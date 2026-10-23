@@ -4,7 +4,16 @@ import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "NodeNext", moduleResolution: "NodeNext", lib: ["es2023"], strict: true, allowImportingTsExtensions: true, noEmit: true, types: [] as string[] };
+const options = {
+  target: "ESNext",
+  module: "NodeNext",
+  moduleResolution: "NodeNext",
+  lib: ["es2023"],
+  strict: true,
+  allowImportingTsExtensions: true,
+  noEmit: true,
+  types: [] as string[],
+};
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -13,12 +22,23 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^error: (TS\d+): .*\n\s+at (\S+):(\d+):\d+$/gm)].map(match => `${match[2]}:${match[3]} ${match[1]}`).sort();
+const errors = (said: string) =>
+  [...said.matchAll(/^error: (TS\d+): .*\n\s+at (\S+):(\d+):\d+$/gm)]
+    .map(match => `${match[2]}:${match[3]} ${match[1]}`)
+    .sort();
 
 const names = ["core", "select", "testing", "app"];
 const packages = Object.fromEntries(
   names.flatMap(name => [
-    [`packages/${name}/package.json`, JSON.stringify({ name: `@workspace/${name}`, version: "1.0.0", type: "module", exports: { ".": "./src/index.ts" } })],
+    [
+      `packages/${name}/package.json`,
+      JSON.stringify({
+        name: `@workspace/${name}`,
+        version: "1.0.0",
+        type: "module",
+        exports: { ".": "./src/index.ts" },
+      }),
+    ],
     [`packages/${name}/tsconfig.json`, JSON.stringify({ compilerOptions: options, include: ["src"] })],
   ]),
 );
@@ -92,9 +112,19 @@ test("app", () => {
 test("a dependency that imports a file of the application leaves that file's check as it is without the dependency", async () => {
   using dir = tempDir("dependency-imports-own-file", workspace);
   mkdirSync(join(String(dir), "node_modules", "@workspace"), { recursive: true });
-  for (const name of names) symlinkSync(join(String(dir), "packages", name), join(String(dir), "node_modules", "@workspace", name), "dir");
+  for (const name of names)
+    symlinkSync(join(String(dir), "packages", name), join(String(dir), "node_modules", "@workspace", name), "dir");
   const alone = await run(String(dir), "test", "--aot", "./packages/select/test/select.test.ts");
   expect({ errors: errors(alone.said), passed: passed(alone.said) }).toEqual({ errors: [], passed: ["select"] });
-  const together = await run(String(dir), "test", "--aot", "./packages/app/app.test.ts", "./packages/select/test/select.test.ts");
-  expect({ errors: errors(together.said), passed: passed(together.said) }).toEqual({ errors: [], passed: ["app", "select"] });
+  const together = await run(
+    String(dir),
+    "test",
+    "--aot",
+    "./packages/app/app.test.ts",
+    "./packages/select/test/select.test.ts",
+  );
+  expect({ errors: errors(together.said), passed: passed(together.said) }).toEqual({
+    errors: [],
+    passed: ["app", "select"],
+  });
 }, 60_000);

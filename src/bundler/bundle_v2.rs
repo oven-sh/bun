@@ -3578,7 +3578,10 @@ pub mod bv2_impl {
 
         #[inline(never)]
         pub(crate) fn on_after_decrement_scan_counter(&mut self) {
-            bun_removable_features::removable_definition!(Bundler, Self::on_after_decrement_scan_counter);
+            bun_removable_features::removable_definition!(
+                Bundler,
+                Self::on_after_decrement_scan_counter
+            );
             if self.asynchronous && self.is_done() {
                 let dev = self
                     .dev_server
@@ -5062,7 +5065,10 @@ pub mod bv2_impl {
         #[inline(never)]
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             bun_removable_features::removable_definition!(Bundler, Self::on_load);
-            debug_assert!(matches!(load.owner, jsc_api::JSBundler::RequestOwner::Bundle));
+            debug_assert!(matches!(
+                load.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -5288,7 +5294,10 @@ pub mod bv2_impl {
         #[inline(never)]
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
-            debug_assert!(matches!(resolve.owner, jsc_api::JSBundler::RequestOwner::Bundle));
+            debug_assert!(matches!(
+                resolve.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
@@ -7749,7 +7758,10 @@ pub mod bv2_impl {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            debug_assert!(matches!(load.owner, jsc_api::JSBundler::RequestOwner::Bundle));
+            debug_assert!(matches!(
+                load.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;

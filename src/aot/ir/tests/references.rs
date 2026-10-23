@@ -22,7 +22,9 @@ pub(super) struct IdMapStorage {
 }
 
 fn shift_ids<I: Id>(count: usize, offset: usize) -> Vec<Option<I>> {
-    (0..count).map(|index| Some(I::new(index + offset))).collect()
+    (0..count)
+        .map(|index| Some(I::new(index + offset)))
+        .collect()
 }
 
 impl IdMapStorage {
@@ -65,19 +67,46 @@ const WORD: u32 = 3;
 
 fn references_of_word() -> Vec<(ReferenceKind, Reference)> {
     let mut references = vec![
-        (ReferenceKind::String, Reference::String(StringId::from_word(WORD))),
-        (ReferenceKind::PropertyKey, Reference::PropertyKey(PropertyKeyId::from_word(WORD))),
-        (ReferenceKind::Type, Reference::Type(TypeId::from_word(WORD))),
-        (ReferenceKind::TypeSite, Reference::TypeSite(TypeSiteId::from_word(WORD))),
+        (
+            ReferenceKind::String,
+            Reference::String(StringId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::PropertyKey,
+            Reference::PropertyKey(PropertyKeyId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::Type,
+            Reference::Type(TypeId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::TypeSite,
+            Reference::TypeSite(TypeSiteId::from_word(WORD)),
+        ),
         (
             ReferenceKind::ExpectedResult,
             Reference::ExpectedResult(ExpectedResultId::from_word(WORD)),
         ),
-        (ReferenceKind::Layout, Reference::Layout(LayoutId::from_word(WORD))),
-        (ReferenceKind::Variable, Reference::Variable(VariableId::from_word(WORD))),
-        (ReferenceKind::ModuleFailure, Reference::ModuleFailure(ModuleFailureId::from_word(WORD))),
-        (ReferenceKind::EvalScope, Reference::EvalScope(EvalScopeId::from_word(WORD))),
-        (ReferenceKind::Data, Reference::Data(DataId::from_word(WORD))),
+        (
+            ReferenceKind::Layout,
+            Reference::Layout(LayoutId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::Variable,
+            Reference::Variable(VariableId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::ModuleFailure,
+            Reference::ModuleFailure(ModuleFailureId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::EvalScope,
+            Reference::EvalScope(EvalScopeId::from_word(WORD)),
+        ),
+        (
+            ReferenceKind::Data,
+            Reference::Data(DataId::from_word(WORD)),
+        ),
     ];
     for role in ModuleReferenceKind::ALL {
         let reference = Reference::Module(ModuleId::from_word(WORD), role);
@@ -107,7 +136,10 @@ fn builtin_word_past_table_is_no_reference() {
     let last = BuiltinId::COUNT - 1;
     let reference = Reference::from_word(ReferenceKind::Builtin, last);
     assert_eq!(reference.map(Reference::kind), Some(ReferenceKind::Builtin));
-    assert_eq!(Reference::from_word(ReferenceKind::Builtin, BuiltinId::COUNT), None);
+    assert_eq!(
+        Reference::from_word(ReferenceKind::Builtin, BuiltinId::COUNT),
+        None
+    );
     assert_eq!(Reference::from_word(ReferenceKind::Builtin, u32::MAX), None);
 }
 
@@ -181,5 +213,8 @@ fn remap_word_uses_slice_of_kind() {
 fn remap_word_keeps_builtin_past_every_slice() {
     let storage = IdMapStorage::new(0, |_| 0);
     let word = BuiltinId::COUNT - 1;
-    assert_eq!(storage.as_id_map().remap_word(ReferenceKind::Builtin, word), word);
+    assert_eq!(
+        storage.as_id_map().remap_word(ReferenceKind::Builtin, word),
+        word
+    );
 }

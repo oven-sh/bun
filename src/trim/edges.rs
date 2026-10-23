@@ -135,10 +135,16 @@ mod tests {
             edges.leaving(feature(1)),
             [edge(1, 0, Reference, true), edge(1, 2, AbortingGuard, true)]
         );
-        assert_eq!(edges.leaving(feature(3)), [edge(3, 0, RecoverableGuard, false)]);
+        assert_eq!(
+            edges.leaving(feature(3)),
+            [edge(3, 0, RecoverableGuard, false)]
+        );
         assert_eq!(
             edges.leaving(feature(5)),
-            [edge(5, 1, Reference, true), edge(5, 3, RecoverableGuard, true)]
+            [
+                edge(5, 1, Reference, true),
+                edge(5, 3, RecoverableGuard, true)
+            ]
         );
         for absent in [0, 2, 4, 6] {
             assert!(edges.leaving(feature(absent)).is_empty());
@@ -150,7 +156,10 @@ mod tests {
     fn entering_returns_edges_by_target() {
         let edges = sample_edges();
         let sources_entering = |target: usize| -> Vec<Feature> {
-            edges.entering(feature(target)).map(|edge| edge.from).collect()
+            edges
+                .entering(feature(target))
+                .map(|edge| edge.from)
+                .collect()
         };
         assert_eq!(sources_entering(0), [feature(1), feature(3)]);
         assert_eq!(sources_entering(3), [feature(5)]);

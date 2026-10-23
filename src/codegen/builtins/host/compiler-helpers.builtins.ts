@@ -53,7 +53,15 @@ const textMethods = b.calls("startsWith", "endsWith", "indexOf", "slice");
 const validated = [
   b.returned,
   b.reachableValuesStoredIn(b.result),
-  b.runsTransitively("OwnKeys", "OwnValues", "Iterate", "PrototypeChain", "ToPrimitive", b.named("length"), textMethods),
+  b.runsTransitively(
+    "OwnKeys",
+    "OwnValues",
+    "Iterate",
+    "PrototypeChain",
+    "ToPrimitive",
+    b.named("length"),
+    textMethods,
+  ),
 ];
 const copied = (...protocols: readonly b.ProtocolSpec[]) => [b.runs(...protocols), b.contentsStoredIn(b.result)];
 
@@ -72,7 +80,14 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
     implementation: b.compiled("DisposableStackPrototype", name),
   }) satisfies b.FunctionField;
 
-const ownProperties = ["ObjectFields", "ShapeWords", "OrderWords", "NamedProperties", "Elements", "ArrayStorage"] as const;
+const ownProperties = [
+  "ObjectFields",
+  "ShapeWords",
+  "OrderWords",
+  "NamedProperties",
+  "Elements",
+  "ArrayStorage",
+] as const;
 
 // Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from. describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description. definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
 const definitionFrom = {
@@ -107,7 +122,12 @@ const definitionFrom = {
 const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
 const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
 
-const scanOfText = (symbol: string, minimum: number, args: Readonly<Record<string, b.TableType>>, parameters: readonly (typeof value | typeof realm)[]) =>
+const scanOfText = (
+  symbol: string,
+  minimum: number,
+  args: Readonly<Record<string, b.TableType>>,
+  parameters: readonly (typeof value | typeof realm)[],
+) =>
   ({
     args,
     returns: b.int(minimum, 2 ** 31 - 1),
@@ -216,13 +236,20 @@ export default b.declarations(
     ],
     scanPlainQuery: scanOfText("AOT__scanPlainQuery", -1, { text: b.string }, [realm, value]),
     findInPlainQuery: scanOfText("AOT__findInPlainQuery", -2, { text: b.string, name: b.any }, [realm, value, value]),
-    plainQueryEntries: listOfPlainQuery("AOT__plainQueryEntries", b.instance("Array").holding({ element: b.string }).fresh.dense),
+    plainQueryEntries: listOfPlainQuery(
+      "AOT__plainQueryEntries",
+      b.instance("Array").holding({ element: b.string }).fresh.dense,
+    ),
     plainQueryKeys: listOfPlainQuery("AOT__plainQueryKeys", b.string),
     plainQueryValues: listOfPlainQuery("AOT__plainQueryValues", b.string),
     scanPlainURL: scanOfText("AOT__scanPlainURL", -1, { text: b.string }, [value]),
     scanPlainURLWithPlainBase: scanOfText("AOT__scanPlainURLWithPlainBase", -1, { text: b.string }, [value]),
     scanPlainURLWithBase: scanOfText("AOT__scanPlainURLWithBase", -1, { text: b.string, base: b.any }, [value, value]),
-    findPlainQueryValue: scanOfText("AOT__findPlainQueryValue", -2, { text: b.string, offsets: b.any, name: b.any }, [value, value, value]),
+    findPlainQueryValue: scanOfText("AOT__findPlainQueryValue", -2, { text: b.string, offsets: b.any, name: b.any }, [
+      value,
+      value,
+      value,
+    ]),
     // Object.entries(object) for a loop that takes each pair apart at once: the keys and values one behind the other in one list.
     ownEntriesFlat: {
       args: { object: b.any },
@@ -235,7 +262,8 @@ export default b.declarations(
       implementation: b.hostCall,
       directEntry: {
         symbol: "AOT__ownEntriesFlat",
-        declaration: 'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__ownEntriesFlat(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
+        declaration:
+          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__ownEntriesFlat(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
         headers: [],
         parameters: [
           { value: "Realm", cppType: "JSC::JSGlobalObject*" },
@@ -255,7 +283,8 @@ export default b.declarations(
       implementation: b.hostCall,
       directEntry: {
         symbol: "AOT__describeUnlessOrdinary",
-        declaration: 'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__describeUnlessOrdinary(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
+        declaration:
+          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__describeUnlessOrdinary(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
         headers: [],
         parameters: [
           { value: "Realm", cppType: "JSC::JSGlobalObject*" },

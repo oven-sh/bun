@@ -40,7 +40,13 @@ try {
 console.log(value, import.meta.url, import.meta.dir, process.argv[1], Bun.main);
 `,
     );
-    built(await spawned([bunExe(), ...compileCommand, ...withoutDebugInformation(), "./main.mjs", "--outfile", executable], source, bunEnv));
+    built(
+      await spawned(
+        [bunExe(), ...compileCommand, ...withoutDebugInformation(), "./main.mjs", "--outfile", executable],
+        source,
+        bunEnv,
+      ),
+    );
   }, 300_000);
 
   test("its bytes do not hold the folder", () => {
@@ -49,7 +55,12 @@ console.log(value, import.meta.url, import.meta.dir, process.argv[1], Bun.main);
 
   test("it prints nothing of the folder, and does not find a file that lies there alone", async () => {
     const run = await spawned([executable], elsewhere, bunEnv);
-    expect({ names: (run.stdout + run.stderr).includes(secret), exitCode: run.exitCode }).toEqual({ names: false, exitCode: 0 });
-    expect(run.stdout.split("\n")[0]).toBe("ERR_MODULE_NOT_FOUND Cannot find module './lib/outside.mjs' imported from /$bunfs/root/main.mjs");
+    expect({ names: (run.stdout + run.stderr).includes(secret), exitCode: run.exitCode }).toEqual({
+      names: false,
+      exitCode: 0,
+    });
+    expect(run.stdout.split("\n")[0]).toBe(
+      "ERR_MODULE_NOT_FOUND Cannot find module './lib/outside.mjs' imported from /$bunfs/root/main.mjs",
+    );
   });
 });

@@ -854,7 +854,7 @@ export class StringType extends Type {
   }
   /** The JS string itself, a `JsLocal<'a, JSString>`: nothing is resolved, counted or copied. */
   get local(): LocalStringType {
-    assert(this.valueKinds !== "any", ".local is a string or, after .allowStringObject, a String object");
+    assert(this.valueKinds !== "any", ".local follows b.string or b.string.allowStringObject");
     return new LocalStringType(this.valueKinds.includes("stringObject"));
   }
   get nullRepresentation() {
@@ -1535,7 +1535,9 @@ export class OptionalType extends Type {
   /** A null pointer stands for an argument that is not there. One that is `undefined` or `null` is for the host function. */
   get directForm(): DirectForm | null {
     const form = this.inner.directForm;
-    return form?.value === "Value" && this.inner.nullRepresentation === "pointer" ? { ...form, value: "ValueOrEmpty" } : null;
+    return form?.value === "Value" && this.inner.nullRepresentation === "pointer"
+      ? { ...form, value: "ValueOrEmpty" }
+      : null;
   }
   get isReadInPlace(): boolean {
     return this.inner.isReadInPlace;
@@ -2377,7 +2379,10 @@ export class Signature {
       ...positions.filter(index => !isFirst(index)),
     ];
     this.args.forEach(({ name, type }, index) =>
-      assert(!isMadeOf(type, RestType) || (type instanceof RestType && index === this.args.length - 1), `${name}: b.rest is the last argument`),
+      assert(
+        !isMadeOf(type, RestType) || (type instanceof RestType && index === this.args.length - 1),
+        `${name}: b.rest is the last argument`,
+      ),
     );
     this.returns = options.returns ?? new UnitType("undefined");
     this.capability = options.capability ?? "none";
@@ -2387,7 +2392,10 @@ export class Signature {
     assert(!(this.rustPath && this.cppSymbol), "rustPath or cppSymbol, not both");
     this.cppInlineBody = options.cppInlineBody;
     assert(!this.cppInlineBody || this.cppSymbol, "cppInlineBody goes with a cppSymbol");
-    assert(!this.cppInlineBody || this.args.every(arg => arg.type instanceof AnyType), "cppInlineBody takes its arguments as they are: b.any");
+    assert(
+      !this.cppInlineBody || this.args.every(arg => arg.type instanceof AnyType),
+      "cppInlineBody takes its arguments as they are: b.any",
+    );
     assertDistinct(
       this.args.map(arg => snakeCase(arg.name)),
       "arguments",

@@ -37,7 +37,9 @@ impl Quiet<'_, '_> {
         let found = match hir[expression].kind {
             ExprKind::Ident(name) => {
                 let is_global = bound.binding(expression) == Binding::Free
-                    && bound.dynamic_lookup_scope(NodeData::Expr(expression)).is_none();
+                    && bound
+                        .dynamic_lookup_scope(NodeData::Expr(expression))
+                        .is_none();
                 if !is_global {
                     return None;
                 }
@@ -69,8 +71,8 @@ impl Quiet<'_, '_> {
 
     /// A locked path that leads to an object, which is truthy.
     pub fn names_locked_object(&self, expression: ExprId) -> bool {
-        self.find_locked_builtin(expression).is_some_and(|found| {
-            match table::entry(found).kind {
+        self.find_locked_builtin(expression)
+            .is_some_and(|found| match table::entry(found).kind {
                 BuiltinKind::Namespace
                 | BuiltinKind::Constructor
                 | BuiltinKind::Function
@@ -80,8 +82,7 @@ impl Quiet<'_, '_> {
                 | BuiltinKind::DataProperty
                 | BuiltinKind::Constant
                 | BuiltinKind::NativeBinding => false,
-            }
-        })
+            })
     }
 
     fn enclosing_statement(&self, expression: ExprId) -> Option<StmtId> {
@@ -112,12 +113,19 @@ impl Quiet<'_, '_> {
         let expression = self.hir.skip_type_assertions(expression);
         let is_exports_variable = matches!(self.hir[expression].kind, ExprKind::Ident(_))
             && self.bound.binding(expression) == Binding::CommonJs(CommonJsVariable::Exports)
-            && self.bound.dynamic_lookup_scope(NodeData::Expr(expression)).is_none();
+            && self
+                .bound
+                .dynamic_lookup_scope(NodeData::Expr(expression))
+                .is_none();
         is_exports_variable || self.is_this_of_file(expression)
     }
 
     fn is_quiet_name(&self, expression: ExprId, name: Atom) -> bool {
-        if self.bound.dynamic_lookup_scope(NodeData::Expr(expression)).is_some() {
+        if self
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(expression))
+            .is_some()
+        {
             return false;
         }
         match self.bound.binding(expression) {
@@ -139,7 +147,9 @@ impl Quiet<'_, '_> {
             ExprKind::ImportMeta => true,
             ExprKind::Ident(_) => {
                 bound.binding(expression) == Binding::Free
-                    && bound.dynamic_lookup_scope(NodeData::Expr(expression)).is_none()
+                    && bound
+                        .dynamic_lookup_scope(NodeData::Expr(expression))
+                        .is_none()
             }
             ExprKind::Dot {
                 chain: Chain::No, ..
@@ -206,7 +216,9 @@ impl Quiet<'_, '_> {
             return false;
         }
         if (self.runs_nothing)(call) {
-            return hir.ids(site.args).all(|argument| self.is_quiet_expression(argument));
+            return hir
+                .ids(site.args)
+                .all(|argument| self.is_quiet_expression(argument));
         }
         match hir[hir.skip_type_assertions(site.callee)].kind {
             ExprKind::Fn(function) => site.args.is_empty() && self.is_quiet_when_called(function),
@@ -257,9 +269,9 @@ impl Quiet<'_, '_> {
                     && self.is_quiet_expression(branches.no)
             }
             ExprKind::Object(properties) => self.is_quiet_literal(properties),
-            ExprKind::Array(elements) => {
-                hir.ids(elements).all(|element| self.is_quiet_expression(element))
-            }
+            ExprKind::Array(elements) => hir
+                .ids(elements)
+                .all(|element| self.is_quiet_expression(element)),
             ExprKind::Call(call) => self.is_quiet_call(call),
             _ => false,
         }
@@ -268,7 +280,10 @@ impl Quiet<'_, '_> {
     fn is_quiet_declaration(&self, declaration: VarDeclId) -> bool {
         let declaration = self.hir[declaration];
         matches!(self.hir[declaration.pat].kind, PatKind::Ident(_))
-            && matches!(declaration.kind, VarKind::Var | VarKind::Let | VarKind::Const)
+            && matches!(
+                declaration.kind,
+                VarKind::Var | VarKind::Let | VarKind::Const
+            )
             && self.is_quiet_expression(declaration.init)
     }
 
@@ -287,9 +302,9 @@ impl Quiet<'_, '_> {
             | StmtKind::ExportNamed(_)
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportAsNamespace(_) => true,
-            StmtKind::Var(declarations) => {
-                declarations.iter().all(|declaration| self.is_quiet_declaration(declaration))
-            }
+            StmtKind::Var(declarations) => declarations
+                .iter()
+                .all(|declaration| self.is_quiet_declaration(declaration)),
             StmtKind::Expr(value) | StmtKind::Return(value) | StmtKind::ExportDefault(value) => {
                 self.is_quiet_expression(value)
             }

@@ -5,6 +5,18 @@
 import { programsBuiltWith } from "./run-programs";
 
 const overwriting = { BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1" };
-for (const every of [5, 7, 11]) programsBuiltWith("inner-objects", `a-collection-at-every-${every}`, [], { BUN_JSC_slowPathAllocsBetweenGCs: String(every), ...overwriting });
-programsBuiltWith("inner-objects", "full-collections-only", [], { BUN_JSC_useGenerationalGC: "0", BUN_JSC_slowPathAllocsBetweenGCs: "40", ...overwriting });
-programsBuiltWith("inner-objects", "no-marking-beside-the-program", [], { BUN_JSC_useConcurrentGC: "0", BUN_JSC_slowPathAllocsBetweenGCs: "25", ...overwriting });
+for (const every of [5, 7, 11])
+  programsBuiltWith("inner-objects", `a-collection-at-every-${every}`, [], {
+    BUN_JSC_slowPathAllocsBetweenGCs: String(every),
+    ...overwriting,
+  });
+programsBuiltWith("inner-objects", "full-collections-only", [], {
+  BUN_JSC_useGenerationalGC: "0",
+  BUN_JSC_slowPathAllocsBetweenGCs: "40",
+  ...overwriting,
+});
+programsBuiltWith("inner-objects", "no-marking-beside-the-program", [], {
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_slowPathAllocsBetweenGCs: "25",
+  ...overwriting,
+});

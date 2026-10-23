@@ -72,7 +72,11 @@ impl Collector {
         if !table::exists_on(id, self.platform) {
             return;
         }
-        for function in table::entry(id).calls_for_texts().iter().flat_map(|listed| listed.calls) {
+        for function in table::entry(id)
+            .calls_for_texts()
+            .iter()
+            .flat_map(|listed| listed.calls)
+        {
             self.functions.set(function.to_wire() as usize);
         }
     }
@@ -87,7 +91,9 @@ impl Collector {
         for load in entry.loads() {
             self.modules.set(load.module.to_wire() as usize);
             match load.exports_read {
-                Some(names) => self.exports_read.extend(names.iter().map(|&name| (load.module, name))),
+                Some(names) => self
+                    .exports_read
+                    .extend(names.iter().map(|&name| (load.module, name))),
                 None => self.modules_read_whole.set(load.module.to_wire() as usize),
             }
         }
@@ -138,7 +144,8 @@ impl Collector {
             .filter(|module| self.modules.is_set(module.to_wire() as usize));
         let is_read_whole =
             |module: &RuntimeModule| self.modules_read_whole.is_set(module.to_wire() as usize);
-        self.exports_read.retain(|(module, _)| !is_read_whole(module));
+        self.exports_read
+            .retain(|(module, _)| !is_read_whole(module));
         self.exports_read.sort_unstable();
         self.exports_read.dedup();
         let functions = table::runtime_functions()
@@ -148,7 +155,10 @@ impl Collector {
             .map(|data| data.function);
         RuntimeUses {
             modules: modules.collect(),
-            modules_read_whole: RuntimeModule::ALL.into_iter().filter(is_read_whole).collect(),
+            modules_read_whole: RuntimeModule::ALL
+                .into_iter()
+                .filter(is_read_whole)
+                .collect(),
             exports_read: self.exports_read.clone().into(),
             functions: functions.collect(),
         }

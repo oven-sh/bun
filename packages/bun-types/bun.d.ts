@@ -90,7 +90,9 @@ declare module "bun" {
     /** `string & Pattern<"^[a-z]+$">`: the source of a regular expression that the string must match. */
     type Pattern<S extends string> = { readonly "bun.pattern"?: S };
     /** `string & Format<"uuid">` */
-    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
+    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = {
+      readonly "bun.format"?: S;
+    };
     /** `number & Min<1> & Message<"Order at least one">`: the message of the issues about this value. */
     type Message<S extends string> = { readonly "bun.message"?: S };
     /** `number & Default<8080>`: the value to use when the property is missing. */
@@ -123,9 +125,12 @@ declare module "bun" {
      *
      * `JSON.parse(text)` and `JSON.parse<any>(text)` never validate.
      */
-    parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
+    parse<T = any>(
+      text: string,
+      reviver?: (this: any, key: string, value: any, context: { source?: string }) => any,
+    ): T;
     // TypeScript infers (`ReturnType`, `.then(JSON.parse)`) from the last signature, so `JSON.parse(text)` stays `any`.
-    parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;
+    parse(text: string, reviver?: (this: any, key: string, value: any, context: { source?: string }) => any): any;
   }
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =

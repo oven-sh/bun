@@ -174,7 +174,7 @@ export class Layouts {
   isBelowByClass(layout: ReportedLayout, ancestor: number) {
     const seen = new Set([layout.id]);
     let leftAClass = false;
-    for (let current = layout; current.base !== null; ) {
+    for (let current = layout; current.base !== null;) {
       leftAClass ||= !current.isDerived;
       if (current.base === ancestor) return leftAClass;
       const base = this.#byId.get(current.base);

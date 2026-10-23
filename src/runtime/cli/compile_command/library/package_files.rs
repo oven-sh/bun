@@ -513,7 +513,10 @@ pub(super) fn write_package_json(
     json.put(&mut package, b"type", json.string(module_type));
     let authored_exports = existing.as_ref().and_then(|it| it.get(b"exports"));
     let WrittenExports { exports, main } = written.write_exports(authored_exports, &mut warnings);
-    if let Some(main) = main.map(|main| &exported[main]).or(exported.first()) {
+    if let Some(main) = main
+        .map(|main| &exported[main])
+        .or_else(|| exported.first())
+    {
         let javascript = json.relative_path(&main.javascript);
         json.put(&mut package, b"main", javascript);
         if !request.is_commonjs {

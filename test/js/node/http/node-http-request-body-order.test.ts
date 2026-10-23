@@ -49,7 +49,9 @@ function sampleJobs(req: http.IncomingMessage, log: Log, count: number) {
 
 function hear(req: http.IncomingMessage, log: Log, names: string[]) {
   for (const name of names) {
-    req.on(name, value => log(`${name} ${value === undefined ? "" : typeof value + ":" + String(value).length} ${look(req)}`));
+    req.on(name, value =>
+      log(`${name} ${value === undefined ? "" : typeof value + ":" + String(value).length} ${look(req)}`),
+    );
   }
 }
 
@@ -98,7 +100,9 @@ const asBytes: Scene = (req, res, log) => {
 function wrap(req: any, log: Log, name: string) {
   const original = req[name];
   req[name] = function (first: unknown) {
-    log(`${name} ${first === null || typeof first !== "object" ? String(first) : (first as Buffer).length} ${look(req)}`);
+    log(
+      `${name} ${first === null || typeof first !== "object" ? String(first) : (first as Buffer).length} ${look(req)}`,
+    );
     return original.apply(this, arguments);
   };
 }
@@ -218,7 +222,12 @@ const bodies: Record<string, string | Buffer> = {
   empty: head + "Content-Length: 0\r\n\r\n",
 };
 
-async function record(port: number, setScene: (scene: http.RequestListener) => void, scene: Scene, body: string | Buffer) {
+async function record(
+  port: number,
+  setScene: (scene: http.RequestListener) => void,
+  scene: Scene,
+  body: string | Buffer,
+) {
   const lines: string[] = [];
   const log: Log = text => void lines.push(text);
   const { promise, resolve } = Promise.withResolvers<void>();

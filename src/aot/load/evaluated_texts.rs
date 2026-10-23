@@ -4,9 +4,7 @@ use bun_core::strings::is_valid_utf8;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, Decl, FunctionFlags, RuntimeBindOptions, bind};
 use bun_sema::fold::{Constant, Decision, Decisions};
-use bun_sema::hir::{
-    DiagnosticClass, ExprId, ExprKind, File, Flags, FnId, StmtId, StmtKind, rare,
-};
+use bun_sema::hir::{DiagnosticClass, ExprId, ExprKind, File, Flags, FnId, StmtId, StmtKind, rare};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::FinishedFile;
 use bun_sema::session::Session;
@@ -44,7 +42,9 @@ impl EvaluatedTexts {
             EvaluatedTextForm::Script => try_create_script_text(texts.first()?)?,
         };
         let path = create_virtual_path(importer, text.call);
-        let stored = self.files.insert_ref(path.clone(), source.clone().into_boxed_slice());
+        let stored = self
+            .files
+            .insert_ref(path.clone(), source.clone().into_boxed_slice());
         (**stored == *source).then_some(path)
     }
 
@@ -145,7 +145,14 @@ fn try_create_script_text(source: &[u8]) -> Option<Vec<u8>> {
 
 fn create_function_text(parameters: &[&[u8]], body: &[u8]) -> Vec<u8> {
     let parameter_list = parameters.join(&b","[..]);
-    [&b"(function anonymous("[..], &parameter_list, b"\n) {\n", body, b"\n})"].concat()
+    [
+        &b"(function anonymous("[..],
+        &parameter_list,
+        b"\n) {\n",
+        body,
+        b"\n})",
+    ]
+    .concat()
 }
 
 fn create_script_text(source: &[u8]) -> Vec<u8> {
@@ -160,8 +167,10 @@ enum ParsedShape {
 }
 
 // `010`, `08` and `"\1"` are errors in strict code alone, and the tree does not say that one was met.
+#[allow(clippy::disallowed_methods)] // two patterns at every place, not one text
 fn may_hold_legacy_octal(text: &[u8]) -> bool {
-    let continues_a_token = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'.');
+    let continues_a_token =
+        |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'.');
     text.windows(2).enumerate().any(|(at, pair)| match *pair {
         [b'0', b'0'..=b'9'] => at == 0 || !continues_a_token(text[at - 1]),
         [b'\\', b'1'..=b'9'] => true,
@@ -213,7 +222,9 @@ const SYNTAX_THAT_MAY_BE_AN_ERROR: u32 = rare::SUSPENDS_IN_PARAMETERS | rare::OD
 
 // The parameters of an arrow function are read as if no generator stood around them: `(a = yield) => 1` has a name there, where the language has the operator, which is an error.
 fn has_yield_as_name(hir: &File<'_>) -> bool {
-    hir.exprs.iter().any(|expression| matches!(expression.kind, ExprKind::Ident(name) if name == known::r#yield))
+    hir.exprs.iter().any(
+        |expression| matches!(expression.kind, ExprKind::Ident(name) if name == known::r#yield),
+    )
 }
 
 fn has_function_as_body(hir: &File<'_>) -> bool {
@@ -232,7 +243,10 @@ fn has_name_twice(hir: &File<'_>, statements: impl Iterator<Item = StmtId>) -> b
             _ => None,
         })
         .collect();
-    names.iter().enumerate().any(|(index, name)| names[..index].contains(name))
+    names
+        .iter()
+        .enumerate()
+        .any(|(index, name)| names[..index].contains(name))
 }
 
 fn declares_function_twice_in_block(hir: &File<'_>) -> bool {
@@ -375,7 +389,10 @@ mod tests {
         assert_eq!(text.as_deref(), Some(&expected[..]));
 
         let empty = try_create_function_text(&[]);
-        assert_eq!(empty.as_deref(), Some(&b"(function anonymous(\n) {\n\n})"[..]));
+        assert_eq!(
+            empty.as_deref(),
+            Some(&b"(function anonymous(\n) {\n\n})"[..])
+        );
 
         assert!(try_create_function_text(&[b"a //", b"return a"]).is_some());
     }
@@ -444,7 +461,11 @@ mod tests {
             b"return function* () { yield (a => a); }",
         ];
         for body in taken {
-            assert!(try_create_function_text(&[body]).is_some(), "{} is rejected", BStr::new(body));
+            assert!(
+                try_create_function_text(&[body]).is_some(),
+                "{} is rejected",
+                BStr::new(body)
+            );
         }
     }
 
@@ -457,7 +478,9 @@ mod tests {
     }
 
     fn count_linked_function_bodies(body: &str) -> usize {
-        count_linked_texts(&format!("export const create = () => new Function({body:?});\n"))
+        count_linked_texts(&format!(
+            "export const create = () => new Function({body:?});\n"
+        ))
     }
 
     #[test]
@@ -472,7 +495,10 @@ mod tests {
             "'use strict'; delete a;",
         ];
         for body in bodies {
-            assert!(try_create_function_text(&[body.as_bytes()]).is_some(), "{body}");
+            assert!(
+                try_create_function_text(&[body.as_bytes()]).is_some(),
+                "{body}"
+            );
             assert_eq!(count_linked_function_bodies(body), 0, "{body}");
         }
         let script = "export const read = () => (0, eval)(\"super.x\");\n";
@@ -491,7 +517,11 @@ mod tests {
 
     #[test]
     fn jump_inside_its_statement_is_compiled() {
-        for body in ["for (;;) { break; }", "a: for (;;) { continue a; }", "delete a;"] {
+        for body in [
+            "for (;;) { break; }",
+            "a: for (;;) { continue a; }",
+            "delete a;",
+        ] {
             assert_eq!(count_linked_function_bodies(body), 1, "{body}");
         }
     }
@@ -536,8 +566,14 @@ mod tests {
 
         let strict = r#"Function("'use strict'; return this;");"#;
         assert_eq!(strictness_of_compiled_texts(strict), [true]);
-        assert_eq!(strictness_of_compiled_texts(r#"Function("return this;");"#), [false]);
-        assert_eq!(count_linked_function_bodies("'use strict'; return this;"), 1);
+        assert_eq!(
+            strictness_of_compiled_texts(r#"Function("return this;");"#),
+            [false]
+        );
+        assert_eq!(
+            count_linked_function_bodies("'use strict'; return this;"),
+            1
+        );
     }
 
     #[test]
@@ -652,12 +688,18 @@ mod tests {
     #[test]
     fn text_that_names_require_is_not_compiled() {
         assert_eq!(count_compiled_texts(r#"Function("return require");"#), 0);
-        assert_eq!(count_compiled_texts(r#"Function("require", "return require");"#), 1);
+        assert_eq!(
+            count_compiled_texts(r#"Function("require", "return require");"#),
+            1
+        );
     }
 
     #[test]
     fn text_with_import_call_is_not_compiled() {
-        assert_eq!(count_compiled_texts(r#"Function("return import('./b.js')");"#), 0);
+        assert_eq!(
+            count_compiled_texts(r#"Function("return import('./b.js')");"#),
+            0
+        );
     }
 
     #[test]
@@ -671,23 +713,35 @@ mod tests {
     #[test]
     fn return_this_is_compiled() {
         assert_eq!(count_compiled_texts(r#"Function("return this")();"#), 1);
-        assert_eq!(count_compiled_texts(r#"new Function("a", "b", "return a + b");"#), 1);
+        assert_eq!(
+            count_compiled_texts(r#"new Function("a", "b", "return a + b");"#),
+            1
+        );
         assert_eq!(count_compiled_texts(r#"Function("return new.target");"#), 1);
     }
 
     #[test]
     fn text_that_names_a_constant_global_is_compiled() {
-        assert_eq!(count_compiled_texts(r#"Function("a", "return a === undefined");"#), 1);
+        assert_eq!(
+            count_compiled_texts(r#"Function("a", "return a === undefined");"#),
+            1
+        );
         assert_eq!(count_compiled_texts(r#"Function("return NaN");"#), 1);
         assert_eq!(count_compiled_texts(r#"Function("return -Infinity");"#), 1);
         assert_eq!(count_compiled_texts(r#"(0, eval)("undefined");"#), 1);
-        assert_eq!(count_linked_function_bodies("return [undefined, NaN, Infinity];"), 1);
+        assert_eq!(
+            count_linked_function_bodies("return [undefined, NaN, Infinity];"),
+            1
+        );
     }
 
     #[test]
     fn own_name_reference_is_not_compiled() {
         assert_eq!(count_compiled_texts(r#"Function("return anonymous");"#), 0);
-        assert_eq!(count_compiled_texts(r#"Function("anonymous", "return anonymous");"#), 1);
+        assert_eq!(
+            count_compiled_texts(r#"Function("anonymous", "return anonymous");"#),
+            1
+        );
     }
 
     #[test]

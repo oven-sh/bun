@@ -3411,7 +3411,11 @@ impl VirtualMachine {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
-            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.compiled_program().is_some_and(|program| !program.entry_points.is_empty())));
+            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| {
+                graph
+                    .compiled_program()
+                    .is_some_and(|program| !program.entry_points.is_empty())
+            }));
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
@@ -3625,17 +3629,21 @@ impl VirtualMachine {
         // empty execArgv under a traced parent stays a no-op there.)
         use bun_core::is_bootstrap_flag;
         let main_thread_vm = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
-        let program_argument_count = if self.standalone_module_graph.is_none() || main_thread_vm.is_null() {
-            0
-        } else if self.is_main_thread {
-            self.argv.len()
-        } else {
-            // SAFETY: the main thread's VM outlives a worker's, and writes `argv` only before it loads its entry point.
-            let program_arguments = unsafe { &(*main_thread_vm).argv };
-            program_arguments.len()
-        };
+        let program_argument_count =
+            if self.standalone_module_graph.is_none() || main_thread_vm.is_null() {
+                0
+            } else if self.is_main_thread {
+                self.argv.len()
+            } else {
+                // SAFETY: the main thread's VM outlives a worker's, and writes `argv` only before it loads its entry point.
+                let program_arguments = unsafe { &(*main_thread_vm).argv };
+                program_arguments.len()
+            };
         let argv = bun_core::argv();
-        let needs_pre_execution = argv.iter().take(argv.len().saturating_sub(program_argument_count)).any(is_bootstrap_flag)
+        let needs_pre_execution = argv
+            .iter()
+            .take(argv.len().saturating_sub(program_argument_count))
+            .any(is_bootstrap_flag)
             || self
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
@@ -4379,14 +4387,16 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByTrimming")]
     pub(crate) extern "C" fn is_code_generation_disallowed_by_trimming_for_cpp() -> bool {
         bun_core::is_code_generation_disallowed_by_trimming()
-            && bun_core::code_generation_from_strings_by_flags() == bun_core::CodeGenerationFromStrings::Allowed
+            && bun_core::code_generation_from_strings_by_flags()
+                == bun_core::CodeGenerationFromStrings::Allowed
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]
     #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByCompiledProgram")]
     pub(crate) extern "C" fn is_code_generation_disallowed_by_compiled_program_for_cpp() -> bool {
         bun_core::is_code_generation_disallowed_by_compiled_program()
-            && bun_core::code_generation_from_strings_by_flags() == bun_core::CodeGenerationFromStrings::Allowed
+            && bun_core::code_generation_from_strings_by_flags()
+                == bun_core::CodeGenerationFromStrings::Allowed
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -5464,7 +5474,10 @@ impl VirtualMachine {
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self.standalone_module_graph.map(|graph| graph.base_public_path_with_default_suffix()).filter(|root| !source_to_use.starts_with(root))
+                        && let Some(root) = self
+                            .standalone_module_graph
+                            .map(|graph| graph.base_public_path_with_default_suffix())
+                            .filter(|root| !source_to_use.starts_with(root))
                     {
                         source_to_use = root;
                         retry_on_not_found = true;
@@ -5942,7 +5955,8 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let entry_path = crate::compiled_program::entry_module_key(entry_path);
-        self.has_loaded = crate::compiled_program::runs_in_place() && crate::compiled_program::is_compiled_module(entry_path);
+        self.has_loaded = crate::compiled_program::runs_in_place()
+            && crate::compiled_program::is_compiled_module(entry_path);
         self.set_main(Some(entry_path));
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();

@@ -146,7 +146,14 @@ function Interface(
     completer = (v, cb) => cb(null, realCompleter(v));
   }
 
-  FunctionPrototypeCall(InterfaceConstructor, this, input, output, completer as CallbackCompleter | undefined, terminal);
+  FunctionPrototypeCall(
+    InterfaceConstructor,
+    this,
+    input,
+    output,
+    completer as CallbackCompleter | undefined,
+    terminal,
+  );
 
   if (process.env.TERM === "dumb") {
     this._ttyWrite = FunctionPrototypeBind(_ttyWriteDumb, this);
@@ -480,10 +487,7 @@ Interface.prototype._addHistory = _Interface.prototype[kAddHistory];
 Interface.prototype._refreshLine = _Interface.prototype[kRefreshLine];
 Interface.prototype._normalWrite = _Interface.prototype[kNormalWrite];
 Interface.prototype._insertString = _Interface.prototype[kInsertString];
-Interface.prototype._tabComplete = function (
-  this: CallbackInterface,
-  lastKeypressWasTab: boolean | null | undefined,
-) {
+Interface.prototype._tabComplete = function (this: CallbackInterface, lastKeypressWasTab: boolean | null | undefined) {
   // Overriding parent method because `this.completer` in the legacy
   // implementation takes a callback instead of being an async function.
   this.pause();
@@ -592,7 +596,12 @@ Object.defineProperty(__node_module__.exports, "promises", {
     return (promises ??= require("node:readline/promises"));
   },
   set(value) {
-    Object.defineProperty(__node_module__.exports, "promises", { value, writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(__node_module__.exports, "promises", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   },
 });
 

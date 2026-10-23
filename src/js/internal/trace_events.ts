@@ -1,8 +1,16 @@
 // Trace-events agent: who enables categories, the instrumentation of other modules, and the `node_trace.${rotation}.log` writer.
 // Worker support: call `setTid(n)` before emitting to tag events with a
 // non-main thread id.
-const { categoryRefs, events, now, setTid, getTid, isCategoryGroupEnabled, emitEvent, emitEventWithArgs } =
-  require("internal/trace_event_recorder");
+const {
+  categoryRefs,
+  events,
+  now,
+  setTid,
+  getTid,
+  isCategoryGroupEnabled,
+  emitEvent,
+  emitEventWithArgs,
+} = require("internal/trace_event_recorder");
 // Live one-byte views handed out by getCategoryEnabledBuffer(); byte 0 is 1
 // while the category is enabled.
 const categoryBuffers = new Map<string, Uint8Array>();

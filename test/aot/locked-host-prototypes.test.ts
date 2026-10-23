@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // Under --aot the prototypes of six classes that Bun provides are locked like the prototypes of the language.
 // programs/host-classes has what a compiled program prints. Here: the refusal, in an executable and under bun run --aot.
@@ -9,7 +9,13 @@ import { join } from "node:path";
 const classes = ["Request", "Response", "Blob", "Headers", "URL", "URLSearchParams"];
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -27,14 +33,23 @@ for (const C of [${classes.join(", ")}]) {
   }
 }
 `;
-const refusals = classes.flatMap(name => ["add", "replace", "define", "reparent"].map(kind => `${name} ${kind} TypeError`));
-const withoutMessage = (text: string) => text.trim().split("\n").map(line => line.replace(/:.*$/, ""));
+const refusals = classes.flatMap(name =>
+  ["add", "replace", "define", "reparent"].map(kind => `${name} ${kind} TypeError`),
+);
+const withoutMessage = (text: string) =>
+  text
+    .trim()
+    .split("\n")
+    .map(line => line.replace(/:.*$/, ""));
 
 test("every write is refused with a TypeError", async () => {
   using dir = tempDir("locked-host-prototypes", { "main.mjs": attempts });
   const cwd = String(dir);
   const build = await bun(cwd, "build", "--compile", "--aot", "main.mjs", "--outfile", "program");
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   await using program = Bun.spawn({ cmd: [join(cwd, "program")], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   expect(withoutMessage(await program.stdout.text())).toEqual(refusals);
   expect(await program.exited).toBe(0);
@@ -45,16 +60,28 @@ test("every write is refused with a TypeError", async () => {
 // The message is the engine's own, such as "Attempted to assign to readonly property."
 test.todo("the refusal names the prototype and the property and says what to do instead");
 
-const declarations = { typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"], skipLibCheck: true };
-const compilerOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, ...declarations };
+const declarations = {
+  typeRoots: [join(import.meta.dir, "..", "..", "packages")],
+  types: ["bun-types"],
+  skipLibCheck: true,
+};
+const compilerOptions = {
+  target: "esnext",
+  module: "preserve",
+  moduleResolution: "bundler",
+  noEmit: true,
+  ...declarations,
+};
 
 test.each([
   ["without type declarations", {}],
   ["with Bun's type declarations", { "tsconfig.json": JSON.stringify({ compilerOptions }) }],
-])("bun test --aot can spy on their methods, as bun test can, %s", async (_, configuration) => {
-  using dir = tempDir("locked-host-prototypes-spies", {
-    ...configuration,
-    "reads.ts": `
+])(
+  "bun test --aot can spy on their methods, as bun test can, %s",
+  async (_, configuration) => {
+    using dir = tempDir("locked-host-prototypes-spies", {
+      ...configuration,
+      "reads.ts": `
       export const header = (headers: Headers, name: string) => headers.get(name);
       export const param = (params: URLSearchParams, name: string) => params.get(name);
       export const query = (text: string, name: string) => new URL(text).searchParams.get(name);
@@ -63,7 +90,7 @@ test.each([
       export const part = (blob: Blob) => blob.slice(0, 1).size;
       export const copy = (request: Request) => request.clone().url;
     `,
-    "main.test.ts": `
+      "main.test.ts": `
       import { expect, spyOn, test } from "bun:test";
       import * as reads from "./reads";
       test("spies", async () => {
@@ -90,14 +117,20 @@ test.each([
         console.log("see:", JSON.stringify(await all()), spies.map(spy => spy.mock.calls.length).join());
       });
     `,
-  });
-  const seen = async (...args: string[]) => {
-    const ran = await bun(String(dir), ...args);
-    const printed = ran.stdout + ran.stderr;
-    return { seen: printed.split("\n").filter(line => line.startsWith("see:")), exitCode: ran.exitCode, printedByFailure: ran.exitCode ? printed : "" };
-  };
-  const plain = await seen("test", "./main.test.ts");
-  expect(plain).toEqual({ seen: expect.any(Array), exitCode: 0, printedByFailure: "" });
-  expect(plain.seen.length).toBe(3);
-  expect(await seen("test", "--aot", "./main.test.ts")).toEqual(plain);
-}, 120_000);
+    });
+    const seen = async (...args: string[]) => {
+      const ran = await bun(String(dir), ...args);
+      const printed = ran.stdout + ran.stderr;
+      return {
+        seen: printed.split("\n").filter(line => line.startsWith("see:")),
+        exitCode: ran.exitCode,
+        printedByFailure: ran.exitCode ? printed : "",
+      };
+    };
+    const plain = await seen("test", "./main.test.ts");
+    expect(plain).toEqual({ seen: expect.any(Array), exitCode: 0, printedByFailure: "" });
+    expect(plain.seen.length).toBe(3);
+    expect(await seen("test", "--aot", "./main.test.ts")).toEqual(plain);
+  },
+  120_000,
+);

@@ -59,7 +59,9 @@ fn cause_of(cause: EngineCause) -> UnseenCodeCause {
         EngineCause::EvaluatesText => UnseenCodeCause::EvaluatesText,
         EngineCause::ImportsUncompiledModule => UnseenCodeCause::ImportsUncompiledCode,
         EngineCause::LoadsModuleByName => UnseenCodeCause::LoadsModuleByName,
-        EngineCause::RunsUnseenCode | EngineCause::RunsMachineCode => UnseenCodeCause::RunsUnseenCode,
+        EngineCause::RunsUnseenCode | EngineCause::RunsMachineCode => {
+            UnseenCodeCause::RunsUnseenCode
+        }
         EngineCause::OptionAdmitsCode => UnseenCodeCause::OptionAdmitsCode,
         EngineCause::LimitReached => UnseenCodeCause::FlowGaveUp,
         EngineCause::FlowResultDisabled => UnseenCodeCause::FlowResultDisabled,

@@ -17,7 +17,9 @@ fn extensions_of(kind: CodeImportKind) -> Vec<Vec<u8>> {
 fn spellings_of(written: &str, kind: CodeImportKind) -> Vec<String> {
     let spellings = specifier_spellings(written.as_bytes(), &extensions_of(kind));
     let spellings = spellings.iter();
-    spellings.map(|spelling| spelling.as_bstr().to_string()).collect()
+    spellings
+        .map(|spelling| spelling.as_bstr().to_string())
+        .collect()
 }
 
 fn import_pattern<'a>(prefix: &'a str, directory: &'a str) -> ComputedCodeRequest<'a> {
@@ -78,7 +80,11 @@ fn package_prefix_has_complete_name() {
         assert_eq!(classify(prefix, ""), expected, "{prefix}");
     }
     for prefix in ["pkg", "@", "@scope", "@scope/", "@scope/pkg", "node", "bun"] {
-        assert_eq!(classify(prefix, ""), PrefixKind::IncompletePackageName, "{prefix}");
+        assert_eq!(
+            classify(prefix, ""),
+            PrefixKind::IncompletePackageName,
+            "{prefix}"
+        );
     }
 }
 
@@ -98,7 +104,14 @@ fn hash_prefix_names_package_imports() {
 
 #[test]
 fn url_prefix_is_url_and_part_of_one_is_unclear() {
-    for prefix in ["http://", "https://x/", "//", "//cdn/", "data:", "data:text,"] {
+    for prefix in [
+        "http://",
+        "https://x/",
+        "//",
+        "//cdn/",
+        "data:",
+        "data:text,",
+    ] {
         assert_eq!(classify(prefix, ""), PrefixKind::Url, "{prefix}");
     }
     assert_eq!(classify("https://x/", "?query"), PrefixKind::Url);
@@ -144,17 +157,30 @@ fn pattern_able_to_name_other_directory_is_unclear() {
         ("./a/", "\\b"),
     ];
     for (prefix, suffix) in cases {
-        assert_eq!(classify(prefix, suffix), PrefixKind::Unclear, "{prefix:?} {suffix:?}");
+        assert_eq!(
+            classify(prefix, suffix),
+            PrefixKind::Unclear,
+            "{prefix:?} {suffix:?}"
+        );
     }
 }
 
 #[test]
 fn typescript_file_is_spelled_with_javascript_extensions() {
-    assert_eq!(spellings_of("./a.ts", Import), ["./a.ts", "./a", "./a.js", "./a.jsx"]);
-    assert_eq!(spellings_of("./a.tsx", Import), ["./a.tsx", "./a", "./a.js", "./a.jsx"]);
+    assert_eq!(
+        spellings_of("./a.ts", Import),
+        ["./a.ts", "./a", "./a.js", "./a.jsx"]
+    );
+    assert_eq!(
+        spellings_of("./a.tsx", Import),
+        ["./a.tsx", "./a", "./a.js", "./a.jsx"]
+    );
     let module = ["./a.mts", "./a", "./a.js", "./a.jsx", "./a.mjs"];
     assert_eq!(spellings_of("./a.mts", Import), module);
-    assert_eq!(spellings_of("./a.cts", Import), ["./a.cts", "./a", "./a.cjs"]);
+    assert_eq!(
+        spellings_of("./a.cts", Import),
+        ["./a.cts", "./a", "./a.cjs"]
+    );
 }
 
 #[test]
@@ -170,7 +196,10 @@ fn extension_in_extension_order_is_optional() {
 fn only_last_extension_of_file_name_is_replaced() {
     assert_eq!(spellings_of("./a", Import), ["./a"]);
     assert_eq!(spellings_of("./d.ts/a", Import), ["./d.ts/a"]);
-    assert_eq!(spellings_of("./a.test.js", Import), ["./a.test.js", "./a.test"]);
+    assert_eq!(
+        spellings_of("./a.test.js", Import),
+        ["./a.test.js", "./a.test"]
+    );
     let declarations = ["./a.d.ts", "./a.d", "./a.d.js", "./a.d.jsx"];
     assert_eq!(spellings_of("./a.d.ts", Import), declarations);
 }
@@ -191,7 +220,11 @@ fn spellings_invert_rewritten_extensions() {
         assert!(spellings.len() > 1, "{}", file.as_bstr());
         for spelling in &spellings[1..] {
             let rewritten = rewritten_extensions(&spelling[STEM.len()..], false);
-            assert!(rewritten.iter().any(|it| *it == found), "{}", spelling.as_bstr());
+            assert!(
+                rewritten.iter().any(|it| *it == found),
+                "{}",
+                spelling.as_bstr()
+            );
         }
     }
 }
@@ -210,7 +243,10 @@ fn prefix_and_suffix_do_not_overlap() {
 
 #[test]
 fn target_pattern_matches_same_text_at_every_star() {
-    assert_eq!(match_target(b"./lib/*.js", b"./lib/a/b.js"), Some(&b"a/b"[..]));
+    assert_eq!(
+        match_target(b"./lib/*.js", b"./lib/a/b.js"),
+        Some(&b"a/b"[..])
+    );
     assert_eq!(match_target(b"./*/*.js", b"./x/x.js"), Some(&b"x"[..]));
     assert_eq!(match_target(b"./*/*.js", b"./x/y.js"), None);
     assert_eq!(match_target(b"./lib/*.js", b"./src/a.js"), None);
@@ -276,7 +312,9 @@ fn search_starts_in_request_directory_or_working_directory() {
     let host = MemoryHost::new(&[]);
     let directory_of = |directory: &str| {
         let request = import_pattern("./", directory);
-        with_search(&host, &request, |search| search.directory.as_bstr().to_string())
+        with_search(&host, &request, |search| {
+            search.directory.as_bstr().to_string()
+        })
     };
     assert_eq!(directory_of("/q/src"), "/q/src");
     assert_eq!(directory_of("/q/src/"), "/q/src");
@@ -354,7 +392,10 @@ fn spellings_are_sorted_and_name_sorted_candidates() {
         spelling(b"fs", 2),
     ];
     let arena = Arena::new();
-    assert_eq!(sorted_spellings_in(spellings, &candidates, &arena), expected);
+    assert_eq!(
+        sorted_spellings_in(spellings, &candidates, &arena),
+        expected
+    );
     assert!(sorted_spellings_in(Vec::new(), &candidates, &arena).is_empty());
 }
 
@@ -441,6 +482,12 @@ fn packages_in_node_path_are_listed() {
         node_paths: vec![b"/global".to_vec()],
         ..CodeOptions::bun_run(b"/p")
     };
-    assert_eq!(resolve_computed_with(&host, &with_node_path, pattern), "/global/pkg/a.js");
-    assert_eq!(resolve_computed_with(&host, &CodeOptions::bun_run(b"/p"), pattern), "");
+    assert_eq!(
+        resolve_computed_with(&host, &with_node_path, pattern),
+        "/global/pkg/a.js"
+    );
+    assert_eq!(
+        resolve_computed_with(&host, &CodeOptions::bun_run(b"/p"), pattern),
+        ""
+    );
 }

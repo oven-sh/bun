@@ -3,10 +3,25 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, types: [] },
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+  },
 });
 
-type Row = { rule: string; message: string; line: number; because: { message: string; line: number }[]; cost: Record<string, number> };
+type Row = {
+  rule: string;
+  message: string;
+  line: number;
+  because: { message: string; line: number }[];
+  cost: Record<string, number>;
+};
 
 async function explain(body: string) {
   const main = `interface Point {
@@ -33,7 +48,11 @@ export const sum = (point: Point) => point.x + point.y + point.kind.length;
     .map(line => JSON.parse(line));
   const said = rows.flatMap(row => [row.message, ...row.because.map(step => step.message)]);
   const prefix = "The object is created by Object.create() here, so it is untyped: ";
-  return { exitCode, stderr, why: [...new Set(said.filter(message => message.startsWith(prefix)).map(message => message.slice(prefix.length)))] };
+  return {
+    exitCode,
+    stderr,
+    why: [...new Set(said.filter(message => message.startsWith(prefix)).map(message => message.slice(prefix.length)))],
+  };
 }
 
 describe("what Object.create makes is born as the record that its declared type names", () => {

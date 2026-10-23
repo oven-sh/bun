@@ -39,13 +39,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return known;
         }
         let is_recursive = self.reaches_itself(file, node);
-        self.kept.recursive_conditionals.insert((file, node), is_recursive);
+        self.kept
+            .recursive_conditionals
+            .insert((file, node), is_recursive);
         is_recursive
     }
 
     /// Follows what is evaluated with the type.
     fn reaches_itself(&mut self, file: FileId, node: TypeNodeId) -> bool {
-        let TypeNodeKind::Cond { check, extends, yes, no } = self.c.hir(file)[node].kind else {
+        let TypeNodeKind::Cond {
+            check,
+            extends,
+            yes,
+            no,
+        } = self.c.hir(file)[node].kind
+        else {
             return false;
         };
         let mut entered: FxHashSet<Sym> = FxHashSet::default();
@@ -64,11 +72,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     push(&mut hir.ids(args));
                     self.find_referenced_symbol(part_file, part, name)
                 }
-                TypeNodeKind::Import { args, is_typeof: false, .. } => {
+                TypeNodeKind::Import {
+                    args,
+                    is_typeof: false,
+                    ..
+                } => {
                     push(&mut hir.ids(args));
                     self.find_imported_symbol(part_file, part)
                 }
-                TypeNodeKind::Import { args, is_typeof: true, .. }
+                TypeNodeKind::Import {
+                    args,
+                    is_typeof: true,
+                    ..
+                }
                 | TypeNodeKind::Typeof { args, .. } => {
                     push(&mut hir.ids(args));
                     None
@@ -92,7 +108,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     push(&mut hir.ids(list));
                     None
                 }
-                TypeNodeKind::Cond { check, extends, yes, no } => {
+                TypeNodeKind::Cond {
+                    check,
+                    extends,
+                    yes,
+                    no,
+                } => {
                     push(&mut [check, extends, yes, no].into_iter());
                     None
                 }

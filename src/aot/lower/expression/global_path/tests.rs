@@ -27,8 +27,14 @@ const IS_FOR_TYPE_OF: u32 = 1 << 1;
 
 const PATHS: &[(&str, DefinedValue)] = &[
     ("PROBE_NAME", DefinedValue::GlobalPath("probeTarget")),
-    ("PROBE_PATH", DefinedValue::GlobalPath("probeHolder.inner.member")),
-    ("process.env.PROBE_ALIAS", DefinedValue::GlobalPath("probeHolder.member")),
+    (
+        "PROBE_PATH",
+        DefinedValue::GlobalPath("probeHolder.inner.member"),
+    ),
+    (
+        "process.env.PROBE_ALIAS",
+        DefinedValue::GlobalPath("probeHolder.member"),
+    ),
 ];
 
 const RENAMED: &[(&str, DefinedValue)] = &[
@@ -38,7 +44,10 @@ const RENAMED: &[(&str, DefinedValue)] = &[
 
 const BUILTINS: &[(&str, DefinedValue)] = &[
     ("PROBE_SYMBOL", DefinedValue::GlobalPath("Symbol")),
-    ("PROBE_ITERATOR", DefinedValue::GlobalPath("Symbol.iterator")),
+    (
+        "PROBE_ITERATOR",
+        DefinedValue::GlobalPath("Symbol.iterator"),
+    ),
     ("PROBE_CONSOLE", DefinedValue::GlobalPath("console")),
     ("PROBE_FLOOR", DefinedValue::GlobalPath("Math.floor")),
     ("PROBE_NOW", DefinedValue::GlobalPath("Date.now")),
@@ -191,7 +200,11 @@ fn decode_mode(word: u32) -> ECMAMode {
 #[track_caller]
 fn decode_read(operation: ValueView<'_>) -> PropertyRead {
     let (Opcode::PropGet, &[flags, object, key]) = (operation.opcode, operation.fields) else {
-        panic!("{} is a {}, not a PropGet", operation.id, operation.opcode.name());
+        panic!(
+            "{} is a {}, not a PropGet",
+            operation.id,
+            operation.opcode.name()
+        );
     };
     PropertyRead {
         id: operation.id,
@@ -207,7 +220,11 @@ fn decode_store(operation: ValueView<'_>) -> PropertyStore {
     let (Opcode::PropSet, &[flags, object, key, mode, value]) =
         (operation.opcode, operation.fields)
     else {
-        panic!("{} is a {}, not a PropSet", operation.id, operation.opcode.name());
+        panic!(
+            "{} is a {}, not a PropSet",
+            operation.id,
+            operation.opcode.name()
+        );
     };
     PropertyStore {
         object: ValueId::from_word(object),
@@ -222,7 +239,11 @@ fn decode_store(operation: ValueView<'_>) -> PropertyStore {
 fn decode_delete(operation: ValueView<'_>) -> PropertyDelete {
     let (Opcode::PropDelete, &[flags, object, key, mode]) = (operation.opcode, operation.fields)
     else {
-        panic!("{} is a {}, not a PropDelete", operation.id, operation.opcode.name());
+        panic!(
+            "{} is a {}, not a PropDelete",
+            operation.id,
+            operation.opcode.name()
+        );
     };
     PropertyDelete {
         object: ValueId::from_word(object),
@@ -237,7 +258,11 @@ fn decode_call(operation: ValueView<'_>) -> CallOperation {
     let (Opcode::Call, &[_, callee, this, argument_count, ref rest @ ..]) =
         (operation.opcode, operation.fields)
     else {
-        panic!("{} is a {}, not a Call", operation.id, operation.opcode.name());
+        panic!(
+            "{} is a {}, not a Call",
+            operation.id,
+            operation.opcode.name()
+        );
     };
     let [key, name, _] = rest[argument_count as usize..] else {
         panic!("three fields follow the arguments of {}", operation.id);
@@ -331,7 +356,12 @@ impl Probe {
             .map(|block| block.terminator())
             .filter(|terminator| terminator.kind == TerminatorKind::Return)
             .collect();
-        let [TerminatorView { fields: &[value], .. }] = returns[..] else {
+        let [
+            TerminatorView {
+                fields: &[value], ..
+            },
+        ] = returns[..]
+        else {
             panic!("expected one return:\n{self}");
         };
         ValueId::from_word(value)
@@ -367,7 +397,11 @@ impl Probe {
         let (Opcode::Convert, &[_, expected, ..]) = (conversion.opcode, conversion.fields) else {
             panic!("{} is no Convert:\n{self}", conversion.id);
         };
-        &self.fragment.types.get(TypeId::from_word(expected)).builtins
+        &self
+            .fragment
+            .types
+            .get(TypeId::from_word(expected))
+            .builtins
     }
 
     #[track_caller]
@@ -408,7 +442,11 @@ impl Probe {
     fn read_path(&self, value: ValueId) -> Vec<&BStr> {
         let read = decode_read(self.definition(value));
         let mut path = if read.is_free_name {
-            assert_eq!(self.builtin_of(read.object), Some(BuiltinId::GlobalThis), "{self}");
+            assert_eq!(
+                self.builtin_of(read.object),
+                Some(BuiltinId::GlobalThis),
+                "{self}"
+            );
             Vec::new()
         } else {
             self.read_path(read.object)
@@ -477,7 +515,10 @@ fn global_path_define() {
         assert_eq!(probe.read_path(probe.returned()), path, "{probe}");
         assert_eq!(probe.count(Opcode::PropGet), path.len(), "{probe}");
         assert_eq!(probe.free_name_reads().len(), 1, "{probe}");
-        assert!(probe.reads().iter().all(|read| !read.is_for_type_of), "{probe}");
+        assert!(
+            probe.reads().iter().all(|read| !read.is_for_type_of),
+            "{probe}"
+        );
         assert_eq!(probe.named_builtins(), [BuiltinId::GlobalThis], "{probe}");
     }
 }
@@ -486,7 +527,11 @@ fn global_path_define() {
 fn local_binding_is_not_the_defined_name() {
     let source = "export function probe(PROBE_PATH) { return PROBE_PATH; }";
     let probe = lower_file(PATHS, "main.js", source);
-    assert_eq!(probe.skip_requests(probe.returned()), probe.parameter(0), "{probe}");
+    assert_eq!(
+        probe.skip_requests(probe.returned()),
+        probe.parameter(0),
+        "{probe}"
+    );
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
     assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
 }
@@ -497,7 +542,11 @@ fn defined_path_is_read_for_effect() {
     let [_, _, member] = probe.reads()[..] else {
         panic!("expected three reads:\n{probe}");
     };
-    assert_eq!(probe.read_path(member.id), ["probeHolder", "inner", "member"], "{probe}");
+    assert_eq!(
+        probe.read_path(member.id),
+        ["probeHolder", "inner", "member"],
+        "{probe}"
+    );
 }
 
 #[test]
@@ -508,7 +557,11 @@ fn global_path_define_resolves_builtin() {
     ];
     for (name, builtin) in locked_rows {
         let locked = lower_body(BUILTINS, &format!("return {name};"));
-        assert_eq!(locked.builtin_of(locked.returned()), Some(builtin), "{locked}");
+        assert_eq!(
+            locked.builtin_of(locked.returned()),
+            Some(builtin),
+            "{locked}"
+        );
         assert_eq!(locked.named_builtins(), [builtin], "{locked}");
         assert_eq!(locked.count(Opcode::PropGet), 0, "{locked}");
     }
@@ -521,15 +574,26 @@ fn global_path_define_resolves_builtin() {
         let predicted = lower_body(BUILTINS, &format!("return {name};"));
         let prediction = predicted.only(Opcode::Convert);
         assert_eq!(predicted.returned(), prediction.id, "{predicted}");
-        assert_eq!(predicted.expected_builtins(prediction), [builtin], "{predicted}");
+        assert_eq!(
+            predicted.expected_builtins(prediction),
+            [builtin],
+            "{predicted}"
+        );
         assert_eq!(predicted.read_path(prediction.id), path, "{predicted}");
         assert_eq!(predicted.count(Opcode::PropGet), 2, "{predicted}");
-        assert_eq!(predicted.named_builtins(), [BuiltinId::GlobalThis], "{predicted}");
+        assert_eq!(
+            predicted.named_builtins(),
+            [BuiltinId::GlobalThis],
+            "{predicted}"
+        );
     }
 
     let unknown = lower_body(PATHS, "return PROBE_PATH;");
     for prediction in unknown.all(Opcode::Convert) {
-        assert!(unknown.expected_builtins(prediction).is_empty(), "{unknown}");
+        assert!(
+            unknown.expected_builtins(prediction).is_empty(),
+            "{unknown}"
+        );
     }
 }
 
@@ -546,7 +610,11 @@ fn store_to_defined_name_goes_to_global() {
         let probe = lower_body(RENAMED, body);
         let store = probe.only_store();
         assert!(store.is_free_name, "{body}\n{probe}");
-        assert_eq!(probe.builtin_of(store.object), Some(BuiltinId::GlobalThis), "{body}\n{probe}");
+        assert_eq!(
+            probe.builtin_of(store.object),
+            Some(BuiltinId::GlobalThis),
+            "{body}\n{probe}"
+        );
         assert_eq!(probe.key_text(store.key), "probeTarget", "{body}\n{probe}");
         assert!(!probe.names_text("ALIAS_NAME"), "{body}\n{probe}");
 
@@ -558,7 +626,11 @@ fn store_to_defined_name_goes_to_global() {
         }
     }
     let plain = lower_body(RENAMED, "ALIAS_NAME = 1;");
-    assert_eq!(plain.integer_of(plain.only_store().value), Some(1), "{plain}");
+    assert_eq!(
+        plain.integer_of(plain.only_store().value),
+        Some(1),
+        "{plain}"
+    );
 }
 
 #[test]
@@ -575,7 +647,11 @@ fn store_to_defined_path_sets_member() {
         let store = probe.only_store();
         assert!(!store.is_free_name, "{body}\n{probe}");
         assert_eq!(probe.key_text(store.key), "member", "{body}\n{probe}");
-        assert_eq!(probe.read_path(store.object), ["probeHolder"], "{body}\n{probe}");
+        assert_eq!(
+            probe.read_path(store.object),
+            ["probeHolder"],
+            "{body}\n{probe}"
+        );
         assert_eq!(probe.free_name_reads().len(), 1, "{body}\n{probe}");
         assert!(!probe.names_text("ALIAS_PATH"), "{body}\n{probe}");
 
@@ -593,7 +669,11 @@ fn global_path_define_is_assignment_target() {
     let path = lower_body(PATHS, "PROBE_PATH += 1;");
     let store = path.only_store();
     assert_eq!(path.key_text(store.key), "member", "{path}");
-    assert_eq!(path.read_path(store.object), ["probeHolder", "inner"], "{path}");
+    assert_eq!(
+        path.read_path(store.object),
+        ["probeHolder", "inner"],
+        "{path}"
+    );
     assert_eq!(path.count(Opcode::PropGet), 3, "{path}");
     let [member_read] = path.reads_of("member")[..] else {
         panic!("expected one read of the member:\n{path}");
@@ -605,7 +685,11 @@ fn global_path_define_is_assignment_target() {
     let store = logical.only_store();
     assert!(store.is_free_name, "{logical}");
     assert_eq!(logical.key_text(store.key), "probeTarget", "{logical}");
-    assert_eq!(logical.skip_requests(store.value), logical.parameter(0), "{logical}");
+    assert_eq!(
+        logical.skip_requests(store.value),
+        logical.parameter(0),
+        "{logical}"
+    );
 
     let local = lower_body(PATHS, "let PROBE_NAME; PROBE_NAME = 1; return PROBE_NAME;");
     assert_eq!(local.count(Opcode::PropSet), 0, "{local}");
@@ -633,9 +717,16 @@ fn typeof_defined_name() {
 
     let path = lower_body(PATHS, "return typeof PROBE_PATH;");
     let operand = ValueId::from_word(path.only(Opcode::TypeOf).fields[0]);
-    assert_eq!(path.read_path(operand), ["probeHolder", "inner", "member"], "{path}");
+    assert_eq!(
+        path.read_path(operand),
+        ["probeHolder", "inner", "member"],
+        "{path}"
+    );
     assert_eq!(path.count(Opcode::PropGet), 3, "{path}");
-    assert!(path.reads().iter().all(|read| !read.is_for_type_of), "{path}");
+    assert!(
+        path.reads().iter().all(|read| !read.is_for_type_of),
+        "{path}"
+    );
 }
 
 #[test]
@@ -643,14 +734,28 @@ fn typeof_defined_builtin() {
     let predicted = lower_body(BUILTINS, "return typeof PROBE_CONSOLE;");
     let operand = ValueId::from_word(predicted.only(Opcode::TypeOf).fields[0]);
     let conversions = predicted.all(Opcode::Convert);
-    let prediction = conversions.iter().find(|conversion| conversion.id == operand);
-    let prediction = *prediction.unwrap_or_else(|| panic!("no Convert defines {operand}:\n{predicted}"));
-    assert_eq!(predicted.expected_builtins(prediction), [BuiltinId::Console], "{predicted}");
-    assert!(decode_read(predicted.definition(operand)).is_for_type_of, "{predicted}");
+    let prediction = conversions
+        .iter()
+        .find(|conversion| conversion.id == operand);
+    let prediction =
+        *prediction.unwrap_or_else(|| panic!("no Convert defines {operand}:\n{predicted}"));
+    assert_eq!(
+        predicted.expected_builtins(prediction),
+        [BuiltinId::Console],
+        "{predicted}"
+    );
+    assert!(
+        decode_read(predicted.definition(operand)).is_for_type_of,
+        "{predicted}"
+    );
 
     let locked = lower_body(BUILTINS, "return typeof PROBE_SYMBOL;");
     let operand = ValueId::from_word(locked.only(Opcode::TypeOf).fields[0]);
-    assert_eq!(locked.builtin_of(operand), Some(BuiltinId::Symbol), "{locked}");
+    assert_eq!(
+        locked.builtin_of(operand),
+        Some(BuiltinId::Symbol),
+        "{locked}"
+    );
     assert_eq!(locked.count(Opcode::PropGet), 0, "{locked}");
 }
 
@@ -664,8 +769,16 @@ fn in_with_defined_key() {
     let &[object, key] = named.only(Opcode::PropHas).fields else {
         panic!("a PropHas has an object and a key:\n{named}");
     };
-    assert_eq!(named.skip_requests(ValueId::from_word(object)), named.parameter(0), "{named}");
-    assert_eq!(named.key_text(PropertyKeyId::from_word(key)), "k", "{named}");
+    assert_eq!(
+        named.skip_requests(ValueId::from_word(object)),
+        named.parameter(0),
+        "{named}"
+    );
+    assert_eq!(
+        named.key_text(PropertyKeyId::from_word(key)),
+        "k",
+        "{named}"
+    );
     for opcode in [Opcode::ElemHas, Opcode::PropGet, Opcode::String] {
         assert_eq!(named.count(opcode), 0, "{named}");
     }
@@ -674,8 +787,16 @@ fn in_with_defined_key() {
     let &[object, property] = number.only(Opcode::ElemHas).fields else {
         panic!("an ElemHas has an object and a property:\n{number}");
     };
-    assert_eq!(number.skip_requests(ValueId::from_word(object)), number.parameter(0), "{number}");
-    assert_eq!(number.integer_of(ValueId::from_word(property)), Some(1), "{number}");
+    assert_eq!(
+        number.skip_requests(ValueId::from_word(object)),
+        number.parameter(0),
+        "{number}"
+    );
+    assert_eq!(
+        number.integer_of(ValueId::from_word(property)),
+        Some(1),
+        "{number}"
+    );
     for opcode in [Opcode::PropHas, Opcode::PropGet] {
         assert_eq!(number.count(opcode), 0, "{number}");
     }
@@ -684,7 +805,11 @@ fn in_with_defined_key() {
     let &[_, property] = other.only(Opcode::ElemHas).fields else {
         panic!("an ElemHas has an object and a property:\n{other}");
     };
-    assert_eq!(other.read_path(ValueId::from_word(property)), ["OTHER_KEY"], "{other}");
+    assert_eq!(
+        other.read_path(ValueId::from_word(property)),
+        ["OTHER_KEY"],
+        "{other}"
+    );
     assert_eq!(other.count(Opcode::PropHas), 0, "{other}");
 }
 
@@ -693,15 +818,28 @@ fn delete_defined_member() {
     let defines = [("process.env.NODE_ENV", DefinedValue::String("production"))];
     let defined = lower_body(&defines, "return delete process.env.NODE_ENV;");
     let returned = defined.definition(defined.returned());
-    assert_eq!((returned.opcode, returned.fields), (Opcode::Boolean, &[1][..]), "{defined}");
-    for opcode in [Opcode::PropDelete, Opcode::PropGet, Opcode::Builtin, Opcode::String] {
+    assert_eq!(
+        (returned.opcode, returned.fields),
+        (Opcode::Boolean, &[1][..]),
+        "{defined}"
+    );
+    for opcode in [
+        Opcode::PropDelete,
+        Opcode::PropGet,
+        Opcode::Builtin,
+        Opcode::String,
+    ] {
         assert_eq!(defined.count(opcode), 0, "{defined}");
     }
 
     let other = lower_body(&defines, "return delete process.env.OTHER;");
     let deleted = decode_delete(other.definition(other.returned()));
     assert_eq!(other.key_text(deleted.key), "OTHER", "{other}");
-    assert_eq!(other.read_path(deleted.object), ["process", "env"], "{other}");
+    assert_eq!(
+        other.read_path(deleted.object),
+        ["process", "env"],
+        "{other}"
+    );
     assert!(!deleted.is_free_name, "{other}");
     assert_eq!(other.count(Opcode::Boolean), 0, "{other}");
 }
@@ -709,13 +847,23 @@ fn delete_defined_member() {
 #[test]
 fn delete_defined_path() {
     let defines = [
-        ("process.env.ALIAS", DefinedValue::GlobalPath("probeHolder.inner.member")),
-        ("process.env.RENAMED", DefinedValue::GlobalPath("probeTarget")),
+        (
+            "process.env.ALIAS",
+            DefinedValue::GlobalPath("probeHolder.inner.member"),
+        ),
+        (
+            "process.env.RENAMED",
+            DefinedValue::GlobalPath("probeTarget"),
+        ),
     ];
     let path = lower_body(&defines, "return delete process.env.ALIAS;");
     let deleted = decode_delete(path.definition(path.returned()));
     assert_eq!(path.key_text(deleted.key), "member", "{path}");
-    assert_eq!(path.read_path(deleted.object), ["probeHolder", "inner"], "{path}");
+    assert_eq!(
+        path.read_path(deleted.object),
+        ["probeHolder", "inner"],
+        "{path}"
+    );
     assert!(!deleted.is_free_name, "{path}");
     assert_eq!(deleted.mode, ECMAMode::Strict, "{path}");
     assert_eq!(path.count(Opcode::PropGet), 2, "{path}");
@@ -724,7 +872,11 @@ fn delete_defined_path() {
     let name = lower_body(&defines, "return delete process.env.RENAMED;");
     let deleted = decode_delete(name.definition(name.returned()));
     assert_eq!(name.key_text(deleted.key), "probeTarget", "{name}");
-    assert_eq!(name.builtin_of(deleted.object), Some(BuiltinId::GlobalThis), "{name}");
+    assert_eq!(
+        name.builtin_of(deleted.object),
+        Some(BuiltinId::GlobalThis),
+        "{name}"
+    );
     assert!(deleted.is_free_name, "{name}");
     assert_eq!(name.count(Opcode::PropGet), 0, "{name}");
 
@@ -744,28 +896,53 @@ fn lower_defined_callee(path: &'static str) -> (Probe, CallOperation) {
 #[test]
 fn defined_global_path_callee() {
     let (member, call) = lower_defined_callee("probeHolder.inner.member");
-    assert_eq!(member.read_path(call.callee), ["probeHolder", "inner", "member"], "{member}");
+    assert_eq!(
+        member.read_path(call.callee),
+        ["probeHolder", "inner", "member"],
+        "{member}"
+    );
     let this = call.this.expect("the holder of the member is the receiver");
-    assert_eq!(decode_read(member.definition(call.callee)).object, this, "{member}");
-    assert_eq!(call.key.map(|key| member.key_text(key)), Some(BStr::new("member")), "{member}");
-    assert_eq!(call.name.map(|name| member.string_text(name)), Some(BStr::new("member")));
+    assert_eq!(
+        decode_read(member.definition(call.callee)).object,
+        this,
+        "{member}"
+    );
+    assert_eq!(
+        call.key.map(|key| member.key_text(key)),
+        Some(BStr::new("member")),
+        "{member}"
+    );
+    assert_eq!(
+        call.name.map(|name| member.string_text(name)),
+        Some(BStr::new("member"))
+    );
     assert_eq!(member.count(Opcode::PropGet), 3, "{member}");
 
     let (global, call) = lower_defined_callee("probeTarget");
     assert_eq!(global.read_path(call.callee), ["probeTarget"], "{global}");
     assert_eq!((call.this, call.key), (None, None), "{global}");
-    assert_eq!(call.name.map(|name| global.string_text(name)), Some(BStr::new("probeTarget")));
+    assert_eq!(
+        call.name.map(|name| global.string_text(name)),
+        Some(BStr::new("probeTarget"))
+    );
     assert!(!global.names_text("settle"), "{global}");
 }
 
 #[test]
 fn defined_builtin_callee() {
     let (locked, call) = lower_defined_callee("Symbol.for");
-    assert_eq!(locked.builtin_of(call.callee), Some(BuiltinId::SymbolFor), "{locked}");
+    assert_eq!(
+        locked.builtin_of(call.callee),
+        Some(BuiltinId::SymbolFor),
+        "{locked}"
+    );
     let this = call.this.expect("the holder of the member is the receiver");
     assert_eq!(locked.read_path(this), ["Symbol"], "{locked}");
     assert_eq!(call.key, None, "{locked}");
-    assert_eq!(call.name.map(|name| locked.string_text(name)), Some(BStr::new("for")));
+    assert_eq!(
+        call.name.map(|name| locked.string_text(name)),
+        Some(BStr::new("for"))
+    );
     assert_eq!(locked.count(Opcode::PropGet), 1, "{locked}");
 
     let (predicted, call) = lower_defined_callee("Promise.resolve");
@@ -773,7 +950,11 @@ fn defined_builtin_callee() {
     assert_eq!(call.callee, prediction.id, "{predicted}");
     let builtins = predicted.expected_builtins(prediction);
     assert_eq!(builtins, [BuiltinId::PromiseResolve], "{predicted}");
-    assert_eq!(predicted.read_path(call.callee), ["Promise", "resolve"], "{predicted}");
+    assert_eq!(
+        predicted.read_path(call.callee),
+        ["Promise", "resolve"],
+        "{predicted}"
+    );
     let this = call.this.expect("the holder of the member is the receiver");
     assert_eq!(predicted.read_path(this), ["Promise"], "{predicted}");
     let key = call.key.map(|key| predicted.key_text(key));
@@ -782,7 +963,11 @@ fn defined_builtin_callee() {
     let (global, call) = lower_defined_callee("fetch");
     let prediction = global.only(Opcode::Convert);
     assert_eq!(call.callee, prediction.id, "{global}");
-    assert_eq!(global.expected_builtins(prediction), [BuiltinId::Fetch], "{global}");
+    assert_eq!(
+        global.expected_builtins(prediction),
+        [BuiltinId::Fetch],
+        "{global}"
+    );
     assert_eq!(global.read_path(call.callee), ["fetch"], "{global}");
     assert_eq!((call.this, call.key), (None, None), "{global}");
 }
@@ -791,27 +976,48 @@ fn defined_builtin_callee() {
 fn free_name_is_property_of_global_object() {
     let read = lower_body(&[], "return probeFree;");
     assert_eq!(read.read_path(read.returned()), ["probeFree"], "{read}");
-    assert!(!decode_read(read.definition(read.returned())).is_for_type_of, "{read}");
+    assert!(
+        !decode_read(read.definition(read.returned())).is_for_type_of,
+        "{read}"
+    );
 
     let tested = lower_body(&[], "return typeof probeFree;");
     let operand = ValueId::from_word(tested.only(Opcode::TypeOf).fields[0]);
     assert_eq!(tested.read_path(operand), ["probeFree"], "{tested}");
-    assert!(decode_read(tested.definition(operand)).is_for_type_of, "{tested}");
+    assert!(
+        decode_read(tested.definition(operand)).is_for_type_of,
+        "{tested}"
+    );
 
     let written = lower_sloppy_body(&[], "probeFree = a; return delete probeFree;");
     let store = written.only_store();
     assert!(store.is_free_name, "{written}");
-    assert_eq!(written.builtin_of(store.object), Some(BuiltinId::GlobalThis), "{written}");
+    assert_eq!(
+        written.builtin_of(store.object),
+        Some(BuiltinId::GlobalThis),
+        "{written}"
+    );
     assert_eq!(written.key_text(store.key), "probeFree", "{written}");
     assert_eq!(store.mode, ECMAMode::Sloppy, "{written}");
-    assert_eq!(written.skip_requests(store.value), written.parameter(0), "{written}");
+    assert_eq!(
+        written.skip_requests(store.value),
+        written.parameter(0),
+        "{written}"
+    );
 
     let deleted = decode_delete(written.definition(written.returned()));
     assert!(deleted.is_free_name, "{written}");
-    assert_eq!(written.builtin_of(deleted.object), Some(BuiltinId::GlobalThis), "{written}");
+    assert_eq!(
+        written.builtin_of(deleted.object),
+        Some(BuiltinId::GlobalThis),
+        "{written}"
+    );
     assert_eq!(written.key_text(deleted.key), "probeFree", "{written}");
     assert_eq!(deleted.mode, ECMAMode::Sloppy, "{written}");
 
     let member = lower_body(&[], "return a.probeFree;");
-    assert!(!decode_read(member.definition(member.returned())).is_free_name, "{member}");
+    assert!(
+        !decode_read(member.definition(member.returned())).is_free_name,
+        "{member}"
+    );
 }

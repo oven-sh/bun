@@ -163,7 +163,10 @@ impl<'a, 's> Resolver<'a, 's> {
             commonjs: CommonJsBuiltins::default(),
             exposes_own_module_object: false,
             stores_to_exports: Vec::new(),
-            loads_node_module: input.targets.iter().any(|it| it.1 == RuntimeModule::NodeModule),
+            loads_node_module: input
+                .targets
+                .iter()
+                .any(|it| it.1 == RuntimeModule::NodeModule),
             output: ResolverOutput::default(),
             work_stack: Vec::new(),
         }
@@ -228,10 +231,12 @@ impl<'a, 's> Resolver<'a, 's> {
         }
         let input = self.input;
         let named_outside = self.named_outside.get_or_init(|| {
-            let names = (0..input.hir.exprs.len() as u32).map(ExprId).filter(|&name| {
-                matches!(input.hir[name].kind, ExprKind::Ident(_))
-                    && !self.is_within(input.hir[name].pos)
-            });
+            let names = (0..input.hir.exprs.len() as u32)
+                .map(ExprId)
+                .filter(|&name| {
+                    matches!(input.hir[name].kind, ExprKind::Ident(_))
+                        && !self.is_within(input.hir[name].pos)
+                });
             names
                 .filter_map(|name| match input.bound.binding(name) {
                     Binding::Symbol(symbol) => Some(symbol),
@@ -324,7 +329,7 @@ impl<'a, 's> Resolver<'a, 's> {
             self.is_unvisited(operand).then_some(operand)
         };
         if let Some((object, key)) = hir.member_key(expr) {
-            return unvisited(object).or(match key {
+            return unvisited(object).or_else(|| match key {
                 MemberKey::Computed(computed) => unvisited(computed),
                 MemberKey::Name(_) | MemberKey::PrivateName(_) => None,
             });
@@ -339,7 +344,7 @@ impl<'a, 's> Resolver<'a, 's> {
         }
         if let ExprKind::Call(call) = hir[expr].kind {
             let first_operand = hir.ids(hir[call].args).next();
-            return unvisited(hir[call].callee).or(first_operand.and_then(unvisited));
+            return unvisited(hir[call].callee).or_else(|| first_operand.and_then(unvisited));
         }
         if !matches!(hir[expr].kind, ExprKind::Ident(_)) {
             return None;
@@ -397,7 +402,9 @@ impl<'a, 's> Resolver<'a, 's> {
             mut output,
             ..
         } = self;
-        output.mentioned.extend(symbols.iter().map(|entry| entry.1.id));
+        output
+            .mentioned
+            .extend(symbols.iter().map(|entry| entry.1.id));
         let mut called_with_other_texts = output.called_with_other_texts;
         called_with_other_texts.retain(|id| !output.mentioned.contains(id));
         output.mentioned.extend_from_slice(&called_with_other_texts);
@@ -412,9 +419,12 @@ impl<'a, 's> Resolver<'a, 's> {
         };
         let uses = RuntimeUses::of_mentions(mentions, input.platform);
         let loads_unknown_modules = match input.dialect {
-            SourceDialect::Program => {
-                reaches_unknown_module_loader(&output.loaded, &output.called, &exposed, input.platform)
-            }
+            SourceDialect::Program => reaches_unknown_module_loader(
+                &output.loaded,
+                &output.called,
+                &exposed,
+                input.platform,
+            ),
             SourceDialect::Runtime => false,
         };
         let mut exprs = Vec::new();

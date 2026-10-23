@@ -5,8 +5,8 @@ use bun_sema::bind::{Binding, CodeUnit, ScopeId, ScopeKind};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnKind, IdList};
 
-use super::identifiers::{self, BindingRead};
 use super::BindingForm;
+use super::identifiers::{self, BindingRead};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
 use crate::ir::{Edge, ValueId};
@@ -92,7 +92,12 @@ fn find_binding_named_by_text(
     let Constant::String(name) = text else {
         return None;
     };
-    if bound.runtime.eval_scopes().iter().any(|entry| entry.1.is_sloppy) {
+    if bound
+        .runtime
+        .eval_scopes()
+        .iter()
+        .any(|entry| entry.1.is_sloppy)
+    {
         return None;
     }
     let eval_scope = bound.eval_scope(call)?;
@@ -104,7 +109,8 @@ fn find_binding_named_by_text(
         scope = bound.runtime_parent_scope(hir, scope);
     }
     let mut symbols = bound.ids(eval_scope.symbols);
-    if let Some(symbol) = symbols.find(|&symbol| bindings::find_spelled_name(file, symbol) == name) {
+    if let Some(symbol) = symbols.find(|&symbol| bindings::find_spelled_name(file, symbol) == name)
+    {
         return match file.scopes.form(symbol) {
             BindingForm::Stored => Some((Binding::Symbol(symbol), name)),
             BindingForm::Import
@@ -153,7 +159,10 @@ fn emit_direct_eval(
     let eval_scope = lowering.file.bound.eval_scope(call);
     let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
     let context = compute_eval_context(lowering.file, eval_scope.scope);
-    let this_value = if context.flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR) {
+    let this_value = if context
+        .flags
+        .contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
+    {
         lowering.builder.undefined()
     } else {
         function::get_this(lowering)

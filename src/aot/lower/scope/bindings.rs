@@ -29,10 +29,7 @@ fn code_unit_slot(
 }
 
 // Only the text of a CommonJS file that keeps the five names as parameters is a function with an arguments object.
-pub(super) fn normalize_binding(
-    file: &FileLowering<'_, '_, '_, '_>,
-    binding: Binding,
-) -> Binding {
+pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Binding) -> Binding {
     match binding {
         Binding::Arguments(CodeUnit::File) if !file.scopes.has_wrapper_parameters() => {
             Binding::Free

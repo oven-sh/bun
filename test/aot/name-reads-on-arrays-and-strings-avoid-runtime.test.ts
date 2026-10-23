@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -31,8 +31,15 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("a read of `name` or `prototype` that an array or a string does not have stops asking the run time", async () => {
   using dir = tempDir("aot-name-reads-on-arrays-and-strings", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const counted = async (rounds: number) => {
     const path = join(String(dir), "counts" + rounds);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
@@ -52,6 +59,8 @@ test("a read of `name` or `prototype` that an array or a string does not have st
   const many = await counted(2500);
   // The first read of each kind of receiver misses its cache. A renamed operation would count none.
   expect(reads.some(name => few[name]! > 0)).toBe(true);
-  const more = Object.fromEntries(reads.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]));
+  const more = Object.fromEntries(
+    reads.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]),
+  );
   expect(more).toEqual(Object.fromEntries(reads.map(name => [name, "level"])));
 }, 240_000);

@@ -45,8 +45,10 @@ mod tests {
         RuntimeRequirement::RuntimeCode,
     ];
 
-    const RUNS_UNSEEN_CODE: [RuntimeRequirement; 2] =
-        [RuntimeRequirement::WholeRuntime, RuntimeRequirement::RuntimeCode];
+    const RUNS_UNSEEN_CODE: [RuntimeRequirement; 2] = [
+        RuntimeRequirement::WholeRuntime,
+        RuntimeRequirement::RuntimeCode,
+    ];
 
     fn is_available_without(requirement: RuntimeRequirement, removed: Feature) -> bool {
         requirement.is_available_with(|feature| feature == removed)
@@ -80,7 +82,10 @@ mod tests {
         let requirement = RuntimeRequirement::Feature(Feature::Sql);
         assert!(!is_available_without(requirement, Feature::Sql));
         assert!(is_available_without(requirement, Feature::Valkey));
-        assert!(is_available_without(RuntimeRequirement::Nothing, Feature::Sql));
+        assert!(is_available_without(
+            RuntimeRequirement::Nothing,
+            Feature::Sql
+        ));
     }
 
     #[test]

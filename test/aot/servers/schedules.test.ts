@@ -18,7 +18,10 @@ import { filterRequested, installPackages, requestedServers, startServer } from 
 
 const servers = filterRequested(["hono", "elysia", "node", "express", "fastify", "tanstack"]);
 
-if (!requestedServers) console.error("SKIPPED: test/aot/servers/schedules.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
+if (!requestedServers)
+  console.error(
+    "SKIPPED: test/aot/servers/schedules.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it",
+  );
 
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/schedules", () => {
   const app = String(tempDir("aot-schedules", {}));
@@ -35,7 +38,10 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/schedul
       cpSync(join(import.meta.dir, "app", "shared.ts"), join(tanstack, "src", "utils", "shared.ts"));
       await installPackages(tanstack);
       const vite = await spawned([bunExe(), "node_modules/vite/bin/vite.js", "build"], tanstack, bunEnv);
-      expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({ output: expect.any(String), exitCode: 0 });
+      expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({
+        output: expect.any(String),
+        exitCode: 0,
+      });
     }
   }, 300_000);
 
@@ -44,7 +50,11 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/schedul
     async name => {
       const folder = name === "tanstack" ? tanstack : app;
       const entry = name === "tanstack" ? "./serve.ts" : `./${name}.ts`;
-      const built = await buildUnderEachSchedule(name, folder, entry, ["--define", 'process.env.NODE_ENV="production"', "--target=bun"]);
+      const built = await buildUnderEachSchedule(name, folder, entry, [
+        "--define",
+        'process.env.NODE_ENV="production"',
+        "--target=bun",
+      ]);
       for (const { schedule, executable } of built) {
         using server = await startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
         for (const route of routes) {

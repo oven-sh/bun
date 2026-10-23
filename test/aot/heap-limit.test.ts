@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { withoutCoreDump } from "./run-programs";
+import { describe, test } from "./supported";
 
 // An ahead-of-time compiled program keeps most references between objects in 32 bits, so its objects live in one reserved range of
 // address space. Each Worker has a range of its own. These tests shrink the ranges to see what happens at their end.
@@ -140,28 +140,47 @@ parentPort!.postMessage("done");
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };
 }
 
 async function build(cwd: string, ...moreEntryPoints: string[]) {
-  const built = await run([bunExe(), "build", "--compile", "--aot", "program.ts", ...moreEntryPoints, "--outfile", "program"], cwd);
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "program.ts", ...moreEntryPoints, "--outfile", "program"],
+    cwd,
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   return join(cwd, "program");
 }
 
-if (isASAN) console.error("SKIPPED: the tests of heap-limit.test.ts under `ulimit -v`: a program built with AddressSanitizer does not start there");
+if (isASAN)
+  console.error(
+    "SKIPPED: the tests of heap-limit.test.ts under `ulimit -v`: a program built with AddressSanitizer does not start there",
+  );
 
 describe.concurrent("the address space for objects of a compiled program", () => {
-  test.skipIf(process.arch !== "x64")("a program that keeps more objects alive than fit ends with a RangeError", async () => {
-    using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
-    expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
-  }, 120_000);
+  test.skipIf(process.arch !== "x64")(
+    "a program that keeps more objects alive than fit ends with a RangeError",
+    async () => {
+      using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
+      expect(stderr).not.toContain("FATAL");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    },
+    120_000,
+  );
 
   test("where no error can be thrown it stops and says why", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsEverything) });
@@ -175,45 +194,62 @@ describe.concurrent("the address space for objects of a compiled program", () =>
   }, 120_000);
 
   // Where functions are entered, the error comes at the next entry that tests the stack, in a try or not.
-  test.skipIf(process.arch !== "x64")("a program that fills the range in functions that call themselves catches a RangeError and goes on", async () => {
-    using folder = tempDir("aot-heap-limit", { "program.ts": catchesThreeTimes });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "0 true Out of memory 1023\n1 true Out of memory 1023\n2 true Out of memory 1023\nafterward 4095\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+  test.skipIf(process.arch !== "x64")(
+    "a program that fills the range in functions that call themselves catches a RangeError and goes on",
+    async () => {
+      using folder = tempDir("aot-heap-limit", { "program.ts": catchesThreeTimes });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "0 true Out of memory 1023\n1 true Out of memory 1023\n2 true Out of memory 1023\nafterward 4095\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
-  test.skipIf(process.arch !== "x64")("so does one that calls values nobody knows", async () => {
-    using folder = tempDir("aot-heap-limit", { "program.js": callsValuesNobodyKnows });
-    const built = await run([bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"], String(folder));
-    expect(built.exitCode).toBe(0);
-    const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), smallHeap);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "0 true Out of memory true\n1 true Out of memory true\n2 true Out of memory true\nafterward 1\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+  test.skipIf(process.arch !== "x64")(
+    "so does one that calls values nobody knows",
+    async () => {
+      using folder = tempDir("aot-heap-limit", { "program.js": callsValuesNobodyKnows });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "0 true Out of memory true\n1 true Out of memory true\n2 true Out of memory true\nafterward 1\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
-  test.skipIf(process.arch !== "x64")("an error that nobody catches ends the process as any other does", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `${treeBuilder}const keep: (Tree | null)[] = [];
+  test.skipIf(process.arch !== "x64")(
+    "an error that nobody catches ends the process as any other does",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `${treeBuilder}const keep: (Tree | null)[] = [];
 process.on("exit", (code: number) => console.log("exit", code, smallest(keep)));
 for (;;) keep.push(build(10, 1));
 `,
-    });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect(stderr).toContain("RangeError: Out of memory");
-    expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1023\n", exitCode: 1 });
-  }, 120_000);
+      });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect(stderr).toContain("RangeError: Out of memory");
+      expect(stderr).not.toContain("FATAL");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1023\n", exitCode: 1 });
+    },
+    120_000,
+  );
 
   // A loop that calls nothing enters no function. Its allocations go to the run time for each new block of memory, and there the error is thrown, as long as the function of the loop has no try of its own.
-  test.skipIf(process.arch !== "x64")("loops that allocate and call nothing get the RangeError where they allocate", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `type Pair = { a: number; b: number };
+  test.skipIf(process.arch !== "x64")(
+    "loops that allocate and call nothing get the RangeError where they allocate",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `type Pair = { a: number; b: number };
 const source: number[] = new Array(3_000_000).fill(1);
 const wide: Record<string, number> = {};
 for (let i = 0; i < 300_000; i++) wide["k" + i] = i;
@@ -237,21 +273,34 @@ for (const [what, fill] of fills) {
 }
 console.log("afterward", short.slice(0, 1000).map(part => ({ part })).length);
 `,
-    });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout:
-        ["a loop without a bound", "a loop up to the length of an array", "map", "Array.from", "Object.entries", "a spread a turn", "closures", "texts"]
-          .map(what => what + " RangeError Out of memory\n")
-          .join("") + "afterward 1000\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+      });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          [
+            "a loop without a bound",
+            "a loop up to the length of an array",
+            "map",
+            "Array.from",
+            "Object.entries",
+            "a spread a turn",
+            "closures",
+            "texts",
+          ]
+            .map(what => what + " RangeError Out of memory\n")
+            .join("") + "afterward 1000\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
-  test.skipIf(process.arch !== "x64")("what the callers of such a loop have in finally and in using runs", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `type Pair = { a: number; b: number };
+  test.skipIf(process.arch !== "x64")(
+    "what the callers of such a loop have in finally and in using runs",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `type Pair = { a: number; b: number };
 let kept: Pair[] = [];
 function fill() {
   for (let i = 0; ; i++) kept.push({ a: i, b: i });
@@ -283,19 +332,24 @@ for (const run of [withFinally, withUsing]) {
 await later().catch(error => { kept = []; console.log("rejected", error.name, error.message); });
 console.log("afterward", kept.length);
 `,
-    });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "finally true\nwithFinally RangeError Out of memory\ndisposed true\nwithUsing RangeError Out of memory\nrejected RangeError Out of memory\nafterward 0\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+      });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          "finally true\nwithFinally RangeError Out of memory\ndisposed true\nwithUsing RangeError Out of memory\nrejected RangeError Out of memory\nafterward 0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
   // Native code that makes an object for each piece of its input enters no function of the program: it asks by itself, once an object, whether the error is owed.
-  test.skipIf(process.arch !== "x64")("one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `const text = "[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]';
+  test.skipIf(process.arch !== "x64")(
+    "one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `const text = "[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]';
 function attempt(what: string, fill: () => unknown[]) {
   try {
     console.log(what, "finished", fill().length);
@@ -314,18 +368,23 @@ attempt("copies", () => {
 attempt("a small text afterward", () => JSON.parse("[1,2,3]"));
 attempt("a small copy afterward", () => structuredClone([1, { a: 2 }]));
 `,
-    });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+      });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
-  test.skipIf(process.arch !== "x64")("a Worker that is sent such a text ends alone", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `import { Worker } from "node:worker_threads";
+  test.skipIf(process.arch !== "x64")(
+    "a Worker that is sent such a text ends alone",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `import { Worker } from "node:worker_threads";
 const worker = new Worker("./worker.ts");
 worker.on("message", (said: string) => console.log("the Worker says:", said));
 worker.on("error", (error: Error) => console.log("the Worker ends with:", error.name, error.message));
@@ -333,22 +392,27 @@ worker.on("exit", (code: number) => console.log("exit", code, "and the main thre
 worker.postMessage("[1,2]");
 worker.postMessage("[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]');
 `,
-      "worker.ts": `import { parentPort } from "node:worker_threads";
+        "worker.ts": `import { parentPort } from "node:worker_threads";
 parentPort!.on("message", (text: string) => parentPort!.postMessage("parsed " + JSON.parse(text).length));
 `,
-    });
-    const program = await build(String(folder), "worker.ts");
-    const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-    expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({
-      stdout: "the Worker says: parsed 2\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100001\n",
-      exitCode: 0,
-    });
-  }, 120_000);
+      });
+      const program = await build(String(folder), "worker.ts");
+      const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+      expect(stderr).not.toContain("FATAL");
+      expect({ stdout, exitCode }).toEqual({
+        stdout:
+          "the Worker says: parsed 2\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100001\n",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
-  test.skipIf(process.arch !== "x64")("a Worker catches its own, and one that it does not catch ends the Worker alone", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `import { Worker } from "node:worker_threads";
+  test.skipIf(process.arch !== "x64")(
+    "a Worker catches its own, and one that it does not catch ends the Worker alone",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `import { Worker } from "node:worker_threads";
 const worker = new Worker("./worker.ts");
 worker.on("message", (said: string) => console.log("the Worker says:", said));
 worker.on("error", (error: Error) => console.log("the Worker ends with:", error.name, error.message));
@@ -358,7 +422,7 @@ worker.on("exit", (code: number) => {
   console.log("exit", code, "and the main thread goes on:", list.length);
 });
 `,
-      "worker.ts": `import { parentPort } from "node:worker_threads";
+        "worker.ts": `import { parentPort } from "node:worker_threads";
 ${treeBuilder}let keep: (Tree | null)[] = [];
 process.on("exit", () => console.log("the Worker held trees of", smallest(keep)));
 try {
@@ -370,15 +434,19 @@ try {
 }
 for (;;) keep.push(build(10, 1));
 `,
-    });
-    const program = await build(String(folder), "worker.ts");
-    const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-    expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({
-      stdout: expect.stringMatching(/^(?=[^]*the Worker says: caught RangeError: Out of memory behind a tree of 1023\n)(?=[^]*the Worker ends with: RangeError Out of memory\n)[^]*exit 1 and the main thread goes on: 100000\n$/),
-      exitCode: 0,
-    });
-  }, 120_000);
+      });
+      const program = await build(String(folder), "worker.ts");
+      const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+      expect(stderr).not.toContain("FATAL");
+      expect({ stdout, exitCode }).toEqual({
+        stdout: expect.stringMatching(
+          /^(?=[^]*the Worker says: caught RangeError: Out of memory behind a tree of 1023\n)(?=[^]*the Worker ends with: RangeError Out of memory\n)[^]*exit 1 and the main thread goes on: 100000\n$/,
+        ),
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
   test("the same program runs to its end in the default range", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
@@ -395,14 +463,18 @@ for (;;) keep.push(build(10, 1));
   test("two Workers each keep more alive than half a range holds", async () => {
     using folder = tempDir("aot-heap-limit", twoWorkersThatKeepMoreThanHalfARange);
     const program = await build(String(folder), "worker.ts");
-    const { stdout, stderr, exitCode } = await run([program], String(folder), { BUN_JSC_markedBlockCageSizeInMB: "128" });
+    const { stdout, stderr, exitCode } = await run([program], String(folder), {
+      BUN_JSC_markedBlockCageSizeInMB: "128",
+    });
     expect(stderr).not.toContain("FATAL");
     expect({ stdout, exitCode }).toEqual({ stdout: "3002300000,3002300000 2000000000\n", exitCode: 0 });
   }, 120_000);
 
-  test.skipIf(!isLinux || isASAN)("where address space is limited a Worker shares the range of the main thread", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `import { readFileSync } from "node:fs";
+  test.skipIf(!isLinux || isASAN)(
+    "where address space is limited a Worker shares the range of the main thread",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 const free = () => 64 * 1024 * 1024 - Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
@@ -416,7 +488,7 @@ new Worker("./worker.ts").once("message", (sum: number) => {
   console.log(after > before / 2 ? "shares" : "took " + (before - after) + " kB of " + before, sum, own);
 });
 `,
-      "worker.ts": `import { parentPort } from "node:worker_threads";
+        "worker.ts": `import { parentPort } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 let head: Entry | null = null;
 for (let i = 0; i < 100_000; i++) head = { id: i, next: head };
@@ -424,15 +496,19 @@ let sum = 0;
 for (let entry: Entry | null = head; entry; entry = entry.next) sum += entry.id;
 parentPort!.postMessage(sum);
 `,
-    });
-    await build(String(folder), "worker.ts");
-    const { stdout, exitCode } = await run(["sh", "-c", "ulimit -v 67108864 && exec ./program"], String(folder));
-    expect({ stdout, exitCode }).toEqual({ stdout: "shares 4999950000 4999950000\n", exitCode: 0 });
-  }, 120_000);
+      });
+      await build(String(folder), "worker.ts");
+      const { stdout, exitCode } = await run(["sh", "-c", "ulimit -v 67108864 && exec ./program"], String(folder));
+      expect({ stdout, exitCode }).toEqual({ stdout: "shares 4999950000 4999950000\n", exitCode: 0 });
+    },
+    120_000,
+  );
 
-  test.skipIf(!isLinux || isASAN)("where address space is limited much of it is left for Workers and their threads", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `import { readFileSync } from "node:fs";
+  test.skipIf(!isLinux || isASAN)(
+    "where address space is limited much of it is left for Workers and their threads",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 const limit = 8 * 1024 * 1024;
 const free = limit - Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
@@ -447,7 +523,7 @@ for (const worker of workers) {
   });
 }
 `,
-      "worker.ts": `import { parentPort } from "node:worker_threads";
+        "worker.ts": `import { parentPort } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 let head: Entry | null = null;
 for (let i = 0; i < 100_000; i++) head = { id: i, next: head };
@@ -457,46 +533,80 @@ await fetch("http://127.0.0.1:1/").catch(() => {});
 parentPort!.once("message", () => {});
 parentPort!.postMessage(sum);
 `,
-    });
-    await build(String(folder), "worker.ts");
-    const { stdout, stderr, exitCode } = await run(["sh", "-c", "ulimit -v 8388608 && exec ./program"], String(folder));
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "roomy 4999950000,4999950000,4999950000,4999950000\n", stderr: "", exitCode: 0 });
-  }, 120_000);
+      });
+      await build(String(folder), "worker.ts");
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -v 8388608 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "roomy 4999950000,4999950000,4999950000,4999950000\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
   // The range is as large as fits in a little under half of the address space that is free at the start, not the next power of two below a quarter of it.
-  test.skipIf(!isLinux || isASAN)("under a limit of 4 GB on address space objects get over a gigabyte", async () => {
-    using folder = tempDir("aot-heap-limit", { "program.ts": keepsObjects(45_000_000) });
-    await build(String(folder));
-    const { stdout, stderr, exitCode } = await run(["sh", "-c", "ulimit -v 4194304 && exec ./program"], String(folder));
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "kept 45000000\n", stderr: "", exitCode: 0 });
-  }, 120_000);
+  test.skipIf(!isLinux || isASAN)(
+    "under a limit of 4 GB on address space objects get over a gigabyte",
+    async () => {
+      using folder = tempDir("aot-heap-limit", { "program.ts": keepsObjects(45_000_000) });
+      await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "kept 45000000\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
 
-  test.skipIf(!isLinux || isASAN)("and what is no object gets over a gigabyte too", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `const buffers: ArrayBuffer[] = [];
+  test.skipIf(!isLinux || isASAN)(
+    "and what is no object gets over a gigabyte too",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `const buffers: ArrayBuffer[] = [];
 for (let i = 0; i < 28; i++) buffers.push(new ArrayBuffer(50 * 1024 * 1024));
 console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) / (1024 * 1024), "MB");
 `,
-    });
-    await build(String(folder));
-    const { stdout, stderr, exitCode } = await run(["sh", "-c", "ulimit -v 4194304 && exec ./program"], String(folder));
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "kept 1400 MB\n", stderr: "", exitCode: 0 });
-  }, 120_000);
+      });
+      await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "kept 1400 MB\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
 
-  test.skipIf(!isLinux || isASAN)("a program that fills what a limit on address space leaves says so", async () => {
-    using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsObjects(45_000_000)) });
-    await build(String(folder));
-    const { stdout, stderr, exitCode } = await run(["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"], String(folder));
-    expect(stderr).toMatch(
-      /FATAL: out of memory\. The limit on address space \(ulimit -v\) leaves the threads of this executable \d+ MB for JavaScript objects\. Raise the limit, or build with --aot-huge-heap\./,
-    );
-    expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
-  }, 120_000);
+  test.skipIf(!isLinux || isASAN)(
+    "a program that fills what a limit on address space leaves says so",
+    async () => {
+      using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsObjects(45_000_000)) });
+      await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
+        String(folder),
+      );
+      expect(stderr).toMatch(
+        /FATAL: out of memory\. The limit on address space \(ulimit -v\) leaves the threads of this executable \d+ MB for JavaScript objects\. Raise the limit, or build with --aot-huge-heap\./,
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
 
-  test.skipIf(!isLinux)("the range of a Worker that has ended is given back", async () => {
-    using folder = tempDir("aot-heap-limit", sixWorkersOneAfterTheOther);
-    const { stdout, exitCode } = await run([await build(String(folder), "worker.ts")], String(folder));
-    expect({ stdout, exitCode }).toEqual({ stdout: "given back\n", exitCode: 0 });
-  }, 120_000);
+  test.skipIf(!isLinux)(
+    "the range of a Worker that has ended is given back",
+    async () => {
+      using folder = tempDir("aot-heap-limit", sixWorkersOneAfterTheOther);
+      const { stdout, exitCode } = await run([await build(String(folder), "worker.ts")], String(folder));
+      expect({ stdout, exitCode }).toEqual({ stdout: "given back\n", exitCode: 0 });
+    },
+    120_000,
+  );
 });

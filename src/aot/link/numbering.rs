@@ -76,7 +76,8 @@ impl<D: PartialEq> RetainedDefinitions<'_, D> {
             .filter_map(move |(index, (id, definition))| {
                 let merged = self.local_to_merged[unit as usize][id.index()];
                 let site = DefinitionSite { unit, index };
-                let is_chosen = self.chosen[merged as usize] == Some((self.create_definition)(site));
+                let is_chosen =
+                    self.chosen[merged as usize] == Some((self.create_definition)(site));
                 self.retained[merged as usize].then_some((merged, site, is_chosen, definition))
             })
     }
@@ -237,8 +238,9 @@ pub(super) fn number_program(input: NumberingInput<'_>) -> Numbering {
     let layout_ids = number_in_order(layouts.keys.len(), layout_order, &mut counts.layouts);
 
     counts.modules = modules.modules.len();
-    let module_ids: Vec<Option<ModuleId>> =
-        (0..counts.modules).map(|index| Some(ModuleId::new(index))).collect();
+    let module_ids: Vec<Option<ModuleId>> = (0..counts.modules)
+        .map(|index| Some(ModuleId::new(index)))
+        .collect();
     let failure_marks = retained.module_failures.as_ref();
     let module_failure_ids =
         failure_marks.map(|_, marks| number_marked(marks, &mut counts.module_failures));

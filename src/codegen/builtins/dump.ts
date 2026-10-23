@@ -28,32 +28,7 @@ import type {
   TypedResultForm,
 } from "./vocabulary.ts";
 
-export type {
-  BuiltinKind,
-  CallbackResultUse,
-  CallbackTimes,
-  CalleeKind,
-  CallMode,
-  Capability,
-  ContentsSlot,
-  Conversion,
-  Freshness,
-  Heap,
-  IntegrityLevel,
-  IterationKind,
-  Mutability,
-  OperandRole,
-  OperandUse,
-  Origin,
-  ParameterMode,
-  Primitive,
-  PristineAspect,
-  Protocol,
-  RangeRule,
-  Scope,
-  TargetPlatform,
-  TypedResultForm,
-} from "./vocabulary.ts";
+export { builtinFlags, implementationKinds, instanceTests, propertyActionKinds, prototypeLinks } from "./model.ts";
 export type { BuiltinFlag, ImplementationKind, InstanceTest, PropertyActionKind, PrototypeLink } from "./model.ts";
 export {
   builtinKinds,
@@ -82,12 +57,43 @@ export {
   targetPlatforms,
   typedResultForms,
 } from "./vocabulary.ts";
-export { builtinFlags, implementationKinds, instanceTests, propertyActionKinds, prototypeLinks } from "./model.ts";
+export type {
+  BuiltinKind,
+  CallbackResultUse,
+  CallbackTimes,
+  CalleeKind,
+  CallMode,
+  Capability,
+  ContentsSlot,
+  Conversion,
+  Freshness,
+  Heap,
+  IntegrityLevel,
+  IterationKind,
+  Mutability,
+  OperandRole,
+  OperandUse,
+  Origin,
+  ParameterMode,
+  Primitive,
+  PristineAspect,
+  Protocol,
+  RangeRule,
+  Scope,
+  TargetPlatform,
+  TypedResultForm,
+} from "./vocabulary.ts";
 
 export type DumpedOperand = "this" | { argument: number } | { argumentsFrom: number };
 
 export type DumpedTypePart =
-  | { part: "Instance"; class: string; pristine: PristineAspect[]; isOfClassItself: boolean; contents: { slot: string; type: DumpedType }[] }
+  | {
+      part: "Instance";
+      class: string;
+      pristine: PristineAspect[];
+      isOfClassItself: boolean;
+      contents: { slot: string; type: DumpedType }[];
+    }
   | { part: "InstanceOfReceiverClass" }
   | { part: "TypedArrayOfReceiverElementType" }
   | { part: "Layout"; layout: string }

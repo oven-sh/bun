@@ -8,9 +8,8 @@ use std::str::FromStr;
 const COMMENT_MARK: &str = "//";
 const DEFAULT_PREFIX: &str = "CHECK";
 const RESERVED_NAMES: [&str; 6] = ["RUN", "FORM", "OPTIONS", "DIAGNOSTIC", "STATISTIC", "CHECK"];
-const TEST_FILE_EXTENSIONS: [&str; 8] = [
-    ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
-];
+const TEST_FILE_EXTENSIONS: [&str; 8] =
+    [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const DECLARATION_FILE_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 const MAX_TYPESCRIPT_CODE_DIGITS: usize = 9;
 const DIAGNOSTIC_SYNTAX: &str = "DIAGNOSTIC is written <name> [ <count> ]";
@@ -791,7 +790,13 @@ mod tests {
         ] {
             expect_error_after_run(&format!("// STATISTIC: {value}"), STATISTIC_SYNTAX);
         }
-        for word in ["None", "program_bytes", "MAX_NESTING_DEPTH", "9lives", "a-b"] {
+        for word in [
+            "None",
+            "program_bytes",
+            "MAX_NESTING_DEPTH",
+            "9lives",
+            "a-b",
+        ] {
             let directive = format!("// STATISTIC: {word} = 0");
             expect_error_after_run(&directive, &format!("unknown statistic {word}"));
         }

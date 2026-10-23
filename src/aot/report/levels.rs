@@ -67,8 +67,11 @@ pub enum AccessColumn {
 }
 
 impl AccessColumn {
-    pub const ALL: [AccessColumn; 3] =
-        [AccessColumn::Free, AccessColumn::Tested, AccessColumn::ByName];
+    pub const ALL: [AccessColumn; 3] = [
+        AccessColumn::Free,
+        AccessColumn::Tested,
+        AccessColumn::ByName,
+    ];
 
     pub fn of(cost: AccessCost) -> AccessColumn {
         match cost {
@@ -234,7 +237,10 @@ mod tests {
     #[test]
     fn columns_hold_every_cost_once() {
         let costs = CostCounts::from_words([1, 2, 4, 8]);
-        assert_eq!(AccessColumn::ALL.map(|column| costs.in_column(column)), [8, 6, 1]);
+        assert_eq!(
+            AccessColumn::ALL.map(|column| costs.in_column(column)),
+            [8, 6, 1]
+        );
     }
 
     #[test]

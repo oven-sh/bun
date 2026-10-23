@@ -112,10 +112,13 @@ pub(super) fn normalize_uses(
     eval_uses.sort_unstable();
     eval_uses.dedup();
 
-    let walked_references = walk.function_references.iter().filter_map(|&(user, function)| {
-        let walked = walk.function_of_fn[function.idx()]?;
-        (walked != user).then_some((user, walked))
-    });
+    let walked_references = walk
+        .function_references
+        .iter()
+        .filter_map(|&(user, function)| {
+            let walked = walk.function_of_fn[function.idx()]?;
+            (walked != user).then_some((user, walked))
+        });
     let mut references: Vec<(WalkedFunctionId, WalkedFunctionId)> = walked_references.collect();
     references.sort_unstable();
     references.dedup();
@@ -179,7 +182,10 @@ fn compute_form(context: &Context<'_, '_>, symbol: SymbolId, kind: BindingKind) 
     }
     let has_scope = bound.symbol_scope(symbol).is_some();
     let is_export = bound.symbol(symbol).parent.is_some();
-    assert!(has_scope || is_export, "only an export-only name has no scope");
+    assert!(
+        has_scope || is_export,
+        "only an export-only name has no scope"
+    );
     BindingForm::Stored
 }
 
@@ -205,7 +211,9 @@ fn top_scope(context: &Context<'_, '_>, function: WalkedFunctionId) -> ScopeId {
     let bound = context.input.bound;
     match context.walk.functions[function.index()].key {
         FunctionKey::ModuleBody(_) => context.file_scope,
-        FunctionKey::WrappedModuleBody(_) | FunctionKey::FaceBody(_) | FunctionKey::CheckBody(_) => {
+        FunctionKey::WrappedModuleBody(_)
+        | FunctionKey::FaceBody(_)
+        | FunctionKey::CheckBody(_) => {
             unreachable!("the walk meets no function of this kind")
         }
         FunctionKey::Source(source) => bound.fns[source.function.idx()].scope,

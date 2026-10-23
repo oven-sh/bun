@@ -2,9 +2,10 @@ use core::mem::offset_of;
 
 use super::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, ArrivalLayoutFieldRecord,
-    ArrivalLayoutRecord, ArrivalSiteRecord, BuiltinUseRecord, BunAOTBytes, DeclineRecord, FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LocaleUseRecord,
-    LossRecord, ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord, RemainingCheckRecord,
-    ResultRecord, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
+    ArrivalLayoutRecord, ArrivalSiteRecord, BuiltinUseRecord, BunAOTBytes, DeclineRecord,
+    FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LocaleUseRecord, LossRecord,
+    ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord, RemainingCheckRecord, ResultRecord,
+    TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
 };
 use crate::ir::generated::{LimitId, ResultSection, StatisticId};
 
@@ -70,18 +71,30 @@ pub(super) fn check_section(
         BuiltinUseRecord::SECTION => check_records::<BuiltinUseRecord>(bytes, lengths.text),
         FeatureUseRecord::SECTION => {
             check_records::<FeatureUseRecord>(bytes, lengths.text)?;
-            check_order(bytes, |record: &FeatureUseRecord| record.feature, PartialOrd::le)
+            check_order(
+                bytes,
+                |record: &FeatureUseRecord| record.feature,
+                PartialOrd::le,
+            )
         }
         LocaleUseRecord::SECTION => check_records::<LocaleUseRecord>(bytes, lengths.text),
         AccessRecord::SECTION => check_records::<AccessRecord>(bytes, lengths.text),
         AccessCountRecord::SECTION => {
             check_records::<AccessCountRecord>(bytes, lengths.text)?;
-            check_order(bytes, |record: &AccessCountRecord| record.module, PartialOrd::lt)
+            check_order(
+                bytes,
+                |record: &AccessCountRecord| record.module,
+                PartialOrd::lt,
+            )
         }
         TypeTestRecord::SECTION => check_records::<TypeTestRecord>(bytes, lengths.text),
         RemainingCheckRecord::SECTION => {
             check_records::<RemainingCheckRecord>(bytes, lengths.text)?;
-            check_order(bytes, |record: &RemainingCheckRecord| record.id, PartialOrd::lt)
+            check_order(
+                bytes,
+                |record: &RemainingCheckRecord| record.id,
+                PartialOrd::lt,
+            )
         }
         DeclineRecord::SECTION => check_records::<DeclineRecord>(bytes, lengths.text),
         AllocationRemarkRecord::SECTION => {
@@ -90,9 +103,8 @@ pub(super) fn check_section(
         LossRecord::SECTION => check_records::<LossRecord>(bytes, lengths.text),
         FunctionReportRecord::SECTION => {
             check_records::<FunctionReportRecord>(bytes, lengths.text)?;
-            let range_of = |record: &FunctionReportRecord| {
-                (record.first_operation, record.operation_count)
-            };
+            let range_of =
+                |record: &FunctionReportRecord| (record.first_operation, record.operation_count);
             check_ranges(bytes, range_of, lengths.operation_counts)
         }
         OperationCountRecord::SECTION => check_records::<OperationCountRecord>(bytes, lengths.text),
@@ -100,7 +112,11 @@ pub(super) fn check_section(
         ObfuscatedSiteRecord::SECTION => check_records::<ObfuscatedSiteRecord>(bytes, lengths.text),
         ArrivalSiteRecord::SECTION => {
             check_records::<ArrivalSiteRecord>(bytes, lengths.text)?;
-            check_order(bytes, |record: &ArrivalSiteRecord| record.number, PartialOrd::lt)?;
+            check_order(
+                bytes,
+                |record: &ArrivalSiteRecord| record.number,
+                PartialOrd::lt,
+            )?;
             let range_of = |record: &ArrivalSiteRecord| {
                 (record.first_expected_layout, record.expected_layout_count)
             };
@@ -108,7 +124,11 @@ pub(super) fn check_section(
         }
         ArrivalLayoutRecord::SECTION => {
             check_records::<ArrivalLayoutRecord>(bytes, lengths.text)?;
-            check_order(bytes, |record: &ArrivalLayoutRecord| record.layout, PartialOrd::lt)?;
+            check_order(
+                bytes,
+                |record: &ArrivalLayoutRecord| record.layout,
+                PartialOrd::lt,
+            )?;
             let range_of = |record: &ArrivalLayoutRecord| (record.first_field, record.field_count);
             check_ranges(bytes, range_of, lengths.arrival_layout_fields)
         }
@@ -160,7 +180,10 @@ fn check_ranges<T: ResultRecord>(
         u64::from(first) + u64::from(count) <= element_count as u64
     };
     let records = read_records::<T>(bytes)?;
-    ensure(records.iter().all(is_inside_section), MalformedReason::Range)
+    ensure(
+        records.iter().all(is_inside_section),
+        MalformedReason::Range,
+    )
 }
 
 fn check_layout<T>(bytes: &[u8]) -> Result<(), MalformedReason> {

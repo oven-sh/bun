@@ -2,17 +2,19 @@ use super::effects::{ProgramOrigins, compute_origins};
 use super::{
     CompileRequest, EntryPointFailure, EntryPoints, LoadFailure, LoadedProgram, WithoutBunTypes,
 };
-use crate::{Libs, default_compiler_options, host, diagnostic_from_config_error, use_dedicated_pool};
+use crate::{
+    Libs, default_compiler_options, diagnostic_from_config_error, host, use_dedicated_pool,
+};
 use bun_sema::check::Program;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::config::{self, ConfigError};
-use bun_sema::json::Json;
 use bun_sema::hir::FileKind;
+use bun_sema::json::Json;
 use bun_sema::program::{CompileInputs, FileId, Files, RootFileNames};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
-    CodeResolution, Host, HostResolution, Options, Resolver, is_same_path,
-    is_typescript_file_name, join,
+    CodeResolution, Host, HostResolution, Options, Resolver, is_same_path, is_typescript_file_name,
+    join,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -36,7 +38,9 @@ pub fn load_program<'s>(
         add_files_of_other_projects(host, &mut project, &entry_paths);
     }
     if request.code.transpiles_by_working_directory && request.code.tsconfig_override.is_none() {
-        project.options.transpile_as(&options_of_working_directory(host, request.code));
+        project
+            .options
+            .transpile_as(&options_of_working_directory(host, request.code));
     }
     project
         .errors
@@ -66,7 +70,11 @@ pub fn load_program<'s>(
     }
     let with_declarations = |files: Vec<Vec<u8>>| [&first_files[..], &files, &last_files].concat();
     let list_files = |on_match: &mut dyn FnMut(&[u8])| {
-        with_declarations(unlisted_files.as_ref().map_or(Vec::new(), |it| it.list(host, on_match)))
+        with_declarations(
+            unlisted_files
+                .as_ref()
+                .map_or(Vec::new(), |it| it.list(host, on_match)),
+        )
     };
     let listed_files = with_declarations(std::mem::take(&mut project.files));
     let root_files = match unlisted_files {
@@ -101,9 +109,10 @@ pub fn load_program<'s>(
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
-    let without_bun_types = (is_application && !has_bun_types_installed).then(|| WithoutBunTypes {
-        has_configuration_file: !config_path.is_empty(),
-    });
+    let without_bun_types =
+        (is_application && !has_bun_types_installed).then_some(WithoutBunTypes {
+            has_configuration_file: !config_path.is_empty(),
+        });
     let diagnostics = ProgramOrigins {
         files: Some(files),
         origins: &origins,
@@ -128,7 +137,9 @@ fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
         let is_source = matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx);
         module.is_leaf && is_source && !files.is_compiled(file)
     };
-    let file_ids: Vec<FileId> = (0..files.modules.len()).map(|index| FileId(index as u32)).collect();
+    let file_ids: Vec<FileId> = (0..files.modules.len())
+        .map(|index| FileId(index as u32))
+        .collect();
     let runs: Vec<&[FileId]> = file_ids.chunks(FILES_FREED_IN_A_RUN).collect();
     host.parallel(runs.len(), &|run| {
         for file in runs[run] {
@@ -227,9 +238,8 @@ fn find_project(
     });
     project.map_err(|errors| LoadFailure {
         unresolved_entry_points: Vec::new(),
-        diagnostics: without_files(request.project_origin).apply_effects(
-            configuration_diagnostics(host, &config_path, errors.iter()),
-        ),
+        diagnostics: without_files(request.project_origin)
+            .apply_effects(configuration_diagnostics(host, &config_path, errors.iter())),
     })
 }
 
@@ -237,7 +247,9 @@ fn options_of_working_directory(host: &dyn CodeHost, code: &CodeOptions) -> Opti
     let config_path = config::find_config(host, &code.working_directory);
     let stated = config_path
         .and_then(|path| config::load_options_for_build(host, &Session::new(), &path).ok());
-    stated.unwrap_or_else(|| default_project(host, code, &[])).options
+    stated
+        .unwrap_or_else(|| default_project(host, code, &[]))
+        .options
 }
 
 // Under a tsconfig.json that only has references, the program is the first of the referenced projects that has the entry point.
@@ -246,13 +258,18 @@ fn find_project_of_first_entry_point(
     nearest: config::Project,
     entry_paths: &[Vec<u8>],
 ) -> config::Project {
-    let Some(entry_path) = entry_paths.first().filter(|_| nearest.only_has_references()) else {
+    let Some(entry_path) = entry_paths
+        .first()
+        .filter(|_| nearest.only_has_references())
+    else {
         return nearest;
     };
     let is_entry_point = |path: &Vec<u8>| is_same_path(path, entry_path, host.is_case_sensitive());
     let referenced = config::load_referenced_projects_for_build(host, &nearest);
     let mut referenced = referenced.into_iter();
-    referenced.find(|project| project.files.iter().any(is_entry_point)).unwrap_or(nearest)
+    referenced
+        .find(|project| project.files.iter().any(is_entry_point))
+        .unwrap_or(nearest)
 }
 
 // What a project declares globally is known to its own files, so the files of the project of each entry point are in the program.
@@ -270,7 +287,10 @@ fn add_files_of_other_projects(
             added.push(project.config_path);
             program.list_files(host);
             let files = files.get_or_insert_with(|| program.files.iter().cloned().collect());
-            let new_files = project.files.into_iter().filter(|path| files.insert(path.clone()));
+            let new_files = project
+                .files
+                .into_iter()
+                .filter(|path| files.insert(path.clone()));
             program.files.extend(new_files);
         }
     };

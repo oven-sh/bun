@@ -361,7 +361,10 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
     verbatimModuleSyntax: true,
   };
   const withElementReads = (sound: object, compilerOptions: object): Files => ({
-    ...project({ ...manifest({ lay: { ...manifest().lay, "perimeter.js": sha256(withSides(installed["perimeter.js"])) } }), ...sound }),
+    ...project({
+      ...manifest({ lay: { ...manifest().lay, "perimeter.js": sha256(withSides(installed["perimeter.js"])) } }),
+      ...sound,
+    }),
     "tsconfig.json": tsconfig(compilerOptions),
     "node_modules/shapes/perimeter.js": withSides(installed["perimeter.js"]),
     ".sound/shapes/lay/perimeter.js": leansOnStrictAlone(installed["perimeter.js"]),
@@ -384,7 +387,9 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
         const sound = { compilerOptions: { strict: true, noUncheckedIndexedAccess: true } };
         using dir = tempDir("aot-typed-packages", withElementReads(sound, {}));
         const result = await runProject(String(dir));
-        expect(result.warnings).toEqual([expect.stringMatching(/^TS100009: 'shapes' has 3 type errors \(the first at /)]);
+        expect(result.warnings).toEqual([
+          expect.stringMatching(/^TS100009: 'shapes' has 3 type errors \(the first at /),
+        ]);
         expect(result).toMatchObject({ errors: [], exitCode: 0 });
       }),
     600_000,

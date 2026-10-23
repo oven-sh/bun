@@ -33,7 +33,16 @@ export type Scope = (typeof scopes)[number];
 export const mutabilities = ["ChangesOnItsOwn", "ConstantUnlessWritten", "AlwaysLocked"] as const;
 export type Mutability = (typeof mutabilities)[number];
 
-export const primitives = ["Undefined", "Null", "Boolean", "Number", "String", "Symbol", "BigInt", "NotPassed"] as const;
+export const primitives = [
+  "Undefined",
+  "Null",
+  "Boolean",
+  "Number",
+  "String",
+  "Symbol",
+  "BigInt",
+  "NotPassed",
+] as const;
 export type Primitive = (typeof primitives)[number];
 
 export const conversions = [
@@ -459,8 +468,7 @@ export interface ModuleLoadSpec {
 
 /** Without uses native code calls the function with what the annotations of its parameters say, and anybody may get what it answers. */
 export type CalledFunctionSpec =
-  | FunctionRef
-  | { function: FunctionRef; when?: ConditionSpec; uses?: readonly HostUseSpec[] };
+  FunctionRef | { function: FunctionRef; when?: ConditionSpec; uses?: readonly HostUseSpec[] };
 
 export interface HostObjectFieldSpec {
   /** null: every other name and index. */

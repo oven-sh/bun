@@ -575,9 +575,19 @@ describe.concurrent("compile/aot/fold matches the transpiler", () => {
           const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
 
           const plain = await spawned([bunExe(), "run", ...flags, main], folder, env);
-          expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.exitCode ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
+          expect({
+            signal: plain.signal,
+            exitCode: plain.exitCode,
+            stderr: plain.exitCode ? plain.stderr : "",
+          }).toEqual({ signal: null, exitCode: 0, stderr: "" });
 
-          built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, main, "--outfile", executable], folder, bunEnv));
+          built(
+            await spawned(
+              [bunExe(), "build", "--compile", "--aot", ...flags, main, "--outfile", executable],
+              folder,
+              bunEnv,
+            ),
+          );
 
           const ran = await spawned([executable], folder, env);
           expect(ran.signal).toBeNull();

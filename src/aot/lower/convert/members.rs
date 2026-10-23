@@ -273,7 +273,8 @@ fn note_views_of_receiver(file: &mut FileLowering<'_, '_, '_, '_>, access: ExprI
         return;
     };
     let mapped = map_type_at(file, receiver, file.hir[object].pos).ty;
-    let views: SmallVec<[LayoutId; 4]> = SmallVec::from_slice(&file.fragment.types.get(mapped).layouts);
+    let views: SmallVec<[LayoutId; 4]> =
+        SmallVec::from_slice(&file.fragment.types.get(mapped).layouts);
     for layout in views {
         layouts::note_view(file, layout);
     }
@@ -305,7 +306,12 @@ pub(super) fn convert_to_member(
         true => positions::add_undefined(lowering.file, position),
         false => position,
     };
-    super::describe_int32_flow(lowering, position, super::Int32Subject::Member(access), source);
+    super::describe_int32_flow(
+        lowering,
+        position,
+        super::Int32Subject::Member(access),
+        source,
+    );
     super::convert(lowering, value, position, source)
 }
 

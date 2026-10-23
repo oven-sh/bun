@@ -42,42 +42,86 @@ const cases: Record<string, { make: string; evaluatesStrings?: true }> = {
   "options without a cause": { make: `new Error("boom", {})` },
   "an inherited cause option": { make: `new Error("boom", Object.create({ cause: "inherited" }))` },
   "called without new": { make: `Error("called")` },
-  "a deleted message": { make: `(() => { const error = new Error("boom"); delete (error as any).message; return error; })()` },
-  "a message deleted and set again": { make: `(() => { const error = new Error("boom", { cause: "why" }); delete (error as any).message; error.message = "again"; return error; })()` },
-  "a reassigned message": { make: `(() => { const error = new Error("boom"); error.message = "reassigned"; return error; })()` },
-  "a message set later": { make: `(() => { const error = new Error(); error.message = "set later"; return error; })()` },
-  "a cause set later": { make: `(() => { const error = new Error("boom"); error.cause = "set later"; return error; })()` },
-  "a cause set before the message": { make: `(() => { const error = new Error(); error.cause = "first"; error.message = "second"; return error; })()` },
-  "another property set before the message": { make: `(() => { const error = new Error(); (error as any).code = "E_FIRST"; error.message = "second"; return error; })()` },
-  "a getter for the message": { make: `Object.defineProperty(new Error("boom"), "message", { get() { return "computed"; }, configurable: true })` },
-  "a getter for a missing message": { make: `Object.defineProperty(new Error(), "message", { get() { return "computed"; }, configurable: true })` },
+  "a deleted message": {
+    make: `(() => { const error = new Error("boom"); delete (error as any).message; return error; })()`,
+  },
+  "a message deleted and set again": {
+    make: `(() => { const error = new Error("boom", { cause: "why" }); delete (error as any).message; error.message = "again"; return error; })()`,
+  },
+  "a reassigned message": {
+    make: `(() => { const error = new Error("boom"); error.message = "reassigned"; return error; })()`,
+  },
+  "a message set later": {
+    make: `(() => { const error = new Error(); error.message = "set later"; return error; })()`,
+  },
+  "a cause set later": {
+    make: `(() => { const error = new Error("boom"); error.cause = "set later"; return error; })()`,
+  },
+  "a cause set before the message": {
+    make: `(() => { const error = new Error(); error.cause = "first"; error.message = "second"; return error; })()`,
+  },
+  "another property set before the message": {
+    make: `(() => { const error = new Error(); (error as any).code = "E_FIRST"; error.message = "second"; return error; })()`,
+  },
+  "a getter for the message": {
+    make: `Object.defineProperty(new Error("boom"), "message", { get() { return "computed"; }, configurable: true })`,
+  },
+  "a getter for a missing message": {
+    make: `Object.defineProperty(new Error(), "message", { get() { return "computed"; }, configurable: true })`,
+  },
   "a read-only message": { make: `Object.defineProperty(new Error("boom"), "message", { writable: false })` },
   "an enumerable message": { make: `Object.defineProperty(new Error("boom"), "message", { enumerable: true })` },
   "frozen": { make: `Object.freeze(new Error("boom", { cause: "why" }))` },
   "a subclass": { make: `new (class Failure extends Error {})("boom")` },
   "a subclass, no message": { make: `new (class Failure extends Error {})()` },
-  "a subclass with a message field": { make: `new (class Failure extends Error { override message = "field"; })("boom")` },
-  "a subclass with a message field, no message": { make: `new (class Failure extends Error { override message = "field"; })()` },
+  "a subclass with a message field": {
+    make: `new (class Failure extends Error { override message = "field"; })("boom")`,
+  },
+  "a subclass with a message field, no message": {
+    make: `new (class Failure extends Error { override message = "field"; })()`,
+  },
   "a subclass with another field": { make: `new (class Failure extends Error { code = "E_FIELD"; })("boom")` },
-  "a subclass whose constructor sets the message": { make: `new (class Failure extends Error { constructor() { super(); this.message = "set by the constructor"; } })()` },
-  "a subclass that forwards a cause": { make: `new (class Failure extends Error { constructor(message: string, cause: unknown) { super(message, { cause }); } })("boom", "why")` },
-  "a subclass with a message getter on its prototype": { make: `(() => { class Failure extends Error {} Object.defineProperty(Failure.prototype, "message", { get() { return "from the prototype"; }, configurable: true }); return new Failure(); })()` },
-  "a subclass with a message getter on its prototype, and a message": { make: `(() => { class Failure extends Error {} Object.defineProperty(Failure.prototype, "message", { get() { return "from the prototype"; }, configurable: true }); return new Failure("boom"); })()` },
+  "a subclass whose constructor sets the message": {
+    make: `new (class Failure extends Error { constructor() { super(); this.message = "set by the constructor"; } })()`,
+  },
+  "a subclass that forwards a cause": {
+    make: `new (class Failure extends Error { constructor(message: string, cause: unknown) { super(message, { cause }); } })("boom", "why")`,
+  },
+  "a subclass with a message getter on its prototype": {
+    make: `(() => { class Failure extends Error {} Object.defineProperty(Failure.prototype, "message", { get() { return "from the prototype"; }, configurable: true }); return new Failure(); })()`,
+  },
+  "a subclass with a message getter on its prototype, and a message": {
+    make: `(() => { class Failure extends Error {} Object.defineProperty(Failure.prototype, "message", { get() { return "from the prototype"; }, configurable: true }); return new Failure("boom"); })()`,
+  },
   "TypeError": { make: `new TypeError("boom")` },
   "RangeError, no message": { make: `new RangeError()` },
   "AggregateError": { make: `new AggregateError([new Error("inner")], "boom", { cause: "why" })` },
   "DOMException": { make: `new DOMException("boom", "AbortError") as unknown as Error` },
-  "a JSON.parse error": { make: `(() => { try { JSON.parse("{"); } catch (error) { return error as Error; } return new Error("not reached"); })()` },
-  "a file system error": { make: `(() => { try { require("node:fs").readFileSync("/no/such/file"); } catch (error) { return error as Error; } return new Error("not reached"); })()` },
+  "a JSON.parse error": {
+    make: `(() => { try { JSON.parse("{"); } catch (error) { return error as Error; } return new Error("not reached"); })()`,
+  },
+  "a file system error": {
+    make: `(() => { try { require("node:fs").readFileSync("/no/such/file"); } catch (error) { return error as Error; } return new Error("not reached"); })()`,
+  },
   "a structured clone": { make: `structuredClone(new Error("boom", { cause: "why" }))` },
   "a different new.target": { make: `Reflect.construct(Error, ["boom"], class Other {})` },
   "a null prototype": { make: `Object.setPrototypeOf(new Error("boom"), null)` },
   "Object.create(Error.prototype)": { make: `Object.create(Error.prototype)` },
   "an error-like object": { make: `({ name: "Lookalike", message: "from a plain object" })` },
-  "a plain object with a captured stack": { make: `(() => { const target = { name: "Plain", message: "from a plain object" }; Error.captureStackTrace(target); return target; })()` },
-  "a proxy for an error": { make: `new Proxy(new Error("boom"), { get(target, key, receiver) { return key === "message" ? "trapped" : Reflect.get(target, key, receiver); } })` },
-  "from another realm": { make: `require("node:vm").runInNewContext("new Error('boom', { cause: 'why' })")`, evaluatesStrings: true },
-  "from another realm, no message": { make: `require("node:vm").runInNewContext("new Error()")`, evaluatesStrings: true },
+  "a plain object with a captured stack": {
+    make: `(() => { const target = { name: "Plain", message: "from a plain object" }; Error.captureStackTrace(target); return target; })()`,
+  },
+  "a proxy for an error": {
+    make: `new Proxy(new Error("boom"), { get(target, key, receiver) { return key === "message" ? "trapped" : Reflect.get(target, key, receiver); } })`,
+  },
+  "from another realm": {
+    make: `require("node:vm").runInNewContext("new Error('boom', { cause: 'why' })")`,
+    evaluatesStrings: true,
+  },
+  "from another realm, no message": {
+    make: `require("node:vm").runInNewContext("new Error()")`,
+    evaluatesStrings: true,
+  },
 };
 
 // --aot has its own wording for some TypeErrors, so only an error's name is printed when an action throws.
@@ -200,7 +244,12 @@ async function runBothWays({ file, text, evaluatesStrings }: Program, flags: str
   using dir = tempDir("aot-error-own-properties", { "tsconfig.json": tsconfig, [file]: text });
   const folder = String(dir);
   const plain = await spawned([bunExe(), "run", file], folder, bunEnv);
-  expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr, printsNothing: plain.stdout === "" }).toEqual({ signal: null, exitCode: 0, stderr: "", printsNothing: false });
+  expect({
+    signal: plain.signal,
+    exitCode: plain.exitCode,
+    stderr: plain.stderr,
+    printsNothing: plain.stdout === "",
+  }).toEqual({ signal: null, exitCode: 0, stderr: "", printsNothing: false });
   const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
   built(await spawned([bunExe(), ...compileCommand, ...flags, file, "--outfile", executable], folder, bunEnv));
   const tripwire = evaluatesStrings ? {} : { [runtimeEnvironment.forbidsInterpreter]: "1" };
@@ -221,7 +270,11 @@ describe.concurrent("compile/aot/error own properties", () => {
   // The analysis proves more about a program that has only one kind of error.
   for (const name of alone) {
     for (const way of chosen(Object.keys(ways))) {
-      test(`${name}, alone, ${way}`, () => slot(() => expectOutputOfPlainBun(programAboutErrors([name]), ways[way])), 600_000);
+      test(
+        `${name}, alone, ${way}`,
+        () => slot(() => expectOutputOfPlainBun(programAboutErrors([name]), ways[way])),
+        600_000,
+      );
     }
   }
 });
@@ -230,7 +283,11 @@ describe.concurrent("compile/aot/error own properties/inherited members", () => 
   for (const [change, text] of Object.entries(prototypeChanges)) {
     for (const [origin, holder] of Object.entries(holders)) {
       for (const way of chosen(["by default", "in a validating build"])) {
-        test(`${change} on Error.prototype ${origin}, ${way}`, () => slot(() => expectOutputOfPlainBun(programAboutThePrototype(text, holder), ways[way])), 600_000);
+        test(
+          `${change} on Error.prototype ${origin}, ${way}`,
+          () => slot(() => expectOutputOfPlainBun(programAboutThePrototype(text, holder), ways[way])),
+          600_000,
+        );
       }
     }
   }

@@ -148,17 +148,15 @@ test.skipIf(!strip)(
 );
 
 test(
-  "another build is rejected when the program is built",
+  "another link of the same run time is compiled onto, and the image names it",
   async () => {
     if (!hasIdentity) return;
-    using dir = tempDir("aot-carrier-another-build", files);
+    using dir = tempDir("aot-carrier-another-link", files);
     const folder = String(dir);
     const other = readFileSync(bunExe());
     flipIdentity(other);
-    const { stdout, stderr, exitCode } = await buildOnCarrier(folder, "another-build", other);
-    expect(stderr).toContain("is a different build of Bun");
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
-    expect(existsSync(executablePath(folder, "out"))).toBe(false);
+    built(await buildOnCarrier(folder, "another-link", other));
+    expectAnswer(await spawned([executablePath(folder, "out")], folder, bunEnv));
   },
   timeout,
 );

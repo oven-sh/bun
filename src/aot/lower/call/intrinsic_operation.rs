@@ -189,7 +189,9 @@ pub(super) fn claim_operand_kind(
         return value;
     };
     let position = DeclaredType::from_compiler(required);
-    lowering.builder.convert(value, position, IllTypedCause::None)
+    lowering
+        .builder
+        .convert(value, position, IllTypedCause::None)
 }
 
 fn operand_kind_type(types: &mut TypeTable, kind: OperandKind) -> Option<TypeId> {
@@ -255,7 +257,11 @@ mod tests {
     #[test]
     fn untyped_kinds_have_no_type() {
         let mut types = TypeTable::new();
-        for kind in [OperandKind::Any, OperandKind::Declared, OperandKind::Results] {
+        for kind in [
+            OperandKind::Any,
+            OperandKind::Declared,
+            OperandKind::Results,
+        ] {
             assert_eq!(operand_kind_type(&mut types, kind), None, "{kind:?}");
         }
     }

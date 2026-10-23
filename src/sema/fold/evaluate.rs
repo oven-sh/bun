@@ -108,7 +108,10 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             (UnOp::Not, Value::Known(operand)) => Value::boolean(!self.to_boolean(operand)),
             (UnOp::Typeof, Value::Known(operand)) => Value::string(type_of(self.operand(operand))),
-            (UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof, Value::Unknown)
+            (
+                UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof,
+                Value::Unknown,
+            )
             | (UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, _) => {
                 Value::Unknown
             }
@@ -163,10 +166,9 @@ impl<'a, 's> Evaluator<'a, 's> {
     pub(super) fn is_nullish(&self, primitive: Primitive) -> bool {
         match self.operand(primitive) {
             Operand::Undefined | Operand::Null => true,
-            Operand::Boolean(_)
-            | Operand::Number(_)
-            | Operand::String(_)
-            | Operand::BigInt(_) => false,
+            Operand::Boolean(_) | Operand::Number(_) | Operand::String(_) | Operand::BigInt(_) => {
+                false
+            }
         }
     }
 

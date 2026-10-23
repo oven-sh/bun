@@ -1,6 +1,6 @@
 use super::answers::{
-    CheckedMember, CheckedType, GaveUp, IndexKey, IndexSignature, ListedMember, MemberName, ObjectMember,
-    ObjectMemberKind, PositionTypes, SymbolCreation, WrittenType,
+    CheckedMember, CheckedType, GaveUp, IndexKey, IndexSignature, ListedMember, MemberName,
+    ObjectMember, ObjectMemberKind, PositionTypes, SymbolCreation, WrittenType,
 };
 use super::queries::Queries;
 use crate::atom::Atom;
@@ -135,7 +135,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let callee = hir[call].callee;
         if !matches!(hir[callee].kind, ExprKind::Ident(_))
-            || !self.c.is_symbol_or_symbol_for_call(variable.file, initializer)
+            || !self
+                .c
+                .is_symbol_or_symbol_for_call(variable.file, initializer)
         {
             return None;
         }

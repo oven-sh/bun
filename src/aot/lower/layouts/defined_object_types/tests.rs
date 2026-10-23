@@ -88,7 +88,11 @@ fn a_definition_at_any_level_counts() {
 #[test]
 fn only_a_definer_below_the_last_level_has_gone_on() {
     let defined = DefinedObjectTypes::default();
-    defined.add_definition(ty(0), LAST_DEFINITION_LEVEL | NAMES_THE_SAME_IN_EVERY_FILE, FileId(1));
+    defined.add_definition(
+        ty(0),
+        LAST_DEFINITION_LEVEL | NAMES_THE_SAME_IN_EVERY_FILE,
+        FileId(1),
+    );
     defined.add_definition(ty(0), 0, FileId(2));
     assert!(defined.is_defined_by_earlier_file(&ty(0), FileId(9)));
     assert!(!defined.has_earlier_file_gone_on_for_all(&ty(0), FileId(9)));
@@ -103,9 +107,7 @@ fn a_type_under_one_layout_does_not_speak_for_it_under_another() {
     let under = |layout: LayoutKey| DefinedObjectType::new(layout, key(0)).unwrap();
     let defined = DefinedObjectTypes::default();
     defined.add_definition(under(layout(1)), 0, FileId(1));
-    let is_left = |layout| {
-        defined.is_defined_by_earlier_file(&under(layout), FileId(2))
-    };
+    let is_left = |layout| defined.is_defined_by_earlier_file(&under(layout), FileId(2));
     assert!(is_left(layout(1)));
     assert!(!is_left(layout(2)));
 }

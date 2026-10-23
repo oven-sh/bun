@@ -171,7 +171,13 @@ describe("parseFeatures", () => {
   test("computes Rust names", () => {
     const names = ["JIT", "URICoding", "JSONRawJSON", "StringHTML", "Uint8ArrayBase64"];
     const { features } = parse({ "bun.def": names.map(name => `feature ${name} "text"`).join("\n") });
-    expect(features.map(({ rustName }) => rustName)).toEqual(["Jit", "UriCoding", "JsonRawJson", "StringHtml", "Uint8ArrayBase64"]);
+    expect(features.map(({ rustName }) => rustName)).toEqual([
+      "Jit",
+      "UriCoding",
+      "JsonRawJson",
+      "StringHtml",
+      "Uint8ArrayBase64",
+    ]);
     const trimFeatures = parse({
       "bun.def": 'feature A "a"',
       "trim-features.def": 'trim-feature html-rewriter : A\n  about "x"',
@@ -202,7 +208,10 @@ describe("parseFeatures", () => {
     test.each<[string, Files]>([
       ["a feature's text", { "bun.def": 'feature A "another"\nfeature B "b"' }],
       ["a minimum", { "bun.def": 'feature A "a"\n  minimum 5\nfeature B "b"' }],
-      ["a trim feature's texts and sizes", { "trim-features.def": 'trim-feature a : A\n  about "y"\n  also "z"\n  saves 1 2' }],
+      [
+        "a trim feature's texts and sizes",
+        { "trim-features.def": 'trim-feature a : A\n  about "y"\n  also "z"\n  saves 1 2' },
+      ],
       ["a profile's features", { "profiles.def": "profile hello : A B\n  minimum-cut-ratio 90" }],
       ["a profile's ratio", { "profiles.def": "profile hello : A\n  minimum-cut-ratio 10" }],
       ["another profile", { "profiles.def": "profile hello : A\n  minimum-cut-ratio 90\nprofile other :" }],
@@ -238,7 +247,15 @@ describe("JSON form", () => {
     expect(read.hash).toBe(model.hash);
     expect(serializeFeatureModel(read)).toBe(text);
     const json = JSON.parse(text);
-    expect(Object.keys(json)).toEqual(["version", "hash", "features", "trimFeatures", "icuData", "icuLanguageGroups", "profiles"]);
+    expect(Object.keys(json)).toEqual([
+      "version",
+      "hash",
+      "features",
+      "trimFeatures",
+      "icuData",
+      "icuLanguageGroups",
+      "profiles",
+    ]);
     expect(json.version).toBe(2);
     expect(Object.keys(json.trimFeatures[0])).toEqual(["name", "features", "about", "also", "saves", "rustName"]);
   });
@@ -252,10 +269,30 @@ describe("JSON form", () => {
       "profiles": [{ "name": "hello" }]
     }`);
     expect(model.features).toEqual([
-      { name: "JIT", rustName: "Jit", index: 0, text: "JIT", enteredFrom: "program", isEngine: true, minimumBytes: {}, exports: false },
-      { name: "Extra", rustName: "Extra", index: 128, text: "Extra", enteredFrom: "program", isEngine: false, minimumBytes: {}, exports: false },
+      {
+        name: "JIT",
+        rustName: "Jit",
+        index: 0,
+        text: "JIT",
+        enteredFrom: "program",
+        isEngine: true,
+        minimumBytes: {},
+        exports: false,
+      },
+      {
+        name: "Extra",
+        rustName: "Extra",
+        index: 128,
+        text: "Extra",
+        enteredFrom: "program",
+        isEngine: false,
+        minimumBytes: {},
+        exports: false,
+      },
     ]);
-    expect(model.trimFeatures).toEqual([{ name: "html-rewriter", features: [], about: "", also: [], rustName: "HtmlRewriter" }]);
+    expect(model.trimFeatures).toEqual([
+      { name: "html-rewriter", features: [], about: "", also: [], rustName: "HtmlRewriter" },
+    ]);
     expect(model.icuData).toEqual([{ itemClass: "zone", exceptWindows: false, byLocale: false, features: [] }]);
     expect(model.icuLanguageGroups).toEqual([]);
     expect(model.profiles).toEqual([{ name: "hello", features: [], minimumCutRatio: {} }]);
@@ -281,7 +318,9 @@ describe("JSON form", () => {
 
   test("rejects a wrong hash", () => {
     const text = '{ "version": 2, "hash": "0x0000000000000000", "features": [] }';
-    expect(buildErrorOf(() => readJson(text)).message).toStartWith("hash 0x0000000000000000 does not match the model, 0x");
+    expect(buildErrorOf(() => readJson(text)).message).toStartWith(
+      "hash 0x0000000000000000 does not match the model, 0x",
+    );
   });
 
   test.each([
@@ -300,14 +339,22 @@ describe("JSON form", () => {
 
   test("applies the same checks as the parser", () => {
     const rejected = (lists: string) => buildErrorOf(() => readJson(`{ "version": 2, ${lists} }`)).message;
-    expect(rejected('"features": [{ "name": "A", "index": 128 }, { "name": "B", "index": 129 }, { "name": "A", "index": 130 }]')).toStartWith(
-      "feature A is declared twice",
-    );
+    expect(
+      rejected(
+        '"features": [{ "name": "A", "index": 128 }, { "name": "B", "index": 129 }, { "name": "A", "index": 130 }]',
+      ),
+    ).toStartWith("feature A is declared twice");
     expect(rejected('"features": [{ "name": "A", "index": 512 }]')).toBe("feature A has index 512, limit 512");
-    expect(rejected('"features": [{ "name": "A", "index": 128 }, { "name": "B", "index": 128 }]')).toBe("two features have index 128");
-    expect(rejected('"features": [{ "name": "A", "index": 128, "isEngine": true }]')).toBe("isEngine of feature A disagrees with index 128");
+    expect(rejected('"features": [{ "name": "A", "index": 128 }, { "name": "B", "index": 128 }]')).toBe(
+      "two features have index 128",
+    );
+    expect(rejected('"features": [{ "name": "A", "index": 128, "isEngine": true }]')).toBe(
+      "isEngine of feature A disagrees with index 128",
+    );
     expect(rejected('"icuLanguageGroups": [["no", "nb"], ["nb", "nn"]]')).toBe("icu-language-group lists nb twice");
-    expect(rejected('"profiles": [{ "name": "hello", "features": ["Z"] }]')).toBe("unknown feature Z in profile of hello");
+    expect(rejected('"profiles": [{ "name": "hello", "features": ["Z"] }]')).toBe(
+      "unknown feature Z in profile of hello",
+    );
   });
 });
 
@@ -326,20 +373,48 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["profile in bun.def", { "bun.def": "profile a :" }, "bun.def:1"],
   ["too many engine features", { "engine.def": repeated(129, index => `feature E${index} "e"`) }, "engine.def:129"],
   ["index limit", { "bun.def": repeated(385, index => `feature E${index} "e"`) }, "bun.def:385"],
-  ["too many trim features", trimFile(repeated(257, index => `trim-feature t${index} : A\n  about "x"`)), "trim-features.def:513"],
+  [
+    "too many trim features",
+    trimFile(repeated(257, index => `trim-feature t${index} : A\n  about "x"`)),
+    "trim-features.def:513",
+  ],
   ["two features with the same Rust name", { "bun.def": 'feature JIT "a"\nfeature Jit "b"' }, "bun.def:2"],
-  ["two trim features with the same Rust name", trimFile('trim-feature a1 : A\n  about "x"\ntrim-feature a-1 : A\n  about "x"'), "trim-features.def:3"],
+  [
+    "two trim features with the same Rust name",
+    trimFile('trim-feature a1 : A\n  about "x"\ntrim-feature a-1 : A\n  about "x"'),
+    "trim-features.def:3",
+  ],
   ["unknown first word", { "bun.def": "door A" }, "bun.def:1"],
   ["indented line without declaration", { "bun.def": "  exports" }, "bun.def:1"],
-  ["indented line does not continue the previous file", { "engine.def": oneFeature, "bun.def": "  exports" }, "bun.def:1"],
+  [
+    "indented line does not continue the previous file",
+    { "engine.def": oneFeature, "bun.def": "  exports" },
+    "bun.def:1",
+  ],
   ["unknown feature attribute", { "bun.def": `${oneFeature}\n  about "x"` }, "bun.def:2"],
   ["c-function without a name", { "bun.def": `${oneFeature}\n  c-function` }, "bun.def:2"],
   ["c-function that is not a C name", { "bun.def": `${oneFeature}\n  c-function Bun::open` }, "bun.def:2"],
-  ["the same c-function twice in a feature", { "bun.def": `${oneFeature}\n  c-function open\n  c-function open` }, "bun.def:3"],
+  [
+    "the same c-function twice in a feature",
+    { "bun.def": `${oneFeature}\n  c-function open\n  c-function open` },
+    "bun.def:3",
+  ],
   ["cxx-function without a pattern", { "bun.def": `${oneFeature}\n  cxx-function uWS` }, "bun.def:2"],
-  ["cxx-function whose hint is no identifier", { "bun.def": `${oneFeature}\n  cxx-function uWS:: uWS::App` }, "bun.def:2"],
-  ["cxx-function that is no regular expression", { "bun.def": `${oneFeature}\n  cxx-function uWS uWS::(` }, "bun.def:2"],
-  ["the same cxx-function twice in a feature", { "bun.def": `${oneFeature}\n  cxx-function uWS uWS::App\n  cxx-function uWS uWS::App` }, "bun.def:3"],
+  [
+    "cxx-function whose hint is no identifier",
+    { "bun.def": `${oneFeature}\n  cxx-function uWS:: uWS::App` },
+    "bun.def:2",
+  ],
+  [
+    "cxx-function that is no regular expression",
+    { "bun.def": `${oneFeature}\n  cxx-function uWS uWS::(` },
+    "bun.def:2",
+  ],
+  [
+    "the same cxx-function twice in a feature",
+    { "bun.def": `${oneFeature}\n  cxx-function uWS uWS::App\n  cxx-function uWS uWS::App` },
+    "bun.def:3",
+  ],
   ["unknown trim feature attribute", trimFile('trim-feature a : A\n  about "x"\n  exports'), "trim-features.def:3"],
   ["unknown profile attribute", profileFile("profile a : A\n  minimum 1"), "profiles.def:2"],
   ["indented line under icu-data", icuFile("icu-data a : A\n  exports"), "icu-data.def:2"],
@@ -354,7 +429,11 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["about without text", trimFile("trim-feature a : A\n  about"), "trim-features.def:2"],
   ["saves with one word", trimFile('trim-feature a : A\n  about "x"\n  saves 1'), "trim-features.def:3"],
   ["icu-data without colon", { "icu-data.def": "icu-data a" }, "icu-data.def:1"],
-  ["icu-data with by-locale before except-windows", icuFile("icu-data a by-locale except-windows : A"), "icu-data.def:1"],
+  [
+    "icu-data with by-locale before except-windows",
+    icuFile("icu-data a by-locale except-windows : A"),
+    "icu-data.def:1",
+  ],
   ["icu-data with except-windows twice", icuFile("icu-data a except-windows except-windows : A"), "icu-data.def:1"],
   ["icu-data with an unknown word before the colon", icuFile("icu-data a sometimes : A"), "icu-data.def:1"],
   ["language group of one language", icuFile("icu-language-group no"), "icu-data.def:1"],
@@ -370,7 +449,11 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["ratio with a fraction", profileFile("profile a : A\n  minimum-cut-ratio 1.5"), "profiles.def:2"],
   ["ratio without words", profileFile("profile a : A\n  minimum-cut-ratio"), "profiles.def:2"],
   ["ratio for an unknown format", profileFile("profile a : A\n  minimum-cut-ratio 1 wasm"), "profiles.def:2"],
-  ["ratio twice for one format", profileFile("profile a : A\n  minimum-cut-ratio 1 elf\n  minimum-cut-ratio 2"), "profiles.def:3"],
+  [
+    "ratio twice for one format",
+    profileFile("profile a : A\n  minimum-cut-ratio 1 elf\n  minimum-cut-ratio 2"),
+    "profiles.def:3",
+  ],
   ["invalid feature name", { "bun.def": 'feature abc "a"' }, "bun.def:1"],
   ["invalid trim feature name", trimFile('trim-feature Abc : A\n  about "x"'), "trim-features.def:1"],
   ["malformed JSON text", { "bun.def": 'feature A "a' }, "bun.def:1"],
@@ -378,7 +461,11 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["empty text", { "bun.def": 'feature A ""' }, "bun.def:1"],
   ["text outside printable ASCII", { "bun.def": 'feature A "caf\\u00e9"' }, "bun.def:1"],
   ["text with a line break", { "bun.def": 'feature A "a\\nb"' }, "bun.def:1"],
-  ["duplicate entered-from", { "bun.def": `${oneFeature}\n  entered-from startup\n  entered-from command-line` }, "bun.def:3"],
+  [
+    "duplicate entered-from",
+    { "bun.def": `${oneFeature}\n  entered-from startup\n  entered-from command-line` },
+    "bun.def:3",
+  ],
   ["unknown entered-from", { "bun.def": `${oneFeature}\n  entered-from someone` }, "bun.def:2"],
   ["entered-from program", { "bun.def": `${oneFeature}\n  entered-from program` }, "bun.def:2"],
   ["entered-from without a word", { "bun.def": `${oneFeature}\n  entered-from` }, "bun.def:2"],
@@ -389,7 +476,11 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["negative minimum", { "bun.def": `${oneFeature}\n  minimum -1` }, "bun.def:2"],
   ["minimum for an unknown format", { "bun.def": `${oneFeature}\n  minimum 1 wasm` }, "bun.def:2"],
   ["feature declared twice", { "engine.def": oneFeature, "bun.def": oneFeature }, "bun.def:1"],
-  ["trim feature declared twice", trimFile('trim-feature a : A\n  about "x"\ntrim-feature a : B\n  about "y"'), "trim-features.def:3"],
+  [
+    "trim feature declared twice",
+    trimFile('trim-feature a : A\n  about "x"\ntrim-feature a : B\n  about "y"'),
+    "trim-features.def:3",
+  ],
   ["ICU class declared twice", { "icu-data.def": "icu-data a :\nicu-data a :" }, "icu-data.def:2"],
   ["profile declared twice", profileFile("profile a : A\nprofile a : B"), "profiles.def:2"],
   ["same member twice in a trim feature", trimFile('trim-feature a : A A\n  about "x"'), "trim-features.def:1"],
@@ -406,14 +497,20 @@ describe("errors", () => {
     expect(buildErrorOf(() => parse(files)).file).toBe(`src/trim/features/${site}`);
   });
 
-  test.each(["decided-by engine", "used-with B", "runs-unknown-code", "builtin Bun.x", "module bun:x", "internal-module internal/x", "class X", "native x.rs open"])(
-    "a feature no longer takes %s",
-    line => {
-      const error = buildErrorOf(() => parse({ "bun.def": `${oneFeature}\nfeature B "b"\n  ${line}` }));
-      expect(error.message).toBe(`unknown feature attribute: ${line.split(" ")[0]}`);
-      expect(error.file).toBe("src/trim/features/bun.def:3");
-    },
-  );
+  test.each([
+    "decided-by engine",
+    "used-with B",
+    "runs-unknown-code",
+    "builtin Bun.x",
+    "module bun:x",
+    "internal-module internal/x",
+    "class X",
+    "native x.rs open",
+  ])("a feature no longer takes %s", line => {
+    const error = buildErrorOf(() => parse({ "bun.def": `${oneFeature}\nfeature B "b"\n  ${line}` }));
+    expect(error.message).toBe(`unknown feature attribute: ${line.split(" ")[0]}`);
+    expect(error.file).toBe("src/trim/features/bun.def:3");
+  });
 
   test("a trim feature no longer takes tolerates", () => {
     const error = buildErrorOf(() => parse(trimFile('trim-feature a : A\n  about "x"\n  tolerates B')));
@@ -422,7 +519,9 @@ describe("errors", () => {
   });
 
   test("says that program is the default", () => {
-    expect(buildErrorOf(() => parse({ "bun.def": `${oneFeature}\n  entered-from program` })).message).toBe("entered-from program is the default");
+    expect(buildErrorOf(() => parse({ "bun.def": `${oneFeature}\n  entered-from program` })).message).toBe(
+      "entered-from program is the default",
+    );
   });
 
   test("says in which order an ICU line takes its words", () => {
@@ -445,7 +544,11 @@ describe("declarationsOf", () => {
     id: nextId++,
     path,
     kind,
-    uses: uses.map(use => (typeof use === "string" ? { feature: use, isConditional: false } : { feature: use.conditional, isConditional: true })),
+    uses: uses.map(use =>
+      typeof use === "string"
+        ? { feature: use, isConditional: false }
+        : { feature: use.conditional, isConditional: true },
+    ),
     nativeSymbols: [],
     hasHiddenRoot,
   });
@@ -495,16 +598,23 @@ trim-feature second : Beta
   });
 
   test("a call, a construction and an accessor throw, each in its own form", () => {
-    expect(commentOf(text, "single")).toContain("       * Without it, `Bun.run()` and `new Bun.Alpha()` throw an `Error`.\n");
-    expect(commentOf(text, "pair")).toContain("       * Without it, `Bun.run()`, `new Bun.Alpha()`, `Bun.beta` and `Bun.method()` throw an `Error`.\n");
-    expect(commentOf(text, "second")).toContain("       * Without it, `Bun.beta` and `Bun.method()` throw an `Error`.\n");
+    expect(commentOf(text, "single")).toContain(
+      "       * Without it, `Bun.run()` and `new Bun.Alpha()` throw an `Error`.\n",
+    );
+    expect(commentOf(text, "pair")).toContain(
+      "       * Without it, `Bun.run()`, `new Bun.Alpha()`, `Bun.beta` and `Bun.method()` throw an `Error`.\n",
+    );
+    expect(commentOf(text, "second")).toContain(
+      "       * Without it, `Bun.beta` and `Bun.method()` throw an `Error`.\n",
+    );
     const one = declarationsOf(model, { entries: [entry("Bun.run", "Function", ["Alpha"])] });
     expect(commentOf(one, "single")).toContain("       * Without it, `Bun.run()` throws an `Error`.\n");
   });
 
   test("nothing a program can test for is documented as gone", () => {
     expect(text).not.toContain("`undefined`");
-    for (const path of ["`Bun.alpha`", "Bun.Alpha.prototype", "Bun.gamma", "Bun.delta", "beta.rs", "internal/beta"]) expect(text).not.toContain(path);
+    for (const path of ["`Bun.alpha`", "Bun.Alpha.prototype", "Bun.gamma", "Bun.delta", "beta.rs", "internal/beta"])
+      expect(text).not.toContain(path);
   });
 
   test("prints modules, also and saves", () => {
@@ -538,7 +648,10 @@ trim-feature second : Beta
 
   test("leaves out an entry that no path from the global object names", () => {
     const declarations = declarationsOf(model, {
-      entries: [entry("%AlphaIterator%.prototype.next", "Method", ["Alpha"], true), entry("Bun.run", "Function", ["Alpha"])],
+      entries: [
+        entry("%AlphaIterator%.prototype.next", "Method", ["Alpha"], true),
+        entry("Bun.run", "Function", ["Alpha"]),
+      ],
     });
     expect(commentOf(declarations, "single")).toContain("       * Without it, `Bun.run()` throws an `Error`.\n");
     expect(declarations).not.toContain("AlphaIterator");
@@ -554,14 +667,18 @@ trim-feature second : Beta
       ],
     };
     const declarations = declarationsOf(model, modules);
-    expect(commentOf(declarations, "single")).toContain("       * Without it, importing `bun:alpha` and `node:alpha` throws an `Error`.\n");
+    expect(commentOf(declarations, "single")).toContain(
+      "       * Without it, importing `bun:alpha` and `node:alpha` throws an `Error`.\n",
+    );
     expect(declarations).not.toContain("internal/");
     expect(documentedModules(model, modules, model.trimFeatures[0]!)).toEqual(["bun:alpha", "node:alpha"]);
     expect(documentedModules(model, modules, model.trimFeatures[2]!)).toEqual([]);
   });
 
   test("prints no sentence on imports when every module is internal", () => {
-    expect(declarationsOf(model, { entries: [entry("internal/alpha", "InternalModule", ["Alpha"])] })).not.toContain("Without it, importing");
+    expect(declarationsOf(model, { entries: [entry("internal/alpha", "InternalModule", ["Alpha"])] })).not.toContain(
+      "Without it, importing",
+    );
   });
 
   describe("by where a feature is entered from", () => {
@@ -570,7 +687,11 @@ trim-feature second : Beta
         "bun.def": `feature Alpha "alpha"\nfeature Tests "tests"\n${attribute}`,
         "trim-features.def": 'trim-feature alpha : Alpha Tests\n  about "Alpha."\n',
       });
-    const entries = [entry("bun:alpha", "Module", ["Alpha"]), entry("Bun.tests", "Function", ["Tests"]), entry("bun:tests", "Module", ["Tests"])];
+    const entries = [
+      entry("bun:alpha", "Module", ["Alpha"]),
+      entry("Bun.tests", "Function", ["Tests"]),
+      entry("bun:tests", "Module", ["Tests"]),
+    ];
 
     test("leaves out a feature that only the command line enters", () => {
       const declarations = declarationsOf(withTests("  entered-from command-line\n"), { entries });

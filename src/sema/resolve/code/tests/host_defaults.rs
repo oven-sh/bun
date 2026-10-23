@@ -204,7 +204,10 @@ fn default_host_leaves_tree_and_payload_unchanged() {
         analysis: &analysis,
         resolve: &|_| None,
     };
-    assert!(Bare.run_macros(arena, &atoms, &macros, &mut payload).is_empty());
+    assert!(
+        Bare.run_macros(arena, &atoms, &macros, &mut payload)
+            .is_empty()
+    );
     let finished = FinishedFile {
         path: MAIN,
         loader: HostLoader::default(),

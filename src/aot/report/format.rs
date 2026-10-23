@@ -250,13 +250,22 @@ mod tests {
     fn new_printer_is_in_working_directory() {
         let path = std::env::current_dir().unwrap().join("a.ts");
         let path = path.as_os_str().as_encoded_bytes();
-        assert_eq!(written(|out| PathPrinter::new().write_path(out, path)), "a.ts");
+        assert_eq!(
+            written(|out| PathPrinter::new().write_path(out, path)),
+            "a.ts"
+        );
     }
 
     #[test]
     fn member_names_in_both_spellings() {
-        assert_eq!(BString::from(code_of("UnknownKeyStore")), "unknown-key-store");
-        assert_eq!(BString::from(lower_camel_case("CompileTime")), "compileTime");
+        assert_eq!(
+            BString::from(code_of("UnknownKeyStore")),
+            "unknown-key-store"
+        );
+        assert_eq!(
+            BString::from(lower_camel_case("CompileTime")),
+            "compileTime"
+        );
         assert_eq!(BString::from(lower_camel_case("Heap")), "heap");
         assert_eq!(BString::from(lower_camel_case("")), "");
     }
@@ -264,7 +273,10 @@ mod tests {
     #[test]
     fn posix_path_has_forward_slashes() {
         let printer = PathPrinter::in_directory(native("/p/app"));
-        assert_eq!(BString::from(printer.posix_path(&native("/p/app/src/a.ts"))), "src/a.ts");
+        assert_eq!(
+            BString::from(printer.posix_path(&native("/p/app/src/a.ts"))),
+            "src/a.ts"
+        );
         assert_eq!(BString::from(printer.posix_path(b"node:fs")), "node:fs");
     }
 }

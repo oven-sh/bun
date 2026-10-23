@@ -13,8 +13,7 @@ use crate::lower::captures::{self, Capture};
 use crate::lower::member::{self, PropertyName};
 use crate::lower::private_names::{self, PrivateHolder};
 use crate::lower::scope::{
-    ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, bindings, environments,
-    variables,
+    ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, bindings, environments, variables,
 };
 use crate::lower::{FileLowering, FunctionLowering, commonjs, function, layouts, module};
 use crate::modules::{ImportBinding, Shape, SyntheticExportId};
@@ -74,11 +73,7 @@ fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
 }
 
 // A function keeps its top-level lexical declarations in an environment of their own, inside the environment of its variables: a `var` of the evaluated text that meets one of them is a SyntaxError.
-fn compute_scope_depths(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
-    innermost: ScopeId,
-) -> ScopeDepths {
+fn compute_scope_depths(hir: &hir::File<'_>, bound: &Bound<'_>, innermost: ScopeId) -> ScopeDepths {
     let mut depths = ScopeDepths::new();
     let mut scope = innermost;
     while scope.is_some() {
@@ -226,7 +221,10 @@ pub(super) fn collect_eval_bindings(
     let mut builder = EvalScopeBuilder::default();
     for symbol in bound.ids(eval_scope.symbols) {
         let Some(depth) = find_entry(&depths, bound.symbol_scope(symbol)) else {
-            debug_assert!(false, "a binding visible to eval is declared in an enclosing scope");
+            debug_assert!(
+                false,
+                "a binding visible to eval is declared in an enclosing scope"
+            );
             continue;
         };
         add_eval_symbol(lowering, &mut builder, symbol, depth);
@@ -262,15 +260,25 @@ fn add_eval_symbol(
     depth: u32,
 ) {
     let bound = lowering.file.bound;
-    let name = lowering.file.intern_atom(find_spelled_name(lowering.file, symbol));
+    let name = lowering
+        .file
+        .intern_atom(find_spelled_name(lowering.file, symbol));
     let declared_as = bound.binding_kind(symbol);
-    let depth = if is_lexical_declaration(declared_as) { depth - 1 } else { depth };
+    let depth = if is_lexical_declaration(declared_as) {
+        depth - 1
+    } else {
+        depth
+    };
     let binding = create_binding(compute_binding_kind(declared_as), Some(name), depth);
     match lowering.file.scopes.form(symbol) {
         BindingForm::Stored => builder.add_stored(lowering, binding, BindingRef::Symbol(symbol)),
         BindingForm::Callee { function } => {
             let scope = bound.fns[function.idx()].scope;
-            builder.add_stored(lowering, binding, BindingRef::Slot(scope, ScopeSlot::Callee));
+            builder.add_stored(
+                lowering,
+                binding,
+                BindingRef::Slot(scope, ScopeSlot::Callee),
+            );
         }
         BindingForm::MappedArgument { unit, index } => {
             add_eval_mapped_argument(lowering, builder, binding, unit, index);
@@ -312,7 +320,11 @@ fn add_eval_import(
     symbol: SymbolId,
     name: StringId,
 ) {
-    let import = lowering.file.inputs.modules.import_binding(lowering.file.file, symbol);
+    let import = lowering
+        .file
+        .inputs
+        .modules
+        .import_binding(lowering.file.file, symbol);
     match import {
         ImportBinding::Variable(variable) => {
             builder.add_variable(lowering, binding, VariableKey::Symbol(variable));
@@ -344,14 +356,22 @@ fn add_eval_scope_bindings(
     depth: u32,
 ) {
     let binding = create_binding(EvalBindingKind::EvalVariables, None, depth);
-    builder.add_stored(lowering, binding, BindingRef::Slot(scope, ScopeSlot::EvalVariables));
+    builder.add_stored(
+        lowering,
+        binding,
+        BindingRef::Slot(scope, ScopeSlot::EvalVariables),
+    );
     if context.this_scope == Some(scope) {
         add_eval_owner_bindings(lowering, builder, context, scope, depth);
     }
     match lowering.file.bound.scopes[scope.idx()].kind {
         ScopeKind::With(_) => {
             let binding = create_binding(EvalBindingKind::WithObject, None, depth);
-            builder.add_stored(lowering, binding, BindingRef::Slot(scope, ScopeSlot::WithObject));
+            builder.add_stored(
+                lowering,
+                binding,
+                BindingRef::Slot(scope, ScopeSlot::WithObject),
+            );
         }
         ScopeKind::Class(class) => {
             add_eval_class_bindings(lowering, builder, context, class, depth);
@@ -395,13 +415,18 @@ fn add_eval_owner_bindings(
         builder.add_stored(lowering, binding, new_target);
     }
     let this = BindingRef::Slot(scope, ScopeSlot::This);
-    if context.flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
+    if context
+        .flags
+        .contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
         || has_location(lowering.file, this)
     {
         let binding = create_binding(EvalBindingKind::This, None, depth);
         builder.add_stored(lowering, binding, this);
     }
-    if context.flags.contains(EvalScopeFlags::ALLOWS_SUPER_PROPERTY) {
+    if context
+        .flags
+        .contains(EvalScopeFlags::ALLOWS_SUPER_PROPERTY)
+    {
         let binding = create_binding(EvalBindingKind::HomeObject, None, depth);
         let home_object = match function::get_home_object(lowering) {
             (HomeObjectKind::Object, object) => object,
@@ -442,10 +467,14 @@ fn add_eval_class_bindings(
     let bound = lowering.file.bound;
     let scope = bound.class_scope[class.idx()];
     let stored_class_object = class_slot(scope, ClassSlot::ClassObject);
-    let allows_super_call = context.class == Some(class)
-        && context.flags.contains(EvalScopeFlags::ALLOWS_SUPER_CALL);
-    let has_static_name = bound.private_names_of_class(class).any(|(_, name)| name.is_static);
-    let has_instance_name = bound.private_names_of_class(class).any(|(_, name)| !name.is_static);
+    let allows_super_call =
+        context.class == Some(class) && context.flags.contains(EvalScopeFlags::ALLOWS_SUPER_CALL);
+    let has_static_name = bound
+        .private_names_of_class(class)
+        .any(|(_, name)| name.is_static);
+    let has_instance_name = bound
+        .private_names_of_class(class)
+        .any(|(_, name)| !name.is_static);
     if allows_super_call || has_static_name {
         let binding = create_binding(EvalBindingKind::ClassObject, None, depth);
         builder.add_stored(lowering, binding, stored_class_object);

@@ -12,7 +12,6 @@ import {
 } from "./declarations.ts";
 import { targetArchitectures, type TargetArchitecture } from "./model.ts";
 import { pathOfNativeBinding, pathOfNativeFunction } from "./paths.ts";
-import { targetPlatforms } from "./vocabulary.ts";
 import type {
   Bound,
   BuiltinPath,
@@ -63,10 +62,12 @@ import type {
   TypeSpec,
   UseSpec,
 } from "./vocabulary.ts";
+import { targetPlatforms } from "./vocabulary.ts";
 
 export type { Declaration, HostReadUse } from "./declarations.ts";
 export type { TargetArchitecture } from "./model.ts";
 export type * from "./vocabulary.ts";
+export { null_ as null, undefined_ as undefined };
 
 const neverSpec: TypeSpec = { type: "Never" };
 const anythingSpec: TypeSpec = { type: "Anything" };
@@ -105,7 +106,10 @@ export class TableType {
   }
 
   #converting(conversion: Conversion | undefined, modifier: string, coercions: Coercions = {}): TableType {
-    assert(this.parameter.conversion === "None", `${modifier}: the type already has the conversion ${this.parameter.conversion}`);
+    assert(
+      this.parameter.conversion === "None",
+      `${modifier}: the type already has the conversion ${this.parameter.conversion}`,
+    );
     assert(conversion !== undefined, `${modifier} does not apply to this type`);
     return this.#with({ conversion }, coercions);
   }
@@ -175,8 +179,14 @@ export class TableType {
   }
 
   pristine(...aspects: readonly PristineAspect[]): TableType {
-    assert(!aspects.includes("AsCreated"), ".pristine() names what a test at run time answers, and none answers AsCreated");
-    assert(!aspects.includes("Dense"), ".pristine() names what a test at run time answers, and none answers Dense: a new array is .dense");
+    assert(
+      !aspects.includes("AsCreated"),
+      ".pristine() names what a test at run time answers, and none answers AsCreated",
+    );
+    assert(
+      !aspects.includes("Dense"),
+      ".pristine() names what a test at run time answers, and none answers Dense: a new array is .dense",
+    );
     const accepted: TypeSpec = { ...this.#instance(".pristine()"), pristine: aspects };
     return this.#with({ accepted, converted: accepted });
   }
@@ -258,7 +268,6 @@ export const never = strict(neverSpec);
 export const notPassed = strict(primitiveSpec("NotPassed"));
 const undefined_ = strict(primitiveSpec("Undefined"));
 const null_ = strict(unionOf([primitiveSpec("Undefined"), primitiveSpec("Null")]));
-export { null_ as null, undefined_ as undefined };
 export const strictNull = strict(primitiveSpec("Null"));
 export const bool = strict(primitiveSpec("Boolean"), { loose: "ToBoolean" });
 export const f64 = strict(primitiveSpec("Number"), { loose: "ToNumber", looseWithBigInt: "ToNumeric" });
@@ -271,7 +280,9 @@ export const primitiveValue = strict(
   unionOf((["Undefined", "Null", "Boolean", "Number", "String", "Symbol", "BigInt"] as const).map(primitiveSpec)),
   { loose: "ToPrimitive" },
 );
-export const propertyKey = strict(unionOf([primitiveSpec("String"), primitiveSpec("Symbol")]), { loose: "ToPropertyKey" });
+export const propertyKey = strict(unionOf([primitiveSpec("String"), primitiveSpec("Symbol")]), {
+  loose: "ToPropertyKey",
+});
 export const plainData = strict({ type: "PlainData" });
 
 const integers = (minimum: Bound, maximum: Bound, coercions: Coercions = {}) =>
@@ -316,7 +327,10 @@ export type PlaceLike = TableType | PlaceSpec;
 function placeOf(place: PlaceLike): PlaceSpec {
   if (!(place instanceof TableType)) {
     // Nobody type-checks a declaration file before it runs, and what is no place would count as none.
-    assert(typeof place === "object" && place !== null && "place" in place, `${JSON.stringify(place)} is no place: an operand is b.operand("name")`);
+    assert(
+      typeof place === "object" && place !== null && "place" in place,
+      `${JSON.stringify(place)} is no place: an operand is b.operand("name")`,
+    );
     return place;
   }
   const { spec } = place;
@@ -413,8 +427,16 @@ export const reachableValuesStoredIn = (place: PlaceLike): UseSpec => ({
   in: placeOf(place),
   transitively: true,
 });
-export const readByKey = (key: KeySpec, to: PlaceLike = result): UseSpec => ({ use: "ReadsByKey", key, to: placeOf(to) });
-export const storedByKey = (key: KeySpec, value: PlaceLike): UseSpec => ({ use: "StoresByKey", key, value: placeOf(value) });
+export const readByKey = (key: KeySpec, to: PlaceLike = result): UseSpec => ({
+  use: "ReadsByKey",
+  key,
+  to: placeOf(to),
+});
+export const storedByKey = (key: KeySpec, value: PlaceLike): UseSpec => ({
+  use: "StoresByKey",
+  key,
+  value: placeOf(value),
+});
 export const deletedByKey = (key: KeySpec): UseSpec => ({ use: "DeletesByKey", key });
 // The answer depends on whether the object has the property, and nothing of its value is read.
 export const testedByKey = (key: KeySpec): UseSpec => ({ use: "TestsByKey", key });
@@ -436,7 +458,11 @@ export const accessorReadByKey = (accessor: "Getter" | "Setter", key: KeySpec, t
   key,
   to: placeOf(to),
 });
-export const definedBy = (key: KeySpec, descriptor: OperandName): UseSpec => ({ use: "TakesDescriptor", key, descriptor });
+export const definedBy = (key: KeySpec, descriptor: OperandName): UseSpec => ({
+  use: "TakesDescriptor",
+  key,
+  descriptor,
+});
 export const definedByMap = (descriptors: OperandName): UseSpec => ({ use: "TakesDescriptorMap", descriptors });
 // The result is a map of descriptors of the own properties of the object: whoever is defined by that map gets those properties.
 export const describedByResult: UseSpec = { use: "DescribesOwnProperties" };
@@ -620,7 +646,11 @@ function conditionOn(name: OperandName, isOneOf: readonly string[], startsWith: 
 
 export const whenOperand = (name: OperandName, ...isOneOf: readonly string[]) => conditionOn(name, isOneOf, []);
 // Native code acts only where the method is called on that entry: an object that inherits the method, or borrows it, has nothing behind it.
-export const whenOperandOfCallOn = (receiver: BuiltinPath, name: OperandName, ...isOneOf: readonly string[]): ConditionSpec => ({
+export const whenOperandOfCallOn = (
+  receiver: BuiltinPath,
+  name: OperandName,
+  ...isOneOf: readonly string[]
+): ConditionSpec => ({
   ...conditionOn(name, isOneOf, []),
   calledOn: receiver,
 });
@@ -660,7 +690,10 @@ export interface UndeclaredSignature {
 }
 
 export const otherwise: UndeclaredSignature = { otherwise: true };
-export const otherwiseBy = (implementation: ImplementationSpec): UndeclaredSignature => ({ otherwise: true, implementation });
+export const otherwiseBy = (implementation: ImplementationSpec): UndeclaredSignature => ({
+  otherwise: true,
+  implementation,
+});
 
 export type FunctionField = (SignatureOptions & EntryColumns) | UndeclaredSignature;
 
@@ -720,7 +753,8 @@ export type TextByTarget = Readonly<Partial<Record<TargetPlatform | TargetArchit
 
 function textsByTarget(texts: TextByTarget): TargetTextSpec[] {
   const targets: readonly string[] = [...targetPlatforms, ...targetArchitectures];
-  for (const key of Object.keys(texts)) assert(targets.includes(key), `${key} is neither a platform nor an architecture`);
+  for (const key of Object.keys(texts))
+    assert(targets.includes(key), `${key} is neither a platform nor an architecture`);
   const byPlatform = targetPlatforms.flatMap((platform): TargetTextSpec[] => {
     const text = texts[platform];
     return text === undefined ? [] : [{ text, platforms: [platform], architectures: targetArchitectures }];
@@ -729,7 +763,10 @@ function textsByTarget(texts: TextByTarget): TargetTextSpec[] {
     const text = texts[architecture];
     return text === undefined ? [] : [{ text, platforms: targetPlatforms, architectures: [architecture] }];
   });
-  assert(byPlatform.length === 0 || byArchitecture.length === 0, "the platform or the architecture decides a text, not both");
+  assert(
+    byPlatform.length === 0 || byArchitecture.length === 0,
+    "the platform or the architecture decides a text, not both",
+  );
   return [...byPlatform, ...byArchitecture];
 }
 
@@ -746,12 +783,7 @@ export const property = (holds: TableType | TypeByPlatform = any, options: Prope
   new PropertyField(holds, options);
 
 export type Field =
-  | FunctionField
-  | readonly FunctionField[]
-  | GetterField
-  | readonly GetterField[]
-  | ConstantField
-  | PropertyField;
+  FunctionField | readonly FunctionField[] | GetterField | readonly GetterField[] | ConstantField | PropertyField;
 
 const entryColumnKeys = [
   "mutability",
@@ -834,7 +866,10 @@ function pick<T extends object, K extends keyof T>(from: T, keys: readonly K[]):
 /** `field` without what applies to every overload, for another overload that is made of it. */
 export function withoutEntryColumns<Field extends EntryColumns>(field: Field): Omit<Field, keyof EntryColumns> {
   const isEntryColumn = (key: string) => (entryColumnKeys as readonly string[]).includes(key);
-  return Object.fromEntries(Object.entries(field).filter(([key]) => !isEntryColumn(key))) as Omit<Field, keyof EntryColumns>;
+  return Object.fromEntries(Object.entries(field).filter(([key]) => !isEntryColumn(key))) as Omit<
+    Field,
+    keyof EntryColumns
+  >;
 }
 
 function collectEntryColumns(path: BuiltinPath, fields: readonly EntryColumns[]): EntryColumns {
@@ -882,9 +917,10 @@ function signatureOf(
 ): SignatureDeclaration {
   if ("otherwise" in field) return undeclaredSignature(mode, field);
   assertColumns(path, field, known);
-  const parameters = Object.entries(field.args ?? {}).map(
-    ([name, type]): ParameterDeclaration => ({ name, type: type.parameter }),
-  );
+  const parameters = Object.entries(field.args ?? {}).map(([name, type]): ParameterDeclaration => ({
+    name,
+    type: type.parameter,
+  }));
   return {
     ...pick(field, signatureColumnKeys),
     mode,
@@ -943,7 +979,9 @@ function accessorMember(path: BuiltinPath, kind: MemberKind, ...fields: readonly
 
 function gettersOf(field: Field): readonly GetterField[] | null {
   const fields: readonly object[] = Array.isArray(field) ? field : [field];
-  return fields.length > 0 && fields.every(overload => "getter" in overload) ? (fields as readonly GetterField[]) : null;
+  return fields.length > 0 && fields.every(overload => "getter" in overload)
+    ? (fields as readonly GetterField[])
+    : null;
 }
 
 function memberOf(path: BuiltinPath, functionKind: "Function" | "Method", field: Field): MemberDeclaration {
@@ -1173,13 +1211,19 @@ export const construction = (path: BuiltinPath, field: FunctionField | readonly 
   }),
 ];
 // What a function that is no class does under `new`, where it can be constructed.
-export const constructionOfFunction = (path: BuiltinPath, field: FunctionField | readonly FunctionField[]): Declaration[] => [
+export const constructionOfFunction = (
+  path: BuiltinPath,
+  field: FunctionField | readonly FunctionField[],
+): Declaration[] => [
   memberWith(path, "Function", {
     signatures: overloadsOf(field).map(overload => signatureOf(path, "Construct", overload)),
   }),
 ];
 // What a constructor does when it is called without `new`.
-export const callOfConstructor = (path: BuiltinPath, field: FunctionField | readonly FunctionField[]): Declaration[] => [
+export const callOfConstructor = (
+  path: BuiltinPath,
+  field: FunctionField | readonly FunctionField[],
+): Declaration[] => [
   memberWith(path, "Constructor", {
     signatures: overloadsOf(field).map(overload => signatureOf(path, "Call", overload)),
   }),
@@ -1205,12 +1249,14 @@ export class OptionalLayoutField {
 
 export const maybeAbsent = (type: TableType) => new OptionalLayoutField(type);
 
-export function layout(name: LayoutName, fields: Readonly<Record<string, TableType | OptionalLayoutField>>): Declaration[] {
-  const declared = Object.entries(fields).map(
-    ([field, type]): LayoutFieldDeclaration =>
-      type instanceof OptionalLayoutField
-        ? { name: field, isOptional: true, type: type.type.spec }
-        : { name: field, isOptional: false, type: type.spec },
+export function layout(
+  name: LayoutName,
+  fields: Readonly<Record<string, TableType | OptionalLayoutField>>,
+): Declaration[] {
+  const declared = Object.entries(fields).map(([field, type]): LayoutFieldDeclaration =>
+    type instanceof OptionalLayoutField
+      ? { name: field, isOptional: true, type: type.type.spec }
+      : { name: field, isOptional: false, type: type.spec },
   );
   return [{ declares: "Layout", name, isTuple: false, fields: declared }];
 }
@@ -1232,9 +1278,11 @@ export const inherits = (path: BuiltinPath, prototype: BuiltinPath | null): Decl
 ];
 export const name = (...texts: readonly string[]): Declaration[] => texts.map(text => ({ declares: "Name", text }));
 
-export const intrinsic = (intrinsicName: string, position: IntrinsicPosition, meaning: IntrinsicSpec): Declaration[] => [
-  { declares: "Intrinsic", name: intrinsicName, position, isPrefixedGlobal: false, meaning },
-];
+export const intrinsic = (
+  intrinsicName: string,
+  position: IntrinsicPosition,
+  meaning: IntrinsicSpec,
+): Declaration[] => [{ declares: "Intrinsic", name: intrinsicName, position, isPrefixedGlobal: false, meaning }];
 export const prefixedGlobal = (globalName: string, meaning: IntrinsicSpec): Declaration[] => [
   { declares: "Intrinsic", name: globalName, position: "Value", isPrefixedGlobal: true, meaning },
 ];
@@ -1274,7 +1322,11 @@ export const dropped: readonly HostUseSpec[] = [];
 export const keptIn = (cell: string): HostUseSpec => ({ read: "Kept", cell });
 // From then on the entry holds the value: it is the function object of a function, what a property holds.
 export const isValueOf = (builtin: BuiltinPath): HostUseSpec => ({ read: "IsValueOf", builtin });
-export const passedTo = (builtin: BuiltinPath, argument: number): HostUseSpec => ({ read: "PassedTo", builtin, argument });
+export const passedTo = (builtin: BuiltinPath, argument: number): HostUseSpec => ({
+  read: "PassedTo",
+  builtin,
+  argument,
+});
 export const calledByHost = (options: HostCallOptions): HostUseSpec => ({
   read: "Called",
   call: {
@@ -1322,14 +1374,22 @@ export const hostObject = (cell: string, options: HostObjectOptions): Declaratio
         ...Object.entries(options.fields ?? {}).map(([field, values]) => ({ name: field, values: valuesOf(values) })),
         ...(options.otherNames === undefined ? [] : [{ name: null, values: valuesOf(options.otherNames) }]),
       ],
-      internalFields: Object.entries(options.internalFields ?? {}).map(([index, uses]) => ({ index: Number(index), uses })),
+      internalFields: Object.entries(options.internalFields ?? {}).map(([index, uses]) => ({
+        index: Number(index),
+        uses,
+      })),
       keepsStringsOfStoredValues: options.keepsStringsOfStoredValues ?? false,
     },
   ];
 };
 
 // A function that native code makes from a host function of its own and hands to code of the library, which has no other way to it.
-export function hostFunction(cell: string, file: string, symbol: string, field: FunctionField | readonly FunctionField[]): Declaration[] {
+export function hostFunction(
+  cell: string,
+  file: string,
+  symbol: string,
+  field: FunctionField | readonly FunctionField[],
+): Declaration[] {
   return [
     {
       declares: "NativeBinding",
@@ -1399,7 +1459,10 @@ export const startup = (options: StartupOptions): Declaration[] => [
   },
 ];
 
-export const seenCodeOnly = (options: { holders?: readonly BuiltinPath[]; nativeFiles?: readonly string[] }): Declaration[] => [
+export const seenCodeOnly = (options: {
+  holders?: readonly BuiltinPath[];
+  nativeFiles?: readonly string[];
+}): Declaration[] => [
   { declares: "SeenCodeOnly", holders: options.holders ?? [], nativeFiles: options.nativeFiles ?? [] },
 ];
 

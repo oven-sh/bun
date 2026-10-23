@@ -16,7 +16,12 @@ function textAt(file: Buffer, offset: number) {
 }
 
 function sectionsOf(file: Buffer) {
-  const [start, size, count, names] = [Number(file.readBigUInt64LE(40)), file.readUInt16LE(58), file.readUInt16LE(60), file.readUInt16LE(62)];
+  const [start, size, count, names] = [
+    Number(file.readBigUInt64LE(40)),
+    file.readUInt16LE(58),
+    file.readUInt16LE(60),
+    file.readUInt16LE(62),
+  ];
   const sections = Array.from({ length: count }, (_, index) => {
     const at = start + index * size;
     return {
@@ -64,17 +69,31 @@ console.log(fibonacciOfTheTest(process.argv.length + 8), new RepositoryOfTheTest
 `;
 
 async function build(cwd: string, outfile: string, ...flags: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile], cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile],
+    cwd,
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ complaints: stderr.split("\n").filter(line => /^(warn|error)\b/.test(line)), exitCode }).toEqual({ complaints: [], exitCode: 0 });
+  expect({ complaints: stderr.split("\n").filter(line => /^(warn|error)\b/.test(line)), exitCode }).toEqual({
+    complaints: [],
+    exitCode: 0,
+  });
   return join(cwd, outfile);
 }
 
 describe.skipIf(!isLinux)("--aot-symbols", () => {
   test("the functions of the program join the symbols that Bun has", async () => {
     using dir = tempDir("aot-symbols", { "main.ts": main });
-    const [without, withThem] = [symbolsOf(await build(String(dir), "without")), symbolsOf(await build(String(dir), "with", "--aot-symbols"))];
-    const isOfTheTest = (symbol: { name: string }) => symbol.name.includes("OfTheTest") || symbol.name.includes("InTheTest");
+    const [without, withThem] = [
+      symbolsOf(await build(String(dir), "without")),
+      symbolsOf(await build(String(dir), "with", "--aot-symbols")),
+    ];
+    const isOfTheTest = (symbol: { name: string }) =>
+      symbol.name.includes("OfTheTest") || symbol.name.includes("InTheTest");
     expect(without.symbols.filter(isOfTheTest)).toEqual([]);
 
     const own = withThem.symbols.filter(isOfTheTest);
@@ -88,13 +107,23 @@ describe.skipIf(!isLinux)("--aot-symbols", () => {
     }
 
     // Every symbol of Bun is still there, and local symbols come first, as the format wants.
-    const added = new Set(withThem.symbols.filter(symbol => symbol.section === ".bun" && symbol.isLocal && symbol.isFunction));
+    const added = new Set(
+      withThem.symbols.filter(symbol => symbol.section === ".bun" && symbol.isLocal && symbol.isFunction),
+    );
     expect(withThem.symbols.filter(symbol => !added.has(symbol))).toEqual(without.symbols);
     expect(withThem.symbols.slice(0, withThem.firstGlobal).filter(symbol => !symbol.isLocal)).toEqual([]);
     expect(withThem.symbols.slice(withThem.firstGlobal).filter(symbol => symbol.isLocal)).toEqual([]);
     expect(withThem.sections.map(section => section.name)).toContain(".debug_frame");
 
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "with")], env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    expect({ stdout: await proc.stdout.text(), stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stdout: "55 row 1\n", stderr: "", exitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "with")],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stdout: await proc.stdout.text(), stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual(
+      { stdout: "55 row 1\n", stderr: "", exitCode: 0 },
+    );
   });
 });

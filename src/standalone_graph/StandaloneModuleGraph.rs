@@ -304,7 +304,10 @@ impl StandaloneModuleGraph {
         // An entry point that was compiled ahead of time is listed below, under the name of its source.
         let is_compiled_entry_point = |index: usize| {
             let program = self.compiled_program.as_ref();
-            program.is_some_and(|program| u32::try_from(index).is_ok_and(|index| program.entry_point_by_file_index(index).is_some()))
+            program.is_some_and(|program| {
+                u32::try_from(index)
+                    .is_ok_and(|index| program.entry_point_by_file_index(index).is_some())
+            })
         };
         for (index, key) in self.files.keys().iter().enumerate() {
             if !is_compiled_entry_point(index) {
@@ -1256,7 +1259,11 @@ impl StandaloneModuleGraph {
                 length: raw_len,
                 file: payload_file,
             };
-            Some(compiled_program::read(&payload, &mut record_at, modules_list_count)?)
+            Some(compiled_program::read(
+                &payload,
+                &mut record_at,
+                modules_list_count,
+            )?)
         } else {
             None
         };
@@ -2652,7 +2659,10 @@ pub(crate) fn inject<'a>(
                 write_elf(
                     cloned_executable_fd,
                     template,
-                    Some(Original { file, mapping: Some((addresses.start, addresses.end)) }),
+                    Some(Original {
+                        file,
+                        mapping: Some((addresses.start, addresses.end)),
+                    }),
                     bytes,
                     additions.image,
                     additions.symbols,

@@ -149,7 +149,9 @@ impl RuntimeModules {
 
     #[cfg(test)]
     pub(crate) fn public_specifiers(&self) -> impl Iterator<Item = &'static [u8]> + '_ {
-        self.public_specifiers.iter().map(|&(_, specifier)| specifier)
+        self.public_specifiers
+            .iter()
+            .map(|&(_, specifier)| specifier)
     }
 
     pub(crate) fn find_modules(&self, prefix: &[u8], suffix: &[u8]) -> Vec<HostModuleId> {
@@ -223,11 +225,7 @@ fn prelude_archive_name(name: &str) -> Vec<u8> {
     [&b"prelude/"[..], name.as_bytes()].concat()
 }
 
-fn resolve_alias(
-    manifest: &Manifest,
-    specifier: &[u8],
-    aliases: Cfg,
-) -> Option<RuntimeResolution> {
+fn resolve_alias(manifest: &Manifest, specifier: &[u8], aliases: Cfg) -> Option<RuntimeResolution> {
     let alias = Alias::get(specifier, Target::Bun, aliases)?;
     Some(match manifest.module_by_specifier(alias.path.as_bytes()) {
         Some(id) => RuntimeResolution::Module(HostModuleId(id)),
@@ -238,7 +236,11 @@ fn resolve_alias(
 // Some names are there for Bun's own tests alone. An executable answers none of them.
 fn is_public(module: HostModuleId) -> bool {
     let module = RuntimeModule::from_registry_id(module.0);
-    module.is_some_and(|it| table::module_data(it).flags.contains(table::ModuleFlags::IS_PUBLIC))
+    module.is_some_and(|it| {
+        table::module_data(it)
+            .flags
+            .contains(table::ModuleFlags::IS_PUBLIC)
+    })
 }
 
 fn collect_public_specifiers(manifest: &Manifest) -> Vec<(HostModuleId, &'static [u8])> {
@@ -283,10 +285,18 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     }
     add(b"tsconfig.json", RuntimeFileKind::Configuration, None);
     let package_json = Some(PACKAGE_JSON);
-    add(b"package.json", RuntimeFileKind::Configuration, package_json);
+    add(
+        b"package.json",
+        RuntimeFileKind::Configuration,
+        package_json,
+    );
     for &(name, text) in prelude::FILES {
         let contents = Some(text.as_bytes());
-        add(&prelude_archive_name(name), RuntimeFileKind::Functions, contents);
+        add(
+            &prelude_archive_name(name),
+            RuntimeFileKind::Functions,
+            contents,
+        );
     }
     files
 }
@@ -458,7 +468,11 @@ mod tests {
         let runtime = runtime_modules();
         for path in runtime.files.keys() {
             let text = runtime.read(path);
-            assert!(text.is_some_and(|text| !text.is_empty()), "{}", BStr::new(path));
+            assert!(
+                text.is_some_and(|text| !text.is_empty()),
+                "{}",
+                BStr::new(path)
+            );
         }
     }
 
@@ -472,7 +486,12 @@ mod tests {
         }
         for path in runtime.function_files_without_ids() {
             let kind = runtime.file_kind(&path);
-            assert_eq!(kind, Some(RuntimeFileKind::Functions), "{}", BStr::new(&path));
+            assert_eq!(
+                kind,
+                Some(RuntimeFileKind::Functions),
+                "{}",
+                BStr::new(&path)
+            );
         }
         let unknown_function = RuntimeFunction(u32::MAX);
         assert_eq!(runtime.function_file_path(unknown_function), None);
@@ -574,7 +593,10 @@ mod tests {
         let Some(DataValue::Object(properties)) = value else {
             panic!("expected an object, got {value:?}");
         };
-        let keys: Vec<&[u8]> = properties.iter().map(|(key, _)| atoms.bytes(*key)).collect();
+        let keys: Vec<&[u8]> = properties
+            .iter()
+            .map(|(key, _)| atoms.bytes(*key))
+            .collect();
         assert_eq!(keys, [&b"name"[..]]);
     }
 
@@ -596,26 +618,41 @@ mod tests {
         let sources = [
             (module.to_vec(), b"export {};".to_vec()),
             (functions.clone(), b"export function probe() {}".to_vec()),
-            (b"/project/main.ts".to_vec(), b"import \"node:os\";".to_vec()),
+            (
+                b"/project/main.ts".to_vec(),
+                b"import \"node:os\";".to_vec(),
+            ),
             (b"/$bun/js/node/missing.ts".to_vec(), b"export {};".to_vec()),
         ];
         let replaced = runtime_modules().with_replaced_sources(&sources);
 
         assert_eq!(replaced.read(module).unwrap(), &b"export {};"[..]);
-        assert_eq!(replaced.read(&functions).unwrap(), &b"export function probe() {}"[..]);
+        assert_eq!(
+            replaced.read(&functions).unwrap(),
+            &b"export function probe() {}"[..]
+        );
         let kind = RuntimeFileKind::Module(RuntimeModule::NodeOs);
         assert_eq!(replaced.file_kind(module), Some(kind));
-        assert_eq!(replaced.file_kind(&functions), Some(RuntimeFileKind::Functions));
+        assert_eq!(
+            replaced.file_kind(&functions),
+            Some(RuntimeFileKind::Functions)
+        );
         let os = replaced.resolve_module(b"node:os", b"");
         assert_eq!(source_path(&replaced, os), module);
         let validators = replaced.resolve_module(b"internal/validators", module);
-        assert_eq!(validators, unchanged.resolve_module(b"internal/validators", module));
+        assert_eq!(
+            validators,
+            unchanged.resolve_module(b"internal/validators", module)
+        );
         assert!(validators.is_some());
 
         assert_eq!(replaced.files.len(), unchanged.files.len());
         assert_eq!(replaced.file_kind(b"/project/main.ts"), None);
         assert_eq!(replaced.file_kind(b"/$bun/js/node/missing.ts"), None);
-        assert_eq!(replaced.entries(b"/$bun/js/node"), unchanged.entries(b"/$bun/js/node"));
+        assert_eq!(
+            replaced.entries(b"/$bun/js/node"),
+            unchanged.entries(b"/$bun/js/node")
+        );
         let other: &[u8] = b"/$bun/js/node/fs.ts";
         assert_eq!(replaced.read(other), unchanged.read(other));
     }
@@ -628,7 +665,10 @@ mod tests {
             assert_eq!(runtime.resolve_module(specifier, b""), HOST_VALUE);
         }
         let importer: &[u8] = b"/$bun/js/node/fs.ts";
-        assert_eq!(runtime.resolve_module(b"internal/validators", importer), HOST_VALUE);
+        assert_eq!(
+            runtime.resolve_module(b"internal/validators", importer),
+            HOST_VALUE
+        );
         assert_eq!(runtime.resolve_module(b"./nothing", b""), None);
         assert!(runtime.find_modules(b"", b"").is_empty());
         assert_eq!(runtime.module_path(RuntimeModule::NodeFs), None);

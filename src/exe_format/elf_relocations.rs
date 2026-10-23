@@ -22,7 +22,9 @@ const WORD_SIZE: u64 = 8;
 const WORDS_IN_A_BITMAP: u64 = 63;
 
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, ImageError> {
-    let word = bytes.get(offset..offset + 8).ok_or(ImageError::MalformedHeaders)?;
+    let word = bytes
+        .get(offset..offset + 8)
+        .ok_or(ImageError::MalformedHeaders)?;
     Ok(u64::from_le_bytes(word.try_into().expect("eight bytes")))
 }
 
@@ -60,7 +62,8 @@ fn pack(addresses: &[u64]) -> Vec<u64> {
             let mut bitmap = 0u64;
             while at < addresses.len() {
                 let distance = addresses[at].wrapping_sub(base);
-                if distance >= WORDS_IN_A_BITMAP * WORD_SIZE || distance % WORD_SIZE != 0 {
+                if distance >= WORDS_IN_A_BITMAP * WORD_SIZE || !distance.is_multiple_of(WORD_SIZE)
+                {
                     break;
                 }
                 bitmap |= 1 << (distance / WORD_SIZE);
@@ -84,7 +87,13 @@ struct Table {
 }
 
 impl Table {
-    fn shrink(&self, elf: &mut [u8], ehdr: &crate::elf::Elf64_Ehdr, section_type: u32, kept_end: usize) {
+    fn shrink(
+        &self,
+        elf: &mut [u8],
+        ehdr: &crate::elf::Elf64_Ehdr,
+        section_type: u32,
+        kept_end: usize,
+    ) {
         elf[kept_end..self.end].fill(0);
         write_u64(elf, self.size_entry, (kept_end - self.start) as u64);
         for index in 0..usize::from(ehdr.e_shnum) {
@@ -101,14 +110,25 @@ impl Table {
     }
 }
 
-fn remove_packed_relocations(elf: &mut [u8], ehdr: &crate::elf::Elf64_Ehdr, table: &Table, removed: &[AddressRange]) -> Result<u64, ImageError> {
+fn remove_packed_relocations(
+    elf: &mut [u8],
+    ehdr: &crate::elf::Elf64_Ehdr,
+    table: &Table,
+    removed: &[AddressRange],
+) -> Result<u64, ImageError> {
     let offsets = (table.start..table.end).step_by(WORD_SIZE as usize);
-    let words = offsets.map(|at| read_u64(elf, at)).collect::<Result<Vec<u64>, ImageError>>()?;
+    let words = offsets
+        .map(|at| read_u64(elf, at))
+        .collect::<Result<Vec<u64>, ImageError>>()?;
     let all = unpack(words.iter().copied());
     if !all.is_sorted() {
         return Ok(0);
     }
-    let kept: Vec<u64> = all.iter().copied().filter(|&address| !is_removed(removed, address)).collect();
+    let kept: Vec<u64> = all
+        .iter()
+        .copied()
+        .filter(|&address| !is_removed(removed, address))
+        .collect();
     let packed = pack(&kept);
     if kept.len() == all.len() || packed.len() > words.len() {
         return Ok(0);
@@ -116,12 +136,20 @@ fn remove_packed_relocations(elf: &mut [u8], ehdr: &crate::elf::Elf64_Ehdr, tabl
     for (index, &word) in packed.iter().enumerate() {
         write_u64(elf, table.start + index * WORD_SIZE as usize, word);
     }
-    table.shrink(elf, ehdr, SHT_RELR, table.start + packed.len() * WORD_SIZE as usize);
+    table.shrink(
+        elf,
+        ehdr,
+        SHT_RELR,
+        table.start + packed.len() * WORD_SIZE as usize,
+    );
     Ok((all.len() - kept.len()) as u64)
 }
 
 /// Drops the relative relocations whose target is in `removed` (sorted, disjoint), so the loader doesn't dirty those pages.
-pub(crate) fn remove_relative_relocations(elf: &mut [u8], removed: &[AddressRange]) -> Result<u64, ImageError> {
+pub(crate) fn remove_relative_relocations(
+    elf: &mut [u8],
+    removed: &[AddressRange],
+) -> Result<u64, ImageError> {
     let ehdr = read_header(elf)?;
     let relative = match ehdr.e_machine {
         EM_X86_64 => R_X86_64_RELATIVE,
@@ -136,7 +164,9 @@ pub(crate) fn remove_relative_relocations(elf: &mut [u8], removed: &[AddressRang
     let (mut table, mut size_entry, mut count_entry) = (None, None, None);
     let (mut packed_table, mut packed_size_entry) = (None, None);
     let dynamic_start = dynamic.p_offset as usize;
-    for entry in (dynamic_start..dynamic_start + dynamic.p_filesz as usize).step_by(DYNAMIC_ENTRY_SIZE) {
+    for entry in
+        (dynamic_start..dynamic_start + dynamic.p_filesz as usize).step_by(DYNAMIC_ENTRY_SIZE)
+    {
         match read_u64(elf, entry)? {
             DT_NULL => break,
             DT_RELA => table = Some(read_u64(elf, entry + 8)?),
@@ -147,21 +177,39 @@ pub(crate) fn remove_relative_relocations(elf: &mut [u8], removed: &[AddressRang
             _ => {}
         }
     }
-    let locate = |elf: &[u8], address: u64, size_entry: usize, entry_size: usize| -> Result<Table, ImageError> {
+    let locate = |elf: &[u8],
+                  address: u64,
+                  size_entry: usize,
+                  entry_size: usize|
+     -> Result<Table, ImageError> {
         let size = read_u64(elf, size_entry)?;
         let load = headers
             .iter()
-            .find(|load| load.p_type == PT_LOAD && load.p_vaddr <= address && address + size <= load.p_vaddr + load.p_filesz)
+            .find(|load| {
+                load.p_type == PT_LOAD
+                    && load.p_vaddr <= address
+                    && address + size <= load.p_vaddr + load.p_filesz
+            })
             .ok_or(ImageError::MalformedHeaders)?;
         let start = (load.p_offset + (address - load.p_vaddr)) as usize;
         let end = start + size as usize;
-        if end > elf.len() || size as usize % entry_size != 0 {
+        if end > elf.len() || !(size as usize).is_multiple_of(entry_size) {
             return Err(ImageError::MalformedHeaders);
         }
-        Ok(Table { address, size_entry, start, end })
+        Ok(Table {
+            address,
+            size_entry,
+            start,
+            end,
+        })
     };
     let removed_from_the_packed_table = match (packed_table, packed_size_entry) {
-        (Some(address), Some(size_entry)) => remove_packed_relocations(elf, &ehdr, &locate(elf, address, size_entry, WORD_SIZE as usize)?, removed)?,
+        (Some(address), Some(size_entry)) => remove_packed_relocations(
+            elf,
+            &ehdr,
+            &locate(elf, address, size_entry, WORD_SIZE as usize)?,
+            removed,
+        )?,
         _ => 0,
     };
     let (Some(table), Some(size_entry)) = (table, size_entry) else {
@@ -205,18 +253,31 @@ mod tests {
         ProgramHeaderTable::read(elf, &ehdr).unwrap().headers[DYNAMIC_INDEX].p_offset as usize
     }
 
-    fn with_relocations(architecture: Architecture, relocations: &[(u64, u32)], relative_count: u64) -> Vec<u8> {
+    fn with_relocations(
+        architecture: Architecture,
+        relocations: &[(u64, u32)],
+        relative_count: u64,
+    ) -> Vec<u8> {
         let mut elf = toy_elf(architecture, true);
         let ehdr = read_header(&elf).unwrap();
         let headers = ProgramHeaderTable::read(&elf, &ehdr).unwrap().headers;
         let load = headers
             .iter()
-            .find(|load| load.p_type == PT_LOAD && load.p_offset <= RODATA_OFFSET && RODATA_OFFSET < load.p_offset + load.p_filesz)
+            .find(|load| {
+                load.p_type == PT_LOAD
+                    && load.p_offset <= RODATA_OFFSET
+                    && RODATA_OFFSET < load.p_offset + load.p_filesz
+            })
             .unwrap();
         let table = load.p_vaddr + (RODATA_OFFSET - load.p_offset);
         let size = (relocations.len() * RELOCATION_SIZE) as u64;
         let dynamic = dynamic_offset(&elf);
-        let entries = [(DT_RELA, table), (DT_RELASZ, size), (DT_RELACOUNT, relative_count), (DT_NULL, 0)];
+        let entries = [
+            (DT_RELA, table),
+            (DT_RELASZ, size),
+            (DT_RELACOUNT, relative_count),
+            (DT_NULL, 0),
+        ];
         for (index, (tag, value)) in entries.into_iter().enumerate() {
             write_u64(&mut elf, dynamic + index * DYNAMIC_ENTRY_SIZE, tag);
             write_u64(&mut elf, dynamic + index * DYNAMIC_ENTRY_SIZE + 8, value);
@@ -236,16 +297,28 @@ mod tests {
         let relocations = (TABLE_OFFSET..TABLE_OFFSET + size)
             .step_by(RELOCATION_SIZE)
             .map(|at| {
-                assert_eq!(read_u64(elf, at + 16).unwrap(), read_u64(elf, at).unwrap() + 1);
-                (read_u64(elf, at).unwrap(), read_u64(elf, at + 8).unwrap() as u32)
+                assert_eq!(
+                    read_u64(elf, at + 16).unwrap(),
+                    read_u64(elf, at).unwrap() + 1
+                );
+                (
+                    read_u64(elf, at).unwrap(),
+                    read_u64(elf, at + 8).unwrap() as u32,
+                )
             })
             .collect();
-        (relocations, read_u64(elf, dynamic + 2 * DYNAMIC_ENTRY_SIZE + 8).unwrap())
+        (
+            relocations,
+            read_u64(elf, dynamic + 2 * DYNAMIC_ENTRY_SIZE + 8).unwrap(),
+        )
     }
 
     #[test]
     fn drops_relative_relocations_in_removed_ranges() {
-        for (architecture, relative) in [(Architecture::X86_64, R_X86_64_RELATIVE), (Architecture::Aarch64, R_AARCH64_RELATIVE)] {
+        for (architecture, relative) in [
+            (Architecture::X86_64, R_X86_64_RELATIVE),
+            (Architecture::Aarch64, R_AARCH64_RELATIVE),
+        ] {
             let relocations = [
                 (0x1000, relative),
                 (0x2000, relative),
@@ -256,11 +329,26 @@ mod tests {
                 (0x2010, R_X86_64_GLOB_DAT),
             ];
             let mut elf = with_relocations(architecture, &relocations, 6);
-            let removed = [AddressRange { start: 0x2000, end: 0x3000 }, AddressRange { start: 0x5000, end: 0x6000 }];
+            let removed = [
+                AddressRange {
+                    start: 0x2000,
+                    end: 0x3000,
+                },
+                AddressRange {
+                    start: 0x5000,
+                    end: 0x6000,
+                },
+            ];
             assert_eq!(remove_relative_relocations(&mut elf, &removed), Ok(3));
-            let kept = vec![(0x1000, relative), (0x2ffc, relative), (0x3000, relative), (0x2010, R_X86_64_GLOB_DAT)];
+            let kept = vec![
+                (0x1000, relative),
+                (0x2ffc, relative),
+                (0x3000, relative),
+                (0x2010, R_X86_64_GLOB_DAT),
+            ];
             assert_eq!(read_relocations(&elf), (kept, 3));
-            let tail = TABLE_OFFSET + 4 * RELOCATION_SIZE..TABLE_OFFSET + relocations.len() * RELOCATION_SIZE;
+            let tail = TABLE_OFFSET + 4 * RELOCATION_SIZE
+                ..TABLE_OFFSET + relocations.len() * RELOCATION_SIZE;
             assert!(elf[tail].iter().all(|&byte| byte == 0));
         }
     }
@@ -270,7 +358,11 @@ mod tests {
         let dynamic = dynamic_offset(&elf);
         let table = read_u64(&elf, dynamic + 8).unwrap();
         let words = pack(addresses);
-        let entries = [(DT_RELR, table), (DT_RELRSZ, words.len() as u64 * WORD_SIZE), (DT_NULL, 0)];
+        let entries = [
+            (DT_RELR, table),
+            (DT_RELRSZ, words.len() as u64 * WORD_SIZE),
+            (DT_NULL, 0),
+        ];
         for (index, (tag, value)) in entries.into_iter().enumerate() {
             write_u64(&mut elf, dynamic + index * DYNAMIC_ENTRY_SIZE, tag);
             write_u64(&mut elf, dynamic + index * DYNAMIC_ENTRY_SIZE + 8, value);
@@ -283,7 +375,11 @@ mod tests {
 
     fn read_packed_relocations(elf: &[u8]) -> Vec<u64> {
         let size = read_u64(elf, dynamic_offset(elf) + DYNAMIC_ENTRY_SIZE + 8).unwrap() as usize;
-        unpack((TABLE_OFFSET..TABLE_OFFSET + size).step_by(WORD_SIZE as usize).map(|at| read_u64(elf, at).unwrap()))
+        unpack(
+            (TABLE_OFFSET..TABLE_OFFSET + size)
+                .step_by(WORD_SIZE as usize)
+                .map(|at| read_u64(elf, at).unwrap()),
+        )
     }
 
     #[test]
@@ -291,31 +387,77 @@ mod tests {
         assert_eq!(pack(&[0x1000]), [0x1000]);
         assert_eq!(pack(&[0x1000, 0x1008, 0x1018]), [0x1000, 0b101 << 1 | 1]);
         assert_eq!(pack(&[0x1000, 0x1000 + 64 * 8]), [0x1000, 0x1000 + 64 * 8]);
-        assert_eq!(pack(&[0x1000, 0x1000 + 63 * 8, 0x1000 + 64 * 8]), [0x1000, 1 << 63 | 1, 0b1 << 1 | 1]);
-        for addresses in [vec![], vec![0x1000], (0..500).map(|index| 0x2000 + index * 8).collect(), (0..500).map(|index| 0x2000 + index * index * 8).collect::<Vec<u64>>()] {
+        assert_eq!(
+            pack(&[0x1000, 0x1000 + 63 * 8, 0x1000 + 64 * 8]),
+            [0x1000, 1 << 63 | 1, 0b1 << 1 | 1]
+        );
+        for addresses in [
+            vec![],
+            vec![0x1000],
+            (0..500).map(|index| 0x2000 + index * 8).collect(),
+            (0..500)
+                .map(|index| 0x2000 + index * index * 8)
+                .collect::<Vec<u64>>(),
+        ] {
             assert_eq!(unpack(pack(&addresses).into_iter()), addresses);
         }
     }
 
     #[test]
     fn drops_packed_relative_relocations_in_removed_ranges() {
-        let addresses: Vec<u64> = (0..0x1000u64).map(|index| 0x1000 + index * 8).chain([0xa000, 0xa010, 0xc000]).collect();
+        let addresses: Vec<u64> = (0..0x1000u64)
+            .map(|index| 0x1000 + index * 8)
+            .chain([0xa000, 0xa010, 0xc000])
+            .collect();
         let (mut elf, word_count) = with_packed_relocations(&addresses);
-        let removed = [AddressRange { start: 0x1000, end: 0x1010 }, AddressRange { start: 0x2000, end: 0x3004 }, AddressRange { start: 0xa000, end: 0xa008 }];
-        let kept: Vec<u64> = addresses.iter().copied().filter(|&address| !is_removed(&removed, address)).collect();
-        assert_eq!(remove_relative_relocations(&mut elf, &removed), Ok((addresses.len() - kept.len()) as u64));
+        let removed = [
+            AddressRange {
+                start: 0x1000,
+                end: 0x1010,
+            },
+            AddressRange {
+                start: 0x2000,
+                end: 0x3004,
+            },
+            AddressRange {
+                start: 0xa000,
+                end: 0xa008,
+            },
+        ];
+        let kept: Vec<u64> = addresses
+            .iter()
+            .copied()
+            .filter(|&address| !is_removed(&removed, address))
+            .collect();
+        assert_eq!(
+            remove_relative_relocations(&mut elf, &removed),
+            Ok((addresses.len() - kept.len()) as u64)
+        );
         assert_eq!(addresses.len() - kept.len(), 2 + 0x200 + 1);
         assert_eq!(read_packed_relocations(&elf), kept);
         let kept_words = pack(&kept).len();
         assert!(kept_words <= word_count);
-        assert!(elf[TABLE_OFFSET + kept_words * 8..TABLE_OFFSET + word_count * 8].iter().all(|&byte| byte == 0));
+        assert!(
+            elf[TABLE_OFFSET + kept_words * 8..TABLE_OFFSET + word_count * 8]
+                .iter()
+                .all(|&byte| byte == 0)
+        );
     }
 
     #[test]
     fn no_packed_relocation_removed_changes_nothing() {
         let (original, _) = with_packed_relocations(&[0x1000, 0x1008, 0x4000]);
         let mut elf = original.clone();
-        assert_eq!(remove_relative_relocations(&mut elf, &[AddressRange { start: 0x2000, end: 0x3000 }]), Ok(0));
+        assert_eq!(
+            remove_relative_relocations(
+                &mut elf,
+                &[AddressRange {
+                    start: 0x2000,
+                    end: 0x3000
+                }]
+            ),
+            Ok(0)
+        );
         assert_eq!(elf, original);
     }
 
@@ -323,7 +465,16 @@ mod tests {
     fn nothing_removed_changes_nothing() {
         let original = with_relocations(Architecture::X86_64, &[(0x1000, R_X86_64_RELATIVE)], 1);
         let mut elf = original.clone();
-        assert_eq!(remove_relative_relocations(&mut elf, &[AddressRange { start: 0x2000, end: 0x3000 }]), Ok(0));
+        assert_eq!(
+            remove_relative_relocations(
+                &mut elf,
+                &[AddressRange {
+                    start: 0x2000,
+                    end: 0x3000
+                }]
+            ),
+            Ok(0)
+        );
         assert_eq!(elf, original);
     }
 }

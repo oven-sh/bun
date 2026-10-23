@@ -121,7 +121,10 @@ fn only_file_resolutions_have_files() {
 
 #[test]
 fn only_file_candidates_have_files() {
-    assert_eq!(file_of_candidate(&ComputedCandidate::File(FILE)), Some(FILE));
+    assert_eq!(
+        file_of_candidate(&ComputedCandidate::File(FILE)),
+        Some(FILE)
+    );
     let host_module = ComputedCandidate::HostModule(HostModuleId(7));
     assert_eq!(file_of_candidate(&host_module), None);
 }
@@ -157,9 +160,16 @@ fn get_builtin_module_returns_host_modules_only() {
     assert_eq!(builtin_module_or_erased(host_value), host_value);
 
     let program_file = CodeResolution::File(FILE);
-    assert_eq!(builtin_module_or_erased(program_file), CodeResolution::Erased);
+    assert_eq!(
+        builtin_module_or_erased(program_file),
+        CodeResolution::Erased
+    );
     for other in &OTHER_RESOLUTIONS[1..] {
-        assert_eq!(builtin_module_or_erased(*other), CodeResolution::Erased, "{other:?}");
+        assert_eq!(
+            builtin_module_or_erased(*other),
+            CodeResolution::Erased,
+            "{other:?}"
+        );
     }
 }
 
@@ -186,13 +196,22 @@ fn only_statement_imports_macro() {
 fn statement_with_other_type_imports_no_macro() {
     with_attributes(&[(known::r#type, known::embed)], |hir, attributes| {
         for kind in STATEMENT_KINDS {
-            assert!(!is_macro_import(hir, &constant_site(kind, attributes)), "{kind:?}");
-            assert!(!is_macro_import(hir, &constant_site(kind, ExprId::NONE)), "{kind:?}");
+            assert!(
+                !is_macro_import(hir, &constant_site(kind, attributes)),
+                "{kind:?}"
+            );
+            assert!(
+                !is_macro_import(hir, &constant_site(kind, ExprId::NONE)),
+                "{kind:?}"
+            );
         }
     });
     with_attributes(&[(known::embed, known::r#macro)], |hir, attributes| {
         for kind in STATEMENT_KINDS {
-            assert!(!is_macro_import(hir, &constant_site(kind, attributes)), "{kind:?}");
+            assert!(
+                !is_macro_import(hir, &constant_site(kind, attributes)),
+                "{kind:?}"
+            );
         }
     });
 }
@@ -213,12 +232,15 @@ fn type_and_embed_attributes_are_read_by_key() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let (sqlite, yes) = (atoms.intern(b"sqlite"), atoms.intern(b"true"));
-    with_attributes(&[(known::embed, yes), (known::r#type, sqlite)], |hir, attributes| {
-        let site = constant_site(ImportSiteKind::ImportCall(ExprId(0)), attributes);
-        assert_eq!(type_attribute(hir, &site), Some(sqlite));
-        assert_eq!(loader_attribute(hir, &site), Some(sqlite));
-        assert_eq!(embed_attribute(hir, &site), Some(yes));
-    });
+    with_attributes(
+        &[(known::embed, yes), (known::r#type, sqlite)],
+        |hir, attributes| {
+            let site = constant_site(ImportSiteKind::ImportCall(ExprId(0)), attributes);
+            assert_eq!(type_attribute(hir, &site), Some(sqlite));
+            assert_eq!(loader_attribute(hir, &site), Some(sqlite));
+            assert_eq!(embed_attribute(hir, &site), Some(yes));
+        },
+    );
 }
 
 #[test]
@@ -242,7 +264,11 @@ fn constant_require_selects_loader_as_require() {
             true => CodeImportKind::Require,
             false => CodeImportKind::Import,
         };
-        assert_eq!(loader_kind(&constant_site(kind, ExprId::NONE)), expected, "{kind:?}");
+        assert_eq!(
+            loader_kind(&constant_site(kind, ExprId::NONE)),
+            expected,
+            "{kind:?}"
+        );
         for specifier in [pattern, ImportSpecifier::Unknown] {
             let site = site_of(kind, specifier, ExprId::NONE);
             assert_eq!(loader_kind(&site), CodeImportKind::Import, "{kind:?}");
@@ -255,7 +281,10 @@ fn constant_prefix_is_specifier_or_start_of_pattern() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let (prefix, suffix) = (atoms.intern(b"./plugins/"), atoms.intern(b".ts"));
-    assert_eq!(constant_prefix(&atoms, ImportSpecifier::Constant(prefix)), b"./plugins/");
+    assert_eq!(
+        constant_prefix(&atoms, ImportSpecifier::Constant(prefix)),
+        b"./plugins/"
+    );
     let pattern = ImportSpecifier::Pattern { prefix, suffix };
     assert_eq!(constant_prefix(&atoms, pattern), b"./plugins/");
     assert_eq!(constant_prefix(&atoms, ImportSpecifier::Unknown), b"");
@@ -279,9 +308,15 @@ fn target_has_loader_and_typed_path_of_file() {
             ..IMPLIED_IMPORT
         };
         let mut targets = Vec::new();
-        assert_eq!(add_target(context, &mut targets, IMPLIED_IMPORT, library), 0);
+        assert_eq!(
+            add_target(context, &mut targets, IMPLIED_IMPORT, library),
+            0
+        );
         assert_eq!(add_target(context, &mut targets, as_text, library), 1);
-        assert_eq!(add_target(context, &mut targets, IMPLIED_IMPORT, HOST_MODULE_SOURCE), 2);
+        assert_eq!(
+            add_target(context, &mut targets, IMPLIED_IMPORT, HOST_MODULE_SOURCE),
+            2
+        );
 
         let keys: Vec<LoadKey<'_>> = targets.iter().map(|target| target.key).collect();
         let key = |path: &'static [u8], loader: HostLoader| LoadKey { path, loader };
@@ -291,15 +326,16 @@ fn target_has_loader_and_typed_path_of_file() {
             key(b"/bun/os.ts", HostLoader::default()),
         ];
         assert_eq!(keys, expected);
-        let typed_paths: Vec<Option<&[u8]>> = (targets.iter())
-            .map(|target| target.typed_path)
-            .collect();
+        let typed_paths: Vec<Option<&[u8]>> =
+            (targets.iter()).map(|target| target.typed_path).collect();
         assert_eq!(typed_paths, [Some(&b"/p/lib.ts"[..]), None, None]);
-        let host_modules: Vec<Option<HostModuleId>> = (targets.iter())
-            .map(|target| target.host_module)
-            .collect();
+        let host_modules: Vec<Option<HostModuleId>> =
+            (targets.iter()).map(|target| target.host_module).collect();
         assert_eq!(host_modules, [None, None, Some(HostModuleId(7))]);
-        let steps: Vec<bool> = targets.iter().map(|target| target.increases_depth).collect();
+        let steps: Vec<bool> = targets
+            .iter()
+            .map(|target| target.increases_depth)
+            .collect();
         assert_eq!(steps, [false, true, false]);
     });
 }
@@ -320,7 +356,10 @@ fn macro_statement_is_erased_without_request() {
 
             let call = site_of(ImportSiteKind::ImportCall(ExprId(0)), specifier, attributes);
             let resolution = resolve_site(context, IMPORTER, hir, &call);
-            assert_eq!(resolution, SiteResolution::Constant(CodeResolution::File(FILE)));
+            assert_eq!(
+                resolution,
+                SiteResolution::Constant(CodeResolution::File(FILE))
+            );
             assert_eq!(host.code_request_count(), 1);
         });
     });
@@ -377,8 +416,12 @@ fn specifier_is_resolved_from_directory_of_importer() {
             path: b"/p/sub/plugins/x.ts",
             host_module: None,
         });
-        let spellings: [&[u8]; 4] =
-            [b"./plugins/x", b"./plugins/x.js", b"./plugins/x.jsx", b"./plugins/x.ts"];
+        let spellings: [&[u8]; 4] = [
+            b"./plugins/x",
+            b"./plugins/x.js",
+            b"./plugins/x.jsx",
+            b"./plugins/x.ts",
+        ];
         let spellings = spellings.map(|text| ComputedSpelling { text, candidate: 0 });
         let expected = ComputedResolution::Candidates {
             candidates: &[plugin],

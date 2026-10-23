@@ -76,11 +76,17 @@ fn computed_answer_lists_sorted_files_and_host_modules() {
         ])
     };
     with_program(&host, &["/main.ts"], |files| {
-        let (x, y) = (file_at(files, "/plugins/x.ts"), file_at(files, "/plugins/y.ts"));
+        let (x, y) = (
+            file_at(files, "/plugins/x.ts"),
+            file_at(files, "/plugins/y.ts"),
+        );
         assert!(y < x);
         let (plugins, host_modules) = ([y, x], [HostModuleId(3), HostModuleId(5)]);
         let spelling = |text: &str, file| {
-            (files.atoms.intern(text.as_bytes()), ComputedTarget::File(file))
+            (
+                files.atoms.intern(text.as_bytes()),
+                ComputedTarget::File(file),
+            )
         };
         let spellings = [
             spelling("./plugins/x", x),
@@ -129,7 +135,10 @@ fn unknown_specifier_answers_with_cause_and_host_modules() {
             })
         };
         let expected = [
-            all(ComputedUnknown::NoPattern, &[HostModuleId(3), HostModuleId(5)][..]),
+            all(
+                ComputedUnknown::NoPattern,
+                &[HostModuleId(3), HostModuleId(5)][..],
+            ),
             all(ComputedUnknown::IncompletePackageName, &[]),
         ];
         let main = file_at(files, "/main.js");
@@ -147,15 +156,25 @@ fn implied_answers_follow_host_order() {
     ];
     let host = StatementsHost {
         implied: vec![("/main.ts", implied)],
-        ..host_of(&[("/main.ts", "import \"./a\""), ("/a.ts", ""), ("/runtime.ts", "")])
+        ..host_of(&[
+            ("/main.ts", "import \"./a\""),
+            ("/a.ts", ""),
+            ("/runtime.ts", ""),
+        ])
     };
     with_program(&host, &["/main.ts"], |files| {
         let (a, runtime) = (file_at(files, "/a.ts"), file_at(files, "/runtime.ts"));
         let compiled = compiled_at(files, "/main.ts");
         assert_eq!(compiled.code_answers, [CodeAnswer::File(a)]);
-        let expected = [CodeAnswer::HostModule(HostModuleId(9)), CodeAnswer::File(runtime)];
+        let expected = [
+            CodeAnswer::HostModule(HostModuleId(9)),
+            CodeAnswer::File(runtime),
+        ];
         assert_eq!(compiled.implied_answers, expected);
-        assert_eq!(files.module(file_at(files, "/main.ts")).code_edges, [a, runtime]);
+        assert_eq!(
+            files.module(file_at(files, "/main.ts")).code_edges,
+            [a, runtime]
+        );
         assert!(files.is_compiled(runtime));
         assert!(compiled_at(files, "/a.ts").implied_answers.is_empty());
         assert_eq!(files.host_modules(), [HostModuleId(9)]);
@@ -168,7 +187,10 @@ fn host_modules_of_program_are_sorted_and_unique() {
         runtime_modules: node_modules(),
         implied: vec![("/a.ts", vec![HostResolution::Module(HostModuleId(4))])],
         ..host_of(&[
-            ("/main.ts", "import \"node:path\"\nimport \"./a\"\nimport \"node:fs\""),
+            (
+                "/main.ts",
+                "import \"node:path\"\nimport \"./a\"\nimport \"node:fs\"",
+            ),
             ("/a.ts", "import \"node:path\"\nrequire(\"node:\" + name)"),
         ])
     };
@@ -231,7 +253,10 @@ fn compiled_module_records_how_file_was_loaded() {
     };
     with_program(&host, &["/main.ts"], |files| {
         let main = compiled_at(files, "/main.ts");
-        assert_eq!((main.loader, main.host_module), (HostLoader::default(), None));
+        assert_eq!(
+            (main.loader, main.host_module),
+            (HostLoader::default(), None)
+        );
         assert_eq!(main.package, None);
         assert!(main.settings.experimental_decorators);
         assert!(std::ptr::eq(main.jsx, &main.settings.jsx));
@@ -239,7 +264,10 @@ fn compiled_module_records_how_file_was_loaded() {
 
         let host_source = compiled_at(files, "/bun/os.cjs");
         assert_eq!(host_source.host_module, Some(HostModuleId(7)));
-        assert_eq!(host_source.declared_module_type, DeclaredModuleType::CommonJs);
+        assert_eq!(
+            host_source.declared_module_type,
+            DeclaredModuleType::CommonJs
+        );
 
         let CodeAnswer::File(note) = main.code_answers[2] else {
             panic!("the text file is loaded");
@@ -252,7 +280,10 @@ fn compiled_module_records_how_file_was_loaded() {
             name: b"pkg",
             version: b"1.0.0",
         };
-        assert_eq!(compiled_at(files, "/node_modules/pkg/index.js").package, Some(expected));
+        assert_eq!(
+            compiled_at(files, "/node_modules/pkg/index.js").package,
+            Some(expected)
+        );
     });
 }
 
@@ -262,7 +293,11 @@ fn rejected_typed_version_is_recorded() {
     const TYPED: &str = "/node_modules/pkg/typed.ts";
     let host = StatementsHost {
         typed_versions: &[(INSTALLED, TYPED)],
-        ..host_of(&[("/main.ts", "import \"pkg\""), (INSTALLED, "a\nbb"), (TYPED, "a\nx")])
+        ..host_of(&[
+            ("/main.ts", "import \"pkg\""),
+            (INSTALLED, "a\nbb"),
+            (TYPED, "a\nx"),
+        ])
     };
     with_program(&host, &["/main.ts"], |files| {
         let installed = file_at(files, INSTALLED);
@@ -270,7 +305,10 @@ fn rejected_typed_version_is_recorded() {
         assert_eq!(files.diagnostic_path(installed), INSTALLED.as_bytes());
         let compiled = compiled_at(files, INSTALLED);
         assert_eq!(compiled.typed_source_path, None);
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Host));
+        assert_eq!(
+            compiled.typed_version_origin,
+            Some(TypedVersionOrigin::Host)
+        );
         let expected = RejectedTypedVersion {
             path: TYPED.as_bytes(),
             kind: ErasureMismatchKind::Name,

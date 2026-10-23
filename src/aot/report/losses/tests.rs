@@ -123,7 +123,11 @@ fn proven_access_has_no_loss() {
         let found = access_losses(&[record]);
         let expected_index = (level != KnowledgeLevel::Proven).then_some(0);
         assert_eq!(found.loss_of_site, [expected_index], "{level:?}");
-        assert_eq!(found.losses.len(), usize::from(expected_index.is_some()), "{level:?}");
+        assert_eq!(
+            found.losses.len(),
+            usize::from(expected_index.is_some()),
+            "{level:?}"
+        );
     }
 }
 
@@ -238,7 +242,11 @@ fn runtime_sites_have_no_loss() {
         location: location(module, 0),
         ..access(0, UnprovenCause::UnknownObject, 100)
     };
-    let found = access_losses(&[in_module(RUNTIME), in_module(DEPENDENCY), in_module(RUNTIME)]);
+    let found = access_losses(&[
+        in_module(RUNTIME),
+        in_module(DEPENDENCY),
+        in_module(RUNTIME),
+    ]);
     assert_eq!(found.loss_of_site, [None, Some(0), None]);
     assert_eq!(found.losses[0].count, 1);
 
@@ -267,7 +275,10 @@ fn site_without_location_is_in_module_of_function() {
         ..access(0, UnprovenCause::UnknownObject, 100)
     };
     let records = [RUNTIME_FUNCTION, PROGRAM_FUNCTION, ABSENT_WORD].map(in_function);
-    assert_eq!(access_losses(&records).loss_of_site, [None, Some(0), Some(0)]);
+    assert_eq!(
+        access_losses(&records).loss_of_site,
+        [None, Some(0), Some(0)]
+    );
 }
 
 #[test]
@@ -288,7 +299,11 @@ fn removed_allocation_has_no_loss() {
             ..allocation(0, AllocationEscapeReason::RETURNED, 100)
         };
         let expected_index = (outcome != AllocationOutcome::Removed).then_some(0);
-        assert_eq!(allocation_losses(&[record]).loss_of_site, [expected_index], "{outcome:?}");
+        assert_eq!(
+            allocation_losses(&[record]).loss_of_site,
+            [expected_index],
+            "{outcome:?}"
+        );
     }
 }
 
@@ -298,7 +313,10 @@ fn first_reason_is_lowest_bit() {
         let higher_bits = AllocationEscapeReason::ALL.0 & (u32::MAX << bit);
         assert_eq!(first_reason(AllocationEscapeReason(1 << bit)), name);
         assert_eq!(first_reason(AllocationEscapeReason(higher_bits)), name);
-        assert_eq!(lowest_reason(AllocationEscapeReason(higher_bits)).0, 1 << bit);
+        assert_eq!(
+            lowest_reason(AllocationEscapeReason(higher_bits)).0,
+            1 << bit
+        );
     }
     let reasons = AllocationEscapeReason::THROWN | AllocationEscapeReason::LIMIT_REACHED;
     assert_eq!(first_reason(reasons), "Thrown");
@@ -327,11 +345,21 @@ fn allocation_without_reason_names_cause() {
         with_cause(8, no_reason, AllocationHeapCause::SeveralLiveInstances),
     ];
     let found = allocation_losses(&records);
-    let reasons: Vec<(&str, u64)> =
-        found.losses.iter().map(|loss| (loss.reason, loss.count)).collect();
-    assert_eq!(reasons, [("SeveralLiveInstances", 2), ("FieldsCreatedLater", 1)]);
+    let reasons: Vec<(&str, u64)> = found
+        .losses
+        .iter()
+        .map(|loss| (loss.reason, loss.count))
+        .collect();
+    assert_eq!(
+        reasons,
+        [("SeveralLiveInstances", 2), ("FieldsCreatedLater", 1)]
+    );
     assert_eq!(found.loss_of_site, [0, 1, 0].map(Some));
-    assert!(reasons.iter().all(|(reason, _)| loss_reasons().contains(reason)));
+    assert!(
+        reasons
+            .iter()
+            .all(|(reason, _)| loss_reasons().contains(reason))
+    );
 }
 
 #[test]
@@ -455,7 +483,14 @@ fn limit_loss_names_unit() {
     ];
     let found = collect_limit_losses(&records, &names());
     let kinds: Vec<SubjectKind> = found.iter().map(|loss| loss.subject_kind).collect();
-    assert_eq!(kinds, [SubjectKind::Object, SubjectKind::Function, SubjectKind::Build]);
+    assert_eq!(
+        kinds,
+        [
+            SubjectKind::Object,
+            SubjectKind::Function,
+            SubjectKind::Build
+        ]
+    );
     for loss in found {
         assert_eq!(loss.reason, LIMIT_REACHED);
         assert_eq!(loss.ill_typed_cause, IllTypedCause::None);
@@ -504,7 +539,11 @@ fn limit_stage_and_witness_separate_limit_losses() {
         [
             (LimitId::MaxTypeNodes, Stage::AnalyzeFlow, None),
             (LimitId::MaxValueFlowEdgesLogged, Stage::AnalyzeFlow, None),
-            (LimitId::MaxValueFlowEdgesLogged, Stage::AnalyzeFlow, at(PROGRAM, 5)),
+            (
+                LimitId::MaxValueFlowEdgesLogged,
+                Stage::AnalyzeFlow,
+                at(PROGRAM, 5)
+            ),
             (LimitId::MaxValueFlowEdgesLogged, Stage::Optimize, None),
         ]
     );
@@ -535,7 +574,9 @@ fn subjects_are_located_in_program() {
     let mut layouts = program.layouts.iter();
     let layout = layouts.position(|layout| layout.constructor == Some(function));
     let layout = LayoutId::new(layout.expect("a retained constructor retains its layout"));
-    let module = names.function_module(function).expect("a source function has a module");
+    let module = names
+        .function_module(function)
+        .expect("a source function has a module");
     let at_offset = |offset| Some(Position { module, offset });
 
     let limits = [
@@ -622,7 +663,11 @@ fn engine_losses_are_shown_at_resolved_positions() {
         ill_typed_cause: IllTypedCause::StateChanged,
         subject_kind: SubjectKind::Object,
         subject: at(PROGRAM, LINE_1_COLUMN_5),
-        ..access_loss(UnprovenCause::FieldDeleted, at(PROGRAM, LINE_2_COLUMN_14), 3)
+        ..access_loss(
+            UnprovenCause::FieldDeleted,
+            at(PROGRAM, LINE_2_COLUMN_14),
+            3,
+        )
     };
     let without_text = access_loss(UnprovenCause::ReachesNativeCode, at(RUNTIME, 0), 1);
     let mut list = LossList::default();
@@ -656,14 +701,22 @@ fn losses_are_listed_by_source_of_record() {
             level: KnowledgeLevel::Proven,
             ..access(0, UnprovenCause::Unknown, 0)
         },
-        access(LINE_1_COLUMN_5, UnprovenCause::UnknownObject, LINE_2_COLUMN_14),
+        access(
+            LINE_1_COLUMN_5,
+            UnprovenCause::UnknownObject,
+            LINE_2_COLUMN_14,
+        ),
     ];
     let remarks = [allocation(
         LINE_1_COLUMN_5,
         AllocationEscapeReason::RETURNED,
         LINE_2_COLUMN_14,
     )];
-    let declines = [decline(DeclineKind::HotCallNotInlined, PROGRAM, LINE_3_COLUMN_1)];
+    let declines = [decline(
+        DeclineKind::HotCallNotInlined,
+        PROGRAM,
+        LINE_3_COLUMN_1,
+    )];
     let limits = [limit_loss(ABSENT_WORD, ABSENT_WORD, 2)];
     let mut fixture = ReportFixture::new(ResultRecords {
         accesses: &accesses,
@@ -672,10 +725,11 @@ fn losses_are_listed_by_source_of_record() {
         losses: &limits,
         ..ResultRecords::default()
     });
-    fixture.statistics.gave_up(LimitId::MaxTypeNodes, shown(3, 1));
-    let list = fixture.with_input(|input| {
-        collect_losses(input, &mut Positions::new(input, PathStyle::Posix))
-    });
+    fixture
+        .statistics
+        .gave_up(LimitId::MaxTypeNodes, shown(3, 1));
+    let list = fixture
+        .with_input(|input| collect_losses(input, &mut Positions::new(input, PathStyle::Posix)));
 
     let summaries: Vec<(Stage, &str, LimitId, u64)> = list
         .losses
@@ -688,22 +742,37 @@ fn losses_are_listed_by_source_of_record() {
             (Stage::AnalyzeFlow, "UnknownObject", LimitId::None, 1),
             (Stage::Optimize, "Returned", LimitId::None, 1),
             (Stage::Optimize, "HotCallNotInlined", LimitId::None, 1),
-            (Stage::AnalyzeFlow, LIMIT_REACHED, LimitId::MaxValueFlowEdgesLogged, 2),
-            (LimitId::MaxTypeNodes.stage(), LIMIT_REACHED, LimitId::MaxTypeNodes, 1),
+            (
+                Stage::AnalyzeFlow,
+                LIMIT_REACHED,
+                LimitId::MaxValueFlowEdgesLogged,
+                2
+            ),
+            (
+                LimitId::MaxTypeNodes.stage(),
+                LIMIT_REACHED,
+                LimitId::MaxTypeNodes,
+                1
+            ),
         ]
     );
-    let witnesses: Vec<Option<SourcePosition>> =
-        list.losses.iter().map(|loss| loss.witness.clone()).collect();
-    assert_eq!(witnesses, [shown(2, 14), shown(2, 14), shown(3, 1), None, shown(3, 1)]);
+    let witnesses: Vec<Option<SourcePosition>> = list
+        .losses
+        .iter()
+        .map(|loss| loss.witness.clone())
+        .collect();
+    assert_eq!(
+        witnesses,
+        [shown(2, 14), shown(2, 14), shown(3, 1), None, shown(3, 1)]
+    );
     assert_eq!(list.loss_of_access, [None, Some(0)]);
     assert_eq!(list.loss_of_allocation, [Some(1)]);
 }
 
 #[test]
 fn build_without_records_has_no_loss() {
-    let list = ReportFixture::new(ResultRecords::default()).with_input(|input| {
-        collect_losses(input, &mut Positions::new(input, PathStyle::Posix))
-    });
+    let list = ReportFixture::new(ResultRecords::default())
+        .with_input(|input| collect_losses(input, &mut Positions::new(input, PathStyle::Posix)));
     assert!(list.losses.is_empty());
     assert!(list.loss_of_access.is_empty());
     assert!(list.loss_of_allocation.is_empty());

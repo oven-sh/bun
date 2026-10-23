@@ -130,7 +130,10 @@ const PATH_IMPORTER: [(&str, &str); 1] = [(
 const UNUSED_RUNTIME_FUNCTION: u32 = 1 << 30;
 
 fn path_source(projects: &PerProject<LinkProject<'_, '_>>) -> ProgramFile {
-    let file = projects.runtime.sources.runtime_module_file(RuntimeModule::NodePath);
+    let file = projects
+        .runtime
+        .sources
+        .runtime_module_file(RuntimeModule::NodePath);
     ProgramFile {
         project: ProjectId::Runtime,
         file: file.expect("the runtime project has no source of node:path"),
@@ -173,13 +176,21 @@ fn units_are_ordered_by_project_and_file() {
         let files: Vec<ProgramFile> = ordered.iter().map(|unit| unit.file).collect();
         assert!(files.is_sorted_by(|first, second| first < second));
         let is_reached = |file: &ProgramFile| {
-            !projects.get(file.project).unreached_files.contains(&file.file)
+            !projects
+                .get(file.project)
+                .unreached_files
+                .contains(&file.file)
         };
-        let reached_files: Vec<ProgramFile> =
-            compiled_files(projects).into_iter().filter(is_reached).collect();
+        let reached_files: Vec<ProgramFile> = compiled_files(projects)
+            .into_iter()
+            .filter(is_reached)
+            .collect();
         assert_eq!(files, reached_files);
         for project in ProjectId::ALL {
-            assert!(files.iter().any(|file| file.project == project), "{project:?}");
+            assert!(
+                files.iter().any(|file| file.project == project),
+                "{project:?}"
+            );
         }
     });
 }
@@ -280,7 +291,9 @@ fn keys_and_names_follow_program_ids() {
     assert_eq!(keys.modules.len(), program.modules.len());
     for (index, function) in program.functions.iter().enumerate() {
         let id = FunctionId::new(index);
-        let name = function.name.map_or(&b""[..], |name| program.strings.get(name));
+        let name = function
+            .name
+            .map_or(&b""[..], |name| program.strings.get(name));
         assert_eq!(names.function_name(id), name);
         assert_eq!(names.function_module(id), Some(function.module));
     }
@@ -327,8 +340,11 @@ fn create_fragment_with_dropped_definitions(file: FileId) -> Fragment {
     for (index, position) in (0..).zip(RETAINED_AND_DROPPED_SITE_POSITIONS) {
         let class_key = test_class_key(file.0, index);
         let layout = unit.fragment.declare_layout(class_key);
-        unit.fragment.define_layout(layout, empty_layout(&class_key));
-        let variable = unit.fragment.declare_variable(test_variable_key(file.0, index));
+        unit.fragment
+            .define_layout(layout, empty_layout(&class_key));
+        let variable = unit
+            .fragment
+            .declare_variable(test_variable_key(file.0, index));
         let definition = synthetic_export_variable(name, module, ExportWriter::Loader);
         unit.fragment.define_variable(variable, definition);
         let site = unit.fragment.add_type_site(TypeSite {
@@ -392,7 +408,10 @@ fn dropped_functions_are_counted() {
         let linked = linked.expect("the program links");
         read_counter(&linked, StatisticId::FunctionsDroppedByLink)
     };
-    assert_eq!(link_with_unused_functions(2), link_with_unused_functions(0) + 2);
+    assert_eq!(
+        link_with_unused_functions(2),
+        link_with_unused_functions(0) + 2
+    );
 }
 
 #[test]
@@ -436,8 +455,14 @@ fn link_keeps_enclosing_runtime_function_ids() {
     let [.., first_entry, second_entry] = program.runtime_functions.as_slice() else {
         panic!("{:?}", program.runtime_functions);
     };
-    assert_eq!((first_entry.id, first_entry.function), (first, first_function));
-    assert_eq!((second_entry.id, second_entry.function), (second, second_function));
+    assert_eq!(
+        (first_entry.id, first_entry.function),
+        (first, first_function)
+    );
+    assert_eq!(
+        (second_entry.id, second_entry.function),
+        (second, second_function)
+    );
 }
 
 #[test]
@@ -508,13 +533,25 @@ fn number_everything_gives_shared_keys_one_id() {
         };
         let shared_function = first_ids.functions[first_function.index()];
         assert!(shared_function.is_some());
-        assert_eq!(second_ids.functions[second_function.index()], shared_function);
+        assert_eq!(
+            second_ids.functions[second_function.index()],
+            shared_function
+        );
         assert_ne!(second_ids.functions[own_function.index()], shared_function);
         let [first_program_module, second_program_module] =
             [0, 1].map(|id| Some(ModuleId::new(id)));
-        assert_eq!(first_ids.modules[first_module.index()], first_program_module);
-        assert_eq!(second_ids.modules[second_module.index()], first_program_module);
-        assert_eq!(second_ids.modules[own_module.index()], second_program_module);
+        assert_eq!(
+            first_ids.modules[first_module.index()],
+            first_program_module
+        );
+        assert_eq!(
+            second_ids.modules[second_module.index()],
+            first_program_module
+        );
+        assert_eq!(
+            second_ids.modules[own_module.index()],
+            second_program_module
+        );
         assert_eq!(first_ids.type_sites, [Some(TypeSiteId::new(0))]);
         assert_eq!(second_ids.type_sites, [Some(TypeSiteId::new(1))]);
         assert_eq!(numbering.counts.type_sites, 2);

@@ -115,7 +115,10 @@ fn features_keep_first_witness() {
         use_of(Feature::Fetch),
     ];
     let found = features_of(&records);
-    assert_eq!(found.features, [used(Feature::RegExp, 0), used(Feature::Fetch, 2)]);
+    assert_eq!(
+        found.features,
+        [used(Feature::RegExp, 0), used(Feature::Fetch, 2)]
+    );
     assert!(found.causes.is_empty());
 }
 
@@ -152,15 +155,33 @@ fn every_engine_cause_maps() {
     let table = [
         (EngineCause::Unknown, UnseenCodeCause::ReportMissing),
         (EngineCause::EvaluatesText, UnseenCodeCause::EvaluatesText),
-        (EngineCause::ImportsUncompiledModule, UnseenCodeCause::ImportsUncompiledCode),
-        (EngineCause::LoadsModuleByName, UnseenCodeCause::LoadsModuleByName),
+        (
+            EngineCause::ImportsUncompiledModule,
+            UnseenCodeCause::ImportsUncompiledCode,
+        ),
+        (
+            EngineCause::LoadsModuleByName,
+            UnseenCodeCause::LoadsModuleByName,
+        ),
         (EngineCause::RunsUnseenCode, UnseenCodeCause::RunsUnseenCode),
-        (EngineCause::OptionAdmitsCode, UnseenCodeCause::OptionAdmitsCode),
+        (
+            EngineCause::OptionAdmitsCode,
+            UnseenCodeCause::OptionAdmitsCode,
+        ),
         (EngineCause::LimitReached, UnseenCodeCause::FlowGaveUp),
-        (EngineCause::FlowResultDisabled, UnseenCodeCause::FlowResultDisabled),
-        (EngineCause::RunsMachineCode, UnseenCodeCause::RunsUnseenCode),
+        (
+            EngineCause::FlowResultDisabled,
+            UnseenCodeCause::FlowResultDisabled,
+        ),
+        (
+            EngineCause::RunsMachineCode,
+            UnseenCodeCause::RunsUnseenCode,
+        ),
     ];
-    assert_eq!(table.map(|(engine_cause, _)| engine_cause), EngineCause::ALL);
+    assert_eq!(
+        table.map(|(engine_cause, _)| engine_cause),
+        EngineCause::ALL
+    );
     for (engine_cause, cause) in table {
         assert_eq!(cause_of(engine_cause), cause, "{engine_cause:?}");
     }
@@ -196,7 +217,11 @@ fn host_default_locale_makes_list_unknown() {
             constant(FR),
             locale_use(kind, NO_TEXT),
         ];
-        assert_eq!(locales_of(&records), UsedLocales::Unknown(at(1)), "{kind:?}");
+        assert_eq!(
+            locales_of(&records),
+            UsedLocales::Unknown(at(1)),
+            "{kind:?}"
+        );
     }
 }
 

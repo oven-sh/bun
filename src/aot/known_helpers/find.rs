@@ -76,7 +76,9 @@ pub struct FileHelpers {
 
 impl FileHelpers {
     pub fn function(&self, function: FnId) -> Option<&KnownFunction> {
-        let at = self.functions.binary_search_by_key(&function, |entry| entry.0);
+        let at = self
+            .functions
+            .binary_search_by_key(&function, |entry| entry.0);
         at.ok().map(|at| &self.functions[at].1)
     }
 
@@ -328,7 +330,8 @@ impl Finder<'_, '_> {
                 let values = self.values_of(symbol);
                 let mut held = values.functions.iter();
                 let is_of_family = !values.functions.is_empty()
-                    && held.all(|held| self.matched[&held.definition].entry.shape.helper() == helper);
+                    && held
+                        .all(|held| self.matched[&held.definition].entry.shape.helper() == helper);
                 is_of_family.then(|| KnownReference::Helper {
                     symbol,
                     is_initialized_first: self.is_initialized_before(symbol, function),
@@ -336,11 +339,12 @@ impl Finder<'_, '_> {
             }
             Reference::Global(path) => {
                 let builtin = find_global(path)?;
-                self.is_alias_of_global(symbol, path).then(|| KnownReference::Global {
-                    symbol,
-                    builtin,
-                    is_initialized_first: self.is_initialized_before(symbol, function),
-                })
+                self.is_alias_of_global(symbol, path)
+                    .then(|| KnownReference::Global {
+                        symbol,
+                        builtin,
+                        is_initialized_first: self.is_initialized_before(symbol, function),
+                    })
             }
         }
     }
@@ -371,7 +375,9 @@ impl Finder<'_, '_> {
                 holders.is_empty()
                     && is_last(name)
                     && bound.binding(expression) == Binding::Free
-                    && bound.dynamic_lookup_scope(NodeData::Expr(expression)).is_none()
+                    && bound
+                        .dynamic_lookup_scope(NodeData::Expr(expression))
+                        .is_none()
             }
             ExprKind::Dot {
                 chain: Chain::No, ..
@@ -406,7 +412,9 @@ impl Finder<'_, '_> {
             let parent = match bound.parent_of_expr(child) {
                 Parent::Expr(parent) => parent,
                 Parent::VarInit(declaration) => {
-                    return bound.declared_symbol(Decl::Var(hir[declaration].pat)).some();
+                    return bound
+                        .declared_symbol(Decl::Var(hir[declaration].pat))
+                        .some();
                 }
                 _ => return None,
             };
@@ -527,9 +535,10 @@ impl Finder<'_, '_> {
     fn is_call_of_require_factory(&self, call: hir::CallId) -> bool {
         let hir = self.hir;
         match hir[hir.skip_type_assertions(hir[call].callee)].kind {
-            ExprKind::Fn(function) => self.matched.get(&function).is_some_and(|matched| {
-                matched.entry.shape == Shape::RequireFactoryPrefersRequire
-            }),
+            ExprKind::Fn(function) => self
+                .matched
+                .get(&function)
+                .is_some_and(|matched| matched.entry.shape == Shape::RequireFactoryPrefersRequire),
             _ => false,
         }
     }
@@ -552,7 +561,9 @@ impl Finder<'_, '_> {
     }
 
     fn end_of_head(&self) -> u32 {
-        *self.end_of_head.get_or_init(|| self.ask_quiet_of_head(|quiet| quiet.find_end_of_head()))
+        *self
+            .end_of_head
+            .get_or_init(|| self.ask_quiet_of_head(|quiet| quiet.find_end_of_head()))
     }
 
     /// Nothing of the file but quiet code runs until the variable holds the value.
@@ -576,28 +587,38 @@ impl Finder<'_, '_> {
 
     /// Nothing of the program runs between the start of the file and the expression.
     fn is_in_silent_head(&self, expression: ExprId) -> bool {
-        let end = *self.end_of_silent_head.get_or_init(|| self.quiet().find_end_of_head());
+        let end = *self
+            .end_of_silent_head
+            .get_or_init(|| self.quiet().find_end_of_head());
         let statement = self.enclosing_statement(expression);
         statement.is_some_and(|it| self.bound.parent_of_stmt(it) == Parent::File)
             && self.hir[expression].pos < end
     }
 
     fn exports_function_declaration(&self) -> bool {
-        *self.exports_function_declaration.get_or_init(|| self.find_exported_function_declaration())
+        *self
+            .exports_function_declaration
+            .get_or_init(|| self.find_exported_function_declaration())
     }
 
     fn find_exported_function_declaration(&self) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        hir.ids(hir.body).any(|statement| match hir[statement].kind {
-            StmtKind::Fn(function) => hir[function].flags.intersects(Flags::EXPORT | Flags::DEFAULT),
-            StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => {
-                hir[export].items.iter().any(|item| match bound.exported_binding(item) {
-                    Binding::Symbol(symbol) => bound.binding_kind(symbol) == BindingKind::Function,
-                    Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
-                })
-            }
-            _ => false,
-        })
+        hir.ids(hir.body)
+            .any(|statement| match hir[statement].kind {
+                StmtKind::Fn(function) => hir[function]
+                    .flags
+                    .intersects(Flags::EXPORT | Flags::DEFAULT),
+                StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => hir[export]
+                    .items
+                    .iter()
+                    .any(|item| match bound.exported_binding(item) {
+                        Binding::Symbol(symbol) => {
+                            bound.binding_kind(symbol) == BindingKind::Function
+                        }
+                        Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+                    }),
+                _ => false,
+            })
     }
 
     fn is_defined_in_head(&self, symbol: SymbolId) -> bool {
@@ -848,7 +869,9 @@ impl Finder<'_, '_> {
         let references = matched.references.clone();
         let answer = matched.verdict == Verdict::Accepted
             && self.names_only_locked_globals(&matched.globals)
-            && references.into_iter().all(|reference| self.is_fact(reference));
+            && references
+                .into_iter()
+                .all(|reference| self.is_fact(reference));
         let matched = self.matched.get_mut(&function).expect("it was found above");
         matched.relies_on_facts = Some(answer);
         answer

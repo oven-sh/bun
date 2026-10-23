@@ -31,8 +31,8 @@ import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
 import type { Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
-import { writeIfChanged } from "../fs.ts";
 import { computeCpuTargetFlags, computeHardeningFlags } from "../flags.ts";
+import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
   depBuildDir,
@@ -836,7 +836,9 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
   const root = linuxIcuRoot(cfg);
   if (cfg.hardened) {
     if (root === undefined) {
-      throw new BuildError("hardened needs ICU's headers and data", { hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT" });
+      throw new BuildError("hardened needs ICU's headers and data", {
+        hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
+      });
     }
     const dir = join(wk.B, "icu");
     const script = join(cfg.cwd, "scripts", "build", "hardened-icu.sh");

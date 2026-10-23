@@ -1,6 +1,6 @@
 use bun_sema::check::aot::{
-    ClassParent, ClassRef, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind,
-    TupleElement, TupleElementKind, TypeParameterRef,
+    ClassParent, ClassRef, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind, TupleElement,
+    TupleElementKind, TypeParameterRef,
 };
 use bun_sema::hir::{BinOp, ExprId, ExprKind};
 use bun_sema::types::SigId as SignatureId;
@@ -103,6 +103,7 @@ fn classify_shape<'x>(kind: &'x ShapeKind<'_>) -> ComparedShape<'x> {
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // its callers hold references
 fn has_element_type(element: &TupleElement) -> bool {
     match element.kind {
         TupleElementKind::Required | TupleElementKind::Optional | TupleElementKind::Rest => true,
@@ -152,10 +153,17 @@ impl Comparison {
         self.depth < MAX_COMPARED_DEPTH
     }
 
-    // A part of the two types: a member, a result, a parameter, the contents.
+    // A part of the two types: a result, an element, the contents.
     fn follow(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
         if self.follows_parts() {
             self.add_pair(source, target, self.depth + 1, self.is_accepted);
+        }
+    }
+
+    // Nothing is compared below a member: those are types that nobody else asks the checker for.
+    fn follow_member(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
+        if self.follows_parts() {
+            self.add_pair(source, target, MAX_COMPARED_DEPTH, self.is_accepted);
         }
     }
 
@@ -214,7 +222,7 @@ impl Comparison {
         if self.depth < MAX_COMPARED_DEPTH
             && let Ok(true) = file.queries.is_assignable(source, target)
         {
-            self.add_pair(source, target, self.depth + 1, true);
+            self.add_pair(source, target, MAX_COMPARED_DEPTH, true);
         }
     }
 }
@@ -243,7 +251,13 @@ pub(super) fn record_contents_flow(
         return;
     };
     let source_position = file.hir[container].pos;
-    record_conversion(file, contents, target, source_position, ConversionKind::Performed);
+    record_conversion(
+        file,
+        contents,
+        target,
+        source_position,
+        ConversionKind::Performed,
+    );
 }
 
 enum FlowingOperands {
@@ -474,8 +488,7 @@ fn follow_copied_members(
         return;
     };
     for member in members {
-        let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked)
-        else {
+        let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked) else {
             continue;
         };
         let Ok(Some(found)) = file.queries.find_checked_member(source, name) else {
@@ -509,7 +522,10 @@ fn compare_pending_pairs(
         }
         // A pair that was met far down was not walked as far as one that is met near the top.
         let compared_types = &mut file.types.conversions.compared_types;
-        if compared_types.get(&pair).is_some_and(|&walked_from| walked_from <= depth) {
+        if compared_types
+            .get(&pair)
+            .is_some_and(|&walked_from| walked_from <= depth)
+        {
             continue;
         }
         if compared == limit {
@@ -559,7 +575,10 @@ fn compare_pair(
         target,
         is_asserted,
     } = pair;
-    let shapes = (file.queries.type_shape(source), file.queries.type_shape(target));
+    let shapes = (
+        file.queries.type_shape(source),
+        file.queries.type_shape(target),
+    );
     let (Ok(source_shape), Ok(target_shape)) = shapes else {
         return;
     };
@@ -567,15 +586,17 @@ fn compare_pair(
     if let (ComparedShape::Transparent(types), true) = (&source_kind, is_asserted) {
         let depth = comparison.depth;
         let members = find_asserted_members(file, types, target);
-        comparison.pending.extend(members.iter().map(|&source| PendingPair {
-            pair: ComparedPair {
-                source,
-                target,
-                is_asserted,
-            },
-            depth,
-            is_accepted: false,
-        }));
+        comparison
+            .pending
+            .extend(members.iter().map(|&source| PendingPair {
+                pair: ComparedPair {
+                    source,
+                    target,
+                    is_asserted,
+                },
+                depth,
+                is_accepted: false,
+            }));
         return;
     }
     // What nothing is known of may be an object that somebody has made.
@@ -684,12 +705,14 @@ fn compare_pair(
         (ComparedShape::ClassConstructor(class), ComparedShape::ClassConstructor(target_class)) => {
             let function = function_types::find_class_function_type(file, class);
             let function_type = function_types::find_class_function_type(file, target_class);
-            file.fragment.add_function_type_edge(function, function_type);
+            file.fragment
+                .add_function_type_edge(function, function_type);
         }
         (ComparedShape::ClassConstructor(class), ComparedShape::Function(targets)) => {
             if let Some(function_type) = function_types::find_function_type(file, targets) {
                 let function = function_types::find_class_function_type(file, class);
-                file.fragment.add_function_type_edge(function, function_type);
+                file.fragment
+                    .add_function_type_edge(function, function_type);
             }
         }
         (
@@ -708,9 +731,7 @@ fn compare_pair(
         )
         | (
             ComparedShape::Function(_),
-            ComparedShape::Tuple(_)
-            | ComparedShape::ClassConstructor(_)
-            | ComparedShape::Container,
+            ComparedShape::Tuple(_) | ComparedShape::ClassConstructor(_) | ComparedShape::Container,
         )
         | (
             ComparedShape::ClassConstructor(_),
@@ -736,9 +757,9 @@ enum ValueKind {
 
 fn find_value_kind(shape: &ComparedShape<'_>) -> ValueKind {
     match shape {
-        ComparedShape::Class(_) | ComparedShape::ObjectType | ComparedShape::TypeParameter { .. } => {
-            ValueKind::Object
-        }
+        ComparedShape::Class(_)
+        | ComparedShape::ObjectType
+        | ComparedShape::TypeParameter { .. } => ValueKind::Object,
         ComparedShape::Function(_) | ComparedShape::ClassConstructor(_) => ValueKind::Function,
         ComparedShape::Tuple(_) | ComparedShape::Container => ValueKind::List,
         ComparedShape::Primitive => ValueKind::Primitive,
@@ -797,7 +818,9 @@ fn follow_into_fitting_member(
     }
     let of_same_kind = || {
         let members = members.iter().zip(&kinds);
-        members.filter(|member| *member.1 == UnionMember::OfSameKind).map(|member| *member.0)
+        members
+            .filter(|member| *member.1 == UnionMember::OfSameKind)
+            .map(|member| *member.0)
     };
     // The union takes the value, and no other member of it can.
     if comparison.is_accepted
@@ -845,7 +868,10 @@ fn collect_types_with_layout(
         return Rc::clone(found);
     }
     let found: Rc<[CheckerTypeId]> = Rc::from(find_types_with_layout(file, ty, side));
-    file.types.conversions.types_with_layout.insert((ty, side), Rc::clone(&found));
+    file.types
+        .conversions
+        .types_with_layout
+        .insert((ty, side), Rc::clone(&found));
     found
 }
 
@@ -940,8 +966,7 @@ fn admit_asserted_members(
         return;
     };
     for member in members {
-        let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked)
-        else {
+        let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked) else {
             continue;
         };
         if !is_read_through(member.kind) {
@@ -976,7 +1001,9 @@ pub(super) fn record_construction_by_library(
         return;
     };
     if let Some(supertype) = find_layout(file, ty) {
-        let layout = file.fragment.declare_layout(LayoutKey::Library(declaration));
+        let layout = file
+            .fragment
+            .declare_layout(LayoutKey::Library(declaration));
         layouts::add_conversion(file, layout, supertype);
     }
 }
@@ -988,7 +1015,10 @@ fn add_layout_edge(
 ) {
     match (find_layout(file, source), find_layout(file, target)) {
         (Some(layout), Some(supertype)) => layouts::add_conversion(file, layout, supertype),
-        (None, Some(supertype)) => file.fragment.family_facts.add_member_without_layout(supertype),
+        (None, Some(supertype)) => file
+            .fragment
+            .family_facts
+            .add_member_without_layout(supertype),
         (Some(_) | None, None) => {}
     }
 }
@@ -1004,7 +1034,8 @@ fn compare_functions(
         function_types::find_function_type(file, targets),
     );
     if let (Some(function), Some(function_type)) = function_types {
-        file.fragment.add_function_type_edge(function, function_type);
+        file.fragment
+            .add_function_type_edge(function, function_type);
     }
     let (&[signature], &[target]) = (signatures, targets) else {
         return;
@@ -1077,7 +1108,10 @@ fn compare_objects(
             }
         }
         (Some(layout), Some(supertype)) => layouts::add_conversion(file, layout, supertype),
-        (None, Some(supertype)) => file.fragment.family_facts.add_member_without_layout(supertype),
+        (None, Some(supertype)) => file
+            .fragment
+            .family_facts
+            .add_member_without_layout(supertype),
         (Some(_) | None, None) => {}
     }
     compare_members(file, comparison, source, target);
@@ -1106,8 +1140,7 @@ fn compare_members(
         return;
     };
     for member in members {
-        let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked)
-        else {
+        let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked) else {
             continue;
         };
         let Ok(Some(found)) = file.queries.find_checked_member(source, name) else {
@@ -1120,7 +1153,7 @@ fn compare_members(
             continue;
         }
         if is_read_through(member.kind) {
-            comparison.follow(source_type, target_type);
+            comparison.follow_member(source_type, target_type);
         }
     }
 }

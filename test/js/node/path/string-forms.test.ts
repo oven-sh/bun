@@ -11,7 +11,8 @@ const wide = (text: string) => flat("日" + text + "本").slice(1, -1);
 const forms: Record<string, (text: string) => any> = {
   flat: text => flat(text + ""),
   rope: text => (text.length < 2 ? text : copy(text.slice(0, text.length >> 1)) + copy(text.slice(text.length >> 1))),
-  ropeOfThree: text => (text.length < 3 ? text : copy(text.slice(0, 1)) + (copy(text.slice(1, 2)) + copy(text.slice(2)))),
+  ropeOfThree: text =>
+    text.length < 3 ? text : copy(text.slice(0, 1)) + (copy(text.slice(1, 2)) + copy(text.slice(2))),
   substring: text => flat("<<" + text + ">>>").slice(2, -3),
   stringObject: text => new String(text),
 };
@@ -29,12 +30,66 @@ function createRandom(seed: number) {
 }
 
 const names = [
-  "", "", ".", "..", "...", "a", "ab", "index.ts", "package.json", ".bin", ".gitignore", "e.", "f..g", "..h", ".i.", "x.tar.gz",
-  "node_modules", "src", " ", "é", "ñandú.txt", "ÿ", "C:", "c:", "1:", "é:", "?", "UNC", "con", "aux:", "server", "share",
-  "a-rather-long-name-of-a-folder-that-has-more-than-thirty-two-characters", "sixteen-letters!", "seventeen-letters", "eight-ch", "nine-char",
+  "",
+  "",
+  ".",
+  "..",
+  "...",
+  "a",
+  "ab",
+  "index.ts",
+  "package.json",
+  ".bin",
+  ".gitignore",
+  "e.",
+  "f..g",
+  "..h",
+  ".i.",
+  "x.tar.gz",
+  "node_modules",
+  "src",
+  " ",
+  "é",
+  "ñandú.txt",
+  "ÿ",
+  "C:",
+  "c:",
+  "1:",
+  "é:",
+  "?",
+  "UNC",
+  "con",
+  "aux:",
+  "server",
+  "share",
+  "a-rather-long-name-of-a-folder-that-has-more-than-thirty-two-characters",
+  "sixteen-letters!",
+  "seventeen-letters",
+  "eight-ch",
+  "nine-char",
 ];
 const separators = ["/", "/", "/", "/", "\\", "\\", "//", "\\\\", "/./", "/../", "\\..\\", "/\\"];
-const starts = ["", "", "", "/", "/", "/", "//", "///", "\\", "\\\\", "\\\\?\\", "\\\\.\\", "C:", "C:\\", "c:/", "./", "../", ".\\", "..\\"];
+const starts = [
+  "",
+  "",
+  "",
+  "/",
+  "/",
+  "/",
+  "//",
+  "///",
+  "\\",
+  "\\\\",
+  "\\\\?\\",
+  "\\\\.\\",
+  "C:",
+  "C:\\",
+  "c:/",
+  "./",
+  "../",
+  ".\\",
+  "..\\",
+];
 const ends = ["", "", "", "", "/", "//", "\\", "/.", "/..", "."];
 
 function createPaths(seed: number, count: number) {
@@ -65,7 +120,10 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
       expect([a, b, c, p.join(form(a), form(b), form(c))]).toEqual([a, b, c, p.join(wide(a), wide(b), wide(c))]);
       expect([a, b, c, p.resolve(form(a), form(b), form(c))]).toEqual([a, b, c, p.resolve(wide(a), wide(b), wide(c))]);
       expect([a, p.dirname(p.dirname(form(a)))]).toEqual([a, p.dirname(p.dirname(wide(a)))]);
-      expect([a, p.join(p.dirname(form(a)), p.basename(form(a)))]).toEqual([a, p.join(p.dirname(wide(a)), p.basename(wide(a)))]);
+      expect([a, p.join(p.dirname(form(a)), p.basename(form(a)))]).toEqual([
+        a,
+        p.join(p.dirname(wide(a)), p.basename(wide(a))),
+      ]);
     });
   });
 
@@ -75,11 +133,18 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
         for (const inserted of ["/", "//", "/.", "/./", "/..", "/../", ".", "..", "\\", "é"]) {
           for (const start of ["", "/"]) {
             const text = start + "x".repeat(Math.max(at, 0)) + inserted + "y".repeat(Math.max(length - at, 0));
-            for (const name of ofOnePath) expect([text, name, p[name](flat(text))]).toEqual([text, name, p[name](wide(text))]);
+            for (const name of ofOnePath)
+              expect([text, name, p[name](flat(text))]).toEqual([text, name, p[name](wide(text))]);
             expect([text, p.join(flat(text), flat(text))]).toEqual([text, p.join(wide(text), wide(text))]);
             expect([text, p.resolve(flat(text), flat(text))]).toEqual([text, p.resolve(wide(text), wide(text))]);
-            expect([text, p.relative(flat(text), flat("/" + text + "/z"))]).toEqual([text, p.relative(wide(text), wide("/" + text + "/z"))]);
-            expect([text, p.relative(flat("/x/" + text + "/z"), flat(text))]).toEqual([text, p.relative(wide("/x/" + text + "/z"), wide(text))]);
+            expect([text, p.relative(flat(text), flat("/" + text + "/z"))]).toEqual([
+              text,
+              p.relative(wide(text), wide("/" + text + "/z")),
+            ]);
+            expect([text, p.relative(flat("/x/" + text + "/z"), flat(text))]).toEqual([
+              text,
+              p.relative(wide("/x/" + text + "/z"), wide(text)),
+            ]);
           }
         }
       }
@@ -96,9 +161,14 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
         for (const before of ["", "/", "bbbbbb", "/bbbbbbbbbbbbb", "bbbbbbbbbbbbbbbb/"]) {
           for (const after of length < 6 || before === "/" ? ["", "c", "/ccccccc", "cccccccccccccccc"] : [""]) {
             const text = before + short + after;
-            for (const name of ofOnePath) expect([text, name, p[name](flat(text))]).toEqual([text, name, p[name](wide(text))]);
+            for (const name of ofOnePath)
+              expect([text, name, p[name](flat(text))]).toEqual([text, name, p[name](wide(text))]);
             for (const suffix of ["a", ".a", "/", "a/", ".", "aa", "c", "ac", "/a", text.slice(-3), "b" + text])
-              expect([text, suffix, p.basename(flat(text), flat(suffix))]).toEqual([text, suffix, p.basename(wide(text), wide(suffix))]);
+              expect([text, suffix, p.basename(flat(text), flat(suffix))]).toEqual([
+                text,
+                suffix,
+                p.basename(wide(text), wide(suffix)),
+              ]);
             expect([text, p.join(flat("x/y"), flat(text))]).toEqual([text, p.join(wide("x/y"), wide(text))]);
             expect([text, p.resolve(flat("/x/y"), flat(text))]).toEqual([text, p.resolve(wide("/x/y"), wide(text))]);
             expect([text, p.relative(flat("/a/b"), flat(text))]).toEqual([text, p.relative(wide("/a/b"), wide(text))]);
@@ -109,20 +179,29 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
       }
     }
     for (const from of resolved)
-      for (const to of resolved) expect([from, to, p.relative(flat(from), flat(to))]).toEqual([from, to, p.relative(wide(from), wide(to))]);
+      for (const to of resolved)
+        expect([from, to, p.relative(flat(from), flat(to))]).toEqual([from, to, p.relative(wide(from), wide(to))]);
   });
 
   test("an answer outlives its operand", () => {
     const answers: string[] = [];
     for (let i = 0; i < 2000; ++i) {
       const text = copy(`/folder-${i}/another-folder/file-${i}.extension`);
-      answers.push(p.dirname(text), p.basename(text), p.extname(text), p.parse(text).name, p.normalize(text), p.join(text, copy(`leaf-${i}`)));
+      answers.push(
+        p.dirname(text),
+        p.basename(text),
+        p.extname(text),
+        p.parse(text).name,
+        p.normalize(text),
+        p.join(text, copy(`leaf-${i}`)),
+      );
       if (i % 500 === 0) Bun.gc(true);
     }
     Bun.gc(true);
     const separator = p.sep;
     for (let i = 0; i < 2000; ++i) {
-      const folder = p === path.posix ? `/folder-${i}/another-folder` : `${separator}folder-${i}${separator}another-folder`;
+      const folder =
+        p === path.posix ? `/folder-${i}/another-folder` : `${separator}folder-${i}${separator}another-folder`;
       expect(answers.slice(i * 6, i * 6 + 6)).toEqual([
         `/folder-${i}/another-folder`,
         `file-${i}.extension`,
@@ -137,7 +216,13 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
   test("what is no string", () => {
     const message = (name: string, got: string) => `The "${name}" property must be of type string, got ${got}`;
     for (const name of ["basename", "dirname", "extname", "isAbsolute", "normalize", "parse"] as const) {
-      expect(() => p[name](5 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message: message("path", "number") }));
+      expect(() => p[name](5 as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: message("path", "number"),
+        }),
+      );
       expect(() => (p[name] as any)()).toThrow(message("path", "undefined"));
       expect(() => p[name]([] as any)).toThrow(message("path", "array"));
       expect(() => p[name](null as any)).toThrow(message("path", "object"));
@@ -156,7 +241,8 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
 
   test("String objects are converted first, in the order of the operands", () => {
     const log: string[] = [];
-    const noisy = (name: string, text: string): any => Object.assign(new String(text), { toString: () => (log.push(name), text) });
+    const noisy = (name: string, text: string): any =>
+      Object.assign(new String(text), { toString: () => (log.push(name), text) });
     const ran = (run: () => unknown) => {
       log.length = 0;
       try {
@@ -168,11 +254,25 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
     expect(ran(() => p.basename(5 as any, noisy("ext", ".b")))).toBe("ext");
     expect(ran(() => p.relative(noisy("from", "a"), noisy("to", "b")))).toBe("from,to");
     expect(ran(() => p.join(5 as any, noisy("second", "b"), noisy("third", "c")))).toBe("second,third");
-    expect(ran(() => p.resolve(noisy("first", "a"), noisy("second", "/b"), noisy("third", "c")))).toBe("first,second,third");
+    expect(ran(() => p.resolve(noisy("first", "a"), noisy("second", "/b"), noisy("third", "c")))).toBe(
+      "first,second,third",
+    );
   });
 
   test("the functions are named and counted as they were", () => {
-    for (const name of ["basename", "dirname", "extname", "format", "isAbsolute", "join", "normalize", "parse", "relative", "resolve", "toNamespacedPath"] as const) {
+    for (const name of [
+      "basename",
+      "dirname",
+      "extname",
+      "format",
+      "isAbsolute",
+      "join",
+      "normalize",
+      "parse",
+      "relative",
+      "resolve",
+      "toNamespacedPath",
+    ] as const) {
       expect([name, p[name].name, p[name].length]).toEqual([name, name, 1]);
     }
   });

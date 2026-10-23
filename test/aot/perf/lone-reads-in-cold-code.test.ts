@@ -23,7 +23,12 @@ const rows: [reader: string, allowance: number][] = [
 ];
 const iterations = 2_000_000;
 
-const skipped = isDebug || isASAN ? "a debug or ASAN build counts other instructions" : isWindows ? "it counts with perf_event_open or /usr/bin/time -l" : undefined;
+const skipped =
+  isDebug || isASAN
+    ? "a debug or ASAN build counts other instructions"
+    : isWindows
+      ? "it counts with perf_event_open or /usr/bin/time -l"
+      : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/lone-reads-in-cold-code.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/lone-reads-in-cold-code", () => {
@@ -33,7 +38,23 @@ describe.skipIf(!!skipped)("compile/aot/perf/lone-reads-in-cold-code", () => {
   const costs = new Map<string, Promise<number | undefined>>();
 
   beforeAll(async () => {
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "--aot-limit=MaxWarmCodeValues:1", ...withoutDebugInformation(), join(root, "main.ts"), "--outfile", executable], root, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          "--aot-limit=MaxWarmCodeValues:1",
+          ...withoutDebugInformation(),
+          join(root, "main.ts"),
+          "--outfile",
+          executable,
+        ],
+        root,
+        bunEnv,
+      ),
+    );
     const compiled = await spawned([executable], root, bunEnv);
     const plain = await spawned([bunExe(), "run", join(root, "main.ts")], root, bunEnv);
     expect(compiled.stdout).toBe(plain.stdout);
@@ -55,15 +76,16 @@ describe.skipIf(!!skipped)("compile/aot/perf/lone-reads-in-cold-code", () => {
   }
 
   for (const [reader, allowance] of rows) {
-    test(
-      `${reader}: at most ${allowance + slack} instructions`,
-      async () => {
-        const [expected, measured] = [await costOf("readNothing"), await costOf(reader)];
-        if (expected === undefined || measured === undefined) return void console.error(`SKIPPED: ${reader}: instructions cannot be counted here`);
-        console.error(`LONE READS IN COLD CODE readNothing\t${expected}\t| ${reader}\t${measured}`);
-        expect({ reader, measured, isWithinAllowance: measured <= expected + allowance + slack + 0.5 }).toEqual({ reader, measured, isWithinAllowance: true });
-      },
-      900_000,
-    );
+    test(`${reader}: at most ${allowance + slack} instructions`, async () => {
+      const [expected, measured] = [await costOf("readNothing"), await costOf(reader)];
+      if (expected === undefined || measured === undefined)
+        return void console.error(`SKIPPED: ${reader}: instructions cannot be counted here`);
+      console.error(`LONE READS IN COLD CODE readNothing\t${expected}\t| ${reader}\t${measured}`);
+      expect({ reader, measured, isWithinAllowance: measured <= expected + allowance + slack + 0.5 }).toEqual({
+        reader,
+        measured,
+        isWithinAllowance: true,
+      });
+    }, 900_000);
   }
 });

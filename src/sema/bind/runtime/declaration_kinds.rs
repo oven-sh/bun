@@ -144,7 +144,9 @@ pub(super) fn pattern_scope(bound: &BoundBuilder, pat: PatId) -> ScopeId {
     let Some(declaration) = variable_declaration(bound, pat) else {
         return ScopeId::NONE;
     };
-    let scope = bound.stmt_scope.get(bound.var_stmt[declaration.idx()].idx());
+    let scope = bound
+        .stmt_scope
+        .get(bound.var_stmt[declaration.idx()].idx());
     scope.map_or(ScopeId::NONE, |&scope| scope)
 }
 
@@ -177,9 +179,13 @@ pub(super) fn creates_binding(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) 
         Decl::ImportSpec(s) => !hir[s].type_only && !hir[hir[s].import].type_only,
         Decl::ImportEquals(i) => !is_ambient() && !hir[i].flags.contains(Flags::TYPE_ONLY),
         Decl::ExportSpec(s) => !hir[s].type_only && !hir[hir[s].export].type_only,
-        Decl::ExportStarAs(s) => {
-            !matches!(hir[s].kind, StmtKind::ExportStar { type_only: true, .. })
-        }
+        Decl::ExportStarAs(s) => !matches!(
+            hir[s].kind,
+            StmtKind::ExportStar {
+                type_only: true,
+                ..
+            }
+        ),
         Decl::ExportExpr(_)
         | Decl::File
         | Decl::ModuleExports(_)
@@ -204,11 +210,7 @@ fn is_strict_scope(hir: &File<'_>, bound: &BoundBuilder, mut scope: ScopeId) -> 
     false
 }
 
-pub(super) fn function_position(
-    hir: &File<'_>,
-    bound: &BoundBuilder,
-    f: FnId,
-) -> FunctionPosition {
+pub(super) fn function_position(hir: &File<'_>, bound: &BoundBuilder, f: FnId) -> FunctionPosition {
     match bound.fns[f.idx()].owner {
         FnOwner::Stmt(statement) => statement_position(hir, bound, statement),
         FnOwner::None | FnOwner::Expr(_) | FnOwner::Member(_) | FnOwner::Type(_) => {

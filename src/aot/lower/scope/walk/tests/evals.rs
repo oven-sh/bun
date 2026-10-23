@@ -26,14 +26,19 @@ fn variable_kinds(
         BindingRef::Symbol(symbol) => Some(bound.binding_kind(symbol)),
         BindingRef::Slot(..) => None,
     });
-    let mut kinds: Vec<BindingKind> = kinds.filter(|&kind| kind != BindingKind::Function).collect();
+    let mut kinds: Vec<BindingKind> = kinds
+        .filter(|&kind| kind != BindingKind::Function)
+        .collect();
     kinds.sort();
     kinds
 }
 
 fn variable_kinds_seen_by_eval(source: &str) -> Vec<BindingKind> {
     with_walk(&[("main.cjs", source)], |_, bound, walk| {
-        variable_kinds(bound, walk.eval_uses.iter().map(|eval_use| eval_use.binding))
+        variable_kinds(
+            bound,
+            walk.eval_uses.iter().map(|eval_use| eval_use.binding),
+        )
     })
 }
 
@@ -61,14 +66,23 @@ fn catch_parameter_does_not_hide_the_variable_from_eval() {
     use BindingKind::{Let, Parameter, SimpleCatchParameter, Var};
     let variable =
         "function f() { var e = 1; try { throw 5; } catch (e) { eval(s); } return typeof e; }";
-    assert_eq!(variable_kinds_seen_by_eval(variable), [Var, SimpleCatchParameter]);
+    assert_eq!(
+        variable_kinds_seen_by_eval(variable),
+        [Var, SimpleCatchParameter]
+    );
     let parameter = "function f(e) { try { throw 5; } catch (e) { eval(s); } return typeof e; }";
-    assert_eq!(variable_kinds_seen_by_eval(parameter), [SimpleCatchParameter, Parameter]);
+    assert_eq!(
+        variable_kinds_seen_by_eval(parameter),
+        [SimpleCatchParameter, Parameter]
+    );
     let nested = "function f() { var e; try {} catch (e) { try {} catch (e) { eval(s); } } }";
     let expected = [Var, SimpleCatchParameter, SimpleCatchParameter];
     assert_eq!(variable_kinds_seen_by_eval(nested), expected);
     let lexical = "function f() { var e; { let e; try {} catch (e) { eval(s); } } }";
-    assert_eq!(variable_kinds_seen_by_eval(lexical), [Let, SimpleCatchParameter]);
+    assert_eq!(
+        variable_kinds_seen_by_eval(lexical),
+        [Let, SimpleCatchParameter]
+    );
     let pattern = "function f() { var e; try {} catch ({ e }) { eval(s); } }";
     assert_eq!(variable_kinds_seen_by_eval(pattern), [Let]);
     let strict = "'use strict'; function f() { var e; try {} catch (e) { eval(s); } }";
@@ -112,7 +126,10 @@ fn direct_eval_in_constructor_references_constructor() {
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {
         let constructor = only_function(hir, FnKind::Constructor);
         let callee = BindingRef::Slot(top_scope(bound, constructor), ScopeSlot::Callee);
-        assert_eq!(walk.function_references, [(walked(walk, constructor), constructor)]);
+        assert_eq!(
+            walk.function_references,
+            [(walked(walk, constructor), constructor)]
+        );
         assert!(has_use(walk, walked(walk, constructor), callee));
     });
 }
@@ -124,9 +141,15 @@ fn direct_eval_uses_home_object_of_method_only() {
             used_slots(walk).contains(&ScopeSlot::HomeObject)
         })
     };
-    assert!(uses_home_object("module.exports = { m(s) { return eval(s); } };"));
-    assert!(!uses_home_object("module.exports = function (s) { return eval(s); };"));
-    assert!(!uses_home_object("module.exports = function (s) { return () => eval(s); };"));
+    assert!(uses_home_object(
+        "module.exports = { m(s) { return eval(s); } };"
+    ));
+    assert!(!uses_home_object(
+        "module.exports = function (s) { return eval(s); };"
+    ));
+    assert!(!uses_home_object(
+        "module.exports = function (s) { return () => eval(s); };"
+    ));
 }
 
 #[test]
@@ -138,7 +161,10 @@ fn direct_eval_uses_commonjs_variables() {
             let binding = BindingRef::Slot(file_scope(hir, bound), ScopeSlot::CommonJs(variable));
             assert!(has_use(walk, function, binding), "{variable:?}");
             let mut eval_uses = walk.eval_uses.iter();
-            assert!(eval_uses.any(|eval_use| eval_use.binding == binding), "{variable:?}");
+            assert!(
+                eval_uses.any(|eval_use| eval_use.binding == binding),
+                "{variable:?}"
+            );
         }
     });
     let uses_commonjs_variable = |file: &str, source: &str| {
@@ -146,8 +172,14 @@ fn direct_eval_uses_commonjs_variables() {
             used_slots(walk).into_iter().any(is_commonjs_slot)
         })
     };
-    assert!(!uses_commonjs_variable("main.mjs", "export function load(s) { return eval(s); }"));
-    assert!(!uses_commonjs_variable("main.cjs", "function load(s) { if (false) eval(s); }"));
+    assert!(!uses_commonjs_variable(
+        "main.mjs",
+        "export function load(s) { return eval(s); }"
+    ));
+    assert!(!uses_commonjs_variable(
+        "main.cjs",
+        "function load(s) { if (false) eval(s); }"
+    ));
 }
 
 #[test]
@@ -168,7 +200,10 @@ fn direct_eval_stores_assignable_slots() {
     let sloppy = stored_slots("main.cjs", "function f(s) { return eval(s); }");
     assert!(sloppy.contains(&ScopeSlot::ArgumentsBinding));
     for variable in WRAPPER_PARAMETERS {
-        assert!(sloppy.contains(&ScopeSlot::CommonJs(variable)), "{variable:?}");
+        assert!(
+            sloppy.contains(&ScopeSlot::CommonJs(variable)),
+            "{variable:?}"
+        );
     }
     let strict = stored_slots("main.mjs", "export function f(s) { return eval(s); }");
     assert!(strict.is_empty());
@@ -202,15 +237,29 @@ fn direct_eval_uses_arguments_of_commonjs_body() {
             let slots = [ScopeSlot::Arguments, ScopeSlot::ArgumentsBinding];
             let is_seen = |slot: ScopeSlot| {
                 let binding = BindingRef::Slot(scope, slot);
-                walk.eval_uses.iter().any(|eval_use| eval_use.binding == binding)
+                walk.eval_uses
+                    .iter()
+                    .any(|eval_use| eval_use.binding == binding)
             };
             slots.map(is_seen)
         })
     };
-    assert_eq!(uses_arguments("main.cjs", "var s = ''; eval(s);"), [true, true]);
-    assert_eq!(uses_arguments("main.cjs", "module.exports = (s) => eval(s);"), [true, true]);
-    assert_eq!(uses_arguments("main.cjs", "function f(s) { eval(s); }"), [false, false]);
-    assert_eq!(uses_arguments("main.mjs", "var s = ''; eval(s); export {};"), [false, false]);
+    assert_eq!(
+        uses_arguments("main.cjs", "var s = ''; eval(s);"),
+        [true, true]
+    );
+    assert_eq!(
+        uses_arguments("main.cjs", "module.exports = (s) => eval(s);"),
+        [true, true]
+    );
+    assert_eq!(
+        uses_arguments("main.cjs", "function f(s) { eval(s); }"),
+        [false, false]
+    );
+    assert_eq!(
+        uses_arguments("main.mjs", "var s = ''; eval(s); export {};"),
+        [false, false]
+    );
     let sloppy = stored_slots("main.cjs", "var s = ''; eval(s);");
     assert!(sloppy.contains(&ScopeSlot::ArgumentsBinding));
     let strict = stored_slots("main.cjs", "'use strict'; var s = ''; eval(s);");
@@ -231,8 +280,14 @@ fn direct_eval_uses_slots_of_enclosing_classes() {
         let expected = [
             (class_scope, ScopeSlot::Class(ClassSlot::ClassObject)),
             (class_scope, ScopeSlot::Class(ClassSlot::ClassToken)),
-            (class_scope, ScopeSlot::Class(ClassSlot::StaticField(static_field))),
-            (class_scope, ScopeSlot::Class(ClassSlot::PrivateMethod(private_method))),
+            (
+                class_scope,
+                ScopeSlot::Class(ClassSlot::StaticField(static_field)),
+            ),
+            (
+                class_scope,
+                ScopeSlot::Class(ClassSlot::PrivateMethod(private_method)),
+            ),
             (scope, ScopeSlot::This),
             (scope, ScopeSlot::Arguments),
             (scope, ScopeSlot::ArgumentsBinding),
@@ -270,12 +325,20 @@ fn eval_variables_are_used_by_dynamic_lookups() {
         let function = only_function(hir, FnKind::Decl);
         let variables = BindingRef::Slot(top_scope(bound, function), ScopeSlot::EvalVariables);
         assert!(has_use(walk, walked(walk, function), variables));
-        assert!(has_use(walk, walked(walk, only_function(hir, FnKind::Arrow)), variables));
+        assert!(has_use(
+            walk,
+            walked(walk, only_function(hir, FnKind::Arrow)),
+            variables
+        ));
     });
     let declared = "function f(s) { let y = 1; eval(s); return () => y; }";
     with_walk(&[("main.cjs", declared)], |hir, bound, walk| {
         let function = only_function(hir, FnKind::Decl);
         let variables = BindingRef::Slot(top_scope(bound, function), ScopeSlot::EvalVariables);
-        assert!(!has_use(walk, walked(walk, only_function(hir, FnKind::Arrow)), variables));
+        assert!(!has_use(
+            walk,
+            walked(walk, only_function(hir, FnKind::Arrow)),
+            variables
+        ));
     });
 }

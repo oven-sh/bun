@@ -404,7 +404,11 @@ fn negative_number_is_negated_literal() {
             else {
                 panic!("{number}: {kind:?}");
             };
-            assert_eq!(number_bits(&hir, operand), Some(magnitude.to_bits()), "{number}");
+            assert_eq!(
+                number_bits(&hir, operand),
+                Some(magnitude.to_bits()),
+                "{number}"
+            );
         }
     });
 }
@@ -433,7 +437,10 @@ fn proto_key_defines_own_property() {
         let hir = default_export_module(&object, atoms, arena).file;
         assert_eq!(hir.validate(), Ok(()));
         let name_kinds: Vec<NameKind> = hir.props.iter().map(|prop| prop.name_kind).collect();
-        assert_eq!(name_kinds, [NameKind::ComputedString, NameKind::StringLiteral]);
+        assert_eq!(
+            name_kinds,
+            [NameKind::ComputedString, NameKind::StringLiteral]
+        );
         assert!(!hir.props.iter().any(is_proto_setter));
     });
 }

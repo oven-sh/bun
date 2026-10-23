@@ -1,10 +1,10 @@
 // A program compiled by --aot keeps most references in 32 bits: its objects have to lie in 32 GB of reserved address space. One that outgrows
 // that says so and names the option that lifts the limit. The limit is lowered to 64 MB here, so that a small program reaches it.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { withoutCoreDump } from "./run-programs";
+import { test } from "./supported";
 
 const program = `
 class Item { constructor(public n: number, public before: Item | null, public far: Item | null, public label: string) {} }
@@ -36,8 +36,13 @@ test("a program that outgrows the range of 32-bit references says which option l
   const cwd = String(dir);
   const narrow = join(cwd, isWindows ? "narrow.exe" : "narrow");
   const wide = join(cwd, isWindows ? "wide.exe" : "wide");
-  expect((await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", narrow], cwd, bunEnv)).exitCode).toBe(0);
-  expect((await run([bunExe(), "build", "--compile", "--aot", "--aot-huge-heap", "main.ts", "--outfile", wide], cwd, bunEnv)).exitCode).toBe(0);
+  expect(
+    (await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", narrow], cwd, bunEnv)).exitCode,
+  ).toBe(0);
+  expect(
+    (await run([bunExe(), "build", "--compile", "--aot", "--aot-huge-heap", "main.ts", "--outfile", wide], cwd, bunEnv))
+      .exitCode,
+  ).toBe(0);
   const plain = await run([bunExe(), "run", "main.ts"], cwd, bunEnv);
   expect(plain.exitCode).toBe(0);
 
@@ -51,5 +56,9 @@ test("a program that outgrows the range of 32-bit references says which option l
   expect(none.stderr).toContain("Build it with --aot-huge-heap to run it without a heap limit.");
 
   for (const reserved of [undefined, "64", "1", "0"])
-    expect(await run([wide], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: reserved })).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
+    expect(await run([wide], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: reserved })).toEqual({
+      stdout: plain.stdout,
+      stderr: "",
+      exitCode: 0,
+    });
 }, 120_000);

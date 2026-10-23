@@ -3,7 +3,12 @@ import { canonicalFunction, forEachPatternName, isFunction, parseProgram, textOf
 export type FoundReference =
   | { readonly name: string; readonly kind: "itself" }
   | { readonly name: string; readonly kind: "global"; readonly path: readonly string[] }
-  | { readonly name: string; readonly kind: "definition"; readonly publishedName: string; readonly trees: readonly string[] }
+  | {
+      readonly name: string;
+      readonly kind: "definition";
+      readonly publishedName: string;
+      readonly trees: readonly string[];
+    }
   | { readonly name: string; readonly kind: "operand" }
   | { readonly name: string; readonly kind: "unknown"; readonly why: string };
 
@@ -83,12 +88,16 @@ function requiredValue(value: Node): ImportedValue | undefined {
     const from = requiredValue(node.object);
     if (from === undefined || from.name !== "*") return undefined;
     if (!node.computed && node.property.type === "Identifier") return { source: from.source, name: node.property.name };
-    if (node.computed && node.property.type === "StringLiteral") return { source: from.source, name: node.property.value };
+    if (node.computed && node.property.type === "StringLiteral")
+      return { source: from.source, name: node.property.value };
     return undefined;
   }
-  if (node.type !== "CallExpression" || node.callee.type !== "Identifier" || node.callee.name !== "require") return undefined;
+  if (node.type !== "CallExpression" || node.callee.type !== "Identifier" || node.callee.name !== "require")
+    return undefined;
   const [source] = node.arguments;
-  return node.arguments.length === 1 && source.type === "StringLiteral" ? { source: source.value, name: "*" } : undefined;
+  return node.arguments.length === 1 && source.type === "StringLiteral"
+    ? { source: source.value, name: "*" }
+    : undefined;
 }
 
 function define(unit: Unit, name: string): Definition {
@@ -122,9 +131,14 @@ function collectDestructuring(unit: Unit, pattern: Node, value: Node | null | un
 function exportedName(target: Node): string | undefined {
   if (target.type !== "MemberExpression") return undefined;
   const isModuleExports = (node: Node) =>
-    node.type === "MemberExpression" && !node.computed && node.object.type === "Identifier" && node.object.name === "module" && node.property.name === "exports";
+    node.type === "MemberExpression" &&
+    !node.computed &&
+    node.object.type === "Identifier" &&
+    node.object.name === "module" &&
+    node.property.name === "exports";
   if (isModuleExports(target)) return "*";
-  const isExports = (target.object.type === "Identifier" && target.object.name === "exports") || isModuleExports(target.object);
+  const isExports =
+    (target.object.type === "Identifier" && target.object.name === "exports") || isModuleExports(target.object);
   if (!isExports) return undefined;
   if (!target.computed && target.property.type === "Identifier") return target.property.name;
   return target.computed && target.property.type === "StringLiteral" ? target.property.value : undefined;
@@ -175,10 +189,13 @@ export function collectDefinitions(unit: Unit, statements: readonly Node[]): voi
       case "ExportNamedDeclaration":
         if (statement.declaration) {
           collectDefinitions(unit, [statement.declaration]);
-          const declared: Node[] = statement.declaration.declarations?.map((declarator: Node) => declarator.id) ?? [statement.declaration.id];
+          const declared: Node[] = statement.declaration.declarations?.map((declarator: Node) => declarator.id) ?? [
+            statement.declaration.id,
+          ];
           for (const id of declared) if (id?.type === "Identifier") unit.exports.set(id.name, id.name);
         } else if (!statement.source) {
-          for (const specifier of statement.specifiers) unit.exports.set(specifier.exported.name ?? specifier.exported.value, specifier.local.name);
+          for (const specifier of statement.specifiers)
+            unit.exports.set(specifier.exported.name ?? specifier.exported.value, specifier.local.name);
         }
         break;
       case "ExportDefaultDeclaration":
@@ -203,7 +220,11 @@ export function collectDefinitions(unit: Unit, statements: readonly Node[]): voi
   }
 }
 
-export function readUnit(where: string, text: string, scopes?: (program: Node) => readonly (readonly Node[])[]): Unit | undefined {
+export function readUnit(
+  where: string,
+  text: string,
+  scopes?: (program: Node) => readonly (readonly Node[])[],
+): Unit | undefined {
   const program = parseProgram(text);
   if (program === undefined) return undefined;
   const unit: Unit = { where, text, definitions: new Map(), exports: new Map(), statements: [] };
@@ -223,7 +244,8 @@ function globalPath(unit: Unit, value: Node): string[] | undefined {
 }
 
 function globalPathOf(definition: Definition): string[] | undefined {
-  if (definition.member === undefined) return definition.values.length === 1 ? globalPath(definition.unit, definition.values[0]) : undefined;
+  if (definition.member === undefined)
+    return definition.values.length === 1 ? globalPath(definition.unit, definition.values[0]) : undefined;
   const object = definition.values.length === 0 ? globalPath(definition.unit, definition.member.object) : undefined;
   return object && [...object, definition.member.name];
 }
@@ -242,7 +264,8 @@ function followImports(definition: Definition): Definition | undefined {
 }
 
 function describeOtherValue(definition: Definition): string {
-  if (definition.member !== undefined) return `it is the member ${definition.member.name} of something that is no global, or it is assigned again`;
+  if (definition.member !== undefined)
+    return `it is the member ${definition.member.name} of something that is no global, or it is assigned again`;
   if (definition.values.length === 0) return "it is declared without a value: functions keep something in it";
   const written = definition.values.map(value => definition.unit.text.slice(value.start, value.end)).join(" | ");
   return `its value is neither a function nor a global: ${written.slice(0, 120)}`;
@@ -252,7 +275,8 @@ function referenceTo(name: string, from: Definition): FoundReference {
   const named = from.unit.definitions.get(name)!;
   if (named === from) return { name, kind: "itself" };
   const definition = followImports(named);
-  if (definition === undefined) return { name, kind: "unknown", why: `imported from ${named.imported?.source}, which was not read` };
+  if (definition === undefined)
+    return { name, kind: "unknown", why: `imported from ${named.imported?.source}, which was not read` };
   const trees = treesOf(definition);
   if (trees.length > 0) return { name, kind: "definition", publishedName: definition.name, trees };
   const path = globalPathOf(definition);
@@ -282,10 +306,14 @@ export const reExportLoopName = "Object.keys(..).forEach";
 
 function reExportLoopCallback(statement: Node): Node | undefined {
   if (statement.type !== "ExpressionStatement" || statement.expression.type !== "CallExpression") return undefined;
-  const { callee, arguments: [callback] } = statement.expression;
+  const {
+    callee,
+    arguments: [callback],
+  } = statement.expression;
   if (callee.type !== "MemberExpression" || callee.computed || callee.property.name !== "forEach") return undefined;
   const keys = callee.object;
-  if (keys.type !== "CallExpression" || keys.callee.type !== "MemberExpression" || keys.callee.property.name !== "keys") return undefined;
+  if (keys.type !== "CallExpression" || keys.callee.type !== "MemberExpression" || keys.callee.property.name !== "keys")
+    return undefined;
   return callback && isFunction(callback) ? callback : undefined;
 }
 
@@ -296,7 +324,9 @@ export function callbacksOfUnit(unit: Unit, isOperandName: (name: string) => boo
     if (callback === undefined) continue;
     const [one] = functionsOf({ name: reExportLoopName, unit, values: [callback] });
     const references = one.references.map(reference =>
-      isOperandName(reference.name) || reference.kind === "unknown" ? ({ name: reference.name, kind: "operand" } as const) : reference,
+      isOperandName(reference.name) || reference.kind === "unknown"
+        ? ({ name: reference.name, kind: "operand" } as const)
+        : reference,
     );
     found.push({ ...one, references });
   }

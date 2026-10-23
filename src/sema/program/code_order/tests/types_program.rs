@@ -15,18 +15,22 @@ const PACKAGE_WITH_DECLARATIONS: &[(&str, &str)] = &[
 
 #[test]
 fn javascript_runs_outside_types_program_without_allow_js() {
-    with_program(&host_of(TYPESCRIPT_IMPORTS_JAVASCRIPT), &["/main.ts"], |files| {
-        let (dep, main) = (file_at(files, "/dep.js"), file_at(files, "/main.ts"));
-        assert_eq!(files.modules.len(), 2);
-        assert_eq!(files.role(dep), FileRole::Inferred);
-        assert!(files.compiled(dep).is_some());
-        assert!(!files.module(dep).is_in_types_program);
-        assert!(files.module(main).is_in_types_program);
-        assert!(files.module(main).imports.is_empty());
-        assert!(files.module(main).edges.is_empty());
-        assert_eq!(files.module(main).code_edges, [dep]);
-        assert_eq!(files.code_answers(main), [CodeAnswer::File(dep)]);
-    });
+    with_program(
+        &host_of(TYPESCRIPT_IMPORTS_JAVASCRIPT),
+        &["/main.ts"],
+        |files| {
+            let (dep, main) = (file_at(files, "/dep.js"), file_at(files, "/main.ts"));
+            assert_eq!(files.modules.len(), 2);
+            assert_eq!(files.role(dep), FileRole::Inferred);
+            assert!(files.compiled(dep).is_some());
+            assert!(!files.module(dep).is_in_types_program);
+            assert!(files.module(main).is_in_types_program);
+            assert!(files.module(main).imports.is_empty());
+            assert!(files.module(main).edges.is_empty());
+            assert_eq!(files.module(main).code_edges, [dep]);
+            assert_eq!(files.code_answers(main), [CodeAnswer::File(dep)]);
+        },
+    );
 }
 
 #[test]
@@ -53,39 +57,47 @@ fn javascript_is_in_types_program_with_allow_js() {
 
 #[test]
 fn checked_file_sees_declarations_and_runs_javascript() {
-    with_program(&host_of(PACKAGE_WITH_DECLARATIONS), &["/main.ts"], |files| {
-        let main = file_at(files, "/main.ts");
-        let code = file_at(files, "/node_modules/pkg/index.js");
-        let declarations = file_at(files, "/node_modules/pkg/index.d.ts");
-        assert_eq!(files.code_answers(main), [CodeAnswer::File(code)]);
-        assert_eq!(imported_files(files, main), [declarations]);
+    with_program(
+        &host_of(PACKAGE_WITH_DECLARATIONS),
+        &["/main.ts"],
+        |files| {
+            let main = file_at(files, "/main.ts");
+            let code = file_at(files, "/node_modules/pkg/index.js");
+            let declarations = file_at(files, "/node_modules/pkg/index.d.ts");
+            assert_eq!(files.code_answers(main), [CodeAnswer::File(code)]);
+            assert_eq!(imported_files(files, main), [declarations]);
 
-        assert_eq!(files.role(code), FileRole::Inferred);
-        assert!(files.is_compiled(code));
-        assert!(!files.module(code).is_in_types_program);
+            assert_eq!(files.role(code), FileRole::Inferred);
+            assert!(files.is_compiled(code));
+            assert!(!files.module(code).is_in_types_program);
 
-        assert_eq!(files.role(declarations), FileRole::TypesOnly);
-        assert!(!files.is_compiled(declarations));
-        assert!(files.compiled(declarations).is_none());
-        assert!(files.code_answers(declarations).is_empty());
-        assert!(files.module(declarations).is_in_types_program);
-    });
+            assert_eq!(files.role(declarations), FileRole::TypesOnly);
+            assert!(!files.is_compiled(declarations));
+            assert!(files.compiled(declarations).is_none());
+            assert!(files.code_answers(declarations).is_empty());
+            assert!(files.module(declarations).is_in_types_program);
+        },
+    );
 }
 
 #[test]
 fn inferred_file_imports_code_targets() {
-    with_program(&host_of(PACKAGE_WITH_DECLARATIONS), &["/main.js"], |files| {
-        let main = file_at(files, "/main.js");
-        let code = file_at(files, "/node_modules/pkg/index.js");
-        assert_eq!(files.role(main), FileRole::Inferred);
-        assert_eq!(files.code_answers(main), [CodeAnswer::File(code)]);
-        assert_eq!(imported_files(files, main), [code]);
-        assert_eq!(files.by_path.get(b"/node_modules/pkg/index.d.ts"), None);
-        assert_eq!(files.modules.len(), 2);
-        for file in all_files(files) {
-            assert!(!files.module(file).is_in_types_program);
-        }
-    });
+    with_program(
+        &host_of(PACKAGE_WITH_DECLARATIONS),
+        &["/main.js"],
+        |files| {
+            let main = file_at(files, "/main.js");
+            let code = file_at(files, "/node_modules/pkg/index.js");
+            assert_eq!(files.role(main), FileRole::Inferred);
+            assert_eq!(files.code_answers(main), [CodeAnswer::File(code)]);
+            assert_eq!(imported_files(files, main), [code]);
+            assert_eq!(files.by_path.get(b"/node_modules/pkg/index.d.ts"), None);
+            assert_eq!(files.modules.len(), 2);
+            for file in all_files(files) {
+                assert!(!files.module(file).is_in_types_program);
+            }
+        },
+    );
 }
 
 #[test]
@@ -120,8 +132,14 @@ fn copies_of_package_run_separately_and_share_declarations() {
         assert!(files.is_compiled(code_of_one) && files.is_compiled(code_of_two));
 
         let declarations = file_at(files, "/x/node_modules/pkg/index.d.ts");
-        assert_eq!(file_at(files, "/y/node_modules/pkg/index.d.ts"), declarations);
-        assert_eq!(name_of(files, declarations), "/x/node_modules/pkg/index.d.ts");
+        assert_eq!(
+            file_at(files, "/y/node_modules/pkg/index.d.ts"),
+            declarations
+        );
+        assert_eq!(
+            name_of(files, declarations),
+            "/x/node_modules/pkg/index.d.ts"
+        );
         assert_eq!(files.modules.len(), 6);
 
         let (one, two) = (file_at(files, "/x/one.ts"), file_at(files, "/y/two.ts"));
@@ -186,7 +204,10 @@ fn typescript_of_dependency_is_from_external_library() {
 #[test]
 fn file_of_package_reached_by_relative_path_is_not_external() {
     let host = host_of(&[
-        ("/main.ts", "import \"dep\"\nimport \"./node_modules/dep/util\""),
+        (
+            "/main.ts",
+            "import \"dep\"\nimport \"./node_modules/dep/util\"",
+        ),
         ("/node_modules/dep/index.ts", "import \"./util\""),
         ("/node_modules/dep/util.ts", ""),
     ]);
@@ -222,7 +243,10 @@ fn typed_version_stands_for_installed_file() {
 
         let compiled = compiled_at(files, INSTALLED);
         assert_eq!(compiled.typed_source_path, Some(TYPED.as_bytes()));
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Host));
+        assert_eq!(
+            compiled.typed_version_origin,
+            Some(TypedVersionOrigin::Host)
+        );
         assert_eq!(compiled.rejected_typed_version, None);
 
         assert_eq!(files.code_answers(main), [CodeAnswer::File(installed)]);
@@ -275,7 +299,11 @@ fn rejected_typed_version_is_untyped_import_in_strict_project() {
     with_build(&strict_build(&host, &["/main.ts"]), |files| {
         let (main, installed) = (file_at(files, "/main.ts"), file_at(files, INSTALLED));
         assert_eq!(files.role(installed), FileRole::Inferred);
-        assert!(compiled_at(files, INSTALLED).rejected_typed_version.is_some());
+        assert!(
+            compiled_at(files, INSTALLED)
+                .rejected_typed_version
+                .is_some()
+        );
         assert!(files.module(main).imports.is_empty());
         assert_eq!(files.module(main).untyped_imports.len(), 1);
     });

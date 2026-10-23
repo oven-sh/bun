@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const files = {
   "lib.js": `exports.double = n => n * 2;\n`,
@@ -24,8 +24,19 @@ test.concurrent.each(entries)(
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(plain.stdout).not.toBe("");
     expect(await run(String(dir), [bunExe(), "run", "--debug-aot", `./${entry}`, "one", "two"])).toEqual(plain);
-    const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", `./built.exe`]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const built = await run(String(dir), [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `./${entry}`,
+      "--outfile",
+      `./built.exe`,
+    ]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     expect(await run(String(dir), [`./built.exe`, "one", "two"])).toEqual(plain);
   },
   120_000,

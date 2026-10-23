@@ -206,22 +206,26 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn switch_case_passes_subject() {
-    assert_graph(&[TypeTable::ANYTHING], SWITCH_CASES_WITH_SUBJECT, |builder| {
-        let subject = builder.parameter(0);
-        let cases: [BlockId; 2] = create_blocks(builder);
-        let otherwise = builder.create_block(None);
-        let edge_results = cases.map(|case| builder.add_edge_result(case));
-        let edges = cases.map(|case| Edge::with_proofs(case, &[0]));
-        builder.switch(subject, &[1, 2], &edges, Edge::to(otherwise));
-        for (case, edge_result) in cases.into_iter().zip(edge_results) {
-            builder.seal(case);
-            builder.switch_to(case);
-            builder.return_value(Some(edge_result));
-        }
-        builder.seal(otherwise);
-        builder.switch_to(otherwise);
-        builder.return_value(None);
-    });
+    assert_graph(
+        &[TypeTable::ANYTHING],
+        SWITCH_CASES_WITH_SUBJECT,
+        |builder| {
+            let subject = builder.parameter(0);
+            let cases: [BlockId; 2] = create_blocks(builder);
+            let otherwise = builder.create_block(None);
+            let edge_results = cases.map(|case| builder.add_edge_result(case));
+            let edges = cases.map(|case| Edge::with_proofs(case, &[0]));
+            builder.switch(subject, &[1, 2], &edges, Edge::to(otherwise));
+            for (case, edge_result) in cases.into_iter().zip(edge_results) {
+                builder.seal(case);
+                builder.switch_to(case);
+                builder.return_value(Some(edge_result));
+            }
+            builder.seal(otherwise);
+            builder.switch_to(otherwise);
+            builder.return_value(None);
+        },
+    );
 }
 
 const EDGE_RESULTS_IN_COVERED_BLOCKS: &str = "\

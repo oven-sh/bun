@@ -1,7 +1,17 @@
 import { casePattern } from "./emit-rust-records.ts";
 import { kindText } from "./hash.ts";
 import { blocks, delimited, indent, indentation, rustMarker, withCommas } from "./lines.ts";
-import type { Field, Kind, ProgramList, ScalarKind, Schema, SchemaRecord, SchemaType, Variant, VariantCase } from "./model.ts";
+import type {
+  Field,
+  Kind,
+  ProgramList,
+  ScalarKind,
+  Schema,
+  SchemaRecord,
+  SchemaType,
+  Variant,
+  VariantCase,
+} from "./model.ts";
 import { nameOf, wireWordsOf } from "./model.ts";
 import { programListMemberName, rustIdentifier, rustTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
@@ -45,7 +55,8 @@ function countField(schema: Schema, field: Field, value: string, byReference: bo
 function writeSpan(schema: Schema, element: Kind, value: string, byReference: boolean): string[] {
   const source = byReference ? value : `&${value}`;
   if (element.tag === "Scalar" && element.scalar === "Byte") return [`let span = sections.push_bytes(${source});`];
-  const push = (words: string) => `let span = sections.push_records(ProgramList::${listMember(schema, element)}, ${words}, ${value}.len());`;
+  const push = (words: string) =>
+    `let span = sections.push_records(ProgramList::${listMember(schema, element)}, ${words}, ${value}.len());`;
   if (element.tag === "Scalar" && scalarsStoredAsWords.has(element.scalar)) return [push(source)];
   if (element.tag === "Record" || element.tag === "Variant") {
     return [
@@ -56,7 +67,10 @@ function writeSpan(schema: Schema, element: Kind, value: string, byReference: bo
   }
   const words = toWords(element, "element", false, false);
   if (words.length !== 1) throw new Error(`a span of ${kindText(element)} has no list`);
-  return [`let element_words: Vec<u32> = ${value}.iter().map(|&element| ${words[0]}).collect();`, push("&element_words")];
+  return [
+    `let element_words: Vec<u32> = ${value}.iter().map(|&element| ${words[0]}).collect();`,
+    push("&element_words"),
+  ];
 }
 
 function writeFields(schema: Schema, fields: readonly Field[], base: string, byReference: boolean): string[] {
@@ -72,7 +86,11 @@ function writeFields(schema: Schema, fields: readonly Field[], base: string, byR
     const kind = field.kind;
     if (kind.tag === "Span") {
       flush();
-      statements.push("{", ...indent([...writeSpan(schema, kind.element, value, byReference), "record.extend([span.first, span.count]);"]), "}");
+      statements.push(
+        "{",
+        ...indent([...writeSpan(schema, kind.element, value, byReference), "record.extend([span.first, span.count]);"]),
+        "}",
+      );
     } else if (kind.tag === "Record" || kind.tag === "Variant") {
       flush();
       statements.push(`${value}.write_record(sections, record);`);
@@ -95,7 +113,11 @@ function countArm(schema: Schema, variant: Variant, variantCase: VariantCase): s
   const countedFields = variantCase.fields.filter(field => pushesRecords(field.kind));
   const pattern = casePattern(variant, variantCase, countedFields);
   if (countedFields.length === 0) return [`${pattern} => {}`];
-  return [`${pattern} => {`, ...indent(countedFields.flatMap(field => countField(schema, field, rustIdentifier(field.name), true))), "}"];
+  return [
+    `${pattern} => {`,
+    ...indent(countedFields.flatMap(field => countField(schema, field, rustIdentifier(field.name), true))),
+    "}",
+  ];
 }
 
 function writeArm(schema: Schema, variant: Variant, variantCase: VariantCase): string[] {
@@ -113,13 +135,22 @@ function writeArm(schema: Schema, variant: Variant, variantCase: VariantCase): s
 
 function variantStatements(schema: Schema, variant: Variant): WriterStatements {
   return {
-    counts: ["match self {", ...indent(variant.cases.flatMap(variantCase => countArm(schema, variant, variantCase))), "}"],
-    writes: ["match self {", ...indent(variant.cases.flatMap(variantCase => writeArm(schema, variant, variantCase))), "}"],
+    counts: [
+      "match self {",
+      ...indent(variant.cases.flatMap(variantCase => countArm(schema, variant, variantCase))),
+      "}",
+    ],
+    writes: [
+      "match self {",
+      ...indent(variant.cases.flatMap(variantCase => writeArm(schema, variant, variantCase))),
+      "}",
+    ],
   };
 }
 
 function writerImpl(schema: Schema, type: SchemaType): string[] {
-  const { counts, writes } = type.tag === "Record" ? recordStatements(schema, type.record) : variantStatements(schema, type.variant);
+  const { counts, writes } =
+    type.tag === "Record" ? recordStatements(schema, type.record) : variantStatements(schema, type.variant);
   return [
     `impl ${rustTypeName(nameOf(type))} {`,
     `${indentation}pub fn count_records(&self, counts: &mut ListCounts) {`,

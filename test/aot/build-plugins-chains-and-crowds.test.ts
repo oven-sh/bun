@@ -2,17 +2,34 @@
 // outcomes, with `compile: { aot: true }` and without `aot`: build-both-ways.ts.
 import { buildBothWays } from "./build-both-ways";
 
-const declines = ["null", "undefined", "false", "0", '""', "42", '"text"', "Symbol()", "Promise.resolve(null)", "Promise.resolve()"];
+const declines = [
+  "null",
+  "undefined",
+  "false",
+  "0",
+  '""',
+  "42",
+  '"text"',
+  "Symbol()",
+  "Promise.resolve(null)",
+  "Promise.resolve()",
+];
 
 const many = 200;
-const crowd = Object.fromEntries(Array.from({ length: many }, (_, index) => [`part${index}.ts`, `export const part${index}: number = 0;`]));
+const crowd = Object.fromEntries(
+  Array.from({ length: many }, (_, index) => [`part${index}.ts`, `export const part${index}: number = 0;`]),
+);
 
 buildBothWays("compile/aot/chains and crowds of plugins of Bun.build", {
   ...Object.fromEntries(
     declines.map(value => [
       `onResolve and onLoad answer ${value}: the next one is asked`,
       {
-        files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "disk";`, "b.ts": `export const a = "b on the disk";` },
+        files: {
+          "main.ts": `import { a } from "./a"; console.log(a);`,
+          "a.ts": `export const a = "disk";`,
+          "b.ts": `export const a = "b on the disk";`,
+        },
         plugins: [
           `build.onResolve({ filter: /^\\.\\/a$/ }, (args: any) => { tell("first onResolve", args); return ${value}; });
 build.onLoad({ filter: /b\\.ts$/ }, (args: any) => { tell("first onLoad", args); return ${value}; });`,
@@ -25,22 +42,33 @@ build.onLoad({ filter: /b\\.ts$/ }, (args: any) => { tell("second onLoad", args)
   ),
   "every plugin declines: the file on the disk": {
     files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "disk";` },
-    plugins: [`build.onResolve({ filter: /a/ }, () => undefined); build.onLoad({ filter: /a/ }, () => undefined);`, `build.onResolve({ filter: /a/ }, () => null); build.onLoad({ filter: /a/ }, async () => null);`],
+    plugins: [
+      `build.onResolve({ filter: /a/ }, () => undefined); build.onLoad({ filter: /a/ }, () => undefined);`,
+      `build.onResolve({ filter: /a/ }, () => null); build.onLoad({ filter: /a/ }, async () => null);`,
+    ],
     prints: "disk\n",
   },
   "an answer without a path declines": {
     files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "disk";` },
-    plugins: [`build.onResolve({ filter: /^\\.\\/a$/ }, () => ({ namespace: "nowhere" }));`, `build.onResolve({ filter: /^\\.\\/a$/ }, () => ({ path: "" }));`],
+    plugins: [
+      `build.onResolve({ filter: /^\\.\\/a$/ }, () => ({ namespace: "nowhere" }));`,
+      `build.onResolve({ filter: /^\\.\\/a$/ }, () => ({ path: "" }));`,
+    ],
     prints: "disk\n",
   },
   "the entry point, where every plugin declines": {
     files: { "main.ts": `console.log("main");` },
-    plugins: [`build.onResolve({ filter: /main/ }, (args: any) => { tell("first", args); return null; });`, `build.onResolve({ filter: /main/ }, (args: any) => { tell("second", args); });`],
+    plugins: [
+      `build.onResolve({ filter: /main/ }, (args: any) => { tell("first", args); return null; });`,
+      `build.onResolve({ filter: /main/ }, (args: any) => { tell("second", args); });`,
+    ],
     prints: "main\n",
   },
   "two hundred files through onResolve and onLoad": {
     files: {
-      "main.ts": Array.from({ length: many }, (_, index) => `import { part${index} } from "./part${index}";`).join("\n") + `\nconsole.log(${Array.from({ length: many }, (_, index) => `part${index}`).join(" + ")});`,
+      "main.ts":
+        Array.from({ length: many }, (_, index) => `import { part${index} } from "./part${index}";`).join("\n") +
+        `\nconsole.log(${Array.from({ length: many }, (_, index) => `part${index}`).join(" + ")});`,
       ...crowd,
     },
     plugins: [
@@ -66,7 +94,9 @@ build.onLoad({ filter: /.*/, namespace: "chain" }, (args: any) => { const index 
       "b.ts": `import { shared } from "./shared.ts"; export const b = shared; export const late = () => import("./shared");`,
       "shared.ts": `export const shared = 0;`,
     },
-    plugins: [`let loads = 0; build.onLoad({ filter: /shared\\.ts$/ }, () => ({ contents: "export const shared = " + ++loads + ";", loader: "ts" })); build.onEnd(() => tell("onEnd", { loads }));`],
+    plugins: [
+      `let loads = 0; build.onLoad({ filter: /shared\\.ts$/ }, () => ({ contents: "export const shared = " + ++loads + ";", loader: "ts" })); build.onEnd(() => tell("onEnd", { loads }));`,
+    ],
     prints: "1 1 1\n",
   },
   "several files with the loader file": {
@@ -76,7 +106,9 @@ build.onLoad({ filter: /.*/, namespace: "chain" }, (args: any) => { const index 
       "b.png": "disk b",
       "same.png": "disk same",
     },
-    plugins: [`build.onLoad({ filter: /\\.png$/ }, (args: any) => ({ contents: basename(args.path) === "b.png" ? "plugin b" : "plugin a", loader: "file" }));`],
+    plugins: [
+      `build.onLoad({ filter: /\\.png$/ }, (args: any) => ({ contents: basename(args.path) === "b.png" ? "plugin b" : "plugin a", loader: "file" }));`,
+    ],
   },
   "onEnd: every callback runs, in order, also behind one that throws": {
     files: { "main.ts": `console.log("main");` },
@@ -88,18 +120,24 @@ build.onLoad({ filter: /.*/, namespace: "chain" }, (args: any) => { const index 
   },
   "onEnd of a build that fails, with throw: true": {
     files: { "main.ts": `// @ts-ignore\nimport "./missing"; console.log("main");` },
-    plugins: [`build.onEnd((result: any) => tell("onEnd", { success: result.success, outputs: result.outputs.length }));`],
+    plugins: [
+      `build.onEnd((result: any) => tell("onEnd", { success: result.success, outputs: result.outputs.length }));`,
+    ],
     options: `throw: true`,
     fails: "Bun.build rejected",
   },
   "onEnd may write beside the executable": {
     files: { "main.ts": `declare const Bun: any; console.log(await Bun.file("written-by-on-end.txt").text());` },
-    plugins: [`build.onEnd(async (result: any) => { await Bun.write(join(folder, "written-by-on-end.txt"), "outputs: " + result.outputs.length); });`],
+    plugins: [
+      `build.onEnd(async (result: any) => { await Bun.write(join(folder, "written-by-on-end.txt"), "outputs: " + result.outputs.length); });`,
+    ],
     prints: "outputs: 1\n",
   },
   "the executable is there when onEnd runs": {
     files: { "main.ts": `console.log("main");` },
-    plugins: [`build.onEnd(async (result: any) => tell("onEnd", { exists: await Bun.file(result.outputs[0].path).exists(), isOutfile: result.outputs[0].path === outfile, large: result.outputs[0].size > 1_000_000 }));`],
+    plugins: [
+      `build.onEnd(async (result: any) => tell("onEnd", { exists: await Bun.file(result.outputs[0].path).exists(), isOutfile: result.outputs[0].path === outfile, large: result.outputs[0].size > 1_000_000 }));`,
+    ],
     prints: "main\n",
   },
 });

@@ -157,7 +157,10 @@ pub(in crate::lower) fn emit_binary(
             }
         }
         BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => {
-            debug_assert!(false, "the caller evaluates logical operators and the comma");
+            debug_assert!(
+                false,
+                "the caller evaluates logical operators and the comma"
+            );
             right
         }
     }

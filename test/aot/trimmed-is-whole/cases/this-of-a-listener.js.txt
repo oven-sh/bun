@@ -108,7 +108,7 @@ globalThis.mine = function () { return this; };
 const Found = globalThis.mine()[names[5]];
 console.log(typeof new Found().on);
 //// a-function-stored-on-Bun-returns-it-and-what-a-name-finds-there-is-called
-//@ todo --trim removes Bun.color, which the program finds under a name made at run time on the Bun that a method of an object above it hands back
+//@ trimmed-says Bun.color was removed by --trim because your code never uses it
 //@ ext cjs
 const holder = Object.create(Bun);
 holder.mine = function () { return Object.getPrototypeOf(this); };

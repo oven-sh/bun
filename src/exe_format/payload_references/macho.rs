@@ -184,12 +184,22 @@ impl LoaderCommands {
     fn add_dyld_info(&mut self, info: dyld_info_command) {
         let range = |offset: u32, size: u32| FileRange { offset, size };
         self.opcode_streams.extend([
-            (OpcodeStream::Rebase, range(info.rebase_off, info.rebase_size)),
+            (
+                OpcodeStream::Rebase,
+                range(info.rebase_off, info.rebase_size),
+            ),
             (OpcodeStream::Bind, range(info.bind_off, info.bind_size)),
-            (OpcodeStream::Bind, range(info.weak_bind_off, info.weak_bind_size)),
-            (OpcodeStream::Bind, range(info.lazy_bind_off, info.lazy_bind_size)),
+            (
+                OpcodeStream::Bind,
+                range(info.weak_bind_off, info.weak_bind_size),
+            ),
+            (
+                OpcodeStream::Bind,
+                range(info.lazy_bind_off, info.lazy_bind_size),
+            ),
         ]);
-        self.export_tries.push(range(info.export_off, info.export_size));
+        self.export_tries
+            .push(range(info.export_off, info.export_size));
     }
 }
 
@@ -223,7 +233,7 @@ fn check_chained_fixups(fixups: &[u8], image_base: u64, payload: Payload) -> Che
             .ok_or(MALFORMED)?;
         let page_size = u64::from(record.page_size);
         let mut page_address = image_base.wrapping_add(record.segment_offset);
-        for page_start in page_starts.chunks_exact(size_of::<u16>()) {
+        for page_start in page_starts.as_chunks::<{ size_of::<u16>() }>().0 {
             if read_struct::<u16>(page_start) != DYLD_CHAINED_PTR_START_NONE {
                 payload.check_relocation(page_address, page_size)?;
             }
@@ -264,7 +274,9 @@ impl FixupSites<'_> {
             distance => distance.div_ceil(stride),
         };
         if first_candidate < count {
-            let address = self.address.wrapping_add(first_candidate.wrapping_mul(stride));
+            let address = self
+                .address
+                .wrapping_add(first_candidate.wrapping_mul(stride));
             self.payload.check_relocation(address, POINTER_SIZE)?;
         }
         self.advance(count.wrapping_mul(stride));
@@ -393,7 +405,7 @@ fn check_defined_symbols(
     let table_offset = u64::from(commands.symbol_table_offset.ok_or(MALFORMED)?);
     let offset = table_offset + u64::from(dynamic.iextdefsym) * SYMBOL_SIZE;
     let symbols = table_bytes(file, offset, u64::from(dynamic.nextdefsym) * SYMBOL_SIZE)?;
-    for symbol in symbols.chunks_exact(size_of::<nlist_64>()) {
+    for symbol in symbols.as_chunks::<{ size_of::<nlist_64>() }>().0 {
         let symbol: nlist_64 = read_struct(symbol);
         if symbol.n_type & N_STAB == 0 && symbol.n_type & N_TYPE == N_SECT {
             payload.check_dynamic_symbol(symbol.n_value, 1)?;

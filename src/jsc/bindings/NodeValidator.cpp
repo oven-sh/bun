@@ -145,7 +145,6 @@ JSC::EncodedJSValue V::validateFiniteNumber(JSC::ThrowScope& scope, JSC::JSGloba
     return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "a finite number"_s, number);
 }
 
-
 JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
     if (!value.isCallable()) {
@@ -162,8 +161,6 @@ JSC::EncodedJSValue V::validateBoolean(JSC::ThrowScope& scope, JSC::JSGlobalObje
     }
     return JSValue::encode(jsUndefined());
 }
-
-
 
 JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
 {
@@ -211,7 +208,6 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     }
     return JSValue::encode(jsUndefined());
 }
-
 
 EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue min, JSValue max)
 {
@@ -305,11 +301,9 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-
 // Matches Node's validateBuffer, which throws ERR_INVALID_ARG_TYPE with the
 // "must be an instance of Buffer, TypedArray, or DataView" message:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/validators.js#L396
-
 
 JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const int32_t> oneOf, int32_t* out)
 {

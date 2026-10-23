@@ -93,10 +93,7 @@ fn visit<'v>(
     finished.push(create_leaf(file, constant));
 }
 
-pub(super) fn create_leaf(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    constant: Constant,
-) -> DataNode {
+pub(super) fn create_leaf(file: &mut FileLowering<'_, '_, '_, '_>, constant: Constant) -> DataNode {
     match constant {
         Constant::Undefined => DataNode::Undefined,
         Constant::Null => DataNode::Null,
@@ -123,7 +120,11 @@ fn finish_object(
     entries: &[(Atom, DataValue<'_>)],
     values: Vec<DataNode>,
 ) -> DataNode {
-    debug_assert_eq!(entries.len(), values.len(), "each entry has one finished node");
+    debug_assert_eq!(
+        entries.len(),
+        values.len(),
+        "each entry has one finished node"
+    );
     let layout_members: LayoutMembers = entries
         .iter()
         .map(|&(name, _)| (member::name_key(file, name), ObjectMemberKind::Field))

@@ -1,12 +1,18 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 async function build(files: Record<string, string>) {
   const dir = tempDir("aot-no-tsconfig", files);
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [said, built] = await Promise.all([build.stderr.text(), build.exited]);
   if (built) return { dir, said, built, stdout: "" };
   await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -24,7 +30,17 @@ test("without a tsconfig.json a .cts file may export in the ordinary way", async
 }, 120_000);
 
 test("a tsconfig.json that asks for verbatimModuleSyntax is obeyed", async () => {
-  const { dir, said, built } = await build({ ...files, "tsconfig.json": JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true, module: "preserve", allowImportingTsExtensions: true, noEmit: true } }) });
+  const { dir, said, built } = await build({
+    ...files,
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        verbatimModuleSyntax: true,
+        module: "preserve",
+        allowImportingTsExtensions: true,
+        noEmit: true,
+      },
+    }),
+  });
   using _ = dir;
   expect(said).toContain("TS1287");
   expect(built).not.toBe(0);

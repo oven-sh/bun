@@ -2,8 +2,7 @@ use crate::builtins::RuntimeModule;
 use crate::engine::Position;
 use crate::ir::generated::{Body, Field, Function, Layout, Module, SourceRange, Variable};
 use crate::ir::{
-    FunctionId, Id, LayoutId, ModuleId, Program, PropertyKey, StringId, VariableId,
-    WellKnownSymbol,
+    FunctionId, Id, LayoutId, ModuleId, Program, PropertyKey, StringId, VariableId, WellKnownSymbol,
 };
 use crate::link::keys::merge_keys;
 use crate::link::names::NameInput;
@@ -95,20 +94,27 @@ fn create_program() -> Program {
 fn take_functions(program: &mut Program) -> BodyRemap {
     let functions = core::mem::take(&mut program.functions);
     let ids = UnitIds {
-        strings: (0..program.strings.len()).map(|index| Some(StringId::new(index))).collect(),
+        strings: (0..program.strings.len())
+            .map(|index| Some(StringId::new(index)))
+            .collect(),
         property_keys: Vec::new(),
         types: Vec::new(),
         type_sites: Vec::new(),
         expected_results: Vec::new(),
         layouts: Vec::new(),
         variables: Vec::new(),
-        modules: (0..program.modules.len()).map(|index| Some(ModuleId::new(index))).collect(),
+        modules: (0..program.modules.len())
+            .map(|index| Some(ModuleId::new(index)))
+            .collect(),
         module_failures: Vec::new(),
         eval_scopes: Vec::new(),
         functions: Vec::new(),
         data: Vec::new(),
     };
-    BodyRemap::new(vec![ids], vec![functions.into_iter().map(Arc::new).collect()])
+    BodyRemap::new(
+        vec![ids],
+        vec![functions.into_iter().map(Arc::new).collect()],
+    )
 }
 
 fn create_names() -> ProgramNames {

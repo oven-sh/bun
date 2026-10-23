@@ -22,7 +22,15 @@ import { resultRules } from "./model.ts";
 import { upperFirst } from "./names.ts";
 import type { DeclarationInFile } from "./parse.ts";
 import type { Scope } from "./resolve.ts";
-import type { Name, NaturalSyntax, ResultSyntax, RuleSyntax, TargetSyntax, TypeSyntax, TypeWordSyntax } from "./syntax.ts";
+import type {
+  Name,
+  NaturalSyntax,
+  ResultSyntax,
+  RuleSyntax,
+  TargetSyntax,
+  TypeSyntax,
+  TypeWordSyntax,
+} from "./syntax.ts";
 
 export interface EntryParts {
   readonly name: string;
@@ -166,10 +174,18 @@ function resolveNaturalTable(scope: Scope, syntax: NaturalSyntax): void {
     type: resolveType(scope, row.type),
   }));
   const arity = rows.at(0)?.classes.length ?? 0;
-  if (rows.some(row => row.classes.length !== arity)) scope.errors.add(name.location, `the rows of ${name.text} differ in length`);
+  if (rows.some(row => row.classes.length !== arity))
+    scope.errors.add(name.location, `the rows of ${name.text} differ in length`);
   if (syntax.otherwise === null) scope.errors.add(name.location, `${name.text} has no else`);
   const otherwise = syntax.otherwise === null ? joinTypeParts("never", []) : resolveType(scope, syntax.otherwise);
-  const table: NaturalTable = { name: name.text, number: scope.naturalTables.size, arity, rows, otherwise, location: name.location };
+  const table: NaturalTable = {
+    name: name.text,
+    number: scope.naturalTables.size,
+    arity,
+    rows,
+    otherwise,
+    location: name.location,
+  };
   scope.declare(scope.naturalTables, name, table, [scope.enums, scope.opaqueKinds]);
 }
 
@@ -205,7 +221,8 @@ function resolveCast(scope: Scope, syntax: RuleSyntax, entry: EntryParts): Resul
   const { argument } = syntax;
   if (argument === null) return { rule: "Cast", returned, type: null };
   const type = findIdPayload(entry, argument.text, "Type");
-  if (type === null) scope.errors.add(argument.location, `cast(${argument.text}) of ${entry.name} does not name a Type field`);
+  if (type === null)
+    scope.errors.add(argument.location, `cast(${argument.text}) of ${entry.name} does not name a Type field`);
   return { rule: "Cast", returned, type };
 }
 
@@ -244,7 +261,10 @@ function resolveAllocation(scope: Scope, syntax: RuleSyntax, entry: EntryParts):
   const name = argument?.text ?? "";
   const allocation = findAllocation(scope, name, entry);
   if (allocation === null) {
-    scope.errors.add((argument ?? syntax.rule).location, `allocation(${name}) of ${entry.name} does not name a Layout field`);
+    scope.errors.add(
+      (argument ?? syntax.rule).location,
+      `allocation(${name}) of ${entry.name} does not name a Layout field`,
+    );
     return unknownRule;
   }
   if (contents === null) return { rule: "Allocation", allocation };
@@ -258,7 +278,12 @@ function resolveAllocation(scope: Scope, syntax: RuleSyntax, entry: EntryParts):
   return { rule: "Allocation", allocation: { ...allocation, contents: contentsField } };
 }
 
-function resolveDeclaredPayload(scope: Scope, field: PayloadField, argument: Name, entry: EntryParts): DeclaredResult | null {
+function resolveDeclaredPayload(
+  scope: Scope,
+  field: PayloadField,
+  argument: Name,
+  entry: EntryParts,
+): DeclaredResult | null {
   const { kind } = field;
   const subject = `declared(${argument.text}) of ${entry.name}`;
   const idKindName = kind.tag === "Id" ? kind.id.name : null;
@@ -289,7 +314,12 @@ function resolveResultAt(scope: Scope, producer: Operand, argument: Name, entry:
   return null;
 }
 
-function resolveDeclaredParameter(scope: Scope, argument: Name, entry: EntryParts, resultName: string | null): DeclaredResult | null {
+function resolveDeclaredParameter(
+  scope: Scope,
+  argument: Name,
+  entry: EntryParts,
+  resultName: string | null,
+): DeclaredResult | null {
   const parameter = entry.parameters.find(candidate => candidate.name === argument.text);
   if (parameter === undefined) {
     scope.errors.add(argument.location, `declared(${argument.text}) of ${entry.name} does not name a parameter`);
@@ -310,7 +340,10 @@ function resolveDeclared(scope: Scope, syntax: RuleSyntax, entry: EntryParts, re
 function resolveResults(scope: Scope, syntax: RuleSyntax, entry: EntryParts): ResultRule {
   const indexEnum = syntax.indexEnum === null ? null : findDeclaredEnum(scope, syntax.indexEnum.text);
   if (syntax.indexEnum !== null && indexEnum === null) {
-    scope.errors.add(syntax.indexEnum.location, `results(${syntax.indexEnum.text}: ..) of ${entry.name} does not name an enum`);
+    scope.errors.add(
+      syntax.indexEnum.location,
+      `results(${syntax.indexEnum.text}: ..) of ${entry.name} does not name an enum`,
+    );
   }
   const results = syntax.results.map((result, index) => {
     return resolveNamedResult(scope, result, entry, indexEnum?.members.at(index)?.name ?? null);

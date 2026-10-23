@@ -59,7 +59,9 @@ impl BuiltinTypeSymbols {
         values: &[BuiltinValuePath<'_>],
     ) -> BuiltinTypeSymbols {
         let classes = resolve::resolve_type_classes(files, types);
-        let exact_types = types.iter().filter(|path| path.denotation == Denotation::Exact);
+        let exact_types = types
+            .iter()
+            .filter(|path| path.denotation == Denotation::Exact);
         let mut classes_with_exact_type: Vec<BuiltinClassIndex> =
             exact_types.map(|path| path.class).collect();
         classes_with_exact_type.sort_unstable();
@@ -95,7 +97,9 @@ impl BuiltinTypeSymbols {
 
     /// The classes that declare a static member `name` in files with code, in the order of the files.
     pub fn classes_with_static_member(&self, name: Atom) -> &[Sym] {
-        self.classes_by_static_member.get(&name).map_or(&[], |classes| &classes[..])
+        self.classes_by_static_member
+            .get(&name)
+            .map_or(&[], |classes| &classes[..])
     }
 
     /// Whether the table has a type whose values are the instances of `class` and nothing else.

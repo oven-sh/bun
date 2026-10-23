@@ -68,10 +68,23 @@ const SWC_EXPORT: &str = r#"function _export(target, all) {
 
 #[test]
 fn the_export_helper_of_swc_is_known() {
-    assert_eq!(shapes_in("/a.cjs", SWC_EXPORT), [Shape::ExportDefinesGetters]);
-    let renamed = SWC_EXPORT.replace("_export", "e").replace("target", "t").replace("all", "a").replace("name", "n");
+    assert_eq!(
+        shapes_in("/a.cjs", SWC_EXPORT),
+        [Shape::ExportDefinesGetters]
+    );
+    let renamed = SWC_EXPORT
+        .replace("_export", "e")
+        .replace("target", "t")
+        .replace("all", "a")
+        .replace("name", "n");
     assert_eq!(shapes_in("/a.cjs", &renamed), [Shape::ExportDefinesGetters]);
-    assert_eq!(shapes_in("/a.cjs", &SWC_EXPORT.replace("enumerable: true", "enumerable: false")), []);
+    assert_eq!(
+        shapes_in(
+            "/a.cjs",
+            &SWC_EXPORT.replace("enumerable: true", "enumerable: false")
+        ),
+        []
+    );
 }
 
 const ESBUILD_PRIVATE_HELPERS: &str = r#"var __typeError = (msg) => {
@@ -119,7 +132,10 @@ fn with_file<R>(path: &str, source: &str, then: impl FnOnce(&FindInput<'_, '_>) 
         jsx: JsxMode::Classic,
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
-    assert!(!hir.has_errors && !hir.has_parse_diagnostics, "syntax error in: {source}");
+    assert!(
+        !hir.has_errors && !hir.has_parse_diagnostics,
+        "syntax error in: {source}"
+    );
     then(&FindInput {
         atoms: &atoms,
         hir: &hir,
@@ -141,7 +157,10 @@ fn shapes_in(path: &str, source: &str) -> Vec<Shape> {
 
 fn certainties_in(path: &str, source: &str) -> Vec<Certainty> {
     let found = find_in(path, source);
-    found.bindings().map(|(_, values)| values.certainty).collect()
+    found
+        .bindings()
+        .map(|(_, values)| values.certainty)
+        .collect()
 }
 
 fn tree_of(function: &str) -> Vec<u8> {
@@ -151,7 +170,10 @@ fn tree_of(function: &str) -> Vec<u8> {
         let StmtKind::Var(declarations) = hir[statement].kind else {
             panic!("the statement declares a variable: {function}");
         };
-        let declaration = declarations.iter().next().expect("it declares one variable");
+        let declaration = declarations
+            .iter()
+            .next()
+            .expect("it declares one variable");
         let ExprKind::Fn(written) = hir[hir[declaration].init].kind else {
             panic!("the value of the variable is a function: {function}");
         };
@@ -181,7 +203,12 @@ fn every_published_function_is_read() {
     let (_, rejected) = Table::read(PUBLISHED_FUNCTIONS);
     let rejected: Vec<(Shape, &str)> = rejected
         .iter()
-        .map(|&index| (PUBLISHED_FUNCTIONS[index].shape, PUBLISHED_FUNCTIONS[index].origin))
+        .map(|&index| {
+            (
+                PUBLISHED_FUNCTIONS[index].shape,
+                PUBLISHED_FUNCTIONS[index].origin,
+            )
+        })
         .collect();
     assert!(rejected.is_empty(), "{rejected:?}");
 }
@@ -217,7 +244,11 @@ fn every_reference_of_a_published_function_can_be_verified() {
                 Reference::Helper(helper) => published.contains(&helper),
                 Reference::Global(path) => is_known_global(path).is_some(),
             };
-            assert!(can_be_verified, "{name} of {:?}, {}", function.shape, function.origin);
+            assert!(
+                can_be_verified,
+                "{name} of {:?}, {}",
+                function.shape, function.origin
+            );
         }
     }
 }
@@ -260,7 +291,10 @@ fn names_and_layout_of_the_text_do_not_matter() {
             Shape::ExportStarBindsNamesTheTargetLacks,
         ]
     );
-    assert_eq!(certainties_in("/a.cjs", source), [Certainty::Always, Certainty::Always]);
+    assert_eq!(
+        certainties_in("/a.cjs", source),
+        [Certainty::Always, Certainty::Always]
+    );
 }
 
 #[test]
@@ -268,14 +302,35 @@ fn one_changed_place_makes_an_ordinary_function() {
     let changes = [
         ("enumerable: true", "enumerable: false"),
         ("return m[k];", "return m[k2];"),
-        ("Object.getOwnPropertyDescriptor(m, k)", "Object.getOwnPropertyDescriptor(o, k)"),
-        ("desc.writable || desc.configurable", "desc.configurable || desc.writable"),
-        ("Object.defineProperty(o, k2, desc);", "Object.defineProperty(o, k2, desc); return o;"),
-        ("if (k2 === undefined) k2 = k;\n    var desc", "if (k2 == undefined) k2 = k;\n    var desc"),
+        (
+            "Object.getOwnPropertyDescriptor(m, k)",
+            "Object.getOwnPropertyDescriptor(o, k)",
+        ),
+        (
+            "desc.writable || desc.configurable",
+            "desc.configurable || desc.writable",
+        ),
+        (
+            "Object.defineProperty(o, k2, desc);",
+            "Object.defineProperty(o, k2, desc); return o;",
+        ),
+        (
+            "if (k2 === undefined) k2 = k;\n    var desc",
+            "if (k2 == undefined) k2 = k;\n    var desc",
+        ),
         ("!m.__esModule", "!m.__esmodule"),
-        ("(function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var", "(function(o, m, k, k2, k3) {\n    if (k2 === undefined) k2 = k;\n    var"),
-        ("(function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var", "(function*(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var"),
-        ("(function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var", "((o, m, k, k2) => {\n    if (k2 === undefined) k2 = k;\n    var"),
+        (
+            "(function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var",
+            "(function(o, m, k, k2, k3) {\n    if (k2 === undefined) k2 = k;\n    var",
+        ),
+        (
+            "(function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var",
+            "(function*(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var",
+        ),
+        (
+            "(function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var",
+            "((o, m, k, k2) => {\n    if (k2 === undefined) k2 = k;\n    var",
+        ),
     ];
     for (from, to) in changes {
         assert!(CREATE_BINDING.contains(from), "{from}");
@@ -287,7 +342,10 @@ fn one_changed_place_makes_an_ordinary_function() {
 #[test]
 fn a_global_that_is_shadowed_is_no_global() {
     let source = format!("function outer(Object) {{ {CREATE_BINDING} return __createBinding; }}");
-    assert_eq!(shapes_in("/a.cjs", &source), [Shape::CreateBindingCopiesValue]);
+    assert_eq!(
+        shapes_in("/a.cjs", &source),
+        [Shape::CreateBindingCopiesValue]
+    );
     let source = format!("var undefined = 1; {CREATE_BINDING}");
     assert_eq!(shapes_in("/a.mjs", &source), []);
 }
@@ -295,9 +353,13 @@ fn a_global_that_is_shadowed_is_no_global() {
 #[test]
 fn a_global_that_evaluated_text_may_shadow_is_no_global() {
     let source = format!("function outer() {{ {CREATE_BINDING} return __createBinding; }}");
-    let both = [Shape::CreateBindingReusesDescriptor, Shape::CreateBindingCopiesValue];
+    let both = [
+        Shape::CreateBindingReusesDescriptor,
+        Shape::CreateBindingCopiesValue,
+    ];
     assert_eq!(shapes_in("/a.cjs", &source), both);
-    let source = format!("function outer(text) {{ eval(text); {CREATE_BINDING} return __createBinding; }}");
+    let source =
+        format!("function outer(text) {{ eval(text); {CREATE_BINDING} return __createBinding; }}");
     assert_eq!(shapes_in("/a.cjs", &source), []);
 }
 
@@ -313,7 +375,10 @@ fn a_binding_that_may_hold_something_else_says_so() {
     let source = format!("{CREATE_BINDING}{EXPORT_STAR}");
     let once = [Certainty::OnceInitialized, Certainty::OnceInitialized];
     assert_eq!(certainties_in("/a.cjs", &source), once);
-    assert_eq!(certainties_in("/a.mjs", &format!("{source}export {{}};")), once);
+    assert_eq!(
+        certainties_in("/a.mjs", &format!("{source}export {{}};")),
+        once
+    );
     let uncertain = [Certainty::MayHoldOtherValues, Certainty::MayHoldOtherValues];
     let behind_a_call = format!("require(\"./b.cjs\");\n{source}");
     assert_eq!(certainties_in("/a.cjs", &behind_a_call), uncertain);
@@ -343,22 +408,48 @@ fn a_variable_assigned_once_before_the_helper_is_created_is_initialized_first() 
         })();
     "#;
     let found = find_in("/a.cjs", source);
-    let star = found.functions().find(|(_, known)| known.shape == Shape::ExportStarBindsNamesTheTargetLacks);
+    let star = found
+        .functions()
+        .find(|(_, known)| known.shape == Shape::ExportStarBindsNamesTheTargetLacks);
     let references = &star.expect("the helper is recognized").1.references;
-    assert!(matches!(references[..], [KnownReference::Helper { is_initialized_first: true, .. }]));
+    assert!(matches!(
+        references[..],
+        [KnownReference::Helper {
+            is_initialized_first: true,
+            ..
+        }]
+    ));
 }
 
 #[test]
 fn forms_that_mean_the_same_are_one_tree() {
     let pairs = [
-        ("function (a) { if (a) { a(); } }", "function (a) { if (a) a(); }"),
-        ("function (a) { for (;;) { { a(); } } }", "function (a) { for (;;) a(); }"),
-        ("function (a) { while (a()) {} }", "function (a) { while (a()); }"),
-        ("function (a) { { var b = a; } return b; }", "function (a) { var b = a; return b; }"),
+        (
+            "function (a) { if (a) { a(); } }",
+            "function (a) { if (a) a(); }",
+        ),
+        (
+            "function (a) { for (;;) { { a(); } } }",
+            "function (a) { for (;;) a(); }",
+        ),
+        (
+            "function (a) { while (a()) {} }",
+            "function (a) { while (a()); }",
+        ),
+        (
+            "function (a) { { var b = a; } return b; }",
+            "function (a) { var b = a; return b; }",
+        ),
         ("(a) => { return a(); }", "(a) => a()"),
         ("(a) => { { return a(); } }", "(a) => a()"),
-        ("function (a) { return a === void 0; }", "function (a) { return a === undefined; }"),
-        ("function () { return [!0, !1]; }", "function () { return [true, false]; }"),
+        (
+            "function (a) { return a === void 0; }",
+            "function (a) { return a === undefined; }",
+        ),
+        (
+            "function () { return [!0, !1]; }",
+            "function () { return [true, false]; }",
+        ),
         (
             r#"function (a) { return typeof a == "object" || "function" != typeof a; }"#,
             r#"function (a) { return typeof a === "object" || "function" !== typeof a; }"#,
@@ -372,16 +463,34 @@ fn forms_that_mean_the_same_are_one_tree() {
 #[test]
 fn forms_that_mean_something_else_are_two_trees() {
     let pairs = [
-        ("function (a) { { let b = a; } }", "function (a) { let b = a; }"),
-        ("function (a) { { function b() {} } }", "function (a) { function b() {} }"),
+        (
+            "function (a) { { let b = a; } }",
+            "function (a) { let b = a; }",
+        ),
+        (
+            "function (a) { { function b() {} } }",
+            "function (a) { function b() {} }",
+        ),
         ("function (a) { { a(); a(); } }", "function (a) { a(); }"),
         ("function (a) { return a(); }", "(a) => a()"),
         ("(a) => { a(); }", "(a) => a()"),
-        ("function (a) { return void a(); }", "function (a) { return undefined; }"),
-        ("function (undefined) { return undefined; }", "function (a) { return void 0; }"),
+        (
+            "function (a) { return void a(); }",
+            "function (a) { return undefined; }",
+        ),
+        (
+            "function (undefined) { return undefined; }",
+            "function (a) { return void 0; }",
+        ),
         ("function (a) { return !a; }", "function (a) { return !0; }"),
-        (r#"function (a) { return a == "object"; }"#, r#"function (a) { return a === "object"; }"#),
-        ("function (a, b) { return typeof a == b; }", "function (a, b) { return typeof a === b; }"),
+        (
+            r#"function (a) { return a == "object"; }"#,
+            r#"function (a) { return a === "object"; }"#,
+        ),
+        (
+            "function (a, b) { return typeof a == b; }",
+            "function (a, b) { return typeof a === b; }",
+        ),
     ];
     for (one, other) in pairs {
         assert!(tree_of(one) != tree_of(other), "{one} | {other}");
@@ -393,11 +502,20 @@ fn what_another_printer_makes_of_a_helper_is_recognized() {
     let printed_again = replace_each(
         CREATE_BINDING,
         &[
-            ("if (k2 === undefined) k2 = k;", "if (k2 === void 0) {\n      k2 = k;\n    }"),
-            ("{\n      desc = { enumerable: true, get: function() { return m[k]; } };\n    }", "desc = { enumerable: !0, get: function() { return m[k]; } };"),
+            (
+                "if (k2 === undefined) k2 = k;",
+                "if (k2 === void 0) {\n      k2 = k;\n    }",
+            ),
+            (
+                "{\n      desc = { enumerable: true, get: function() { return m[k]; } };\n    }",
+                "desc = { enumerable: !0, get: function() { return m[k]; } };",
+            ),
         ],
     );
-    let both = [Shape::CreateBindingReusesDescriptor, Shape::CreateBindingCopiesValue];
+    let both = [
+        Shape::CreateBindingReusesDescriptor,
+        Shape::CreateBindingCopiesValue,
+    ];
     assert_eq!(shapes_in("/a.cjs", &printed_again), both);
     let printed_again = replace_each(
         ESBUILD_MODULE_HELPERS,
@@ -406,7 +524,10 @@ fn what_another_printer_makes_of_a_helper_is_recognized() {
             ("\"function\") {", "\"function\")"),
             ("  }\n  return to;", "  return to;"),
             ("true", "!0"),
-            ("(mod) => __copyProps(__defProp({}, \"__esModule\", { value: !0 }), mod);", "(mod) => {\n  return __copyProps(__defProp({}, \"__esModule\", { value: !0 }), mod);\n};"),
+            (
+                "(mod) => __copyProps(__defProp({}, \"__esModule\", { value: !0 }), mod);",
+                "(mod) => {\n  return __copyProps(__defProp({}, \"__esModule\", { value: !0 }), mod);\n};",
+            ),
         ],
     );
     assert_eq!(shapes_in("/a.cjs", &printed_again), ESBUILD_MODULE_SHAPES);
@@ -414,8 +535,14 @@ fn what_another_printer_makes_of_a_helper_is_recognized() {
 
 #[test]
 fn helpers_of_esbuild_are_recognized() {
-    assert_eq!(shapes_in("/a.cjs", ESBUILD_MODULE_HELPERS), ESBUILD_MODULE_SHAPES);
-    assert_eq!(shapes_in("/a.mjs", &format!("{ESBUILD_MODULE_HELPERS}export {{}};")), ESBUILD_MODULE_SHAPES);
+    assert_eq!(
+        shapes_in("/a.cjs", ESBUILD_MODULE_HELPERS),
+        ESBUILD_MODULE_SHAPES
+    );
+    assert_eq!(
+        shapes_in("/a.mjs", &format!("{ESBUILD_MODULE_HELPERS}export {{}};")),
+        ESBUILD_MODULE_SHAPES
+    );
     assert_eq!(
         shapes_in("/a.cjs", ESBUILD_PRIVATE_HELPERS),
         [
@@ -427,13 +554,20 @@ fn helpers_of_esbuild_are_recognized() {
             Shape::PrivateMethodChecksAccess,
         ]
     );
-    let shortened = "var a=Object.defineProperty,b=(c,d)=>{for(var e in d)a(c,e,{get:d[e],enumerable:!0})};";
-    assert_eq!(shapes_in("/a.cjs", shortened), [Shape::ExportDefinesGetters]);
+    let shortened =
+        "var a=Object.defineProperty,b=(c,d)=>{for(var e in d)a(c,e,{get:d[e],enumerable:!0})};";
+    assert_eq!(
+        shapes_in("/a.cjs", shortened),
+        [Shape::ExportDefinesGetters]
+    );
     let wrapper = r#"var names = Object.getOwnPropertyNames;
         var wrap = (cb, mod) => function __require() {
           return mod || (0, cb[names(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
         };"#;
-    assert_eq!(shapes_in("/a.mjs", wrapper), [Shape::CommonJsRunsFirstOwnNameOnce]);
+    assert_eq!(
+        shapes_in("/a.mjs", wrapper),
+        [Shape::CommonJsRunsFirstOwnNameOnce]
+    );
 }
 
 #[test]
@@ -446,7 +580,10 @@ fn the_require_of_an_es_module_is_the_require_of_the_published_text() {
 });
 export {};
 "#;
-    let both = [Shape::RequireFactoryPrefersRequire, Shape::RequireAppliesRequireOrThrowsError];
+    let both = [
+        Shape::RequireFactoryPrefersRequire,
+        Shape::RequireAppliesRequireOrThrowsError,
+    ];
     assert_eq!(shapes_in("/a.mjs", source), both);
 }
 
@@ -507,17 +644,35 @@ var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, 
 #[test]
 fn a_variable_that_is_no_alias_of_the_global_makes_an_ordinary_function() {
     let changes = [
-        ("var __defProp = Object.defineProperty;", "var __defProp = Reflect.defineProperty;"),
-        ("var __defProp = Object.defineProperty;", "var __defProp = Object.defineProperties;"),
-        ("var __defProp = Object.defineProperty;", "var __defProp = Object.defineProperty; __defProp = null;"),
-        ("var __defProp = Object.defineProperty;", "var Object = {}; var __defProp = Object.defineProperty;"),
-        ("var __defProp = Object.defineProperty;", "var __defProp = (o, k, d) => Object.defineProperty(o, k, d);"),
+        (
+            "var __defProp = Object.defineProperty;",
+            "var __defProp = Reflect.defineProperty;",
+        ),
+        (
+            "var __defProp = Object.defineProperty;",
+            "var __defProp = Object.defineProperties;",
+        ),
+        (
+            "var __defProp = Object.defineProperty;",
+            "var __defProp = Object.defineProperty; __defProp = null;",
+        ),
+        (
+            "var __defProp = Object.defineProperty;",
+            "var Object = {}; var __defProp = Object.defineProperty;",
+        ),
+        (
+            "var __defProp = Object.defineProperty;",
+            "var __defProp = (o, k, d) => Object.defineProperty(o, k, d);",
+        ),
     ];
     for (from, to) in changes {
         let changed = replace_each(ESBUILD_MODULE_HELPERS, &[(from, to)]);
         assert_eq!(shapes_in("/a.cjs", &changed), [], "{to}");
     }
-    let other = ("var __getOwnPropDesc = Object.getOwnPropertyDescriptor;", "var __getOwnPropDesc = Object.getOwnPropertyNames;");
+    let other = (
+        "var __getOwnPropDesc = Object.getOwnPropertyDescriptor;",
+        "var __getOwnPropDesc = Object.getOwnPropertyNames;",
+    );
     let changed = replace_each(ESBUILD_MODULE_HELPERS, &[other]);
     assert_eq!(shapes_in("/a.cjs", &changed), [Shape::ExportDefinesGetters]);
 }
@@ -525,11 +680,17 @@ fn a_variable_that_is_no_alias_of_the_global_makes_an_ordinary_function() {
 #[test]
 fn a_branch_that_a_locked_built_in_rules_out_is_no_alternative() {
     let found = find_in("/a.cjs", CREATE_BINDING);
-    let held: Vec<usize> = found.bindings().map(|(_, values)| values.functions.len()).collect();
+    let held: Vec<usize> = found
+        .bindings()
+        .map(|(_, values)| values.functions.len())
+        .collect();
     assert_eq!(held, [1]);
     let asks_something_else = CREATE_BINDING.replace("Object.create ?", "globalThis.flag ?");
     let found = find_in("/a.cjs", &asks_something_else);
-    let held: Vec<usize> = found.bindings().map(|(_, values)| values.functions.len()).collect();
+    let held: Vec<usize> = found
+        .bindings()
+        .map(|(_, values)| values.functions.len())
+        .collect();
     assert_eq!(held, [2]);
 }
 
@@ -537,15 +698,21 @@ fn a_branch_that_a_locked_built_in_rules_out_is_no_alternative() {
 fn a_definition_in_the_head_holds_from_the_start() {
     let holds = |path: &str, source: &str| -> Vec<bool> {
         let found = find_in(path, source);
-        found.bindings().map(|(_, values)| values.holds_from_the_start).collect()
+        found
+            .bindings()
+            .map(|(_, values)| values.holds_from_the_start)
+            .collect()
     };
     let wrapper = "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);\n";
     assert_eq!(holds("/a.mjs", &format!("{wrapper}export {{}};")), [true]);
-    let behind_reads = format!("var names = Object.getOwnPropertyNames;\nvar load = import.meta.require;\n{wrapper}export {{}};");
+    let behind_reads = format!(
+        "var names = Object.getOwnPropertyNames;\nvar load = import.meta.require;\n{wrapper}export {{}};"
+    );
     assert_eq!(holds("/a.mjs", &behind_reads), [true]);
     let behind_a_call = format!("globalThis.start();\n{wrapper}export {{}};");
     assert_eq!(holds("/a.mjs", &behind_a_call), [false]);
-    let in_a_function = format!("function outer() {{ {wrapper} return __commonJS; }}\nexport {{}};");
+    let in_a_function =
+        format!("function outer() {{ {wrapper} return __commonJS; }}\nexport {{}};");
     assert_eq!(holds("/a.mjs", &in_a_function), [false]);
 }
 
@@ -553,24 +720,53 @@ fn a_definition_in_the_head_holds_from_the_start() {
 fn a_definition_behind_other_code_of_its_statement_does_not_hold_from_the_start() {
     let holds = |source: &str| -> Vec<bool> {
         let found = find_in("/a.mjs", &format!("{source}\nexport {{}};"));
-        found.bindings().map(|(_, values)| values.holds_from_the_start).collect()
+        found
+            .bindings()
+            .map(|(_, values)| values.holds_from_the_start)
+            .collect()
     };
-    let wrapper = "(cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports)";
-    let in_front = format!("var keys = Object.keys, __commonJS = {wrapper}, started = globalThis.start();");
+    let wrapper =
+        "(cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports)";
+    let in_front =
+        format!("var keys = Object.keys, __commonJS = {wrapper}, started = globalThis.start();");
     assert_eq!(holds(&in_front), [true]);
-    assert_eq!(holds(&format!("var started = globalThis.start(), __commonJS = {wrapper};")), [false]);
-    assert_eq!(holds(&format!("var __commonJS = (globalThis.start(), {wrapper});")), [false]);
-    assert_eq!(holds(&format!("var __commonJS;\n__commonJS = {wrapper};")), [true]);
-    assert_eq!(holds(&format!("var __commonJS;\n__commonJS = (globalThis.start(), {wrapper});")), [false]);
+    assert_eq!(
+        holds(&format!(
+            "var started = globalThis.start(), __commonJS = {wrapper};"
+        )),
+        [false]
+    );
+    assert_eq!(
+        holds(&format!(
+            "var __commonJS = (globalThis.start(), {wrapper});"
+        )),
+        [false]
+    );
+    assert_eq!(
+        holds(&format!("var __commonJS;\n__commonJS = {wrapper};")),
+        [true]
+    );
+    assert_eq!(
+        holds(&format!(
+            "var __commonJS;\n__commonJS = (globalThis.start(), {wrapper});"
+        )),
+        [false]
+    );
 }
 
 #[test]
 fn exports_that_the_statement_has_handed_out_are_not_untouched() {
     let certainty = |source: &str| -> Vec<Certainty> {
-        find_in("/a.cjs", source).bindings().map(|(_, values)| values.certainty).collect()
+        find_in("/a.cjs", source)
+            .bindings()
+            .map(|(_, values)| values.certainty)
+            .collect()
     };
     let helper = "__importDefault = (this && this.__importDefault) || function (mod) {\n    return (mod && mod.__esModule) ? mod : { \"default\": mod };\n}";
-    assert_eq!(certainty(&format!("var {helper};")), [Certainty::OnceInitialized]);
+    assert_eq!(
+        certainty(&format!("var {helper};")),
+        [Certainty::OnceInitialized]
+    );
     let behind_a_call = format!("var touched = globalThis.touch(this), {helper};");
     assert_eq!(certainty(&behind_a_call), [Certainty::MayHoldOtherValues]);
 }

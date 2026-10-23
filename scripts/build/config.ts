@@ -587,7 +587,9 @@ export function glibcLoadsPackedRelocations(version: string): boolean {
 
 function hostLoadsPackedRelocations(): boolean {
   try {
-    const version = /^glibc (\d+\.\d+)/.exec(execSync("getconf GNU_LIBC_VERSION", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    const version = /^glibc (\d+\.\d+)/.exec(
+      execSync("getconf GNU_LIBC_VERSION", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+    );
     return version !== null && glibcLoadsPackedRelocations(version[1]!);
   } catch {
     return false;

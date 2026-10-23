@@ -256,6 +256,27 @@ describeLink("a trimmable link", () => {
     expectCleanRuns(result);
   });
 
+  test("takes a guard whose entry point does nothing, so that the compiler removes the call and the linker the function", async () => {
+    using dir = tempDir("trim-elf", {
+      ...sources,
+      "main.c": `
+        ${start}
+        extern const char retained_table[62];
+        __attribute__((noinline)) int does_nothing(int x) { return 0; }
+        __attribute__((noinline)) void destroys(int x) { RECORD(Extra, does_nothing); does_nothing(x); }
+        int main(int argc, char **argv) {
+          destroys(argc);
+          return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : retained_table[argc & 31] == '1' ? 0 : 1;
+        }
+      `,
+    });
+    const result = await linked(String(dir));
+    expect(result.featuresOf("entered")).toEqual([Extra]);
+    expect(() => result.featuresOf("does_nothing")).toThrow("has no symbol does_nothing");
+    expectRetained(result, ["destroys"]);
+    expectCleanRuns(result);
+  });
+
   test.skipIf(archiver === null)("relinks objects compiled from bitcode in an archive", async () => {
     using dir = tempDir("trim-elf", {
       ...sources,
@@ -416,40 +437,49 @@ describeLink("each stub", () => {
   test.skipIf(!canUseGuardHeader).each([
     ["native code", {}],
     ["bitcode", { spellings: thinLtoFlags }],
-  ])("of the engine's header does what its kind says, and Abort, which tests nothing at run time, lands on the traps that fill the removed range: %s", async (_, compileFlags) => {
-    using dir = tempDir("trim-elf-stubs", { ...sources, "toy.h": toyHeader, "spellings.cpp": spellingsSource });
-    const folder = String(dir);
-    const objects = ["feature_code", "embedder", "spellings"];
-    const linkFlags = spellingsGuardFunctions.map(name => `-Wl,--undefined=${name}`);
-    const result = await linked(folder, { objects, compileFlags, linkFlags });
-    expect(result.programResult.stdout).toBe(wholeSpellingsOutput + "\n");
-    expect(result.trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
-    expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(endedByTrap);
-    const removableLines = entryPointsText(folder, "program").split(foldedEntryPointsHeading)[0]!.trimEnd().split("\n");
-    const listedStubs = removableLines.map(line => line.split(" ")[1]!);
-    expect([...new Set(listedStubs)].sort()).toEqual(spellingsStubs);
-    const symbols = (await run([tools["llvm-nm"]!, "--demangle", "program"], folder)).stdout;
-    const addressOfFunction = (name: string) =>
-      parseInt(new RegExp(`^([0-9a-f]+) [tT] ${name}\\(`, "m").exec(symbols)![1]!, 16);
-    const featuresOfEntryPoints = spellingsEntryPoints.map(name => result.featuresAt(addressOfFunction(name)));
-    expect(featuresOfEntryPoints).toEqual(spellingsEntryPoints.map(() => [Extra]));
-    expectRetained(result, [...spellingsGuardFunctions, "main"]);
-  });
+  ])(
+    "of the engine's header does what its kind says, and Abort, which tests nothing at run time, lands on the traps that fill the removed range: %s",
+    async (_, compileFlags) => {
+      using dir = tempDir("trim-elf-stubs", { ...sources, "toy.h": toyHeader, "spellings.cpp": spellingsSource });
+      const folder = String(dir);
+      const objects = ["feature_code", "embedder", "spellings"];
+      const linkFlags = spellingsGuardFunctions.map(name => `-Wl,--undefined=${name}`);
+      const result = await linked(folder, { objects, compileFlags, linkFlags });
+      expect(result.programResult.stdout).toBe(wholeSpellingsOutput + "\n");
+      expect(result.trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
+      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(endedByTrap);
+      const removableLines = entryPointsText(folder, "program")
+        .split(foldedEntryPointsHeading)[0]!
+        .trimEnd()
+        .split("\n");
+      const listedStubs = removableLines.map(line => line.split(" ")[1]!);
+      expect([...new Set(listedStubs)].sort()).toEqual(spellingsStubs);
+      const symbols = (await run([tools["llvm-nm"]!, "--demangle", "program"], folder)).stdout;
+      const addressOfFunction = (name: string) =>
+        parseInt(new RegExp(`^([0-9a-f]+) [tT] ${name}\\(`, "m").exec(symbols)![1]!, 16);
+      const featuresOfEntryPoints = spellingsEntryPoints.map(name => result.featuresAt(addressOfFunction(name)));
+      expect(featuresOfEntryPoints).toEqual(spellingsEntryPoints.map(() => [Extra]));
+      expectRetained(result, [...spellingsGuardFunctions, "main"]);
+    },
+  );
 
   for (const [name, isBitcode] of [
     ["native code", false],
     ["bitcode", true],
   ] as const) {
     const isSkipped = rustc === null || (isBitcode && !canLinkRustBitcode);
-    test.skipIf(isSkipped)(`of the Rust crate does what its kind says, and Abort, which tests nothing at run time, lands on the traps that fill the removed range: ${name}`, async () => {
-      using dir = tempDir("trim-elf-stubs", rustFiles(rustSource));
-      const folder = String(dir);
-      const result = await inspectAndRun(folder, await wrappedRust(folder, isBitcode));
-      expect(result.programResult.stdout).toMatch(/^-?\d*[13579] -?\d*[13579],7 -?\d*[13579] false\n$/);
-      expect(result.trimmedResult.stdout).toBe("0 0,0 -2 true\n");
-      expect(await exitCodeOf(folder, "trimmed", ["a"])).toBe(endedByTrap);
-      expect(await exitCodeOf(folder, "trimmed", ["a", "b"])).toBe(endedByTrap);
-    });
+    test.skipIf(isSkipped)(
+      `of the Rust crate does what its kind says, and Abort, which tests nothing at run time, lands on the traps that fill the removed range: ${name}`,
+      async () => {
+        using dir = tempDir("trim-elf-stubs", rustFiles(rustSource));
+        const folder = String(dir);
+        const result = await inspectAndRun(folder, await wrappedRust(folder, isBitcode));
+        expect(result.programResult.stdout).toMatch(/^-?\d*[13579] -?\d*[13579],7 -?\d*[13579] false\n$/);
+        expect(result.trimmedResult.stdout).toBe("0 0,0 -2 true\n");
+        expect(await exitCodeOf(folder, "trimmed", ["a"])).toBe(endedByTrap);
+        expect(await exitCodeOf(folder, "trimmed", ["a", "b"])).toBe(endedByTrap);
+      },
+    );
   }
 
   test("trimExecutable rejects an already trimmed executable, an unknown feature name and a missing file", async () => {
@@ -514,7 +544,9 @@ describeLink("two features", () => {
     });
     const folder = String(dir);
     const { table, featuresOf } = await linked(folder, { objects });
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true }]);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
+    ]);
     const requiresText = readFileSync(join(folder, "program.trim/requires.txt"), "utf8");
     expect(requiresText).toStartWith(`${Extra} requires ${Other}: 1 references`);
     expect(featuresOf("entry_of_other")).toEqual([Other]);
@@ -529,8 +561,12 @@ describeLink("two features", () => {
     });
     const folder = String(dir);
     const { table, trimmedResult } = await linked(folder, { objects, removed: [Other] });
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true }]);
-    expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toBe(`${Extra} enters ${Other}: aborting guard\n`);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true },
+    ]);
+    expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toBe(
+      `${Extra} enters ${Other}: aborting guard\n`,
+    );
     expect(trimmedResult.exitCode).toBe(0);
   });
 
@@ -546,7 +582,9 @@ describeLink("two features", () => {
       using dir = tempDir("trim-elf-two", files);
       const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
       const { table, featuresOf } = await linked(String(dir), { objects, builtins });
-      expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false }]);
+      expect(table.edges).toEqual([
+        { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
+      ]);
       expect(featuresOf("entered")).toEqual([Extra]);
       expect(featuresOf("entry_of_other")).toEqual([Other]);
     });
@@ -568,13 +606,20 @@ describeLink("two features", () => {
       const folder = String(dir);
       const both = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
       const { table, featuresOf } = await linked(folder, { objects: builtinEnteringOtherObjects, builtins: both });
-      expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false }]);
+      expect(table.edges).toEqual([
+        { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
+      ]);
       expect(["entered_as_builtin", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
       const one = [builtinUsing(spelledBuiltin, "toy.extra", Extra)];
-      expectLinkFailure(folder, "program", await wrapped(folder, { objects: builtinEnteringOtherObjects, builtins: one }), [
-        "UndeclaredUse: toy.extra (entered_as_builtin (guarding.o, ",
-        `reaches a guard of ${Other}, and its table entry has no "uses ${Other}"`,
-      ]);
+      expectLinkFailure(
+        folder,
+        "program",
+        await wrapped(folder, { objects: builtinEnteringOtherObjects, builtins: one }),
+        [
+          "UndeclaredUse: toy.extra (entered_as_builtin (guarding.o, ",
+          `reaches a guard of ${Other}, and its table entry has no "uses ${Other}"`,
+        ],
+      );
     });
 
     test("fail the link when the table does not list the built-in", async () => {

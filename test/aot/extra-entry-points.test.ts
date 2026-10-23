@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const see = `const see = v => v === null || (typeof v !== "object" && typeof v !== "function") ? String(v) : typeof v + " " + Object.keys(v).sort().join("+") + " default: " + (v.default === undefined ? "none" : typeof v.default + " " + Object.keys(v.default).sort().join("+"));\n`;
 
@@ -18,7 +18,8 @@ const further: Record<string, string> = {
   "rt/counts.cjs": `globalThis.ran = (globalThis.ran ?? 0) + 1; module.exports = { ran: globalThis.ran };\n`,
 };
 const names = JSON.stringify(Object.keys(further).map(name => "./" + name));
-const each = (load: string) => `for (const name of ${names}) { try { console.log(name, see(${load})); } catch (e) { console.log(name, "THROWS", e.constructor.name); } }\n`;
+const each = (load: string) =>
+  `for (const name of ${names}) { try { console.log(name, see(${load})); } catch (e) { console.log(name, "THROWS", e.constructor.name); } }\n`;
 
 const mains: Record<string, string> = {
   "by-create-require.mjs": `import { createRequire } from "node:module";\n${see}const load = createRequire(import.meta.url);\n${each("load(name)")}console.log(load("./rt/counts.cjs") === load("./rt/counts.cjs"), load("./rt/counts.cjs").ran, load("./rt/es.mjs") === load("./rt/es.mjs"));\n`,
@@ -39,16 +40,40 @@ async function isAsPlain(main: string, text: string, entries: Record<string, str
   using dir = tempDir("extra-entry-points", { ...entries, [main]: text });
   const plain = await run([bunExe(), "run", main], String(dir), bunEnv);
   expect(plain.exitCode).toBe(0);
-  const build = await run([bunExe(), "build", "--compile", "--aot", "--format=esm", "--target=bun", main, ...Object.keys(entries), "--outfile", "program"], String(dir), bunEnv);
+  const build = await run(
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--format=esm",
+      "--target=bun",
+      main,
+      ...Object.keys(entries),
+      "--outfile",
+      "program",
+    ],
+    String(dir),
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  const aot = await run([join(String(dir), "program")], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  const aot = await run([join(String(dir), "program")], String(dir), {
+    ...bunEnv,
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+  });
   expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 }
 
 for (const main of Object.keys(mains)) {
-  test(`what an executable made with --aot loads of its further entry points at run time is what bun run loads: ${main}`, () => isAsPlain(main, mains[main], further), 120_000);
+  test(
+    `what an executable made with --aot loads of its further entry points at run time is what bun run loads: ${main}`,
+    () => isAsPlain(main, mains[main], further),
+    120_000,
+  );
 }
 
 test.todo("require() of a further entry point does not call a `then` that it exports", () =>
-  isAsPlain("main.cjs", `const load = require;\nconsole.log(Object.keys(load("./rt/" + "thenable.cjs")).join());\n`, { "rt/thenable.cjs": `module.exports = { then() { throw new Error("asked"); } };\n` }),
+  isAsPlain("main.cjs", `const load = require;\nconsole.log(Object.keys(load("./rt/" + "thenable.cjs")).join());\n`, {
+    "rt/thenable.cjs": `module.exports = { then() { throw new Error("asked"); } };\n`,
+  }),
 );

@@ -362,24 +362,24 @@ impl SinkHandle {
             SinkHandle::ServerResponse(any) => {
                 removable_body!(Serve, Abort, { any.write_chunk(data) })
             }
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => {
-                removable_body!(Fetch, Abort, { unsafe { p.get_mut() }.write(data) })
-            }
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(mut p) => {
-                removable_body!(S3Client, Abort, { unsafe { p.get_mut() }.write(data) })
-            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
             SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpResponse(mut p) => {
-                removable_body_of_either!(Serve, WebStreams, { unsafe { p.get_mut() }.write(data) })
-            }
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpsResponse(mut p) => {
-                removable_body_of_either!(Serve, WebStreams, { unsafe { p.get_mut() }.write(data) })
-            }
+            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
         }
@@ -394,10 +394,10 @@ impl SinkHandle {
             SinkHandle::ServerResponse(any) => {
                 removable_body!(Serve, Abort, { any.end_chunk(err.as_ref()) })
             }
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => {
-                removable_body!(Fetch, Abort, { unsafe { p.get_mut() }.end_from_stream(err) })
-            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.end_from_stream(err)
+            }),
             // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
             SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
                 streams::NetworkSink::end_from_stream(p.as_ptr(), err)

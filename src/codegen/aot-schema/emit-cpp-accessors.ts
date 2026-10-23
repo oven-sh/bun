@@ -62,7 +62,9 @@ function collect(schema: Schema): NamedParts {
       }),
     ),
     flags: byName(entry => entry.flags.map(flag => ({ name: flag.name, entry, position: `1 << ${flag.bit}` }))),
-    operands: byName(entry => entry.namedOperands.map(operand => ({ name: operand.name, entry, position: String(operand.index) }))),
+    operands: byName(entry =>
+      entry.namedOperands.map(operand => ({ name: operand.name, entry, position: String(operand.index) })),
+    ),
     variadicOperands: byName(entry => {
       const operand = entry.variadicOperand;
       return operand === null ? [] : [{ name: operand.name, entry, position: String(operand.index) }];
@@ -78,7 +80,9 @@ function lookup(name: string, users: readonly User[]): string[] {
     if (own.length === 0) continue;
     if (own.length === 1) {
       const [{ entry, position }] = own;
-      functions.push([`${signature} { return ${tag} == ${enumName}::${entry.name} ? std::optional<unsigned>(${position}) : std::nullopt; }`]);
+      functions.push([
+        `${signature} { return ${tag} == ${enumName}::${entry.name} ? std::optional<unsigned>(${position}) : std::nullopt; }`,
+      ]);
       continue;
     }
     const lines = [signature, "{", `${indentation}switch (${tag}) {`];
@@ -165,13 +169,17 @@ function entrySet(entryEnum: EntryEnum, name: string, users: readonly User[]): s
 function accessorsInc(parts: NamedParts, entryEnum: EntryEnum, part: AccessorPart): string[] {
   const { tag } = entryEnum;
   const groups: string[][] = [];
-  const ownUsersOf = (users: readonly User[]): User[] => users.filter(user => user.entry.isTerminator === entryEnum.isTerminator);
+  const ownUsersOf = (users: readonly User[]): User[] =>
+    users.filter(user => user.entry.isTerminator === entryEnum.isTerminator);
   if (part !== "operands") {
     for (const [name, users] of parts.payload) {
       const own = ownUsersOf(users);
       if (own.length === 0) continue;
       const isOptional = users.some(user => user.field.isOptional);
-      groups.push([...indent(accessorLines(name, users[0].field.kind, isOptional, tag)), ...entrySet(entryEnum, name, own)]);
+      groups.push([
+        ...indent(accessorLines(name, users[0].field.kind, isOptional, tag)),
+        ...entrySet(entryEnum, name, own),
+      ]);
     }
     for (const [name, users] of parts.flags) {
       const own = ownUsersOf(users);
@@ -222,7 +230,10 @@ export function emitCppAccessors(context: EmitContext): OutputFile[] {
     { name: "AOTSchemaPayloadPositions.h", lines: positionsHeader("PayloadWord", parts.payload) },
     { name: "AOTSchemaFlagMasks.h", lines: positionsHeader("FlagMask", parts.flags) },
     { name: "AOTSchemaOperandPositions.h", lines: positionsHeader("OperandPosition", parts.operands) },
-    { name: "AOTSchemaVariadicOperandPositions.h", lines: positionsHeader("VariadicOperandPosition", parts.variadicOperands) },
+    {
+      name: "AOTSchemaVariadicOperandPositions.h",
+      lines: positionsHeader("VariadicOperandPosition", parts.variadicOperands),
+    },
     { name: "AOTSchemaValueAccessors.inc", lines: accessorsInc(parts, opcodes, "payload") },
     { name: "AOTSchemaValueOperandAccessors.inc", lines: accessorsInc(parts, opcodes, "operands") },
     { name: "AOTSchemaTerminatorAccessors.inc", lines: accessorsInc(parts, terminatorKinds, "all") },

@@ -36,14 +36,34 @@ struct Ace {
 
 #[link(name = "advapi32")]
 unsafe extern "system" {
-    fn GetKernelObjectSecurity(handle: HANDLE, requested: DWORD, descriptor: *mut c_void, length: DWORD, needed: *mut DWORD) -> BOOL;
-    fn GetSecurityDescriptorOwner(descriptor: *mut c_void, owner: *mut PSID, is_defaulted: *mut BOOL) -> BOOL;
-    fn GetSecurityDescriptorDacl(descriptor: *mut c_void, is_present: *mut BOOL, dacl: *mut *mut c_void, is_defaulted: *mut BOOL) -> BOOL;
+    fn GetKernelObjectSecurity(
+        handle: HANDLE,
+        requested: DWORD,
+        descriptor: *mut c_void,
+        length: DWORD,
+        needed: *mut DWORD,
+    ) -> BOOL;
+    fn GetSecurityDescriptorOwner(
+        descriptor: *mut c_void,
+        owner: *mut PSID,
+        is_defaulted: *mut BOOL,
+    ) -> BOOL;
+    fn GetSecurityDescriptorDacl(
+        descriptor: *mut c_void,
+        is_present: *mut BOOL,
+        dacl: *mut *mut c_void,
+        is_defaulted: *mut BOOL,
+    ) -> BOOL;
     fn GetAce(acl: *mut c_void, index: DWORD, ace: *mut *mut Ace) -> BOOL;
     fn EqualSid(a: PSID, b: PSID) -> BOOL;
     fn IsWellKnownSid(sid: PSID, kind: c_int) -> BOOL;
     fn ConvertSidToStringSidW(sid: PSID, text: *mut *mut u16) -> BOOL;
-    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(text: *const u16, revision: DWORD, descriptor: *mut *mut c_void, size: *mut DWORD) -> BOOL;
+    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        text: *const u16,
+        revision: DWORD,
+        descriptor: *mut *mut c_void,
+        size: *mut DWORD,
+    ) -> BOOL;
 }
 
 #[link(name = "kernel32")]
@@ -57,13 +77,24 @@ impl User {
     fn current() -> Option<User> {
         let mut token: HANDLE = null_mut();
         // SAFETY: the pseudo-handle of this process; `token` is a valid out-param.
-        if unsafe { win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token) } == 0 {
+        if unsafe {
+            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
+        } == 0
+        {
             return None;
         }
         let mut user = Box::new([0u64; 16]);
         let mut length: DWORD = 0;
         // SAFETY: `token` is open; the buffer is writable for the length given.
-        let is_read = unsafe { win32::GetTokenInformation(token, TOKEN_USER, user.as_mut_ptr().cast(), size_of_val(&*user) as DWORD, &mut length) };
+        let is_read = unsafe {
+            win32::GetTokenInformation(
+                token,
+                TOKEN_USER,
+                user.as_mut_ptr().cast(),
+                size_of_val(&*user) as DWORD,
+                &mut length,
+            )
+        };
         // SAFETY: `token` is open and not used again.
         unsafe { win32::CloseHandle(token) };
         (is_read != 0).then_some(User(user))
@@ -75,7 +106,11 @@ impl User {
 
     fn trusts(&self, sid: PSID) -> bool {
         // SAFETY: both are valid SIDs: one out of the token, one out of a descriptor that the system handed over.
-        unsafe { EqualSid(sid, self.sid()) != 0 || IsWellKnownSid(sid, LOCAL_SYSTEM) != 0 || IsWellKnownSid(sid, BUILTIN_ADMINISTRATORS) != 0 }
+        unsafe {
+            EqualSid(sid, self.sid()) != 0
+                || IsWellKnownSid(sid, LOCAL_SYSTEM) != 0
+                || IsWellKnownSid(sid, BUILTIN_ADMINISTRATORS) != 0
+        }
     }
 
     fn has_exclusive_access(&self, handle: HANDLE) -> bool {
@@ -84,12 +119,22 @@ impl User {
         unsafe { GetKernelObjectSecurity(handle, OWNER_AND_DACL, null_mut(), 0, &mut needed) };
         let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
         let descriptor: *mut c_void = buffer.as_mut_ptr().cast();
-        let (mut owner, mut dacl, mut is_present, mut is_defaulted): (PSID, *mut c_void, BOOL, BOOL) = (null_mut(), null_mut(), 0, 0);
+        let (mut owner, mut dacl, mut is_present, mut is_defaulted): (
+            PSID,
+            *mut c_void,
+            BOOL,
+            BOOL,
+        ) = (null_mut(), null_mut(), 0, 0);
         // SAFETY: `buffer` holds `needed` bytes; what the two getters hand out points into it, and it lives to the end of this function.
         let is_read = unsafe {
             GetKernelObjectSecurity(handle, OWNER_AND_DACL, descriptor, needed, &mut needed) != 0
                 && GetSecurityDescriptorOwner(descriptor, &mut owner, &mut is_defaulted) != 0
-                && GetSecurityDescriptorDacl(descriptor, &mut is_present, &mut dacl, &mut is_defaulted) != 0
+                && GetSecurityDescriptorDacl(
+                    descriptor,
+                    &mut is_present,
+                    &mut dacl,
+                    &mut is_defaulted,
+                ) != 0
         };
         if !is_read || owner.is_null() || is_present == 0 || dacl.is_null() || !self.trusts(owner) {
             return false;
@@ -118,13 +163,28 @@ impl User {
         let user = String::from_utf16_lossy(unsafe { bun_core::ffi::wstr_units(sid) });
         // SAFETY: as above.
         unsafe { LocalFree(sid.cast()) };
-        let text: Vec<u16> = format!("O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\0").encode_utf16().collect();
+        let text: Vec<u16> =
+            format!("O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\0")
+                .encode_utf16()
+                .collect();
         let mut descriptor: *mut c_void = null_mut();
         // SAFETY: `text` is NUL-terminated; `descriptor` is a valid out-param.
-        if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), SDDL_REVISION_1, &mut descriptor, null_mut()) } == 0 {
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                text.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                null_mut(),
+            )
+        } == 0
+        {
             return;
         }
-        let mut attributes = win32::SECURITY_ATTRIBUTES { nLength: size_of::<win32::SECURITY_ATTRIBUTES>() as DWORD, lpSecurityDescriptor: descriptor, bInheritHandle: 0 };
+        let mut attributes = win32::SECURITY_ATTRIBUTES {
+            nLength: size_of::<win32::SECURITY_ATTRIBUTES>() as DWORD,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
         // SAFETY: `path` is NUL-terminated; the descriptor lives until it is freed on the next line.
         unsafe {
             win32::CreateDirectoryW(path, &mut attributes);
@@ -136,11 +196,15 @@ impl User {
 /// Makes the folder unless there is something at `path`.
 pub fn make_or_find(path: &[u8]) -> bool {
     static VERIFIED_FOLDERS: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
-    let Ok(mut verified_folders) = VERIFIED_FOLDERS.lock() else { return false };
+    let Ok(mut verified_folders) = VERIFIED_FOLDERS.lock() else {
+        return false;
+    };
     if verified_folders.iter().any(|folder| folder == path) {
         return true;
     }
-    let Some(user) = User::current() else { return false };
+    let Some(user) = User::current() else {
+        return false;
+    };
     let mut wide = bun_paths::w_path_buffer_pool::get();
     let wide = bun_paths::string_paths::to_kernel32_path(&mut wide.0[..], path).as_ptr();
     user.create(wide);
@@ -163,7 +227,10 @@ pub fn make_or_find(path: &[u8]) -> bool {
     let mut found: win32::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: `handle` is open and `found` is a valid out-param.
     let is_read = unsafe { win32::GetFileInformationByHandle(handle, &mut found) };
-    let is_folder = is_read != 0 && found.dwFileAttributes & (win32::FILE_ATTRIBUTE_DIRECTORY | win32::FILE_ATTRIBUTE_REPARSE_POINT) == win32::FILE_ATTRIBUTE_DIRECTORY;
+    let is_folder = is_read != 0
+        && found.dwFileAttributes
+            & (win32::FILE_ATTRIBUTE_DIRECTORY | win32::FILE_ATTRIBUTE_REPARSE_POINT)
+            == win32::FILE_ATTRIBUTE_DIRECTORY;
     if !is_folder || !user.has_exclusive_access(handle) {
         // SAFETY: `handle` is open and not used again.
         unsafe { win32::CloseHandle(handle) };

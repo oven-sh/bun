@@ -102,7 +102,10 @@ impl SourceProvider for ScriptedProvider {
             loader: Loader::Ts,
             is_from_plugin: true,
         };
-        let answers = [(NEVER_LOADED, Loaded::NotFound), (DEFERRED_TEMPLATE, template)];
+        let answers = [
+            (NEVER_LOADED, Loaded::NotFound),
+            (DEFERRED_TEMPLATE, template),
+        ];
         answers
             .into_iter()
             .map(|(path, answer)| DeferredLoad {
@@ -296,7 +299,10 @@ fn loader_of(host: &LoadHost<'_>, path: &[u8], type_attribute: Option<&[u8]>) ->
 }
 
 fn payload_of<'p>(parsed: &'p ParsedCode<'_>) -> &'p ParsedSource {
-    let payload = parsed.payload.as_ref().expect("parse_code gives every tree a payload");
+    let payload = parsed
+        .payload
+        .as_ref()
+        .expect("parse_code gives every tree a payload");
     let source = payload.downcast_ref::<ParsedSource>();
     source.expect("the payload of a tree is a ParsedSource")
 }
@@ -317,13 +323,19 @@ fn resolve_code_takes_first_claim() {
     with_host(&[], |fixture| {
         let unclaimed = HostResolution::Unclaimed;
         assert_eq!(fixture.resolve(b"bun:bundle", MAIN), HostResolution::Erased);
-        assert_eq!(fixture.resolve(b"fs", MAIN), module_by_id(RuntimeModule::NodeFs));
+        assert_eq!(
+            fixture.resolve(b"fs", MAIN),
+            module_by_id(RuntimeModule::NodeFs)
+        );
         assert!(fixture.take_calls().is_empty());
 
         let claimed = HostResolution::Path(CLAIMED.to_vec());
         assert_eq!(fixture.resolve(b"./lib", MAIN), claimed);
         assert_eq!(fixture.resolve(b"claimed-package", MAIN), claimed);
-        assert_eq!(fixture.resolve(b"./outside", MAIN), uncompiled_code(b"renamed-outside"));
+        assert_eq!(
+            fixture.resolve(b"./outside", MAIN),
+            uncompiled_code(b"renamed-outside")
+        );
         assert_eq!(fixture.resolve(b"react", MAIN), uncompiled_code(b"react"));
         assert_eq!(fixture.resolve(b"react", b""), unclaimed);
         assert_eq!(fixture.resolve(b"./nothing", MAIN), unclaimed);
@@ -374,12 +386,25 @@ fn bun_module_is_answered_by_id() {
 fn runtime_module_resolution_asks_no_plugin() {
     with_host(&[], |fixture| {
         let host = fixture.host;
-        assert_eq!(host.resolve_runtime_module(b"fs"), module_by_id(RuntimeModule::NodeFs));
-        let other_specifiers: [&[u8]; 5] =
-            [b"./lib", b"virtual:config", b"./outside", b"react", b"bun:bundle"];
+        assert_eq!(
+            host.resolve_runtime_module(b"fs"),
+            module_by_id(RuntimeModule::NodeFs)
+        );
+        let other_specifiers: [&[u8]; 5] = [
+            b"./lib",
+            b"virtual:config",
+            b"./outside",
+            b"react",
+            b"bun:bundle",
+        ];
         for specifier in other_specifiers {
             let resolution = host.resolve_runtime_module(specifier);
-            assert_eq!(resolution, HostResolution::Unclaimed, "{}", BStr::new(specifier));
+            assert_eq!(
+                resolution,
+                HostResolution::Unclaimed,
+                "{}",
+                BStr::new(specifier)
+            );
         }
         assert!(fixture.take_calls().is_empty());
     });
@@ -404,7 +429,10 @@ fn internal_module_is_not_visible_to_the_application() {
         let unclaimed = HostResolution::Unclaimed;
         for specifier in [&b"internal/primordials"[..], b"internal/validators"] {
             assert_eq!(fixture.resolve(specifier, MAIN), unclaimed);
-            assert_eq!(fixture.resolve(specifier, b"/$bun/js/node/fs.ts"), unclaimed);
+            assert_eq!(
+                fixture.resolve(specifier, b"/$bun/js/node/fs.ts"),
+                unclaimed
+            );
             assert_eq!(fixture.host.resolve_runtime_module(specifier), unclaimed);
         }
     });
@@ -423,7 +451,10 @@ fn computed_prefix_finds_both_spellings() {
         assert!(!node_modules.is_empty() && node_modules.iter().all(is_id));
         assert!(host.find_runtime_modules(b"", b"").is_empty());
         assert!(host.find_runtime_modules(b"internal/", b"").is_empty());
-        assert!(host.find_runtime_modules(b"internal/primordials", b"").is_empty());
+        assert!(
+            host.find_runtime_modules(b"internal/primordials", b"")
+                .is_empty()
+        );
         assert!(host.find_runtime_modules(b"./", b"").is_empty());
     });
 }
@@ -441,9 +472,18 @@ fn external_flag_is_uncompiled_code() {
 #[test]
 fn plugin_external_is_uncompiled_code() {
     with_host(&[], |fixture| {
-        assert_eq!(fixture.resolve(b"./outside", MAIN), uncompiled_code(b"renamed-outside"));
-        assert_eq!(fixture.resolve(b"./outside", b""), uncompiled_code(b"renamed-outside"));
-        assert_eq!(fixture.take_calls(), ["resolve ./outside", "resolve ./outside"]);
+        assert_eq!(
+            fixture.resolve(b"./outside", MAIN),
+            uncompiled_code(b"renamed-outside")
+        );
+        assert_eq!(
+            fixture.resolve(b"./outside", b""),
+            uncompiled_code(b"renamed-outside")
+        );
+        assert_eq!(
+            fixture.take_calls(),
+            ["resolve ./outside", "resolve ./outside"]
+        );
     });
 }
 
@@ -461,10 +501,22 @@ fn loader_follows_attribute_options_and_entry_points() {
         let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 8] = [
             (b"/project/a.ts", None, HostLoaderKind::ByName),
             (b"/project/a.txt", Some(b"text"), HostLoaderKind::ByName),
-            (b"/project/a.ts", Some(b"text"), HostLoaderKind::Loader(Loader::Text)),
-            (b"/project/a.ts", Some(b"no-such-loader"), HostLoaderKind::ByName),
+            (
+                b"/project/a.ts",
+                Some(b"text"),
+                HostLoaderKind::Loader(Loader::Text),
+            ),
+            (
+                b"/project/a.ts",
+                Some(b"no-such-loader"),
+                HostLoaderKind::ByName,
+            ),
             (b"/project/tool", None, HostLoaderKind::ByName),
-            (b"/project/with.dots.in-its-name", None, HostLoaderKind::Loader(Loader::Tsx)),
+            (
+                b"/project/with.dots.in-its-name",
+                None,
+                HostLoaderKind::Loader(Loader::Tsx),
+            ),
             (b"/project/other.in-its-name", None, HostLoaderKind::ByName),
             (b"/project/a.vue", None, HostLoaderKind::Loader(Loader::Tsx)),
         ];
@@ -501,7 +553,10 @@ fn required_file_without_loader_is_typescript() {
         let path = b"/project/other.in-its-name";
         assert_eq!(kind_for(path, CodeImportKind::Require), typescript);
         assert_eq!(kind_for(path, CodeImportKind::Import), by_name);
-        assert_eq!(kind_for(b"/project/a.txt", CodeImportKind::Require), by_name);
+        assert_eq!(
+            kind_for(b"/project/a.txt", CodeImportKind::Require),
+            by_name
+        );
     });
 }
 
@@ -518,8 +573,14 @@ fn embedded_sqlite_has_its_own_loader() {
             host_loader_kind(loader)
         };
         let loaded_as = |loader: Loader| Some(HostLoaderKind::Loader(loader));
-        assert_eq!(kind_for(b"sqlite", Some(b"true")), loaded_as(Loader::SqliteEmbedded));
-        assert_eq!(kind_for(b"sqlite", Some(b"false")), loaded_as(Loader::Sqlite));
+        assert_eq!(
+            kind_for(b"sqlite", Some(b"true")),
+            loaded_as(Loader::SqliteEmbedded)
+        );
+        assert_eq!(
+            kind_for(b"sqlite", Some(b"false")),
+            loaded_as(Loader::Sqlite)
+        );
         assert_eq!(kind_for(b"sqlite", None), loaded_as(Loader::Sqlite));
         assert_eq!(kind_for(b"text", Some(b"true")), loaded_as(Loader::Text));
     });
@@ -535,13 +596,19 @@ fn plugin_loader_decides_language() {
         assert_eq!(template.hir.kind, FileKind::Ts);
         assert!(!template.hir.is_js && !template.hir.has_errors);
         let source = payload_of(&template);
-        assert_eq!((source.kind, source.loader), (SourceKind::Program, Loader::Ts));
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Program, Loader::Ts)
+        );
         assert!(source.is_from_plugin && source.plugin_module.is_none());
         assert_eq!(host.script_kind(TEMPLATE), Some(ScriptKind::Ts));
 
         let data = fixture.parse(DATA, BY_NAME);
         let source = payload_of(&data);
-        assert_eq!((source.kind, source.loader), (SourceKind::Data, Loader::Json));
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Data, Loader::Json)
+        );
         assert!(source.is_from_plugin);
         assert_eq!(host.script_kind(DATA), None);
         let calls = [
@@ -565,7 +632,10 @@ fn plugin_loader_decides_language() {
 #[test]
 fn script_kind_asks_only_plugins_that_see_the_file() {
     with_host(&[("without-plugin.vue", "")], |fixture| {
-        assert_eq!(fixture.host.script_kind(WITHOUT_PLUGIN), Some(ScriptKind::Tsx));
+        assert_eq!(
+            fixture.host.script_kind(WITHOUT_PLUGIN),
+            Some(ScriptKind::Tsx)
+        );
         assert_eq!(fixture.host.script_kind(b"/project/missing.tmpl"), None);
         assert!(fixture.take_calls().is_empty());
     });
@@ -586,12 +656,22 @@ fn every_tree_has_a_payload() {
             (b"/project/a.ts", as_text, SourceKind::Data, Loader::Text),
             (b"/project/a.json", BY_NAME, SourceKind::Data, Loader::Json),
             (b"/project/a.toml", BY_NAME, SourceKind::Data, Loader::Toml),
-            (b"/project/types.d.ts", BY_NAME, SourceKind::Program, Loader::Ts),
+            (
+                b"/project/types.d.ts",
+                BY_NAME,
+                SourceKind::Program,
+                Loader::Ts,
+            ),
         ];
         for (path, host_loader, kind, loader) in cases {
             let parsed = fixture.parse(path, host_loader);
             let source = payload_of(&parsed);
-            assert_eq!((source.kind, source.loader), (kind, loader), "{}", BStr::new(path));
+            assert_eq!(
+                (source.kind, source.loader),
+                (kind, loader),
+                "{}",
+                BStr::new(path)
+            );
             assert!(!source.is_from_plugin && source.plugin_module.is_none());
             assert!(source.web_assembly.is_none() && !source.is_page);
         }
@@ -614,7 +694,10 @@ fn plugin_module_name_is_in_the_payload() {
         };
         assert_eq!(source.plugin_module.as_ref(), Some(&expected));
         assert!(source.is_from_plugin);
-        assert_eq!((source.kind, source.loader), (SourceKind::Program, Loader::Ts));
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Program, Loader::Ts)
+        );
     });
 }
 
@@ -665,7 +748,10 @@ fn typed_file_is_typescript_and_hidden_from_plugins() {
         assert_eq!(parsed.hir.kind, FileKind::Ts);
         assert!(!parsed.hir.is_js && !parsed.hir.has_errors);
         let source = payload_of(&parsed);
-        assert_eq!((source.kind, source.loader), (SourceKind::Program, Loader::Ts));
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Program, Loader::Ts)
+        );
         assert!(!host.is_plugin_source(&typed));
         assert!(fixture.take_calls().is_empty());
         assert!(fixture.take_messages().is_empty());
@@ -697,7 +783,10 @@ fn evaluated_text_is_served_as_javascript() {
         let parsed = fixture.parse(&path, BY_NAME);
         assert!(parsed.hir.is_js && !parsed.hir.has_errors);
         let source = payload_of(&parsed);
-        assert_eq!((source.kind, source.loader), (SourceKind::EvaluatedText, Loader::Js));
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::EvaluatedText, Loader::Js)
+        );
         assert!(!host.is_plugin_source(&path));
         assert!(fixture.take_calls().is_empty());
 
@@ -711,7 +800,10 @@ fn react_compiler_declarations_are_served() {
         let (host, path) = (fixture.host, react_compiler::DECLARATIONS_PATH);
         assert!(host.is_file(path));
         assert_eq!(host.realpath(path), path);
-        assert_eq!(host.read(path).as_deref(), Some(react_compiler::DECLARATIONS));
+        assert_eq!(
+            host.read(path).as_deref(),
+            Some(react_compiler::DECLARATIONS)
+        );
         assert_eq!(&*host.read_source(path), react_compiler::DECLARATIONS);
         assert_eq!(host.script_kind(path), None);
         assert_eq!(loader_of(host, path, None), BY_NAME);
@@ -737,7 +829,12 @@ fn host_paths_are_not_directories() {
         for path in host_directories {
             assert!(!host.is_dir(path), "{}", BStr::new(path));
             assert!(!host.is_file(path), "{}", BStr::new(path));
-            assert_eq!(host.entries(path), (Vec::new(), Vec::new()), "{}", BStr::new(path));
+            assert_eq!(
+                host.entries(path),
+                (Vec::new(), Vec::new()),
+                "{}",
+                BStr::new(path)
+            );
             assert!(host.list_dir(path).is_empty(), "{}", BStr::new(path));
         }
         assert!(!host.is_dir(&module));
@@ -760,20 +857,23 @@ fn bun_sources_are_not_served() {
 
 #[test]
 fn plugin_source_is_text_from_on_load() {
-    with_host(&[("hello.tmpl", ""), ("plain.ts", "export {};")], |fixture| {
-        let host = fixture.host;
-        let virtual_module = fixture.resolve_to_path(b"virtual:config");
-        let plain: &[u8] = b"/project/plain.ts";
-        for path in [TEMPLATE, &virtual_module[..], plain] {
-            assert!(!fixture.read_code(path).is_empty(), "{}", BStr::new(path));
-            assert_eq!(host.read_source(path), fixture.read_code(path));
-        }
-        assert!(host.is_plugin_source(TEMPLATE));
-        assert!(host.is_plugin_source(&virtual_module));
-        assert!(!host.is_plugin_source(plain));
-        assert_eq!(host.read(&virtual_module).as_deref(), Some(TYPESCRIPT_TEXT));
-        assert!(fixture.take_messages().is_empty());
-    });
+    with_host(
+        &[("hello.tmpl", ""), ("plain.ts", "export {};")],
+        |fixture| {
+            let host = fixture.host;
+            let virtual_module = fixture.resolve_to_path(b"virtual:config");
+            let plain: &[u8] = b"/project/plain.ts";
+            for path in [TEMPLATE, &virtual_module[..], plain] {
+                assert!(!fixture.read_code(path).is_empty(), "{}", BStr::new(path));
+                assert_eq!(host.read_source(path), fixture.read_code(path));
+            }
+            assert!(host.is_plugin_source(TEMPLATE));
+            assert!(host.is_plugin_source(&virtual_module));
+            assert!(!host.is_plugin_source(plain));
+            assert_eq!(host.read(&virtual_module).as_deref(), Some(TYPESCRIPT_TEXT));
+            assert!(fixture.take_messages().is_empty());
+        },
+    );
 }
 
 #[test]
@@ -821,11 +921,17 @@ fn deferred_read_of_missing_file_is_unreadable() {
 fn deferred_read_gets_text_and_loader_of_plugin() {
     with_host(&[], |fixture| {
         let host = fixture.host;
-        assert!(matches!(host.read_code(DEFERRED_TEMPLATE), CodeRead::Deferred));
+        assert!(matches!(
+            host.read_code(DEFERRED_TEMPLATE),
+            CodeRead::Deferred
+        ));
         assert!(!host.is_plugin_source(DEFERRED_TEMPLATE));
 
         let texts = host.finish_deferred_reads();
-        assert_eq!(texts, [(DEFERRED_TEMPLATE.to_vec(), Cow::Borrowed(TYPESCRIPT_TEXT))]);
+        assert_eq!(
+            texts,
+            [(DEFERRED_TEMPLATE.to_vec(), Cow::Borrowed(TYPESCRIPT_TEXT))]
+        );
         assert!(host.is_plugin_source(DEFERRED_TEMPLATE));
         assert_eq!(host.script_kind(DEFERRED_TEMPLATE), Some(ScriptKind::Ts));
         let parsed = fixture.parse(DEFERRED_TEMPLATE, BY_NAME);

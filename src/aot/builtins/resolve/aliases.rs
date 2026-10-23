@@ -12,7 +12,10 @@ impl Resolver<'_, '_> {
     fn is_stable(&self, symbol: SymbolId) -> bool {
         let input = self.input;
         let is_dead_store = |target: ExprId| input.decisions.is_dead_expr(target);
-        match input.bound.binding_stability_ignoring(symbol, &is_dead_store) {
+        match input
+            .bound
+            .binding_stability_ignoring(symbol, &is_dead_store)
+        {
             BindingStability::Stable => true,
             BindingStability::NoBinding
             | BindingStability::Linked
@@ -130,7 +133,8 @@ impl Resolver<'_, '_> {
                 && !self.exported_symbols.contains(&symbol)
                 && !input.bound.is_visible_to_eval(symbol);
             if is_local {
-                self.aliases.insert(symbol, AliasSource::Known(value.predicted()));
+                self.aliases
+                    .insert(symbol, AliasSource::Known(value.predicted()));
             } else {
                 self.expose(value.path.id);
             }

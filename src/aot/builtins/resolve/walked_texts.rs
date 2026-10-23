@@ -12,7 +12,8 @@ const OPERANDS_BEFORE_LIST: usize = 2;
 
 impl Resolver<'_, '_> {
     fn walks_lists_as_the_language_says() -> bool {
-        is_locked(BuiltinId::ArrayPrototypeSymbolIterator) && is_locked(BuiltinId::ArrayIteratorPrototypeNext)
+        is_locked(BuiltinId::ArrayPrototypeSymbolIterator)
+            && is_locked(BuiltinId::ArrayIteratorPrototypeNext)
     }
 
     // `list.forEach(function)`: the list.
@@ -52,7 +53,9 @@ impl Resolver<'_, '_> {
         let mut node = mention;
         loop {
             match bound.parent_of_expr(node) {
-                Parent::Expr(parent) if hir.skip_type_assertions(parent) == mention => node = parent,
+                Parent::Expr(parent) if hir.skip_type_assertions(parent) == mention => {
+                    node = parent
+                }
                 Parent::Expr(parent) => {
                     let Parent::Expr(user) = bound.parent_of_expr(parent) else {
                         return false;
@@ -66,7 +69,8 @@ impl Resolver<'_, '_> {
                     let ExprKind::Fn(function) = hir[callback].kind else {
                         return false;
                     };
-                    return hir[call].callee == parent && self.find_receiver_of_for_each(function) == Some(node);
+                    return hir[call].callee == parent
+                        && self.find_receiver_of_for_each(function) == Some(node);
                 }
                 Parent::Stmt(statement) => {
                     return Self::walks_lists_as_the_language_says()
@@ -96,8 +100,9 @@ impl Resolver<'_, '_> {
         let mut mentions = (0..hir.exprs.len() as u32).map(ExprId).filter(|&mention| {
             bound.is_evaluated_ident(mention) && bound.binding(mention) == Binding::Symbol(symbol)
         });
-        (matches!(hir[written].kind, ExprKind::Array(_)) && mentions.all(|mention| self.is_walk(mention)))
-            .then_some(written)
+        (matches!(hir[written].kind, ExprKind::Array(_))
+            && mentions.all(|mention| self.is_walk(mention)))
+        .then_some(written)
     }
 
     // The list whose elements the variable takes one after the other, and nothing else: `for (const v of list)`, `list.forEach(v => ..)`.

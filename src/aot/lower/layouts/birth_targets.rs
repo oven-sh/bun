@@ -22,7 +22,9 @@ fn find_passage(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> Opti
     if hir.ids(call.args).next() != Some(expression) {
         return None;
     }
-    let builtin = file.builtins.builtin_of_expression(hir.skip_type_assertions(call.callee))?;
+    let builtin = file
+        .builtins
+        .builtin_of_expression(hir.skip_type_assertions(call.callee))?;
     returns_first_argument(builtin).then_some(parent)
 }
 

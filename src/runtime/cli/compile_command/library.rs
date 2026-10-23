@@ -114,7 +114,11 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
 
 fn is_inside(directory: &[u8], path: &[u8]) -> bool {
     let below = path.strip_prefix(directory);
-    below.is_some_and(|below| below.first().is_some_and(|&byte| bun_paths::is_sep_any(byte)))
+    below.is_some_and(|below| {
+        below
+            .first()
+            .is_some_and(|&byte| bun_paths::is_sep_any(byte))
+    })
 }
 
 fn check_outdir(project: &Project, outdir: &[u8]) -> Result<(), LibraryError> {
@@ -152,10 +156,9 @@ fn find_external_packages(
     let project = Project::find(working_directory);
     let outdir = absolute_path(working_directory, outdir);
     check_outdir(&project, &outdir)?;
-    let is_overwritten = |entry_point: &&Box<[u8]>| {
-        is_inside(&outdir, &absolute_path(working_directory, entry_point))
-    };
-    if let Some(entry_point) = entry_points.iter().find(is_overwritten) {
+    let is_overwritten =
+        |entry_point: &[u8]| is_inside(&outdir, &absolute_path(working_directory, entry_point));
+    if let Some(entry_point) = entry_points.iter().find(|it| is_overwritten(it)) {
         return Err(LibraryError::EntryPointInsideOutdir {
             entry_point: entry_point.to_vec(),
         });

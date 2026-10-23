@@ -13,8 +13,15 @@ test("sql<Row[]> output matches bun run", async () => {
   using dir = tempDir("aot-sql-typed-rows", {});
   const folder = join(import.meta.dir, "programs", "data-from-outside");
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "./sql-typed-rows.ts", "--outfile", executable], folder, bunEnv);
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^(error|warn)\b/m), exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "./sql-typed-rows.ts", "--outfile", executable],
+    folder,
+    bunEnv,
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^(error|warn)\b/m),
+    exitCode: 0,
+  });
   const ran = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const expected = await run([bunExe(), "run", "./sql-typed-rows.ts"], folder, bunEnv);

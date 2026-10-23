@@ -68,7 +68,8 @@ impl DuplicateNames<'_, '_> {
                         entry.insert((first, count + 1));
                         if count > 1 || !is_accessor_pair(&hir[first], &hir[member]) {
                             let (earlier, later) = (Decl::Member(first), Decl::Member(member));
-                            self.redeclarations.push(EarlyRedeclaration { earlier, later });
+                            self.redeclarations
+                                .push(EarlyRedeclaration { earlier, later });
                         }
                     }
                 }
@@ -199,7 +200,8 @@ impl DuplicateNames<'_, '_> {
             Entry::Occupied(entry) => {
                 let (earlier, earlier_symbol) = *entry.get();
                 if symbol.is_none() || symbol != earlier_symbol {
-                    self.redeclarations.push(EarlyRedeclaration { earlier, later });
+                    self.redeclarations
+                        .push(EarlyRedeclaration { earlier, later });
                 }
             }
         }

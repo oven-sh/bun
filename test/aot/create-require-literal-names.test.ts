@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { describe, test } from "./supported";
 
 // `const require = createRequire(import.meta.url); require("./lib.cjs")`. The name is written in the program, so an ahead-of-time
 // build compiles the file like any other that is required. BUN_JSC_crashIfInterpreterIsUsed=1 crashes the compiled program if
@@ -95,7 +95,11 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
-  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler" } }` };
+  const tree = {
+    ...files,
+    [entry]: programs[entry],
+    "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler" } }`,
+  };
 
   test("bun run --aot interprets nothing and prints what bun run prints", async () => {
     using dir = tempDir("create-require", tree);
@@ -107,17 +111,23 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
   });
 
   // These two calls are left to the host's `require`, which looks on the disk.
-  test.skipIf(entry === "a-package-that-is-also-imported.mjs" || entry === "one-of-two-names-under-another-name.mjs")("bun build --compile --aot interprets nothing and prints what bun run prints, away from its sources", async () => {
-    using dir = tempDir("create-require", tree);
-    using elsewhere = tempDir("create-require-elsewhere", {});
-    const plain = await spawned([bunExe(), "run", entry], String(dir));
-    const built = await spawned([bunExe(), "build", "--compile", "--aot", entry, "--outfile", join(String(elsewhere), "program")], String(dir));
-    expect(built.stderr).not.toContain("error:");
-    expect(built.exitCode).toBe(0);
-    const aot = await spawned([join(String(elsewhere), "program")], String(elsewhere), compiledOnly);
-    expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
-    expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-  });
+  test.skipIf(entry === "a-package-that-is-also-imported.mjs" || entry === "one-of-two-names-under-another-name.mjs")(
+    "bun build --compile --aot interprets nothing and prints what bun run prints, away from its sources",
+    async () => {
+      using dir = tempDir("create-require", tree);
+      using elsewhere = tempDir("create-require-elsewhere", {});
+      const plain = await spawned([bunExe(), "run", entry], String(dir));
+      const built = await spawned(
+        [bunExe(), "build", "--compile", "--aot", entry, "--outfile", join(String(elsewhere), "program")],
+        String(dir),
+      );
+      expect(built.stderr).not.toContain("error:");
+      expect(built.exitCode).toBe(0);
+      const aot = await spawned([join(String(elsewhere), "program")], String(elsewhere), compiledOnly);
+      expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
+      expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+    },
+  );
 });
 
 test.each([
@@ -128,7 +138,10 @@ test.each([
     "lib lib 1\n",
   ],
 ])("a require off which more than resolve is read stays the host's: %s", async (entry, text, output) => {
-  using dir = tempDir("create-require", { ...files, [entry]: `import { createRequire } from "node:module";\nconst load = createRequire(import.meta.url);\n` + text });
+  using dir = tempDir("create-require", {
+    ...files,
+    [entry]: `import { createRequire } from "node:module";\nconst load = createRequire(import.meta.url);\n` + text,
+  });
   const plain = await spawned([bunExe(), "run", entry], String(dir));
   const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir));
   expect(plain.stdout).toBe(output);

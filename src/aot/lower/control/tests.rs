@@ -1,9 +1,7 @@
 use bun_sema::hir::StmtId;
 use smallvec::SmallVec;
 
-use super::{
-    BreakTargetKind, Cleanup, ControlEntry, ControlState, ReturnRule, get_return_rule,
-};
+use super::{BreakTargetKind, Cleanup, ControlEntry, ControlState, ReturnRule, get_return_rule};
 use crate::ir::generated::{BlockRole, FunctionFlags, FunctionKind};
 use crate::ir::testing::function_with_parameters;
 use crate::ir::{BlockId, BuilderScratch, FunctionBuilder, Handler, Id};

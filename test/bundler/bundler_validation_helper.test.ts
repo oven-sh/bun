@@ -32,7 +32,8 @@ const namesOfTheHelper = ["isObject", "isPlainObject", "report", "build", "copyO
 const names = [...globalsOfTheHelper, ...namesOfTheHelper];
 
 const declaresTheNames =
-  names.map((name, at) => `var ${name} = ${at};\n`).join("") + `export { ${names.join(", ")} };\nexport * as all from "./other";\n`;
+  names.map((name, at) => `var ${name} = ${at};\n`).join("") +
+  `export { ${names.join(", ")} };\nexport * as all from "./other";\n`;
 
 const user = `export interface User { id: number }\n`;
 const parses = (label: string) =>
@@ -56,28 +57,40 @@ const formats = [
   ["browser", "iife"],
 ];
 
-test.each(formats)("without a validating call, --target=%s --format=%s renames nothing and holds nothing of the helper", async (target, format) => {
-  using dir = tempDir("validation-helper-not-called", {
-    "program.ts": declaresTheNames,
-    "other.ts": `export const one = 1;\n`,
-  });
-  await run([bunExe(), "build", "--target=" + target, "--format=" + format, "./program.ts", "--outdir=out"], String(dir));
-  const [bundle] = writtenIn(join(String(dir), "out"));
-  expect(bundle).toContain("__export");
-  for (const [at, name] of names.entries()) expect(bundle).toContain(`var ${name} = ${at};`);
-  expect(bundle).not.toMatch(new RegExp(`\\b(${names.join("|")})\\d`));
-  expect(bundle).not.toContain(partOfTheHelper);
-  expect(bundle).not.toContain("__validate");
-});
+test.each(formats)(
+  "without a validating call, --target=%s --format=%s renames nothing and holds nothing of the helper",
+  async (target, format) => {
+    using dir = tempDir("validation-helper-not-called", {
+      "program.ts": declaresTheNames,
+      "other.ts": `export const one = 1;\n`,
+    });
+    await run(
+      [bunExe(), "build", "--target=" + target, "--format=" + format, "./program.ts", "--outdir=out"],
+      String(dir),
+    );
+    const [bundle] = writtenIn(join(String(dir), "out"));
+    expect(bundle).toContain("__export");
+    for (const [at, name] of names.entries()) expect(bundle).toContain(`var ${name} = ${at};`);
+    expect(bundle).not.toMatch(new RegExp(`\\b(${names.join("|")})\\d`));
+    expect(bundle).not.toContain(partOfTheHelper);
+    expect(bundle).not.toContain("__validate");
+  },
+);
 
-whereNothingIsCompiled.each(formats)("with a validating call, --target=%s --format=%s holds the helper once", async (target, format) => {
-  using dir = tempDir("validation-helper-called", { "user.ts": user, "program.ts": parses("program") });
-  await run([bunExe(), "build", "--target=" + target, "--format=" + format, "./program.ts", "--outdir=out"], String(dir));
-  const written = writtenIn(join(String(dir), "out"));
-  expect(written.length).toBe(1);
-  expect(timesHeld(written, "var __validate = ") + timesHeld(written, "function __validate(")).toBe(1);
-  expect(await run([bunExe(), "run", "./out/program.js"], String(dir))).toBe(printedBy("program"));
-});
+whereNothingIsCompiled.each(formats)(
+  "with a validating call, --target=%s --format=%s holds the helper once",
+  async (target, format) => {
+    using dir = tempDir("validation-helper-called", { "user.ts": user, "program.ts": parses("program") });
+    await run(
+      [bunExe(), "build", "--target=" + target, "--format=" + format, "./program.ts", "--outdir=out"],
+      String(dir),
+    );
+    const written = writtenIn(join(String(dir), "out"));
+    expect(written.length).toBe(1);
+    expect(timesHeld(written, "var __validate = ") + timesHeld(written, "function __validate(")).toBe(1);
+    expect(await run([bunExe(), "run", "./out/program.js"], String(dir))).toBe(printedBy("program"));
+  },
+);
 
 whereNothingIsCompiled("the call may be in the last of many files", async () => {
   const files: Record<string, string> = { "user.ts": user, "last.ts": parses("last") };
@@ -86,15 +99,24 @@ whereNothingIsCompiled("the call may be in the last of many files", async () => 
     files[`plain${at}.ts`] = `export const value${at} = ${at};\n`;
     program += `import { value${at} } from "./plain${at}";\n`;
   }
-  files["program.ts"] = program + `import "./last";\nconsole.log(${Array.from({ length: 40 }, (_, at) => "value" + at).join(" + ")});\n`;
+  files["program.ts"] =
+    program + `import "./last";\nconsole.log(${Array.from({ length: 40 }, (_, at) => "value" + at).join(" + ")});\n`;
   using dir = tempDir("validation-helper-last-file", files);
   await run([bunExe(), "build", "--target=bun", "./program.ts", "--outdir=out"], String(dir));
   expect(await run([bunExe(), "run", "./out/program.js"], String(dir))).toBe(printedBy("last") + "780\n");
 });
 
 whereNothingIsCompiled("two entry points each hold the helper once", async () => {
-  using dir = tempDir("validation-helper-two-entry-points", { "user.ts": user, "first.ts": parses("first"), "second.ts": parses("second"), "third.ts": `console.log("third");\n` });
-  await run([bunExe(), "build", "--target=bun", "./first.ts", "./second.ts", "./third.ts", "--outdir=out"], String(dir));
+  using dir = tempDir("validation-helper-two-entry-points", {
+    "user.ts": user,
+    "first.ts": parses("first"),
+    "second.ts": parses("second"),
+    "third.ts": `console.log("third");\n`,
+  });
+  await run(
+    [bunExe(), "build", "--target=bun", "./first.ts", "./second.ts", "./third.ts", "--outdir=out"],
+    String(dir),
+  );
   for (const name of ["first", "second"]) {
     const bundle = readFileSync(join(String(dir), "out", name + ".js"), "utf8");
     expect(timesHeld([bundle], "var __validate = ") + timesHeld([bundle], "function __validate(")).toBe(1);
@@ -104,11 +126,19 @@ whereNothingIsCompiled("two entry points each hold the helper once", async () =>
 });
 
 whereNothingIsCompiled("with --splitting the helper is written once for all entry points", async () => {
-  using dir = tempDir("validation-helper-splitting", { "user.ts": user, "first.ts": parses("first"), "second.ts": parses("second") });
-  await run([bunExe(), "build", "--target=bun", "--splitting", "./first.ts", "./second.ts", "--outdir=out"], String(dir));
+  using dir = tempDir("validation-helper-splitting", {
+    "user.ts": user,
+    "first.ts": parses("first"),
+    "second.ts": parses("second"),
+  });
+  await run(
+    [bunExe(), "build", "--target=bun", "--splitting", "./first.ts", "./second.ts", "--outdir=out"],
+    String(dir),
+  );
   const written = writtenIn(join(String(dir), "out"));
   expect(timesHeld(written, "var __validate = ") + timesHeld(written, "function __validate(")).toBe(1);
-  for (const name of ["first", "second"]) expect(await run([bunExe(), "run", `./out/${name}.js`], String(dir))).toBe(printedBy(name));
+  for (const name of ["first", "second"])
+    expect(await run([bunExe(), "run", `./out/${name}.js`], String(dir))).toBe(printedBy(name));
 });
 
 whereNothingIsCompiled("Bun.build holds the helper only in the build that calls it", async () => {
@@ -124,5 +154,7 @@ whereNothingIsCompiled("Bun.build holds the helper only in the build that calls 
 }
 `,
   });
-  expect(await run([bunExe(), "run", "./build.ts"], String(dir))).toBe("./plain.ts false false\n./calls.ts true false\n./plain.ts false false\n");
+  expect(await run([bunExe(), "run", "./build.ts"], String(dir))).toBe(
+    "./plain.ts false false\n./calls.ts true false\n./plain.ts false false\n",
+  );
 });

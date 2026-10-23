@@ -20,7 +20,9 @@ pub fn write_log_lines(summary: &TrimSummary, lines: &mut Vec<Vec<u8>>) {
         .partition(|library| library.is_removed);
     if !removed.is_empty() {
         let prefix: &[u8] = match summary.format {
-            Some(ExecutableFormat::Pe) => b"compile.trim: native libraries whose code was removed: ",
+            Some(ExecutableFormat::Pe) => {
+                b"compile.trim: native libraries whose code was removed: "
+            }
             Some(ExecutableFormat::Elf | ExecutableFormat::MachO) | None => {
                 b"compile.trim: native libraries removed: "
             }
@@ -28,15 +30,27 @@ pub fn write_log_lines(summary: &TrimSummary, lines: &mut Vec<Vec<u8>>) {
         lines.push(library_line(prefix, removed));
     }
     if !included.is_empty() {
-        lines.push(library_line(b"compile.trim: native libraries included: ", included));
+        lines.push(library_line(
+            b"compile.trim: native libraries included: ",
+            included,
+        ));
     }
 }
 
 /// The lines of `write_log_lines` that a build that does not log prints too.
 pub fn write_warning_lines(summary: &TrimSummary, lines: &mut Vec<Vec<u8>>) {
     match summary.uncut {
-        Some(uncut @ Uncut { reason: UncutReason::NoCuts(_), .. }) => lines.push(uncut_line(uncut)),
-        Some(Uncut { reason: UncutReason::BudgetSpent, .. }) | None => {}
+        Some(
+            uncut @ Uncut {
+                reason: UncutReason::NoCuts(_),
+                ..
+            },
+        ) => lines.push(uncut_line(uncut)),
+        Some(Uncut {
+            reason: UncutReason::BudgetSpent,
+            ..
+        })
+        | None => {}
     }
 }
 
@@ -200,7 +214,9 @@ mod tests {
         );
         assert_eq!(
             log_lines(&summary(cli_and_html_rewriter(), Vec::new(), None)),
-            ["compile.trim: removed 105.0 MB of the runtime, 98.3 MB of it from the file: cli, html-rewriter"]
+            [
+                "compile.trim: removed 105.0 MB of the runtime, 98.3 MB of it from the file: cli, html-rewriter"
+            ]
         );
     }
 
@@ -304,7 +320,10 @@ mod tests {
     fn case_insensitive_ties_sort_by_bytes() {
         let libraries = vec![library("abc", "2", true), library("ABC", "1", true)];
         let lines = log_lines(&summary(TrimFeature::Cli.features(), libraries, None));
-        assert_eq!(lines[1], "compile.trim: native libraries removed: ABC 1, abc 2");
+        assert_eq!(
+            lines[1],
+            "compile.trim: native libraries removed: ABC 1, abc 2"
+        );
     }
 
     #[test]

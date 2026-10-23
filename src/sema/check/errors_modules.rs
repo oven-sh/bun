@@ -949,8 +949,10 @@ impl Checker<'_, '_> {
         let (import, pos) = (hir[i], hir[s].start);
         let context_error = if cx.is_js { 1473 } else { 1232 };
         // An `@import` tag is a comment.
-        let class =
-            DiagnosticClass::early_error_if(!hir.is_in_jsdoc(pos), DiagnosticClass::TypeScriptGrammar);
+        let class = DiagnosticClass::early_error_if(
+            !hir.is_in_jsdoc(pos),
+            DiagnosticClass::TypeScriptGrammar,
+        );
         if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             self.modules_resolve_aliases_of_import_if_used(cx, i);
             return;

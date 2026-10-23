@@ -13,10 +13,12 @@ impl Checker<'_, '_> {
             return;
         }
         let mut queries = owner.into_iter().chain(self.stack.iter().rev().copied());
-        let location = queries.find_map(|query| self.query_location(query)).or_else(|| {
-            let current = self.current_node().or(self.current_source_element)?;
-            Some(self.span_of_current_node(current))
-        });
+        let location = queries
+            .find_map(|query| self.query_location(query))
+            .or_else(|| {
+                let current = self.current_node().or(self.current_source_element)?;
+                Some(self.span_of_current_node(current))
+            });
         if let Some((file, start, end)) = location {
             (diagnostic.file, diagnostic.start, diagnostic.end) = (file, start, end);
         }

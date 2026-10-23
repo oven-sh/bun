@@ -39,11 +39,16 @@ function simpleFields(entry: Entry): string[] | null {
   for (const parameter of wireParametersOf(entry)) {
     if (parameter.tag === "Operand") {
       if (parameter.isVariadic) return null;
-      fields.push(`EntryField::Operand { kind: OperandKind::${parameter.kind.name}, is_optional: ${parameter.isOptional} }`);
+      fields.push(
+        `EntryField::Operand { kind: OperandKind::${parameter.kind.name}, is_optional: ${parameter.isOptional} }`,
+      );
       continue;
     }
-    if (parameter.kind.tag === "List" || parameter.kind.tag === "Record" || parameter.kind.tag === "Variant") return null;
-    fields.push(`EntryField::Payload { kind: PayloadKind::${parameter.payloadKind.name}, is_optional: ${parameter.isOptional} }`);
+    if (parameter.kind.tag === "List" || parameter.kind.tag === "Record" || parameter.kind.tag === "Variant")
+      return null;
+    fields.push(
+      `EntryField::Payload { kind: PayloadKind::${parameter.payloadKind.name}, is_optional: ${parameter.isOptional} }`,
+    );
   }
   return fields;
 }
@@ -51,7 +56,9 @@ function simpleFields(entry: Entry): string[] | null {
 function simpleFieldsFunction(operations: readonly Entry[]): string[] {
   const answers = operations.map(entry => ({ name: entry.name, fields: simpleFields(entry) }));
   const arms: string[] = [];
-  for (const group of Map.groupBy(answers, answer => (answer.fields === null ? null : answer.fields.join("\n"))).values()) {
+  for (const group of Map.groupBy(answers, answer =>
+    answer.fields === null ? null : answer.fields.join("\n"),
+  ).values()) {
     const names = group.map(answer => answer.name);
     const labels = pack(alternatives("Opcode", names), threeLevels);
     const fields = group[0].fields;
@@ -59,7 +66,8 @@ function simpleFieldsFunction(operations: readonly Entry[]): string[] {
     else if (fields.length === 0) labels[labels.length - 1] += " => Some(&[]),";
     else labels[labels.length - 1] += " => Some(&[";
     arms.push(...labels);
-    if (fields !== null && fields.length > 0) arms.push(...fields.map(field => `${fourLevels}${field},`), `${threeLevels}]),`);
+    if (fields !== null && fields.length > 0)
+      arms.push(...fields.map(field => `${fourLevels}${field},`), `${threeLevels}]),`);
   }
   return [
     `${indentation}pub fn simple_fields(self) -> Option<&'static [EntryField]> {`,
@@ -83,7 +91,9 @@ function targetNameArms(entry: Entry): string[] {
   if (names.length === 0) return [`${pattern} => None,`];
   const variadicPosition = entry.targets.findIndex(target => target.isVariadic);
   if (variadicPosition < 0) return [`${pattern} => [${names.join(", ")}].get(index).copied(),`];
-  const arms = names.map((name, position) => `${pattern} if ${targetGuard(position, variadicPosition, names.length)} => Some(${name}),`);
+  const arms = names.map(
+    (name, position) => `${pattern} if ${targetGuard(position, variadicPosition, names.length)} => Some(${name}),`,
+  );
   return [...arms, `${pattern} => None,`];
 }
 
@@ -114,8 +124,16 @@ function entriesRs(schema: Schema): string[] {
       entryField,
       [
         "impl Opcode {",
-        ...predicateFunction("has_result", "Opcode", namesOf(operations.filter(entry => entry.result.unproven.rule !== "None"))),
-        ...predicateFunction("has_flags_word", "Opcode", namesOf(operations.filter(entry => wireFlagsOf(entry).length > 0))),
+        ...predicateFunction(
+          "has_result",
+          "Opcode",
+          namesOf(operations.filter(entry => entry.result.unproven.rule !== "None")),
+        ),
+        ...predicateFunction(
+          "has_flags_word",
+          "Opcode",
+          namesOf(operations.filter(entry => wireFlagsOf(entry).length > 0)),
+        ),
         ...predicateFunction("is_intrinsic", "Opcode", namesOf(operations.filter(isIntrinsic))),
         ...simpleFieldsFunction(operations),
         "}",
@@ -135,8 +153,18 @@ function entriesRs(schema: Schema): string[] {
       [
         "impl ProgramList {",
         ...delimited(`const ELEMENT_SIZES: [usize; ${lists.length}] = [`, withCommas(elementSizes), "];", indentation),
-        ...delimited(`const KEYWORDS: [Option<&'static str>; ${lists.length}] = [`, withCommas(keywords), "];", indentation),
-        ...delimited(`const PREFIXES: [Option<&'static str>; ${lists.length}] = [`, withCommas(prefixes), "];", indentation),
+        ...delimited(
+          `const KEYWORDS: [Option<&'static str>; ${lists.length}] = [`,
+          withCommas(keywords),
+          "];",
+          indentation,
+        ),
+        ...delimited(
+          `const PREFIXES: [Option<&'static str>; ${lists.length}] = [`,
+          withCommas(prefixes),
+          "];",
+          indentation,
+        ),
         `${indentation}pub const fn element_size(self) -> usize { Self::ELEMENT_SIZES[self as usize] }`,
         `${indentation}pub const fn keyword(self) -> Option<&'static str> { Self::KEYWORDS[self as usize] }`,
         `${indentation}pub const fn prefix(self) -> Option<&'static str> { Self::PREFIXES[self as usize] }`,

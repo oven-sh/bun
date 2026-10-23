@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.js": `
@@ -37,14 +37,21 @@ function countersIn(path: string) {
 test("a definition by key files nothing for an index written as a string, nor for a name that comes once", async () => {
   using dir = tempDir("aot-definition-by-key", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", executable], String(dir), bunEnv);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
   expect(built.exitCode).toBe(0);
   const counted: Record<string, number>[] = [];
   for (const rounds of [100, 4100]) {
     const path = join(String(dir), "counts-" + rounds);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
     const ran = await run([executable, String(rounds)], String(dir), env);
-    expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: `${(rounds * (rounds - 1)) / 2 + 2 * rounds}\n`, exitCode: 0 });
+    expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+      stdout: `${(rounds * (rounds - 1)) / 2 + 2 * rounds}\n`,
+      exitCode: 0,
+    });
     counted.push(countersIn(path));
   }
   expect(counted[1]).toEqual(counted[0]);

@@ -6,25 +6,45 @@ import { join } from "node:path";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: false, noEmit: true, skipLibCheck: true, types: [] },
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    strict: false,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+  },
 });
 const prelude = `import type { int32 } from "bun";\ndeclare const console: { log(...values: unknown[]): void };\n`;
 
 async function build(program: string) {
   using dir = tempDir("aot-int32-lax", { "tsconfig.json": tsconfig, "main.ts": prelude + program });
   const outfile = join(String(dir), isWindows ? "app.exe" : "app");
-  await using built = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", outfile], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using built = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", outfile],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([built.stderr.text(), built.exited]);
-  const errors = stderr.split("\n").filter(line => line.startsWith("error: ")).map(line => /, but ('[^']*') might not be an int32/.exec(line)?.[1] ?? line);
+  const errors = stderr
+    .split("\n")
+    .filter(line => line.startsWith("error: "))
+    .map(line => /, but ('[^']*') might not be an int32/.exec(line)?.[1] ?? line);
   if (exitCode !== 0) return { errors, exitCode, stdout: "" };
   await using ran = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   return { errors, exitCode, stdout: await ran.stdout.text() };
 }
 
 // TODO: the executable prints what plain Bun prints; TS100031 is not reported for the four places.
-test.todo("what can be left out is not an int32", async () => {
-  expect(
-    await build(`interface Point { x: int32; y?: int32 }
+test.todo(
+  "what can be left out is not an int32",
+  async () => {
+    expect(
+      await build(`interface Point { x: int32; y?: int32 }
 class Cursor { line: int32; column?: int32; late: int32; constructor() { this.line = 1; } }
 function property(p: Point): int32 { return p.y; }
 function parameter(n?: int32): int32 { return n; }
@@ -32,8 +52,10 @@ function field(c: Cursor): int32 { return c.column; }
 function unassigned(c: Cursor): int32 { return c.late; }
 console.log(property({ x: 1 }), parameter(), field(new Cursor()), unassigned(new Cursor()));
 `),
-  ).toEqual({ errors: ["'p.y'", "'n'", "'c.column'", "'c.late'"], exitCode: 1, stdout: "" });
-}, 120_000);
+    ).toEqual({ errors: ["'p.y'", "'n'", "'c.column'", "'c.late'"], exitCode: 1, stdout: "" });
+  },
+  120_000,
+);
 
 test("arithmetic on what can be left out is as in plain Bun", async () => {
   expect(

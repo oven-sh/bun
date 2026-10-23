@@ -16,7 +16,13 @@ function callOf(path: string, mode: CallMode = "Call"): Call {
   return { entry, mode, overloads: table.overloadsOf(entry, mode) };
 }
 
-function selected(path: string, receiver: unknown, args: unknown[], isPristine = true, mode: CallMode = "Call"): string {
+function selected(
+  path: string,
+  receiver: unknown,
+  args: unknown[],
+  isPristine = true,
+  mode: CallMode = "Call",
+): string {
   return selectOverload(realm, callOf(path, mode), { receiver, args, isPristine: () => isPristine }).token;
 }
 

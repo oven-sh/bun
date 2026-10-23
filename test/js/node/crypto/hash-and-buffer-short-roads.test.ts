@@ -50,7 +50,9 @@ describe("buffer.toString", () => {
       const buffer = Buffer.from(bytes);
       expect(buffer.toString("hex")).toBe(hexOf(bytes));
       expect(buffer.toString("base64")).toBe(base64Of(bytes));
-      expect(buffer.toString("base64url")).toBe(base64Of(bytes).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""));
+      expect(buffer.toString("base64url")).toBe(
+        base64Of(bytes).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""),
+      );
     }
   });
 });
@@ -65,7 +67,20 @@ describe("createHash", () => {
   };
 
   test("a name is looked up rightly whatever was asked for before", () => {
-    const names = ["sha1", "sha1", "SHA1", "sha256", "sha1", "md5", "MD5", "sha512", "SHA-512", "sha-1", "RSA-SHA1", "sha1"];
+    const names = [
+      "sha1",
+      "sha1",
+      "SHA1",
+      "sha256",
+      "sha1",
+      "md5",
+      "MD5",
+      "sha512",
+      "SHA-512",
+      "sha-1",
+      "RSA-SHA1",
+      "sha1",
+    ];
     const digestOf: Record<string, string> = {
       sha1: empty.sha1,
       SHA1: empty.sha1,
@@ -95,9 +110,13 @@ describe("createHash", () => {
       const [first = "", ...rest] = text;
       expect(createHash("sha256").update(first).update(rest.join("")).digest("hex")).toBe(expected);
     }
-    expect(createHash("sha1").update("68656c6c6f", "hex").digest("hex")).toBe(createHash("sha1").update("hello").digest("hex"));
+    expect(createHash("sha1").update("68656c6c6f", "hex").digest("hex")).toBe(
+      createHash("sha1").update("hello").digest("hex"),
+    );
     expect(createHash("sha1").update("café", "latin1").digest("hex")).toBe(
-      createHash("sha1").update(Uint8Array.of(0x63, 0x61, 0x66, 0xe9)).digest("hex"),
+      createHash("sha1")
+        .update(Uint8Array.of(0x63, 0x61, 0x66, 0xe9))
+        .digest("hex"),
     );
   });
 
@@ -108,7 +127,11 @@ describe("createHash", () => {
       expect(createHash(name).update("abc").digest("hex")).toBe(hexOf(bytes));
       expect(createHash(name).update("abc").digest("base64")).toBe(base64Of(bytes));
       expect(createHash(name).update("abc").digest("latin1")).toBe(String.fromCharCode(...bytes));
-      expect(createHash(name).update("abc").digest("buffer" as any)).toEqual(bytes);
+      expect(
+        createHash(name)
+          .update("abc")
+          .digest("buffer" as any),
+      ).toEqual(bytes);
     }
     expect(createHash("sha1").update("abc").digest("hex")).toBe("a9993e364706816aba3e25717850c26c9cd0d89d");
   });
@@ -117,7 +140,9 @@ describe("createHash", () => {
     const long = createHash("shake256", { outputLength: 200 }).update("abc").digest("hex");
     expect(long).toHaveLength(400);
     for (const outputLength of [1, 63, 64, 65]) {
-      expect(createHash("shake256", { outputLength }).update("abc").digest("hex")).toBe(long.slice(0, outputLength * 2));
+      expect(createHash("shake256", { outputLength }).update("abc").digest("hex")).toBe(
+        long.slice(0, outputLength * 2),
+      );
     }
   });
 

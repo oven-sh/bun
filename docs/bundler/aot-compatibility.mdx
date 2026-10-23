@@ -11,19 +11,19 @@ A value that doesn't match its declared type isn't on the list. It [falls back t
 
 If an error message sent you here:
 
-| The message                                                                                           | See                                                                             |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `Cannot assign to ... because built-in objects are read-only`                                         | [Built-in objects are read-only](#built-in-objects-are-read-only)               |
-| `Cannot declare 'Math': compiled code treats the global 'Math' as a constant ...`                     | [Built-in objects are read-only](#built-in-objects-are-read-only)               |
-| `Cannot load '...': it isn't in this executable`                                                      | [Code that isn't in the executable](#code-that-isnt-in-the-executable)          |
-| `Cannot load '...': this executable can't load a module from a dynamic path`                          | [Code from strings](#code-from-strings)                                         |
-| `Code generation from strings disallowed for this context: the compiler couldn't tell ...`            | [Code from strings](#code-from-strings)                                         |
-| `... was not compiled into this executable because your code never uses it`                           | [Code from strings](#code-from-strings)                                         |
-| `Cannot replace a loader in Module._extensions: imports in this executable were resolved ...`         | [Loader hooks](#loader-hooks)                                                   |
-| `... can't be used with this executable`                                                              | [Options that load code](#options-that-load-code)                               |
-| `... was compiled ahead of time and can't be imported inside a ShadowRealm`                           | [What isn't available](#what-isnt-available)                                    |
-| `super() cannot be called from direct eval`                                                           | [What isn't available](#what-isnt-available)                                    |
-| Anything else                                                                                         | [Troubleshooting](/bundler/aot-troubleshooting)                                 |
+| The message                                                                                   | See                                                                    |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `Cannot assign to ... because built-in objects are read-only`                                 | [Built-in objects are read-only](#built-in-objects-are-read-only)      |
+| `Cannot declare 'Math': compiled code treats the global 'Math' as a constant ...`             | [Built-in objects are read-only](#built-in-objects-are-read-only)      |
+| `Cannot load '...': it isn't in this executable`                                              | [Code that isn't in the executable](#code-that-isnt-in-the-executable) |
+| `Cannot load '...': this executable can't load a module from a dynamic path`                  | [Code from strings](#code-from-strings)                                |
+| `Code generation from strings disallowed for this context: the compiler couldn't tell ...`    | [Code from strings](#code-from-strings)                                |
+| `... was not compiled into this executable because your code never uses it`                   | [Code from strings](#code-from-strings)                                |
+| `Cannot replace a loader in Module._extensions: imports in this executable were resolved ...` | [Loader hooks](#loader-hooks)                                          |
+| `... can't be used with this executable`                                                      | [Options that load code](#options-that-load-code)                      |
+| `... was compiled ahead of time and can't be imported inside a ShadowRealm`                   | [What isn't available](#what-isnt-available)                           |
+| `super() cannot be called from direct eval`                                                   | [What isn't available](#what-isnt-available)                           |
+| Anything else                                                                                 | [Troubleshooting](/bundler/aot-troubleshooting)                        |
 
 ## What works the same
 
@@ -72,23 +72,23 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 
 ## What isn't available
 
-| Feature                                                        | What you see                                                                                             | Instead                                                                                                        |
-| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `--target` for another platform                                | `error: bun compile can't cross-compile. It only builds for the platform it runs on`                     | Run the build on the target platform, or pass `--no-aot`                                                       |
-| More than 256 `JSCallback`s from `bun:ffi` open at a time      | `RangeError: bun:ffi: a compiled executable can have 256 JSCallbacks open at a time`                     | `close()` the ones you no longer use. The rest of `bun:ffi` works                                              |
-| `cc()` from `bun:ffi`, on Linux 6.7 or later                   | `Error: Cannot compile C code because this process can't create executable memory (PR_SET_MDWE)`         | Compile the C file when you build, and load the library with `dlopen()`                                        |
-| A native addon that generates machine code, on Linux 6.7 or later | Whatever the addon does when `mprotect` or `mmap` fails                                               | Run that code in a child process. Child processes aren't restricted                                            |
-| Breakpoints, stepping, `debugger` statements                   | A breakpoint never binds                                                                                 | `bun --inspect-brk ./app.ts`, from your source files                                                           |
-| `--bytecode-depth`, `--bytecode-order`                         | An error from `bun build`                                                                                | Nothing. The executable has no bytecode                                                                        |
-| `import()`, `require()` or `import * as` of an HTML file       | An error from the build                                                                                  | `import page from "./page.html"`, as in a [full-stack executable](/bundler/executables#full-stack-executables) |
-| A query string in an import path: `import "./a.ts?raw"`        | `bun compile does not support a query string in an import path`                                          | Import the path without it                                                                                     |
-| `importValue()` of one of your modules in a `ShadowRealm`      | `SyntaxError: The module ... was compiled ahead of time and can't be imported inside a ShadowRealm`      | `evaluate()`, with the code as a string                                                                        |
-| `super()` in the string of a direct `eval`                     | `TypeError: super() cannot be called from direct eval in a compiled executable`                          | Call `super()` outside of the string                                                                           |
-| `process.stdout` and others, used only in a string you `eval`  | `Error: ... was not compiled into this executable because your code never uses it`, when the string runs | [Use it in your own code too](#code-from-strings)                                                              |
-| `bun --aot` with `-e` or `-p`                                  | An error                                                                                                 | [Run under the compiler's rules](/bundler/aot-debugging#run-under-the-compilers-rules) has the list                 |
-| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT`                    | An error when the executable starts                                                                      | Build with [`--compile-inspector`](#options-that-load-code)                                                    |
-| `--preload` in `BUN_OPTIONS`                                   | An error when the executable starts                                                                      | [Import the file from your entry point](#options-that-load-code)                                               |
-| `banner` or `footer` with code, `metafile`, `format: "cjs"`    | An error from the build                                                                                  | [Plugins and build options](#plugins-and-build-options)                                                        |
+| Feature                                                           | What you see                                                                                             | Instead                                                                                                        |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `--target` for another platform                                   | `error: bun compile can't cross-compile. It only builds for the platform it runs on`                     | Run the build on the target platform, or pass `--no-aot`                                                       |
+| More than 256 `JSCallback`s from `bun:ffi` open at a time         | `RangeError: bun:ffi: a compiled executable can have 256 JSCallbacks open at a time`                     | `close()` the ones you no longer use. The rest of `bun:ffi` works                                              |
+| `cc()` from `bun:ffi`, on Linux 6.7 or later                      | `Error: Cannot compile C code because this process can't create executable memory (PR_SET_MDWE)`         | Compile the C file when you build, and load the library with `dlopen()`                                        |
+| A native addon that generates machine code, on Linux 6.7 or later | Whatever the addon does when `mprotect` or `mmap` fails                                                  | Run that code in a child process. Child processes aren't restricted                                            |
+| Breakpoints, stepping, `debugger` statements                      | A breakpoint never binds                                                                                 | `bun --inspect-brk ./app.ts`, from your source files                                                           |
+| `--bytecode-depth`, `--bytecode-order`                            | An error from `bun build`                                                                                | Nothing. The executable has no bytecode                                                                        |
+| `import()`, `require()` or `import * as` of an HTML file          | An error from the build                                                                                  | `import page from "./page.html"`, as in a [full-stack executable](/bundler/executables#full-stack-executables) |
+| A query string in an import path: `import "./a.ts?raw"`           | `bun compile does not support a query string in an import path`                                          | Import the path without it                                                                                     |
+| `importValue()` of one of your modules in a `ShadowRealm`         | `SyntaxError: The module ... was compiled ahead of time and can't be imported inside a ShadowRealm`      | `evaluate()`, with the code as a string                                                                        |
+| `super()` in the string of a direct `eval`                        | `TypeError: super() cannot be called from direct eval in a compiled executable`                          | Call `super()` outside of the string                                                                           |
+| `process.stdout` and others, used only in a string you `eval`     | `Error: ... was not compiled into this executable because your code never uses it`, when the string runs | [Use it in your own code too](#code-from-strings)                                                              |
+| `bun --aot` with `-e` or `-p`                                     | An error                                                                                                 | [Run under the compiler's rules](/bundler/aot-debugging#run-under-the-compilers-rules) has the list            |
+| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT`                       | An error when the executable starts                                                                      | Build with [`--compile-inspector`](#options-that-load-code)                                                    |
+| `--preload` in `BUN_OPTIONS`                                      | An error when the executable starts                                                                      | [Import the file from your entry point](#options-that-load-code)                                               |
+| `banner` or `footer` with code, `metafile`, `format: "cjs"`       | An error from the build                                                                                  | [Plugins and build options](#plugins-and-build-options)                                                        |
 
 ## Type errors are TypeScript 7's
 
@@ -96,13 +96,13 @@ The build reports the errors that `tsc` from TypeScript 7 reports, like [`bun ch
 
 TypeScript 7 also stopped reading four older patterns in JavaScript files. They still run. But when a TypeScript file imports one of your own `.js` files that uses them, it no longer sees what TypeScript 6 saw, and the build stops at the TypeScript file.
 
-| In the `.js` file                                                                  | The error in the TypeScript file                               | Write instead                                                     |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `function f() { return arguments.length }`, called with arguments                  | `TS2554: Expected 0 arguments, but got 3.`                     | A rest parameter: `function f(...values) {}`                      |
-| A constructor function: `function Old(v) { this.value = v }` and `new Old(3)`      | `TS7009: 'new' expression, whose target lacks a construct signature` | A `class` with a `constructor`                              |
-| A method added later: `Grown.prototype.extra = function () {}`                     | `TS2339: Property 'extra' does not exist on type 'Grown'.`     | A method in the body of the class                                 |
-| `/** @enum {number} */ const Level = { Low: 1 }`, with `Level` used as a type      | `TS2749: 'Level' refers to a value, but is being used as a type here.` | `/** @typedef {number} Level */` above the object         |
-| `module.exports = Main` followed by `module.exports.helper = ...`                  | `TS2339: Property 'helper' does not exist on type 'typeof Main'.` | `Main.helper = ...` first, then `module.exports = Main`        |
+| In the `.js` file                                                             | The error in the TypeScript file                                       | Write instead                                           |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------- |
+| `function f() { return arguments.length }`, called with arguments             | `TS2554: Expected 0 arguments, but got 3.`                             | A rest parameter: `function f(...values) {}`            |
+| A constructor function: `function Old(v) { this.value = v }` and `new Old(3)` | `TS7009: 'new' expression, whose target lacks a construct signature`   | A `class` with a `constructor`                          |
+| A method added later: `Grown.prototype.extra = function () {}`                | `TS2339: Property 'extra' does not exist on type 'Grown'.`             | A method in the body of the class                       |
+| `/** @enum {number} */ const Level = { Low: 1 }`, with `Level` used as a type | `TS2749: 'Level' refers to a value, but is being used as a type here.` | `/** @typedef {number} Level */` above the object       |
+| `module.exports = Main` followed by `module.exports.helper = ...`             | `TS2339: Property 'helper' does not exist on type 'typeof Main'.`      | `Main.helper = ...` first, then `module.exports = Main` |
 
 The build doesn't report type errors inside a `.js` file, so only the TypeScript files that use it are affected.
 
@@ -223,18 +223,18 @@ These also work as usual:
 
 A few packages change built-ins, mostly to support old browsers or to offer a shorter syntax in tests. The `TypeError` says which object and which property, and its stack trace points to the line in the package.
 
-| Package                         | What it does                                                                         | When it throws                   | What works                                                 |
-| ------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------- | ---------------------------------------------------------- |
-| `chai` 6, `vitest` 4 through it | `chai.should()` defines `Object.prototype.should`                                    | When `should()` is called        | `expect` and `assert`                                      |
-| `timezone-mock`                 | `register()` replaces `Object.prototype.toString`                                    | When `register()` is called      | Set the time zone itself: `process.env.TZ = "US/Pacific"`  |
-| `private` 0.1                   | Replaces `Object.getOwnPropertyNames`                                                | On import                        | `recast` 0.17 and `regenerator-transform` 0.14 do without  |
-| `sass` 1                        | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype` | On import                        | Compile your stylesheets before you build the executable   |
-| `zone.js`, Angular through it   | Replaces `Promise.prototype.then` and `Object.prototype.toString`                    | On import                        | Angular without zones (`provideZonelessChangeDetection()`) |
-| `es5-shim`                      | Replaces `Array.prototype.forEach`, `map`, `filter`, `every` and `some`              | On import                        | Remove the import: Bun implements what it fills in         |
-| `es6-shim`                      | Replaces `RegExp.prototype.toString` and `Set.prototype.add`, `has` and `delete`     | On import                        | Remove the import: Bun implements what it fills in         |
-| `harmony-reflect`               | Replaces `Object.prototype.hasOwnProperty`, `valueOf`, `toString` and four more      | On import                        | Remove the import: `Reflect` and `Proxy` are built in      |
-| `ses`                           | `lockdown()` replaces and freezes the built-in objects                               | When `lockdown()` is called      | Nothing known yet                                          |
-| `sugar`                         | `Sugar.extend()` adds to `Object.prototype` when asked to                            | When `extend()` is called        | The functions on `Sugar` itself: `Sugar.Object.keys(o)`    |
+| Package                         | What it does                                                                         | When it throws              | What works                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------ | --------------------------- | ---------------------------------------------------------- |
+| `chai` 6, `vitest` 4 through it | `chai.should()` defines `Object.prototype.should`                                    | When `should()` is called   | `expect` and `assert`                                      |
+| `timezone-mock`                 | `register()` replaces `Object.prototype.toString`                                    | When `register()` is called | Set the time zone itself: `process.env.TZ = "US/Pacific"`  |
+| `private` 0.1                   | Replaces `Object.getOwnPropertyNames`                                                | On import                   | `recast` 0.17 and `regenerator-transform` 0.14 do without  |
+| `sass` 1                        | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype` | On import                   | Compile your stylesheets before you build the executable   |
+| `zone.js`, Angular through it   | Replaces `Promise.prototype.then` and `Object.prototype.toString`                    | On import                   | Angular without zones (`provideZonelessChangeDetection()`) |
+| `es5-shim`                      | Replaces `Array.prototype.forEach`, `map`, `filter`, `every` and `some`              | On import                   | Remove the import: Bun implements what it fills in         |
+| `es6-shim`                      | Replaces `RegExp.prototype.toString` and `Set.prototype.add`, `has` and `delete`     | On import                   | Remove the import: Bun implements what it fills in         |
+| `harmony-reflect`               | Replaces `Object.prototype.hasOwnProperty`, `valueOf`, `toString` and four more      | On import                   | Remove the import: `Reflect` and `Proxy` are built in      |
+| `ses`                           | `lockdown()` replaces and freezes the built-in objects                               | When `lockdown()` is called | Nothing known yet                                          |
+| `sugar`                         | `Sugar.extend()` adds to `Object.prototype` when asked to                            | When `extend()` is called   | The functions on `Sugar` itself: `Sugar.Object.keys(o)`    |
 
 `core-js`, `@babel/polyfill`, `colors`, `symbol-observable` and the packages of `es-shims` load as under `bun run`. So does `sinon`, fake timers included.
 
@@ -417,6 +417,8 @@ true
 error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
 ```
 
+A built-in module that a dynamic name finds works like one that you import, even if it's only in the executable because another built-in module imports it.
+
 To keep a built-in module that your program only loads by a dynamic name, import it once by its name. The import costs nothing until the module is used.
 
 ```ts load.ts icon="/icons/typescript.svg"
@@ -443,11 +445,11 @@ The error has the code `MODULE_NOT_FOUND` from `require()` and `ERR_MODULE_NOT_F
 warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or mark it --external
 ```
 
-| You want                     | Do this                                                                                              |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| The file compiled            | Pass it as an additional entry point                                                                 |
-| One package loaded from disk | `--external <package>`. Bun interprets it, and everything it loads                                   |
-| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text and other files that run no code load from disk as usual |
+| You want                     | Do this                                                                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| The file compiled            | Pass it as an additional entry point                                                                                              |
+| One package loaded from disk | `--external <package>`. Bun interprets it, and everything it loads                                                                |
+| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text and other files that run no code load from disk as usual                              |
 | A database or an HTML page   | Import it by a constant path. `import(name, { with: { type: "sqlite" } })` and `require(name)` of an `.html` file throw like code |
 
 An `--external` package has `require`, `module`, `require.cache` and every built-in module, whole: the compiler can't see what the package calls, so a build with `--external` compiles every function of the built-in modules in the executable, not only the ones that your program calls. That makes the executable a few megabytes larger. The package doesn't see the modules of your program, as in an executable built without `--aot`: its `module.parent` has the path of the file that required it and empty `exports`, and `require.cache` lists the files that were loaded from disk. If a file of your program [names a way between module objects](#module-objects), the package finds your modules through `process.mainModule` too. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too: it can add a global or a property, and it can't replace one that your compiled code uses. `globalThis.fetch = polyfill` in such a package throws a `TypeError` if your program calls `fetch`.
@@ -456,15 +458,23 @@ An `--external` package has `require`, `module`, `require.cache` and every built
 
 The compiler also follows `require` under another name, as long as it can see that the name holds `require`. Where it can't, every path is a dynamic path, a string literal too.
 
-| Call                                                                        | Compiled like                                |
-| --------------------------------------------------------------------------- | -------------------------------------------- |
-| `const load = require; load("./inside.js")`                                 | `require("./inside.js")`                     |
-| `require.call(this, "./inside.js")`, `require.apply(this, ["./inside.js"])` | `require("./inside.js")`                     |
-| `const load = require; load("./plugins/" + wanted + ".js")`                 | `require("./plugins/" + wanted + ".js")`     |
-| `(r => r("./inside.js"))(require)`                                          | `require(name)`: it finds the entry points   |
-| `({ load: require }).load("./inside.js")`                                   | `require(name)`: it finds the entry points   |
-| `require.bind(null)("./inside.js")`                                         | `require(name)`: it finds the entry points   |
-| `let load = require; load = other; load("./inside.js")`                     | `require(name)`: it finds the entry points   |
+| Call                                                                        | Compiled like                              |
+| --------------------------------------------------------------------------- | ------------------------------------------ |
+| `const load = require; load("./inside.js")`                                 | `require("./inside.js")`                   |
+| `require.call(this, "./inside.js")`, `require.apply(this, ["./inside.js"])` | `require("./inside.js")`                   |
+| `const load = require; load("./plugins/" + wanted + ".js")`                 | `require("./plugins/" + wanted + ".js")`   |
+| `(r => r("./inside.js"))(require)`                                          | `require(name)`: it finds the entry points |
+| `({ load: require }).load("./inside.js")`                                   | `require(name)`: it finds the entry points |
+| `require.bind(null)("./inside.js")`                                         | `require(name)`: it finds the entry points |
+| `let load = require; load = other; load("./inside.js")`                     | `require(name)`: it finds the entry points |
+
+The name of a built-in module means the same in every file, so for those names the compiler follows `require`, `import.meta.require` and `createRequire()` further: out of a function that's called where it's written, and from an `export` to an `import`. That covers the `__require` helper that esbuild and `bun build` put into ES module bundles, also when code splitting moves the helper into a shared chunk. Any other path is still a dynamic path there.
+
+| Call                                                                                        | Compiled like                              |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `var __require = (x => typeof require !== "undefined" ? require : x)(f); __require("zlib")` | `require("zlib")`                          |
+| `import { __require } from "./chunk.js"; __require("node:zlib")`                            | `require("node:zlib")`                     |
+| `import { __require } from "./chunk.js"; __require("./inside.js")`                          | `require(name)`: it finds the entry points |
 
 `process.getBuiltinModule("node:fs")` with a string literal is compiled like `require("node:fs")`. If your program assigns a function of its own to `process.getBuiltinModule`, such a call still gets the built-in module. A call with a dynamic name runs the replacement. The compiler follows `process.getBuiltinModule` under another name like `require`. It can't see the function behind a computed key (`process[key](name)`) or behind a `Proxy`: such a call throws `Cannot load '...': this executable can't load a module from a dynamic path`.
 
@@ -513,12 +523,12 @@ error: --preload can't be used with this executable because it only runs code th
 
 The executable exits with code `1`, before any of your code runs. To run `before.ts` first, import it at the top of `greeting.ts`.
 
-| A default build | Options                                                                                                                                                                      |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rejects         | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p`, `--hot` and `--watch` in `BUN_OPTIONS`, and `BUN_INSPECT_PRELOAD`                               |
-| Rejects         | `BUN_INSPECT`, and `--inspect`, `--inspect-wait` and `--inspect-brk` in `BUN_OPTIONS`                                                                                        |
-| Ignores         | `--trace-exit`, `--trace-env`, `--trace-env-js-stack` and the three `--trace-event` options in `BUN_OPTIONS` and in the `execArgv` of a `Worker`, with a warning             |
-| Ignores         | `preload` and `[serve.static] plugins` in a `bunfig.toml`                                                                                                                    |
+| A default build | Options                                                                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rejects         | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p`, `--hot` and `--watch` in `BUN_OPTIONS`, and `BUN_INSPECT_PRELOAD`                   |
+| Rejects         | `BUN_INSPECT`, and `--inspect`, `--inspect-wait` and `--inspect-brk` in `BUN_OPTIONS`                                                                            |
+| Ignores         | `--trace-exit`, `--trace-env`, `--trace-env-js-stack` and the three `--trace-event` options in `BUN_OPTIONS` and in the `execArgv` of a `Worker`, with a warning |
+| Ignores         | `preload` and `[serve.static] plugins` in a `bunfig.toml`                                                                                                        |
 
 An executable reads the `bunfig.toml` of the directory it's started in. That file may be there for `bun run`, so what it would load is ignored and isn't an error. The build has bundled your pages, so no server needs the plugins.
 
@@ -532,10 +542,10 @@ In `--compile-exec-argv`, the options of the first and the third row fail the bu
 
 Two build flags change that.
 
-| Flag                           | In `Bun.build`                       | The executable                                                                             |
-| ------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `--compile-inspector`          | `compile: { inspector: true }`       | Accepts all of the above, so that a debugger can attach. Bun interprets the code it loads  |
-| `--no-compile-function-source` | `compile: { functionSource: false }` | Rejects the options in the first row, with `--compile-inspector` too                       |
+| Flag                           | In `Bun.build`                       | The executable                                                                            |
+| ------------------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `--compile-inspector`          | `compile: { inspector: true }`       | Accepts all of the above, so that a debugger can attach. Bun interprets the code it loads |
+| `--no-compile-function-source` | `compile: { functionSource: false }` | Rejects the options in the first row, with `--compile-inspector` too                      |
 
 - **`--compile-inspector` has a price.** A debugger can run any code in any scope, so the compiler can prove less about the program. The executable is larger and slower, and [`--trim`](/bundler/aot-size) removes no features.
 - **An option in `--compile-exec-argv` is part of the build.** `--inspect` there needs no `--compile-inspector`.

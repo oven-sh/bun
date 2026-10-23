@@ -12,10 +12,26 @@ pub fn collect_requirements(settings: &ExecutableSettings) -> Vec<OptionRequirem
     } = settings;
 
     let setting_features: [(bool, Feature, &str); 4] = [
-        (*autoloads_bunfig, Feature::Bunfig, "autoloading bunfig.toml"),
-        (*autoloads_package_json, Feature::PackageFiles, "autoloading package.json"),
-        (*autoloads_tsconfig, Feature::PackageFiles, "autoloading tsconfig.json"),
-        (*embeds_source_maps, Feature::SourceMaps, "the embedded source maps"),
+        (
+            *autoloads_bunfig,
+            Feature::Bunfig,
+            "autoloading bunfig.toml",
+        ),
+        (
+            *autoloads_package_json,
+            Feature::PackageFiles,
+            "autoloading package.json",
+        ),
+        (
+            *autoloads_tsconfig,
+            Feature::PackageFiles,
+            "autoloading tsconfig.json",
+        ),
+        (
+            *embeds_source_maps,
+            Feature::SourceMaps,
+            "the embedded source maps",
+        ),
     ];
 
     let mut requirements = Vec::new();
@@ -74,7 +90,10 @@ mod tests {
         };
         assert_eq!(
             collect_requirements(&settings),
-            [feature_option(Feature::PackageFiles, "autoloading package.json")]
+            [feature_option(
+                Feature::PackageFiles,
+                "autoloading package.json"
+            )]
         );
     }
 
@@ -86,7 +105,10 @@ mod tests {
         };
         assert_eq!(
             collect_requirements(&settings),
-            [feature_option(Feature::PackageFiles, "autoloading tsconfig.json")]
+            [feature_option(
+                Feature::PackageFiles,
+                "autoloading tsconfig.json"
+            )]
         );
     }
 
@@ -98,7 +120,10 @@ mod tests {
         };
         assert_eq!(
             collect_requirements(&settings),
-            [feature_option(Feature::SourceMaps, "the embedded source maps")]
+            [feature_option(
+                Feature::SourceMaps,
+                "the embedded source maps"
+            )]
         );
     }
 

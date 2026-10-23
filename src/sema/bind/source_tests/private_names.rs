@@ -6,18 +6,45 @@ const PRIVATE_REFERENCES: &[(&str, Option<&str>)] = &[
     ("class C { #a; m(o) { #a in o; } }", Some("C")),
     ("class C { #a; [o.#a]() {} }", Some("C")),
     ("class C { static #a; @(C.#a) m() {} }", Some("C")),
-    ("class D { #a; m(o) { class C { n() { o.#a; } } } }", Some("D")),
-    ("class D { #a; m(o) { class C { #a; n() { o.#a; } } } }", Some("C")),
+    (
+        "class D { #a; m(o) { class C { n() { o.#a; } } } }",
+        Some("D"),
+    ),
+    (
+        "class D { #a; m(o) { class C { #a; n() { o.#a; } } } }",
+        Some("C"),
+    ),
     ("class C extends (o.#a) { #a; }", None),
     ("class C extends (#a in o ? A : B) { #a; }", None),
-    ("class D { #a; m(o) { class C extends (o.#a) { #a; } } }", Some("D")),
-    ("class D { #a; m(o) { class C extends (() => o.#a) { #a; } } }", Some("D")),
-    ("class D { #a; m(o) { (class C extends (o.#a) { #a; }); } }", Some("D")),
-    ("class C extends (class B { #a; m(o) { o.#a; } }) { #a; }", Some("B")),
+    (
+        "class D { #a; m(o) { class C extends (o.#a) { #a; } } }",
+        Some("D"),
+    ),
+    (
+        "class D { #a; m(o) { class C extends (() => o.#a) { #a; } } }",
+        Some("D"),
+    ),
+    (
+        "class D { #a; m(o) { (class C extends (o.#a) { #a; }); } }",
+        Some("D"),
+    ),
+    (
+        "class C extends (class B { #a; m(o) { o.#a; } }) { #a; }",
+        Some("B"),
+    ),
     ("class C extends (class B { m(o) { o.#a; } }) { #a; }", None),
-    ("class D { #a; m(o) { @(o.#a) class C { #a; } } }", Some("D")),
-    ("class D { #a; m(o) { (@(o.#a) class C { #a; }); } }", Some("D")),
-    ("class D { #a; m(o) { @(class B { n() { o.#a; } }) class C { #a; } } }", Some("D")),
+    (
+        "class D { #a; m(o) { @(o.#a) class C { #a; } } }",
+        Some("D"),
+    ),
+    (
+        "class D { #a; m(o) { (@(o.#a) class C { #a; }); } }",
+        Some("D"),
+    ),
+    (
+        "class D { #a; m(o) { @(class B { n() { o.#a; } }) class C { #a; } } }",
+        Some("D"),
+    ),
     ("class C { #b; m(o) { o.#a; } }", None),
     ("o.#a;", None),
 ];
@@ -84,7 +111,10 @@ fn same_text_in_two_classes_is_two_names() {
         let first = s.bound.private_name_of_reference(first).unwrap();
         let second = s.bound.private_name_of_reference(second).unwrap();
         assert_ne!(first, second);
-        assert_eq!(s.bound.private_name(first).name, s.bound.private_name(second).name);
+        assert_eq!(
+            s.bound.private_name(first).name,
+            s.bound.private_name(second).name
+        );
         assert_eq!(s.bound.private_name(first).class, s.class("C"));
         assert_eq!(s.bound.private_name(second).class, s.class("D"));
     });
@@ -125,13 +155,17 @@ fn kinds_of_private_members() {
 
 #[test]
 fn public_members_have_no_private_name() {
-    analyzed("a.mjs", "class C { a; m() {} static {} constructor() {} }", |s| {
-        assert!(names_of(s, "C").is_empty());
-        for member in members_of(s, "C") {
-            assert_eq!(s.bound.private_name_of_member(member), None);
-        }
-        assert!(s.bound.runtime.private_names().is_empty());
-    });
+    analyzed(
+        "a.mjs",
+        "class C { a; m() {} static {} constructor() {} }",
+        |s| {
+            assert!(names_of(s, "C").is_empty());
+            for member in members_of(s, "C") {
+                assert_eq!(s.bound.private_name_of_member(member), None);
+            }
+            assert!(s.bound.runtime.private_names().is_empty());
+        },
+    );
 }
 
 #[test]
@@ -140,7 +174,9 @@ fn names_are_listed_by_class() {
     analyzed("a.mjs", text, |s| {
         let texts = |class: &str| -> Vec<String> {
             let names = names_of(s, class);
-            let texts = names.iter().map(|(_, name)| s.workspace.text(name.name).to_owned());
+            let texts = names
+                .iter()
+                .map(|(_, name)| s.workspace.text(name.name).to_owned());
             texts.collect()
         };
         assert_eq!(texts("C"), ["#a", "#d"]);
@@ -171,23 +207,33 @@ fn duplicate_keeps_first_and_is_an_early_error() {
 
 #[test]
 fn members_that_do_not_run_declare_nothing() {
-    analyzed("a.ts", "declare class C { #a; } class D { #m(): void; #m() {} }", |s| {
-        assert!(names_of(s, "C").is_empty());
-        let members = members_of(s, "D");
-        let [(_, name)] = names_of(s, "D")[..] else {
-            panic!("one private name");
-        };
-        assert_eq!(name.members, PrivateMembers::Method(members[1]));
-        assert_eq!(s.bound.private_name_of_member(members[0]), None);
-    });
+    analyzed(
+        "a.ts",
+        "declare class C { #a; } class D { #m(): void; #m() {} }",
+        |s| {
+            assert!(names_of(s, "C").is_empty());
+            let members = members_of(s, "D");
+            let [(_, name)] = names_of(s, "D")[..] else {
+                panic!("one private name");
+            };
+            assert_eq!(name.members, PrivateMembers::Method(members[1]));
+            assert_eq!(s.bound.private_name_of_member(members[0]), None);
+        },
+    );
 }
 
 #[test]
 fn only_decorated_class_expression_has_decorator_scope() {
-    analyzed("a.ts", "const D = @d class C {};", |s| assert!(has_decorator_scope(s)));
-    analyzed("a.ts", "const D = class C { @d m() {} }; @d class E {}", |s| {
-        assert!(!has_decorator_scope(s));
+    analyzed("a.ts", "const D = @d class C {};", |s| {
+        assert!(has_decorator_scope(s))
     });
+    analyzed(
+        "a.ts",
+        "const D = class C { @d m() {} }; @d class E {}",
+        |s| {
+            assert!(!has_decorator_scope(s));
+        },
+    );
 }
 
 #[test]

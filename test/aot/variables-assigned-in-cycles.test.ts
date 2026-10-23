@@ -2,13 +2,17 @@
 // closures, through functions whose results are inferred, and through long chains of calls on the variable itself (`s = s.replace(..).replace(..)`). A question that is asked anew along
 // every path through such a circle takes time that doubles and more with each link. These programs are small and are checked in a fraction of a second: the bound is on the time.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "./run-programs";
 
 const upTo = (n: number) => Array.from({ length: n }, (_, i) => i);
-const replaced = (name: string, n: number) => name + upTo(n).map(i => `.replace("${i}", "${i + 1}")`).join("");
+const replaced = (name: string, n: number) =>
+  name +
+  upTo(n)
+    .map(i => `.replace("${i}", "${i + 1}")`)
+    .join("");
 
 // prettier-ignore
 const shapes: Record<string, (n: number) => string> = {
@@ -31,9 +35,26 @@ for (const [shape, text] of Object.entries(shapes)) {
       const entryPoint = join(String(folder), "main.ts");
       writeFileSync(entryPoint, "declare const console: { log(...values: unknown[]): void };\n" + text(60) + "\n");
       // A debug build takes a second or two. One that asks anew along every path does not end.
-      await using checked = Bun.spawn({ cmd: [bunExe(), "check", "--aot", entryPoint], cwd: String(folder), env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" });
-      const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
-      expect({ signal: checked.signalCode, exitCode, errors: (stdout + stderr).match(/\berror\b.*/g) ?? [] }).toEqual({ signal: null, exitCode: 0, errors: [] });
+      await using checked = Bun.spawn({
+        cmd: [bunExe(), "check", "--aot", entryPoint],
+        cwd: String(folder),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        checked.stdout.text(),
+        checked.stderr.text(),
+        checked.exited,
+      ]);
+      expect({ signal: checked.signalCode, exitCode, errors: (stdout + stderr).match(/\berror\b.*/g) ?? [] }).toEqual({
+        signal: null,
+        exitCode: 0,
+        errors: [],
+      });
     },
     60_000,
   );

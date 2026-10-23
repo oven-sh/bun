@@ -10,8 +10,8 @@ use bun_sema::bind::{
 };
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, PatKind, PropKey, PropKind, StmtId,
-    StmtKind, UnOp, VarDeclId,
+    BinOp, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, PatKind, PropKey, PropKind,
+    StmtId, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::import_sites::ImportSiteKind;
 
@@ -85,7 +85,9 @@ pub(super) enum Marker {
     /// The text never gives the module an `__esModule`.
     Absent,
     /// Once, in order, a true constant.
-    True { start: u32 },
+    True {
+        start: u32,
+    },
     Unknown,
 }
 
@@ -144,7 +146,9 @@ impl OwnText {
     }
 
     pub(super) fn creations_of(&self, name: Atom) -> impl Iterator<Item = &Creation> {
-        self.creations.iter().filter(move |creation| creation.name == name)
+        self.creations
+            .iter()
+            .filter(move |creation| creation.name == name)
     }
 
     pub(super) fn alias_of(&self, name: Atom) -> Option<&Alias> {
@@ -153,13 +157,17 @@ impl OwnText {
 
     /// Whoever finds the body run to its end finds the name.
     pub(super) fn always_creates(&self, name: Atom) -> bool {
-        self.creations_of(name).any(|creation| creation.is_in_order) || self.alias_of(name).is_some()
+        self.creations_of(name).any(|creation| creation.is_in_order)
+            || self.alias_of(name).is_some()
     }
 
     /// The text says which names the module has once its body has run to its end.
     pub(super) fn knows_all_names(&self) -> bool {
         self.form == Form::Names
-            && self.creations.iter().all(|creation| self.always_creates(creation.name))
+            && self
+                .creations
+                .iter()
+                .all(|creation| self.always_creates(creation.name))
     }
 }
 
@@ -263,7 +271,10 @@ impl Scan<'_, '_, '_> {
                 return None;
             }
             let site = text.analysis.import_site_of_call(call)?;
-            let is_require = matches!(text.analysis.import_sites[site].kind, ImportSiteKind::Require(_));
+            let is_require = matches!(
+                text.analysis.import_sites[site].kind,
+                ImportSiteKind::Require(_)
+            );
             return match &self.input.sites[site] {
                 ScannedSite::Module(module) if is_require => Some(*module),
                 _ => None,
@@ -318,7 +329,9 @@ impl Scan<'_, '_, '_> {
         let creation = Creation {
             name,
             node,
-            value: value_node.some().map_or(StoredValue::Unknown, |value| text.classify_value(value)),
+            value: value_node
+                .some()
+                .map_or(StoredValue::Unknown, |value| text.classify_value(value)),
             value_node,
             is_in_order: text.is_in_order(node, body),
             is_run_by_body_alone: text.is_run_by_body_alone(node, body),
@@ -369,7 +382,8 @@ impl Scan<'_, '_, '_> {
             return None;
         };
         let function = hir[function];
-        if !function.params.is_empty() || function.flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
+        if !function.params.is_empty() || function.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+        {
             return None;
         }
         match function.body {
@@ -402,7 +416,9 @@ impl Scan<'_, '_, '_> {
                 return None;
             };
             let found = match (text.atoms.bytes(name), property.kind) {
-                (b"value", PropKind::Init | PropKind::Shorthand) => DefinedPart::Value(property.value),
+                (b"value", PropKind::Init | PropKind::Shorthand) => {
+                    DefinedPart::Value(property.value)
+                }
                 (b"get", PropKind::Init | PropKind::Method) => {
                     DefinedPart::Getter(self.find_returned_expression(property.value)?)
                 }
@@ -478,10 +494,13 @@ impl Scan<'_, '_, '_> {
             return self.find_binding_alias(index, returned);
         }
         let (object, key) = hir.member_key(returned)?;
-        let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[returned].kind else {
+        let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[returned].kind
+        else {
             return None;
         };
-        let name = text.name_of_key(key).filter(|&name| text.can_name_variable(name))?;
+        let name = text
+            .name_of_key(key)
+            .filter(|&name| text.can_name_variable(name))?;
         // A call that is written in the getter runs when the getter does.
         let object = hir.skip_type_assertions(object);
         if chain != Chain::No || !matches!(hir[object].kind, ExprKind::Ident(_)) {
@@ -530,7 +549,9 @@ impl Scan<'_, '_, '_> {
             return false;
         };
         let call = hir[call];
-        let callee = text.builtins.builtin_of_expression(hir.skip_type_assertions(call.callee));
+        let callee = text
+            .builtins
+            .builtin_of_expression(hir.skip_type_assertions(call.callee));
         let defines_property = matches!(
             callee,
             Some(BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty)
@@ -562,15 +583,29 @@ impl Scan<'_, '_, '_> {
                 let Some(target) = self.find_alias_target(index, returned, call_node) else {
                     return false;
                 };
-                self.add_alias(index, name, target, call_node, returned, defined.is_enumerable);
-                self.found(index).erased.extend(text.statement_of(call_node));
+                self.add_alias(
+                    index,
+                    name,
+                    target,
+                    call_node,
+                    returned,
+                    defined.is_enumerable,
+                );
+                self.found(index)
+                    .erased
+                    .extend(text.statement_of(call_node));
             }
         }
         true
     }
 
     // `_export(exports, { name: function () { return e; }, .. })` as a statement that every run of the body passes: the helper defines an enumerable getter for each name of the literal, in the order in which they are written.
-    fn add_definitions_of_helper(&mut self, index: usize, object: ExprId, call_node: ExprId) -> bool {
+    fn add_definitions_of_helper(
+        &mut self,
+        index: usize,
+        object: ExprId,
+        call_node: ExprId,
+    ) -> bool {
         let text = self.text;
         let hir = text.hir;
         let body = self.drafts[index].body;
@@ -595,7 +630,9 @@ impl Scan<'_, '_, '_> {
             let PropKey::Name(name) = property.key else {
                 return false;
             };
-            if !matches!(property.kind, PropKind::Init | PropKind::Method) || !text.can_name_variable(name) {
+            if !matches!(property.kind, PropKind::Init | PropKind::Method)
+                || !text.can_name_variable(name)
+            {
                 return false;
             }
             let Some(returned) = self.find_returned_expression(property.value) else {
@@ -609,7 +646,9 @@ impl Scan<'_, '_, '_> {
         for (name, target, returned) in aliases {
             self.add_alias(index, name, target, call_node, returned, true);
         }
-        self.found(index).erased.extend(text.statement_of(call_node));
+        self.found(index)
+            .erased
+            .extend(text.statement_of(call_node));
         true
     }
 
@@ -621,7 +660,10 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         let symbol = text.bound.declared_symbol(Decl::Var(pattern));
-        let path = symbol.is_some().then(|| text.builtins.of_symbol(symbol)).flatten();
+        let path = symbol
+            .is_some()
+            .then(|| text.builtins.of_symbol(symbol))
+            .flatten();
         path.is_some_and(|path| path.id == BuiltinId::ModuleObjectExports)
     }
 
@@ -736,7 +778,11 @@ impl Scan<'_, '_, '_> {
             return self.add_access(index, access);
         }
         let (outermost, parent) = text.parent(object);
-        if text.bound.get_assignment_target(text.hir, outermost).is_some() {
+        if text
+            .bound
+            .get_assignment_target(text.hir, outermost)
+            .is_some()
+        {
             return match kind {
                 MentionKind::ModuleExports => self.add_replacement(index, object),
                 // The binder lists the stores to the name.
@@ -752,8 +798,13 @@ impl Scan<'_, '_, '_> {
             Parent::Expr(user) if self.is_asked_as_some_object(outermost, user) => true,
             // The fold has the answer, and nothing evaluates the operand.
             Parent::Expr(user)
-                if matches!(text.hir[user].kind, ExprKind::Unary { op: UnOp::Typeof, .. })
-                    && text.constant(user).is_some() =>
+                if matches!(
+                    text.hir[user].kind,
+                    ExprKind::Unary {
+                        op: UnOp::Typeof,
+                        ..
+                    }
+                ) && text.constant(user).is_some() =>
             {
                 return;
             }
@@ -799,7 +850,9 @@ impl Scan<'_, '_, '_> {
         }
         let member = match text.parent(module_object) {
             (outermost, Parent::Expr(user)) => match text.hir.member_key(user) {
-                Some((accessed, _)) if accessed == outermost => text.builtins.builtin_of_expression(user),
+                Some((accessed, _)) if accessed == outermost => {
+                    text.builtins.builtin_of_expression(user)
+                }
                 _ => None,
             },
             _ => None,
@@ -811,7 +864,10 @@ impl Scan<'_, '_, '_> {
     }
 
     fn find_parameter(&self, symbol: SymbolId) -> Option<(usize, Parameter)> {
-        let at = self.parameters.binary_search_by_key(&symbol, |entry| entry.0).ok()?;
+        let at = self
+            .parameters
+            .binary_search_by_key(&symbol, |entry| entry.0)
+            .ok()?;
         Some((self.parameters[at].1, self.parameters[at].2))
     }
 
@@ -969,12 +1025,17 @@ impl Scan<'_, '_, '_> {
             let mut accesses = found.accesses.iter();
             right == store
                 && accesses.any(|access| {
-                    access.node == left && access.name == creation.name && access.kind == AccessKind::Read
+                    access.node == left
+                        && access.name == creation.name
+                        && access.kind == AccessKind::Read
                 })
                 && text.is_in_order(choice, body)
         };
-        let filled: Vec<bool> =
-            found.creations.iter().map(|creation| !creation.is_in_order && fills(creation)).collect();
+        let filled: Vec<bool> = found
+            .creations
+            .iter()
+            .map(|creation| !creation.is_in_order && fills(creation))
+            .collect();
         for (creation, is_filled) in self.found(index).creations.iter_mut().zip(filled) {
             creation.is_in_order |= is_filled;
         }
@@ -991,23 +1052,39 @@ impl Scan<'_, '_, '_> {
             let mut reads = found.accesses.iter().filter(|access| {
                 access.name == alias.name && !matches!(access.kind, AccessKind::Store(_))
             });
-            reads.any(|read| text.hir[read.node].pos < alias.start || text.code_unit_of(read.node) != Some(body))
+            reads.any(|read| {
+                text.hir[read.node].pos < alias.start || text.code_unit_of(read.node) != Some(body)
+            })
         };
         for alias in &found.aliases {
-            let is_defined_once = found.aliases.iter().filter(|it| it.name == alias.name).count() == 1;
+            let is_defined_once = found
+                .aliases
+                .iter()
+                .filter(|it| it.name == alias.name)
+                .count()
+                == 1;
             let is_cleared_before = |creation: &Creation| {
                 creation.value == StoredValue::Undefined
                     && creation.is_in_order
                     && !creation.is_read_only
                     && creation.end <= alias.start
             };
-            if !is_defined_once || !found.creations_of(alias.name).all(is_cleared_before) || is_read_before(alias) {
+            if !is_defined_once
+                || !found.creations_of(alias.name).all(is_cleared_before)
+                || is_read_before(alias)
+            {
                 refused = Some(alias.node);
             }
             cleared.push(alias.name);
         }
-        for creation in found.creations.iter().filter(|creation| creation.is_read_only) {
-            let mut others = found.creations_of(creation.name).filter(|it| it.node != creation.node);
+        for creation in found
+            .creations
+            .iter()
+            .filter(|creation| creation.is_read_only)
+        {
+            let mut others = found
+                .creations_of(creation.name)
+                .filter(|it| it.node != creation.node);
             if others.next().is_some() {
                 refused = Some(creation.node);
             }
@@ -1024,7 +1101,9 @@ impl Scan<'_, '_, '_> {
             return found.keep_object(node);
         }
         // Nobody sees what is stored under a name that a getter is defined for behind the store.
-        found.creations.retain(|creation| !cleared.contains(&creation.name));
+        found
+            .creations
+            .retain(|creation| !cleared.contains(&creation.name));
     }
 
     // Whether no code but that of `body` itself runs until `body` gets to the position: an accessor, a conversion or an iterator runs code as a call does, and a function that only makes the helpers of a compiler runs none.
@@ -1039,12 +1118,20 @@ impl Scan<'_, '_, '_> {
             CodeUnit::FieldInitializer(_) => return false,
         };
         // A definition on the object that the module was born with runs the built-in, or the helper that calls it, and no more.
-        let found = self.drafts.iter().find(|draft| draft.body == body).map(|draft| &draft.found);
+        let found = self
+            .drafts
+            .iter()
+            .find(|draft| draft.body == body)
+            .map(|draft| &draft.found);
         let is_definition = |call: CallId| {
-            let is_call = |node: ExprId| matches!(text.hir[node].kind, ExprKind::Call(id) if id == call);
+            let is_call =
+                |node: ExprId| matches!(text.hir[node].kind, ExprKind::Call(id) if id == call);
             found.is_some_and(|found| {
                 found.aliases.iter().any(|alias| is_call(alias.node))
-                    || found.defined_values.iter().any(|defined| is_call(defined.0))
+                    || found
+                        .defined_values
+                        .iter()
+                        .any(|defined| is_call(defined.0))
             })
         };
         let quiet = Quiet {
@@ -1056,7 +1143,8 @@ impl Scan<'_, '_, '_> {
             runs_nothing: &is_definition,
         };
         let statements = text.hir.ids(statements);
-        let mut in_front = statements.take_while(|&statement: &StmtId| text.hir[statement].start < position);
+        let mut in_front =
+            statements.take_while(|&statement: &StmtId| text.hir[statement].start < position);
         in_front.all(|statement| quiet.is_quiet_statement(statement))
     }
 
@@ -1089,7 +1177,8 @@ impl Scan<'_, '_, '_> {
             (Some(_), _) => Marker::Unknown,
             // Whoever finds the module half evaluated in front of that statement finds no marker.
             (None, Marker::True { start, .. })
-                if found.is_half && !self.runs_nothing_else_in_front_of(self.drafts[index].body, start) =>
+                if found.is_half
+                    && !self.runs_nothing_else_in_front_of(self.drafts[index].body, start) =>
             {
                 Marker::Unknown
             }
@@ -1112,14 +1201,17 @@ impl Scan<'_, '_, '_> {
             let at = self.drafts[index].replacements[0].statement;
             self.found(index).keep_object(at);
         }
-        if !has_replacements && let Some(&store) = self.drafts[index].stores_to_exports_name.first() {
+        if !has_replacements && let Some(&store) = self.drafts[index].stores_to_exports_name.first()
+        {
             // Nobody knows what the name holds from then on.
             self.found(index).needs_wrapped_body = true;
             self.found(index).keep_object(store);
         }
         if has_replacements {
             let replacements = self.drafts[index].replacements.iter();
-            let renamed = replacements.filter(|it| it.renames_exports && it.is_statement_in_order).count();
+            let renamed = replacements
+                .filter(|it| it.renames_exports && it.is_statement_in_order)
+                .count();
             if self.drafts[index].stores_to_exports_name.len() != renamed {
                 self.found(index).needs_wrapped_body = true;
             }
@@ -1129,7 +1221,9 @@ impl Scan<'_, '_, '_> {
         self.find_marker(index);
         let draft = &mut self.drafts[index];
         let found = &mut draft.found;
-        found.creations.sort_by_key(|it| (!it.is_in_order, it.end, core::cmp::Reverse(it.start)));
+        found
+            .creations
+            .sort_by_key(|it| (!it.is_in_order, it.end, core::cmp::Reverse(it.start)));
         if found.form == Form::Value {
             found.aliases.clear();
             found.erased.clear();
@@ -1181,16 +1275,22 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
         stores_to_exports_name: Vec::new(),
     };
     // The file comes first, also where it is no module of this kind: then nothing is added to it.
-    scan.drafts.push(create_draft(ModuleRef::File(text.file), CodeUnit::File));
+    scan.drafts
+        .push(create_draft(ModuleRef::File(text.file), CodeUnit::File));
     for inner in input.inner_modules {
         let index = scan.drafts.len();
         let module = ModuleRef::Inner {
             file: text.file,
             callback: inner.callback,
         };
-        scan.drafts.push(create_draft(module, CodeUnit::Function(inner.callback)));
-        let exports = inner.exports_parameter.map(|symbol| (symbol, index, Parameter::Exports));
-        let module = inner.module_parameter.map(|symbol| (symbol, index, Parameter::Module));
+        scan.drafts
+            .push(create_draft(module, CodeUnit::Function(inner.callback)));
+        let exports = inner
+            .exports_parameter
+            .map(|symbol| (symbol, index, Parameter::Exports));
+        let module = inner
+            .module_parameter
+            .map(|symbol| (symbol, index, Parameter::Module));
         scan.parameters.extend(exports.into_iter().chain(module));
     }
     scan.parameters.sort_unstable_by_key(|entry| entry.0);
@@ -1203,7 +1303,12 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
     }
     if input.is_file_a_module {
         let exports = Binding::CommonJs(CommonJsVariable::Exports);
-        let stores = text.bound.runtime.unbound_name_stores().iter().map(|store| store.0);
+        let stores = text
+            .bound
+            .runtime
+            .unbound_name_stores()
+            .iter()
+            .map(|store| store.0);
         let stores = stores.filter(|&target| {
             text.bound.binding(target) == exports && !text.decisions.is_dead_expr(target)
         });
@@ -1232,5 +1337,8 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
         true => 0,
         false => 1,
     };
-    scan.drafts.drain(first..).map(|draft| draft.found).collect()
+    scan.drafts
+        .drain(first..)
+        .map(|draft| draft.found)
+        .collect()
 }

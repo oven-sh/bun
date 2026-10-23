@@ -6,9 +6,24 @@ import { describe, test } from "../supported";
 function files(declaration: string) {
   return {
     "tsconfig.json": JSON.stringify({
-      compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", moduleDetection: "force", strict: true, noEmit: true, lib: ["esnext", "dom"], types: [] },
+      compilerOptions: {
+        target: "esnext",
+        module: "preserve",
+        moduleResolution: "bundler",
+        moduleDetection: "force",
+        strict: true,
+        noEmit: true,
+        lib: ["esnext", "dom"],
+        types: [],
+      },
     }),
-    "node_modules/sockets/package.json": JSON.stringify({ name: "sockets", version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" }),
+    "node_modules/sockets/package.json": JSON.stringify({
+      name: "sockets",
+      version: "1.0.0",
+      type: "module",
+      main: "index.js",
+      types: "index.d.ts",
+    }),
     "node_modules/sockets/index.js": `export function connect() {
   return 1;
 }
@@ -51,20 +66,25 @@ for (const { kind, declaration, differs } of [
 
     test("plain Bun and bun run --aot list the two functions", async () => {
       using dir = tempDir("aot-class-reexported-as-a-type", files(declaration));
-      expect(await run([bunExe(), "run", "main.ts"], String(dir))).toMatchObject({ stdout: "defineSocket,serve\n", exitCode: 0 });
-      for (const flag of ["--aot", "--debug-aot"]) expect(await run([bunExe(), "run", flag, "main.ts"], String(dir))).toMatchObject({ stdout: "defineSocket,serve\n", exitCode: 0 });
+      expect(await run([bunExe(), "run", "main.ts"], String(dir))).toMatchObject({
+        stdout: "defineSocket,serve\n",
+        exitCode: 0,
+      });
+      for (const flag of ["--aot", "--debug-aot"])
+        expect(await run([bunExe(), "run", flag, "main.ts"], String(dir))).toMatchObject({
+          stdout: "defineSocket,serve\n",
+          exitCode: 0,
+        });
     });
 
-    test(
-      "the program builds",
-      async () => {
-        using dir = tempDir("aot-class-reexported-as-a-type", files(declaration));
-        expect(await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"], String(dir))).toMatchObject({ exitCode: 0 });
-        const { stdout, exitCode } = await run([join(String(dir), "program")], String(dir));
-        executable = { stdout, exitCode };
-      },
-      120_000,
-    );
+    test("the program builds", async () => {
+      using dir = tempDir("aot-class-reexported-as-a-type", files(declaration));
+      expect(
+        await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"], String(dir)),
+      ).toMatchObject({ exitCode: 0 });
+      const { stdout, exitCode } = await run([join(String(dir), "program")], String(dir));
+      executable = { stdout, exitCode };
+    }, 120_000);
 
     (differs ? test.failing : test)("the executable lists the two functions", () => {
       expect(executable).toEqual({ stdout: "defineSocket,serve\n", exitCode: 0 });

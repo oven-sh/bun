@@ -1096,8 +1096,7 @@ impl Checker<'_, '_> {
     /// `checkSpreadPropOverrides`: 2783 for a property that a later spread overwrites.
     pub(super) fn check_spread_overrides(&mut self, file: FileId, props: Span<PropId>) {
         let hir = self.hir(file);
-        if !self.reports_null_checks(file)
-            || !props.iter().any(|p| hir[p].kind == PropKind::Spread)
+        if !self.reports_null_checks(file) || !props.iter().any(|p| hir[p].kind == PropKind::Spread)
         {
             return;
         }

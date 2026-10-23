@@ -118,7 +118,12 @@ export default b.declarations(
   webCoreClass("URLSearchParams", b.cppClass("JSURLSearchParams"), lockedNativeValue("JSURLSearchParams")),
   b.class("EventTarget", {
     instanceCppClass: b.cppClass("JSEventTarget"),
-    construct: { returns: b.instance("EventTarget").fresh, capability: "heap", throws: true, implementation: b.hostCall },
+    construct: {
+      returns: b.instance("EventTarget").fresh,
+      capability: "heap",
+      throws: true,
+      implementation: b.hostCall,
+    },
   }),
   webCoreClass("AbortSignal", b.cppClass("JSAbortSignal"), { extends: "EventTarget" }),
   webCoreClass("ReadableStream", b.cppClass("JSReadableStream", "streams/JSReadableStream.h")),

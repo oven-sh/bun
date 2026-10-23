@@ -1,9 +1,9 @@
 // `JSON.parse<T>(text)` validates, and the namespace `Schema` of "bun" is known by import and through the global `Bun`, also where
 // no types of Bun are installed: the only declarations of Bun's are those that the compiler brings along.
 import { expect } from "bun:test";
-import { test } from "../supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "../supported";
 
 const program = `
 import type { Schema } from "bun";

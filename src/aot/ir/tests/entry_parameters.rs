@@ -21,7 +21,11 @@ fn create_constructor() -> Function {
 fn positions_of(function: &Function) -> Vec<EntryPosition> {
     let indexes = 0..function.entry_parameter_count();
     indexes
-        .map(|index| function.entry_parameter(index).expect("an index below the count"))
+        .map(|index| {
+            function
+                .entry_parameter(index)
+                .expect("an index below the count")
+        })
         .collect()
 }
 
@@ -63,7 +67,10 @@ fn parameters_without_flag_are_absent() {
         | FunctionFlags::IS_CHECKED;
     let function = create_function(flags_without_entry_parameter);
     assert_eq!(function.entry_parameter_count(), 4);
-    assert_eq!(function_with_parameters(FunctionFlags::default(), &[]).entry_parameter_count(), 0);
+    assert_eq!(
+        function_with_parameters(FunctionFlags::default(), &[]).entry_parameter_count(),
+        0
+    );
 }
 
 #[test]
@@ -112,7 +119,10 @@ fn absent_entry_parameter_has_no_index() {
     };
     let constructor = create_constructor();
     assert_eq!(index_in(&constructor, EntryParameter::Callee, 0), None);
-    assert_eq!(index_in(&constructor, EntryParameter::ArgumentCount, 0), None);
+    assert_eq!(
+        index_in(&constructor, EntryParameter::ArgumentCount, 0),
+        None
+    );
     assert_eq!(index_in(&constructor, EntryParameter::HiddenRest, 0), None);
     assert_eq!(index_in(&constructor, EntryParameter::Capture, 2), None);
     assert_eq!(index_in(&constructor, EntryParameter::Parameter, 2), None);

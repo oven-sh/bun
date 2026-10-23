@@ -49,12 +49,19 @@ fn stands_where_a_constructor_stands(
         return match hir[parent].kind {
             ExprKind::New(site) => hir[site].callee == value,
             ExprKind::Call(_) | ExprKind::TaggedTemplate(_) => false,
-            ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq, .. } => false,
+            ExprKind::Binary {
+                op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
+                ..
+            } => false,
             ExprKind::Dot { .. } | ExprKind::Index { .. } => matches!(
                 hir.member_key(parent),
                 Some((object, MemberKey::Name(name))) if object == value && name == known::prototype
             ),
-            ExprKind::Assign { op: None, target, value: stored } if stored == value => {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value: stored,
+            } if stored == value => {
                 let becomes_member = declares_this && hir.member_key(target).is_some();
                 !becomes_member && !is_member_of_receiver_or_prototype_object(hir, target)
             }
@@ -70,7 +77,11 @@ fn declares_this(hir: &hir::File<'_>, function: FnId) -> bool {
 }
 
 // `const remove = function remove() { .. }`: the name stands for the function wherever it is written, like the name of a declared one.
-fn find_constant_holding(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> Option<(SymbolId, bool)> {
+fn find_constant_holding(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> Option<(SymbolId, bool)> {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return None;
     };
@@ -81,7 +92,10 @@ fn find_constant_holding(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId)
     if variable.kind != VarKind::Const || !matches!(hir[variable.pat].kind, PatKind::Ident(_)) {
         return None;
     }
-    Some((bound.declared_symbol(Decl::Var(variable.pat)), variable.flags.contains(Flags::EXPORT)))
+    Some((
+        bound.declared_symbol(Decl::Var(variable.pat)),
+        variable.flags.contains(Flags::EXPORT),
+    ))
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -95,7 +109,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         for function in functions {
             let (symbol, is_exported) = match hir[function].kind {
                 FnKind::Decl => {
-                    let is_exported = hir[function].flags.intersects(Flags::EXPORT | Flags::DEFAULT);
+                    let is_exported = hir[function]
+                        .flags
+                        .intersects(Flags::EXPORT | Flags::DEFAULT);
                     (bound.declared_symbol(Decl::Fn(function)), is_exported)
                 }
                 FnKind::Expr => match find_constant_holding(hir, bound, function) {
@@ -127,7 +143,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 if let Binding::Symbol(symbol) = bound.binding(reference)
                     && unused.contains(&symbol)
                     && !bound.is_in_type_query(reference)
-                    && stands_where_a_constructor_stands(hir, bound, reference, declaring_this.contains(&symbol))
+                    && stands_where_a_constructor_stands(
+                        hir,
+                        bound,
+                        reference,
+                        declaring_this.contains(&symbol),
+                    )
                 {
                     unused.remove(&symbol);
                     used.push(symbol);
@@ -144,7 +165,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let FunctionRef { file, function } = function;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let named = match bound.fns[function.idx()].owner {
-            FnOwner::Expr(_) => find_constant_holding(hir, bound, function).map(|(symbol, _)| symbol),
+            FnOwner::Expr(_) => {
+                find_constant_holding(hir, bound, function).map(|(symbol, _)| symbol)
+            }
             FnOwner::Stmt(_) => Some(bound.declared_symbol(Decl::Fn(function))),
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
         };
@@ -156,9 +179,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return used.binary_search(&symbol).is_ok();
         }
         match bound.fns[function.idx()].owner {
-            FnOwner::Expr(expression) => {
-                stands_where_a_constructor_stands(hir, bound, expression, declares_this(hir, function))
-            }
+            FnOwner::Expr(expression) => stands_where_a_constructor_stands(
+                hir,
+                bound,
+                expression,
+                declares_this(hir, function),
+            ),
             FnOwner::Stmt(_) => unreachable!("a declared function has a name"),
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => true,
         }

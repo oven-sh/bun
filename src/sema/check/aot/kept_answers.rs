@@ -1,8 +1,8 @@
 //! What a checker has answered about a type, a signature or a declaration holds in every file that it visits, and neighbors in the program ask about the same ones.
 
 use super::answers::{
-    CheckedMember, ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember, PositionTypes,
-    SignatureShape, WrittenType,
+    CheckedMember, ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember,
+    PositionTypes, SignatureShape, WrittenType,
 };
 use super::queries::AliasScan;
 use super::type_identity::TypeIdentity;
@@ -198,7 +198,8 @@ impl<'c> KeptMemo<'c> {
         let object = &mut self.objects[row.0 as usize];
         object.first_member_type = self.member_types.len() as u32;
         object.member_type_count = count;
-        self.member_types.resize(self.member_types.len() + count as usize, None);
+        self.member_types
+            .resize(self.member_types.len() + count as usize, None);
     }
 
     pub(super) fn keep_member_types(&mut self, row: ObjectRow, index: u32, types: PositionTypes) {

@@ -1500,7 +1500,8 @@ impl FFI {
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let mut backup_buf = bun_paths::path_buffer_pool::get();
-                    let backup_name = Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..]);
+                    let backup_name =
+                        Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..]);
                     match backup_name.map(bun_sys::DynLib::open) {
                         Some(Ok(d)) => break 'brk d,
                         Some(Err(_)) | None => {

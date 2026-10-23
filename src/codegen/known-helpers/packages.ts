@@ -26,9 +26,27 @@ const babelCompanions = [
 export const packageRules: readonly PackageRule[] = [
   { name: "@babel/parser", versions: "latest", files: ["lib/index.js"] },
   { name: "tslib", versions: "every", files: ["tslib.js", "tslib.es6.js", "tslib.es6.mjs"] },
-  { name: "typescript", versions: "last-of-each-minor", since: "1.5.0", files: ["lib/typescript.js", "bin/typescript.js"] },
-  { name: "esbuild-linux-64", versions: "last-of-each-minor", since: "0.8.0", until: "0.15.0", files: ["bin/esbuild"], tool: "esbuild" },
-  { name: "@esbuild/linux-x64", versions: "last-of-each-minor", since: "0.15.0", files: ["bin/esbuild"], tool: "esbuild" },
+  {
+    name: "typescript",
+    versions: "last-of-each-minor",
+    since: "1.5.0",
+    files: ["lib/typescript.js", "bin/typescript.js"],
+  },
+  {
+    name: "esbuild-linux-64",
+    versions: "last-of-each-minor",
+    since: "0.8.0",
+    until: "0.15.0",
+    files: ["bin/esbuild"],
+    tool: "esbuild",
+  },
+  {
+    name: "@esbuild/linux-x64",
+    versions: "last-of-each-minor",
+    since: "0.15.0",
+    files: ["bin/esbuild"],
+    tool: "esbuild",
+  },
   { name: "@oven/bun-linux-x64", versions: "every-fifth-patch", since: "1.0.0", files: ["bin/bun"], tool: "bun" },
   { name: "rolldown", versions: "last-of-each-minor", since: "1.0.0-beta.1", with: [], prereleases: true },
   { name: "rollup", versions: "last-of-every-fifth-minor", since: "1.0.0", with: [] },
@@ -52,7 +70,13 @@ export function parseVersion(text: string): Version | undefined {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$/.exec(text);
   if (!match) return undefined;
   const stage = match[4] === undefined ? stages.length : stages.indexOf(match[4]);
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), stage, round: Number(match[5] ?? 0) };
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    stage,
+    round: Number(match[5] ?? 0),
+  };
 }
 
 export function isRelease(version: Version): boolean {
@@ -72,7 +96,8 @@ export function minorOf(version: string): string | undefined {
 }
 
 export function chooseVersions(published: readonly string[], rule: PackageRule): string[] {
-  const isWanted = (version: Version | undefined) => version !== undefined && (isRelease(version) || rule.prereleases === true);
+  const isWanted = (version: Version | undefined) =>
+    version !== undefined && (isRelease(version) || rule.prereleases === true);
   let wanted = published.filter(version => isWanted(parseVersion(version))).sort(compareVersions);
   if (rule.since !== undefined) wanted = wanted.filter(version => compareVersions(version, rule.since!) >= 0);
   if (rule.until !== undefined) wanted = wanted.filter(version => compareVersions(version, rule.until!) < 0);
@@ -86,7 +111,8 @@ export function chooseVersions(published: readonly string[], rule: PackageRule):
   }
   const minors = [...lastOfMinor.values()];
   if (rule.versions === "last-of-each-minor") return minors;
-  if (rule.versions === "every-fifth-patch") return wanted.filter(version => parseVersion(version)!.patch % 5 === 0 || minors.includes(version));
+  if (rule.versions === "every-fifth-patch")
+    return wanted.filter(version => parseVersion(version)!.patch % 5 === 0 || minors.includes(version));
   const newest = minors.at(-1);
   return minors.filter(version => parseVersion(version)!.minor % 5 === 0 || version === newest);
 }

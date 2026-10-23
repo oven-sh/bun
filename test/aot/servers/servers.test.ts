@@ -29,8 +29,8 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { canTrim } from "../../bundler/compile-trim-features";
 import { built, spawned, unsupported } from "../run-programs";
-import { invalidOrders, invalidOrderBody, routes, type Route } from "./answers";
-import { installPackages, filterRequested, startServer, requestedServers } from "./run-servers";
+import { invalidOrderBody, invalidOrders, routes, type Route } from "./answers";
+import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
 
 const servers = filterRequested(["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "tanstack"]);
 
@@ -77,17 +77,36 @@ const edgeCaseRequests: [method: string, path: string, init?: { headers?: Record
   ["POST", "/shops/west/orders", { headers: json, body: " " + order + "\n" }],
   ["POST", "/shops/west/orders", { headers: { "Content-Type": "text/plain" }, body: order }],
   ["POST", "/shops/west/orders", { headers: { "Content-Type": "application/json; charset=utf-8" }, body: order }],
-  ["POST", "/shops/west/orders", { headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "coupon=TENOFF" }],
+  [
+    "POST",
+    "/shops/west/orders",
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "coupon=TENOFF" },
+  ],
   ["POST", `/shops/${"w".repeat(32)}/orders`, { headers: json, body: order }],
   ["POST", `/shops/${"w".repeat(33)}/orders`, { headers: json, body: order }],
   ["POST", "/shops/w%C3%A9st/orders", { headers: json, body: order }],
-  ["POST", "/shops/west/orders", { headers: json, body: JSON.stringify({ ...JSON.parse(order), items: Array(101).fill(JSON.parse(order).items[0]) }) }],
-  ["POST", "/shops/west/orders", { headers: json, body: JSON.stringify({ ...JSON.parse(order), coupon: "x".repeat(200_000) }) }],
+  [
+    "POST",
+    "/shops/west/orders",
+    {
+      headers: json,
+      body: JSON.stringify({ ...JSON.parse(order), items: Array(101).fill(JSON.parse(order).items[0]) }),
+    },
+  ],
+  [
+    "POST",
+    "/shops/west/orders",
+    { headers: json, body: JSON.stringify({ ...JSON.parse(order), coupon: "x".repeat(200_000) }) },
+  ],
   ["POST", "/shops/west/orders", { headers: json, body: order.replace('"id":4711', '"id":4711,"id":4712') }],
   ["POST", "/shops/west/orders", { headers: json, body: order.replace('"id":4711', '"__proto__":{"id":1},"id":4711') }],
   ["POST", "/shops/west/checked-orders", { headers: json, body: order.replace('"id":4711', '"id":1e400') }],
   ["POST", "/shops/west/checked-orders", { headers: json, body: order.replace('"id":4711', '"id":9007199254740993') }],
-  ["POST", "/shops/west/typed-orders", { headers: json, body: order.replace('"coupon":"TENOFF"', '"coupon":"tenoff"') }],
+  [
+    "POST",
+    "/shops/west/typed-orders",
+    { headers: json, body: order.replace('"coupon":"TENOFF"', '"coupon":"tenoff"') },
+  ],
 ];
 
 async function sendRequest(origin: string, route: Route, request = route.request) {
@@ -97,10 +116,17 @@ async function sendRequest(origin: string, route: Route, request = route.request
     body: request,
     headers: request === undefined ? {} : { "Content-Type": "application/json" },
   });
-  return { status: response.status, type: response.headers.get("Content-Type")?.split(";")[0]!.trim().toLowerCase(), body: await response.text() };
+  return {
+    status: response.status,
+    type: response.headers.get("Content-Type")?.split(";")[0]!.trim().toLowerCase(),
+    body: await response.text(),
+  };
 }
 
-if (!requestedServers) console.error("SKIPPED: test/aot/servers/servers.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
+if (!requestedServers)
+  console.error(
+    "SKIPPED: test/aot/servers/servers.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it",
+  );
 
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () => {
   const app = String(tempDir("aot-servers", {}));
@@ -118,7 +144,10 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
       cpSync(join(import.meta.dir, "app", "shared.ts"), join(tanstack, "src", "utils", "shared.ts"));
       await installPackages(tanstack);
       const vite = await spawned([bunExe(), "node_modules/vite/bin/vite.js", "build"], tanstack, bunEnv);
-      expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({ output: expect.any(String), exitCode: 0 });
+      expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({
+        output: expect.any(String),
+        exitCode: 0,
+      });
     }
   }, 300_000);
 
@@ -129,16 +158,28 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
     // make Express include stack traces in error responses.
     const flags = ["--define", 'process.env.NODE_ENV="production"'];
     const executable = join(folder, `${name}-compiled${isWindows ? ".exe" : ""}`);
-    const startCompiled = (env: Record<string, string> = {}) => startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
+    const startCompiled = (env: Record<string, string> = {}) =>
+      startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
 
     beforeAll(async () => {
-      built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", entry, "--outfile", executable], folder, bunEnv));
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", entry, "--outfile", executable],
+          folder,
+          bunEnv,
+        ),
+      );
     }, 120_000);
 
     test("serves every route", async () => {
       using server = await startCompiled();
       for (const route of routes) {
-        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+          route: route.name,
+          status: 200,
+          type: route.type,
+          body: route.expectedBody,
+        });
       }
       expect((await fetch(server.origin + "/nothing")).status).toBe(404);
     });
@@ -148,23 +189,30 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
       ["serves every route after a few thousand requests", {}],
       ["serves every route with the RegExp JIT off", { BUN_JSC_useRegExpJIT: "0" }],
       ["serves every route with the GC running continuously", { BUN_JSC_collectContinuously: "1" }],
-      ["serves every route in zombie mode", { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" }],
-    ])("%s", async (_, env) => {
-      using server = await startCompiled(env);
-      for (const route of routes) {
-        const expected = { status: 200, type: route.type, body: route.expectedBody };
-        let mismatch: unknown;
-        await Promise.all(
-          Array.from({ length: 16 }, async () => {
-            for (let n = 0; n < 200 && !mismatch; n++) {
-              const response = await sendRequest(server.origin, route);
-              if (!Bun.deepEquals(response, expected)) mismatch = response;
-            }
-          }),
-        );
-        expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
-      }
-    }, 240_000);
+      [
+        "serves every route in zombie mode",
+        { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" },
+      ],
+    ])(
+      "%s",
+      async (_, env) => {
+        using server = await startCompiled(env);
+        for (const route of routes) {
+          const expected = { status: 200, type: route.type, body: route.expectedBody };
+          let mismatch: unknown;
+          await Promise.all(
+            Array.from({ length: 16 }, async () => {
+              for (let n = 0; n < 200 && !mismatch; n++) {
+                const response = await sendRequest(server.origin, route);
+                if (!Bun.deepEquals(response, expected)) mismatch = response;
+              }
+            }),
+          );
+          expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
+        }
+      },
+      240_000,
+    );
 
     // JSGlobalObject::haveABadTime() permanently switches every array in the realm to SlowPutArrayStorage. It fires when an object
     // that may have indexed accessors enters a prototype chain. ES5-style inheritance between functions (util.inherits, transpiled
@@ -180,9 +228,16 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
 `,
       );
       const probe = join(folder, `${name}-probe${isWindows ? ".exe" : ""}`);
-      built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", `./${name}-probe.ts`, "--outfile", probe], folder, bunEnv));
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", `./${name}-probe.ts`, "--outfile", probe],
+          folder,
+          bunEnv,
+        ),
+      );
       using server = await startServer([probe], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      for (const route of routes) for (let n = 0; n < 20; n++) expect((await sendRequest(server.origin, route)).status).toBe(200);
+      for (const route of routes)
+        for (let n = 0; n < 20; n++) expect((await sendRequest(server.origin, route)).status).toBe(200);
       rmSync(indexingTypePath, { force: true });
       while (!existsSync(indexingTypePath) || !readFileSync(indexingTypePath, "utf8")) await Bun.sleep(5);
       expect(readFileSync(indexingTypePath, "utf8")).toBe("ArrayWithContiguous");
@@ -197,10 +252,16 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
         for (const [description, request] of Object.entries(invalidOrders)) {
           const { status, body } = await sendRequest(server.origin, route, request);
           actual[`${route.name}: ${description}`] = status;
-          expected[`${route.name}: ${description}`] = route.name === "typed" ? (await sendRequest(reference.origin, route, request)).status : 400;
+          expected[`${route.name}: ${description}`] =
+            route.name === "typed" ? (await sendRequest(reference.origin, route, request)).status : 400;
           if (description === "a quantity of zero") expect(body).toBe(invalidOrderBody);
         }
-        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+          route: route.name,
+          status: 200,
+          type: route.type,
+          body: route.expectedBody,
+        });
       }
       expect(actual).toEqual(expected);
     });
@@ -209,28 +270,65 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
       { options: ["--disallow-code-generation-from-strings"], needsTrimming: false },
       { options: ["--trim"], needsTrimming: true },
       { options: ["--trim", "--disallow-code-generation-from-strings"], needsTrimming: true },
-    ])("answers the same when built with $options", async ({ options, needsTrimming }) => {
-      if (needsTrimming && !canTrim) return;
-      if (generatesHandlersFromStrings.includes(name) && options.includes("--disallow-code-generation-from-strings")) return;
-      const variant = join(folder, `${name}-variant${isWindows ? ".exe" : ""}`);
-      built(await spawned([bunExe(), "build", "--compile", "--aot", ...options, ...flags, "--target=bun", entry, "--outfile", variant], folder, bunEnv));
-      using server = await startServer([variant], folder, bunEnv);
-      using reference = await startCompiled();
-      for (const route of routes) {
-        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
-      }
-      for (const route of routes.filter(route => route.method === "POST")) {
-        for (const [description, request] of Object.entries(invalidOrders)) {
-          const expected = await sendRequest(reference.origin, route, request);
-          expect({ route: route.name, description, ...(await sendRequest(server.origin, route, request)) }).toEqual({ route: route.name, description, ...expected });
+    ])(
+      "answers the same when built with $options",
+      async ({ options, needsTrimming }) => {
+        if (needsTrimming && !canTrim) return;
+        if (generatesHandlersFromStrings.includes(name) && options.includes("--disallow-code-generation-from-strings"))
+          return;
+        const variant = join(folder, `${name}-variant${isWindows ? ".exe" : ""}`);
+        built(
+          await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              ...options,
+              ...flags,
+              "--target=bun",
+              entry,
+              "--outfile",
+              variant,
+            ],
+            folder,
+            bunEnv,
+          ),
+        );
+        using server = await startServer([variant], folder, bunEnv);
+        using reference = await startCompiled();
+        for (const route of routes) {
+          expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+            route: route.name,
+            status: 200,
+            type: route.type,
+            body: route.expectedBody,
+          });
         }
-      }
-      expect((await fetch(server.origin + "/nothing")).status).toBe(404);
-    }, 240_000);
+        for (const route of routes.filter(route => route.method === "POST")) {
+          for (const [description, request] of Object.entries(invalidOrders)) {
+            const expected = await sendRequest(reference.origin, route, request);
+            expect({ route: route.name, description, ...(await sendRequest(server.origin, route, request)) }).toEqual({
+              route: route.name,
+              description,
+              ...expected,
+            });
+          }
+        }
+        expect((await fetch(server.origin + "/nothing")).status).toBe(404);
+      },
+      240_000,
+    );
 
     test("handles edge-case requests like a build without --aot", async () => {
       const withoutAot = join(folder, `${name}-no-aot${isWindows ? ".exe" : ""}`);
-      built(await spawned([bunExe(), "build", "--compile", ...flags, "--target=bun", entry, "--outfile", withoutAot], folder, bunEnv));
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", ...flags, "--target=bun", entry, "--outfile", withoutAot],
+          folder,
+          bunEnv,
+        ),
+      );
       using server = await startCompiled();
       using reference = await startServer([withoutAot], folder, bunEnv);
       const collectResponses = async (origin: string) => {
@@ -250,36 +348,52 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
       expect(actual).toEqual(expected);
     });
 
-    test.skipIf(name !== "tanstack")("renders pages like Bun without --aot", async () => {
-      using server = await startCompiled();
-      using reference = await startServer([bunExe(), entry], folder, bunEnv);
-      const statuses: Record<string, number> = {};
-      for (const path of ["/", "/items", "/items/7", "/items/700", "/contacts", "/deferred", "/redirects", "/broken", "/search", "/search?page=2&word=Item", "/search?page=x"]) {
-        const page: Route = { name: path, method: "GET", path, type: "text/html", expectedBody: "" };
-        // Pages embed the time their data was loaded, in milliseconds.
-        const fetchPage = async (origin: string) => {
-          const response = await sendRequest(origin, page);
-          return { ...response, body: response.body.replace(/\b\d{13}\b/g, "<time>") };
-        };
-        const expected = await fetchPage(reference.origin);
-        statuses[path] = expected.status;
-        for (let n = 0; n < 100; n++) expect(await fetchPage(server.origin)).toEqual(expected);
-      }
-      // The router redirects non-canonical search params to their canonical form.
-      expect(statuses).toEqual({
-        "/": 200,
-        "/items": 200,
-        "/items/7": 200,
-        "/items/700": 404,
-        "/contacts": 200,
-        "/deferred": 200,
-        "/redirects": 307,
-        "/broken": 500,
-        "/search": 307,
-        "/search?page=2&word=Item": 200,
-        "/search?page=x": 307,
-      });
-    }, 60_000);
+    test.skipIf(name !== "tanstack")(
+      "renders pages like Bun without --aot",
+      async () => {
+        using server = await startCompiled();
+        using reference = await startServer([bunExe(), entry], folder, bunEnv);
+        const statuses: Record<string, number> = {};
+        for (const path of [
+          "/",
+          "/items",
+          "/items/7",
+          "/items/700",
+          "/contacts",
+          "/deferred",
+          "/redirects",
+          "/broken",
+          "/search",
+          "/search?page=2&word=Item",
+          "/search?page=x",
+        ]) {
+          const page: Route = { name: path, method: "GET", path, type: "text/html", expectedBody: "" };
+          // Pages embed the time their data was loaded, in milliseconds.
+          const fetchPage = async (origin: string) => {
+            const response = await sendRequest(origin, page);
+            return { ...response, body: response.body.replace(/\b\d{13}\b/g, "<time>") };
+          };
+          const expected = await fetchPage(reference.origin);
+          statuses[path] = expected.status;
+          for (let n = 0; n < 100; n++) expect(await fetchPage(server.origin)).toEqual(expected);
+        }
+        // The router redirects non-canonical search params to their canonical form.
+        expect(statuses).toEqual({
+          "/": 200,
+          "/items": 200,
+          "/items/7": 200,
+          "/items/700": 404,
+          "/contacts": 200,
+          "/deferred": 200,
+          "/redirects": 307,
+          "/broken": 500,
+          "/search": 307,
+          "/search?page=2&word=Item": 200,
+          "/search?page=x": 307,
+        });
+      },
+      60_000,
+    );
   });
 
   describe.each(["go", "rust"].filter(name => requestedServers?.split(",").includes(name)))("%s", name => {
@@ -292,11 +406,19 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
       expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
       using server = await startServer([executable], app, bunEnv);
       for (const route of routes.filter(route => route.name !== "hand" && route.name !== "typed")) {
-        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+          route: route.name,
+          status: 200,
+          type: route.type,
+          body: route.expectedBody,
+        });
         if (route.method !== "POST") continue;
         for (const [description, request] of Object.entries(invalidOrders)) {
           // encoding/json and serde treat a null optional field like a missing one.
-          expect({ description, status: (await sendRequest(server.origin, route, request)).status }).toEqual({ description, status: description === "a coupon that is null" ? 200 : 400 });
+          expect({ description, status: (await sendRequest(server.origin, route, request)).status }).toEqual({
+            description,
+            status: description === "a coupon that is null" ? 200 : 400,
+          });
         }
       }
     }, 300_000);

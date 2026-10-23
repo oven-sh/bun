@@ -132,11 +132,23 @@ fn typed_version_by_condition() {
         assert!(!files.hir(shapes).is_js);
         assert!(files.hir(shapes).is_typed_version);
         assert_eq!(&*files.hir(shapes).text, TYPED_SHAPES.as_bytes());
-        assert!(files.module(shapes).file_name().ends_with(b"/shapes/index.js"));
-        assert!(files.diagnostic_path(shapes).ends_with(b"/shapes/index.sound.ts"));
+        assert!(
+            files
+                .module(shapes)
+                .file_name()
+                .ends_with(b"/shapes/index.js")
+        );
+        assert!(
+            files
+                .diagnostic_path(shapes)
+                .ends_with(b"/shapes/index.sound.ts")
+        );
         let compiled = files.compiled(shapes).expect("a file with code");
         assert_eq!(compiled.rejected_typed_version, None);
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Package));
+        assert_eq!(
+            compiled.typed_version_origin,
+            Some(TypedVersionOrigin::Package)
+        );
     });
 }
 
@@ -160,7 +172,10 @@ fn typed_version_with_syntax_error_is_rejected() {
         assert_eq!(rejected.kind, ErasureMismatchKind::NodeKind);
         assert!(rejected.path.ends_with(b"/shapes/index.sound.ts"));
         assert_eq!(rejected.installed_range, (0, 0));
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Package));
+        assert_eq!(
+            compiled.typed_version_origin,
+            Some(TypedVersionOrigin::Package)
+        );
     });
 }
 
@@ -194,14 +209,19 @@ fn unused_imports(main_text: &str) -> Vec<BString> {
             "node_modules/react/package.json",
             r#"{ "name": "react", "version": "19.0.0", "main": "index.js" }"#,
         ),
-        ("node_modules/react/index.js", "exports.createElement = function () {};"),
+        (
+            "node_modules/react/index.js",
+            "exports.createElement = function () {};",
+        ),
     ];
     with_program(&files, &["./main.tsx"], 1, |program| {
         let files = program.files();
         let main = file_at(files, "main.tsx");
         let unused = files.analysis(main).unused_import_symbols.iter();
         let names = unused.map(|&symbol| files.bound(main).symbol(symbol).name);
-        names.map(|name| BString::from(files.atoms.bytes(name))).collect()
+        names
+            .map(|name| BString::from(files.atoms.bytes(name)))
+            .collect()
     })
 }
 
@@ -234,15 +254,23 @@ fn typed_version_from_host() {
         typed_versions: &[("shapes.js", "shapes.sound.ts")],
         ..HostScript::default()
     };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.js", |program| {
-        let files = program.files();
-        let shapes = file_at(files, "shapes.js");
-        assert_eq!(files.role(shapes), FileRole::Checked);
-        assert_eq!(&*files.hir(shapes).text, TYPED_SHAPES.as_bytes());
-        assert!(files.diagnostic_path(shapes).ends_with(b"/shapes.sound.ts"));
-        let compiled = files.compiled(shapes).expect("a file with code");
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Host));
-    });
+    with_host(
+        &ScriptedHost(&disk, script),
+        PROJECT,
+        "./main.js",
+        |program| {
+            let files = program.files();
+            let shapes = file_at(files, "shapes.js");
+            assert_eq!(files.role(shapes), FileRole::Checked);
+            assert_eq!(&*files.hir(shapes).text, TYPED_SHAPES.as_bytes());
+            assert!(files.diagnostic_path(shapes).ends_with(b"/shapes.sound.ts"));
+            let compiled = files.compiled(shapes).expect("a file with code");
+            assert_eq!(
+                compiled.typed_version_origin,
+                Some(TypedVersionOrigin::Host)
+            );
+        },
+    );
 }
 
 const TWO_MACRO_CALLS: &str = r#"import { m } from "./m.ts" with { type: "macro" };
@@ -280,16 +308,23 @@ fn macro_rounds_end_without_new_result() {
 
 #[test]
 fn package_type_applies_to_typescript() {
-    let module_package = [("package.json", r#"{ "type": "module" }"#), ("main.ts", "export {};")];
+    let module_package = [
+        ("package.json", r#"{ "type": "module" }"#),
+        ("main.ts", "export {};"),
+    ];
     with_program(&module_package, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let compiled = files.compiled(file_at(files, "main.ts")).expect("a file with code");
+        let compiled = files
+            .compiled(file_at(files, "main.ts"))
+            .expect("a file with code");
         assert!(compiled.is_package_type_module);
         assert_eq!(compiled.declared_module_type, DeclaredModuleType::Esm);
     });
     with_program(&[("main.ts", "export {};")], &["./main.ts"], 1, |program| {
         let files = program.files();
-        let compiled = files.compiled(file_at(files, "main.ts")).expect("a file with code");
+        let compiled = files
+            .compiled(file_at(files, "main.ts"))
+            .expect("a file with code");
         assert!(!compiled.is_package_type_module);
         assert_eq!(compiled.declared_module_type, DeclaredModuleType::Unknown);
     });

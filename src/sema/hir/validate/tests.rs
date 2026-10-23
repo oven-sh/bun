@@ -65,7 +65,11 @@ fn only_strings_are_template_literals() {
 #[test]
 fn branches_are_in_range() {
     let mut file = FileBuilder::default();
-    let (test, yes, no) = (add_name(&mut file), add_name(&mut file), add_name(&mut file));
+    let (test, yes, no) = (
+        add_name(&mut file),
+        add_name(&mut file),
+        add_name(&mut file),
+    );
     let branches = file.store_branches(Branches { yes, no });
     let conditional = file.expr(ExprKind::Cond { test, branches }, 0, 0);
     assert_eq!(validate_statement(file, conditional), Ok(()));
@@ -75,7 +79,10 @@ fn branches_are_in_range() {
     let no = ExprId(9);
     let branches = file.store_branches(Branches { yes, no });
     let conditional = file.expr(ExprKind::Cond { test, branches }, 0, 0);
-    assert_eq!(validate_statement(file, conditional), Err(FileRule::IdOutOfRange));
+    assert_eq!(
+        validate_statement(file, conditional),
+        Err(FileRule::IdOutOfRange)
+    );
 }
 
 #[test]
@@ -96,7 +103,10 @@ fn type_arguments_are_in_range() {
     let mut file = FileBuilder::default();
     let type_args = file.store_list(IdList::<TypeNodeId>::new(90, 1));
     let call = add_call(&mut file, type_args);
-    assert_eq!(validate_statement(file, call), Err(FileRule::ListOutOfRange));
+    assert_eq!(
+        validate_statement(file, call),
+        Err(FileRule::ListOutOfRange)
+    );
 }
 
 #[test]
@@ -128,7 +138,10 @@ fn with_statement_is_after_its_parts() {
     assert_eq!(validate(file), Err(FileRule::OperandAfterExpression));
 }
 
-fn put_around_name(end_of_outer: u32, wrap: impl FnOnce(ExprId, TypeNodeId) -> ExprKind) -> Result<(), FileRule> {
+fn put_around_name(
+    end_of_outer: u32,
+    wrap: impl FnOnce(ExprId, TypeNodeId) -> ExprKind,
+) -> Result<(), FileRule> {
     let mut file = FileBuilder::default();
     let outer = file.expr(ExprKind::Ident(known::require), 0, 7);
     let name = file.expr(ExprKind::Ident(known::require), 0, 7);
@@ -140,9 +153,15 @@ fn put_around_name(end_of_outer: u32, wrap: impl FnOnce(ExprId, TypeNodeId) -> E
 
 #[test]
 fn only_a_cast_that_takes_no_room_in_the_text_stands_in_front_of_its_operand() {
-    assert_eq!(put_around_name(7, |expr, ty| ExprKind::As { expr, ty }), Ok(()));
+    assert_eq!(
+        put_around_name(7, |expr, ty| ExprKind::As { expr, ty }),
+        Ok(())
+    );
     let after = Err(FileRule::OperandAfterExpression);
-    assert_eq!(put_around_name(14, |expr, ty| ExprKind::As { expr, ty }), after);
+    assert_eq!(
+        put_around_name(14, |expr, ty| ExprKind::As { expr, ty }),
+        after
+    );
     assert_eq!(put_around_name(7, |expr, _| ExprKind::NonNull(expr)), after);
 }
 

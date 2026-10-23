@@ -4,7 +4,12 @@ import { tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
-import { coffRecordSectionName, namedBytesOfPe, readCoffGraph, sectionInFile } from "../../../scripts/build/trim/coff-graph.ts";
+import {
+  coffRecordSectionName,
+  namedBytesOfPe,
+  readCoffGraph,
+  sectionInFile,
+} from "../../../scripts/build/trim/coff-graph.ts";
 import { readEntryPoints } from "../../../scripts/build/trim/entry-points.ts";
 import { nodeAt } from "../../../scripts/build/trim/graph.ts";
 import { itemsOf } from "../../../scripts/build/trim/icu-data.ts";
@@ -99,7 +104,9 @@ async function expectFeatureRemoved(folder: string, machine: Machine) {
   const program = await linked(folder, { machine });
   const { executable, trimmedExecutable, addressOf, featuresOf, summary, soundness } = program;
   expect(peImage(executable).isArm64).toBe(machine === "arm64");
-  expect(["feature_code", "feature_code_0", "feature_code_1499", "entered", "feature_numbers"].map(featuresOf)).toEqual([[Extra], [Extra], [Extra], [Extra], [Extra]]);
+  expect(["feature_code", "feature_code_0", "feature_code_1499", "entered", "feature_numbers"].map(featuresOf)).toEqual(
+    [[Extra], [Extra], [Extra], [Extra], [Extra]],
+  );
   expect(["retained", "main", "retained_table"].map(featuresOf)).toEqual([undefined, undefined, undefined]);
   expect(addressOf("feature_table")).toBe(addressOf("retained_table"));
   expect(summary.removedBytes).toBeGreaterThan(100_000);
@@ -120,10 +127,13 @@ describeLink("a trimmable link with lld-link", () => {
     await expectFeatureRemoved(String(dir), "x64");
   });
 
-  test.skipIf(arm64SkipReason !== undefined)("does the same for arm64, with ADDR64 records and brk as fill", async () => {
-    using dir = tempDir("trim-coff-arm64", largeSources);
-    await expectFeatureRemoved(String(dir), "arm64");
-  });
+  test.skipIf(arm64SkipReason !== undefined)(
+    "does the same for arm64, with ADDR64 records and brk as fill",
+    async () => {
+      using dir = tempDir("trim-coff-arm64", largeSources);
+      await expectFeatureRemoved(String(dir), "arm64");
+    },
+  );
 
   test("writes the four review files, the table and the state, and no record", async () => {
     using dir = tempDir("trim-coff-sections", sources);
@@ -167,7 +177,9 @@ describeLink("a trimmable link with lld-link", () => {
     });
     const program = await linked(String(dir), { objects: ["feature_code", "entry", "one", "two", "embedder", "main"] });
     expect(["from_one", "from_two"].map(program.featuresOf)).toEqual([undefined, [Extra]]);
-    const helpers = program.symbols.filter(([name]) => name === "helper").map(([, address]) => program.featuresAt(address));
+    const helpers = program.symbols
+      .filter(([name]) => name === "helper")
+      .map(([, address]) => program.featuresAt(address));
     expect(helpers).toHaveLength(2);
     expect(helpers).toContainEqual(undefined);
     expect(helpers).toContainEqual([Extra]);
@@ -175,11 +187,16 @@ describeLink("a trimmable link with lld-link", () => {
   });
 
   test("finds an unmarked entry point that the link compiles from bitcode, and deletes the compiled objects", async () => {
-    using dir = tempDir("trim-coff-bitcode", { ...sources, "entry.c": `int feature_code(int); int entered(int x) { return feature_code(x) * 3 + feature_code(x + 1); }` });
+    using dir = tempDir("trim-coff-bitcode", {
+      ...sources,
+      "entry.c": `int feature_code(int); int entered(int x) { return feature_code(x) * 3 + feature_code(x + 1); }`,
+    });
     const folder = String(dir);
     const program = await linked(folder, { compileFlags: { entry: thinLtoFlags, main: thinLtoFlags } });
     expect(program.featuresOf("entered")).toEqual([Extra]);
-    expect([...readdirSync(folder), ...readdirSync(join(folder, "work"))].filter(name => name.includes(".lto."))).toEqual([]);
+    expect(
+      [...readdirSync(folder), ...readdirSync(join(folder, "work"))].filter(name => name.includes(".lto.")),
+    ).toEqual([]);
     expectCleanRuns(program);
   });
 
@@ -208,7 +225,9 @@ describeLink("a trimmable link with lld-link", () => {
     const { executable, trimmedExecutable, featuresOf, trimmedResult } = await linked(folder);
     expect(featuresOf("feature_pointers")).toEqual([Extra]);
     const relocationBytes = (path: string) => readPe(path).directoryBytes(baseRelocationDirectory).length;
-    expect(relocationBytes(executable) - relocationBytes(trimmedExecutable)).toBeGreaterThanOrEqual(60 * fullBlockBytes);
+    expect(relocationBytes(executable) - relocationBytes(trimmedExecutable)).toBeGreaterThanOrEqual(
+      60 * fullBlockBytes,
+    );
     if (trimmedResult === undefined) return;
     for (let attempt = 0; attempt < 10; attempt++) expect(await exitCodeOf(folder, "trimmed.exe")).toBe(0);
   });
@@ -343,7 +362,11 @@ describeLink("retained code reaches a feature's code by", () => {
       const { linkFlags, archives, afterCompile } = reach;
       const program = await linked(String(dir), { objects: moreObjects, linkFlags, archives, afterCompile });
       expect(reach.retained.map(program.featuresOf)).toEqual(reach.retained.map(() => undefined));
-      expect(["feature_code", "feature_code_0", "feature_code_1499"].map(program.featuresOf)).toEqual([[Extra], [Extra], [Extra]]);
+      expect(["feature_code", "feature_code_0", "feature_code_1499"].map(program.featuresOf)).toEqual([
+        [Extra],
+        [Extra],
+        [Extra],
+      ]);
       reach.check?.(program);
       expectCleanRuns(program);
     });
@@ -362,13 +385,21 @@ int main(int argc, char**) {
   return 0;
 }
 `;
-const rustFiles = (toy: string) => ({ ...sources, "embedder.cpp": embedderSource("coff", { stateFromRust: true }), "toy.rs": toy, "main.cpp": rustMain });
+const rustFiles = (toy: string) => ({
+  ...sources,
+  "embedder.cpp": embedderSource("coff", { stateFromRust: true }),
+  "toy.rs": toy,
+  "main.cpp": rustMain,
+});
 
 async function compileRustInputs(folder: string): Promise<LinkOptions | undefined> {
   const target = triple("x64");
   const crate = rustc === null ? undefined : await buildGuardCrate(folder, rustc, target);
   if (crate === undefined) {
-    skipNotice(testFile, `rustc is not on PATH or cannot build the guard crate for ${target}: the cases in Rust do not run`);
+    skipNotice(
+      testFile,
+      `rustc is not on PATH or cannot build the guard crate for ${target}: the cases in Rust do not run`,
+    );
     return undefined;
   }
   const library = await compileRust(folder, rustc!, crate, "toy.rs", { target });
@@ -379,9 +410,16 @@ describeLink("each stub", () => {
   test("from the C++ header behaves as its kind specifies", async () => {
     using dir = tempDir("trim-coff-stubs", { ...sources, "spellings.cpp": spellingsSource });
     const folder = String(dir);
-    const program = await linked(folder, { objects: ["feature_code", "embedder", "spellings"], linkFlags: [printfLibrary] });
+    const program = await linked(folder, {
+      objects: ["feature_code", "embedder", "spellings"],
+      linkFlags: [printfLibrary],
+    });
     const { executable, trimmedExecutable, featuresOf, programResult, trimmedResult } = program;
-    const listedStubs = entryPointsText(folder, output).split(foldedEntryPointsHeading)[0]!.trimEnd().split("\n").map(line => line.split(" ")[1]!);
+    const listedStubs = entryPointsText(folder, output)
+      .split(foldedEntryPointsHeading)[0]!
+      .trimEnd()
+      .split("\n")
+      .map(line => line.split(" ")[1]!);
     expect([...new Set(listedStubs)].sort()).toEqual(spellingsStubs);
     expect(spellingsEntryPoints.map(featuresOf)).toEqual(spellingsEntryPoints.map(() => [Extra]));
     const retained = [...spellingsGuardFunctions, "main", "replacement"];
@@ -392,7 +430,9 @@ describeLink("each stub", () => {
       expect(await exitCodeOf(folder, "trimmed.exe", ["abort"])).toBe(70);
     }
     expect(() => trimExecutable(trimmedExecutable, join(folder, "again.exe"), [Extra])).toThrow("(AlreadyTrimmed)");
-    expect(() => trimExecutable(executable, join(folder, "again.exe"), ["NoSuchFeature"])).toThrow(`unknown feature "NoSuchFeature"`);
+    expect(() => trimExecutable(executable, join(folder, "again.exe"), ["NoSuchFeature"])).toThrow(
+      `unknown feature "NoSuchFeature"`,
+    );
   });
 
   test("from the Rust crate behaves as its kind specifies", async () => {
@@ -410,7 +450,10 @@ describeLink("each stub", () => {
     if (programResult === undefined || trimmedResult === undefined) return;
     expect(programResult.stdout.trim()).toBe("1 1 7 0 0");
     expect(trimmedResult.stdout.trim()).toBe("0 0 0 1 1");
-    expect([await exitCodeOf(folder, "trimmed.exe", ["a"]), await exitCodeOf(folder, "trimmed.exe", ["a", "b"])]).toEqual([70, 70]);
+    expect([
+      await exitCodeOf(folder, "trimmed.exe", ["a"]),
+      await exitCodeOf(folder, "trimmed.exe", ["a", "b"]),
+    ]).toEqual([70, 70]);
   });
 });
 
@@ -440,11 +483,20 @@ describeLink("two features", () => {
   const objects = ["feature_code", "entry", "other", "embedder", "main"];
 
   test("record a requirement when one calls the other's entry point directly", async () => {
-    using dir = tempDir("trim-coff-requires", { ...sources, "entry.c": entryCalling("entry_of_other"), "other.c": otherSource, "main.cpp": guardsBoth });
+    using dir = tempDir("trim-coff-requires", {
+      ...sources,
+      "entry.c": entryCalling("entry_of_other"),
+      "other.c": otherSource,
+      "main.cpp": guardsBoth,
+    });
     const folder = String(dir);
     const { table, featuresOf } = await linked(folder, { objects });
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true }]);
-    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toStartWith(`${Extra} requires ${Other}: 1 references`);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
+    ]);
+    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toStartWith(
+      `${Extra} requires ${Other}: 1 references`,
+    );
     expect(featuresOf("entry_of_other")).toEqual([Other]);
   });
 
@@ -459,9 +511,16 @@ extern "C" int entered(int x) { return feature_code(x) * 3 + ${guard(Other, "Abo
       "main.cpp": guardsBoth,
     });
     const folder = String(dir);
-    const program = await linked(folder, { objects: ["feature_code", "guarding", "other", "embedder", "main"], removed: [Other] });
-    expect(program.table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true }]);
-    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toBe(`${Extra} enters ${Other}: aborting guard\n`);
+    const program = await linked(folder, {
+      objects: ["feature_code", "guarding", "other", "embedder", "main"],
+      removed: [Other],
+    });
+    expect(program.table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true },
+    ]);
+    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toBe(
+      `${Extra} enters ${Other}: aborting guard\n`,
+    );
     expectCleanRuns(program);
   });
 
@@ -470,7 +529,9 @@ extern "C" int entered(int x) { return feature_code(x) * 3 + ${guard(Other, "Abo
     const folder = String(dir);
     const both = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
     const { table, featuresOf } = await linked(folder, { objects: builtinEnteringOtherObjects, builtins: both });
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false }]);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
+    ]);
     expect(["entered_as_builtin", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
     const one = [builtinUsing(spelledBuiltin, "toy.extra", Extra)];
     expectLinkFailure(folder, output, await wrapped(folder, { objects: builtinEnteringOtherObjects, builtins: one }), [
@@ -480,7 +541,8 @@ extern "C" int entered(int x) { return feature_code(x) * 3 + ${guard(Other, "Abo
   });
 
   test("with equal entry points fold into one body, removed only with both", async () => {
-    const equalEntry = (name: string) => `int ${name}(int x) { for (int i = 0; i < 5; i++) x += feature_code(x + i) * 3 + feature_code(x ^ i); return x; }`;
+    const equalEntry = (name: string) =>
+      `int ${name}(int x) { for (int i = 0; i < 5; i++) x += feature_code(x + i) * 3 + feature_code(x ^ i); return x; }`;
     using dir = tempDir("trim-coff-folded", {
       ...sources,
       "entry.c": `int feature_code(int); ${equalEntry("entered")} ${equalEntry("entry_of_other")}`,
@@ -494,14 +556,19 @@ int main(int argc, char**) {
 `,
     });
     const folder = String(dir);
-    const { executable, table, addressOf, featuresOf, retainedAddresses, programResult } = await linked(folder, { objects: guardObjects });
+    const { executable, table, addressOf, featuresOf, retainedAddresses, programResult } = await linked(folder, {
+      objects: guardObjects,
+    });
     expect(addressOf("entered")).toBe(addressOf("entry_of_other"));
     expect(featuresOf("entered")).toEqual(byIndex(Extra, Other));
     const withoutBoth = "without-both.exe";
     trimExecutable(executable, join(folder, withoutBoth), [Extra, Other]);
     expectSoundPe({ folder, table, removed: [Extra, Other], retainedAddresses, trimmedName: withoutBoth });
     if (programResult === undefined) return;
-    const exitCodes = async (name: string) => [await exitCodeOf(folder, name, ["a"]), await exitCodeOf(folder, name, ["a", "b"])];
+    const exitCodes = async (name: string) => [
+      await exitCodeOf(folder, name, ["a"]),
+      await exitCodeOf(folder, name, ["a", "b"]),
+    ];
     const originalCodes = await exitCodes(output);
     expect(originalCodes).not.toContain(70);
     expect(await exitCodes("trimmed.exe")).toEqual([70, originalCodes[1]!]);
@@ -522,7 +589,9 @@ function readLink(folder: string) {
     executable: pathOf(output),
     chunkMap: pathOf("program.lldmap"),
     symbolMap: pathOf("program.map"),
-    inputs: readFileSync(pathOf("in.rsp"), "utf8").split("\n").filter(line => line !== ""),
+    inputs: readFileSync(pathOf("in.rsp"), "utf8")
+      .split("\n")
+      .filter(line => line !== ""),
     libraryFolders: libraryFolders("x64"),
     alternateNames: [],
   });
@@ -547,11 +616,20 @@ describeLink("the reader of lld-link's maps", () => {
     const reading = readLink(folder);
     const { entryPoints, failures, statistics } = readEntryPoints(reading, model);
     expect(failures).toEqual([]);
-    expect(statistics).toEqual({ records: 3, deadGuards: 1, guardsInsideEntryPoint: 0, definitions: 0 });
+    expect(statistics).toEqual({
+      records: 3,
+      deadGuards: 1,
+      guardsInsideEntryPoint: 0,
+      definitions: 0,
+      guardsOfEmptyEntryPoints: 0,
+    });
     expect(entryPoints).toHaveLength(1);
-    if (objcopy === null) return skipNotice(testFile, "llvm-objcopy is not on PATH: the link without records does not run");
+    if (objcopy === null)
+      return skipNotice(testFile, "llvm-objcopy is not on PATH: the link without records does not run");
     for (const name of inlineGuardOptions.objects!) {
-      expect((await run([objcopy, `--remove-section=${coffRecordSectionName}`, `${name}.obj`], folder)).exitCode).toBe(0);
+      expect((await run([objcopy, `--remove-section=${coffRecordSectionName}`, `${name}.obj`], folder)).exitCode).toBe(
+        0,
+      );
     }
     expect((await run(command, folder)).exitCode).toBe(0);
     const withoutRecords = readLink(folder);
@@ -570,13 +648,18 @@ describeLink("the reader of lld-link's maps", () => {
   });
 
   test("reports a reference to a name the symbol map does not list", async () => {
-    using dir = tempDir("trim-coff-unresolved", { ...sources, "main.cpp": mainSource("int feature_code_7(int);", "feature_code_7(argc) & 0") });
+    using dir = tempDir("trim-coff-unresolved", {
+      ...sources,
+      "main.cpp": mainSource("int feature_code_7(int);", "feature_code_7(argc) & 0"),
+    });
     const folder = String(dir);
     await plainLink(folder, { objects: guardObjects });
     const symbolMap = join(folder, "program.map");
     const lines = readFileSync(symbolMap, "latin1").split("\n");
     writeFileSync(symbolMap, lines.filter(line => !line.split(/\s+/).includes("feature_code_7")).join("\n"), "latin1");
-    expect(readLink(folder).failures).toContainEqual(expect.objectContaining({ kind: "UnresolvedReference", target: "feature_code_7" }));
+    expect(readLink(folder).failures).toContainEqual(
+      expect.objectContaining({ kind: "UnresolvedReference", target: "feature_code_7" }),
+    );
   });
 
   test("does not report a name that only sections outside the image refer to", async () => {
@@ -604,9 +687,15 @@ describeLink("the reader of lld-link's maps", () => {
     };
     const withoutTables = await countSymbolsOutsideGraph([...defaultObjects, "callee"]);
     expect(await countSymbolsOutsideGraph([...defaultObjects, "callee", "tables"])).toBeGreaterThan(withoutTables);
-    expect(readFileSync(join(folder, "program.lldmap"), "latin1")).toMatch(/^[0-9a-f]{8} 00000018 .*tables\.obj:\(\.rdata\)\r?$/m);
-    const listedNames = new Set(namedBytesOfPe(join(folder, output), join(folder, "program.map")).symbols.map(([name]) => name));
-    expect(["collected_table", "collected_first", "collected_callee"].filter(name => listedNames.has(name))).toEqual([]);
+    expect(readFileSync(join(folder, "program.lldmap"), "latin1")).toMatch(
+      /^[0-9a-f]{8} 00000018 .*tables\.obj:\(\.rdata\)\r?$/m,
+    );
+    const listedNames = new Set(
+      namedBytesOfPe(join(folder, output), join(folder, "program.map")).symbols.map(([name]) => name),
+    );
+    expect(["collected_table", "collected_first", "collected_callee"].filter(name => listedNames.has(name))).toEqual(
+      [],
+    );
   });
 
   test("reports an object deleted after the link", async () => {
@@ -619,7 +708,11 @@ describeLink("the reader of lld-link's maps", () => {
     const folder = String(dir);
     await plainLink(folder, { objects: moreObjects });
     rmSync(join(folder, "more.obj"));
-    expect(readLink(folder).failures).toContainEqual({ kind: "UnreadInput", object: join(folder, "more.obj"), reason: "NotFound" });
+    expect(readLink(folder).failures).toContainEqual({
+      kind: "UnreadInput",
+      object: join(folder, "more.obj"),
+      reason: "NotFound",
+    });
   });
 
   test("reports two archive members with the same name", async () => {
@@ -630,8 +723,13 @@ describeLink("the reader of lld-link's maps", () => {
       "main.cpp": mainSource("int from_a(int); int from_b(int);", "from_a(argc) + from_b(argc) == 5 ? 0 : 1"),
     });
     const folder = String(dir);
-    await plainLink(folder, { objects: [...guardObjects, "a/same", "b/same"], archives: { "a/shelf.lib": ["a/same"], "b/shelf.lib": ["b/same"] } });
-    expect(readLink(folder).failures).toContainEqual(expect.objectContaining({ kind: "UnreadInput", reason: "AmbiguousArchiveMember" }));
+    await plainLink(folder, {
+      objects: [...guardObjects, "a/same", "b/same"],
+      archives: { "a/shelf.lib": ["a/same"], "b/shelf.lib": ["b/same"] },
+    });
+    expect(readLink(folder).failures).toContainEqual(
+      expect.objectContaining({ kind: "UnreadInput", reason: "AmbiguousArchiveMember" }),
+    );
   });
 
   test("cannot write a table into an executable without the section reserved for it", async () => {
@@ -639,25 +737,51 @@ describeLink("the reader of lld-link's maps", () => {
     const folder = String(dir);
     const command = await plainLink(folder);
     const { features, builtinUses, libraries } = writeLinkInputs(folder);
-    const arguments_ = parseArguments(["bun", "link.ts", join(folder, "work"), features, builtinUses, libraries, "--", ...command]);
+    const arguments_ = parseArguments([
+      "bun",
+      "link.ts",
+      join(folder, "work"),
+      features,
+      builtinUses,
+      libraries,
+      "--",
+      ...command,
+    ]);
     expect(() => coff(createLinker(arguments_).linker).writeTable(Buffer.alloc(8))).toThrow(BuildError);
   });
 });
 
 describeLink("the link fails", () => {
   test("on retained code that calls an entry point without its guard", async () => {
-    using dir = tempDir("trim-coff-fails", { ...sources, "main.cpp": mainSource("NEVER_INLINE int calls_directly(int x) { return entered(x); }", "calls_directly(argc) & 0") });
+    using dir = tempDir("trim-coff-fails", {
+      ...sources,
+      "main.cpp": mainSource(
+        "NEVER_INLINE int calls_directly(int x) { return entered(x); }",
+        "calls_directly(argc) & 0",
+      ),
+    });
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, { objects: guardObjects }), ["EntryPointReferencedByRetainedCode", "calls_directly", "entered", "main"]);
+    expectLinkFailure(folder, output, await wrapped(folder, { objects: guardObjects }), [
+      "EntryPointReferencedByRetainedCode",
+      "calls_directly",
+      "entered",
+      "main",
+    ]);
   });
 
   test("on retained code that calls an entry point by a name the link command defines", async () => {
     using dir = tempDir("trim-coff-fails", {
       ...sources,
-      "main.cpp": mainSource("int another_name(int); NEVER_INLINE int calls_alias(int x) { return another_name(x); }", "calls_alias(argc) & 0"),
+      "main.cpp": mainSource(
+        "int another_name(int); NEVER_INLINE int calls_alias(int x) { return another_name(x); }",
+        "calls_alias(argc) & 0",
+      ),
     });
     const folder = String(dir);
-    const linkResult = await wrapped(folder, { objects: guardObjects, linkFlags: ["/alternatename:another_name=entered"] });
+    const linkResult = await wrapped(folder, {
+      objects: guardObjects,
+      linkFlags: ["/alternatename:another_name=entered"],
+    });
     expectLinkFailure(folder, output, linkResult, ["EntryPointReferencedByRetainedCode", "calls_alias", "entered"]);
   });
 
@@ -671,7 +795,11 @@ int main(int argc, char**) { if (argc > 5) ${guard(Extra, "ReturnDefault", "ente
 `,
     });
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, { objects: guardObjects }), ["EntryPointReferencedByRetainedCode", ".CRT$XCU", "entered_early"]);
+    expectLinkFailure(folder, output, await wrapped(folder, { objects: guardObjects }), [
+      "EntryPointReferencedByRetainedCode",
+      ".CRT$XCU",
+      "entered_early",
+    ]);
   });
 
   test("on a Rust entry point that is always inlined", async () => {
@@ -680,7 +808,8 @@ int main(int argc, char**) { if (argc > 5) ${guard(Extra, "ReturnDefault", "ente
     using dir = tempDir("trim-coff-fails", rustFiles(alwaysInlined));
     const folder = String(dir);
     const options = await compileRustInputs(folder);
-    if (options !== undefined) expectLinkFailure(folder, output, await wrapped(folder, options), ["GuardWithoutReference"]);
+    if (options !== undefined)
+      expectLinkFailure(folder, output, await wrapped(folder, options), ["GuardWithoutReference"]);
   });
 
   test("on a feature below its minimum size, and names what retains the rest", async () => {
@@ -700,13 +829,21 @@ int main(int argc, char**) { if (argc > 5) ${guard(Extra, "ReturnDefault", "ente
 
 describeLink("what the executable exports", () => {
   test("is removed with the features marked exports", async () => {
-    using dir = tempDir("trim-coff-exports", { ...sources, "exported.c": exportedSource, "other.c": otherSource, "main.cpp": guardsBoth });
+    using dir = tempDir("trim-coff-exports", {
+      ...sources,
+      "exported.c": exportedSource,
+      "other.c": otherSource,
+      "main.cpp": guardsBoth,
+    });
     const program = await linked(String(dir), {
       objects: ["feature_code", "entry", "exported", "other", "embedder", "main"],
       linkFlags: ["/export:exported_function", "/export:entry_of_other"],
     });
     expect(exportFeatures).not.toEqual([]);
-    expect(["exported_function", "entry_of_other"].map(program.featuresOf)).toEqual([exportFeatures, byIndex(Other, ...exportFeatures)]);
+    expect(["exported_function", "entry_of_other"].map(program.featuresOf)).toEqual([
+      exportFeatures,
+      byIndex(Other, ...exportFeatures),
+    ]);
     expectCleanRuns(program);
   });
 });
@@ -745,7 +882,10 @@ describeLink("ICU's data package", () => {
     ["icudt99l/zoneinfo64.res", 33],
   ];
   const lineOf = (itemClass: string) => model.icuData.find(line => line.itemClass === itemClass)!;
-  const featuresOfClass = (itemClass: string) => lineOf(itemClass).features.map(indexOf).toSorted((a, b) => a - b);
+  const featuresOfClass = (itemClass: string) =>
+    lineOf(itemClass)
+      .features.map(indexOf)
+      .toSorted((a, b) => a - b);
 
   test("lists its items by class, but not the classes Windows always needs, and loses the items of a removed feature", async () => {
     using dir = tempDir("trim-coff-icu", {
@@ -754,7 +894,10 @@ describeLink("ICU's data package", () => {
       "data.c": String.raw`__asm__(".section .rdata,\"dr\"\n.balign 16\n.globl icudt99_dat\nicudt99_dat:\n.incbin \"package.dat\"\n.text\n");`,
       "main.cpp": mainSource("extern const unsigned char icudt99_dat[];", "icudt99_dat[argc + 1] == 0xda ? 0 : 1"),
     });
-    const program = await linked(String(dir), { objects: ["feature_code", "entry", "embedder", "data", "main"], removed: ["IntlCollation"] });
+    const program = await linked(String(dir), {
+      objects: ["feature_code", "entry", "embedder", "data", "main"],
+      removed: ["IntlCollation"],
+    });
     const { table, addressOf, trimmedExecutable } = program;
     expect(table.icuPackages.map(({ start }) => start)).toEqual([addressOf("icudt99_dat")]);
     const { start, end, runs } = table.icuPackages[0]!;

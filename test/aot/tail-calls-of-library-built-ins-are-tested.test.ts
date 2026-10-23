@@ -22,22 +22,22 @@ const program = `
 `;
 
 describe("a tail call of a built-in that the library implements", () => {
-  test(
-    "is among the uses of the test that its receiver needs",
-    async () => {
-      using dir = tempDir("aot-tail-calls-of-built-ins", { "main.ts": program });
-      const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "PlaceTypeTests", BUN_JSC_aotFunctionToDump: "doubled" };
-      const build = await spawned([bunExe(), "build", "--compile", "--aot", withoutPass("InlineCalls"), "main.ts", "--outfile", "main"], String(dir), env);
-      built(build);
-      const dump = (build.stdout + build.stderr).split("\n");
-      const first = dump.findIndex(line => line.startsWith("AOT IR after PlaceTypeTests"));
-      const end = dump.indexOf("}", first);
-      const body = dump.slice(first, end);
-      expect(body.some(line => line.includes(" = IsPristine "))).toBe(true);
-      expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
-      const run = await spawned(["./main"], String(dir), bunEnv);
-      expect(run.stdout.trim()).toBe("4900");
-    },
-    240_000,
-  );
+  test("is among the uses of the test that its receiver needs", async () => {
+    using dir = tempDir("aot-tail-calls-of-built-ins", { "main.ts": program });
+    const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "PlaceTypeTests", BUN_JSC_aotFunctionToDump: "doubled" };
+    const build = await spawned(
+      [bunExe(), "build", "--compile", "--aot", withoutPass("InlineCalls"), "main.ts", "--outfile", "main"],
+      String(dir),
+      env,
+    );
+    built(build);
+    const dump = (build.stdout + build.stderr).split("\n");
+    const first = dump.findIndex(line => line.startsWith("AOT IR after PlaceTypeTests"));
+    const end = dump.indexOf("}", first);
+    const body = dump.slice(first, end);
+    expect(body.some(line => line.includes(" = IsPristine "))).toBe(true);
+    expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
+    const run = await spawned(["./main"], String(dir), bunEnv);
+    expect(run.stdout.trim()).toBe("4900");
+  }, 240_000);
 });

@@ -126,7 +126,8 @@ fn links_small_program() {
 
 #[test]
 fn closure_that_names_class_declared_behind_return_links() {
-    let source = "function make() {\n  return () => new Late();\n  class Late {}\n}\nconsole.log(make);";
+    let source =
+        "function make() {\n  return () => new Late();\n  class Late {}\n}\nconsole.log(make);";
     link_successfully(&[("a.ts", source), GLOBALS]);
 }
 
@@ -360,14 +361,19 @@ fn only_functions_of_loaded_files_are_registered() {
     for &function in table::STARTUP_FUNCTIONS {
         let is_registered = registered.contains(&function);
         assert_eq!(is_registered, exists_on_host(function), "{function:?}");
-        assert!(!registered_without_modules.contains(&function), "{function:?}");
+        assert!(
+            !registered_without_modules.contains(&function),
+            "{function:?}"
+        );
     }
 }
 
 fn count_folded_strings_over_limit(operand_length: usize) -> u64 {
     let operand = "a".repeat(operand_length);
     let text = format!("console.log(\"{operand}\" + \"{operand}\");");
-    let statistics = link_successfully(&[("a.ts", text.as_str()), GLOBALS]).summary.statistics;
+    let statistics = link_successfully(&[("a.ts", text.as_str()), GLOBALS])
+        .summary
+        .statistics;
     statistics.get(LimitId::MaxFoldedStringBytes.hits())
 }
 
@@ -386,7 +392,10 @@ fn counts_emitted_bytes() {
     let emitted = expect_success(result, &log);
     let size = emitted.bytes.as_slice().len() as u64;
     assert!(size > 0);
-    assert_eq!(emitted.summary.statistics.get(StatisticId::ProgramBytes), size);
+    assert_eq!(
+        emitted.summary.statistics.get(StatisticId::ProgramBytes),
+        size
+    );
 }
 
 fn write_program_to(path: &[u8]) -> (Result<Vec<u8>, BuildFailed>, Log) {
@@ -395,10 +404,12 @@ fn write_program_to(path: &[u8]) -> (Result<Vec<u8>, BuildFailed>, Log) {
     let options = project.options(BUNDLED_LIBS);
     let caches = ThreadCaches::default();
     let mut build = Build::new(&options, &WithoutServices, &caches, LimitValues::for_host());
-    let written = build.run_through_emit(BodyPlacement::InProgramBytes).and_then(|(bytes, _)| {
-        build.write_program_file(&bytes)?;
-        Ok(bytes.as_slice().to_vec())
-    });
+    let written = build
+        .run_through_emit(BodyPlacement::InProgramBytes)
+        .and_then(|(bytes, _)| {
+            build.write_program_file(&bytes)?;
+            Ok(bytes.as_slice().to_vec())
+        });
     let mut log = Log::init();
     let result = build.finish(written, &mut log);
     (result.map(|(bytes, _)| bytes), log)
@@ -536,7 +547,12 @@ fn print_runtime_functions(linked: &LinkedProgram) -> String {
     let mut text = String::new();
     for (index, function) in program.functions.iter().enumerate() {
         if names.module_origin(function.module) == ModuleOrigin::Runtime {
-            print_function(program.name_tables(), FunctionId::new(index), function, &mut text);
+            print_function(
+                program.name_tables(),
+                FunctionId::new(index),
+                function,
+                &mut text,
+            );
         }
     }
     text
@@ -567,7 +583,10 @@ fn projects_share_atoms() {
         assert!(atom.is_some());
         assert_eq!(atoms_of(ProjectId::Runtime).lookup(NAME), atom);
         assert_eq!(loaded.atoms.lookup(NAME), atom);
-        assert_eq!(atoms_of(ProjectId::Runtime).lookup(b"nameNobodyWrites"), None);
+        assert_eq!(
+            atoms_of(ProjectId::Runtime).lookup(b"nameNobodyWrites"),
+            None
+        );
     });
 }
 
@@ -581,7 +600,10 @@ fn erased_types_lower_every_file_as_inferred() {
         let names = &linked.summary.names;
         let checked_functions =
             count_checked_functions(&linked.program, names, ModuleOrigin::Program);
-        let checked_files = linked.summary.statistics.get(StatisticId::SourceFilesChecked);
+        let checked_files = linked
+            .summary
+            .statistics
+            .get(StatisticId::SourceFilesChecked);
         (checked_functions, checked_files)
     };
     assert_eq!(link(true), (0, 1));
@@ -642,18 +664,28 @@ fn count_lowered_files_of_bun(source: &str) -> usize {
 #[test]
 fn small_program_lowers_little_of_bun() {
     let of_empty_program = count_lowered_files_of_bun("export {};\n");
-    assert!(of_empty_program < 70, "{of_empty_program} files of Bun are lowered for nothing");
+    assert!(
+        of_empty_program < 70,
+        "{of_empty_program} files of Bun are lowered for nothing"
+    );
     let computed = "export const loaded = require(process.argv[2]);\n";
     let of_computed_name = count_lowered_files_of_bun(computed);
-    assert!(of_computed_name < 90, "{of_computed_name} files of Bun are lowered for a computed name");
+    assert!(
+        of_computed_name < 90,
+        "{of_computed_name} files of Bun are lowered for a computed name"
+    );
     let listeners = "process.on('exit', () => {});\nprocess.once('SIGINT', () => {});\n";
     let of_listeners = count_lowered_files_of_bun(listeners);
-    assert!(of_listeners < 90, "{of_listeners} files of Bun are lowered for two listeners");
+    assert!(
+        of_listeners < 90,
+        "{of_listeners} files of Bun are lowered for two listeners"
+    );
 }
 
 #[test]
 fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
-    let manifest = r#"{ "name": "tools", "version": "1.0.0", "main": "index.js", "sideEffects": false }"#;
+    let manifest =
+        r#"{ "name": "tools", "version": "1.0.0", "main": "index.js", "sideEffects": false }"#;
     let importer = "import { first, second } from \"tools\";\nconsole.log(1);\nexport function unused() { return first + second; }\n";
     for exports in [
         "Object.assign(exports, { first: 1, second: 2 });\n",
@@ -678,7 +710,10 @@ fn link_error_names_the_files_and_the_import() {
     use crate::load::ProgramFile;
 
     let files = [
-        ("main.js", "import { first } from \"./tools.cjs\";\nconsole.log(first);\n"),
+        (
+            "main.js",
+            "import { first } from \"./tools.cjs\";\nconsole.log(first);\n",
+        ),
         ("tools.cjs", "exports.first = 1;\n"),
         GLOBALS,
     ];
@@ -689,7 +724,10 @@ fn link_error_names_the_files_and_the_import() {
             project,
             file: by_path.get(path).expect("the program has the file"),
         };
-        let (main, module) = (file(b"/project/main.js"), ProgramModule::File(file(b"/project/tools.cjs")));
+        let (main, module) = (
+            file(b"/project/main.js"),
+            ProgramModule::File(file(b"/project/tools.cjs")),
+        );
         let name = loaded.atoms.intern(b"first");
         let described = |key| {
             let error = LinkError::UndefinedVariable {
@@ -707,7 +745,10 @@ fn link_error_names_the_files_and_the_import() {
             "UndefinedVariable: the export `first` of /project/tools.cjs, reached from /project/main.js"
         );
         let missing = LinkError::MissingUnit { file: main };
-        assert_eq!(describe_link_error(loaded, &missing), b"MissingUnit: /project/main.js");
+        assert_eq!(
+            describe_link_error(loaded, &missing),
+            b"MissingUnit: /project/main.js"
+        );
     });
 }
 
@@ -715,13 +756,23 @@ fn link_error_names_the_files_and_the_import() {
 #[test]
 fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
     let importer = "import { first } from \"tools\";\nconsole.log(1);\nexport function unused() { return first; }\n";
-    let commonjs = r#"{ "name": "tools", "version": "1.0.0", "main": "index.js", "sideEffects": false }"#;
+    let commonjs =
+        r#"{ "name": "tools", "version": "1.0.0", "main": "index.js", "sideEffects": false }"#;
     let es = r#"{ "name": "tools", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }"#;
     for (manifest, package) in [
-        (es, "import value from \"data:text/javascript,export default 1\";\nexport const first = value;\n"),
-        (es, "import value from \"https://example.com/a.js\";\nexport const first = value;\n"),
+        (
+            es,
+            "import value from \"data:text/javascript,export default 1\";\nexport const first = value;\n",
+        ),
+        (
+            es,
+            "import value from \"https://example.com/a.js\";\nexport const first = value;\n",
+        ),
         (commonjs, "exports.first = new Function(\"return 1\")();\n"),
-        (commonjs, "exports.first = new Function(\"return new Function('return 1')()\")();\n"),
+        (
+            commonjs,
+            "exports.first = new Function(\"return new Function('return 1')()\")();\n",
+        ),
     ] {
         let (result, log) = link_files(&[
             ("main.js", "import \"./effects.js\";\n"),
@@ -741,15 +792,26 @@ fn list_evaluated_files_of_package(main: &str, page: &str, index: &str) -> Vec<S
         ("page.js", page),
         ("node_modules/lib/package.json", manifest),
         ("node_modules/lib/index.js", index),
-        ("node_modules/lib/a.js", "console.log(1);\nexport function a() {}\n"),
-        ("node_modules/lib/b.js", "console.log(2);\nexport function b() {}\n"),
+        (
+            "node_modules/lib/a.js",
+            "console.log(1);\nexport function a() {}\n",
+        ),
+        (
+            "node_modules/lib/b.js",
+            "console.log(2);\nexport function b() {}\n",
+        ),
         GLOBALS,
     ]);
     let program = &linked.program;
-    let with_body = program.modules.iter().filter(|module| module.body.is_some());
+    let with_body = program
+        .modules
+        .iter()
+        .filter(|module| module.body.is_some());
     let paths = with_body.map(|module| program.strings.get(module.path));
     let in_package = paths.filter_map(|path| path.split_once_str("node_modules/lib/"));
-    let mut files: Vec<String> = in_package.map(|(_, file)| BStr::new(file).to_string()).collect();
+    let mut files: Vec<String> = in_package
+        .map(|(_, file)| BStr::new(file).to_string())
+        .collect();
     files.sort();
     files
 }
@@ -762,7 +824,10 @@ fn file_that_a_call_loads_evaluates_what_it_imports_from() {
     let uses_a = "import { a } from \"lib\";\nexport function page() { a(); }\n";
     let uses_nothing = "import { a } from \"lib\";\nexport function page() {}\n";
     let stars = "console.log(0);\nexport * from \"./a.js\";\nexport * from \"./b.js\";\n";
-    assert_eq!(list_evaluated_files_of_package(by_statement, uses_a, stars), ["a.js"]);
+    assert_eq!(
+        list_evaluated_files_of_package(by_statement, uses_a, stars),
+        ["a.js"]
+    );
     for by_call in [by_import_call, by_require] {
         let evaluated = list_evaluated_files_of_package(by_call, uses_a, stars);
         assert_eq!(evaluated, ["a.js", "b.js", "index.js"], "{by_call}");
@@ -776,7 +841,10 @@ fn file_that_exports_the_object_of_a_module_under_a_name_is_evaluated() {
     let main = "import { page } from \"./page.js\";\npage();\n";
     let page = "import { inner } from \"lib\";\nexport function page() { inner.b(); }\n";
     let index = "console.log(0);\nexport * as inner from \"./b.js\";\nexport * from \"./a.js\";\n";
-    assert_eq!(list_evaluated_files_of_package(main, page, index), ["b.js", "index.js"]);
+    assert_eq!(
+        list_evaluated_files_of_package(main, page, index),
+        ["b.js", "index.js"]
+    );
 }
 
 #[test]
@@ -787,7 +855,9 @@ fn import_of_uncompiled_code_lets_code_load_at_run_time() {
         })
     };
     assert!(can_load_code("import \"https://example.com/a.js\";\n"));
-    assert!(can_load_code("export const a = import(\"data:text/javascript,1\");\n"));
+    assert!(can_load_code(
+        "export const a = import(\"data:text/javascript,1\");\n"
+    ));
     assert!(!can_load_code("import \"node:fs\";\n"));
 }
 
@@ -839,9 +909,14 @@ fn types_of_bun_modules_lead_in_no_circle() {
     let specifiers: Vec<&[u8]> = modules.public_specifiers().collect();
     let mut source = String::new();
     for (index, specifier) in specifiers.iter().enumerate() {
-        source += &format!("import * as module{index} from \"{}\";\n", BStr::new(specifier));
+        source += &format!(
+            "import * as module{index} from \"{}\";\n",
+            BStr::new(specifier)
+        );
     }
-    let names: Vec<String> = (0..specifiers.len()).map(|index| format!("module{index}")).collect();
+    let names: Vec<String> = (0..specifiers.len())
+        .map(|index| format!("module{index}"))
+        .collect();
     source += &format!("globalThis.everyModule = [{}];\n", names.join(", "));
     let project = TestProject::new(&[("a.js", source.as_str())], &default_settings());
     run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
@@ -849,10 +924,16 @@ fn types_of_bun_modules_lead_in_no_circle() {
             let unit_count = build.check_and_lower(loaded, bound).len();
             assert!(unit_count > 150, "{unit_count} files were lowered");
             let files = loaded.projects.runtime.loaded.files();
-            let is_excused = |file: FileId| files.module(file).file_name() == b"/$bun/js/runtime.bun.js";
-            let circular = build.circular_runtime_files.iter().filter(|it| !is_excused(it.0));
+            let is_excused =
+                |file: FileId| files.module(file).file_name() == b"/$bun/js/runtime.bun.js";
+            let circular = build
+                .circular_runtime_files
+                .iter()
+                .filter(|it| !is_excused(it.0));
             let circular: Vec<String> = circular
-                .map(|&(file, count)| format!("{}: {count}", BStr::new(files.module(file).file_name())))
+                .map(|&(file, count)| {
+                    format!("{}: {count}", BStr::new(files.module(file).file_name()))
+                })
                 .collect();
             assert!(
                 circular.is_empty(),
@@ -886,7 +967,9 @@ fn entry_points_keep_command_line_order() {
     let program = &linked.program;
     assert_eq!(program.entries.len(), linked.summary.entry_points.len());
     for (entry, paths) in program.entries.iter().zip(&linked.summary.entry_points) {
-        let module_path = program.strings.get(program.modules[entry.module.index()].path);
+        let module_path = program
+            .strings
+            .get(program.modules[entry.module.index()].path);
         assert_eq!(BStr::new(module_path), BStr::new(&paths.public_path));
     }
 }
@@ -949,14 +1032,29 @@ fn find_refused_entry_points(files: &[(&str, &str)], entry_point_count: usize) -
 #[test]
 fn entry_points_that_reach_an_error_are_refused() {
     let files = [
-        ("fine.ts", "import { one } from \"./shared\";\nconsole.log(one);"),
-        ("wrong.ts", "const n: number = \"text\";\nconsole.log(n);\nexport {};"),
-        ("imports-wrong.ts", "import { two } from \"./middle\";\nconsole.log(two);"),
-        ("types-of-wrong.ts", "import type { Two } from \"./broken\";\nconst two: Two = 2;\nconsole.log(two);"),
+        (
+            "fine.ts",
+            "import { one } from \"./shared\";\nconsole.log(one);",
+        ),
+        (
+            "wrong.ts",
+            "const n: number = \"text\";\nconsole.log(n);\nexport {};",
+        ),
+        (
+            "imports-wrong.ts",
+            "import { two } from \"./middle\";\nconsole.log(two);",
+        ),
+        (
+            "types-of-wrong.ts",
+            "import type { Two } from \"./broken\";\nconst two: Two = 2;\nconsole.log(two);",
+        ),
         ("also-fine.ts", "console.log(1);\nexport {};"),
         ("shared.ts", "export const one: number = 1;"),
         ("middle.ts", "export { two } from \"./broken\";"),
-        ("broken.ts", "export const two: number = \"two\";\nexport type Two = number;"),
+        (
+            "broken.ts",
+            "export const two: number = \"two\";\nexport type Two = number;",
+        ),
         GLOBALS,
     ];
     assert_eq!(find_refused_entry_points(&files, 5), Some(vec![1, 2, 3]));
@@ -966,7 +1064,10 @@ fn entry_points_that_reach_an_error_are_refused() {
 fn syntax_error_refuses_the_entry_points_that_reach_it() {
     let files = [
         ("fine.ts", "console.log(1);\nexport {};"),
-        ("imports-wrong.ts", "import { two } from \"./broken\";\nconsole.log(two);"),
+        (
+            "imports-wrong.ts",
+            "import { two } from \"./broken\";\nconsole.log(two);",
+        ),
         ("broken.ts", "export const two = ;"),
         GLOBALS,
     ];
@@ -977,7 +1078,10 @@ fn syntax_error_refuses_the_entry_points_that_reach_it() {
 fn build_that_compiles_refuses_the_whole_program() {
     let files = [
         ("fine.ts", "console.log(1);\nexport {};"),
-        ("wrong.ts", "const n: number = \"text\";\nconsole.log(n);\nexport {};"),
+        (
+            "wrong.ts",
+            "const n: number = \"text\";\nconsole.log(n);\nexport {};",
+        ),
         GLOBALS,
     ];
     let project = TestProject::with_entry_points(&files, 2, &default_settings());
@@ -987,7 +1091,11 @@ fn build_that_compiles_refuses_the_whole_program() {
 
 #[test]
 fn summary_says_whether_the_program_validates_by_type() {
-    let validates = |text: &str| link_successfully(&[("a.ts", text), GLOBALS]).summary.validates_by_type;
+    let validates = |text: &str| {
+        link_successfully(&[("a.ts", text), GLOBALS])
+            .summary
+            .validates_by_type
+    };
     assert!(!validates("console.log(JSON.parse(\"1\"));"));
     assert!(!validates("console.log(JSON.parse(\"1\") as number);"));
     assert!(validates("console.log(JSON.parse<number>(\"1\"));"));

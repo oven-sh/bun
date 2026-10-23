@@ -15,7 +15,12 @@ const packages = {
 
 const honored: Record<string, { flags: string[]; files: Record<string, string>; prints: string }> = {
   "--define": {
-    flags: ["--define=LEVEL=41", '--define=NAME="named"', '--define=FLAGS={"a":true}', '--define=process.env.NODE_ENV="staging"'],
+    flags: [
+      "--define=LEVEL=41",
+      '--define=NAME="named"',
+      '--define=FLAGS={"a":true}',
+      '--define=process.env.NODE_ENV="staging"',
+    ],
     files: {
       "main.ts": `declare const LEVEL: number; declare const NAME: string; declare const FLAGS: { a: boolean }; console.log(LEVEL + 1, NAME, FLAGS.a, typeof LEVEL, process.env.NODE_ENV);`,
     },
@@ -23,7 +28,9 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
   },
   "--feature": {
     flags: ["--feature=ON"],
-    files: { "main.ts": `import { feature } from "bun:bundle"; console.log(feature("ON") ? "on" : "off", feature("OFF") ? "on" : "off");` },
+    files: {
+      "main.ts": `import { feature } from "bun:bundle"; console.log(feature("ON") ? "on" : "off", feature("OFF") ? "on" : "off");`,
+    },
     prints: "on off\n",
   },
   "--env": {
@@ -31,10 +38,17 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     files: { "main.ts": `console.log(process.env.PUBLIC_ONE);`, ".env": "PUBLIC_ONE=from-dotenv\n" },
     prints: "from-dotenv\n",
   },
-  "--conditions": { flags: ["--conditions=custom"], files: { ...packages, "main.mjs": `import which from "cond"; console.log(which);` }, prints: "custom\n" },
+  "--conditions": {
+    flags: ["--conditions=custom"],
+    files: { ...packages, "main.mjs": `import which from "cond"; console.log(which);` },
+    prints: "custom\n",
+  },
   "--loader": {
     flags: ["--loader=.weird:text"],
-    files: { "a.weird": "hello from a .weird file\n", "main.ts": `// @ts-ignore\nimport text from "./a.weird"; console.log(text.trim());` },
+    files: {
+      "a.weird": "hello from a .weird file\n",
+      "main.ts": `// @ts-ignore\nimport text from "./a.weird"; console.log(text.trim());`,
+    },
     prints: "hello from a .weird file\n",
   },
   "--tsconfig-override": {
@@ -50,14 +64,26 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
   },
   "--jsx-runtime=classic, --jsx-factory, --jsx-fragment": {
     flags: ["--jsx-runtime=classic", "--jsx-factory=h", "--jsx-fragment=Frag"],
-    files: { "main.jsx": `const h = (tag, props, ...kids) => tag + JSON.stringify(props) + kids.join(); const Frag = "frag"; console.log(<a b="c">d</a>, <>e</>);` },
+    files: {
+      "main.jsx": `const h = (tag, props, ...kids) => tag + JSON.stringify(props) + kids.join(); const Frag = "frag"; console.log(<a b="c">d</a>, <>e</>);`,
+    },
     prints: 'a{"b":"c"}d fragnulle\n',
   },
-  "--jsx-import-source": { flags: ["--jsx-import-source=mine"], files: { ...packages, "main.jsx": `console.log(<a b="c">d</a>);` }, prints: 'mine:a{"b":"c","children":"d"}\n' },
-  "--compile-exec-argv": { flags: ["--compile-exec-argv=--smol"], files: { "main.ts": `console.log(JSON.stringify(process.execArgv));` }, prints: '["--smol"]\n' },
+  "--jsx-import-source": {
+    flags: ["--jsx-import-source=mine"],
+    files: { ...packages, "main.jsx": `console.log(<a b="c">d</a>);` },
+    prints: 'mine:a{"b":"c","children":"d"}\n',
+  },
+  "--compile-exec-argv": {
+    flags: ["--compile-exec-argv=--smol"],
+    files: { "main.ts": `console.log(JSON.stringify(process.execArgv));` },
+    prints: '["--smol"]\n',
+  },
   "--minify-syntax, --minify-whitespace": {
     flags: ["--minify-syntax", "--minify-whitespace"],
-    files: { "main.ts": `const a = 1 + 2; function f(x: number) { if (x) { return true; } else { return false; } } console.log(a, f(1), f(0), void 0 === undefined);` },
+    files: {
+      "main.ts": `const a = 1 + 2; function f(x: number) { if (x) { return true; } else { return false; } } console.log(a, f(1), f(0), void 0 === undefined);`,
+    },
     prints: "3 true false true\n",
   },
   "--ignore-dce-annotations": {
@@ -67,7 +93,11 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     },
     prints: "pure unused\n",
   },
-  "--production": { flags: ["--production"], files: { "main.ts": `console.log(process.env.NODE_ENV);` }, prints: "production\n" },
+  "--production": {
+    flags: ["--production"],
+    files: { "main.ts": `console.log(process.env.NODE_ENV);` },
+    prints: "production\n",
+  },
   "--drop=console": {
     flags: ["--drop=console"],
     files: {
@@ -90,7 +120,8 @@ say((console as any).log("as a test") ? "never" : "the arm for undefined");
 import("./other").then(other => other.run());`,
       "other.ts": `export function run() { console.log("dropped in every file"); process.stdout.write("other ran\\n"); }`,
     },
-    prints: "undefined\n0\na parameter by the name is called\nso is a constant: called\nfunction\nthrough another name it is called\nthe arm for undefined\nother ran\n",
+    prints:
+      "undefined\n0\na parameter by the name is called\nso is a constant: called\nfunction\nthrough another name it is called\nthe arm for undefined\nother ran\n",
   },
   "--drop of a global function, and of a path": {
     flags: ["--drop=assert", "--drop=tools.trace"],
@@ -108,8 +139,16 @@ console.log(evaluated, tools.keep("kept"));`,
     },
     prints: "0 kept\n",
   },
-  "--drop=debugger": { flags: ["--drop=debugger"], files: { "main.ts": `debugger; console.log("ran");` }, prints: "ran\n" },
-  "--banner and --footer that are comments": { flags: ["--banner=// a banner", "--footer=/* a footer */"], files: { "main.ts": `console.log("ran");` }, prints: "ran\n" },
+  "--drop=debugger": {
+    flags: ["--drop=debugger"],
+    files: { "main.ts": `debugger; console.log("ran");` },
+    prints: "ran\n",
+  },
+  "--banner and --footer that are comments": {
+    flags: ["--banner=// a banner", "--footer=/* a footer */"],
+    files: { "main.ts": `console.log("ran");` },
+    prints: "ran\n",
+  },
 };
 
 const rejected: Record<string, string[]> = {
@@ -129,10 +168,27 @@ describe.concurrent("compile/aot/flags of bun build", () => {
           const main = Object.keys(files).find(file => file.startsWith("main."))!;
           for (const how of [[], ["--aot"]]) {
             const executable = join(folder, "program" + how.length + (isWindows ? ".exe" : ""));
-            const built = await spawned([bunExe(), "build", "--compile", ...how, ...flags, main, "--outfile", executable], folder, bunEnv);
-            expect({ how, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ how, stderr: expect.any(String), exitCode: 0 });
-            const ran = await spawned([executable], folder, how.length ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
-            expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ how, stdout: prints, exitCode: 0, signal: null });
+            const built = await spawned(
+              [bunExe(), "build", "--compile", ...how, ...flags, main, "--outfile", executable],
+              folder,
+              bunEnv,
+            );
+            expect({ how, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+              how,
+              stderr: expect.any(String),
+              exitCode: 0,
+            });
+            const ran = await spawned(
+              [executable],
+              folder,
+              how.length ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv,
+            );
+            expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+              how,
+              stdout: prints,
+              exitCode: 0,
+              signal: null,
+            });
           }
         }),
       600_000,
@@ -147,17 +203,39 @@ describe.concurrent("compile/aot/flags of bun build", () => {
           "build.ts": `const built = await Bun.build({ entrypoints: ["./main.ts"], drop: ["console"], compile: { outfile: "./program", aot: true } }); process.stdout.write(String(built.success));`,
         });
         const built = await spawned([bunExe(), "build.ts"], String(dir), bunEnv);
-        expect({ stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stdout: "true", stderr: expect.any(String), exitCode: 0 });
-        const ran = await spawned([join(String(dir), isWindows ? "program.exe" : "program")], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ stdout: "kept\n", exitCode: 0, signal: null });
+        expect({ stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+          stdout: "true",
+          stderr: expect.any(String),
+          exitCode: 0,
+        });
+        const ran = await spawned([join(String(dir), isWindows ? "program.exe" : "program")], String(dir), {
+          ...bunEnv,
+          BUN_JSC_crashIfInterpreterIsUsed: "1",
+        });
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+          stdout: "kept\n",
+          exitCode: 0,
+          signal: null,
+        });
       }),
     600_000,
   );
   for (const [what, flags] of Object.entries(rejected)) {
-    test("stops the build with an error: " + what, async () => {
-      using dir = tempDir("aot-build-flags-rejected", { "main.ts": `console.log("ran");` });
-      const built = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", join(String(dir), "program")], String(dir), bunEnv);
-      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.stringContaining(`--aot does not support ${what}`), exitCode: 1 });
-    }, 60_000);
+    test(
+      "stops the build with an error: " + what,
+      async () => {
+        using dir = tempDir("aot-build-flags-rejected", { "main.ts": `console.log("ran");` });
+        const built = await spawned(
+          [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", join(String(dir), "program")],
+          String(dir),
+          bunEnv,
+        );
+        expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+          stderr: expect.stringContaining(`--aot does not support ${what}`),
+          exitCode: 1,
+        });
+      },
+      60_000,
+    );
   }
 });

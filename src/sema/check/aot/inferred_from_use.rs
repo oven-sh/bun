@@ -72,6 +72,7 @@ impl SubjectStack {
     }
 
     // Returns whether the subject ran into one that is still in progress.
+    #[allow(clippy::needless_pass_by_value)] // what `enter` gave is used up
     fn leave(&mut self, entered: EnteredSubject) -> bool {
         self.depth = entered.depth;
         let outer = self
@@ -1055,31 +1056,34 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn gets_only_integers(&mut self, walk: &mut Walk, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(), self.bound());
-        bound.stores_to(symbol).iter().all(|store| match store.kind {
-            StoreKind::Update(_) => true,
-            StoreKind::Assign | StoreKind::CompoundAssign(_) => {
-                match find_use(hir, bound, store.target) {
-                    Use::Stored { op, value } => self.stores_integer(walk, op, value),
-                    Use::Nothing
-                    | Use::PassedOn(_)
-                    | Use::Initializes(_)
-                    | Use::Destructured(_)
-                    | Use::Member { .. }
-                    | Use::Keyed { .. }
-                    | Use::Key { .. }
-                    | Use::Called { .. }
-                    | Use::Argument { .. }
-                    | Use::Iterated(_)
-                    | Use::Object { .. }
-                    | Use::Number
-                    | Use::Int32
-                    | Use::Updated
-                    | Use::AddedTo(_)
-                    | Use::ComparedWith(_) => false,
+        bound
+            .stores_to(symbol)
+            .iter()
+            .all(|store| match store.kind {
+                StoreKind::Update(_) => true,
+                StoreKind::Assign | StoreKind::CompoundAssign(_) => {
+                    match find_use(hir, bound, store.target) {
+                        Use::Stored { op, value } => self.stores_integer(walk, op, value),
+                        Use::Nothing
+                        | Use::PassedOn(_)
+                        | Use::Initializes(_)
+                        | Use::Destructured(_)
+                        | Use::Member { .. }
+                        | Use::Keyed { .. }
+                        | Use::Key { .. }
+                        | Use::Called { .. }
+                        | Use::Argument { .. }
+                        | Use::Iterated(_)
+                        | Use::Object { .. }
+                        | Use::Number
+                        | Use::Int32
+                        | Use::Updated
+                        | Use::AddedTo(_)
+                        | Use::ComparedWith(_) => false,
+                    }
                 }
-            }
-            StoreKind::Destructure | StoreKind::ForIn | StoreKind::ForOf => false,
-        })
+                StoreKind::Destructure | StoreKind::ForIn | StoreKind::ForOf => false,
+            })
     }
 
     // Whether `variable op= value` leaves an integer in a variable that holds one.
@@ -1337,7 +1341,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         // Assigning to the other variable does not store into the place this value came from.
         let is_stored = usage.facts & Facts::STORED;
         usage.merge(walk, &found);
-        usage.facts = usage.facts - Facts::STORED | is_stored;
+        usage.facts = (usage.facts - Facts::STORED) | is_stored;
     }
 
     // `f.call` is a member of every function, and no property that an object of the program has.
@@ -1345,7 +1349,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let named = self.inputs.named_values.find_named_value(self.file, access);
         matches!(
             named,
-            Some(NamedValue::PrototypeOperation(PrototypeOperation::CallFunction { .. }))
+            Some(NamedValue::PrototypeOperation(
+                PrototypeOperation::CallFunction { .. }
+            ))
         )
     }
 
@@ -1652,7 +1658,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let known_here = usage.facts & number_facts;
         self.add_uses_of_subject(walk, subject, usage);
         if !usage.facts.contains(Facts::NUMBER_AT_EVERY_VALUE) {
-            usage.facts = usage.facts - number_facts | known_here;
+            usage.facts = (usage.facts - number_facts) | known_here;
         }
     }
 
@@ -1937,14 +1943,27 @@ mod tests {
         for value in [0.0, -1.0, 7.0, 2147483647.0, -2147483648.0] {
             assert!(is_int32_value(value), "{value}");
         }
-        for value in [0.5, -0.0, 2147483648.0, -2147483649.0, f64::NAN, f64::INFINITY] {
+        for value in [
+            0.5,
+            -0.0,
+            2147483648.0,
+            -2147483649.0,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
             assert!(!is_int32_value(value), "{value}");
         }
     }
 
     #[test]
     fn an_unsigned_shift_and_a_sum_may_leave_int32() {
-        for op in [BinOp::Shl, BinOp::Shr, BinOp::BitAnd, BinOp::BitOr, BinOp::BitXor] {
+        for op in [
+            BinOp::Shl,
+            BinOp::Shr,
+            BinOp::BitAnd,
+            BinOp::BitOr,
+            BinOp::BitXor,
+        ] {
             assert!(yields_int32(op), "{op:?}");
         }
         for op in [BinOp::UShr, BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Rem] {

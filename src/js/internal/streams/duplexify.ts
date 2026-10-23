@@ -41,9 +41,7 @@ class Duplexify extends Duplex {
   }
 }
 
-type Then =
-  | ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown)
-  | undefined;
+type Then = ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown) | undefined;
 
 function duplexify(body, name?: string): $Node.Duplex {
   if (isDuplexNodeStream(body)) {

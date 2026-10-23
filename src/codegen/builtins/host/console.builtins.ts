@@ -49,7 +49,9 @@ const withoutOperands = {
 const createdOnFirstRead = b.property(b.any, { createdOnFirstRead: { capability: "js", throws: true } });
 
 export default b.declarations(
-  ["Console", "_stdout", "_stderr"].flatMap(name => b.extend(`console.${name}`, { mutability: "ConstantUnlessWritten" })),
+  ["Console", "_stdout", "_stderr"].flatMap(name =>
+    b.extend(`console.${name}`, { mutability: "ConstantUnlessWritten" }),
+  ),
   b.namespace("console", {
     log: logging,
     info: logging,

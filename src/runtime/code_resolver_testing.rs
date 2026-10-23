@@ -29,10 +29,10 @@ use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTargets, FileId, Files, HostLoader, HostModuleId,
 };
 use bun_sema::resolve::{
-    CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeParseRequest, CodeRequest,
-    CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, Host,
-    HostResolution, JsxSettings, CachedConfig, Options, ParseOptions, ParsedCode, Paths, Resolver,
-    ScriptKind, TranspileSettings, inside, is_declaration_file_name, is_same_path,
+    CachedConfig, CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions,
+    CodeParseRequest, CodeRequest, CodeResolution, ComputedCandidate, ComputedCodeRequest,
+    ComputedResolution, Host, HostResolution, JsxSettings, Options, ParseOptions, ParsedCode,
+    Paths, Resolver, ScriptKind, TranspileSettings, inside, is_declaration_file_name, is_same_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::FxHashSet;

@@ -1,4 +1,14 @@
-import { closeSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { isElfObject } from "./binary-reader.ts";
@@ -57,7 +67,8 @@ export function elf(linker: Linker): LinkerFormat {
   const orderFile = join(work, "order.txt");
   const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))]);
   const executableNames = { first: linker.firstLinkName, second: basename(output) };
-  const listCompiledObjects = (link: "first" | "second") => findCompiledObjects(inputDirectories, executableNames[link]);
+  const listCompiledObjects = (link: "first" | "second") =>
+    findCompiledObjects(inputDirectories, executableNames[link]);
   const tidyUp = () => {
     for (const object of [...listCompiledObjects("first"), ...listCompiledObjects("second")]) rmSync(object);
   };
@@ -93,11 +104,17 @@ export function elf(linker: Linker): LinkerFormat {
       const objects = listCompiledObjects(link);
       const empty = objects.filter(object => statSync(object).size === 0);
       if (empty.length > 0) {
-        throw new BuildError(`the linker left ${empty.length} empty files for objects compiled from bitcode: it does so when it has a ThinLTO cache; link without one`);
+        throw new BuildError(
+          `the linker left ${empty.length} empty files for objects compiled from bitcode: it does so when it has a ThinLTO cache; link without one`,
+        );
       }
       return objects;
     },
-    firstLinkArguments: () => ({ last: [...commonFlags, "-Wl,--strip-debug"], replaced: new Map(), without: debuggerOnlyFlags }),
+    firstLinkArguments: () => ({
+      last: [...commonFlags, "-Wl,--strip-debug"],
+      replaced: new Map(),
+      without: debuggerOnlyFlags,
+    }),
     secondLinkArguments(order) {
       writeFileSync(orderFile, order.groups.flatMap(group => group.names).join("\n") + "\n" + commandOrder, "latin1");
       if (orderAt >= 0) return { last: [...commonFlags], replaced: new Map([[orderAt, orderFlag + orderFile]]) };

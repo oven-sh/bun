@@ -5,15 +5,15 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::builder::{
-    ENTRY_BLOCK, MAX_SPARE_BLOCKS, MAX_SPARE_VALUES, PendingBlock, PendingDefinition, PendingTarget,
-    PendingTerminator, PendingValue, recycle_vector,
+    ENTRY_BLOCK, MAX_SPARE_BLOCKS, MAX_SPARE_VALUES, PendingBlock, PendingDefinition,
+    PendingTarget, PendingTerminator, PendingValue, recycle_vector,
 };
 use super::generated::{
     FunctionFlags, FunctionRelations, HandedTo, IteratorResumeResult, Opcode, OperandInfo,
     OperandOf, OperandUse, OperandWord, Protocol, RelationSubject, RelationSubjectKind,
-    ResultOrigin, Retainer, RetainingHeap, StoredInto, TerminatorKind, ValueFate, compares_identity,
-    defines_members, is_made_from_payload, operand_infos_of, result_origin_of, retaining_heap_of,
-    visit_terminator_operands, visit_value_operands,
+    ResultOrigin, Retainer, RetainingHeap, StoredInto, TerminatorKind, ValueFate,
+    compares_identity, defines_members, is_made_from_payload, operand_infos_of, result_origin_of,
+    retaining_heap_of, visit_terminator_operands, visit_value_operands,
 };
 use super::ids::{BlockId, Id, PropertyKeyId, ValueId};
 
@@ -113,7 +113,9 @@ impl Operations {
     pub(super) fn decode(function: &WalkedFunction<'_>, scratch: Operations) -> Operations {
         let mut decoded = scratch;
         decoded.operations.resize(function.values.len(), None);
-        decoded.terminator_operands.resize(function.blocks.len(), None);
+        decoded
+            .terminator_operands
+            .resize(function.blocks.len(), None);
         for &block in function.order {
             let pending = &function.blocks[block.index()];
             for &value in &pending.values {
@@ -133,7 +135,8 @@ impl Operations {
     }
 
     fn decode_value(&mut self, function: &WalkedFunction<'_>, value: ValueId) {
-        let PendingDefinition::Operation { opcode, fields } = &function.values[value.index()].definition
+        let PendingDefinition::Operation { opcode, fields } =
+            &function.values[value.index()].definition
         else {
             return;
         };
@@ -145,7 +148,7 @@ impl Operations {
                 operands.push((index, ValueId::from_word(words[at])));
                 places.push(at as u32);
             }
-            OperandWord::Key => key = key.or(Some(PropertyKeyId::from_word(words[at]))),
+            OperandWord::Key => key = key.or_else(|| Some(PropertyKeyId::from_word(words[at]))),
         });
         self.operations[value.index()] = Some(DecodedOperation {
             opcode: *opcode,
@@ -171,7 +174,9 @@ impl Operations {
         let first = decoded.first_operand as usize;
         let range = first..first + decoded.operand_count as usize;
         let places = self.operand_places[range.clone()].iter();
-        places.zip(&self.operands[range]).map(|(&place, &(_, operand))| (place as usize, operand))
+        places
+            .zip(&self.operands[range])
+            .map(|(&place, &(_, operand))| (place as usize, operand))
     }
 
     pub(super) fn into_scratch(self) -> Operations {
@@ -270,11 +275,14 @@ fn arguments_of(target: &PendingTarget) -> impl Iterator<Item = ValueId> {
 }
 
 fn terminator_of(block: &PendingBlock) -> &PendingTerminator {
-    block.terminator.as_ref().expect("every block is terminated")
+    block
+        .terminator
+        .as_ref()
+        .expect("every block is terminated")
 }
 
 fn info_of(infos: &[OperandInfo], index: u32) -> Option<&OperandInfo> {
-    infos.get(index as usize).or(infos.last())
+    infos.get(index as usize).or_else(|| infos.last())
 }
 
 // What is read comes last, so that every subject stands behind what it is read out of.
@@ -320,7 +328,8 @@ fn is_construction(opcode: Opcode) -> bool {
 fn retains_an_operand(infos: &[OperandInfo], operation: &Operation<'_>, retaining: u32) -> bool {
     operation.operands.iter().any(|&(index, _)| {
         info_of(infos, index).is_some_and(|info| {
-            info.uses.contains(OperandUse::RETAINS) && info.retainer == Retainer::Operand(retaining as u8)
+            info.uses.contains(OperandUse::RETAINS)
+                && info.retainer == Retainer::Operand(retaining as u8)
         })
     })
 }
@@ -408,7 +417,13 @@ impl<'a, const W: usize> Walk<'a, W> {
         walk.holds.occupied.resize(value_count, 0);
         walk.is_unlisted.resize(value_count, false);
         walk.subject_of_value.resize(value_count, NO_SUBJECT);
-        walk.places.resize(value_count, Place { block: 0, position: 0 });
+        walk.places.resize(
+            value_count,
+            Place {
+                block: 0,
+                position: 0,
+            },
+        );
         walk
     }
 
@@ -569,7 +584,10 @@ impl<'a, const W: usize> Walk<'a, W> {
             ResultOrigin::Call => Some(RelationSubjectKind::CallResult),
             ResultOrigin::Computed => Some(RelationSubjectKind::Computed),
             ResultOrigin::Read { receiver } => {
-                let base = operation.operands.iter().find(|&&(index, _)| index == u32::from(receiver));
+                let base = operation
+                    .operands
+                    .iter()
+                    .find(|&&(index, _)| index == u32::from(receiver));
                 let Some(&(_, base)) = base else {
                     self.is_unlisted[value.index()] = true;
                     return;
@@ -695,7 +713,10 @@ impl<'a, const W: usize> Walk<'a, W> {
         const READS: Protocol =
             Protocol(Protocol::OWN_VALUES.0 | Protocol::PROTOTYPE_CHAIN.0 | Protocol::NAMED.0);
         const RUNS_CODE: Protocol = Protocol(
-            Protocol::THENABLE.0 | Protocol::SPECIES.0 | Protocol::TO_JSON.0 | Protocol::CALLS_NAMED.0,
+            Protocol::THENABLE.0
+                | Protocol::SPECIES.0
+                | Protocol::TO_JSON.0
+                | Protocol::CALLS_NAMED.0,
         );
         let (uses, protocols) = (info.uses, info.protocols);
         let mut fate = ValueFate::default();
@@ -704,18 +725,42 @@ impl<'a, const W: usize> Walk<'a, W> {
                 fate |= added;
             }
         };
-        add(uses.contains(OperandUse::READS_CONTENTS), ValueFate::HAS_MEMBERS_READ);
+        add(
+            uses.contains(OperandUse::READS_CONTENTS),
+            ValueFate::HAS_MEMBERS_READ,
+        );
         add(uses.intersects(WRITES), ValueFate::HAS_MEMBERS_WRITTEN);
-        add(uses.intersects(DEFINES), ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED);
+        add(
+            uses.intersects(DEFINES),
+            ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED,
+        );
         add(uses.intersects(CALLS), ValueFate::IS_CALLED);
-        add(uses.contains(OperandUse::PASSES_TO_USER_CODE), ValueFate::IS_HANDED_TO_UNKNOWN_CODE);
+        add(
+            uses.contains(OperandUse::PASSES_TO_USER_CODE),
+            ValueFate::IS_HANDED_TO_UNKNOWN_CODE,
+        );
         add(uses.intersects(REACHES_FURTHER), ValueFate::IS_INCOMPLETE);
-        add(protocols.contains(Protocol::OWN_KEYS), ValueFate::HAS_KEYS_ENUMERATED);
-        add(protocols.contains(Protocol::ITERATE), ValueFate::IS_ITERATED);
+        add(
+            protocols.contains(Protocol::OWN_KEYS),
+            ValueFate::HAS_KEYS_ENUMERATED,
+        );
+        add(
+            protocols.contains(Protocol::ITERATE),
+            ValueFate::IS_ITERATED,
+        );
         add(protocols.intersects(READS), ValueFate::HAS_MEMBERS_READ);
-        add(protocols.intersects(RUNS_CODE), ValueFate::IS_HANDED_TO_UNKNOWN_CODE | ValueFate::HAS_MEMBERS_READ);
-        add(protocols.contains(Protocol::TO_PRIMITIVE), ValueFate::IS_CONVERTED_TO_PRIMITIVE);
-        add(protocols.contains(Protocol::HAS_INSTANCE), ValueFate::IS_INCOMPLETE);
+        add(
+            protocols.intersects(RUNS_CODE),
+            ValueFate::IS_HANDED_TO_UNKNOWN_CODE | ValueFate::HAS_MEMBERS_READ,
+        );
+        add(
+            protocols.contains(Protocol::TO_PRIMITIVE),
+            ValueFate::IS_CONVERTED_TO_PRIMITIVE,
+        );
+        add(
+            protocols.contains(Protocol::HAS_INSTANCE),
+            ValueFate::IS_INCOMPLETE,
+        );
         fate
     }
 
@@ -766,7 +811,8 @@ impl<'a, const W: usize> Walk<'a, W> {
         let is_sure_of_target = !is_unlisted && targets.len() == 1;
         for &target in &targets {
             if !is_in_result && operation.opcode != Opcode::PutEnvironmentField {
-                let done = self.as_done_to(target, operation.opcode, operation.key.is_some(), written);
+                let done =
+                    self.as_done_to(target, operation.opcode, operation.key.is_some(), written);
                 self.subjects[target as usize].fate |= done;
             }
             if self.is_unlisted[stored.index()] || self.holds.is_empty(stored) {
@@ -802,10 +848,21 @@ impl<'a, const W: usize> Walk<'a, W> {
     }
 
     // `{ a: p, n: 2 }`: a member of a literal that is no operand of NewObject is defined behind it.
-    fn as_done_to(&self, subject: u16, opcode: Opcode, has_key: bool, fate: ValueFate) -> ValueFate {
+    fn as_done_to(
+        &self,
+        subject: u16,
+        opcode: Opcode,
+        has_key: bool,
+        fate: ValueFate,
+    ) -> ValueFate {
         let is_own = self.subjects[subject as usize].kind == RelationSubjectKind::Allocation;
-        if opcode == Opcode::PropDefine && has_key && is_own && fate.contains(ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED) {
-            return fate.without(ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED) | ValueFate::HAS_MEMBERS_WRITTEN;
+        if opcode == Opcode::PropDefine
+            && has_key
+            && is_own
+            && fate.contains(ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED)
+        {
+            return fate.without(ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED)
+                | ValueFate::HAS_MEMBERS_WRITTEN;
         }
         fate
     }
@@ -817,7 +874,9 @@ impl<'a, const W: usize> Walk<'a, W> {
         let mut held = self.holds.members(value);
         while let Some(subject) = held.next_in(&self.holds) {
             match self.subjects[subject as usize].kind {
-                RelationSubjectKind::Constant | RelationSubjectKind::Computed => holds_others = true,
+                RelationSubjectKind::Constant | RelationSubjectKind::Computed => {
+                    holds_others = true
+                }
                 RelationSubjectKind::Parameter
                 | RelationSubjectKind::Allocation
                 | RelationSubjectKind::CallResult
@@ -884,7 +943,9 @@ impl<'a, const W: usize> Walk<'a, W> {
                 let mut reads = self.holds.members(value);
                 while let Some(read) = reads.next_in(&self.holds) {
                     let record = &self.subjects[read as usize];
-                    if record.kind == RelationSubjectKind::ReadFrom && record.index == value.index() as u32 {
+                    if record.kind == RelationSubjectKind::ReadFrom
+                        && record.index == value.index() as u32
+                    {
                         users.push(read);
                     }
                 }
@@ -906,7 +967,8 @@ impl<'a, const W: usize> Walk<'a, W> {
         }
         // The method that says what an instance is gets the value that is asked about.
         let asks_an_operand = operation.operands.iter().any(|&(index, _)| {
-            info_of(infos, index).is_some_and(|info| info.protocols.contains(Protocol::HAS_INSTANCE))
+            info_of(infos, index)
+                .is_some_and(|info| info.protocols.contains(Protocol::HAS_INSTANCE))
         });
         for &(index, operand) in operation.operands {
             let Some(info) = info_of(infos, index) else {
@@ -917,9 +979,15 @@ impl<'a, const W: usize> Walk<'a, W> {
                 continue;
             };
             // Beside its subjects.
-            let may_be_unlisted = self.is_unlisted[operand.index()] && !self.holds.is_empty(operand);
+            let may_be_unlisted =
+                self.is_unlisted[operand.index()] && !self.holds.is_empty(operand);
             let mut fate = Self::fate_of_uses(info);
-            if origin == (ResultOrigin::Read { receiver: index as u8 }) && opcode != Opcode::GetEnvironmentField {
+            if origin
+                == (ResultOrigin::Read {
+                    receiver: index as u8,
+                })
+                && opcode != Opcode::GetEnvironmentField
+            {
                 fate |= ValueFate::HAS_MEMBERS_READ;
             }
             if compares_identity(opcode) {
@@ -957,7 +1025,8 @@ impl<'a, const W: usize> Walk<'a, W> {
                     self.note_retained(value, &operation, info, (index, operand), place);
                 }
                 // What comes out of an operation whose result nobody follows may have come out of any of its operands.
-                let may_be_read_out = origin == ResultOrigin::Other && !info.uses.contains(OperandUse::RETURNS);
+                let may_be_read_out =
+                    origin == ResultOrigin::Other && !info.uses.contains(OperandUse::RETURNS);
                 if may_be_read_out {
                     fate |= ValueFate::HAS_MEMBERS_READ;
                 }
@@ -968,9 +1037,12 @@ impl<'a, const W: usize> Walk<'a, W> {
                 } else if may_be_read_out || retains_contents {
                     self.note_contents_retained(value, operand);
                 }
-                let is_written = fate.intersects(ValueFate::HAS_MEMBERS_WRITTEN | ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED);
+                let is_written = fate.intersects(
+                    ValueFate::HAS_MEMBERS_WRITTEN | ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED,
+                );
                 if is_written && !retains_an_operand(infos, &operation, index) {
-                    let is_sure_of_target = !self.is_unlisted[operand.index()] && self.holds.is_single(operand);
+                    let is_sure_of_target =
+                        !self.is_unlisted[operand.index()] && self.holds.is_single(operand);
                     let mut held = self.holds.members(operand);
                     while let Some(target) = held.next_in(&self.holds) {
                         self.stores.push(Store {
@@ -985,7 +1057,10 @@ impl<'a, const W: usize> Walk<'a, W> {
                     }
                 }
             }
-            let is_receiver = origin == (ResultOrigin::Read { receiver: index as u8 });
+            let is_receiver = origin
+                == (ResultOrigin::Read {
+                    receiver: index as u8,
+                });
             let users_of_operand: &[u16] = if is_receiver { &[] } else { users.as_slice() };
             let add_operand = |walk: &mut Walk<'_, W>, source: u32| {
                 for &user in users_of_operand {
@@ -1025,7 +1100,11 @@ impl<'a, const W: usize> Walk<'a, W> {
                     self.results_fully_listed = 0;
                 }
                 let fate = match self.is_coroutine() {
-                    true => ValueFate::IS_RETURNED | ValueFate::IS_STORED_IN_UNKNOWN_OBJECT | ValueFate::HAS_MEMBERS_READ,
+                    true => {
+                        ValueFate::IS_RETURNED
+                            | ValueFate::IS_STORED_IN_UNKNOWN_OBJECT
+                            | ValueFate::HAS_MEMBERS_READ
+                    }
                     false => ValueFate::IS_RETURNED,
                 };
                 let note_returned = |walk: &mut Walk<'_, W>, subject: u16| {
@@ -1067,7 +1146,9 @@ impl<'a, const W: usize> Walk<'a, W> {
     }
 
     fn is_coroutine(&self) -> bool {
-        self.function.flags.intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR)
+        self.function
+            .flags
+            .intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR)
     }
 
     fn results_mask(&self) -> u32 {
@@ -1084,7 +1165,9 @@ impl<'a, const W: usize> Walk<'a, W> {
 
     fn number_of(&self, value: ValueId) -> u32 {
         let number = self.function.value_numbers[value.index()];
-        number.expect("a value of a reached block has a number").to_word()
+        number
+            .expect("a value of a reached block has a number")
+            .to_word()
     }
 
     fn note_uses(&mut self) {
@@ -1092,14 +1175,30 @@ impl<'a, const W: usize> Walk<'a, W> {
         for (number, &id) in (0u32..).zip(function.order) {
             let block = &function.blocks[id.index()];
             for (position, &value) in (0u32..).zip(&block.values) {
-                self.places[value.index()] = Place { block: number, position };
+                self.places[value.index()] = Place {
+                    block: number,
+                    position,
+                };
             }
             for (position, &value) in (0u32..).zip(&block.values) {
-                self.note_uses_of(value, Place { block: number, position });
+                self.note_uses_of(
+                    value,
+                    Place {
+                        block: number,
+                        position,
+                    },
+                );
             }
             let position = block.values.len() as u32;
             let operand = self.operations.terminator_operands[id.index()];
-            self.note_terminator(terminator_of(block).kind, operand, Place { block: number, position });
+            self.note_terminator(
+                terminator_of(block).kind,
+                operand,
+                Place {
+                    block: number,
+                    position,
+                },
+            );
         }
     }
 }
@@ -1115,7 +1214,9 @@ struct Dominators {
 impl Dominators {
     fn new(function: &WalkedFunction<'_>) -> Dominators {
         let count = function.order.len();
-        let number_of = |block: BlockId| function.block_numbers[block.index()].map(|number| number.index() as u32);
+        let number_of = |block: BlockId| {
+            function.block_numbers[block.index()].map(|number| number.index() as u32)
+        };
         let mut predecessors: Vec<SmallVec<[u32; 4]>> = vec![SmallVec::new(); count];
         let mut leaves_early = vec![false; count];
         let mut may_run_again = vec![false; count];
@@ -1148,8 +1249,12 @@ impl Dominators {
         loop {
             let mut has_changed = false;
             for block in 1..count {
-                let known = predecessors[block].iter().copied().filter(|&it| immediate[it as usize] != UNKNOWN);
-                let Some(new) = known.reduce(|left, right| intersect(&immediate, left, right)) else {
+                let known = predecessors[block]
+                    .iter()
+                    .copied()
+                    .filter(|&it| immediate[it as usize] != UNKNOWN);
+                let Some(new) = known.reduce(|left, right| intersect(&immediate, left, right))
+                else {
                     continue;
                 };
                 has_changed |= core::mem::replace(&mut immediate[block], new) != new;
@@ -1191,9 +1296,13 @@ impl<const W: usize> Walk<'_, W> {
         is_used.resize(self.subjects.len(), false);
         for (subject, record) in self.subjects.iter().enumerate() {
             is_used[subject] |= match record.kind {
-                RelationSubjectKind::Parameter | RelationSubjectKind::Allocation | RelationSubjectKind::ReadFrom => true,
+                RelationSubjectKind::Parameter
+                | RelationSubjectKind::Allocation
+                | RelationSubjectKind::ReadFrom => true,
                 RelationSubjectKind::CallResult => !record.fate.is_empty(),
-                RelationSubjectKind::Constant | RelationSubjectKind::Computed => record.fate.intersects(KEEPS),
+                RelationSubjectKind::Constant | RelationSubjectKind::Computed => {
+                    record.fate.intersects(KEEPS)
+                }
             };
             if record.source != NO_SUBJECT {
                 is_used[record.source as usize] = true;
@@ -1209,13 +1318,18 @@ impl<const W: usize> Walk<'_, W> {
                 is_used[handed.source as usize] = true;
             }
         }
-        let listed = || self.operands.iter().filter(|operand| operand.source != UNLISTED);
+        let listed = || {
+            self.operands
+                .iter()
+                .filter(|operand| operand.source != UNLISTED)
+        };
         // From the last row to the first: an operand comes in front of its user but where a loop carries it round.
         loop {
             let mut has_changed = false;
             for operand in listed().rev() {
                 let is_needed = is_used[operand.user as usize];
-                has_changed |= is_needed && !core::mem::replace(&mut is_used[operand.source as usize], true);
+                has_changed |=
+                    is_needed && !core::mem::replace(&mut is_used[operand.source as usize], true);
             }
             if !has_changed {
                 break;
@@ -1225,7 +1339,9 @@ impl<const W: usize> Walk<'_, W> {
             let kind = self.subjects[subject].kind;
             let is_value = matches!(
                 kind,
-                RelationSubjectKind::CallResult | RelationSubjectKind::Constant | RelationSubjectKind::Computed
+                RelationSubjectKind::CallResult
+                    | RelationSubjectKind::Constant
+                    | RelationSubjectKind::Computed
             );
             self.subjects[subject].is_left_out |= is_value && !is_used;
         }
@@ -1260,9 +1376,13 @@ impl<const W: usize> Walk<'_, W> {
 
     // Asked when the departures are in the order of their subjects.
     fn departures_of(&self, subject: u16) -> impl Iterator<Item = Place> {
-        let first = self.departures.partition_point(|&(other, _)| other < subject);
+        let first = self
+            .departures
+            .partition_point(|&(other, _)| other < subject);
         let departures = self.departures[first..].iter();
-        departures.take_while(move |&&(other, _)| other == subject).map(|&(_, place)| place)
+        departures
+            .take_while(move |&&(other, _)| other == subject)
+            .map(|&(_, place)| place)
     }
 
     fn apply_rules_of_whole_function(&mut self) {
@@ -1292,22 +1412,29 @@ impl<const W: usize> Walk<'_, W> {
 
         let question_count = self.stores.len() * (self.returns.len() + self.departures.len());
         // Of no other store is it asked what comes first.
-        let asks_for_order = self.stores.iter().any(|store| store.is_sure_of_target && !store.is_at_creation);
+        let asks_for_order = self
+            .stores
+            .iter()
+            .any(|store| store.is_sure_of_target && !store.is_at_creation);
         let dominators = (asks_for_order && question_count <= MAX_ORDER_QUESTIONS)
             .then(|| Dominators::new(self.function));
         if asks_for_order {
-            self.departures.sort_unstable_by_key(|&(subject, _)| subject);
+            self.departures
+                .sort_unstable_by_key(|&(subject, _)| subject);
         }
         let mut stores: Vec<StoredInto> = Vec::with_capacity(self.stores.len());
         for store in &self.stores {
             if self.is_left_out(u32::from(store.target)) {
                 continue;
             }
-            let is_source_listed = store.source != NO_SUBJECT && !self.is_left_out(u32::from(store.source));
+            let is_source_listed =
+                store.source != NO_SUBJECT && !self.is_left_out(u32::from(store.source));
             // What an object holds from its creation it holds wherever it gets to.
             let comes_first = |later: Place| {
                 store.is_at_creation
-                    || dominators.as_ref().is_some_and(|dominators| dominators.comes_first(store.place, later))
+                    || dominators
+                        .as_ref()
+                        .is_some_and(|dominators| dominators.comes_first(store.place, later))
             };
             // A subject stands for every object that its operation makes: one that is made again behind the store has not been through it.
             let target = &self.subjects[store.target as usize];
@@ -1315,10 +1442,11 @@ impl<const W: usize> Walk<'_, W> {
                 && (target.kind == RelationSubjectKind::Parameter
                     || store.is_at_creation
                     || dominators.as_ref().is_some_and(|dominators| {
-                    let made = self.places[target.index as usize];
-                    let is_made_once = !dominators.may_run_again[made.block as usize];
-                    (is_made_once || made.block == store.place.block) && dominators.comes_first(made, store.place)
-                }));
+                        let made = self.places[target.index as usize];
+                        let is_made_once = !dominators.may_run_again[made.block as usize];
+                        (is_made_once || made.block == store.place.block)
+                            && dominators.comes_first(made, store.place)
+                    }));
             stores.push(StoredInto {
                 source: match is_source_listed {
                     true => self.final_numbers[store.source as usize],
@@ -1328,13 +1456,19 @@ impl<const W: usize> Walk<'_, W> {
                 key: store.key,
                 creation_operand: store.creation_operand,
                 is_on_every_path: is_one_object
-                    && (store.is_at_creation || self.returns.iter().all(|&place| comes_first(place))),
+                    && (store.is_at_creation
+                        || self.returns.iter().all(|&place| comes_first(place))),
                 is_before_target_leaves: is_one_object
                     && (store.is_at_creation || self.departures_of(store.target).all(&comes_first)),
             });
         }
         let key_of = |store: &StoredInto| {
-            (store.source, store.target, store.key.map(PropertyKeyId::to_word), store.creation_operand)
+            (
+                store.source,
+                store.target,
+                store.key.map(PropertyKeyId::to_word),
+                store.creation_operand,
+            )
         };
         stores.sort_unstable_by_key(key_of);
         stores.dedup_by(|next, kept| {
@@ -1351,18 +1485,21 @@ impl<const W: usize> Walk<'_, W> {
                 handed.source = self.final_numbers[handed.source as usize];
             }
         }
-        self.handed.sort_unstable_by_key(|handed| (handed.call, handed.argument, handed.source));
+        self.handed
+            .sort_unstable_by_key(|handed| (handed.call, handed.argument, handed.source));
         self.handed.dedup();
 
         let subjects = &self.subjects;
-        self.operands.retain(|operand| !subjects[operand.user as usize].is_left_out);
+        self.operands
+            .retain(|operand| !subjects[operand.user as usize].is_left_out);
         for operand in &mut self.operands {
             if operand.source != UNLISTED {
                 operand.source = self.final_numbers[operand.source as usize];
             }
             operand.user = self.final_numbers[operand.user as usize];
         }
-        self.operands.sort_unstable_by_key(|operand| (operand.user, operand.position, operand.source));
+        self.operands
+            .sort_unstable_by_key(|operand| (operand.user, operand.position, operand.source));
         self.operands.dedup();
 
         let subjects = self.order.iter().map(|&(_, subject)| {

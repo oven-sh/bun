@@ -710,12 +710,7 @@ const socketOptionNames = [
   ...tlsOptionNames,
 ];
 
-const socketCallbackNames = [
-  "session",
-  "keylog",
-  "serverName",
-  "alpnCallback",
-];
+const socketCallbackNames = ["session", "keylog", "serverName", "alpnCallback"];
 
 const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
 const datagramSocketHandlerNames = ["data", "drain", "error"];
@@ -838,7 +833,11 @@ const serverState = [b.readsContents(), b.writesContents()];
 
 const closesConnections = [
   ...serverState,
-  b.keptCalled(webSocketHandlerCell("close"), { times: "Repeatedly", args: webSocketHandlerArguments.close, result: "Ignored" }),
+  b.keptCalled(webSocketHandlerCell("close"), {
+    times: "Repeatedly",
+    args: webSocketHandlerArguments.close,
+    result: "Ignored",
+  }),
 ];
 const changesServerState = {
   capability: "heap",
@@ -870,7 +869,14 @@ const serverMembers = {
       ],
       request: [b.readsContents(), b.writesContents()],
       options: [
-        b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "Iterate", "ToPrimitive", b.named("data", "headers")),
+        b.runsTransitively(
+          "OwnKeys",
+          "OwnValues",
+          "PrototypeChain",
+          "Iterate",
+          "ToPrimitive",
+          b.named("data", "headers"),
+        ),
         b.membersOfObjectsOnly,
         b.memberStoredIn(["data"], b.nativeCell(webSocketDataCell)),
       ],
@@ -1265,7 +1271,9 @@ export default b.declarations(
         createdOnFirstRead: {
           capability: "heap",
           throws: true,
-          uses: { this: [b.createdIn(newArrayOf(b.string), b.nativeCell(argumentsCell)), b.returnedFrom(argumentsCell)] },
+          uses: {
+            this: [b.createdIn(newArrayOf(b.string), b.nativeCell(argumentsCell)), b.returnedFrom(argumentsCell)],
+          },
           reads: externalState,
         },
       }),
@@ -1386,7 +1394,9 @@ export default b.declarations(
       concatArrayBuffers,
       readableStreamToArray: streamConsumer(newArrayOf(b.any)),
       // A stream whose only chunk is a string settles with a Uint8Array.
-      readableStreamToArrayBuffer: streamConsumer(b.union(b.instance("ArrayBuffer"), b.instance("Uint8Array").exactly).fresh),
+      readableStreamToArrayBuffer: streamConsumer(
+        b.union(b.instance("ArrayBuffer"), b.instance("Uint8Array").exactly).fresh,
+      ),
       readableStreamToBlob: streamConsumer(b.instance("Blob").fresh),
       readableStreamToBytes: streamConsumer(b.instance("Uint8Array").exactly.fresh),
       // The bytes are handed to what `FormData.from` holds when they have arrived, which a program can replace.
@@ -1498,7 +1508,10 @@ export default b.declarations(
     ),
   }),
   // The three that load machine code: dlopen, linkSymbols and CFunction of bun:ffi call them. The module takes the third off the object when it is evaluated.
-  b.namespace("Bun.FFI", Object.fromEntries(["cfunction", "dlopen", "linkSymbols"].map(name => [name, b.otherwiseBy(b.generic)]))),
+  b.namespace(
+    "Bun.FFI",
+    Object.fromEntries(["cfunction", "dlopen", "linkSymbols"].map(name => [name, b.otherwiseBy(b.generic)])),
+  ),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
     ...Object.fromEntries(undeclaredFunctionsOfDNS.map(name => [name, b.otherwiseBy(b.generic)])),
@@ -1627,71 +1640,74 @@ export default b.declarations(
     extends: "EventTarget",
     instanceCppClass: b.cppClass("JSPerformance"),
     proto: {
-    timeOrigin: {
-      this: timeline,
-      getter: b.f64,
-      capability: "none",
-      uses: { this: b.inspected },
-      implementation: b.generic,
-    },
-    timing: {
-      this: timeline,
-      getter: b.object,
-      capability: "heap",
-      uses: { this: b.inspected },
-      implementation: b.generic,
-    },
-    onresourcetimingbufferfull: {
-      this: timeline,
-      ...eventHandlerAttribute(receiver),
-      setter: { this: timeline, ...eventHandlerAttribute(receiver).setter },
-    },
-    mark: timelineOperation({
-      ...operandCodeOnly,
-      args: { markName: b.any.optional, markOptions: b.any.optional },
-      returns: timelineEntry,
-      uses: { markName: converted, markOptions: optionsWithClonedDetail("detail", "startTime") },
-      reads: heapsReadByClone,
-    }),
-    measure: timelineOperation({
-      ...operandCodeOnly,
-      args: { measureName: b.any.optional, startOrMeasureOptions: b.any.optional, endMark: b.any.optional },
-      returns: timelineEntry,
-      uses: {
-        measureName: converted,
-        startOrMeasureOptions: optionsWithClonedDetail("detail", "start", "duration", "end"),
-        endMark: converted,
+      timeOrigin: {
+        this: timeline,
+        getter: b.f64,
+        capability: "none",
+        uses: { this: b.inspected },
+        implementation: b.generic,
       },
-      reads: heapsReadByClone,
-    }),
-    getEntries: timelineOperation({ returns: timelineEntries, capability: "heap" }),
-    getEntriesByName: timelineOperation({
-      ...operandCodeOnly,
-      args: { name: b.any.optional, type: b.any.optional },
-      returns: timelineEntries,
-      uses: { name: converted, type: converted },
-    }),
-    getEntriesByType: timelineOperation({
-      ...operandCodeOnly,
-      args: { type: b.any.optional },
-      returns: timelineEntries,
-      uses: { type: converted },
-    }),
-    clearMarks: removesTimelineEntries,
-    clearMeasures: removesTimelineEntries,
-    clearResourceTimings: timelineOperation({ capability: "heap" }),
-    setResourceTimingBufferSize: timelineOperation({
-      ...operandCodeOnly,
-      args: { maxSize: b.any.optional },
-      uses: { maxSize: converted },
-    }),
-    markResourceTiming: { this: b.any, capability: "none", uses: { this: b.inspected }, implementation: b.generic },
-    toJSON: timelineOperation({ returns: b.object.fresh, capability: "heap" }),
+      timing: {
+        this: timeline,
+        getter: b.object,
+        capability: "heap",
+        uses: { this: b.inspected },
+        implementation: b.generic,
+      },
+      onresourcetimingbufferfull: {
+        this: timeline,
+        ...eventHandlerAttribute(receiver),
+        setter: { this: timeline, ...eventHandlerAttribute(receiver).setter },
+      },
+      mark: timelineOperation({
+        ...operandCodeOnly,
+        args: { markName: b.any.optional, markOptions: b.any.optional },
+        returns: timelineEntry,
+        uses: { markName: converted, markOptions: optionsWithClonedDetail("detail", "startTime") },
+        reads: heapsReadByClone,
+      }),
+      measure: timelineOperation({
+        ...operandCodeOnly,
+        args: { measureName: b.any.optional, startOrMeasureOptions: b.any.optional, endMark: b.any.optional },
+        returns: timelineEntry,
+        uses: {
+          measureName: converted,
+          startOrMeasureOptions: optionsWithClonedDetail("detail", "start", "duration", "end"),
+          endMark: converted,
+        },
+        reads: heapsReadByClone,
+      }),
+      getEntries: timelineOperation({ returns: timelineEntries, capability: "heap" }),
+      getEntriesByName: timelineOperation({
+        ...operandCodeOnly,
+        args: { name: b.any.optional, type: b.any.optional },
+        returns: timelineEntries,
+        uses: { name: converted, type: converted },
+      }),
+      getEntriesByType: timelineOperation({
+        ...operandCodeOnly,
+        args: { type: b.any.optional },
+        returns: timelineEntries,
+        uses: { type: converted },
+      }),
+      clearMarks: removesTimelineEntries,
+      clearMeasures: removesTimelineEntries,
+      clearResourceTimings: timelineOperation({ capability: "heap" }),
+      setResourceTimingBufferSize: timelineOperation({
+        ...operandCodeOnly,
+        args: { maxSize: b.any.optional },
+        uses: { maxSize: converted },
+      }),
+      markResourceTiming: { this: b.any, capability: "none", uses: { this: b.inspected }, implementation: b.generic },
+      toJSON: timelineOperation({ returns: b.object.fresh, capability: "heap" }),
     },
   }),
   ...Object.entries({
     // A receiver that is no target is refused before the type is converted.
-    addEventListener: (eventTarget: b.TableType) => ({ ...listenerRegistration(eventTarget), readsStateBeforeConversions: true }),
+    addEventListener: (eventTarget: b.TableType) => ({
+      ...listenerRegistration(eventTarget),
+      readsStateBeforeConversions: true,
+    }),
     removeEventListener: () => ({ ...listenerRemoval, uses: { this: b.inspected, ...listenerRemoval.uses } }),
     // The listeners that were added earlier run, with the event and the target.
     dispatchEvent: () => ({
@@ -1705,7 +1721,12 @@ export default b.declarations(
     }),
   } satisfies Record<string, (eventTarget: b.TableType) => b.FunctionField>).map(([name, on]) =>
     b.method(`EventTarget.prototype.${name}`, [
-      { ...on(receiver), this: b.builtin("performance"), overloadUsesFeature: timelineFeatures, implementation: b.generic },
+      {
+        ...on(receiver),
+        this: b.builtin("performance"),
+        overloadUsesFeature: timelineFeatures,
+        implementation: b.generic,
+      },
       // Without a receiver the target is the global object.
       { ...on(globalObject), this: b.union(b.undefined, b.null, globalObject), implementation: b.generic },
       { ...on(receiver), implementation: b.generic },

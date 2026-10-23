@@ -78,9 +78,10 @@ test("the built-ins table names declared features only, each once for an entry, 
 });
 
 test("packages/bun-types/trim.d.ts is current", () => {
-  expect(readFileSync(declarationsPath, "utf8"), "Run: bun scripts/build/trim/declarations.ts <codegen dir>/builtin-uses.json").toBe(
-    declarationsOf(model, uses),
-  );
+  expect(
+    readFileSync(declarationsPath, "utf8"),
+    "Run: bun scripts/build/trim/declarations.ts <codegen dir>/builtin-uses.json",
+  ).toBe(declarationsOf(model, uses));
 });
 
 test("packages/bun-types/trim.d.ts lists every trim feature with its description", () => {
@@ -120,7 +121,9 @@ test("no trim feature documents a module of src/js/internal", () => {
 test("every profile has a ratio for every format", () => {
   expect(model.profiles.length).toBeGreaterThan(0);
   expect(
-    model.profiles.filter(profile => objectFormats.some(format => profile.minimumCutRatio[format] === undefined)).map(profile => profile.name),
+    model.profiles
+      .filter(profile => objectFormats.some(format => profile.minimumCutRatio[format] === undefined))
+      .map(profile => profile.name),
   ).toEqual([]);
 });
 
@@ -144,7 +147,13 @@ test("every vendored library is listed with the version that is built", () => {
     mockToolchain(),
   );
   const deps = allDeps.map(
-    dep => ({ name: dep.name, libs: [join(buildDir, `${dep.name}.a`)], objects: [], sources: [] }) as Partial<ResolvedDep> as ResolvedDep,
+    dep =>
+      ({
+        name: dep.name,
+        libs: [join(buildDir, `${dep.name}.a`)],
+        objects: [],
+        sources: [],
+      }) as Partial<ResolvedDep> as ResolvedDep,
   );
   const listed = readLibrariesFile(writeLibrariesFile(cfg, deps)).libraries;
 

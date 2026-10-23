@@ -7,12 +7,30 @@ pub(crate) struct Target {
 }
 
 pub(crate) const ALL_TARGETS: [Target; 6] = [
-    Target { format: ExecutableFormat::Elf, architecture: Architecture::X86_64 },
-    Target { format: ExecutableFormat::Elf, architecture: Architecture::Aarch64 },
-    Target { format: ExecutableFormat::MachO, architecture: Architecture::X86_64 },
-    Target { format: ExecutableFormat::MachO, architecture: Architecture::Aarch64 },
-    Target { format: ExecutableFormat::Pe, architecture: Architecture::X86_64 },
-    Target { format: ExecutableFormat::Pe, architecture: Architecture::Aarch64 },
+    Target {
+        format: ExecutableFormat::Elf,
+        architecture: Architecture::X86_64,
+    },
+    Target {
+        format: ExecutableFormat::Elf,
+        architecture: Architecture::Aarch64,
+    },
+    Target {
+        format: ExecutableFormat::MachO,
+        architecture: Architecture::X86_64,
+    },
+    Target {
+        format: ExecutableFormat::MachO,
+        architecture: Architecture::Aarch64,
+    },
+    Target {
+        format: ExecutableFormat::Pe,
+        architecture: Architecture::X86_64,
+    },
+    Target {
+        format: ExecutableFormat::Pe,
+        architecture: Architecture::Aarch64,
+    },
 ];
 
 pub(crate) const CODE_BYTES: u64 = 0x20_0000;
@@ -40,7 +58,10 @@ pub(crate) fn pattern_byte(address: u64) -> u8 {
 }
 
 const fn sized(start: u64, size: u64) -> AddressRange {
-    AddressRange { start, end: start + size }
+    AddressRange {
+        start,
+        end: start + size,
+    }
 }
 
 pub(crate) fn layout_of(target: Target) -> ToyLayout {
@@ -63,10 +84,21 @@ pub(crate) fn build_executable(
         ExecutableFormat::Pe => build_pe(layout, table.is_some()),
     };
     if let Some(table) = table {
-        assert!(table.len() as u64 <= TABLE_ROOM, "the toy table does not fit its room");
-        put(&mut file, find_file_offset(format, layout.table.start), table);
+        assert!(
+            table.len() as u64 <= TABLE_ROOM,
+            "the toy table does not fit its room"
+        );
+        put(
+            &mut file,
+            find_file_offset(format, layout.table.start),
+            table,
+        );
     }
-    put(&mut file, find_file_offset(format, layout.state.start), STATE_MAGIC);
+    put(
+        &mut file,
+        find_file_offset(format, layout.state.start),
+        STATE_MAGIC,
+    );
     for (address, bytes) in overlays {
         put(&mut file, find_file_offset(format, *address), bytes);
     }
@@ -77,7 +109,10 @@ fn find_file_offset(format: ExecutableFormat, address: u64) -> usize {
     match format {
         ExecutableFormat::Elf => (address - ELF_BASE) as usize,
         ExecutableFormat::MachO => {
-            assert!(address < MACHO_BASE + MACHO_TEXT_BYTES, "an overlay lies outside __TEXT");
+            assert!(
+                address < MACHO_BASE + MACHO_TEXT_BYTES,
+                "an overlay lies outside __TEXT"
+            );
             (address - MACHO_BASE) as usize
         }
         ExecutableFormat::Pe => {
@@ -417,7 +452,11 @@ fn append_elf_section_table(file: &mut Vec<u8>, has_table: bool) {
 }
 
 fn append_elf_section_header(headers: &mut Vec<u8>, name_offset: u32, section: &ElfSection) {
-    let address = if section.flags & SHF_ALLOC != 0 { ELF_BASE + section.offset } else { 0 };
+    let address = if section.flags & SHF_ALLOC != 0 {
+        ELF_BASE + section.offset
+    } else {
+        0
+    };
     headers.extend_from_slice(&name_offset.to_le_bytes());
     headers.extend_from_slice(&section.kind.to_le_bytes());
     headers.extend_from_slice(&section.flags.to_le_bytes());
@@ -460,7 +499,13 @@ struct MachSection {
 }
 
 const fn text_section(name: &'static str, address: u64, bytes: u64, flags: u32) -> MachSection {
-    MachSection { name, address, bytes, offset: (address - MACHO_BASE) as u32, flags }
+    MachSection {
+        name,
+        address,
+        bytes,
+        offset: (address - MACHO_BASE) as u32,
+        flags,
+    }
 }
 
 const MACHO_TEXT_SECTIONS: [MachSection; 5] = [
@@ -604,7 +649,11 @@ fn build_macho(layout: &ToyLayout, has_table: bool) -> Vec<u8> {
     ] {
         put_pattern(&mut file, (range.start - MACHO_BASE) as usize, range);
     }
-    put(&mut file, MACHO_LINKEDIT_OFFSET as usize, &[0x1e; MACHO_LINKEDIT_BYTES as usize]);
+    put(
+        &mut file,
+        MACHO_LINKEDIT_OFFSET as usize,
+        &[0x1e; MACHO_LINKEDIT_BYTES as usize],
+    );
     file
 }
 
@@ -764,7 +813,11 @@ fn build_pe(layout: &ToyLayout, has_table: bool) -> Vec<u8> {
         (PE_BUILTINS, BUILTINS_BYTES),
     ] {
         let range = sized(u64::from(address), bytes);
-        put_pattern(&mut file, find_file_offset(ExecutableFormat::Pe, range.start), range);
+        put_pattern(
+            &mut file,
+            find_file_offset(ExecutableFormat::Pe, range.start),
+            range,
+        );
     }
     file
 }
@@ -776,8 +829,16 @@ fn put_pe_headers(file: &mut [u8], architecture: Architecture) {
     };
     put(file, PE_HEADER_OFFSET, b"PE\0\0");
     put(file, PE_HEADER_OFFSET + 4, &machine.to_le_bytes());
-    put(file, PE_HEADER_OFFSET + 6, &(PE_SECTIONS.len() as u16).to_le_bytes());
-    put(file, PE_HEADER_OFFSET + 20, &PE_OPTIONAL_HEADER_BYTES.to_le_bytes());
+    put(
+        file,
+        PE_HEADER_OFFSET + 6,
+        &(PE_SECTIONS.len() as u16).to_le_bytes(),
+    );
+    put(
+        file,
+        PE_HEADER_OFFSET + 20,
+        &PE_OPTIONAL_HEADER_BYTES.to_le_bytes(),
+    );
     put(file, PE_HEADER_OFFSET + 22, &0x23u16.to_le_bytes());
 
     let optional = PE_OPTIONAL_HEADER_OFFSET;
@@ -802,7 +863,11 @@ fn put_pe_headers(file: &mut [u8], architecture: Architecture) {
 fn put_pe_section_table(file: &mut [u8], has_table: bool) {
     let mut table = Vec::new();
     for section in &PE_SECTIONS {
-        let name = if !has_table && section.address == PE_TABLE { ".unnamed" } else { section.name };
+        let name = if !has_table && section.address == PE_TABLE {
+            ".unnamed"
+        } else {
+            section.name
+        };
         table.extend_from_slice(&padded_name::<8>(name));
         table.extend_from_slice(&section.virtual_bytes.to_le_bytes());
         table.extend_from_slice(&section.address.to_le_bytes());

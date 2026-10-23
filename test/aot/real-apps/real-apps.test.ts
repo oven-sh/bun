@@ -15,10 +15,14 @@ describe.skipIf(!work || process.platform !== "linux")("open-source projects at 
       async () => {
         expect(await runner.fetch(project)).toBe(true);
         const types = await runner.compareTypes(project);
-        expect({ onlyTsc: types?.onlyTsc ?? [], onlyBunCheck: types?.onlyBunCheck ?? [] }).toEqual({ onlyTsc: [], onlyBunCheck: [] });
+        expect({ onlyTsc: types?.onlyTsc ?? [], onlyBunCheck: types?.onlyBunCheck ?? [] }).toEqual({
+          onlyTsc: [],
+          onlyBunCheck: [],
+        });
         const build = await runner.build(project);
         expect(build!.aot.signal).toBeNull();
-        if (build!.stock.exitCode === 0 && build!.aot.exitCode !== 0) expect(build!.aot.firstErrors.filter(line => !/^error: TS\d+/.test(line))).toEqual([]);
+        if (build!.stock.exitCode === 0 && build!.aot.exitCode !== 0)
+          expect(build!.aot.firstErrors.filter(line => !/^error: TS\d+/.test(line))).toEqual([]);
         const tests = await runner.compareTests(project);
         expect(tests.aot.signal).toBeNull();
       },

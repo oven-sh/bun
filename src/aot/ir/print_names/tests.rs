@@ -63,7 +63,10 @@ fn printable_ascii_is_not_escaped() {
 #[test]
 fn other_code_points_have_no_leading_zero() {
     assert_eq!(quoted(b"\x00\t\r\x1f"), r#""\u{0}\u{9}\u{d}\u{1f}""#);
-    assert_eq!(quoted("\u{80}\u{fffd}\u{10ffff}".as_bytes()), r#""\u{80}\u{fffd}\u{10ffff}""#);
+    assert_eq!(
+        quoted("\u{80}\u{fffd}\u{10ffff}".as_bytes()),
+        r#""\u{80}\u{fffd}\u{10ffff}""#
+    );
     assert_eq!(quoted(b"\xED\xBF\xBF"), r#""\u{dfff}""#);
 }
 
@@ -117,7 +120,10 @@ fn keys() {
         (PropertyKey::from_text(x), r#""x""#),
         (PropertyKey::from_engine_private_name(x), r#"@"x""#),
         (PropertyKey::from_private_name(x, layout(2)), r#"#"x"@L2"#),
-        (PropertyKey::from_created_symbol(module, 120, None), "symbol@m0:120"),
+        (
+            PropertyKey::from_created_symbol(module, 120, None),
+            "symbol@m0:120",
+        ),
         (
             PropertyKey::from_created_symbol(ModuleId::new(3), 0, Some(description)),
             r#"symbol("d\"")@m3:0"#,
@@ -216,7 +222,9 @@ fn anything_with_absent() {
 #[test]
 fn absent_follows_object_word() {
     let mut program = Program::new();
-    let id = program.types.union_all([TypeTable::ABSENT, TypeTable::OBJECT, TypeTable::NULL]);
+    let id = program
+        .types
+        .union_all([TypeTable::ABSENT, TypeTable::OBJECT, TypeTable::NULL]);
     assert_eq!(type_text(&program, id), "null|object|absent");
 }
 
@@ -227,7 +235,10 @@ fn boolean_halves() {
     let halves = [
         (Primitives::TRUE, "true"),
         (Primitives::FALSE, "false"),
-        (Primitives::NULL | Primitives::FALSE | Primitives::STRING, "null|false|string"),
+        (
+            Primitives::NULL | Primitives::FALSE | Primitives::STRING,
+            "null|false|string",
+        ),
     ];
     for (primitives, expected) in halves {
         let printed = interned_type_text(&mut program, Type::primitives(primitives));
@@ -262,7 +273,10 @@ fn range_prints_in_number_position() {
         primitives: Primitives::BOOLEAN | Primitives::STRING,
         ..Type::integers(1, 2)
     };
-    assert_eq!(interned_type_text(&mut program, ty), "boolean|int[1, 2]|string");
+    assert_eq!(
+        interned_type_text(&mut program, ty),
+        "boolean|int[1, 2]|string"
+    );
 }
 
 #[test]
@@ -330,8 +344,14 @@ fn class_without_known_contents_has_no_brackets() {
         (Type::class(BuiltinClass::Map, &[anything, anything]), "Map"),
         (Type::class(BuiltinClass::Promise, &[anything]), "Promise"),
         (Type::class(BuiltinClass::Date, &[]), "Date"),
-        (Type::class(BuiltinClass::Map, &[anything, TypeTable::NUMBER]), "Map<anything, number>"),
-        (Type::class(BuiltinClass::Map, &[TypeTable::NEVER, anything]), "Map<never, anything>"),
+        (
+            Type::class(BuiltinClass::Map, &[anything, TypeTable::NUMBER]),
+            "Map<anything, number>",
+        ),
+        (
+            Type::class(BuiltinClass::Map, &[TypeTable::NEVER, anything]),
+            "Map<never, anything>",
+        ),
     ];
     for (ty, expected) in types {
         assert_eq!(interned_type_text(&mut program, ty), expected);
@@ -342,13 +362,19 @@ fn class_without_known_contents_has_no_brackets() {
 fn nested_class_contents() {
     let mut program = Program::new();
     let numbers = program.types.intern(array_of(TypeTable::NUMBER));
-    assert_eq!(interned_type_text(&mut program, array_of(numbers)), "Array<Array<number>>");
+    assert_eq!(
+        interned_type_text(&mut program, array_of(numbers)),
+        "Array<Array<number>>"
+    );
 
     let object = program.types.intern(Type::layout(layout(2)));
     let nullable = program.types.union(object, TypeTable::NULL);
     let nullables = program.types.intern(array_of(nullable));
     let map = Type::class(BuiltinClass::Map, &[TypeTable::STRING, nullables]);
-    assert_eq!(interned_type_text(&mut program, map), "Map<string, Array<null|L2>>");
+    assert_eq!(
+        interned_type_text(&mut program, map),
+        "Map<string, Array<null|L2>>"
+    );
 }
 
 #[test]
@@ -361,7 +387,10 @@ fn opaque_is_lower_case() {
         (OpaqueKind::ClassToken, "classtoken"),
     ];
     for (kind, expected) in kinds {
-        assert_eq!(interned_type_text(&mut program, Type::opaque(kind)), expected);
+        assert_eq!(
+            interned_type_text(&mut program, Type::opaque(kind)),
+            expected
+        );
     }
 }
 
@@ -385,14 +414,23 @@ fn invalid_ids_inside_names_print() {
     let mut program = Program::new();
     let a = program.strings.intern(b"a");
     let missing = StringId::new(7);
-    assert_eq!(key_text(&mut program, PropertyKey::from_text(missing)), "<invalid string 7>");
+    assert_eq!(
+        key_text(&mut program, PropertyKey::from_text(missing)),
+        "<invalid string 7>"
+    );
     let key = PropertyKey::from_created_symbol(ModuleId::new(0), 1, Some(missing));
-    assert_eq!(key_text(&mut program, key), "symbol(<invalid string 7>)@m0:1");
+    assert_eq!(
+        key_text(&mut program, key),
+        "symbol(<invalid string 7>)@m0:1"
+    );
     let literals = Type {
         strings: vec![a, missing],
         ..Type::default()
     };
-    assert_eq!(interned_type_text(&mut program, literals), "\"a\"|<invalid string 7>");
+    assert_eq!(
+        interned_type_text(&mut program, literals),
+        "\"a\"|<invalid string 7>"
+    );
 }
 
 #[test]

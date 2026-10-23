@@ -25,7 +25,10 @@ type SpecifierRow = (&'static str, &'static str, Specifier);
 type LiteralRow = (&'static str, &'static str);
 
 const UNDEFINED_DEFINE: Fold<'static> = Fold {
-    defines: &[(Path::Global(&["undefined"]), Defined::Value(Data::Undefined))],
+    defines: &[(
+        Path::Global(&["undefined"]),
+        Defined::Value(Data::Undefined),
+    )],
     ..Fold::NONE
 };
 const GLOBAL_PATH_DEFINE: Fold<'static> = Fold {
@@ -52,9 +55,21 @@ const PUBLISHED_CONSTANTS: &[FoldedRow] = &[
     ("a.ts", "v(1 as const);", Pure(Number(1.0))),
     ("a.mjs", "v(1);", Pure(Number(1.0))),
     ("a.mjs", "v(1n);", Pure(Data::BigInt("1"))),
-    ("a.mjs", r#"v("quire".replace(/^/, "re"));"#, Pure(Text("require"))),
-    ("a.mjs", r#"v("requir".replace(/$/, "e"));"#, Pure(Text("require"))),
-    ("a.mjs", r#"v(("b" + "c").replace(/^/, `a`));"#, Pure(Text("abc"))),
+    (
+        "a.mjs",
+        r#"v("quire".replace(/^/, "re"));"#,
+        Pure(Text("require")),
+    ),
+    (
+        "a.mjs",
+        r#"v("requir".replace(/$/, "e"));"#,
+        Pure(Text("require")),
+    ),
+    (
+        "a.mjs",
+        r#"v(("b" + "c").replace(/^/, `a`));"#,
+        Pure(Text("abc")),
+    ),
     ("a.mjs", r#"v("".replace(/$/, ""));"#, Pure(Text(""))),
     ("a.mjs", r#"v("a".replace(/^/g, "b"));"#, Unknown),
     ("a.mjs", r#"v("a".replace(/^/, "$&"));"#, Unknown),
@@ -77,18 +92,66 @@ const PUBLISHED_CONSTANTS: &[FoldedRow] = &[
 
 const CONST_READS: &[FoldedRow] = &[
     ("a.mjs", "const X = 1; v(X);", OutsideDeadZone(Number(1.0))),
-    ("a.mjs", "const X = 1; v(X + 1);", OutsideDeadZone(Number(2.0))),
-    ("a.mjs", "const X = 1; v(`${X}`);", OutsideDeadZone(Text("1"))),
-    ("a.mjs", "const X = 1; v(-X);", OutsideDeadZone(Number(-1.0))),
-    ("a.mjs", "const X = 1; v((X, 2));", OutsideDeadZone(Number(2.0))),
-    ("a.mjs", "const X = 1; v(X ? 3 : 4);", OutsideDeadZone(Number(3.0))),
-    ("a.mjs", "const X = 1; v(X && 5);", OutsideDeadZone(Number(5.0))),
-    ("a.mjs", "const X = 1, Y = X + 1; v(Y);", OutsideDeadZone(Number(2.0))),
-    ("a.mjs", "const X = 1; function g() { v(X); }", OutsideDeadZone(Number(1.0))),
-    ("a.mjs", "function g() { const X = 1; v(X); }", OutsideDeadZone(Number(1.0))),
-    ("a.mjs", "const X = (f(), 1); v(X);", OutsideDeadZone(Number(1.0))),
-    ("a.mjs", "export const X = 1; v(X);", OutsideDeadZone(Number(1.0))),
-    ("a.ts", "namespace N { const X = 1; v(X); }", OutsideDeadZone(Number(1.0))),
+    (
+        "a.mjs",
+        "const X = 1; v(X + 1);",
+        OutsideDeadZone(Number(2.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = 1; v(`${X}`);",
+        OutsideDeadZone(Text("1")),
+    ),
+    (
+        "a.mjs",
+        "const X = 1; v(-X);",
+        OutsideDeadZone(Number(-1.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = 1; v((X, 2));",
+        OutsideDeadZone(Number(2.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = 1; v(X ? 3 : 4);",
+        OutsideDeadZone(Number(3.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = 1; v(X && 5);",
+        OutsideDeadZone(Number(5.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = 1, Y = X + 1; v(Y);",
+        OutsideDeadZone(Number(2.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = 1; function g() { v(X); }",
+        OutsideDeadZone(Number(1.0)),
+    ),
+    (
+        "a.mjs",
+        "function g() { const X = 1; v(X); }",
+        OutsideDeadZone(Number(1.0)),
+    ),
+    (
+        "a.mjs",
+        "const X = (f(), 1); v(X);",
+        OutsideDeadZone(Number(1.0)),
+    ),
+    (
+        "a.mjs",
+        "export const X = 1; v(X);",
+        OutsideDeadZone(Number(1.0)),
+    ),
+    (
+        "a.ts",
+        "namespace N { const X = 1; v(X); }",
+        OutsideDeadZone(Number(1.0)),
+    ),
     ("a.mjs", "let X = 1; v(X);", Unknown),
     ("a.cjs", "var X = 1; v(X);", Unknown),
     ("a.ts", "namespace N { export const X = 1; v(X); }", Unknown),
@@ -100,19 +163,51 @@ const CONST_READS: &[FoldedRow] = &[
     ("a.mjs", "const X = f(); v(X);", Unknown),
     ("a.mjs", "const X = 1; function g(X) { v(X); }", Unknown),
     ("a.cjs", "const X = 1; with (o) v(X);", Unknown),
-    ("a.cjs", "const X = 1; function g() { eval(s); v(X); }", Unknown),
+    (
+        "a.cjs",
+        "const X = 1; function g() { eval(s); v(X); }",
+        Unknown,
+    ),
 ];
 
 const LIBRARY_READS: &[(&str, Option<Data<'static>>, Expected)] = &[
     ("const X = 1; v(X);", Some(Number(1.0)), Pure(Number(1.0))),
-    ("const X = 1; function g() { v(X); }", Some(Number(1.0)), Pure(Number(1.0))),
-    (r#"const X = "a" + "b"; v(X);"#, Some(Text("ab")), Pure(Text("ab"))),
-    ("const X = 1, Y = X + 1; v(Y);", Some(Number(2.0)), Pure(Number(2.0))),
-    ("const X = false; v(X);", Some(Boolean(false)), Pure(Boolean(false))),
-    ("export const X = 1; v(X);", Some(Number(1.0)), Pure(Number(1.0))),
-    ("function g() { const X = 1; v(X); }", None, OutsideDeadZone(Number(1.0))),
+    (
+        "const X = 1; function g() { v(X); }",
+        Some(Number(1.0)),
+        Pure(Number(1.0)),
+    ),
+    (
+        r#"const X = "a" + "b"; v(X);"#,
+        Some(Text("ab")),
+        Pure(Text("ab")),
+    ),
+    (
+        "const X = 1, Y = X + 1; v(Y);",
+        Some(Number(2.0)),
+        Pure(Number(2.0)),
+    ),
+    (
+        "const X = false; v(X);",
+        Some(Boolean(false)),
+        Pure(Boolean(false)),
+    ),
+    (
+        "export const X = 1; v(X);",
+        Some(Number(1.0)),
+        Pure(Number(1.0)),
+    ),
+    (
+        "function g() { const X = 1; v(X); }",
+        None,
+        OutsideDeadZone(Number(1.0)),
+    ),
     ("{ const X = 1; v(X); }", None, OutsideDeadZone(Number(1.0))),
-    ("const X = (f(), 1); v(X);", None, OutsideDeadZone(Number(1.0))),
+    (
+        "const X = (f(), 1); v(X);",
+        None,
+        OutsideDeadZone(Number(1.0)),
+    ),
     ("const X = f(); v(X);", None, Unknown),
     ("let X = 1; v(X);", None, Unknown),
     ("v(X); const X = 1;", None, Unknown),
@@ -121,35 +216,151 @@ const LIBRARY_READS: &[(&str, Option<Data<'static>>, Expected)] = &[
 ];
 
 const SPECIFIERS: &[SpecifierRow] = &[
-    ("a.cjs", "require(`./l/${x}.json`);", Specifier::Pattern("./l/", ".json")),
-    ("a.cjs", r#"require("./a/" + x + ".js");"#, Specifier::Pattern("./a/", ".js")),
-    ("a.cjs", r#"require(dir + "/x.js");"#, Specifier::Pattern("", "/x.js")),
-    ("a.cjs", r#"require("./" + x);"#, Specifier::Pattern("./", "")),
-    ("a.cjs", r#"require(1 + 2 + "a" + x);"#, Specifier::Pattern("3a", "")),
-    ("a.cjs", r#"require(x + 1 + "a");"#, Specifier::Pattern("", "a")),
-    ("a.cjs", r#"const p = "./a/" + x; require(p);"#, Specifier::Pattern("./a/", "")),
-    ("a.cjs", r#"const p = "./a/" + x; require(p + ".js");"#, Specifier::Pattern("./a/", ".js")),
-    ("a.cjs", r#"require(`./${c ? "a" : "b"}.js`);"#, Specifier::Pattern("./", ".js")),
-    ("a.cjs", r#"require(c ? "./d/one.cjs" : "./d/two.cjs");"#, Specifier::Pattern("./d/", ".cjs")),
-    ("a.cjs", r#"require("./" + (c ? "a/x" : "a/y") + ".js");"#, Specifier::Pattern("./a/", ".js")),
-    ("a.cjs", r#"require(c ? "./a/x" : d ? "./a/y" : "./a/z");"#, Specifier::Pattern("./a/", "")),
-    ("a.cjs", r#"require(c ? "./a/" + x : "./a/b.js");"#, Specifier::Pattern("./a/", "")),
-    ("a.cjs", r#"require(c ? "./a/" + (d ? 1 : 2) : "./a/z");"#, Specifier::Pattern("./a/", "")),
-    ("a.cjs", r#"require(c ? "ab" : "aab");"#, Specifier::Pattern("a", "b")),
-    ("a.cjs", r#"require(c ? "./a" : "./a");"#, Specifier::Pattern("./a", "")),
-    ("a.cjs", r#"require(c ? "./\u00e9.js" : "./\u00e8.js");"#, Specifier::Pattern("./", ".js")),
-    ("a.ts", r#"require((c ? "./a/x" : "./a/y") as string);"#, Specifier::Pattern("./a/", "")),
-    ("a.cjs", r#"require("a" + (1 + x));"#, Specifier::Pattern("a", "")),
-    ("a.cjs", r#"require("a" + ("b" + x));"#, Specifier::Pattern("ab", "")),
-    ("a.cjs", r#"require(("./a/" + x));"#, Specifier::Pattern("./a/", "")),
-    ("a.cjs", r#"require(("./a/") + (x));"#, Specifier::Pattern("./a/", "")),
-    ("a.ts", r#"require(("./a/" + x) as string);"#, Specifier::Pattern("./a/", "")),
-    ("a.ts", r#"require(("./a/" as string) + x!);"#, Specifier::Pattern("./a/", "")),
-    ("a.ts", r#"require(`./${x as any}.js` satisfies string);"#, Specifier::Pattern("./", ".js")),
-    ("a.mjs", "import(`./l/${x}.js`);", Specifier::Pattern("./l/", ".js")),
-    ("a.cjs", "require.resolve(`./l/${x}.js`);", Specifier::Pattern("./l/", ".js")),
-    ("a.cjs", r"require(`a\ud83d${x}\ude00b`);", Specifier::Pattern("a", "b")),
-    ("a.cjs", r#"require((f(), "./x"));"#, Specifier::Constant("./x")),
+    (
+        "a.cjs",
+        "require(`./l/${x}.json`);",
+        Specifier::Pattern("./l/", ".json"),
+    ),
+    (
+        "a.cjs",
+        r#"require("./a/" + x + ".js");"#,
+        Specifier::Pattern("./a/", ".js"),
+    ),
+    (
+        "a.cjs",
+        r#"require(dir + "/x.js");"#,
+        Specifier::Pattern("", "/x.js"),
+    ),
+    (
+        "a.cjs",
+        r#"require("./" + x);"#,
+        Specifier::Pattern("./", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(1 + 2 + "a" + x);"#,
+        Specifier::Pattern("3a", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(x + 1 + "a");"#,
+        Specifier::Pattern("", "a"),
+    ),
+    (
+        "a.cjs",
+        r#"const p = "./a/" + x; require(p);"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.cjs",
+        r#"const p = "./a/" + x; require(p + ".js");"#,
+        Specifier::Pattern("./a/", ".js"),
+    ),
+    (
+        "a.cjs",
+        r#"require(`./${c ? "a" : "b"}.js`);"#,
+        Specifier::Pattern("./", ".js"),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "./d/one.cjs" : "./d/two.cjs");"#,
+        Specifier::Pattern("./d/", ".cjs"),
+    ),
+    (
+        "a.cjs",
+        r#"require("./" + (c ? "a/x" : "a/y") + ".js");"#,
+        Specifier::Pattern("./a/", ".js"),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "./a/x" : d ? "./a/y" : "./a/z");"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "./a/" + x : "./a/b.js");"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "./a/" + (d ? 1 : 2) : "./a/z");"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "ab" : "aab");"#,
+        Specifier::Pattern("a", "b"),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "./a" : "./a");"#,
+        Specifier::Pattern("./a", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(c ? "./\u00e9.js" : "./\u00e8.js");"#,
+        Specifier::Pattern("./", ".js"),
+    ),
+    (
+        "a.ts",
+        r#"require((c ? "./a/x" : "./a/y") as string);"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require("a" + (1 + x));"#,
+        Specifier::Pattern("a", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require("a" + ("b" + x));"#,
+        Specifier::Pattern("ab", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(("./a/" + x));"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.cjs",
+        r#"require(("./a/") + (x));"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.ts",
+        r#"require(("./a/" + x) as string);"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.ts",
+        r#"require(("./a/" as string) + x!);"#,
+        Specifier::Pattern("./a/", ""),
+    ),
+    (
+        "a.ts",
+        r#"require(`./${x as any}.js` satisfies string);"#,
+        Specifier::Pattern("./", ".js"),
+    ),
+    (
+        "a.mjs",
+        "import(`./l/${x}.js`);",
+        Specifier::Pattern("./l/", ".js"),
+    ),
+    (
+        "a.cjs",
+        "require.resolve(`./l/${x}.js`);",
+        Specifier::Pattern("./l/", ".js"),
+    ),
+    (
+        "a.cjs",
+        r"require(`a\ud83d${x}\ude00b`);",
+        Specifier::Pattern("a", "b"),
+    ),
+    (
+        "a.cjs",
+        r#"require((f(), "./x"));"#,
+        Specifier::Constant("./x"),
+    ),
     ("a.cjs", "require(1 + x);", Specifier::Unknown),
     ("a.cjs", "require(x + 1);", Specifier::Unknown),
     ("a.cjs", "require(x);", Specifier::Unknown),
@@ -158,7 +369,11 @@ const SPECIFIERS: &[SpecifierRow] = &[
     ("a.cjs", r#"require(c ? "./a" : "b");"#, Specifier::Unknown),
     ("a.cjs", "require(`${a}${b}`);", Specifier::Unknown),
     ("a.cjs", "require(1);", Specifier::Unknown),
-    ("a.cjs", r#"let p = "./a/" + x; require(p);"#, Specifier::Unknown),
+    (
+        "a.cjs",
+        r#"let p = "./a/" + x; require(p);"#,
+        Specifier::Unknown,
+    ),
     ("a.cjs", r"require(`\ud83d${x}\ude00`);", Specifier::Unknown),
 ];
 
@@ -267,15 +482,51 @@ const PATHS_FROM_OWN_DIRECTORY: &[SpecifierRow] = &[
 ];
 
 const MODIFIED_IMPORT_META_PATHS: &[SpecifierRow] = &[
-    ("a.mjs", r#"import.meta.dir = d; import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"import.meta.dirname += d; import(`${import.meta.dirname}/a.js`);"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"import.meta["dir"] = d; import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"[import.meta.dir] = d; import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"delete import.meta.dir; import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"const meta = import.meta; import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"f(import.meta); import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mjs", r#"import.meta.f(); import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
-    ("a.mts", r#"(import.meta as any).dir = d; import(import.meta.dir + "/a.js");"#, Specifier::Pattern("", "/a.js")),
+    (
+        "a.mjs",
+        r#"import.meta.dir = d; import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"import.meta.dirname += d; import(`${import.meta.dirname}/a.js`);"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"import.meta["dir"] = d; import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"[import.meta.dir] = d; import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"delete import.meta.dir; import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"const meta = import.meta; import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"f(import.meta); import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mjs",
+        r#"import.meta.f(); import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
+    (
+        "a.mts",
+        r#"(import.meta as any).dir = d; import(import.meta.dir + "/a.js");"#,
+        Specifier::Pattern("", "/a.js"),
+    ),
     (
         "a.mjs",
         r#"import path from "path"; import.meta.dir = d; import(path.join(import.meta.dir, "a.js"));"#,
@@ -284,13 +535,21 @@ const MODIFIED_IMPORT_META_PATHS: &[SpecifierRow] = &[
 ];
 
 const READ_ONLY_IMPORT_META_PATHS: &[SpecifierRow] = &[
-    ("a.mjs", r#"const { dir, url } = import.meta; import(import.meta.dir + "/a.js");"#, Specifier::Constant("./a.js")),
+    (
+        "a.mjs",
+        r#"const { dir, url } = import.meta; import(import.meta.dir + "/a.js");"#,
+        Specifier::Constant("./a.js"),
+    ),
     (
         "a.mjs",
         r#"f(import.meta.url, import.meta["path"], import.meta.env.A, import.meta.resolve("./b.js")); import(import.meta.dir + "/a.js");"#,
         Specifier::Constant("./a.js"),
     ),
-    ("a.mjs", r#"import.meta.hot?.accept(); import(import.meta.dir + "/a.js");"#, Specifier::Constant("./a.js")),
+    (
+        "a.mjs",
+        r#"import.meta.hot?.accept(); import(import.meta.dir + "/a.js");"#,
+        Specifier::Constant("./a.js"),
+    ),
 ];
 
 const PATH_JOINS: &[SpecifierRow] = &[
@@ -369,8 +628,16 @@ const PATH_JOINS: &[SpecifierRow] = &[
         r#"let path = require("path"); path = o; require(path.join(d, "a.json"));"#,
         Specifier::Unknown,
     ),
-    ("a.cjs", r#"require(path.join(d, "a.json"));"#, Specifier::Unknown),
-    ("a.cjs", r#"require([d, "a.json"].join("/"));"#, Specifier::Unknown),
+    (
+        "a.cjs",
+        r#"require(path.join(d, "a.json"));"#,
+        Specifier::Unknown,
+    ),
+    (
+        "a.cjs",
+        r#"require([d, "a.json"].join("/"));"#,
+        Specifier::Unknown,
+    ),
 ];
 
 const DATA_LITERALS: &[(&str, &str, &str)] = &[
@@ -392,7 +659,11 @@ const DATA_LITERALS: &[(&str, &str, &str)] = &[
     ("a.mjs", r#"v({ ["__proto__"]: 1 });"#, r#"{"__proto__":1}"#),
     ("a.mjs", "v([]);", "[]"),
     ("a.mjs", "v({});", "{}"),
-    ("a.mjs", "v([1 + 1, `a${1}`, void 0, 1n]);", r#"[2,"a1",undefined,1n]"#),
+    (
+        "a.mjs",
+        "v([1 + 1, `a${1}`, void 0, 1n]);",
+        r#"[2,"a1",undefined,1n]"#,
+    ),
 ];
 
 const OTHER_LITERALS: &[LiteralRow] = &[
@@ -429,12 +700,7 @@ const REPEATED_KEYS: &[(&str, &str)] = &[
     ),
 ];
 
-fn folded(
-    path: &str,
-    text: &str,
-    fold: Fold<'_>,
-    test: impl for<'s> FnOnce(&Analyzed<'s>) + Send,
-) {
+fn folded(path: &str, text: &str, fold: Fold<'_>, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
     with_workspace(|w| {
         let inputs = w.fold_inputs(&fold);
         test(&w.analyze(&Source::new(path, text), &inputs));
@@ -504,7 +770,10 @@ fn assert_folded(s: &Analyzed<'_>, e: ExprId, expected: Expected, text: &str) {
             _,
         ) => false,
     };
-    assert!(is_expected, "{text}: expected {expected:?}, found {found:?}");
+    assert!(
+        is_expected,
+        "{text}: expected {expected:?}, found {found:?}"
+    );
 }
 
 fn data_value<'s>(s: &Analyzed<'s>, e: ExprId) -> FoldedData<'s> {
@@ -546,8 +815,15 @@ fn check_specifiers(rows: &[SpecifierRow]) {
             let expected = to_import_specifier(&s.workspace, expected);
             assert!(site.kind.call().is_some(), "{text}");
             assert_eq!(site.specifier, expected, "{text}");
-            assert_eq!(s.analysis.decisions.specifier(site.specifier_node), expected, "{text}");
-            assert!(!s.analysis.decisions.is_dead_expr(site.specifier_node), "{text}");
+            assert_eq!(
+                s.analysis.decisions.specifier(site.specifier_node),
+                expected,
+                "{text}"
+            );
+            assert!(
+                !s.analysis.decisions.is_dead_expr(site.specifier_node),
+                "{text}"
+            );
             assert!(s.analysis.strings_over_limit.is_empty(), "{text}");
         });
     }
@@ -586,7 +862,11 @@ fn constants_are_published() {
         analyzed(path, text, |s| {
             let e = probe(s);
             assert_folded(s, e, expected, text);
-            assert_eq!(s.analysis.decisions.decision(e), Decision::Unknown, "{text}");
+            assert_eq!(
+                s.analysis.decisions.decision(e),
+                Decision::Unknown,
+                "{text}"
+            );
         });
     }
     analyzed("a.mjs", "switch (x) { case 1 << 2: }", |s| {
@@ -646,7 +926,11 @@ fn const_reads_check_the_dead_zone() {
         analyzed(path, text, |s| {
             let e = probe(s);
             assert_folded(s, e, expected, text);
-            assert_eq!(s.analysis.decisions.decision(e), Decision::Unknown, "{text}");
+            assert_eq!(
+                s.analysis.decisions.decision(e),
+                Decision::Unknown,
+                "{text}"
+            );
             assert!(!s.analysis.decisions.is_dead_expr(e), "{text}");
         });
     }
@@ -664,7 +948,10 @@ fn const_read_excludes_arm() {
         };
         assert!(!s.analysis.decisions.is_dead_expr(a), "{text}");
         assert!(s.analysis.decisions.is_dead_expr(b), "{text}");
-        assert!(!s.analysis.decisions.is_dead_expr(s.ident("X", 0)), "{text}");
+        assert!(
+            !s.analysis.decisions.is_dead_expr(s.ident("X", 0)),
+            "{text}"
+        );
     });
 }
 
@@ -692,7 +979,11 @@ fn program_file_decides_no_const_read() {
                 Pure(value) | OutsideDeadZone(value) => OutsideDeadZone(value),
                 Unknown => Unknown,
             };
-            assert_eq!(s.analysis.decisions.decision(read), Decision::Unknown, "{text}");
+            assert_eq!(
+                s.analysis.decisions.decision(read),
+                Decision::Unknown,
+                "{text}"
+            );
             assert_folded(s, read, expected, text);
         });
     }
@@ -701,7 +992,9 @@ fn program_file_decides_no_const_read() {
 #[test]
 fn library_const_read_is_data() {
     let text = "const X = 1; v([X]);";
-    library(text, |s| assert!(s.analysis.decisions.is_data_literal(probe(s)), "{text}"));
+    library(text, |s| {
+        assert!(s.analysis.decisions.is_data_literal(probe(s)), "{text}")
+    });
     analyzed("a.mjs", text, |s| {
         assert!(!s.analysis.decisions.is_data_literal(probe(s)), "{text}");
     });
@@ -724,20 +1017,44 @@ fn path_joined_to_own_directory_is_a_path_from_the_folder_of_the_file() {
 
 // Whether the constant of the last load is what a call of `path.join` or `path.resolve` gave.
 const PATHS_MADE_BY_CALLS: &[(&str, &str, bool)] = &[
-    ("a.cjs", r#"const path = require("path"); require(path.join(__dirname, "a.js"));"#, true),
-    ("a.cjs", r#"const path = require("path"); require(path.resolve(__dirname, "a.js"));"#, true),
-    ("a.cjs", r#"const path = require("path"); require(path.join(__dirname, "..", "a.js"));"#, true),
-    ("a.cjs", r#"const { join } = require("node:path"); require(join(__dirname, "a.js"));"#, true),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(__dirname, "a.js"));"#,
+        true,
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.resolve(__dirname, "a.js"));"#,
+        true,
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(__dirname, "..", "a.js"));"#,
+        true,
+    ),
+    (
+        "a.cjs",
+        r#"const { join } = require("node:path"); require(join(__dirname, "a.js"));"#,
+        true,
+    ),
     (
         "a.cjs",
         r#"const path = require("path"); const file = path.join(__dirname, "a.js"); require(file);"#,
         true,
     ),
-    ("a.mjs", r#"import path from "node:path"; import(path.join(import.meta.dir, "a.js"));"#, true),
+    (
+        "a.mjs",
+        r#"import path from "node:path"; import(path.join(import.meta.dir, "a.js"));"#,
+        true,
+    ),
     ("a.cjs", r#"require(__dirname + "/a.js");"#, false),
     ("a.cjs", r#"require(`${__dirname}/a.js`);"#, false),
     ("a.cjs", r#"require("./a" + ".js");"#, false),
-    ("a.cjs", r#"const path = require("path"); require(path.join(__dirname, "lib", name));"#, false),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(__dirname, "lib", name));"#,
+        false,
+    ),
     (
         "a.cjs",
         r#"const path = require("path"); path.join(__dirname, "b.js"); require(__dirname + "/a.js");"#,
@@ -750,7 +1067,11 @@ fn constant_path_that_a_call_gave_is_marked() {
     for &(path, text, expected) in PATHS_MADE_BY_CALLS {
         analyzed(path, text, |s| {
             let node = last_site(s, text).specifier_node;
-            assert_eq!(s.analysis.decisions.is_path_made_by_call(node), expected, "{text}");
+            assert_eq!(
+                s.analysis.decisions.is_path_made_by_call(node),
+                expected,
+                "{text}"
+            );
         });
     }
 }
@@ -768,7 +1089,10 @@ fn affix_over_limit_is_cut() {
         let site = last_site(s, text);
         let expected = to_import_specifier(&s.workspace, Specifier::Pattern("12345678", ""));
         assert_eq!(site.specifier, expected);
-        assert_eq!(s.analysis.strings_over_limit.to_vec(), Vec::from_iter(site.kind.call()));
+        assert_eq!(
+            s.analysis.strings_over_limit.to_vec(),
+            Vec::from_iter(site.kind.call())
+        );
     });
     analyzed("a.cjs", text, |s| {
         let expected = to_import_specifier(&s.workspace, Specifier::Pattern("123456789", ""));
@@ -830,10 +1154,14 @@ fn other_part_costs_enclosing_literals_only() {
 #[test]
 fn data_values() {
     for &(path, text, expected) in DATA_LITERALS {
-        analyzed(path, text, |s| assert_eq!(data_text(s, probe(s), text), expected, "{text}"));
+        analyzed(path, text, |s| {
+            assert_eq!(data_text(s, probe(s), text), expected, "{text}")
+        });
     }
     for &(text, expected) in DEAD_ZONE_LITERALS.iter().chain(REPEATED_KEYS) {
-        analyzed("a.mjs", text, |s| assert_eq!(data_text(s, probe(s), text), expected, "{text}"));
+        analyzed("a.mjs", text, |s| {
+            assert_eq!(data_text(s, probe(s), text), expected, "{text}")
+        });
     }
     for &(path, text) in OTHER_LITERALS {
         analyzed(path, text, |s| {

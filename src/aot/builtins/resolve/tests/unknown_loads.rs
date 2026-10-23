@@ -24,14 +24,32 @@ const KNOWN_LOADS: &[(Setup, &str)] = &[
     (PROGRAM, "import('node:vm');"),
     (PROGRAM, "import 'node:module';"),
     (PROGRAM, "import { createRequire } from 'node:module';"),
-    (PROGRAM, "import { isBuiltin } from 'node:module'; isBuiltin(name);"),
+    (
+        PROGRAM,
+        "import { isBuiltin } from 'node:module'; isBuiltin(name);",
+    ),
     (PROGRAM, "import Module from 'node:module'; typeof Module;"),
-    (PROGRAM, "import { createRequire } from 'node:module'; createRequire(import.meta.url)('./a.json');"),
-    (PROGRAM, "import { createRequire } from 'node:module'; createRequire(import.meta.url)(name);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load('./a.json'); load.resolve(name); typeof load;"),
-    (PROGRAM, "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url), same = load; same('./a.json');"),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; createRequire(import.meta.url)('./a.json');",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; createRequire(import.meta.url)(name);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load('./a.json'); load.resolve(name); typeof load;",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url), same = load; same('./a.json');",
+    ),
     (SCRIPT, "require('node:module');"),
-    (SCRIPT, "const { createRequire } = require('node:module'); createRequire(__filename)('./a.json');"),
+    (
+        SCRIPT,
+        "const { createRequire } = require('node:module'); createRequire(__filename)('./a.json');",
+    ),
 ];
 
 const UNKNOWN_LOADS: &[(Setup, &str)] = &[
@@ -59,21 +77,63 @@ const UNKNOWN_LOADS: &[(Setup, &str)] = &[
     (PROGRAM, "f(Bun);"),
     (PROGRAM, "f(globalThis);"),
     (PROGRAM, "new ShadowRealm();"),
-    (PROGRAM, "import { createRequire } from 'node:module'; f(createRequire(import.meta.url));"),
-    (PROGRAM, "import { createRequire } from 'node:module'; f(createRequire(import.meta.url) as any);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); f(load);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); x = { load };"),
-    (PROGRAM, "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load.call(null, name);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; export const load = createRequire(import.meta.url);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; let load = createRequire(import.meta.url); load = f;"),
-    (PROGRAM, "import { createRequire } from 'node:module'; function g() { return createRequire(import.meta.url); }"),
-    (PROGRAM, "import { createRequire } from 'node:module'; createRequire('/other/file.js')(name);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; f(createRequire);"),
-    (PROGRAM, "import { createRequire } from 'node:module'; export { createRequire };"),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; f(createRequire(import.meta.url));",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; f(createRequire(import.meta.url) as any);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); f(load);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); x = { load };",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load.call(null, name);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; export const load = createRequire(import.meta.url);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; let load = createRequire(import.meta.url); load = f;",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; function g() { return createRequire(import.meta.url); }",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; createRequire('/other/file.js')(name);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; f(createRequire);",
+    ),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; export { createRequire };",
+    ),
     (PROGRAM, "export { createRequire } from 'node:module';"),
-    (PROGRAM, "import { createRequire } from 'node:module'; const make = createRequire; make(import.meta.url)(name);"),
-    (PROGRAM, "import Module from 'node:module'; Module._load(name);"),
-    (PROGRAM, "import Module from 'node:module'; new Module(id).require(name);"),
+    (
+        PROGRAM,
+        "import { createRequire } from 'node:module'; const make = createRequire; make(import.meta.url)(name);",
+    ),
+    (
+        PROGRAM,
+        "import Module from 'node:module'; Module._load(name);",
+    ),
+    (
+        PROGRAM,
+        "import Module from 'node:module'; new Module(id).require(name);",
+    ),
     (PROGRAM, "import Module from 'node:module'; f(Module);"),
     (PROGRAM, "import * as all from 'node:module'; f(all);"),
     (PROGRAM, "import('node:module');"),
@@ -85,9 +145,15 @@ const UNKNOWN_LOADS: &[(Setup, &str)] = &[
 const MACHINE_CODE_LOADS: &[(Setup, &str)] = &[
     (PROGRAM, "process.dlopen(target, name);"),
     (PROGRAM, "f(process.dlopen);"),
-    (PROGRAM, "import { dlopen } from 'bun:ffi'; dlopen(name, symbols);"),
+    (
+        PROGRAM,
+        "import { dlopen } from 'bun:ffi'; dlopen(name, symbols);",
+    ),
     (PROGRAM, "import { cc } from 'bun:ffi'; cc(options);"),
-    (PROGRAM, "import { linkSymbols } from 'bun:ffi'; linkSymbols(symbols);"),
+    (
+        PROGRAM,
+        "import { linkSymbols } from 'bun:ffi'; linkSymbols(symbols);",
+    ),
     (PROGRAM, "import * as ffi from 'bun:ffi'; f(ffi);"),
     (SCRIPT, "require('bun:ffi').dlopen(name, symbols);"),
     (PROGRAM, "Bun.FFI.dlopen(name, symbols);"),

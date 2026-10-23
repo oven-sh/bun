@@ -19,8 +19,8 @@ pub(super) fn exported_variable_key(
         ExportBinding::Synthetic(id) => {
             let export = graph.synthetic_export(id);
             // An ES module holds a copy of a name of a CommonJS file, unless nobody can tell the copy from the variable.
-            let is_copy = graph.face(export.module).is_some()
-                && !graph.settled(export.module, export.name);
+            let is_copy =
+                graph.face(export.module).is_some() && !graph.settled(export.module, export.name);
             Some(match is_copy {
                 true => VariableKey::Copy(id),
                 false => VariableKey::SyntheticExport(id),
@@ -65,7 +65,9 @@ impl Marker<'_> {
     }
 
     fn mark_body(&mut self, module: ProgramModule, file: ProgramFile) {
-        let key = module.body_key().expect("the fragment names the body of a file");
+        let key = module
+            .body_key()
+            .expect("the fragment names the body of a file");
         match self.context.functions.find(&key) {
             Some(body) => self.mark_function(body, file),
             None => self.add_error(LinkError::UndefinedFunction {
@@ -96,7 +98,11 @@ impl Marker<'_> {
         if is_filled_by_loader(graph, face) {
             return;
         }
-        for export in graph.exports_of(face).iter().filter(|export| export.is_read_from_object) {
+        for export in graph
+            .exports_of(face)
+            .iter()
+            .filter(|export| export.is_read_from_object)
+        {
             self.mark_export(file, export.binding);
         }
     }
@@ -105,7 +111,9 @@ impl Marker<'_> {
         if let Some(unit) = self.own_unit() {
             debug_assert!(unit.file == file);
             let fragment = &unit.module;
-            let body = fragment.body.map(|body| (LocalKind::Function, body.to_word()));
+            let body = fragment
+                .body
+                .map(|body| (LocalKind::Function, body.to_word()));
             let data = fragment.data.map(|data| (LocalKind::Data, data.to_word()));
             for (kind, index) in body.into_iter().chain(data) {
                 self.follow(LocalReference { kind, index }, LayoutUse::Direct);
@@ -123,7 +131,11 @@ impl Marker<'_> {
             }
             ModuleKind::RuntimeSource | ModuleKind::Runtime | ModuleKind::External => return,
         }
-        for export in graph.exports(file.file).iter().filter(|export| export.is_read_from_object) {
+        for export in graph
+            .exports(file.file)
+            .iter()
+            .filter(|export| export.is_read_from_object)
+        {
             self.mark_export(file, export.binding);
         }
     }
@@ -217,7 +229,10 @@ mod tests {
             ("lazy.js", "export const value = 1;\n"),
             ("unnamed.js", "export const value = 2;\n"),
         ]);
-        let mut names = program.functions.iter().filter_map(|function| function.name);
+        let mut names = program
+            .functions
+            .iter()
+            .filter_map(|function| function.name);
         assert!(!names.any(|name| program.strings.get(name) == b"dropped"));
         assert!(find_record(&program, "lazy.js").is_none());
         assert!(find_record(&program, "unnamed.js").is_none());
@@ -242,7 +257,10 @@ mod tests {
             }
             let mut records = program.modules.iter();
             let record = records.find(|record| record.runtime_module == Some(module));
-            assert!(record.is_some_and(|record| record.body.is_some()), "{module:?}");
+            assert!(
+                record.is_some_and(|record| record.body.is_some()),
+                "{module:?}"
+            );
             compiled_count += 1;
         }
         assert!(compiled_count > 0);

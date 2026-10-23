@@ -45,7 +45,13 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
       const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
       const hashes: string[] = [];
       for (let build = 0; build < 3; build++) {
-        built(await spawned([bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", executable], folder, bunEnv));
+        built(
+          await spawned(
+            [bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", executable],
+            folder,
+            bunEnv,
+          ),
+        );
         hashes.push(Bun.hash(readFileSync(executable)).toString(16));
         rmSync(executable);
       }
@@ -58,7 +64,13 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
       const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
       const hashes: string[] = [];
       for (const environment of [bunEnv, { ...bunEnv, MIMALLOC_HAND_OUT_LAST_FREED: "0" }]) {
-        built(await spawned([bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", executable], folder, environment));
+        built(
+          await spawned(
+            [bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", executable],
+            folder,
+            environment,
+          ),
+        );
         hashes.push(Bun.hash(readFileSync(executable)).toString(16));
         rmSync(executable);
       }

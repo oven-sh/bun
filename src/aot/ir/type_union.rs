@@ -20,12 +20,14 @@ pub(super) fn normalize_without_table(ty: &mut Type) -> bool {
     ty.strings.dedup();
     ty.layouts.sort_unstable();
     ty.layouts.dedup();
-    ty.builtins.sort_unstable_by_key(|builtin| builtin.to_wire());
+    ty.builtins
+        .sort_unstable_by_key(|builtin| builtin.to_wire());
     ty.builtins.dedup();
     ty.functions.sort_unstable();
     ty.functions.dedup();
     ty.classes.sort_by_key(|part| part.builtin_class.to_wire());
-    !ty.classes.windows(2).any(|pair| is_same_class(&pair[0], &pair[1]))
+    let mut neighbors = ty.classes.iter().zip(ty.classes.iter().skip(1));
+    !neighbors.any(|(left, right)| is_same_class(left, right))
 }
 
 pub(super) fn union_types(table: &mut TypeTable, left: TypeId, right: TypeId) -> TypeId {

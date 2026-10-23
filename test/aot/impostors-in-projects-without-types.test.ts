@@ -17,7 +17,16 @@ import { expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, renameSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, relative } from "path";
-import { built, expectCompiledOutput, slot, spawned, told, unsupported, wanted, withoutDebugInformation } from "./run-programs";
+import {
+  built,
+  expectCompiledOutput,
+  slot,
+  spawned,
+  told,
+  unsupported,
+  wanted,
+  withoutDebugInformation,
+} from "./run-programs";
 import { describe, test } from "./supported";
 
 const projects = join(import.meta.dir, "impostors-projects");
@@ -35,19 +44,26 @@ function filesUnder(folder: string): string[] {
 
 /** What would give the project types, or make it part of a larger project. */
 function typesIn(folder: string): string[] {
-  const inside = filesUnder(folder).filter(path => !/\.([cm]?js|json)$/.test(path) || /(^|\/)([tj]sconfig[^/]*\.json$|@types\/|bun-types\/|typescript\/)/.test(path));
+  const inside = filesUnder(folder).filter(
+    path =>
+      !/\.([cm]?js|json)$/.test(path) || /(^|\/)([tj]sconfig[^/]*\.json$|@types\/|bun-types\/|typescript\/)/.test(path),
+  );
   const above: string[] = [];
   for (let up = dirname(folder); ; up = dirname(up)) {
-    for (const name of ["tsconfig.json", "jsconfig.json", "package.json", "node_modules"]) if (existsSync(join(up, name))) above.push(join(up, name));
+    for (const name of ["tsconfig.json", "jsconfig.json", "package.json", "node_modules"])
+      if (existsSync(join(up, name))) above.push(join(up, name));
     if (up === dirname(up)) return [...inside, ...above];
   }
 }
 
 function copyOf(name: string) {
   const copy = tempDir("aot-project-without-types", join(projects, name));
-  const installed = readdirSync(String(copy), { recursive: true, withFileTypes: true }).filter(entry => entry.isDirectory() && entry.name === "installed");
+  const installed = readdirSync(String(copy), { recursive: true, withFileTypes: true }).filter(
+    entry => entry.isDirectory() && entry.name === "installed",
+  );
   // The deepest first: a rename moves what is below it.
-  for (const entry of installed.sort((a, b) => b.parentPath.length - a.parentPath.length)) renameSync(join(entry.parentPath, "installed"), join(entry.parentPath, "node_modules"));
+  for (const entry of installed.sort((a, b) => b.parentPath.length - a.parentPath.length))
+    renameSync(join(entry.parentPath, "installed"), join(entry.parentPath, "node_modules"));
   return copy;
 }
 
@@ -65,20 +81,40 @@ describe.concurrent("compile/aot/impostors-in-projects-without-types", () => {
           const cwd = String(copy);
           expect(typesIn(cwd)).toEqual([]);
           const main = "./" + readdirSync(cwd).find(entry => /^main\.[cm]?js$/.test(entry));
-          const options: { reference?: "compiled" } = existsSync(join(projects, name + ".json")) ? JSON.parse(readFileSync(join(projects, name + ".json"), "utf8")) : {};
+          const options: { reference?: "compiled" } = existsSync(join(projects, name + ".json"))
+            ? JSON.parse(readFileSync(join(projects, name + ".json"), "utf8"))
+            : {};
 
-          const program = { cwd, entryPoints: [main], carrier, buildFlags: [], runEnvironments: [{}], outputFolder: String(output) };
+          const program = {
+            cwd,
+            entryPoints: [main],
+            carrier,
+            buildFlags: [],
+            runEnvironments: [{}],
+            outputFolder: String(output),
+          };
           const stored = join(projects, name + ".expected.txt");
-          if (existsSync(stored)) return await expectCompiledOutput("compiled", program, { stdout: readFileSync(stored, "utf8"), stderr: "", exitCode: 0 });
+          if (existsSync(stored))
+            return await expectCompiledOutput("compiled", program, {
+              stdout: readFileSync(stored, "utf8"),
+              stderr: "",
+              exitCode: 0,
+            });
 
           let reference = [bunExe(), "run", main];
           if (options.reference === "compiled") {
             reference = [join(String(output), "reference" + (isWindows ? ".exe" : ""))];
-            built(await spawned([bunExe(), "build", "--compile", ...carrier, main, "--outfile", reference[0]], cwd, bunEnv));
+            built(
+              await spawned([bunExe(), "build", "--compile", ...carrier, main, "--outfile", reference[0]], cwd, bunEnv),
+            );
           }
           const plain = await spawned(reference, cwd, bunEnv);
           // A reference run that fails is useless: two runs that end with the same error would compare equal and prove nothing.
-          expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.exitCode ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
+          expect({
+            signal: plain.signal,
+            exitCode: plain.exitCode,
+            stderr: plain.exitCode ? plain.stderr : "",
+          }).toEqual({ signal: null, exitCode: 0, stderr: "" });
           await expectCompiledOutput("compiled", program, told(plain));
         }),
       600_000,

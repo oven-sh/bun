@@ -144,7 +144,11 @@ pub(crate) fn lower_expression_for_effect(
         Decision::GlobalPath(_) => {
             lower_by_decision(lowering, expression, Evaluation::PLAIN);
         }
-        Decision::Unknown if lowering.file.decisions().is_truthy_without_effects(expression) => {}
+        Decision::Unknown
+            if lowering
+                .file
+                .decisions()
+                .is_truthy_without_effects(expression) => {}
         Decision::Unknown => lower_for_effect_by_kind(lowering, expression),
     }
     lowering.leave_nesting();
@@ -204,10 +208,7 @@ pub(crate) fn emit_number(
     }
 }
 
-pub(crate) fn skip_type_syntax(
-    file: &FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-) -> ExprId {
+pub(crate) fn skip_type_syntax(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> ExprId {
     file.hir.skip_type_assertions(expression)
 }
 
@@ -233,7 +234,8 @@ pub(in crate::lower) fn finish_expression(
     value: ValueId,
 ) -> ValueId {
     // A constant has its own type, and a built-in that the table resolves says more than the type the checker has for it.
-    if is_statically_resolved(lowering.file, expression) || lowering.enum_constants.contains(&value) {
+    if is_statically_resolved(lowering.file, expression) || lowering.enum_constants.contains(&value)
+    {
         return value;
     }
     let mut finished = convert::convert_narrowed_reference(lowering, expression, value);

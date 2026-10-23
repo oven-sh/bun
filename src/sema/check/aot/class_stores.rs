@@ -104,7 +104,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let FnOwner::Member(member) = self.c.bound(file).fns[function.idx()].owner else {
             return None;
         };
-        Some((class, self.c.hir(file)[member].flags.contains(hir::Flags::STATIC)))
+        Some((
+            class,
+            self.c.hir(file)[member].flags.contains(hir::Flags::STATIC),
+        ))
     }
 
     pub(super) fn store_index(&mut self, file: FileId) -> &'s StoreIndex<'s> {
@@ -137,7 +140,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                         None => continue,
                     }
                 }
-                Some((_, MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_)))
+                Some((
+                    _,
+                    MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_),
+                ))
                 | None => continue,
             };
             let object = hir.skip_type_assertions(object);

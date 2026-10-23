@@ -133,7 +133,7 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
   if (givenSignal !== undefined) validateAbortSignal(givenSignal, "options.signal");
 
   if (!isNodeStream(stream)) {
-    "unlikely";
+    ("unlikely");
     if (isReadableStream(stream) || isWritableStream(stream)) {
       return eosWeb(stream, options, callback!);
     }
@@ -283,7 +283,7 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
     if (error === null) {
       callback!.$call(stream);
     } else {
-      "unlikely";
+      ("unlikely");
       callback!.$call(stream, error);
     }
   };

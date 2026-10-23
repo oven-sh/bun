@@ -20,7 +20,10 @@ fn role_decision(view: ProgramView<'_, '_>, demoted: &[FileId]) -> RoleDecision 
     let cause = DemotionCause::TypeError;
     RoleDecision {
         roles: file_ids.map(|file| files.role(file)).collect(),
-        demoted: demoted.iter().map(|&file| Demotion { file, cause }).collect(),
+        demoted: demoted
+            .iter()
+            .map(|&file| Demotion { file, cause })
+            .collect(),
         checked: Vec::new(),
         diagnostics: Vec::new(),
         incomplete: Vec::new(),
@@ -29,7 +32,12 @@ fn role_decision(view: ProgramView<'_, '_>, demoted: &[FileId]) -> RoleDecision 
 
 fn count(view: ProgramView<'_, '_>, roles: &RoleDecision) -> Statistics {
     let mut statistics = Statistics::default();
-    count_files(&mut statistics, view, roles, &crate::ir::parallel::run_serially);
+    count_files(
+        &mut statistics,
+        view,
+        roles,
+        &crate::ir::parallel::run_serially,
+    );
     statistics
 }
 
@@ -131,7 +139,10 @@ fn file_that_is_not_compiled_counts_as_types_only() {
         let file_count = view.files().modules.len() as u64;
         assert!(file_count > 2);
         assert_eq!(statistics.get(StatisticId::SourceFilesChecked), 2);
-        assert_eq!(statistics.get(StatisticId::SourceFilesTypesOnly), file_count - 2);
+        assert_eq!(
+            statistics.get(StatisticId::SourceFilesTypesOnly),
+            file_count - 2
+        );
     });
 }
 
@@ -150,7 +161,10 @@ fn demoted_files_are_counted() {
 
 #[test]
 fn evaluated_text_with_early_error_is_not_a_demoted_file() {
-    let files = [("a.js", "export const create = () => new Function(\"break;\");\n")];
+    let files = [(
+        "a.js",
+        "export const create = () => new Function(\"break;\");\n",
+    )];
     with_project_view(&files, |view| {
         let mut compiled_files = view.files().compiled_files().iter().copied();
         let text = compiled_files.find(|&file| view.origin(file) == FileOrigin::EvaluatedText);

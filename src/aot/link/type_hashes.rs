@@ -249,9 +249,15 @@ mod tests {
         let layout_keys: Vec<ProgramLayoutKey> =
             layout_keys.map(|&key| InProject { project, key }).collect();
         let function_keys = builder.function_keys().iter();
-        let function_keys: Vec<ProgramFunctionKey> =
-            function_keys.map(|&key| InProject { project, key }).collect();
-        hash_types(&builder.types, &builder.strings, &layout_keys, &function_keys)
+        let function_keys: Vec<ProgramFunctionKey> = function_keys
+            .map(|&key| InProject { project, key })
+            .collect();
+        hash_types(
+            &builder.types,
+            &builder.strings,
+            &layout_keys,
+            &function_keys,
+        )
     }
 
     fn hash_type(create_type: impl FnOnce(&mut FragmentBuilder) -> Type) -> ContentHash {

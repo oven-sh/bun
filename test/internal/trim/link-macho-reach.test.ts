@@ -15,7 +15,15 @@ import {
   perMachine,
   sources,
 } from "./link-macho-support.ts";
-import { entryCalling, equalFunction, expectCleanRuns, Extra, mixingFunction, skipNotice, start } from "./toy-program.ts";
+import {
+  entryCalling,
+  equalFunction,
+  expectCleanRuns,
+  Extra,
+  mixingFunction,
+  skipNotice,
+  start,
+} from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
 
@@ -158,7 +166,9 @@ const reachCases: Record<string, ReachCase> = {
   "fallthrough between names in an input without subsections": {
     more: `int whole_second(int); ${mixingFunction("feature_target", 3)} int more(int x) { return whole_second(x) + feature_target(x); }`,
     main: `int whole_first(int); int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : whole_first(argc) == 56 ? 0 : 1; }`,
-    files: { "whole.S": `.text\n.globl _whole_first, _whole_second\n.p2align 2\n_whole_first:\n${addOne}\n_whole_second:\n${jumpTo("_feature_target")}\n` },
+    files: {
+      "whole.S": `.text\n.globl _whole_first, _whole_second\n.p2align 2\n_whole_first:\n${addOne}\n_whole_second:\n${jumpTo("_feature_target")}\n`,
+    },
     objects: ["feature_code", "entry", "more", "whole", "embedder", "main"],
     retained: ["whole_second", "feature_target"],
   },
@@ -267,7 +277,9 @@ const reachCases: Record<string, ReachCase> = {
       int deeper(int);
       int more(int x) { return member_one(x) + member_two(x) + deeper(x); }
     `,
-    files: { "deeper.c": `extern int (*const one)(int); extern int (*const two)(int); int deeper(int x) { return one(x) + two(x); }` },
+    files: {
+      "deeper.c": `extern int (*const one)(int); extern int (*const two)(int); int deeper(int x) { return one(x) + two(x); }`,
+    },
     objects: ["feature_code", "entry", "more", "deeper", "embedder", "main"],
     main: `
       extern int (*const set_start[])(int) __asm__("section$start$__DATA$handler_set");
@@ -282,7 +294,9 @@ const reachCases: Record<string, ReachCase> = {
   },
   "an offset from the linker's section start symbol into the header of the built-in modules": {
     more: `extern const char builtins_text[20000]; int more(int x) { return builtins_text[x % 20000]; }`,
-    files: { "builtins.S": `.section __TEXT,__bun_builtins,regular,no_dead_strip\n.globl _builtins_text\n.p2align 4\n_builtins_text:\n.fill 20000, 1, 0x61\n` },
+    files: {
+      "builtins.S": `.section __TEXT,__bun_builtins,regular,no_dead_strip\n.globl _builtins_text\n.p2align 4\n_builtins_text:\n.fill 20000, 1, 0x61\n`,
+    },
     objects: ["feature_code", "entry", "more", "embedder", "main", "builtins"],
     main: `
       extern const char builtins_start[] __asm__("section$start$__TEXT$__bun_builtins");
@@ -297,7 +311,9 @@ const reachCases: Record<string, ReachCase> = {
       int more(int x) { return feature_target(x) + feature_words()[x & 7]; }
     `,
     main: `int archive_member_with_long_name(int); int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : archive_member_with_long_name(argc) == 35 + 'o' ? 0 : 1; }`,
-    files: { "archive_member_with_long_name.c": `int feature_target(int); int archive_member_with_long_name(int x) { return feature_target(x) + "words that a member of an archive names too"[x]; }` },
+    files: {
+      "archive_member_with_long_name.c": `int feature_target(int); int archive_member_with_long_name(int x) { return feature_target(x) + "words that a member of an archive names too"[x]; }`,
+    },
     objects: ["feature_code", "entry", "more", "archive_member_with_long_name", "embedder", "main"],
     archived: ["archive_member_with_long_name"],
     retained: ["feature_target", "archive_member_with_long_name"],
@@ -365,9 +381,13 @@ describeEachMachine("Mach-O $name", machine => {
           objects: reach.objects ?? ["feature_code", "entry", "more", "embedder", "main"],
           compileFlags: reach.compileFlags,
         });
-        expect(Object.fromEntries(reach.retained.map(name => [name, featuresOf(name)]))).toEqual(Object.fromEntries(reach.retained.map(name => [name, undefined])));
+        expect(Object.fromEntries(reach.retained.map(name => [name, featuresOf(name)]))).toEqual(
+          Object.fromEntries(reach.retained.map(name => [name, undefined])),
+        );
         const removable = ["feature_code", "feature_code_0", `feature_code_${count - 1}`, ...(reach.removable ?? [])];
-        expect(Object.fromEntries(removable.map(name => [name, featuresOf(name)]))).toEqual(Object.fromEntries(removable.map(name => [name, [Extra]])));
+        expect(Object.fromEntries(removable.map(name => [name, featuresOf(name)]))).toEqual(
+          Object.fromEntries(removable.map(name => [name, [Extra]])),
+        );
         expectCleanRuns({ programResult, trimmedResult });
       });
     }

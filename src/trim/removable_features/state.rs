@@ -222,7 +222,11 @@ mod tests {
     #[test]
     fn accepts_valid_list_header() {
         assert!(has_removed_range_list(&state_with_list(1, 1, 536)));
-        assert!(has_removed_range_list(&state_with_list(1, MAX_REMOVED_RANGES, 536)));
+        assert!(has_removed_range_list(&state_with_list(
+            1,
+            MAX_REMOVED_RANGES,
+            536
+        )));
         assert!(has_removed_range_list(&state_with_list(1, 1, -8)));
     }
 
@@ -239,7 +243,11 @@ mod tests {
     #[test]
     fn rejects_range_count_outside_limit() {
         assert!(!has_removed_range_list(&state_with_list(1, 0, 536)));
-        assert!(!has_removed_range_list(&state_with_list(1, MAX_REMOVED_RANGES + 1, 536)));
+        assert!(!has_removed_range_list(&state_with_list(
+            1,
+            MAX_REMOVED_RANGES + 1,
+            536
+        )));
         assert!(!has_removed_range_list(&state_with_list(1, u32::MAX, 536)));
     }
 

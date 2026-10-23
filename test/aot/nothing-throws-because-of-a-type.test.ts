@@ -13,9 +13,14 @@ programs("nothing-throws-because-of-a-type");
 programsBuiltWith("nothing-throws-because-of-a-type", "validated", ["--aot-validate"]);
 // Cold code goes by records and stubs in the place of tests in line.
 programsBuiltWith("nothing-throws-because-of-a-type", "every-function-cold", ["--aot-heat=everything-is-cold"]);
-programsBuiltWith("nothing-throws-because-of-a-type", "every-function-cold-types-erased", ["--aot-heat=everything-is-cold", "--aot-erase-types"]);
+programsBuiltWith("nothing-throws-because-of-a-type", "every-function-cold-types-erased", [
+  "--aot-heat=everything-is-cold",
+  "--aot-erase-types",
+]);
 
 test("no program of the folder says that --aot may differ from plain Bun", () => {
-  const files = readdirSync(join(import.meta.dir, "programs", "nothing-throws-because-of-a-type"), { recursive: true }) as string[];
+  const files = readdirSync(join(import.meta.dir, "programs", "nothing-throws-because-of-a-type"), {
+    recursive: true,
+  }) as string[];
   expect(files.filter(file => /\.(expected|erased|build-errors|todo)\.txt$/.test(file))).toEqual([]);
 });

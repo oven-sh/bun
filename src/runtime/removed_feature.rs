@@ -3,10 +3,16 @@ use bun_removable_features::Feature;
 
 unsafe extern "C" {
     safe fn Bun__throwForRemovedFeature(global: &JSGlobalObject, feature: u16) -> JSValue;
-    safe fn Bun__createStandInForRemovedInstance(global: &JSGlobalObject, constructor: JSValue) -> JSValue;
+    safe fn Bun__createStandInForRemovedInstance(
+        global: &JSGlobalObject,
+        constructor: JSValue,
+    ) -> JSValue;
 }
 
-pub(crate) fn stand_in_for_removed_instance(global: &JSGlobalObject, constructor: JSValue) -> JSValue {
+pub(crate) fn stand_in_for_removed_instance(
+    global: &JSGlobalObject,
+    constructor: JSValue,
+) -> JSValue {
     Bun__createStandInForRemovedInstance(global, constructor)
 }
 

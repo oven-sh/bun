@@ -105,7 +105,9 @@ fn classify_statements(source: &LibrarySource<'_, '_>) -> Vec<LibraryStatement> 
 fn find_runtime_function(file: &str, export_name: &str) -> RuntimeFunction {
     let mut functions = table::runtime_functions().iter();
     let found = functions.find(|data| data.file == file && data.export_name == export_name);
-    found.expect("the built-ins table lists the function").function
+    found
+        .expect("the built-ins table lists the function")
+        .function
 }
 
 fn lower_library_file(listed_function: RuntimeFunction, text: &str) -> LoweredFile {
@@ -424,10 +426,7 @@ fn computes_default_visibility() {
         FunctionVisibility::Private
     );
     pending.add(Directive::Visibility(FunctionVisibility::Public));
-    assert_eq!(
-        pending.compute_visibility(true),
-        FunctionVisibility::Public
-    );
+    assert_eq!(pending.compute_visibility(true), FunctionVisibility::Public);
 }
 
 #[test]
@@ -450,11 +449,23 @@ fn function_form_decides_header_kind() {
     for takes_this in [method, constructor] {
         assert!(takes_this.flags.contains(FunctionFlags::HAS_THIS));
         assert!(!takes_this.flags.contains(FunctionFlags::HAS_NEW_TARGET));
-        assert!(!takes_this.flags.contains(FunctionFlags::IS_NAKED_CONSTRUCTOR));
+        assert!(
+            !takes_this
+                .flags
+                .contains(FunctionFlags::IS_NAKED_CONSTRUCTOR)
+        );
     }
     assert!(!naked_constructor.flags.contains(FunctionFlags::HAS_THIS));
-    assert!(naked_constructor.flags.contains(FunctionFlags::HAS_NEW_TARGET));
-    assert!(naked_constructor.flags.contains(FunctionFlags::IS_NAKED_CONSTRUCTOR));
+    assert!(
+        naked_constructor
+            .flags
+            .contains(FunctionFlags::HAS_NEW_TARGET)
+    );
+    assert!(
+        naked_constructor
+            .flags
+            .contains(FunctionFlags::IS_NAKED_CONSTRUCTOR)
+    );
     assert_eq!(naked_constructor.this_type, DeclaredType::untyped());
     assert_eq!(
         naked_constructor.results,
@@ -564,7 +575,10 @@ fn an_empty_overridden_name_leaves_a_builtin_without_a_name() {
     let header = array_header(&fragment, "at");
     assert_eq!(header.name, None);
     assert!(!header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME));
-    assert_eq!(name_of(&fragment, array_header(&fragment, "every")), "every");
+    assert_eq!(
+        name_of(&fragment, array_header(&fragment, "every")),
+        "every"
+    );
 }
 
 #[test]

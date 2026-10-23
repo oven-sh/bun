@@ -139,7 +139,11 @@ const standardInputFunctionsOf = (stream: b.BuiltinPath) => [
 ];
 
 // The function answers the stream and its sink, in which native code sets a flag.
-const standardOutputFunctionsOf = (descriptor: 1 | 2, stream: b.BuiltinPath, ...otherUses: readonly b.HostUseSpec[]) => [
+const standardOutputFunctionsOf = (
+  descriptor: 1 | 2,
+  stream: b.BuiltinPath,
+  ...otherUses: readonly b.HostUseSpec[]
+) => [
   streamOfWorker(descriptor, stream, ...otherUses),
   b.functionUsed(
     processInternal("getStdioWriteStream"),
@@ -206,10 +210,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Bun.$": functionsIn("builtins/shell", "createBunShellTemplateFunction"),
   "Bun.Glob": functionsIn("builtins/Glob", "scan", "scanSync"),
   "Bun.build": bundlerPluginFunctions,
-  "Bun.peek": [
-    heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"),
-    b.functionIn("builtins/Peek", "peekStatus"),
-  ],
+  "Bun.peek": [heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"), b.functionIn("builtins/Peek", "peekStatus")],
   "Bun.plugin": bundlerPluginFunctions,
   "Bun.serve": pluginFunctionsOfServer,
   "JSON.stringify": jsonTextFunctions,
@@ -247,7 +248,10 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,
   "process._rawDebug": [heldAs(processInternal("rawDebug"), "process._rawDebug")],
-  "process.allowedNodeEnvironmentFlags": builtBy("buildAllowedNodeEnvironmentFlags", "process.allowedNodeEnvironmentFlags"),
+  "process.allowedNodeEnvironmentFlags": builtBy(
+    "buildAllowedNodeEnvironmentFlags",
+    "process.allowedNodeEnvironmentFlags",
+  ),
   "process.channel": builtBy("getChannel", "process.channel"),
   "process.finalization": builtBy("createProcessFinalization", "process.finalization", processObject),
   "process.loadEnvFile": [heldAs(processInternal("loadEnvFile"), "process.loadEnvFile")],
@@ -417,7 +421,11 @@ const nativeCalls = [
       {
         file: inBindings("BunProcess.cpp"),
         caller: "Process_functionDefaultOnWarning",
-        onBehalfOf: ["%EventEmitter%.prototype.emit", "%EventEmitter%.prototype.listeners", "%EventEmitter%.prototype.rawListeners"],
+        onBehalfOf: [
+          "%EventEmitter%.prototype.emit",
+          "%EventEmitter%.prototype.listeners",
+          "%EventEmitter%.prototype.rawListeners",
+        ],
       },
     ],
   }),
@@ -621,7 +629,9 @@ export default b.declarations(
   channelUsers.flatMap(user =>
     typeof user === "string"
       ? b.extend(user, { callsFunctions: channelFunctions })
-      : b.extend(user.path, { callsFunctions: channelFunctions.map(called => ({ function: called, when: user.when })) }),
+      : b.extend(user.path, {
+          callsFunctions: channelFunctions.map(called => ({ function: called, when: user.when })),
+        }),
   ),
   // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
   b.hostObject(environmentCell, { otherNames: b.string, keepsStringsOfStoredValues: true }),
@@ -661,14 +671,19 @@ export default b.declarations(
     uses: { exception: [b.retained] },
     implementation: b.hostCall,
   }),
-  b.hostFunction(flushesDirectStreamCell, "JSDirectStreamController.cpp", "jsWebStreamsHandler_onDirectEndOfTickFlush", {
-    args: { ignored: b.any.optional, controller: b.any.optional },
-    returns: b.any,
-    capability: "js",
-    throws: true,
-    uses: { ignored: b.inspected, controller: [b.retained] },
-    implementation: b.hostCall,
-  }),
+  b.hostFunction(
+    flushesDirectStreamCell,
+    "JSDirectStreamController.cpp",
+    "jsWebStreamsHandler_onDirectEndOfTickFlush",
+    {
+      args: { ignored: b.any.optional, controller: b.any.optional },
+      returns: b.any,
+      capability: "js",
+      throws: true,
+      uses: { ignored: b.inspected, controller: [b.retained] },
+      implementation: b.hostCall,
+    },
+  ),
   // It calls what it finds as process.emit, with its own operands.
   b.hostFunction(emitsProcessEventCell, "BunProcess.cpp", "Process_functionEmitHelper", {
     args: { operands: b.any.rest },

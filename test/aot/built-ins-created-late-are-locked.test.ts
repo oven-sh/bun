@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // A compiled program takes the members of built-in objects that it uses for constants. Most of those objects are created at their first read, not at start-up,
 // and they are locked at that moment: a write that comes before the program's first use of the object is refused like one that comes after it.
@@ -81,16 +81,33 @@ const createdAtFirstRead = [
 ];
 
 // These are constants only in a program that does not write them. This one may write any member of any object that it reaches from the global object.
-const openBecauseTheProgramWritesThem = ["WebAssembly.validate", "Intl.NumberFormat", "performance.now", "process.hrtime"];
+const openBecauseTheProgramWritesThem = [
+  "WebAssembly.validate",
+  "Intl.NumberFormat",
+  "performance.now",
+  "process.hrtime",
+];
 
 test("a write is refused before the program's first use of a built-in object as it is after it", async () => {
   using dir = tempDir("built-ins-created-late", { "main.mjs": program });
   const cwd = String(dir);
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
   expect({ stderr, exitCode: buildExitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   const run = async (...args: string[]) => {
-    await using proc = Bun.spawn({ cmd: [join(cwd, "program"), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [join(cwd, "program"), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(exitCode).toBe(0);
     return stdout.trim().split("\n");
@@ -98,6 +115,10 @@ test("a write is refused before the program's first use of a built-in object as 
   const writesFirst = await run();
   expect(writesFirst).toEqual(await run("use-first"));
   expect(writesFirst).toEqual(expect.arrayContaining(createdAtFirstRead.map(path => `${path} TypeError TypeError`)));
-  expect(writesFirst).toEqual(expect.arrayContaining(openBecauseTheProgramWritesThem.map(path => `${path} assigned defined`)));
-  expect(writesFirst.at(-1)).toBe("true 1 1 false 1 true 1 36 false bigint 0 0 1 1 bigint 1 1.5 1 true A a true en 1 /b 1 A");
+  expect(writesFirst).toEqual(
+    expect.arrayContaining(openBecauseTheProgramWritesThem.map(path => `${path} assigned defined`)),
+  );
+  expect(writesFirst.at(-1)).toBe(
+    "true 1 1 false 1 true 1 36 false bigint 0 0 1 1 bigint 1 1.5 1 true A a true en 1 /b 1 A",
+  );
 }, 120_000);

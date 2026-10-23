@@ -32,7 +32,7 @@ function takeTick(callback: TickCallback | undefined, frame: Frame): Tick {
   const tick = ring.write!;
   let next = tick.next;
   if (next === ring.read) {
-    "unlikely";
+    ("unlikely");
     next = growRing(tick);
   }
   tick.callback = callback;
@@ -49,14 +49,14 @@ function nextTick(cb: TickCallback, ...args: unknown[]) {
   const count = args.length | 0;
   const frame: Frame = $getInternalField(asyncContext, 0);
   if (tickInitHooks.length !== 0) {
-    "unlikely";
+    ("unlikely");
     ring.pushWithInitHooks!(cb, count !== 0 ? listOf(...args) : undefined, frame);
   } else {
     const tick = takeTick(cb, frame);
     tick.count = count;
     if (count !== 0) {
       if (count > 4) {
-        "unlikely";
+        ("unlikely");
         tick.list = listOf(...args);
       } else {
         tick.first = args[0];
@@ -79,7 +79,7 @@ function enqueueTick(callback: TickCallback, count: number, first: unknown, seco
   if (tickingProcess._exiting) return;
   const frame: Frame = $getInternalField(asyncContext, 0);
   if (tickInitHooks.length !== 0) {
-    "unlikely";
+    ("unlikely");
     ring.pushWithInitHooks!(
       callback,
       count === 1 ? [first] : count === 2 ? [first, second] : [first, second, third],
@@ -90,7 +90,7 @@ function enqueueTick(callback: TickCallback, count: number, first: unknown, seco
     const tick = ring.write!;
     let next = tick.next;
     if (next === ring.read) {
-      "unlikely";
+      ("unlikely");
       next = growRing(tick);
     }
     tick.callback = callback;
@@ -121,7 +121,7 @@ function queueTick1(callback: TickCallback, first: unknown): void {
   const current = target.nextTick;
   if (current === installedNextTick) enqueueTick(callback, 1, first, undefined, undefined);
   else {
-    "unlikely";
+    ("unlikely");
     current.$call(target, callback, first);
   }
 }
@@ -131,7 +131,7 @@ function queueTick2(callback: TickCallback, first: unknown, second: unknown): vo
   const current = target.nextTick;
   if (current === installedNextTick) enqueueTick(callback, 2, first, second, undefined);
   else {
-    "unlikely";
+    ("unlikely");
     current.$call(target, callback, first, second);
   }
 }
@@ -141,7 +141,7 @@ function queueTick3(callback: TickCallback, first: unknown, second: unknown, thi
   const current = target.nextTick;
   if (current === installedNextTick) enqueueTick(callback, 3, first, second, third);
   else {
-    "unlikely";
+    ("unlikely");
     current.$call(target, callback, first, second, third);
   }
 }
@@ -154,4 +154,15 @@ function initializeNextTickQueue(process: NodeJS.Process, marker: unknown, drain
   return nextTick;
 }
 
-export default { initializeNextTickQueue, nextTick, ticksAreUnseen, ticksAreUnhooked, enqueueTick1, queueTick1, queueTick2, queueTick3, ring, takeTick };
+export default {
+  initializeNextTickQueue,
+  nextTick,
+  ticksAreUnseen,
+  ticksAreUnhooked,
+  enqueueTick1,
+  queueTick1,
+  queueTick2,
+  queueTick3,
+  ring,
+  takeTick,
+};

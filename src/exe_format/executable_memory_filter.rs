@@ -1,4 +1,7 @@
-#![cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#![cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 
 use core::ops::Range;
 
@@ -120,12 +123,24 @@ impl Assembler {
             Next => 0,
             Label(label) => self.positions[label].expect("every label is placed") - from - 1,
         };
-        let short = |distance: usize| u8::try_from(distance).expect("a test jumps at most 255 instructions ahead");
+        let short = |distance: usize| {
+            u8::try_from(distance).expect("a test jumps at most 255 instructions ahead")
+        };
         let instructions = self.instructions.iter().enumerate();
         instructions
             .map(|(at, &(code, if_true, if_false, value))| match code {
-                JUMP_ALWAYS => Instruction { code, jump_if_true: 0, jump_if_false: 0, value: distance(at, if_true) as u32 },
-                _ => Instruction { code, jump_if_true: short(distance(at, if_true)), jump_if_false: short(distance(at, if_false)), value },
+                JUMP_ALWAYS => Instruction {
+                    code,
+                    jump_if_true: 0,
+                    jump_if_false: 0,
+                    value: distance(at, if_true) as u32,
+                },
+                _ => Instruction {
+                    code,
+                    jump_if_true: short(distance(at, if_true)),
+                    jump_if_false: short(distance(at, if_false)),
+                    value,
+                },
             })
             .collect()
     }
@@ -134,7 +149,8 @@ impl Assembler {
         let halves = |address: u64| ((address >> 32) as u32, address as u32);
         for range in ranges {
             let (at_or_above_start, next_range) = (self.label(), self.label());
-            let ((start_high, start_low), (end_high, end_low)) = (halves(range.start), halves(range.end));
+            let ((start_high, start_low), (end_high, end_low)) =
+                (halves(range.start), halves(range.end));
             self.load(INSTRUCTION_POINTER + HIGH_HALF);
             self.jump(JUMP_IF_GREATER, start_high, Label(at_or_above_start), Next);
             self.jump(JUMP_IF_EQUAL, start_high, Next, Label(next_range));
@@ -153,7 +169,11 @@ impl Assembler {
 }
 
 fn few_ranges(ranges: &[Range<u64>]) -> Vec<Range<u64>> {
-    let mut sorted: Vec<Range<u64>> = ranges.iter().filter(|range| range.start < range.end).cloned().collect();
+    let mut sorted: Vec<Range<u64>> = ranges
+        .iter()
+        .filter(|range| range.start < range.end)
+        .cloned()
+        .collect();
     sorted.sort_by_key(|range| range.start);
     let mut merged: Vec<Range<u64>> = Vec::new();
     for range in sorted {
@@ -164,7 +184,9 @@ fn few_ranges(ranges: &[Range<u64>]) -> Vec<Range<u64>> {
     }
     while merged.len() > MOST_RANGES {
         let gap = |at: usize| merged[at + 1].start - merged[at].end;
-        let at = (0..merged.len() - 1).min_by_key(|&at| gap(at)).expect("there are two ranges");
+        let at = (0..merged.len() - 1)
+            .min_by_key(|&at| gap(at))
+            .expect("there are two ranges");
         let next = merged.remove(at + 1);
         merged[at].end = next.end;
     }
@@ -183,13 +205,27 @@ pub fn program(code_of_this_process: &[Range<u64>], libraries: Libraries) -> Vec
         Libraries::AreNeverLoaded => few_ranges(code_of_this_process),
     };
     let mut filter = Assembler::default();
-    let [no_such_call, never, far_map, map, protect, remap, attach, personality] = core::array::from_fn(|_| filter.label());
+    let [
+        no_such_call,
+        never,
+        far_map,
+        map,
+        protect,
+        remap,
+        attach,
+        personality,
+    ] = core::array::from_fn(|_| filter.label());
 
     filter.load(ARCHITECTURE);
     filter.jump(JUMP_IF_EQUAL, THIS_ARCHITECTURE, Next, Label(no_such_call));
     filter.load(NUMBER);
     if cfg!(target_arch = "x86_64") {
-        filter.jump(JUMP_IF_GREATER_OR_EQUAL, FIRST_NUMBER_OF_THE_X32_CALLS, Label(no_such_call), Next);
+        filter.jump(
+            JUMP_IF_GREATER_OR_EQUAL,
+            FIRST_NUMBER_OF_THE_X32_CALLS,
+            Label(no_such_call),
+            Next,
+        );
     }
     filter.jump(JUMP_IF_EQUAL, MMAP, Label(far_map), Next);
     filter.jump(JUMP_IF_EQUAL, MPROTECT, Label(protect), Next);
@@ -214,7 +250,12 @@ pub fn program(code_of_this_process: &[Range<u64>], libraries: Libraries) -> Vec
     filter.place(personality);
     filter.load(argument(0));
     filter.jump(JUMP_IF_EQUAL, ASKS_FOR_THE_PERSONALITY, Label(allow), Next);
-    filter.jump(JUMP_IF_ANY_BIT_SET, READ_IMPLIES_EXEC, Label(refuse), Label(allow));
+    filter.jump(
+        JUMP_IF_ANY_BIT_SET,
+        READ_IMPLIES_EXEC,
+        Label(refuse),
+        Label(allow),
+    );
     filter.answer_at(allow, ALLOW);
     filter.answer_at(refuse, REFUSE);
 
@@ -235,7 +276,12 @@ pub fn program(code_of_this_process: &[Range<u64>], libraries: Libraries) -> Vec
     filter.jump(JUMP_IF_ANY_BIT_SET, PROT_EXEC, Next, Label(allow));
     filter.jump(JUMP_IF_ANY_BIT_SET, PROT_WRITE, Label(refuse), Next);
     filter.load(argument(3));
-    filter.jump(JUMP_IF_ANY_BIT_SET, MAP_ANONYMOUS | MAP_SHARED, Label(refuse), Next);
+    filter.jump(
+        JUMP_IF_ANY_BIT_SET,
+        MAP_ANONYMOUS | MAP_SHARED,
+        Label(refuse),
+        Next,
+    );
     filter.jump_if_called_from(&own_code, refuse, allow);
     filter.answer_at(allow, ALLOW);
     filter.answer_at(refuse, REFUSE);
@@ -258,11 +304,22 @@ mod tests {
     fn call(number: u32, from: u64, arguments: &[u64]) -> Call {
         let mut all = [0; 6];
         all[..arguments.len()].copy_from_slice(arguments);
-        Call { number, architecture: THIS_ARCHITECTURE, from, arguments: all }
+        Call {
+            number,
+            architecture: THIS_ARCHITECTURE,
+            from,
+            arguments: all,
+        }
     }
 
     fn word(call: &Call, offset: u32) -> u32 {
-        let half = |value: u64, is_high: bool| if is_high { (value >> 32) as u32 } else { value as u32 };
+        let half = |value: u64, is_high: bool| {
+            if is_high {
+                (value >> 32) as u32
+            } else {
+                value as u32
+            }
+        };
         match offset {
             NUMBER => call.number,
             ARCHITECTURE => call.architecture,
@@ -274,7 +331,12 @@ mod tests {
     fn run(program: &[Instruction], call: &Call) -> u32 {
         let (mut at, mut held) = (0, 0u32);
         loop {
-            let Instruction { code, jump_if_true, jump_if_false, value } = program[at];
+            let Instruction {
+                code,
+                jump_if_true,
+                jump_if_false,
+                value,
+            } = program[at];
             let is_true = match code {
                 LOAD_WORD => {
                     held = word(call, value);
@@ -306,17 +368,41 @@ mod tests {
     const FIXED: u64 = 0x10;
     const MAY_MOVE: u64 = 1;
     #[cfg(target_arch = "x86_64")]
-    const READ_MUNMAP_EXECVE_CLONE_SECCOMP_PRCTL_MEMFD_CREATE: [u32; 7] = [0, 11, 59, 56, 317, 157, 319];
+    const READ_MUNMAP_EXECVE_CLONE_SECCOMP_PRCTL_MEMFD_CREATE: [u32; 7] =
+        [0, 11, 59, 56, 317, 157, 319];
     #[cfg(target_arch = "aarch64")]
-    const READ_MUNMAP_EXECVE_CLONE_SECCOMP_PRCTL_MEMFD_CREATE: [u32; 7] = [63, 215, 221, 220, 277, 167, 279];
+    const READ_MUNMAP_EXECVE_CLONE_SECCOMP_PRCTL_MEMFD_CREATE: [u32; 7] =
+        [63, 215, 221, 220, 277, 167, 279];
 
-    const OWN: [Range<u64>; 3] = [0x5555_0000_1000..0x5555_0800_0000, 0x7ffe_ffff_f000..0x7fff_0000_2000, 0x7fff_2000_0000..0x7fff_2000_1000];
-    const INSIDE: [u64; 6] = [0x5555_0000_1000, 0x5555_07ff_ffff, 0x7ffe_ffff_f000, 0x7fff_0000_0000, 0x7fff_0000_1fff, 0x7fff_2000_0fff];
-    const OUTSIDE: [u64; 8] =
-        [0, 0x5555_0000_0fff, 0x5555_0800_0000, 0x5554_0000_2000, 0x7ffe_ffff_efff, 0x7fff_0000_2000, 0x7fff_2000_1000, 0xffff_ffff_ff60_0000];
+    const OWN: [Range<u64>; 3] = [
+        0x5555_0000_1000..0x5555_0800_0000,
+        0x7ffe_ffff_f000..0x7fff_0000_2000,
+        0x7fff_2000_0000..0x7fff_2000_1000,
+    ];
+    const INSIDE: [u64; 6] = [
+        0x5555_0000_1000,
+        0x5555_07ff_ffff,
+        0x7ffe_ffff_f000,
+        0x7fff_0000_0000,
+        0x7fff_0000_1fff,
+        0x7fff_2000_0fff,
+    ];
+    const OUTSIDE: [u64; 8] = [
+        0,
+        0x5555_0000_0fff,
+        0x5555_0800_0000,
+        0x5554_0000_2000,
+        0x7ffe_ffff_efff,
+        0x7fff_0000_2000,
+        0x7fff_2000_1000,
+        0xffff_ffff_ff60_0000,
+    ];
 
     fn both_forms() -> [Vec<Instruction>; 2] {
-        [program(&OWN, Libraries::MayBeLoaded), program(&OWN, Libraries::AreNeverLoaded)]
+        [
+            program(&OWN, Libraries::MayBeLoaded),
+            program(&OWN, Libraries::AreNeverLoaded),
+        ]
     }
 
     fn everywhere() -> impl Iterator<Item = u64> {
@@ -325,27 +411,49 @@ mod tests {
 
     fn assert_answer(filter: &[Instruction], answer: u32, number: u32, arguments: &[u64]) {
         for from in everywhere() {
-            assert_eq!(run(filter, &call(number, from, arguments)), answer, "{number} {arguments:x?} from {from:#x}");
+            assert_eq!(
+                run(filter, &call(number, from, arguments)),
+                answer,
+                "{number} {arguments:x?} from {from:#x}"
+            );
         }
     }
 
     fn assert_refused_from_own_code_only(filter: &[Instruction], number: u32, arguments: &[u64]) {
         for from in INSIDE {
-            assert_eq!(run(filter, &call(number, from, arguments)), REFUSE, "{number} {arguments:x?} from {from:#x}");
+            assert_eq!(
+                run(filter, &call(number, from, arguments)),
+                REFUSE,
+                "{number} {arguments:x?} from {from:#x}"
+            );
         }
         for from in OUTSIDE {
-            assert_eq!(run(filter, &call(number, from, arguments)), ALLOW, "{number} {arguments:x?} from {from:#x}");
+            assert_eq!(
+                run(filter, &call(number, from, arguments)),
+                ALLOW,
+                "{number} {arguments:x?} from {from:#x}"
+            );
         }
     }
 
     #[test]
     fn memory_that_is_not_executable_is_nobodys_business() {
         for filter in both_forms() {
-            assert_answer(&filter, ALLOW, MMAP, &[0, 4096, READ | WRITE, PRIVATE | ANONYMOUS, u64::MAX, 0]);
+            assert_answer(
+                &filter,
+                ALLOW,
+                MMAP,
+                &[0, 4096, READ | WRITE, PRIVATE | ANONYMOUS, u64::MAX, 0],
+            );
             assert_answer(&filter, ALLOW, MMAP, &[0, 4096, READ, SHARED, 3, 0]);
             assert_answer(&filter, ALLOW, MPROTECT, &[0x1000, 4096, READ]);
             assert_answer(&filter, ALLOW, MPROTECT, &[0x1000, 4096, 0]);
-            assert_answer(&filter, ALLOW, PKEY_MPROTECT, &[0x1000, 4096, READ | WRITE, 1]);
+            assert_answer(
+                &filter,
+                ALLOW,
+                PKEY_MPROTECT,
+                &[0x1000, 4096, READ | WRITE, 1],
+            );
             assert_answer(&filter, ALLOW, SHMAT, &[1, 0, 0]);
         }
     }
@@ -354,7 +462,12 @@ mod tests {
     fn other_calls_pass_and_so_do_the_two_that_add_filters() {
         for filter in both_forms() {
             for number in READ_MUNMAP_EXECVE_CLONE_SECCOMP_PRCTL_MEMFD_CREATE {
-                assert_answer(&filter, ALLOW, number, &[EXECUTE, EXECUTE, EXECUTE, EXECUTE]);
+                assert_answer(
+                    &filter,
+                    ALLOW,
+                    number,
+                    &[EXECUTE, EXECUTE, EXECUTE, EXECUTE],
+                );
             }
         }
     }
@@ -372,11 +485,36 @@ mod tests {
     #[test]
     fn executable_memory_comes_from_no_place_that_can_be_written() {
         for filter in both_forms() {
-            assert_answer(&filter, REFUSE, MMAP, &[0, 4096, READ | EXECUTE, PRIVATE | ANONYMOUS, u64::MAX, 0]);
-            assert_answer(&filter, REFUSE, MMAP, &[0, 4096, READ | EXECUTE, SHARED | ANONYMOUS, u64::MAX, 0]);
-            assert_answer(&filter, REFUSE, MMAP, &[0, 4096, READ | EXECUTE, SHARED, 3, 0]);
-            assert_answer(&filter, REFUSE, MMAP, &[0, 4096, READ | EXECUTE, SHARED_VALIDATE, 3, 0]);
-            assert_answer(&filter, REFUSE, MMAP, &[0, 4096, READ | WRITE | EXECUTE, PRIVATE, 3, 0]);
+            assert_answer(
+                &filter,
+                REFUSE,
+                MMAP,
+                &[0, 4096, READ | EXECUTE, PRIVATE | ANONYMOUS, u64::MAX, 0],
+            );
+            assert_answer(
+                &filter,
+                REFUSE,
+                MMAP,
+                &[0, 4096, READ | EXECUTE, SHARED | ANONYMOUS, u64::MAX, 0],
+            );
+            assert_answer(
+                &filter,
+                REFUSE,
+                MMAP,
+                &[0, 4096, READ | EXECUTE, SHARED, 3, 0],
+            );
+            assert_answer(
+                &filter,
+                REFUSE,
+                MMAP,
+                &[0, 4096, READ | EXECUTE, SHARED_VALIDATE, 3, 0],
+            );
+            assert_answer(
+                &filter,
+                REFUSE,
+                MMAP,
+                &[0, 4096, READ | WRITE | EXECUTE, PRIVATE, 3, 0],
+            );
             assert_answer(&filter, REFUSE, SHMAT, &[1, 0, u64::from(SHM_EXEC)]);
         }
     }
@@ -400,9 +538,24 @@ mod tests {
     #[test]
     fn reading_does_not_come_to_imply_executing() {
         for filter in both_forms() {
-            assert_answer(&filter, REFUSE, PERSONALITY, &[u64::from(READ_IMPLIES_EXEC)]);
-            assert_answer(&filter, REFUSE, PERSONALITY, &[u64::from(READ_IMPLIES_EXEC) | 0x0004_0000]);
-            assert_answer(&filter, ALLOW, PERSONALITY, &[u64::from(ASKS_FOR_THE_PERSONALITY)]);
+            assert_answer(
+                &filter,
+                REFUSE,
+                PERSONALITY,
+                &[u64::from(READ_IMPLIES_EXEC)],
+            );
+            assert_answer(
+                &filter,
+                REFUSE,
+                PERSONALITY,
+                &[u64::from(READ_IMPLIES_EXEC) | 0x0004_0000],
+            );
+            assert_answer(
+                &filter,
+                ALLOW,
+                PERSONALITY,
+                &[u64::from(ASKS_FOR_THE_PERSONALITY)],
+            );
             assert_answer(&filter, ALLOW, PERSONALITY, &[0x0004_0000]);
         }
     }
@@ -411,17 +564,31 @@ mod tests {
     fn the_tables_of_other_architectures_are_closed() {
         for filter in both_forms() {
             for from in everywhere() {
-                let foreign = Call { architecture: 0x4000_0003, ..call(192, from, &[0, 4096, READ | EXECUTE, PRIVATE | ANONYMOUS]) };
+                let foreign = Call {
+                    architecture: 0x4000_0003,
+                    ..call(192, from, &[0, 4096, READ | EXECUTE, PRIVATE | ANONYMOUS])
+                };
                 assert_eq!(run(&filter, &foreign), NO_SUCH_CALL);
             }
             if cfg!(target_arch = "x86_64") {
-                assert_answer(&filter, NO_SUCH_CALL, MMAP + FIRST_NUMBER_OF_THE_X32_CALLS, &[0, 4096, READ | EXECUTE, PRIVATE | ANONYMOUS]);
+                assert_answer(
+                    &filter,
+                    NO_SUCH_CALL,
+                    MMAP + FIRST_NUMBER_OF_THE_X32_CALLS,
+                    &[0, 4096, READ | EXECUTE, PRIVATE | ANONYMOUS],
+                );
             }
         }
     }
 
-    const FILE_AS_CODE: [[u64; 6]; 2] = [[0, 4096, READ | EXECUTE, PRIVATE, 3, 0], [0x1000, 4096, READ | EXECUTE, PRIVATE | FIXED | 0x800, 3, 0]];
-    const MOVES: [[u64; 5]; 2] = [[0x1000, 4096, 8192, MAY_MOVE, 0], [0x1000, 1 << 32, 1 << 33, MAY_MOVE | 2, 0x7000_0000]];
+    const FILE_AS_CODE: [[u64; 6]; 2] = [
+        [0, 4096, READ | EXECUTE, PRIVATE, 3, 0],
+        [0x1000, 4096, READ | EXECUTE, PRIVATE | FIXED | 0x800, 3, 0],
+    ];
+    const MOVES: [[u64; 5]; 2] = [
+        [0x1000, 4096, 8192, MAY_MOVE, 0],
+        [0x1000, 1 << 32, 1 << 33, MAY_MOVE | 2, 0x7000_0000],
+    ];
 
     #[test]
     fn where_libraries_may_be_loaded_a_file_is_mapped_as_code_and_mappings_move() {
@@ -447,15 +614,35 @@ mod tests {
 
     #[test]
     fn ranges_are_sorted_joined_and_kept_few() {
-        assert_eq!(few_ranges(&[30..40, 10..20, 20..25, 5..5, 12..14]), [10..25, 30..40]);
-        let many: Vec<Range<u64>> = (0..100u64).map(|at| at * 1000 + at * at..at * 1000 + at * at + 10).collect();
+        assert_eq!(
+            few_ranges(&[30..40, 10..20, 20..25, 5..5, 12..14]),
+            [10..25, 30..40]
+        );
+        let many: Vec<Range<u64>> = (0..100u64)
+            .map(|at| at * 1000 + at * at..at * 1000 + at * at + 10)
+            .collect();
         let few = few_ranges(&many);
         assert_eq!(few.len(), MOST_RANGES);
-        assert!(many.iter().all(|range| few.iter().any(|it| it.start <= range.start && range.end <= it.end)));
+        assert!(many.iter().all(|range| {
+            few.iter()
+                .any(|it| it.start <= range.start && range.end <= it.end)
+        }));
         let filter = program(&many, Libraries::AreNeverLoaded);
         for range in &many {
-            assert_eq!(run(&filter, &call(MMAP, range.start, &[0, 4096, READ | EXECUTE, PRIVATE, 3, 0])), REFUSE);
+            assert_eq!(
+                run(
+                    &filter,
+                    &call(MMAP, range.start, &[0, 4096, READ | EXECUTE, PRIVATE, 3, 0])
+                ),
+                REFUSE
+            );
         }
-        assert_eq!(run(&filter, &call(MMAP, 1 << 40, &[0, 4096, READ | EXECUTE, PRIVATE, 3, 0])), ALLOW);
+        assert_eq!(
+            run(
+                &filter,
+                &call(MMAP, 1 << 40, &[0, 4096, READ | EXECUTE, PRIVATE, 3, 0])
+            ),
+            ALLOW
+        );
     }
 }

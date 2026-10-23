@@ -39,22 +39,38 @@ export function denseEnum(
 ): string[] {
   const type = rustTypeName(name);
   const count = members.length;
-  const declarations = members.map((member, number) => (number === 0 ? `#[default] ${member} = 0` : `${member} = ${number}`));
+  const declarations = members.map((member, number) =>
+    number === 0 ? `#[default] ${member} = 0` : `${member} = ${number}`,
+  );
   const lines = [
     `#[repr(${rep})]`,
     denseEnumDerives,
     ...braced(`pub enum ${type}`, declarations, "}"),
     `impl ${type} {`,
     `${indentation}pub const COUNT: usize = ${count};`,
-    ...delimited(`pub const ALL: [${type}; ${count}] = [`, withCommas(members.map(member => `${type}::${member}`)), "];", indentation),
-    ...delimited(`pub const NAMES: [&'static str; ${count}] = [`, withCommas(members.map(rustLiteral)), "];", indentation),
+    ...delimited(
+      `pub const ALL: [${type}; ${count}] = [`,
+      withCommas(members.map(member => `${type}::${member}`)),
+      "];",
+      indentation,
+    ),
+    ...delimited(
+      `pub const NAMES: [&'static str; ${count}] = [`,
+      withCommas(members.map(rustLiteral)),
+      "];",
+      indentation,
+    ),
   ];
   for (const [position, column] of columns.entries()) {
     if (!column.isInRust) continue;
     const open = `const ${screamingCase(column.name)}: [${columnType(schema, column.kind)}; ${count}] = [`;
     const texts = values.map(memberValues => columnValue(schema, column.kind, memberValues[position]));
     if (column.kind.tag === "Text") {
-      lines.push(`${indentation}${open}`, ...texts.map(text => `${indentation}${indentation}${text},`), `${indentation}];`);
+      lines.push(
+        `${indentation}${open}`,
+        ...texts.map(text => `${indentation}${indentation}${text},`),
+        `${indentation}];`,
+      );
     } else {
       lines.push(...delimited(open, withCommas(texts), "];", indentation));
     }
@@ -93,9 +109,16 @@ export function flagWord(type: SchemaEnum): string[] {
     "#[derive(Copy, Clone, PartialEq, Eq, Hash, Default, Debug)]",
     `pub struct ${name}(pub u32);`,
     `impl ${name} {`,
-    ...members.map((member, bit) => `${indentation}pub const ${screamingCase(member)}: ${name} = ${name}(1 << ${bit});`),
+    ...members.map(
+      (member, bit) => `${indentation}pub const ${screamingCase(member)}: ${name} = ${name}(1 << ${bit});`,
+    ),
     `${indentation}pub const ALL: ${name} = ${name}(0b${"1".repeat(members.length)});`,
-    ...delimited(`pub const NAMES: [&'static str; ${members.length}] = [`, withCommas(members.map(rustLiteral)), "];", indentation),
+    ...delimited(
+      `pub const NAMES: [&'static str; ${members.length}] = [`,
+      withCommas(members.map(rustLiteral)),
+      "];",
+      indentation,
+    ),
     `${indentation}pub const fn contains(self, other: ${name}) -> bool { self.0 & other.0 == other.0 }`,
     `${indentation}pub const fn intersects(self, other: ${name}) -> bool { self.0 & other.0 != 0 }`,
     `${indentation}pub const fn is_empty(self) -> bool { self.0 == 0 }`,
@@ -109,7 +132,13 @@ export function flagWord(type: SchemaEnum): string[] {
   ];
 }
 
-const abiFiles: ReadonlySet<string> = new Set(["schema/limits.def", "schema/passes.def", "schema/statistics.def", "schema/diagnostics.def", "schema/compile-call.def"]);
+const abiFiles: ReadonlySet<string> = new Set([
+  "schema/limits.def",
+  "schema/passes.def",
+  "schema/statistics.def",
+  "schema/diagnostics.def",
+  "schema/compile-call.def",
+]);
 
 const vocabularyFiles: ReadonlySet<string> = new Set(["AOTSchema.def", "schema/types.def"]);
 

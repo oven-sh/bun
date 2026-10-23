@@ -38,11 +38,12 @@ const programs: Record<string, { source: string; untrimmed: string; trimmed?: st
     untrimmed: "true entry-point ts\ntrue\n",
     runsUnseenCode: "Bun.build",
   },
-  "Bun.build of a file that calls a macro whose file is not in the executable: the build fails and the program continues": {
-    source: `${prelude}printResult(await Bun.build({ entrypoints: [directory + "calls-macro.ts"], target: "bun", throw: false }));\nconsole.log("continues");\n`,
-    untrimmed: "false \ncontinues\n",
-    runsUnseenCode: "Bun.build",
-  },
+  "Bun.build of a file that calls a macro whose file is not in the executable: the build fails and the program continues":
+    {
+      source: `${prelude}printResult(await Bun.build({ entrypoints: [directory + "calls-macro.ts"], target: "bun", throw: false }));\nconsole.log("continues");\n`,
+      untrimmed: "false \ncontinues\n",
+      runsUnseenCode: "Bun.build",
+    },
   "Bun.serve with an imported HTML file as a route": {
     source: `import page from "./index.html";
 const server = Bun.serve({ port: 0, routes: { "/": page, "/api": () => new Response("x") } });
@@ -58,7 +59,8 @@ for (const path of assets) {
 }
 server.stop(true);
 `,
-    untrimmed: "/ 200 text/html;charset=utf-8\n/api 200 text/plain;charset=utf-8\n200 text/css;charset=utf-8 true\n200 text/javascript;charset=utf-8 true\n",
+    untrimmed:
+      "/ 200 text/html;charset=utf-8\n/api 200 text/plain;charset=utf-8\n200 text/css;charset=utf-8 true\n200 text/javascript;charset=utf-8 true\n",
   },
   "Bun.Transpiler": {
     source: `const transpiler = new Bun.Transpiler({ loader: "tsx" });\nconsole.log(transpiler.transformSync("const x: number = 1; export default x;").trim());\nconsole.log(JSON.stringify(transpiler.scanImports("import a from 'a'; import('b');")));\n`,
@@ -83,29 +85,48 @@ function usesEveryMember(report: string): boolean {
   return /^aot: trim: uses property toTemporalInstant$/m.test(report);
 }
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)("Bun.build, HTML routes and Bun.Transpiler in a trimmed executable", () => {
-  for (const [name, { source, untrimmed, trimmed = untrimmed, runsUnseenCode }] of Object.entries(programs)) {
-    test(
-      name,
-      () =>
-        slot(async () => {
-          using dir = tempDir("bundler", { "program.mjs": source, ...sources });
-          const folder = String(dir);
-          const found: Record<string, unknown> = {};
-          for (const [kind, flags] of [["untrimmed", []], ["trimmed", ["--trim"]]] as const) {
-            const build = await spawned([bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind], folder, env);
-            built(build);
-            const ran = await spawned([join(folder, kind)], folder, env);
-            const openedBy = builtinsThatRunUnseenCode(build.stderr).filter(builtin => builtin === runsUnseenCode);
-            found[kind] = { completeness: findCompleteness(build.stderr), openedBy, usesEveryMember: usesEveryMember(build.stderr), stdout: ran.stdout, exitCode: ran.exitCode };
-          }
-          const report =
-            runsUnseenCode === undefined
-              ? { completeness: "Complete", openedBy: [], usesEveryMember: false, exitCode: 0 }
-              : { completeness: "Incomplete", openedBy: [runsUnseenCode], usesEveryMember: true, exitCode: 0 };
-          expect(found).toEqual({ untrimmed: { ...report, stdout: untrimmed }, trimmed: { ...report, stdout: trimmed } });
-        }),
-      600_000,
-    );
-  }
-});
+(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+  "Bun.build, HTML routes and Bun.Transpiler in a trimmed executable",
+  () => {
+    for (const [name, { source, untrimmed, trimmed = untrimmed, runsUnseenCode }] of Object.entries(programs)) {
+      test(
+        name,
+        () =>
+          slot(async () => {
+            using dir = tempDir("bundler", { "program.mjs": source, ...sources });
+            const folder = String(dir);
+            const found: Record<string, unknown> = {};
+            for (const [kind, flags] of [
+              ["untrimmed", []],
+              ["trimmed", ["--trim"]],
+            ] as const) {
+              const build = await spawned(
+                [bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind],
+                folder,
+                env,
+              );
+              built(build);
+              const ran = await spawned([join(folder, kind)], folder, env);
+              const openedBy = builtinsThatRunUnseenCode(build.stderr).filter(builtin => builtin === runsUnseenCode);
+              found[kind] = {
+                completeness: findCompleteness(build.stderr),
+                openedBy,
+                usesEveryMember: usesEveryMember(build.stderr),
+                stdout: ran.stdout,
+                exitCode: ran.exitCode,
+              };
+            }
+            const report =
+              runsUnseenCode === undefined
+                ? { completeness: "Complete", openedBy: [], usesEveryMember: false, exitCode: 0 }
+                : { completeness: "Incomplete", openedBy: [runsUnseenCode], usesEveryMember: true, exitCode: 0 };
+            expect(found).toEqual({
+              untrimmed: { ...report, stdout: untrimmed },
+              trimmed: { ...report, stdout: trimmed },
+            });
+          }),
+        600_000,
+      );
+    }
+  },
+);

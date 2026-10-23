@@ -30,14 +30,22 @@ fn inherited_member_of_listed_holder() {
     let members = [
         ("Math.toString", BuiltinId::Math, "toString"),
         ("console.toString", BuiltinId::Console, "toString"),
-        ("Error.prototype.valueOf", BuiltinId::ErrorPrototype, "valueOf"),
+        (
+            "Error.prototype.valueOf",
+            BuiltinId::ErrorPrototype,
+            "valueOf",
+        ),
     ];
     let source = "Math.toString; console.toString; Error.prototype.valueOf;";
     with_case(PROGRAM, source, |case| {
         assert_builtin(case, "Math.toString", BuiltinId::ObjectPrototypeToString);
         for (text, holder, name) in members {
             let path = case.path(text);
-            assert_eq!(path.map(|path| path.id), find_member(holder, name), "{text}");
+            assert_eq!(
+                path.map(|path| path.id),
+                find_member(holder, name),
+                "{text}"
+            );
             let is_predicted =
                 path.is_none_or(|path| path.mutability <= Mutability::ConstantUnlessWritten);
             assert!(is_predicted, "{text}");
@@ -81,7 +89,10 @@ fn global_and_members() {
         ];
         for (text, id) in expected {
             assert_builtin(case, text, id);
-            assert_eq!(case.resolved.builtin_of_expression(case.expr(text)), Some(id));
+            assert_eq!(
+                case.resolved.builtin_of_expression(case.expr(text)),
+                Some(id)
+            );
             assert!(case.mentions(id), "{text}");
         }
     });
@@ -115,7 +126,11 @@ fn same_object_has_one_id() {
         let parse_float = table::global(find_name("parseFloat"));
         assert!(parse_float.is_some());
         assert_eq!(case.builtin("Number.parseFloat"), parse_float);
-        assert_builtin(case, "Number.parseFloat.call", BuiltinId::FunctionPrototypeCall);
+        assert_builtin(
+            case,
+            "Number.parseFloat.call",
+            BuiltinId::FunctionPrototypeCall,
+        );
         assert!(case.mentions(trim_start));
         assert!(!case.mentions(BuiltinId::StringPrototypeTrimLeft));
         assert!(!case.exposes(BuiltinId::Number));
@@ -129,7 +144,10 @@ fn well_known_symbol_key() {
     let MemberLookup::Found(iterator) = iterator else {
         panic!("Array.prototype[Symbol.iterator] is {iterator:?}");
     };
-    assert_eq!(table::canonical_id(iterator), BuiltinId::ArrayPrototypeValues);
+    assert_eq!(
+        table::canonical_id(iterator),
+        BuiltinId::ArrayPrototypeValues
+    );
     with_case(PROGRAM, "Array.prototype[Symbol.iterator];", |case| {
         let values = BuiltinId::ArrayPrototypeValues;
         assert_builtin(case, "Array.prototype[Symbol.iterator]", values);
@@ -176,7 +194,10 @@ fn global_object_aliases() {
 
 #[test]
 fn other_platform() {
-    assert!(!table::exists_on(BuiltinId::ProcessGetuid, Platforms::WINDOWS));
+    assert!(!table::exists_on(
+        BuiltinId::ProcessGetuid,
+        Platforms::WINDOWS
+    ));
     with_case(PROGRAM, "process.getuid;", |case| {
         assert_builtin(case, "process.getuid", BuiltinId::ProcessGetuid);
     });
@@ -258,14 +279,21 @@ mod mutability {
 
     #[test]
     fn only_object_or_symbol_stands_for_locked_path() {
-        with_case(PROGRAM, "Math.imul; Math.PI; Symbol.iterator; Math.random;", |case| {
-            assert_mutability(case, "Math.PI", Mutability::AlwaysLocked);
-            let locked_builtin = |text| case.path(text).and_then(|path| path.locked_builtin());
-            assert_eq!(locked_builtin("Math.imul"), Some(BuiltinId::MathImul));
-            assert_eq!(locked_builtin("Symbol.iterator"), Some(BuiltinId::SymbolIterator));
-            assert_eq!(locked_builtin("Math.PI"), None);
-            assert_eq!(locked_builtin("Math.random"), None);
-        });
+        with_case(
+            PROGRAM,
+            "Math.imul; Math.PI; Symbol.iterator; Math.random;",
+            |case| {
+                assert_mutability(case, "Math.PI", Mutability::AlwaysLocked);
+                let locked_builtin = |text| case.path(text).and_then(|path| path.locked_builtin());
+                assert_eq!(locked_builtin("Math.imul"), Some(BuiltinId::MathImul));
+                assert_eq!(
+                    locked_builtin("Symbol.iterator"),
+                    Some(BuiltinId::SymbolIterator)
+                );
+                assert_eq!(locked_builtin("Math.PI"), None);
+                assert_eq!(locked_builtin("Math.random"), None);
+            },
+        );
     }
 
     #[test]
@@ -320,7 +348,11 @@ mod mutability {
         });
         let source = "const key = Symbol.iterator; $Array.prototype[key];";
         with_case(RUNTIME, source, |case| {
-            assert_builtin(case, "$Array.prototype[key]", BuiltinId::ArrayPrototypeValues);
+            assert_builtin(
+                case,
+                "$Array.prototype[key]",
+                BuiltinId::ArrayPrototypeValues,
+            );
             let predicted = Mutability::ConstantUnlessWritten;
             assert_mutability(case, "$Array.prototype[key]", predicted);
         });

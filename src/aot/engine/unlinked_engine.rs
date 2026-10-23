@@ -59,6 +59,16 @@ unsafe extern "C" fn Bun__AOT__relocateImage(_image: *mut u8, _size: usize, _add
 }
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__AOT__describeDifferenceOfRuntime(
+    _description: *const u8,
+    _size: usize,
+    _message: *mut u8,
+    _capacity: usize,
+) -> usize {
+    no_engine("Bun__AOT__describeDifferenceOfRuntime")
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn Bun__AOT__operationCount() -> usize {
     no_engine("Bun__AOT__operationCount")
 }

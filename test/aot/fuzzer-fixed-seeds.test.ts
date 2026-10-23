@@ -18,7 +18,11 @@ import { fuzz } from "./fuzz/fuzzer";
 import { unsupported } from "./run-programs";
 
 const programs = Number(process.env.AOT_FUZZ_PROGRAMS) || 45;
-const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : freshSeed === undefined ? [1] : [1, freshSeed];
+const seeds = process.env.AOT_FUZZ_SEED
+  ? [Number(process.env.AOT_FUZZ_SEED)]
+  : freshSeed === undefined
+    ? [1]
+    : [1, freshSeed];
 const secondsPerProgram = 8;
 
 for (const seed of seeds)
@@ -27,7 +31,13 @@ for (const seed of seeds)
     async () => {
       using folder = tempDir("aot-fuzzer-fixed-seeds", {});
       const out = join(String(folder), "out");
-      const bed = new ProductBed(bunExe(), { baseFlags: [], validate: true, threads: 2, buildSeconds: 300, runSeconds: 20 });
+      const bed = new ProductBed(bunExe(), {
+        baseFlags: [],
+        validate: true,
+        threads: 2,
+        buildSeconds: 300,
+        runSeconds: 20,
+      });
       const summary = await fuzz({
         beds: [{ bed, jobs: Math.max(1, availableParallelism() >> 2) }],
         out,
@@ -43,7 +53,9 @@ for (const seed of seeds)
         batch: 1,
       });
       const findings = summary.distinct.map(name => {
-        const { bed, mode, kind, detail, source, seed } = JSON.parse(readFileSync(join(out, "findings", name, "finding.json"), "utf8"));
+        const { bed, mode, kind, detail, source, seed } = JSON.parse(
+          readFileSync(join(out, "findings", name, "finding.json"), "utf8"),
+        );
         return `${source}:${seed} ${bed} ${mode}: ${kind}: ${detail}`;
       });
       expect(findings).toEqual([]);

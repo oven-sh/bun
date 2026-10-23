@@ -80,8 +80,12 @@ impl LoadedImage {
     }
 
     fn span_at(&self, address: u64) -> Option<&Span> {
-        let index = self.spans.partition_point(|span| span.addresses.end <= address);
-        self.spans.get(index).filter(|span| span.addresses.start <= address)
+        let index = self
+            .spans
+            .partition_point(|span| span.addresses.end <= address);
+        self.spans
+            .get(index)
+            .filter(|span| span.addresses.start <= address)
     }
 }
 
@@ -110,7 +114,10 @@ fn file_bytes_at(file: &[u8], offset: u64, size: u64) -> Vec<u8> {
         .checked_add(size)
         .and_then(|end| file.get(offset as usize..end as usize))
         .unwrap_or_else(|| {
-            panic!("{size:#x} bytes at file offset {offset:#x} lie outside the file of {:#x} bytes", file.len())
+            panic!(
+                "{size:#x} bytes at file offset {offset:#x} lie outside the file of {:#x} bytes",
+                file.len()
+            )
         })
         .to_vec()
 }
@@ -149,7 +156,10 @@ fn load_elf(file: &[u8]) -> LoadedImage {
         table_bytes <= ELF_MAX_PROGRAM_HEADER_TABLE_BYTES,
         "the program header table of {table_bytes} bytes is too large for the kernel"
     );
-    assert!(table_offset + table_bytes <= file.len(), "the program header table lies outside the file");
+    assert!(
+        table_offset + table_bytes <= file.len(),
+        "the program header table lies outside the file"
+    );
     let headers: Vec<ElfProgramHeader> = (0..count)
         .map(|index| read_elf_program_header(file, table_offset + index * ELF_PROGRAM_HEADER_BYTES))
         .collect();
@@ -157,7 +167,11 @@ fn load_elf(file: &[u8]) -> LoadedImage {
     for header in headers.iter().filter(|header| header.kind == PT_PHDR) {
         check_elf_program_header_segment(header, &headers, table_offset as u64);
     }
-    LoadedImage { spans, entry_point: u64_at(file, 24), identity: find_elf_build_id(file, &headers) }
+    LoadedImage {
+        spans,
+        entry_point: u64_at(file, 24),
+        identity: find_elf_build_id(file, &headers),
+    }
 }
 
 fn load_elf_segments(file: &[u8], headers: &[ElfProgramHeader], page: u64) -> Vec<Span> {
@@ -175,9 +189,16 @@ fn load_elf_segments(file: &[u8], headers: &[ElfProgramHeader], page: u64) -> Ve
             header.offset
         );
         let previous_end = spans.last().map_or(0, |span| span.addresses.end);
-        assert!(header.address >= previous_end, "PT_LOAD at {:#x} overlaps the one before it", header.address);
+        assert!(
+            header.address >= previous_end,
+            "PT_LOAD at {:#x} overlaps the one before it",
+            header.address
+        );
         spans.push(Span {
-            addresses: AddressRange { start: header.address, end: header.address + header.memory_bytes },
+            addresses: AddressRange {
+                start: header.address,
+                end: header.address + header.memory_bytes,
+            },
             file_bytes: file_bytes_at(file, header.offset, header.file_bytes),
             is_accessible: true,
         });
@@ -185,14 +206,27 @@ fn load_elf_segments(file: &[u8], headers: &[ElfProgramHeader], page: u64) -> Ve
     spans
 }
 
-fn check_elf_program_header_segment(phdr: &ElfProgramHeader, headers: &[ElfProgramHeader], table_offset: u64) {
-    assert!(phdr.offset == table_offset, "PT_PHDR does not name the program header table");
-    let is_mapped = headers.iter().filter(|header| header.kind == PT_LOAD).any(|load| {
-        load.address <= phdr.address
-            && phdr.address + phdr.file_bytes <= load.address + load.file_bytes
-            && load.offset + (phdr.address - load.address) == phdr.offset
-    });
-    assert!(is_mapped, "PT_PHDR does not lie in the file bytes of a PT_LOAD at its address");
+fn check_elf_program_header_segment(
+    phdr: &ElfProgramHeader,
+    headers: &[ElfProgramHeader],
+    table_offset: u64,
+) {
+    assert!(
+        phdr.offset == table_offset,
+        "PT_PHDR does not name the program header table"
+    );
+    let is_mapped = headers
+        .iter()
+        .filter(|header| header.kind == PT_LOAD)
+        .any(|load| {
+            load.address <= phdr.address
+                && phdr.address + phdr.file_bytes <= load.address + load.file_bytes
+                && load.offset + (phdr.address - load.address) == phdr.offset
+        });
+    assert!(
+        is_mapped,
+        "PT_PHDR does not lie in the file bytes of a PT_LOAD at its address"
+    );
 }
 
 fn find_elf_build_id(file: &[u8], headers: &[ElfProgramHeader]) -> Vec<u8> {
@@ -254,12 +288,19 @@ fn load_macho(file: &[u8]) -> LoadedImage {
         .segments
         .iter()
         .map(|segment| Span {
-            addresses: AddressRange { start: segment.address, end: segment.address + segment.memory_bytes },
+            addresses: AddressRange {
+                start: segment.address,
+                end: segment.address + segment.memory_bytes,
+            },
             file_bytes: file_bytes_at(file, segment.offset, segment.file_bytes),
             is_accessible: segment.protection != 0,
         })
         .collect();
-    LoadedImage { spans, entry_point, identity: commands.uuid }
+    LoadedImage {
+        spans,
+        entry_point,
+        identity: commands.uuid,
+    }
 }
 
 fn read_macho_commands(file: &[u8]) -> MachCommands {
@@ -269,16 +310,24 @@ fn read_macho_commands(file: &[u8]) -> MachCommands {
     let mut offset = MACHO_HEADER_BYTES;
     for _ in 0..count {
         let bytes = u32_at(file, offset + 4) as usize;
-        assert!(bytes >= 8, "a load command of {bytes} bytes cannot be walked");
+        assert!(
+            bytes >= 8,
+            "a load command of {bytes} bytes cannot be walked"
+        );
         match u32_at(file, offset) {
-            LC_SEGMENT_64 => commands.segments.push(read_macho_segment(file, offset, bytes)),
+            LC_SEGMENT_64 => commands
+                .segments
+                .push(read_macho_segment(file, offset, bytes)),
             LC_UUID => commands.uuid = file_bytes_at(file, offset as u64 + 8, 16),
             LC_MAIN => commands.entry_offset = u64_at(file, offset + 8),
             _ => {}
         }
         offset += bytes;
     }
-    assert!(offset == commands_end, "the load commands end at {offset:#x}, not at {commands_end:#x}");
+    assert!(
+        offset == commands_end,
+        "the load commands end at {offset:#x}, not at {commands_end:#x}"
+    );
     commands
 }
 
@@ -314,24 +363,54 @@ fn check_macho_segments(file: &[u8], segments: &[MachSegment], commands_end: u64
     let mut previous_address_end = 0;
     let mut previous_file_end = 0;
     for segment in segments {
-        assert!(segment.address >= previous_address_end, "segment at {:#x} is out of address order", segment.address);
+        assert!(
+            segment.address >= previous_address_end,
+            "segment at {:#x} is out of address order",
+            segment.address
+        );
         previous_address_end = segment.address + segment.memory_bytes;
-        assert!(segment.file_bytes <= segment.memory_bytes, "segment at {:#x} has too many file bytes", segment.address);
+        assert!(
+            segment.file_bytes <= segment.memory_bytes,
+            "segment at {:#x} has too many file bytes",
+            segment.address
+        );
         if segment.file_bytes > 0 {
-            assert!(segment.offset >= previous_file_end, "segment at {:#x} is out of file order", segment.address);
-            assert!(segment.offset % MACHO_FILE_PAGE == 0, "segment at {:#x} starts inside a page", segment.address);
+            assert!(
+                segment.offset >= previous_file_end,
+                "segment at {:#x} is out of file order",
+                segment.address
+            );
+            assert!(
+                segment.offset % MACHO_FILE_PAGE == 0,
+                "segment at {:#x} starts inside a page",
+                segment.address
+            );
             previous_file_end = segment.offset + segment.file_bytes;
-            assert!(previous_file_end <= file.len() as u64, "segment at {:#x} ends past the file", segment.address);
+            assert!(
+                previous_file_end <= file.len() as u64,
+                "segment at {:#x} ends past the file",
+                segment.address
+            );
         }
         check_macho_sections(segment, commands_end);
     }
     let last = segments.last().expect("a Mach-O executable has segments");
-    assert!(last.name.starts_with(b"__LINKEDIT\0"), "the last segment is not __LINKEDIT");
-    assert!(last.offset + last.file_bytes == file.len() as u64, "__LINKEDIT does not end the file");
+    assert!(
+        last.name.starts_with(b"__LINKEDIT\0"),
+        "the last segment is not __LINKEDIT"
+    );
+    assert!(
+        last.offset + last.file_bytes == file.len() as u64,
+        "__LINKEDIT does not end the file"
+    );
 }
 
 fn check_macho_sections(segment: &MachSegment, commands_end: u64) {
-    for section in segment.sections.iter().filter(|section| section.section_type != S_ZEROFILL) {
+    for section in segment
+        .sections
+        .iter()
+        .filter(|section| section.section_type != S_ZEROFILL)
+    {
         assert!(
             segment.address <= section.address
                 && section.address + section.bytes <= segment.address + segment.memory_bytes,
@@ -345,7 +424,11 @@ fn check_macho_sections(segment: &MachSegment, commands_end: u64) {
             section.address
         );
         if segment.offset == 0 && segment.file_bytes > 0 {
-            assert!(commands_end <= section.offset, "the load commands run into section at {:#x}", section.address);
+            assert!(
+                commands_end <= section.offset,
+                "the load commands run into section at {:#x}",
+                section.address
+            );
         }
     }
 }
@@ -370,19 +453,32 @@ fn read_pe_section(file: &[u8], offset: usize) -> PeSection {
 
 fn load_pe(file: &[u8]) -> LoadedImage {
     let header = u32_at(file, 0x3c) as usize;
-    assert!(array_at::<4>(file, header) == *b"PE\0\0", "the PE signature is missing");
+    assert!(
+        array_at::<4>(file, header) == *b"PE\0\0",
+        "the PE signature is missing"
+    );
     let count = u16_at(file, header + 6) as usize;
-    assert!(count <= PE_MAX_SECTIONS, "Windows does not load {count} sections");
+    assert!(
+        count <= PE_MAX_SECTIONS,
+        "Windows does not load {count} sections"
+    );
     let optional = header + 24;
     let table = optional + u16_at(file, header + 20) as usize;
-    let sections: Vec<PeSection> =
-        (0..count).map(|index| read_pe_section(file, table + PE_SECTION_BYTES * index)).collect();
+    let sections: Vec<PeSection> = (0..count)
+        .map(|index| read_pe_section(file, table + PE_SECTION_BYTES * index))
+        .collect();
 
     let headers_bytes = u64::from(u32_at(file, optional + 60));
     let table_end = (table + PE_SECTION_BYTES * count) as u64;
-    assert!(table_end <= headers_bytes, "the section table ends past SizeOfHeaders");
+    assert!(
+        table_end <= headers_bytes,
+        "the section table ends past SizeOfHeaders"
+    );
     let first = sections.first().expect("a PE executable has sections");
-    assert!(headers_bytes <= first.address, "SizeOfHeaders reaches into the first section");
+    assert!(
+        headers_bytes <= first.address,
+        "SizeOfHeaders reaches into the first section"
+    );
     check_pe_section_addresses(
         &sections,
         u64::from(u32_at(file, optional + 32)),
@@ -393,12 +489,23 @@ fn load_pe(file: &[u8]) -> LoadedImage {
     let spans = sections
         .iter()
         .map(|section| Span {
-            addresses: AddressRange { start: section.address, end: section.address + section.virtual_bytes },
-            file_bytes: file_bytes_at(file, section.raw_pointer, section.raw_bytes.min(section.virtual_bytes)),
+            addresses: AddressRange {
+                start: section.address,
+                end: section.address + section.virtual_bytes,
+            },
+            file_bytes: file_bytes_at(
+                file,
+                section.raw_pointer,
+                section.raw_bytes.min(section.virtual_bytes),
+            ),
             is_accessible: section.characteristics & IMAGE_SCN_MEM_READ != 0,
         })
         .collect();
-    LoadedImage { spans, entry_point: u64::from(u32_at(file, optional + 16)), identity: Vec::new() }
+    LoadedImage {
+        spans,
+        entry_point: u64::from(u32_at(file, optional + 16)),
+        identity: Vec::new(),
+    }
 }
 
 fn check_pe_section_addresses(sections: &[PeSection], section_alignment: u64, image_bytes: u64) {
@@ -409,9 +516,13 @@ fn check_pe_section_addresses(sections: &[PeSection], section_alignment: u64, im
             "section at {:#x} does not start where the one before ends, {next_address:#x}",
             section.address
         );
-        next_address = (section.address + section.virtual_bytes).next_multiple_of(section_alignment);
+        next_address =
+            (section.address + section.virtual_bytes).next_multiple_of(section_alignment);
     }
-    assert!(next_address == image_bytes, "the sections end at {next_address:#x}, not at SizeOfImage {image_bytes:#x}");
+    assert!(
+        next_address == image_bytes,
+        "the sections end at {next_address:#x}, not at SizeOfImage {image_bytes:#x}"
+    );
 }
 
 fn check_pe_raw_data(file: &[u8], sections: &[PeSection], file_alignment: u64) {
@@ -428,6 +539,10 @@ fn check_pe_raw_data(file: &[u8], sections: &[PeSection], file_alignment: u64) {
             section.address
         );
         previous_end = section.raw_pointer + section.raw_bytes;
-        assert!(previous_end <= file.len() as u64, "the raw data of section at {:#x} ends past the file", section.address);
+        assert!(
+            previous_end <= file.len() as u64,
+            "the raw data of section at {:#x} ends past the file",
+            section.address
+        );
     }
 }

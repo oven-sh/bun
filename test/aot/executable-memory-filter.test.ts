@@ -172,9 +172,17 @@ async function run(cmd: string[], env: Record<string, string | undefined> = bunE
 
 async function whatAnIntruderCanDo(dir: string, cmd: string[], patience: number) {
   const library = join(dir, "intruder.so");
-  expect(await run([compiler!, "-shared", "-fPIC", "-O1", "-o", library, join(dir, "intruder.c"), "-lpthread"])).toMatchObject({ exitCode: 0 });
+  expect(
+    await run([compiler!, "-shared", "-fPIC", "-O1", "-o", library, join(dir, "intruder.c"), "-lpthread"]),
+  ).toMatchObject({ exitCode: 0 });
   const report = join(dir, "report.txt");
-  const env = { ...bunEnv, LD_PRELOAD: library, INTRUDER_LIBRARY: library, INTRUDER_REPORT: report, INTRUDER_PATIENCE: String(patience) };
+  const env = {
+    ...bunEnv,
+    LD_PRELOAD: library,
+    INTRUDER_LIBRARY: library,
+    INTRUDER_REPORT: report,
+    INTRUDER_PATIENCE: String(patience),
+  };
   expect(await run(cmd, env)).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   return Object.fromEntries(
     readFileSync(report, "utf8")
@@ -186,7 +194,16 @@ async function whatAnIntruderCanDo(dir: string, cmd: string[], patience: number)
 
 async function build(dir: string, ...flags: string[]) {
   const executable = join(dir, "program");
-  const built = await run([bunExe(), "build", "--compile", "--aot", ...flags, join(dir, "program.ts"), "--outfile", executable]);
+  const built = await run([
+    bunExe(),
+    "build",
+    "--compile",
+    "--aot",
+    ...flags,
+    join(dir, "program.ts"),
+    "--outfile",
+    executable,
+  ]);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   return executable;
 }
@@ -209,18 +226,29 @@ describe.skipIf(!isHardened || !isX64 || !compiler)("an executable of a Bun buil
   test("without the filter every one of the intruder's ways works, so the cases below test something", async () => {
     using dir = tempDir("aot-executable-memory-filter", { "intruder.c": intruder, "program.ts": waits });
     const found = await whatAnIntruderCanDo(String(dir), [bunExe(), join(String(dir), "program.ts")], 0);
-    expect(found).toEqual({ ...Object.fromEntries(Object.keys(refusedEverywhere).map(way => [way, "works"])), "a filter": "refused", "a file written just now as code": "works" });
+    expect(found).toEqual({
+      ...Object.fromEntries(Object.keys(refusedEverywhere).map(way => [way, "works"])),
+      "a filter": "refused",
+      "a file written just now as code": "works",
+    });
   }, 120_000);
 
   test("makes no new executable memory but from a file, where the program may load libraries", async () => {
-    using dir = tempDir("aot-executable-memory-filter", { "intruder.c": intruder, "program.ts": waitsAndMayLoadALibrary });
+    using dir = tempDir("aot-executable-memory-filter", {
+      "intruder.c": intruder,
+      "program.ts": waitsAndMayLoadALibrary,
+    });
     const found = await whatAnIntruderCanDo(String(dir), [await build(String(dir))], 5000);
     expect(found).toEqual({ ...refusedEverywhere, "a file written just now as code": "works" });
   }, 120_000);
 
-  test.skipIf(!canTrim)("makes no new executable memory at all, where nothing that loads libraries is in the executable", async () => {
-    using dir = tempDir("aot-executable-memory-filter", { "intruder.c": intruder, "program.ts": waits });
-    const found = await whatAnIntruderCanDo(String(dir), [await build(String(dir), "--trim")], 5000);
-    expect(found).toEqual({ ...refusedEverywhere, "a file written just now as code": "refused" });
-  }, 120_000);
+  test.skipIf(!canTrim)(
+    "makes no new executable memory at all, where nothing that loads libraries is in the executable",
+    async () => {
+      using dir = tempDir("aot-executable-memory-filter", { "intruder.c": intruder, "program.ts": waits });
+      const found = await whatAnIntruderCanDo(String(dir), [await build(String(dir), "--trim")], 5000);
+      expect(found).toEqual({ ...refusedEverywhere, "a file written just now as code": "refused" });
+    },
+    120_000,
+  );
 });

@@ -173,7 +173,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let files: Option<SmallVec<[FileId; 2]>> = signatures
             .map(|&signature| self.c.sig_decl(signature).map(|declaration| declaration.0))
             .collect();
-        files.map_or(Trust::Untrusted, |files| self.weakest_file_trust(files.into_iter()))
+        files.map_or(Trust::Untrusted, |files| {
+            self.weakest_file_trust(files.into_iter())
+        })
     }
 
     fn strongest_prop_trust(&mut self, props: &'p [Prop<'p>]) -> Trust {
@@ -228,7 +230,10 @@ mod tests {
     fn strongest_and_weakest() {
         assert_eq!(Trust::Trusted.strongest(Trust::Untrusted), Trust::Trusted);
         assert_eq!(Trust::Trusted.weakest(Trust::Untrusted), Trust::Untrusted);
-        assert_eq!(Trust::Untrusted.strongest(Trust::Untrusted), Trust::Untrusted);
+        assert_eq!(
+            Trust::Untrusted.strongest(Trust::Untrusted),
+            Trust::Untrusted
+        );
         assert_eq!(Trust::Trusted.weakest(Trust::Trusted), Trust::Trusted);
     }
 }

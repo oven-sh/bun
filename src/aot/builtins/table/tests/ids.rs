@@ -43,7 +43,10 @@ fn tokens_round_trip() {
 #[test]
 fn tokens_spell_paths() {
     assert_eq!(BuiltinId::ArrayPrototypePush.name(), "ArrayPrototypePush");
-    assert_eq!(BuiltinId::from_name("MathFloor"), Some(BuiltinId::MathFloor));
+    assert_eq!(
+        BuiltinId::from_name("MathFloor"),
+        Some(BuiltinId::MathFloor)
+    );
     assert_eq!(BuiltinClass::Map.name(), "Map");
     assert_eq!(RuntimeModule::NodeFs.name(), "NodeFs");
 }
@@ -76,7 +79,10 @@ fn runtime_functions_round_trip() {
         let word = data.function.to_wire();
         assert_eq!(RuntimeFunction::from_wire(word), Some(data.function));
         let found = runtime_function(data.function).unwrap();
-        assert_eq!((found.file, found.export_name), (data.file, data.export_name));
+        assert_eq!(
+            (found.file, found.export_name),
+            (data.file, data.export_name)
+        );
     }
     let last = functions.last().unwrap().function;
     assert_eq!(last.to_wire() + 1, RuntimeFunction::COUNT);

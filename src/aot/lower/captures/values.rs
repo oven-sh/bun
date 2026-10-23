@@ -145,10 +145,13 @@ pub(super) fn collect_capture_values(
 }
 
 pub(super) fn captures_home_object(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> bool {
-    file.scopes.captures(key).iter().any(|&capture| match capture {
-        Capture::Environment(_) => false,
-        Capture::Value(binding) => is_entry_capture(file, key, binding),
-    })
+    file.scopes
+        .captures(key)
+        .iter()
+        .any(|&capture| match capture {
+            Capture::Environment(_) => false,
+            Capture::Value(binding) => is_entry_capture(file, key, binding),
+        })
 }
 
 pub(super) fn find_captured_value(

@@ -583,7 +583,10 @@ mod tests {
         for index in 0..new_symtab.nsyms as usize {
             let old_symbol = symbol_bytes(&with_symbols, index);
             assert_eq!(symbol_bytes(&signed, index), old_symbol);
-            assert_eq!(symbol_name(&signed, index), symbol_name(&with_symbols, index));
+            assert_eq!(
+                symbol_name(&signed, index),
+                symbol_name(&with_symbols, index)
+            );
         }
     }
 

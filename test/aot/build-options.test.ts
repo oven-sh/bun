@@ -7,7 +7,9 @@ build.onLoad({ filter: /.*/ }, (args: any) => void tell("onLoad", args));`;
 
 buildBothWays("compile/aot/options of Bun.build", {
   "files: modules that are only in memory": {
-    files: { "main.ts": `import { a } from "./memory.ts"; import { b } from "./nested/deep.ts"; import data from "./data.json"; console.log(a, b, data.n);` },
+    files: {
+      "main.ts": `import { a } from "./memory.ts"; import { b } from "./nested/deep.ts"; import data from "./data.json"; console.log(a, b, data.n);`,
+    },
     options: `files: { [join(folder, "memory.ts")]: "export const a: string = 'memory';", [join(folder, "nested/deep.ts")]: "import { a } from '../memory.ts'; export const b = a + ' deep';", "./data.json": '{ "n": 1 }' }`,
     prints: "memory memory deep 1\n",
   },
@@ -32,11 +34,17 @@ buildBothWays("compile/aot/options of Bun.build", {
   "files: what plugins are told about them": {
     files: { "main.ts": `import { a } from "./memory.ts"; import { b } from "./changed.ts"; console.log(a, b);` },
     options: `files: { "./memory.ts": "export const a = 'memory';", "./changed.ts": "export const b = 'memory';" }`,
-    plugins: [tellEverything, `build.onLoad({ filter: /changed\\.ts$/ }, () => ({ contents: "export const b = 'plugin';", loader: "ts" }));`],
+    plugins: [
+      tellEverything,
+      `build.onLoad({ filter: /changed\\.ts$/ }, () => ({ contents: "export const b = 'plugin';", loader: "ts" }));`,
+    ],
     prints: "memory plugin\n",
   },
   "files: CommonJS in memory": {
-    files: { "main.cjs": `const lib = require("./lib.cjs"); console.log(lib.a, lib.b, Object.keys(lib).join());`, "lib.cjs": `exports.a = "disk"; exports.b = "disk";` },
+    files: {
+      "main.cjs": `const lib = require("./lib.cjs"); console.log(lib.a, lib.b, Object.keys(lib).join());`,
+      "lib.cjs": `exports.a = "disk"; exports.b = "disk";`,
+    },
     options: `entrypoints: ["./main.cjs"], files: { "./lib.cjs": "exports.a = 'memory'; exports.c = require('./more.cjs');", "./more.cjs": "module.exports = 'more';" }`,
     prints: "memory undefined a,c\n",
   },
@@ -52,11 +60,20 @@ buildBothWays("compile/aot/options of Bun.build", {
       "main.ts": `import { word } from "./macro" with { type: "macro" }; console.log(word());`,
       "macro.ts": `export function word() { return "disk"; }`,
     },
-    plugins: [tellEverything, `build.onLoad({ filter: /macro\\.ts$/ }, () => ({ contents: "export function word() { return 'plugin'; }", loader: "ts" }));`],
+    plugins: [
+      tellEverything,
+      `build.onLoad({ filter: /macro\\.ts$/ }, () => ({ contents: "export function word() { return 'plugin'; }", loader: "ts" }));`,
+    ],
   },
   "macros in the text that a plugin yields": {
-    files: { "main.ts": `import { made } from "./lib"; console.log(made);`, "lib.ts": `export const made: string = "disk";`, "macro.ts": `export function word() { return "from the macro"; }` },
-    plugins: [`build.onLoad({ filter: /lib\\.ts$/ }, () => ({ contents: 'import { word } from "./macro" with { type: "macro" }; export const made: string = word();', loader: "ts" }));`],
+    files: {
+      "main.ts": `import { made } from "./lib"; console.log(made);`,
+      "lib.ts": `export const made: string = "disk";`,
+      "macro.ts": `export function word() { return "from the macro"; }`,
+    },
+    plugins: [
+      `build.onLoad({ filter: /lib\\.ts$/ }, () => ({ contents: 'import { word } from "./macro" with { type: "macro" }; export const made: string = word();', loader: "ts" }));`,
+    ],
     prints: "from the macro\n",
   },
   "define": {
@@ -73,7 +90,9 @@ declare const require: any;`,
   "define reaches the text that a plugin yields": {
     files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "disk";` },
     options: `define: { WORD: '"word"' }`,
-    plugins: [`build.onLoad({ filter: /a\\.ts$/ }, () => ({ contents: "declare const WORD: string; export const a = WORD;", loader: "ts" }));`],
+    plugins: [
+      `build.onLoad({ filter: /a\\.ts$/ }, () => ({ contents: "declare const WORD: string; export const a = WORD;", loader: "ts" }));`,
+    ],
     prints: "word\n",
   },
   "define picks the branch whose import is followed": {
@@ -100,12 +119,19 @@ declare const require: any;`,
     prints: "custom text 1 typed code string\n",
   },
   "the loader map changes a known extension": {
-    files: { "main.ts": `import text from "./data.json"; import code from "./words.txt"; console.log(typeof text, (text as unknown as string).trim(), code);`, "types.d.ts": `declare module "*.txt";`, "data.json": `{ "n": 1 }\n`, "words.txt": `export default "code in a .txt";` },
+    files: {
+      "main.ts": `import text from "./data.json"; import code from "./words.txt"; console.log(typeof text, (text as unknown as string).trim(), code);`,
+      "types.d.ts": `declare module "*.txt";`,
+      "data.json": `{ "n": 1 }\n`,
+      "words.txt": `export default "code in a .txt";`,
+    },
     options: `loader: { ".json": "text", ".txt": "js" }`,
     prints: `string { "n": 1 } code in a .txt\n`,
   },
   "env: inline": {
-    files: { "main.ts": `declare const process: any; console.log(process.env.BUILD_TIME_WORD, process.env.OTHER_WORD, process.env.NOT_SET_ANYWHERE);` },
+    files: {
+      "main.ts": `declare const process: any; console.log(process.env.BUILD_TIME_WORD, process.env.OTHER_WORD, process.env.NOT_SET_ANYWHERE);`,
+    },
     options: `env: "inline"`,
     env: { BUILD_TIME_WORD: "at the build", OTHER_WORD: "other" },
   },
@@ -126,7 +152,11 @@ declare const require: any;`,
         name: "pkg",
         version: "1.0.0",
         exports: {
-          ".": { custom: { import: "./custom.mjs", require: "./custom.cjs" }, bun: "./bun.js", default: "./default.js" },
+          ".": {
+            custom: { import: "./custom.mjs", require: "./custom.cjs" },
+            bun: "./bun.js",
+            default: "./default.js",
+          },
           "./sub": { other: "./other.js", custom: "./sub-custom.js", default: "./default.js" },
         },
       }),
@@ -146,7 +176,17 @@ declare const require: any;`,
   "paths of the tsconfig": {
     files: {
       "main.ts": `import { a } from "@lib/a"; import { b } from "exact"; import { c } from "based/c"; console.log(a, b, c);`,
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "preserve", moduleResolution: "bundler", types: [], baseUrl: ".", paths: { "@lib/*": ["./src/lib/*"], exact: ["./src/exact.ts"] } }, exclude: ["build.ts"] }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "preserve",
+          moduleResolution: "bundler",
+          types: [],
+          baseUrl: ".",
+          paths: { "@lib/*": ["./src/lib/*"], exact: ["./src/exact.ts"] },
+        },
+        exclude: ["build.ts"],
+      }),
       "src/lib/a.ts": `export const a = "a";`,
       "src/exact.ts": `export const b = "b";`,
       "based/c.ts": `export const c = "c";`,
@@ -157,8 +197,26 @@ declare const require: any;`,
   "another tsconfig": {
     files: {
       "main.ts": `import { a } from "@lib/a"; console.log(a);`,
-      "other.json": JSON.stringify({ compilerOptions: { strict: true, module: "preserve", moduleResolution: "bundler", types: [], paths: { "@lib/*": ["./other/*"] } }, exclude: ["build.ts"] }),
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "preserve", moduleResolution: "bundler", types: [], paths: { "@lib/*": ["./usual/*"] } }, exclude: ["build.ts"] }),
+      "other.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "preserve",
+          moduleResolution: "bundler",
+          types: [],
+          paths: { "@lib/*": ["./other/*"] },
+        },
+        exclude: ["build.ts"],
+      }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "preserve",
+          moduleResolution: "bundler",
+          types: [],
+          paths: { "@lib/*": ["./usual/*"] },
+        },
+        exclude: ["build.ts"],
+      }),
       "other/a.ts": `export const a = "other";`,
       "usual/a.ts": `export const a = "usual";`,
     },
@@ -190,7 +248,9 @@ declare const require: any;`,
     interprets: true,
   },
   "drop": {
-    files: { "main.ts": `console.log("kept"); console.debug("dropped?"); debugger; function noisy(): number { console.log("evaluated"); return 1; } console.error(noisy()); trace("call"); function trace(text: string) { console.log("trace", text); }` },
+    files: {
+      "main.ts": `console.log("kept"); console.debug("dropped?"); debugger; function noisy(): number { console.log("evaluated"); return 1; } console.error(noisy()); trace("call"); function trace(text: string) { console.log("trace", text); }`,
+    },
     options: `drop: ["console.debug", "console.error", "debugger", "trace"]`,
   },
   "drop: all of console": {
@@ -228,10 +288,14 @@ declare const require: any;`,
     },
     options: `sourcemap: "inline"`,
     differs: { outputs: ["entry-point"] },
-    plugins: [`build.onLoad({ filter: /fail\\.ts$/ }, () => ({ contents: "\\n\\n\\n\\n\\nexport function fail(): never {\\n      throw new Error('plugin');\\n}", loader: "ts" }));`],
+    plugins: [
+      `build.onLoad({ filter: /fail\\.ts$/ }, () => ({ contents: "\\n\\n\\n\\n\\nexport function fail(): never {\\n      throw new Error('plugin');\\n}", loader: "ts" }));`,
+    ],
   },
   "minify": {
-    files: { "main.ts": `function longName(value: number) { return value * 2; } class Named {} console.log(longName(21), longName.name, Named.name, (() => {}).name);` },
+    files: {
+      "main.ts": `function longName(value: number) { return value * 2; } class Named {} console.log(longName(21), longName.name, Named.name, (() => {}).name);`,
+    },
     options: `minify: true`,
     prints: "42 n e \n",
     // Nothing is renamed: the names are those of the sources, as under `bun run`.
@@ -247,12 +311,19 @@ declare const require: any;`,
     plugins: [tellEverything],
   },
   "several entry points": {
-    files: { "main.ts": `console.log("main", (await import("./second")).name);`, "second.ts": `export const name = "second"; console.log("second runs");` },
+    files: {
+      "main.ts": `console.log("main", (await import("./second")).name);`,
+      "second.ts": `export const name = "second"; console.log("second runs");`,
+    },
     options: `entrypoints: ["./main.ts", "./second.ts"]`,
     plugins: [tellEverything],
   },
   "root and naming": {
-    files: { "src/app/main.ts": `import path from "./asset.bin" with { type: "file" }; console.log(path.replaceAll("\\\\", "/").split("/").slice(-2).join("/").replace(/-[a-z0-9]+\\./, "-hash."));`, "src/app/asset.bin": "asset", "types.d.ts": `declare module "*.bin" { const path: string; export default path; }` },
+    files: {
+      "src/app/main.ts": `import path from "./asset.bin" with { type: "file" }; console.log(path.replaceAll("\\\\", "/").split("/").slice(-2).join("/").replace(/-[a-z0-9]+\\./, "-hash."));`,
+      "src/app/asset.bin": "asset",
+      "types.d.ts": `declare module "*.bin" { const path: string; export default path; }`,
+    },
     options: `entrypoints: ["./src/app/main.ts"], root: "./src"`,
   },
   "options that a build with aot refuses: a banner with code": {

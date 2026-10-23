@@ -95,13 +95,19 @@ impl UsedFeatures {
     pub fn with_cause(cause: UnseenCodeCause) -> UsedFeatures {
         UsedFeatures {
             features: Vec::new(),
-            causes: vec![UnseenCode { cause, witness: None }],
+            causes: vec![UnseenCode {
+                cause,
+                witness: None,
+            }],
             locales: UsedLocales::Unknown(None),
         }
     }
 
     pub fn from_features(features: &[Feature]) -> UsedFeatures {
-        let without_witness = |feature: &Feature| UsedFeature { feature: *feature, witness: None };
+        let without_witness = |feature: &Feature| UsedFeature {
+            feature: *feature,
+            witness: None,
+        };
         UsedFeatures {
             features: features.iter().map(without_witness).collect(),
             causes: Vec::new(),
@@ -191,7 +197,10 @@ pub enum RetainReason {
     RequiredByOption(usize),
     AlwaysEntered,
     ReachableByUnseenCode(usize),
-    NeededBy { feature: Feature, strength: EdgeStrength },
+    NeededBy {
+        feature: Feature,
+        strength: EdgeStrength,
+    },
     NotRequested,
 }
 
@@ -245,7 +254,10 @@ impl Decision {
     pub fn chain_of(&self, feature: Feature) -> Vec<Feature> {
         let mut chain = vec![feature];
         let mut current = feature;
-        while let Some(RetainReason::NeededBy { feature: dependent, .. }) = self.reason_of(current) {
+        while let Some(RetainReason::NeededBy {
+            feature: dependent, ..
+        }) = self.reason_of(current)
+        {
             if chain.contains(&dependent) {
                 break;
             }

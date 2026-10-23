@@ -57,14 +57,19 @@ pub(crate) fn count_files(
             counted_texts.push((text, 0));
         }
     }
-    for_each_mut(&mut counted_texts, in_parallel, &|(text, lines)| *lines = count_lines(text));
+    for_each_mut(&mut counted_texts, in_parallel, &|(text, lines)| {
+        *lines = count_lines(text)
+    });
     let lines = counted_texts.iter().map(|&(_, lines)| lines).sum();
     statistics.count(StatisticId::SourceLines, lines);
 
     let demoted_files = roles.demoted.iter().map(|demotion| demotion.file);
     let demoted_count = demoted_files
         .filter(|&file| {
-            !matches!(view.origin(file), FileOrigin::Runtime | FileOrigin::EvaluatedText)
+            !matches!(
+                view.origin(file),
+                FileOrigin::Runtime | FileOrigin::EvaluatedText
+            )
         })
         .count();
     statistics.count(StatisticId::SourceFilesDemoted, demoted_count as u64);

@@ -86,8 +86,16 @@ impl SyntheticExportKeys {
     }
 
     // A name of a CommonJS module, which may stand for a name of another one.
-    fn add_name(&mut self, modules: &ModuleSet, tables: &ExportTables, module: ModuleRef, name: Atom) {
-        if let Resolution::Synthetic { module, name } = tables.resolve_in(modules, module, name).resolution {
+    fn add_name(
+        &mut self,
+        modules: &ModuleSet,
+        tables: &ExportTables,
+        module: ModuleRef,
+        name: Atom,
+    ) {
+        if let Resolution::Synthetic { module, name } =
+            tables.resolve_in(modules, module, name).resolution
+        {
             self.add((module, name), false);
         }
     }
@@ -101,14 +109,23 @@ fn collect_synthetic_export_keys(
 ) -> SyntheticExportKeys {
     let mut keys = SyntheticExportKeys::default();
     for file_imports in imports {
-        let symbol_bindings = file_imports.bindings.iter().map(|&(_, binding)| (binding, true));
-        let member_bindings = file_imports.members.iter().map(|&(_, binding)| (binding, false));
+        let symbol_bindings = file_imports
+            .bindings
+            .iter()
+            .map(|&(_, binding)| (binding, true));
+        let member_bindings = file_imports
+            .members
+            .iter()
+            .map(|&(_, binding)| (binding, false));
         let jsx_bindings = file_imports.jsx.iter().map(|&(_, binding)| (binding, true));
         // A key of `const { n } = require(K)` reads `undefined` where the module has no `n`.
-        let named_bindings = file_imports.named_members.iter().filter_map(|&(_, member)| match member {
-            NamedMember::Binding(binding) => Some((binding, false)),
-            NamedMember::Fixed(_) => None,
-        });
+        let named_bindings = file_imports
+            .named_members
+            .iter()
+            .filter_map(|&(_, member)| match member {
+                NamedMember::Binding(binding) => Some((binding, false)),
+                NamedMember::Fixed(_) => None,
+            });
         let bindings = symbol_bindings.chain(member_bindings).chain(jsx_bindings);
         let bindings = bindings.chain(named_bindings);
         for (binding, is_required) in bindings {
@@ -145,7 +162,11 @@ fn collect_synthetic_export_keys(
     // A namespace object shows every name.
     for file in collect_seen_namespaces(modules, tables, imports) {
         let module = ModuleRef::File(file);
-        for name in tables.names_of_commonjs_module(module).into_iter().flatten() {
+        for name in tables
+            .names_of_commonjs_module(module)
+            .into_iter()
+            .flatten()
+        {
             keys.add_name(modules, tables, module, name);
         }
     }
@@ -206,7 +227,9 @@ mod tests {
     ) -> ImportBinding {
         let file = file_named(input, importer);
         let mut specifiers = input.files.hir(file)[ImportId(0)].named.iter();
-        let specifier = specifiers.next().expect("the first import has no named specifier");
+        let specifier = specifiers
+            .next()
+            .expect("the first import has no named specifier");
         let bound = input.files.bound(file);
         graph.import_binding(file, bound.declared_symbol(Decl::ImportSpec(specifier)))
     }
@@ -225,16 +248,26 @@ mod tests {
     #[test]
     fn ids_follow_module_and_name_order() {
         let files = [
-            ("main.js", "import { b, a, Z } from './c.cjs'; import './reexport.js';"),
+            (
+                "main.js",
+                "import { b, a, Z } from './c.cjs'; import './reexport.js';",
+            ),
             ("reexport.js", "export { Buffer } from 'node:buffer';"),
             ("c.cjs", "module.exports = { a: 1, b: 2, Z: 3 };"),
         ];
         with_graph(&files, |graph, input| {
             let exports = graph.synthetic_exports();
-            let names: Vec<&str> = exports.iter().map(|export| name_of(input, export)).collect();
+            let names: Vec<&str> = exports
+                .iter()
+                .map(|export| name_of(input, export))
+                .collect();
             assert_eq!(names, ["Z", "a", "b", "Buffer"]);
             let commonjs_module = ModuleRef::File(file_named(input, "c.cjs"));
-            assert!(exports[..3].iter().all(|export| export.module == commonjs_module));
+            assert!(
+                exports[..3]
+                    .iter()
+                    .all(|export| export.module == commonjs_module)
+            );
             assert!(matches!(exports[3].module, ModuleRef::Runtime(_)));
             let last_id = ExportBinding::Synthetic(SyntheticExportId(3));
             assert_eq!(only_export(graph, input, "reexport.js"), last_id);
@@ -262,7 +295,10 @@ mod tests {
             };
             let second = first_named_import(graph, input, "second.js");
             assert_eq!(second, ImportBinding::Synthetic(id));
-            assert_eq!(only_export(graph, input, "barrel.js"), ExportBinding::Synthetic(id));
+            assert_eq!(
+                only_export(graph, input, "barrel.js"),
+                ExportBinding::Synthetic(id)
+            );
             let commonjs_module = ModuleRef::File(file_named(input, "c.cjs"));
             assert_eq!(graph.synthetic_export(id).module, commonjs_module);
             assert_eq!(graph.synthetic_exports().len(), 2);
@@ -272,7 +308,10 @@ mod tests {
     #[test]
     fn member_paths_ask_for_ids() {
         let files = [
-            ("main.js", "import * as ns from './c.cjs'; export const x = ns.x;"),
+            (
+                "main.js",
+                "import * as ns from './c.cjs'; export const x = ns.x;",
+            ),
             ("c.cjs", "exports.x = 1;"),
         ];
         with_graph(&files, |graph, input| {
@@ -297,7 +336,10 @@ mod tests {
             let known_members: Vec<(&str, bool)> = exports
                 .map(|export| (name_of(input, export), export.is_known_member))
                 .collect();
-            assert_eq!(known_members, [("x", false), ("Buffer", true), ("nope", false)]);
+            assert_eq!(
+                known_members,
+                [("x", false), ("Buffer", true), ("nope", false)]
+            );
         });
         with_runtime_graph(&files, |_, input| {
             let modules = collect_modules(input, &scan_files(input));

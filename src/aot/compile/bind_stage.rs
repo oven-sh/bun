@@ -58,15 +58,19 @@ impl Build<'_> {
         let value_paths = BuiltinValuePaths::collect(self.platform);
         let library = loaded.project(ProjectId::Runtime).view();
         let deferred_exports = DeferredExports::collect(library.files(), library.sources);
-        let files = loaded.projects.as_ref().map(|_, project| project.loaded.files());
+        let files = loaded
+            .projects
+            .as_ref()
+            .map(|_, project| project.loaded.files());
         let find_builtin_types = move || {
             let (types, values) = (builtin_type_paths(), value_paths.paths());
             files.map(|_, files| BuiltinTypeSymbols::compute(files, &types, &values))
         };
-        let (builtin_types, graphs) = run_beside(&self.beside_runner(), find_builtin_types, || PerProject {
-            application: self.bind_project(loaded, ProjectId::Application, &deferred_exports),
-            runtime: self.bind_project(loaded, ProjectId::Runtime, &deferred_exports),
-        });
+        let (builtin_types, graphs) =
+            run_beside(&self.beside_runner(), find_builtin_types, || PerProject {
+                application: self.bind_project(loaded, ProjectId::Application, &deferred_exports),
+                runtime: self.bind_project(loaded, ProjectId::Runtime, &deferred_exports),
+            });
         for (_, types) in builtin_types.iter() {
             self.statistics.count(
                 StatisticId::BuiltinTypesDegradedToViews,
@@ -75,7 +79,9 @@ impl Build<'_> {
         }
         Ok(BoundBuild {
             projects: PerProject {
-                application: graphs.application.with_builtin_types(builtin_types.application),
+                application: graphs
+                    .application
+                    .with_builtin_types(builtin_types.application),
                 runtime: graphs.runtime.with_builtin_types(builtin_types.runtime),
             },
         })
@@ -95,7 +101,10 @@ impl Build<'_> {
         };
         // A call of a helper that a compiler or a bundler wrote says what a module exports, and where a module begins.
         let known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
-        let BoundModules { mut graph, counters } = modules::bind_modules(&BindInput {
+        let BoundModules {
+            mut graph,
+            counters,
+        } = modules::bind_modules(&BindInput {
             files: view.files(),
             sources: view.sources,
             builtin_names: loaded.builtin_names,

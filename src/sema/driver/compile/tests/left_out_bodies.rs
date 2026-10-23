@@ -20,7 +20,9 @@ const REPORTS_UNUSED: &str = r#"{
 fn offset_of(program: &TestProgram<'_, '_>, file: FileId, text: &str) -> u32 {
     let source = &program.files().hir(file).text;
     let mut offsets = (0..source.len()).filter(|&at| source[at..].starts_with(text.as_bytes()));
-    let offset = offsets.next().unwrap_or_else(|| panic!("{text} is not in the file"));
+    let offset = offsets
+        .next()
+        .unwrap_or_else(|| panic!("{text} is not in the file"));
     assert!(offsets.next().is_none(), "{text} is in the file twice");
     offset as u32
 }
@@ -29,7 +31,9 @@ fn function_starting_with(program: &TestProgram<'_, '_>, path: &str, text: &str)
     let file = program.file(path);
     let start = offset_of(program, file, text);
     let functions = program.files().hir(file).fns.iter();
-    let index = functions.clone().position(|function| function.start == start);
+    let index = functions
+        .clone()
+        .position(|function| function.start == start);
     FunctionRef {
         file,
         function: FnId(index.unwrap_or_else(|| panic!("no function starts with {text}")) as u32),
@@ -67,11 +71,15 @@ fn error_in_left_out_body_is_not_reported() {
     let text = "export function kept() { const first: string = 1; return first; }
 export function dropped() { const second: string = 2; return second; }
 ";
-    check_without(&[("main.ts", text)], &[("main.ts", "export function dropped")], |program, build| {
-        let first = offset_of(program, program.file("main.ts"), "first: string");
-        assert_eq!(build.codes(), [2322]);
-        assert_eq!(starts_of(&build, 2322), [first]);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "export function dropped")],
+        |program, build| {
+            let first = offset_of(program, program.file("main.ts"), "first: string");
+            assert_eq!(build.codes(), [2322]);
+            assert_eq!(starts_of(&build, 2322), [first]);
+        },
+    );
 }
 
 #[test]
@@ -114,9 +122,13 @@ export const literal = {
     check_without(&[("main.ts", text)], &[], |_, build| {
         assert_eq!(build.codes(), [2322; 9]);
     });
-    check_without(&[("main.ts", text)], &left_out.map(|text| ("main.ts", text)), |_, build| {
-        assert_eq!(build.codes(), [0; 0]);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &left_out.map(|text| ("main.ts", text)),
+        |_, build| {
+            assert_eq!(build.codes(), [0; 0]);
+        },
+    );
 }
 
 #[test]
@@ -127,18 +139,26 @@ fn function_in_left_out_function_is_not_checked() {
     return [inner, Local];
 }
 ";
-    check_without(&[("main.ts", text)], &[("main.ts", "export function dropped")], |_, build| {
-        assert_eq!(build.codes(), [0; 0]);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "export function dropped")],
+        |_, build| {
+            assert_eq!(build.codes(), [0; 0]);
+        },
+    );
 }
 
 #[test]
 fn parameters_of_left_out_function_are_not_checked() {
     let text = "export function dropped(a: string = 1, { b }: { b: Missing } = { b: 2 }): Absent { return a + b; }
 ";
-    check_without(&[("main.ts", text)], &[("main.ts", "export function dropped")], |_, build| {
-        assert_eq!(build.codes(), [0; 0]);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "export function dropped")],
+        |_, build| {
+            assert_eq!(build.codes(), [0; 0]);
+        },
+    );
 }
 
 #[test]
@@ -147,9 +167,13 @@ fn computed_name_of_left_out_method_is_checked() {
     [missing]() { const a: string = 1; return a; }
 }
 ";
-    check_without(&[("main.ts", text)], &[("main.ts", "[missing]() {")], |_, build| {
-        assert_eq!(build.codes(), [2304]);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "[missing]() {")],
+        |_, build| {
+            assert_eq!(build.codes(), [2304]);
+        },
+    );
 }
 
 #[test]
@@ -170,7 +194,10 @@ fn member_in_file_with_decorators_is_checked() {
 export function dropped() { const b: string = 2; return b; }
 ";
     let files = [("tsconfig.json", tsconfig), ("main.ts", text)];
-    let left_out = [("main.ts", "method(@missing"), ("main.ts", "export function dropped")];
+    let left_out = [
+        ("main.ts", "method(@missing"),
+        ("main.ts", "export function dropped"),
+    ];
     check_without(&files, &left_out, |_, build| {
         assert_eq!(build.codes(), [2304, 2322]);
     });
@@ -184,12 +211,19 @@ export const count: number = dropped();
 export const text: string = dropped();
 export const other: Returned<typeof dropped> = \"\";
 ";
-    check_without(&[("main.ts", text)], &[("main.ts", "function dropped")], |program, build| {
-        let file = program.file("main.ts");
-        let expected = [offset_of(program, file, "text: string"), offset_of(program, file, "other: ")];
-        assert_eq!(starts_of(&build, 2322), expected);
-        assert_eq!(build.codes().len(), 2);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "function dropped")],
+        |program, build| {
+            let file = program.file("main.ts");
+            let expected = [
+                offset_of(program, file, "text: string"),
+                offset_of(program, file, "other: "),
+            ];
+            assert_eq!(starts_of(&build, 2322), expected);
+            assert_eq!(build.codes().len(), 2);
+        },
+    );
 }
 
 #[test]
@@ -197,9 +231,13 @@ fn assertion_signature_of_left_out_function_narrows() {
     let text = "function dropped(value: unknown): asserts value is string { if (typeof value !== \"string\") throw value; }
 export function kept(value: unknown): string { dropped(value); return value; }
 ";
-    check_without(&[("main.ts", text)], &[("main.ts", "function dropped")], |_, build| {
-        assert_eq!(build.codes(), [0; 0]);
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "function dropped")],
+        |_, build| {
+            assert_eq!(build.codes(), [0; 0]);
+        },
+    );
 }
 
 #[test]
@@ -214,9 +252,16 @@ export class Unassigned {
     constructor() {}
 }
 ";
-    let left_out = [("main.ts", "constructor() { super"), ("main.ts", "constructor() {}")];
+    let left_out = [
+        ("main.ts", "constructor() { super"),
+        ("main.ts", "constructor() {}"),
+    ];
     check_without(&[("main.ts", text)], &left_out, |program, build| {
-        let unassigned = offset_of(program, program.file("main.ts"), "count: number;\n    constructor() {}");
+        let unassigned = offset_of(
+            program,
+            program.file("main.ts"),
+            "count: number;\n    constructor() {}",
+        );
         assert_eq!(build.codes(), [2564]);
         assert_eq!(starts_of(&build, 2564), [unassigned]);
     });
@@ -242,7 +287,10 @@ export { Holder };
         ("main.ts", main),
         ("other.ts", "export const imported = 6;\n"),
     ];
-    let left_out = [("main.ts", "dropped() { return this.field"), ("main.ts", "function dropped(unused")];
+    let left_out = [
+        ("main.ts", "dropped() { return this.field"),
+        ("main.ts", "function dropped(unused"),
+    ];
     check_without(&files, &left_out, |_, build| {
         assert_eq!(build.codes(), [0; 0]);
     });
@@ -263,7 +311,10 @@ export const count: string = pick(1);
 ";
     let left_out = [
         ("main.ts", "export function pick(value: unknown)"),
-        ("main.ts", "pick(value: unknown): unknown { const wrong: string = 2"),
+        (
+            "main.ts",
+            "pick(value: unknown): unknown { const wrong: string = 2",
+        ),
     ];
     check_without(&[("main.ts", text)], &left_out, |program, build| {
         let count = offset_of(program, program.file("main.ts"), "count: string");
@@ -315,7 +366,10 @@ export function short(value: Missing) { return value; }
 // @ts-expect-error
 export const kept = 1;
 ";
-    let left_out = [("main.ts", "export function dropped"), ("main.ts", "export function short")];
+    let left_out = [
+        ("main.ts", "export function dropped"),
+        ("main.ts", "export function short"),
+    ];
     check_without(&[("main.ts", text)], &left_out, |program, build| {
         let file = program.file("main.ts");
         let unused = offset_of(program, file, "// @ts-expect-error\nexport const kept");
@@ -327,9 +381,13 @@ export const kept = 1;
 #[test]
 fn early_error_in_left_out_function_is_reported() {
     let text = "export function dropped() { let twice; let twice; }\n";
-    check_without(&[("main.ts", text)], &[("main.ts", "export function dropped")], |_, build| {
-        assert!(build.codes().contains(&2451));
-    });
+    check_without(
+        &[("main.ts", text)],
+        &[("main.ts", "export function dropped")],
+        |_, build| {
+            assert!(build.codes().contains(&2451));
+        },
+    );
 }
 
 fn check_without_file(
@@ -348,9 +406,14 @@ fn check_without_file(
         let compiled_files = program.files().compiled_files();
         let (loaded, host) = (program.loaded, program.host);
         let roles = decide_roles(loaded, host, &request, compiled_files);
-        let files_to_lower: Vec<FileId> =
-            compiled_files.iter().copied().filter(|&file| file != left_out).collect();
-        let checked = check_and_lower(loaded, host, &request, &roles, &files_to_lower, &|_, _| Some(()));
+        let files_to_lower: Vec<FileId> = compiled_files
+            .iter()
+            .copied()
+            .filter(|&file| file != left_out)
+            .collect();
+        let checked = check_and_lower(loaded, host, &request, &roles, &files_to_lower, &|_, _| {
+            Some(())
+        });
         let build = CheckedBuild {
             roles,
             program: checked,
@@ -362,7 +425,10 @@ fn check_without_file(
 #[test]
 fn left_out_file_is_not_checked() {
     let files = [
-        ("main.ts", "import { unused } from \"./other\";\nexport const kept = 1;\nexport function dropped() { return unused; }\n"),
+        (
+            "main.ts",
+            "import { unused } from \"./other\";\nexport const kept = 1;\nexport function dropped() { return unused; }\n",
+        ),
         ("other.ts", "export const unused: string = 2;\n"),
     ];
     check_without_file(&files, "other.ts", false, |program, build| {
@@ -376,14 +442,31 @@ fn left_out_file_is_not_checked() {
 #[test]
 fn error_in_left_out_file_costs_dependency_no_trust() {
     let files = [
-        ("main.ts", "import { value } from \"dep\";\nexport const copy = value;\n"),
+        (
+            "main.ts",
+            "import { value } from \"dep\";\nexport const copy = value;\n",
+        ),
         ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
-        ("node_modules/dep/index.ts", "export { unused } from \"./unused\";\nexport const value = 2;\n"),
-        ("node_modules/dep/unused.ts", "export const unused: string = 3;\n"),
+        (
+            "node_modules/dep/index.ts",
+            "export { unused } from \"./unused\";\nexport const value = 2;\n",
+        ),
+        (
+            "node_modules/dep/unused.ts",
+            "export const unused: string = 3;\n",
+        ),
     ];
-    check_without_file(&files, "node_modules/dep/unused.ts", false, |program, build| {
-        assert_eq!(build.demoted_files(), [program.file("node_modules/dep/unused.ts")]);
-    });
+    check_without_file(
+        &files,
+        "node_modules/dep/unused.ts",
+        false,
+        |program, build| {
+            assert_eq!(
+                build.demoted_files(),
+                [program.file("node_modules/dep/unused.ts")]
+            );
+        },
+    );
     check_without_file(&files, "node_modules/dep/unused.ts", true, |_, build| {
         assert_eq!(build.demoted_files(), []);
         assert_eq!(build.codes(), [0; 0]);
@@ -396,12 +479,18 @@ fn error_in_left_out_body_costs_dependency_no_trust() {
 export function dropped() { const wrong: string = 1; return wrong; }
 ";
     let files = [
-        ("main.ts", "import { value } from \"dep\";\nexport const copy = value;\n"),
+        (
+            "main.ts",
+            "import { value } from \"dep\";\nexport const copy = value;\n",
+        ),
         ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
         ("node_modules/dep/index.ts", dependency),
     ];
     check_without(&files, &[], |program, build| {
-        assert_eq!(build.demoted_files(), [program.file("node_modules/dep/index.ts")]);
+        assert_eq!(
+            build.demoted_files(),
+            [program.file("node_modules/dep/index.ts")]
+        );
     });
     let left_out = [("node_modules/dep/index.ts", "export function dropped")];
     check_without(&files, &left_out, |_, build| {

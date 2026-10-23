@@ -37,18 +37,30 @@ const leastNumberOfOperations = 3;
 const leastNumberThatGoesWrong = 1;
 
 const check = "--aot-check=validate-reference-guards";
-const stress = { BUN_JSC_slowPathAllocsBetweenGCs: "1", BUN_JSC_useZombieMode: "1", BUN_JSC_scribbleFreeCells: "1", BUN_JSC_numberOfGCMarkers: "1", BUN_JSC_useConcurrentGC: "0" };
+const stress = {
+  BUN_JSC_slowPathAllocsBetweenGCs: "1",
+  BUN_JSC_useZombieMode: "1",
+  BUN_JSC_scribbleFreeCells: "1",
+  BUN_JSC_numberOfGCMarkers: "1",
+  BUN_JSC_useConcurrentGC: "0",
+};
 const withoutScan = { BUN_JSC_useNarrowReferenceScan: "0" };
 
 type Guard = { function: string; value: string; operation: string };
 
 function guardsNamedBy(buildOutput: string): Guard[] {
   const named = new Map<string, Guard>();
-  for (const [, fn, value, operation] of buildOutput.matchAll(/NarrowReferenceWithoutPointer: (?:'[^']*' \()?(f\d+)\)?: only the 32-bit reference (v\d+) \((\w+)\)/g)) named.set(fn + value, { function: fn, value, operation });
+  for (const [, fn, value, operation] of buildOutput.matchAll(
+    /NarrowReferenceWithoutPointer: (?:'[^']*' \()?(f\d+)\)?: only the 32-bit reference (v\d+) \((\w+)\)/g,
+  ))
+    named.set(fn + value, { function: fn, value, operation });
   return [...named.values()];
 }
 
-const skipReason = isLinux && process.arch === "x64" && !isASAN && !isDebug ? undefined : "it is run on release builds for Linux x64, which show the most: with fewer registers, fewer stale copies of a pointer lie about";
+const skipReason =
+  isLinux && process.arch === "x64" && !isASAN && !isDebug
+    ? undefined
+    : "it is run on release builds for Linux x64, which show the most: with fewer registers, fewer stale copies of a pointer lie about";
 const seen: { operation: string; goesWrong: boolean }[] = [];
 
 test.skipIf(!!skipReason).concurrent.each(programs)(
@@ -59,11 +71,19 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
     let builds = 0;
     const build = async (...flags: string[]) => {
       const executable = join(String(folder), "program-" + builds++);
-      const result = await slot(() => spawned([bunExe(), "build", "--compile", "--aot", ...flags, source, "--outfile", executable], join(source, ".."), bunEnv));
+      const result = await slot(() =>
+        spawned(
+          [bunExe(), "build", "--compile", "--aot", ...flags, source, "--outfile", executable],
+          join(source, ".."),
+          bunEnv,
+        ),
+      );
       return { ...result, executable };
     };
     const run = async (executable: string, env: Record<string, string>) => {
-      const { stdout, exitCode, signal } = await slot(() => spawned(withoutCoreDump([executable]), String(folder), { ...bunEnv, ...stress, ...env }));
+      const { stdout, exitCode, signal } = await slot(() =>
+        spawned(withoutCoreDump([executable]), String(folder), { ...bunEnv, ...stress, ...env }),
+      );
       return { stdout, exitCode, signal };
     };
     // An executable is as large as Bun.
@@ -79,7 +99,10 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
 
     // With ForceGCSlowPaths every allocation asks the collector.
     const baseline = await build(check, "--aot-testing=ForceGCSlowPaths");
-    expect({ stderr: baseline.stderr, exitCode: baseline.exitCode }).toEqual({ stderr: expect.not.stringContaining("NarrowReferenceWithoutPointer"), exitCode: 0 });
+    expect({ stderr: baseline.stderr, exitCode: baseline.exitCode }).toEqual({
+      stderr: expect.not.stringContaining("NarrowReferenceWithoutPointer"),
+      exitCode: 0,
+    });
     const expected = await run(baseline.executable, withoutScan);
     expect({ exitCode: expected.exitCode, signal: expected.signal }).toEqual({ exitCode: 0, signal: null });
     expect(await run(baseline.executable, {})).toEqual(expected);
@@ -87,7 +110,10 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
 
     const drops: string[] = [];
     for (const operation of new Set(guards.map(guard => guard.operation))) {
-      const inFunction = Map.groupBy(guards.filter(guard => guard.operation === operation), guard => guard.function);
+      const inFunction = Map.groupBy(
+        guards.filter(guard => guard.operation === operation),
+        guard => guard.function,
+      );
       const most = Math.max(...[...inFunction.values()].map(list => list.length));
       for (let ordinal = 0; ordinal < most; ordinal++) drops.push(`${operation}:${ordinal}`);
     }
@@ -97,11 +123,18 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
         remove(checked.executable);
         const unchecked = await build("--aot-testing=ForceGCSlowPaths", "--aot-drop-guard=" + drop);
         expect({ drop, exitCode: unchecked.exitCode }).toEqual({ drop, exitCode: 0 });
-        const [alone, scanned] = await Promise.all([run(unchecked.executable, withoutScan), run(unchecked.executable, {})]);
+        const [alone, scanned] = await Promise.all([
+          run(unchecked.executable, withoutScan),
+          run(unchecked.executable, {}),
+        ]);
         remove(unchecked.executable);
         const goesWrong = !Bun.deepEquals(alone, expected);
         seen.push({ operation: drop.split(":")[0], goesWrong });
-        return { drop, atTheBuild: checked.exitCode !== 0 && guardsNamedBy(checked.stderr).length > 0 ? "rejected" : "compiled", withTheScan: Bun.deepEquals(scanned, expected) ? "runs as before" : "goes wrong" };
+        return {
+          drop,
+          atTheBuild: checked.exitCode !== 0 && guardsNamedBy(checked.stderr).length > 0 ? "rejected" : "compiled",
+          withTheScan: Bun.deepEquals(scanned, expected) ? "runs as before" : "goes wrong",
+        };
       }),
     );
     expect(verdicts).toEqual(drops.map(drop => ({ drop, atTheBuild: "rejected", withTheScan: "runs as before" })));
@@ -109,8 +142,11 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
   280_000,
 );
 
-test.skipIf(!!skipReason)("the programs hold many 32-bit references out of several operations, and some of them go wrong without a pointer", () => {
-  expect(seen.length).toBeGreaterThanOrEqual(leastNumberOfPointers);
-  expect(new Set(seen.map(drop => drop.operation)).size).toBeGreaterThanOrEqual(leastNumberOfOperations);
-  expect(seen.filter(drop => drop.goesWrong).length).toBeGreaterThanOrEqual(leastNumberThatGoesWrong);
-});
+test.skipIf(!!skipReason)(
+  "the programs hold many 32-bit references out of several operations, and some of them go wrong without a pointer",
+  () => {
+    expect(seen.length).toBeGreaterThanOrEqual(leastNumberOfPointers);
+    expect(new Set(seen.map(drop => drop.operation)).size).toBeGreaterThanOrEqual(leastNumberOfOperations);
+    expect(seen.filter(drop => drop.goesWrong).length).toBeGreaterThanOrEqual(leastNumberThatGoesWrong);
+  },
+);

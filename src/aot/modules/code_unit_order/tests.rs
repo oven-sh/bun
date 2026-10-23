@@ -23,7 +23,11 @@ fn prefix_orders_first() {
     assert_order(b"", b"a", Ordering::Less);
     assert_order(b"a", b"ab", Ordering::Less);
     assert_order("\u{E9}".as_bytes(), "\u{E9}a".as_bytes(), Ordering::Less);
-    assert_order(GRINNING_FACE, &[GRINNING_FACE, b"a"].concat(), Ordering::Less);
+    assert_order(
+        GRINNING_FACE,
+        &[GRINNING_FACE, b"a"].concat(),
+        Ordering::Less,
+    );
 }
 
 #[test]
@@ -51,14 +55,26 @@ fn supplementary_character_orders_before_end_of_basic_plane() {
 
 #[test]
 fn supplementary_characters_order_by_code_point() {
-    assert_order("\u{10000}".as_bytes(), "\u{10001}".as_bytes(), Ordering::Less);
-    assert_order("\u{103FF}".as_bytes(), "\u{10400}".as_bytes(), Ordering::Less);
+    assert_order(
+        "\u{10000}".as_bytes(),
+        "\u{10001}".as_bytes(),
+        Ordering::Less,
+    );
+    assert_order(
+        "\u{103FF}".as_bytes(),
+        "\u{10400}".as_bytes(),
+        Ordering::Less,
+    );
     assert_order(GRINNING_FACE, "\u{10FFFF}".as_bytes(), Ordering::Less);
 }
 
 #[test]
 fn lone_surrogates_order_as_code_units() {
-    assert_order(LEAD_SURROGATE_OF_GRINNING_FACE, GRINNING_FACE, Ordering::Less);
+    assert_order(
+        LEAD_SURROGATE_OF_GRINNING_FACE,
+        GRINNING_FACE,
+        Ordering::Less,
+    );
     assert_order(FIRST_TRAIL_SURROGATE, GRINNING_FACE, Ordering::Greater);
     assert_order(
         LEAD_SURROGATE_OF_GRINNING_FACE,
@@ -66,7 +82,11 @@ fn lone_surrogates_order_as_code_units() {
         Ordering::Less,
     );
     assert_order(FIRST_TRAIL_SURROGATE, "\u{E000}".as_bytes(), Ordering::Less);
-    assert_order("\u{D7FF}".as_bytes(), LEAD_SURROGATE_OF_GRINNING_FACE, Ordering::Less);
+    assert_order(
+        "\u{D7FF}".as_bytes(),
+        LEAD_SURROGATE_OF_GRINNING_FACE,
+        Ordering::Less,
+    );
 }
 
 #[test]

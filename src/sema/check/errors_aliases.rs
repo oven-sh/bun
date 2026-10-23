@@ -1444,7 +1444,8 @@ impl Checker<'_, '_> {
                 let node = self.hir(file).node(e);
                 if self.hir(file).get_new_target_container(node).is_none() {
                     let is_early_error = self.is_new_target_outside_function(file, e);
-                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")]).class =
+                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")])
+                        .class =
                         DiagnosticClass::early_error_if(is_early_error, DiagnosticClass::Semantic);
                 }
             }

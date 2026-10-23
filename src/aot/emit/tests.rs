@@ -13,10 +13,10 @@ use crate::ir::generated::{
     Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult, Field, Function,
     FunctionFlags, FunctionRelations, FunctionVisibility, HandedTo, Header, HostRead, ImportPhase,
     Layout, LayoutKind, LimitId, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
-    ModuleRequestKind, OperandOf, ProgramList, RelationSubject, RequiredName, RuntimeFunctionEntry, SCHEMA_HASH,
-    StaticField, StoredInto, SyntheticExport, TemplatePart,
-    TemplatePlaceholder, TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive,
-    ValidationMember, ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
+    ModuleRequestKind, OperandOf, ProgramList, RelationSubject, RequiredName, RuntimeFunctionEntry,
+    SCHEMA_HASH, StaticField, StoredInto, SyntheticExport, TemplatePart, TemplatePlaceholder,
+    TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive, ValidationMember,
+    ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -234,7 +234,9 @@ fn create_full_program() -> Program {
         kind: TypeSiteKind::Field,
         text: Some(names.text),
     });
-    program.expected_results.push(create_expected_result(&names));
+    program
+        .expected_results
+        .push(create_expected_result(&names));
     program.layouts.push(create_layout(&names));
     program.variables.push(Variable {
         name: Some(names.name),
@@ -392,8 +394,16 @@ fn assert_sections_are_sequential(create_program: impl Fn() -> Program) {
             to_bytes(sections.words_of(list))
         };
         let name = list.name();
-        assert_eq!(count_of(&header, list) as u64, sections.count_of(list), "{name}");
-        assert_eq!(section_bytes(bytes, &header, list), expected_bytes, "{name}");
+        assert_eq!(
+            count_of(&header, list) as u64,
+            sections.count_of(list),
+            "{name}"
+        );
+        assert_eq!(
+            section_bytes(bytes, &header, list),
+            expected_bytes,
+            "{name}"
+        );
     }
 }
 
@@ -476,7 +486,10 @@ fn counts_match_program() {
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),
         (ProgramList::Entries, program.entries.len()),
-        (ProgramList::RuntimeFunctions, program.runtime_functions.len()),
+        (
+            ProgramList::RuntimeFunctions,
+            program.runtime_functions.len(),
+        ),
         (
             ProgramList::WebAssemblyModules,
             program.web_assembly_modules.len(),

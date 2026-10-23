@@ -93,7 +93,9 @@ pub(in crate::lower) fn narrow_holder(
     if !is_holder_unchanged(lowering, field) {
         return None;
     }
-    let narrowed = lowering.builder.narrow_by_field(field.holder_value, read, field.key);
+    let narrowed = lowering
+        .builder
+        .narrow_by_field(field.holder_value, read, field.key);
     scope::rebind_local(lowering, field.holder, narrowed);
     Some(TestedField {
         holder_value: narrowed,
@@ -138,7 +140,12 @@ fn is_runtime_property_read(
         }
         layer = file.hir.type_assertion_operand(current);
     }
-    if file.inputs.modules.member_binding(file.file, access).is_some() {
+    if file
+        .inputs
+        .modules
+        .member_binding(file.file, access)
+        .is_some()
+    {
         return false;
     }
     if !file.hir.has_typescript_semantics() {

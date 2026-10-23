@@ -86,7 +86,9 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             &self.decided.roles,
             &self.decided.files_to_lower,
             &|checker, file| {
-                if !is_well_formed(self.loaded.loaded.files(), file) || checker.found_early_error(file) {
+                if !is_well_formed(self.loaded.loaded.files(), file)
+                    || checker.found_early_error(file)
+                {
                     return Some(None);
                 }
                 let lowered = lower_file(self.inputs, checker, file)?;
@@ -98,7 +100,9 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                     return;
                 };
                 for (ty, level) in lowered.unit.defined_object_types() {
-                    self.inputs.defined_object_types.add_definition(ty, level, file);
+                    self.inputs
+                        .defined_object_types
+                        .add_definition(ty, level, file);
                 }
                 self.inputs.defined_object_types.publish_names_of_file(file);
             },
@@ -152,7 +156,10 @@ impl Build<'_> {
         };
         let reached = find_reached_runtime_code(&reach_input, &self.parallel_runner());
         let files_to_lower = &mut decided.runtime.files_to_lower;
-        let unreached = files_to_lower.iter().copied().filter(|&file| !reached.is_file_reached(file));
+        let unreached = files_to_lower
+            .iter()
+            .copied()
+            .filter(|&file| !reached.is_file_reached(file));
         self.unreached_runtime_files = unreached.collect();
         self.unreached_runtime_files.sort_unstable();
         files_to_lower.retain(|&file| reached.is_file_reached(file));
@@ -164,11 +171,27 @@ impl Build<'_> {
         };
         let mut checked = self.lower_projects(loaded, bound, &decided, left_out);
         let files = loaded.project(ProjectId::Application).loaded.files();
-        drop_reports_on_unloadable_modules(files, &bound.projects.application.graph, &mut checked.application);
+        drop_reports_on_unloadable_modules(
+            files,
+            &bound.projects.application.graph,
+            &mut checked.application,
+        );
         let mut units =
             Vec::with_capacity(checked.application.lowered.len() + checked.runtime.lowered.len());
-        self.report_project(loaded, ProjectId::Application, &decided, checked.application, &mut units);
-        self.report_project(loaded, ProjectId::Runtime, &decided, checked.runtime, &mut units);
+        self.report_project(
+            loaded,
+            ProjectId::Application,
+            &decided,
+            checked.application,
+            &mut units,
+        );
+        self.report_project(
+            loaded,
+            ProjectId::Runtime,
+            &decided,
+            checked.runtime,
+            &mut units,
+        );
         units
     }
 
@@ -187,37 +210,58 @@ impl Build<'_> {
         let threads = self.threads_to_lower(source_bytes);
         let runtime_files = loaded.project(runtime).loaded.files();
         let runtime_texts = decided.runtime.files_to_lower.iter();
-        let runtime_bytes: usize =
-            runtime_texts.map(|&file| runtime_files.module(file).hir.text.len()).sum();
+        let runtime_bytes: usize = runtime_texts
+            .map(|&file| runtime_files.module(file).hir.text.len())
+            .sum();
         let runtime_threads = self.threads_to_lower(runtime_bytes);
         let has_one_thread = self.threads == NonZeroUsize::MIN;
         let roles = &decided.application.roles;
         let left_out_of_application = left_out.application;
-        self.with_inputs_for_reached_code(loaded, bound, application, roles, left_out_of_application, |inputs| {
-            let of_application =
-                ProjectToLower::new(loaded, bound, decided, application, inputs, threads);
-            let roles = &decided.runtime.roles;
-            let left_out = left_out.runtime;
-            self.with_inputs_for_reached_code(loaded, bound, runtime, roles, left_out, |inputs| {
-                let of_runtime =
-                    ProjectToLower::new(loaded, bound, decided, runtime, inputs, runtime_threads);
-                if has_one_thread {
-                    return PerProject {
-                        application: of_application.lower(),
-                        runtime: of_runtime.lower(),
-                    };
-                }
-                let (runtime, application) = run_on_one_thread_while(
-                    self.caches,
-                    || of_runtime.lower(),
-                    || of_application.lower(),
-                );
-                PerProject {
-                    application,
+        self.with_inputs_for_reached_code(
+            loaded,
+            bound,
+            application,
+            roles,
+            left_out_of_application,
+            |inputs| {
+                let of_application =
+                    ProjectToLower::new(loaded, bound, decided, application, inputs, threads);
+                let roles = &decided.runtime.roles;
+                let left_out = left_out.runtime;
+                self.with_inputs_for_reached_code(
+                    loaded,
+                    bound,
                     runtime,
-                }
-            })
-        })
+                    roles,
+                    left_out,
+                    |inputs| {
+                        let of_runtime = ProjectToLower::new(
+                            loaded,
+                            bound,
+                            decided,
+                            runtime,
+                            inputs,
+                            runtime_threads,
+                        );
+                        if has_one_thread {
+                            return PerProject {
+                                application: of_application.lower(),
+                                runtime: of_runtime.lower(),
+                            };
+                        }
+                        let (runtime, application) = run_on_one_thread_while(
+                            self.caches,
+                            || of_runtime.lower(),
+                            || of_application.lower(),
+                        );
+                        PerProject {
+                            application,
+                            runtime,
+                        }
+                    },
+                )
+            },
+        )
     }
 
     fn report_project(
@@ -264,7 +308,8 @@ impl Build<'_> {
             self.statistics.add_counters(view, lowered.counters);
             self.statistics.add_queries(lowered.queries);
             if project == ProjectId::Runtime && lowered.queries.closed_cycles != 0 {
-                self.circular_runtime_files.push((file, lowered.queries.closed_cycles));
+                self.circular_runtime_files
+                    .push((file, lowered.queries.closed_cycles));
             }
             units.push(*lowered.unit);
         }
@@ -274,7 +319,9 @@ impl Build<'_> {
     fn threads_to_lower(&self, source_bytes: usize) -> NonZeroUsize {
         const SOURCE_BYTES_PER_THREAD: usize = 256 << 10;
         const MOST_USEFUL_THREADS: usize = 16;
-        let useful = source_bytes.div_ceil(SOURCE_BYTES_PER_THREAD).min(MOST_USEFUL_THREADS);
+        let useful = source_bytes
+            .div_ceil(SOURCE_BYTES_PER_THREAD)
+            .min(MOST_USEFUL_THREADS);
         let useful = NonZeroUsize::new(useful).unwrap_or(NonZeroUsize::MIN);
         match self.options.aot.thread_count {
             Some(_) => self.threads,
@@ -375,8 +422,12 @@ impl Build<'_> {
             | FileOrigin::Runtime
             | FileOrigin::EvaluatedText => false,
         };
-        let mut files_of_dependencies: Vec<FileId> =
-            files.compiled_files().iter().copied().filter(is_in_dependency).collect();
+        let mut files_of_dependencies: Vec<FileId> = files
+            .compiled_files()
+            .iter()
+            .copied()
+            .filter(is_in_dependency)
+            .collect();
         files_of_dependencies.sort_unstable();
         then(&LoweringInputs {
             roles: &lowering_roles,
@@ -444,12 +495,17 @@ fn drop_reports_on_unloadable_modules(
     checked: &mut CheckedProgram<Option<LoweredUnit>>,
 ) {
     let is_lowered = |file: &FileId| {
-        checked.lowered.iter().any(|(lowered, unit)| lowered == file && unit.is_some())
+        checked
+            .lowered
+            .iter()
+            .any(|(lowered, unit)| lowered == file && unit.is_some())
     };
     let lowered = graph.unloadable_files().filter(is_lowered);
     let paths: FxHashSet<&[u8]> = lowered.map(|file| files.module(file).file_name()).collect();
     if !paths.is_empty() {
-        checked.diagnostics.retain(|reported| !paths.contains(&reported.diagnostic.path[..]));
+        checked
+            .diagnostics
+            .retain(|reported| !paths.contains(&reported.diagnostic.path[..]));
     }
 }
 
@@ -457,7 +513,8 @@ fn is_well_formed(files: &Files<'_>, file: FileId) -> bool {
     let module = files.module(file);
     let mut diagnostics = module.hir.diagnostics.iter();
     let mut classes = module.bound.class_symbol.iter();
-    !diagnostics.any(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
+    !diagnostics
+        .any(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
         && !classes.any(|&it| it.is_some() && module.bound.symbol(it).name == known::missing)
 }
 

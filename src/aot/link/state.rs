@@ -51,7 +51,10 @@ pub(super) struct SupertypeEdges {
 
 impl SupertypeEdges {
     pub(super) fn of(&self, layout: u32) -> &[u32] {
-        let (start, end) = (self.starts[layout as usize], self.starts[layout as usize + 1]);
+        let (start, end) = (
+            self.starts[layout as usize],
+            self.starts[layout as usize + 1],
+        );
         &self.supertypes[start as usize..end as usize]
     }
 }
@@ -86,7 +89,9 @@ impl Definitions {
     }
 
     pub(super) fn is_other_definition(&self, layout: u32, site: DefinitionSite) -> bool {
-        self.other_layout_definitions.binary_search(&(layout, site)).is_ok()
+        self.other_layout_definitions
+            .binary_search(&(layout, site))
+            .is_ok()
     }
 }
 

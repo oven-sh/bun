@@ -28,13 +28,19 @@ use core::ops::Range;
 pub enum ModuleRef {
     File(FileId),
     /// The callback of `__commonJS(cb)` or `__esm(fn)` in a bundle.
-    Inner { file: FileId, callback: FnId },
+    Inner {
+        file: FileId,
+        callback: FnId,
+    },
     /// What an ES importer of a CommonJS file requests in its place: it evaluates the file and takes the copies.
     Face(FileId),
     /// Throws the link error for the first name that an ES graph imports and no CommonJS file of it has stored.
     Check(FileId),
     Runtime(RuntimeModule),
-    External { importer: FileId, specifier: Atom },
+    External {
+        importer: FileId,
+        specifier: Atom,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -130,7 +136,11 @@ impl Plan {
         let mut erased_statements = parts.erased_statements;
         erased_statements.sort_unstable();
         let mut plan = Plan {
-            inner_callbacks: numbers.inner_modules().iter().map(|inner| inner.1).collect(),
+            inner_callbacks: numbers
+                .inner_modules()
+                .iter()
+                .map(|inner| inner.1)
+                .collect(),
             keeps_module_object: vec![false; numbers.len()],
             names_way_to_module_objects: vec![false; numbers.len()],
             is_namespace_seen: vec![false; numbers.len()],
@@ -141,7 +151,9 @@ impl Plan {
             prefix_roots,
             erased_statements,
             named_members: parts.named_members.into_iter().collect(),
-            variables: variables.map(|(export, id)| ((export.module, export.name), id)).collect(),
+            variables: variables
+                .map(|(export, id)| ((export.module, export.name), id))
+                .collect(),
             inner_requests: Vec::new(),
             final_requests: Vec::new(),
             final_ranges: FxHashMap::default(),
@@ -154,7 +166,9 @@ impl Plan {
     }
 
     fn has(&self, set: &[bool], module: ModuleRef) -> bool {
-        self.numbers.number_of(module).is_some_and(|number| set[number])
+        self.numbers
+            .number_of(module)
+            .is_some_and(|number| set[number])
     }
 
     fn add(&mut self, set: fn(&mut Plan) -> &mut Vec<bool>, module: ModuleRef) {
@@ -196,7 +210,11 @@ impl ModuleGraph {
                 | ModuleKind::External => Shape::AsToday,
             },
             ModuleRef::Inner { file, callback } => {
-                match self.wrapped().of_callback(file, callback).map(|inner| inner.kind) {
+                match self
+                    .wrapped()
+                    .of_callback(file, callback)
+                    .map(|inner| inner.kind)
+                {
                     // Its variables are the bindings of the file.
                     Some(InnerModuleKind::Esm) => Shape::EsModule,
                     Some(InnerModuleKind::CommonJs) => self.commonjs().shape(module),
@@ -218,8 +236,13 @@ impl ModuleGraph {
         if let Some(site) = self.find_stored_site(file, SiteKey::Call(call)) {
             return Some(self.finish_site(site));
         }
-        let kinds = [ImportSiteKind::Require(call), ImportSiteKind::ImportMetaRequire(call)];
-        let is_site = kinds.iter().any(|&kind| self.find_site_answer(file, kind).is_some());
+        let kinds = [
+            ImportSiteKind::Require(call),
+            ImportSiteKind::ImportMetaRequire(call),
+        ];
+        let is_site = kinds
+            .iter()
+            .any(|&kind| self.find_site_answer(file, kind).is_some());
         is_site.then_some(Site::AsToday)
     }
 
@@ -300,7 +323,9 @@ impl ModuleGraph {
 
     fn find_holder(&self, file: FileId, symbol: SymbolId) -> Option<Holder> {
         let holders = self.holders(file);
-        let at = holders.binary_search_by_key(&symbol, |holder| holder.symbol).ok()?;
+        let at = holders
+            .binary_search_by_key(&symbol, |holder| holder.symbol)
+            .ok()?;
         Some(holders[at])
     }
 
@@ -383,7 +408,10 @@ impl ModuleGraph {
 
     /// The statement has no code.
     pub fn erased(&self, file: FileId, statement: StmtId) -> bool {
-        self.plan().erased_statements.binary_search(&(file, statement)).is_ok()
+        self.plan()
+            .erased_statements
+            .binary_search(&(file, statement))
+            .is_ok()
             || self.commonjs().erased(file, statement)
     }
 
@@ -417,7 +445,8 @@ impl ModuleGraph {
 
     /// Code of the file names a way from one module object to another.
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
-        self.plan().has(&self.plan().names_way_to_module_objects, module)
+        self.plan()
+            .has(&self.plan().names_way_to_module_objects, module)
     }
 
     pub fn settled(&self, module: ModuleRef, name: Atom) -> bool {
@@ -512,17 +541,20 @@ impl ModuleGraph {
 
     /// A read that the build resolved reaches the module object, which shows `exports`.
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
-        self.plan_mut().add(|plan| &mut plan.keeps_module_object, module);
+        self.plan_mut()
+            .add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
     }
 
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
-        self.plan_mut().add(|plan| &mut plan.names_way_to_module_objects, module);
+        self.plan_mut()
+            .add(|plan| &mut plan.names_way_to_module_objects, module);
     }
 
     /// Something looks at the namespace object of the ES module.
     pub fn set_namespace_is_seen(&mut self, module: ModuleRef) {
-        self.plan_mut().add(|plan| &mut plan.is_namespace_seen, module);
+        self.plan_mut()
+            .add(|plan| &mut plan.is_namespace_seen, module);
     }
 
     pub(super) fn mark_plan_unfinished(&mut self) {
@@ -617,10 +649,15 @@ impl ModuleGraph {
         successors.resize_with(self.file_count(), Vec::new);
         let mut commonjs_files = Vec::new();
         for &file in self.record_files() {
-            if !self.is_code_of_program(ModuleRef::File(file)) || self.kind(file) != ModuleKind::SourceText {
+            if !self.is_code_of_program(ModuleRef::File(file))
+                || self.kind(file) != ModuleKind::SourceText
+            {
                 continue;
             }
-            let linked = self.requests(file).iter().filter_map(|request| self.find_linked_file(request));
+            let linked = self
+                .requests(file)
+                .iter()
+                .filter_map(|request| self.find_linked_file(request));
             for target in linked {
                 match self.kind(target) {
                     ModuleKind::SourceText => {}
@@ -691,7 +728,8 @@ impl ModuleGraph {
         let mut ranges = FxHashMap::default();
         let commonjs_files_below = self.find_commonjs_files_below();
         let is_es_module = |file: FileId| {
-            self.is_code_of_program(ModuleRef::File(file)) && self.kind(file) == ModuleKind::SourceText
+            self.is_code_of_program(ModuleRef::File(file))
+                && self.kind(file) == ModuleKind::SourceText
         };
         let is_prefix_root = |file: FileId| self.plan().prefix_roots.binary_search(&file).is_ok();
         let roots = self.record_files().iter().copied();
@@ -749,7 +787,8 @@ impl ModuleGraph {
                 continue;
             }
             let start = requests.len() as u32;
-            let completes_at = |module: ModuleRef| self.keeps_error(module) || !self.exposed(module);
+            let completes_at =
+                |module: ModuleRef| self.keeps_error(module) || !self.exposed(module);
             // The run time takes what a face captures from the file that its first request names.
             requests.push(ModuleRequest::require(file, completes_at(file)));
             for owner in self.faces_behind(face) {

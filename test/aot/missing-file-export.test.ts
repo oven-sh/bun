@@ -12,7 +12,13 @@ test("a missing export of a file is a build error", async () => {
     "a.js": `export const present = 1;\n`,
   });
   const outfile = join(String(dir), isWindows ? "program.exe" : "program");
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", outfile],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
   expect(stderr.split(/\r?\n/).filter(line => line.startsWith("error: "))).toEqual([
     expect.stringMatching(/^error: TS100200: No matching export in ".*a\.js" for import "heldOnlyByFailedImport"$/),

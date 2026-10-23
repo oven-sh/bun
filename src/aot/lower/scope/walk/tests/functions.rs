@@ -25,7 +25,10 @@ fn hoisted_functions_last_wins() {
         };
         let symbol = bound.declared_symbol(Decl::Fn(last));
         assert_eq!(bound.declared_symbol(Decl::Fn(first)), symbol);
-        assert_eq!(walk.hoisted_functions, [(file_scope(hir, bound), symbol, last)]);
+        assert_eq!(
+            walk.hoisted_functions,
+            [(file_scope(hir, bound), symbol, last)]
+        );
     });
 }
 
@@ -39,7 +42,10 @@ fn implicit_block_function_is_hoisted_to_its_block() {
         let scope = bound.own_scope(statement);
         assert_ne!(scope, file_scope(hir, bound));
         assert_eq!(walk.hoisted_functions, [(scope, symbol, function)]);
-        assert_eq!(walk.functions[walked(walk, function).index()].hoisted_to, Some(scope));
+        assert_eq!(
+            walk.functions[walked(walk, function).index()].hoisted_to,
+            Some(scope)
+        );
         assert!(!walk.is_repeated_scope[scope.idx()]);
     });
     let repeated = "for (var i = 0; i < 2; i++) if (i) function f() {}";
@@ -57,7 +63,10 @@ fn hoisted_function_names_its_scope() {
         let symbol = bound.declared_symbol(Decl::Fn(function));
         let block = first_statement(hir, |kind| matches!(kind, StmtKind::Block(_)));
         let scope = bound.own_scope(block);
-        assert_eq!(walk.functions[walked(walk, function).index()].hoisted_to, Some(scope));
+        assert_eq!(
+            walk.functions[walked(walk, function).index()].hoisted_to,
+            Some(scope)
+        );
         assert_eq!(walk.hoisted_functions, [(scope, symbol, function)]);
         assert_eq!(
             walk.symbol_initializations[symbol.idx()],
@@ -72,7 +81,10 @@ fn function_expression_is_not_hoisted() {
     with_walk(&[("main.mjs", source)], |hir, _, walk| {
         let function = only_function(hir, FnKind::Expr);
         assert!(walk.hoisted_functions.is_empty());
-        assert_eq!(walk.functions[walked(walk, function).index()].hoisted_to, None);
+        assert_eq!(
+            walk.functions[walked(walk, function).index()].hoisted_to,
+            None
+        );
     });
 }
 
@@ -126,8 +138,12 @@ fn creation_follows_initialization() {
             initialized_at(walk, symbol_named(hir, bound, "a")) < created_at(walk, arrow)
         })
     };
-    assert!(is_initialized_first("const a = 1; export const f = () => a;"));
-    assert!(!is_initialized_first("export const f = () => a; const a = 1;"));
+    assert!(is_initialized_first(
+        "const a = 1; export const f = () => a;"
+    ));
+    assert!(!is_initialized_first(
+        "export const f = () => a; const a = 1;"
+    ));
 }
 
 #[test]
@@ -153,9 +169,8 @@ fn declaration_is_initialized_after_its_initializer() {
 fn variable_without_initializer_is_never_initialized() {
     let source = "export function g() { var a; var b = 1; return [a, b]; }";
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {
-        let initialization = |name: &str| {
-            walk.symbol_initializations[symbol_named(hir, bound, name).idx()]
-        };
+        let initialization =
+            |name: &str| walk.symbol_initializations[symbol_named(hir, bound, name).idx()];
         assert_eq!(initialization("a"), None);
         assert!(initialization("b").is_some());
     });
@@ -178,7 +193,11 @@ fn arguments_store_is_recorded() {
         with_walk(&[("main.cjs", source.as_str())], |hir, bound, walk| {
             let scope = top_scope(bound, only_function(hir, FnKind::Decl));
             let binding = BindingRef::Slot(scope, ScopeSlot::ArgumentsBinding);
-            assert_eq!(walk.stored_slots, [(scope, ScopeSlot::ArgumentsBinding)], "{store}");
+            assert_eq!(
+                walk.stored_slots,
+                [(scope, ScopeSlot::ArgumentsBinding)],
+                "{store}"
+            );
             assert!(walk.loops[0].stored.contains(&binding), "{store}");
         });
     }
@@ -195,8 +214,14 @@ fn arguments_object_is_used_by_owner() {
         let function = only_function(hir, FnKind::Decl);
         let scope = top_scope(bound, function);
         let arrow = walked(walk, only_function(hir, FnKind::Arrow));
-        assert_eq!(slots_used_by(walk, arrow), [(scope, ScopeSlot::ArgumentsBinding)]);
-        assert_eq!(slots_used_by(walk, walked(walk, function)), [(scope, ScopeSlot::Arguments)]);
+        assert_eq!(
+            slots_used_by(walk, arrow),
+            [(scope, ScopeSlot::ArgumentsBinding)]
+        );
+        assert_eq!(
+            slots_used_by(walk, walked(walk, function)),
+            [(scope, ScopeSlot::Arguments)]
+        );
     });
 }
 
@@ -206,17 +231,26 @@ fn wrapper_arguments_object_is_used_by_module_body() {
     with_walk(&[("main.cjs", source)], |hir, bound, walk| {
         let scope = file_scope(hir, bound);
         let arrow = walked(walk, only_function(hir, FnKind::Arrow));
-        assert_eq!(slots_used_by(walk, arrow), [(scope, ScopeSlot::ArgumentsBinding)]);
+        assert_eq!(
+            slots_used_by(walk, arrow),
+            [(scope, ScopeSlot::ArgumentsBinding)]
+        );
         let arguments = BindingRef::Slot(scope, ScopeSlot::Arguments);
         assert!(has_use(walk, WalkedFunctionId::MODULE_BODY, arguments));
         assert!(walk.stored_slots.is_empty());
     });
     with_walk(&[("main.cjs", "arguments = 1;")], |hir, bound, walk| {
-        assert_eq!(walk.stored_slots, [(file_scope(hir, bound), ScopeSlot::ArgumentsBinding)]);
+        assert_eq!(
+            walk.stored_slots,
+            [(file_scope(hir, bound), ScopeSlot::ArgumentsBinding)]
+        );
     });
-    with_walk(&[("main.mjs", "export default () => typeof arguments;")], |_, _, walk| {
-        assert!(used_slots(walk).is_empty());
-    });
+    with_walk(
+        &[("main.mjs", "export default () => typeof arguments;")],
+        |_, _, walk| {
+            assert!(used_slots(walk).is_empty());
+        },
+    );
 }
 
 #[test]
@@ -257,16 +291,25 @@ fn argument_reads_in_runtime_dialect(source: &str) -> Vec<ArgumentRead> {
         let function = walked(&walk, function_named(input.hir, "f"));
         assert!(slots_used_by(&walk, function).is_empty());
         let reads = walk.argument_reads.iter();
-        reads.filter(|read| read.0 == function).map(|read| read.1).collect()
+        reads
+            .filter(|read| read.0 == function)
+            .map(|read| read.1)
+            .collect()
     })
 }
 
 #[test]
 fn argument_intrinsics_are_recorded_without_arguments_slot() {
     let count = "export function f() { return $argumentCount(); }";
-    assert_eq!(argument_reads_in_runtime_dialect(count), [ArgumentRead::Count]);
+    assert_eq!(
+        argument_reads_in_runtime_dialect(count),
+        [ArgumentRead::Count]
+    );
     let argument = "export function f() { return $argument(1); }";
-    assert_eq!(argument_reads_in_runtime_dialect(argument), [ArgumentRead::At(1)]);
+    assert_eq!(
+        argument_reads_in_runtime_dialect(argument),
+        [ArgumentRead::At(1)]
+    );
     let computed = "export function f(x) { return $argument(x); }";
     assert!(argument_reads_in_runtime_dialect(computed).is_empty());
     let inner = "export function f() { return () => $argument(1); }";
@@ -274,7 +317,9 @@ fn argument_intrinsics_are_recorded_without_arguments_slot() {
     let dead = "export function f() { if (false) $argument(1); }";
     assert!(argument_reads_in_runtime_dialect(dead).is_empty());
 
-    with_walk(&[("main.mjs", count)], |_, _, walk| assert!(walk.argument_reads.is_empty()));
+    with_walk(&[("main.mjs", count)], |_, _, walk| {
+        assert!(walk.argument_reads.is_empty())
+    });
 }
 
 #[test]
@@ -290,8 +335,12 @@ fn jsx_factory_is_used_by_enclosing_function() {
             is_used_by_arrow
         })
     };
-    assert!(is_used_by_arrow("export function f(h) { return () => <a />; }"));
-    assert!(!is_used_by_arrow("export function f(h) { <a />; return () => 1; }"));
+    assert!(is_used_by_arrow(
+        "export function f(h) { return () => <a />; }"
+    ));
+    assert!(!is_used_by_arrow(
+        "export function f(h) { <a />; return () => 1; }"
+    ));
 }
 
 #[test]
@@ -302,7 +351,10 @@ fn metadata_type_is_used_by_evaluating_function() {
         let metadata = format!(r#""emitDecoratorMetadata":{emits_decorator_metadata}"#);
         let configuration =
             format!(r#"{{"compilerOptions":{{"experimentalDecorators":true,{metadata}}}}}"#);
-        let files = [("main.ts", source), ("tsconfig.json", configuration.as_str())];
+        let files = [
+            ("main.ts", source),
+            ("tsconfig.json", configuration.as_str()),
+        ];
         with_walk(&files, |hir, bound, walk| {
             let arrow = walked(walk, only_function(hir, FnKind::Arrow));
             has_symbol_use(walk, arrow, symbol_named(hir, bound, "T"))

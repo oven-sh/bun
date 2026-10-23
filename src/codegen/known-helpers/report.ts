@@ -10,7 +10,8 @@ function describeReference(reference: FoundReference): string {
   if (reference.kind === "itself") return `\`${reference.name}\`: the variable it is the value of`;
   if (reference.kind === "global") return `\`${reference.name}\` = \`${reference.path.join(".")}\``;
   if (reference.kind === "operand") return `\`${reference.name}\`: a variable of the file that the loop works on`;
-  if (reference.kind === "definition") return `\`${reference.name}\`: the helper published as \`${reference.publishedName}\``;
+  if (reference.kind === "definition")
+    return `\`${reference.name}\`: the helper published as \`${reference.publishedName}\``;
   return `\`${reference.name}\`: ${reference.why}`;
 }
 
@@ -45,7 +46,9 @@ function namesOf(tree: Tree): string[] {
 
 function reasonToPassOver(tree: Tree): PassedOver | undefined {
   const reasons = tree.occurrences.map(occurrence =>
-    passedOver.find(reason => reason.tool === occurrence.tool && reason.publishedNames.includes(occurrence.publishedName)),
+    passedOver.find(
+      reason => reason.tool === occurrence.tool && reason.publishedNames.includes(occurrence.publishedName),
+    ),
   );
   return reasons.includes(undefined) ? undefined : reasons[0];
 }
@@ -70,7 +73,8 @@ export function writeUnnamedShapes(table: Table): string {
     `${waiting.length} trees under ${waitingByName.length} published names wait for a name. ${table.unnamed.length - waiting.length} more are passed over on purpose. None of them is in the table.`,
     "",
   ];
-  if (table.complaints.length > 0) lines.push("## Complaints about shapes.ts", "", ...table.complaints.map(line => `- ${line}`), "");
+  if (table.complaints.length > 0)
+    lines.push("## Complaints about shapes.ts", "", ...table.complaints.map(line => `- ${line}`), "");
   for (const [name, trees] of waitingByName) {
     lines.push(`## ${name}`, "");
     for (const tree of trees) {
@@ -107,9 +111,13 @@ export function writeShapes(table: Table): string {
       const last = entry.tree.occurrences[entry.tree.occurrences.length - 1];
       lines.push(`### ${entry.line.shape}`, "");
       lines.push(entry.line.behavior, "");
-      lines.push(`- published as: ${namesOf(entry.tree).join(", ")}${first.partCount > 1 ? ` (function ${first.part} of ${first.partCount} in the definition)` : ""}`);
+      lines.push(
+        `- published as: ${namesOf(entry.tree).join(", ")}${first.partCount > 1 ? ` (function ${first.part} of ${first.partCount} in the definition)` : ""}`,
+      );
       lines.push(`- in: ${entry.origin}`);
-      lines.push(`- first: ${first.tool}@${first.version} (${first.publishedAt.slice(0, 10)}); last: ${last.tool}@${last.version} (${last.publishedAt.slice(0, 10)})`);
+      lines.push(
+        `- first: ${first.tool}@${first.version} (${first.publishedAt.slice(0, 10)}); last: ${last.tool}@${last.version} (${last.publishedAt.slice(0, 10)})`,
+      );
       for (const reference of entry.tree.references) lines.push(`- ${describeReference(reference)}`);
       lines.push("", fenced(entry.tree.text), "");
     }

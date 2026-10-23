@@ -357,7 +357,11 @@ export default b.declarations(
     ...eachOf(assignableURLComponents, assignableURLComponent),
     origin: urlComponent,
     // Every read answers the same object, which native code makes at the first one, and a change to it changes the URL.
-    searchParams: { ...urlComponent, getter: b.instance("URLSearchParams"), uses: { this: [...readsState, ...madeOnceAndKept("URLSearchParams", "URL.searchParams")] } },
+    searchParams: {
+      ...urlComponent,
+      getter: b.instance("URLSearchParams"),
+      uses: { this: [...readsState, ...madeOnceAndKept("URLSearchParams", "URL.searchParams")] },
+    },
     toString: serialized,
     toJSON: serialized,
   }),
@@ -519,9 +523,7 @@ export default b.declarations(
       throws: true,
       uses: {
         this: writesToSubscribers,
-        callback: [
-          b.called({ times: "Once", this: b.operand("this"), args: [b.operand("this")], result: "Returned" }),
-        ],
+        callback: [b.called({ times: "Once", this: b.operand("this"), args: [b.operand("this")], result: "Returned" })],
       },
       implementation: b.hostCall,
     },

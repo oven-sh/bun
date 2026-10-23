@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const calls = 2000;
 // Fractions take a whole word of the frame each, so this many of them are more than the allocator of small objects has a size for.
@@ -70,9 +70,17 @@ const files = {
   `,
 };
 
-const operations = ["operationAOTSaveFrameAndAwait", "operationAOTSaveFrameAndAwaitCall", "operationAOTSaveFrameAndYield"] as const;
+const operations = [
+  "operationAOTSaveFrameAndAwait",
+  "operationAOTSaveFrameAndAwaitCall",
+  "operationAOTSaveFrameAndYield",
+] as const;
 type Entries = Record<(typeof operations)[number], "few" | "every call" | number>;
-const few: Entries = { operationAOTSaveFrameAndAwait: "few", operationAOTSaveFrameAndAwaitCall: "few", operationAOTSaveFrameAndYield: "few" };
+const few: Entries = {
+  operationAOTSaveFrameAndAwait: "few",
+  operationAOTSaveFrameAndAwaitCall: "few",
+  operationAOTSaveFrameAndYield: "few",
+};
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -83,14 +91,28 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("the first suspension of an activation makes the object for its frame without a call into the run time", async () => {
   using dir = tempDir("aot-first-awaits", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   // The run time makes the first object of every block of the allocator.
-  const told = (entries: number) => (entries < calls / 20 ? "few" : entries >= calls && entries < calls * 1.05 ? "every call" : entries);
+  const told = (entries: number) =>
+    entries < calls / 20 ? "few" : entries >= calls && entries < calls * 1.05 ? "every call" : entries;
   const counted = async (name: string, options: Record<string, string> = {}): Promise<Entries> => {
     const path = join(String(dir), ["counts", name, ...Object.keys(options)].join("-"));
     const interpreted = await run([bunExe(), "main.mjs", name, "withoutValue"], String(dir), bunEnv);
-    expect(await run([executable, name, "withoutValue"], String(dir), { ...bunEnv, ...options, BUN_JSC_aotCountsPath: path })).toEqual({ stdout: interpreted.stdout, stderr: "", exitCode: 0 });
+    expect(
+      await run([executable, name, "withoutValue"], String(dir), {
+        ...bunEnv,
+        ...options,
+        BUN_JSC_aotCountsPath: path,
+      }),
+    ).toEqual({ stdout: interpreted.stdout, stderr: "", exitCode: 0 });
     const counts: Record<string, number> = Object.fromEntries(operations.map(operation => [operation, 0]));
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, operation] = line.split("\toperation:");
@@ -106,7 +128,9 @@ test("the first suspension of an activation makes the object for its frame witho
     asyncGenerators: await counted("asyncGenerators"),
   }).toEqual({ pendingPromises: few, suspendedCalls: few, generators: few, asyncGenerators: few });
 
-  expect({ largeFrames: await counted("largeFrames") }).toEqual({ largeFrames: { ...few, operationAOTSaveFrameAndAwait: "every call" } });
+  expect({ largeFrames: await counted("largeFrames") }).toEqual({
+    largeFrames: { ...few, operationAOTSaveFrameAndAwait: "every call" },
+  });
 
   // A validating run lists every such object, which only the run time does. It also shows that each case suspends through the operation it is named for:
   // a renamed operation, a call that returns a promise after all, or generators that are never made would count none here.
@@ -118,7 +142,11 @@ test("the first suspension of an activation makes the object for its frame witho
     asyncGenerators: await counted("asyncGenerators", validating),
   }).toEqual({
     pendingPromises: { ...few, operationAOTSaveFrameAndAwait: "every call" },
-    suspendedCalls: { ...few, operationAOTSaveFrameAndAwait: "every call", operationAOTSaveFrameAndAwaitCall: "every call" },
+    suspendedCalls: {
+      ...few,
+      operationAOTSaveFrameAndAwait: "every call",
+      operationAOTSaveFrameAndAwaitCall: "every call",
+    },
     generators: { ...few, operationAOTSaveFrameAndYield: "every call" },
     asyncGenerators: { ...few, operationAOTSaveFrameAndYield: "every call" },
   });

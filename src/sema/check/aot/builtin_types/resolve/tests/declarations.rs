@@ -1,9 +1,9 @@
 use crate::atom::{Atom, Interner};
 use crate::hir::{
     Alias, AliasId, Chain, Class, ClassId, ExprId, ExprKind, File, FileBuilder, FileKind, Flags,
-    FnBody, FnId, FnKind, Func, IdList, Interface, InterfaceId, Keyword, Member, MemberKind, Module,
-    ModuleId, ModuleName, ParamId, PatKind, PropKey, Span, StmtId, StmtKind, TextRange, TypeNodeId,
-    TypeNodeKind, VarDecl, VarDeclId, VarKind,
+    FnBody, FnId, FnKind, Func, IdList, Interface, InterfaceId, Keyword, Member, MemberKind,
+    Module, ModuleId, ModuleName, ParamId, PatKind, PropKey, Span, StmtId, StmtKind, TextRange,
+    TypeNodeId, TypeNodeKind, VarDecl, VarDeclId, VarKind,
 };
 use crate::json::Json;
 use crate::resolve::{Host, ParseOptions, ScriptKind, ancestors, is_declaration_file_name};
@@ -91,8 +91,8 @@ impl Host for DeclarationsHost<'_> {
     }
 
     fn is_dir(&self, path: &[u8]) -> bool {
-        let mut directories = (self.files.iter())
-            .flat_map(|file| ancestors(dirname::<Posix>(file.path.as_bytes())));
+        let mut directories =
+            (self.files.iter()).flat_map(|file| ancestors(dirname::<Posix>(file.path.as_bytes())));
         directories.any(|directory| directory == path)
     }
 
@@ -294,7 +294,11 @@ impl TreeBuilder<'_, '_> {
     fn create_member(&mut self, signature: Signature) -> Member {
         let start = self.next_position();
         let (kind, function_kind, key) = match signature {
-            Signature::Call => (MemberKind::CallSignature, FnKind::CallSignature, PropKey::None),
+            Signature::Call => (
+                MemberKind::CallSignature,
+                FnKind::CallSignature,
+                PropKey::None,
+            ),
             Signature::Method(name) => {
                 let key = PropKey::Name(self.atoms.intern(name.as_bytes()));
                 (MemberKind::Method, FnKind::Method, key)

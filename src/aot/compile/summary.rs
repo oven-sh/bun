@@ -26,7 +26,10 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
 }
 
 fn folder_of(path: &[u8], is_separator: impl Fn(u8) -> bool) -> &[u8] {
-    &path[..path.iter().rposition(|&byte| is_separator(byte)).unwrap_or(0)]
+    &path[..path
+        .iter()
+        .rposition(|&byte| is_separator(byte))
+        .unwrap_or(0)]
 }
 
 pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<FolderPaths> {
@@ -36,8 +39,13 @@ pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<Folde
         .compiled_files()
         .iter()
         .map(|&file| FolderPaths {
-            public_path: folder_of(sources.module_paths(file).public_path, |byte| byte == b'/').to_vec(),
-            source_path: folder_of(&to_native(files.module(file).file_name()), bun_paths::is_sep_native).to_vec(),
+            public_path: folder_of(sources.module_paths(file).public_path, |byte| byte == b'/')
+                .to_vec(),
+            source_path: folder_of(
+                to_native(files.module(file).file_name()),
+                bun_paths::is_sep_native,
+            )
+            .to_vec(),
         })
         .collect();
     folders.sort_unstable();

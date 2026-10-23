@@ -19,7 +19,11 @@ pub(super) fn lower_variable_declaration(
     if decl.flags.contains(Flags::AMBIENT) || is_unread_export(lowering, decl.pat) {
         return;
     }
-    let left_out = lowering.file.inputs.library_functions.left_out_declarations();
+    let left_out = lowering
+        .file
+        .inputs
+        .library_functions
+        .left_out_declarations();
     if left_out.is_declarator_left_out(lowering.file.file, declaration) {
         return;
     }
@@ -140,10 +144,7 @@ pub(super) fn lower_function_statement(
     scope::leave_scope(lowering, implicit_block);
 }
 
-fn lower_function_declaration(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    function: FnId,
-) {
+fn lower_function_declaration(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, function: FnId) {
     let (hir, bound) = (lowering.file.hir, lowering.file.bound);
     if matches!(hir[function].body, FnBody::None) {
         return;
@@ -168,7 +169,11 @@ pub(super) fn lower_class_statement(
     if hir[class].flags.contains(Flags::AMBIENT) {
         return;
     }
-    let left_out = lowering.file.inputs.library_functions.left_out_declarations();
+    let left_out = lowering
+        .file
+        .inputs
+        .library_functions
+        .left_out_declarations();
     if left_out.is_class_left_out(lowering.file.file, class) {
         return;
     }

@@ -317,7 +317,14 @@ describe("ranges that can only be filled", () => {
     const unmovable: OutputPolicy = { ...policy, isMovable: () => false };
     const layout = createLayout([[0x20, [Tools]]]);
     expect(fillOnlyRanges(layout.graph, layout.partition, [], unmovable).ranges).toEqual([
-      { start: 0x200000, end: 0x200020, set: layout.partition.setOf[0]!, isCode: true, canBeCut: false, canBeFilled: true },
+      {
+        start: 0x200000,
+        end: 0x200020,
+        set: layout.partition.setOf[0]!,
+        isCode: true,
+        canBeCut: false,
+        canBeFilled: true,
+      },
     ]);
   });
 
@@ -701,11 +708,9 @@ describe("the items of ICU's data package", () => {
   });
 
   test("adjacent items with the same features are one run", () => {
-    expect(runsOf(createItems("af.res", "ar.res", "coll/de.res", "coll/fr.res", "de.res"), classes, undefined)).toStrictEqual([
-      withoutGroup(0, 2, [7]),
-      withoutGroup(2, 2, [5]),
-      withoutGroup(4, 1, [7]),
-    ]);
+    expect(
+      runsOf(createItems("af.res", "ar.res", "coll/de.res", "coll/fr.res", "de.res"), classes, undefined),
+    ).toStrictEqual([withoutGroup(0, 2, [7]), withoutGroup(2, 2, [5]), withoutGroup(4, 1, [7])]);
   });
 
   test("an item without a class ends a run and is not in any run", () => {
@@ -726,7 +731,10 @@ describe("the items of ICU's data package", () => {
 
   test("an item whose class has no features ends a run and is not in any run", () => {
     expect(runsOf(createItems("curr/de.res"), classes, undefined)).toEqual([]);
-    expect(runsOf(createItems("af.res", "curr/de.res", "de.res"), classes, undefined)).toEqual([withoutGroup(0, 1, [7]), withoutGroup(2, 1, [7])]);
+    expect(runsOf(createItems("af.res", "curr/de.res", "de.res"), classes, undefined)).toEqual([
+      withoutGroup(0, 1, [7]),
+      withoutGroup(2, 1, [7]),
+    ]);
   });
 
   describe("by locale", () => {
@@ -736,29 +744,38 @@ describe("the items of ICU's data package", () => {
       ["no", 1],
       ["sv", 2],
     ]);
-    const inGroup = (firstItem: number, itemCount: number, localeGroup: number | undefined) => ({ ...withoutGroup(firstItem, itemCount, [7]), localeGroup });
+    const inGroup = (firstItem: number, itemCount: number, localeGroup: number | undefined) => ({
+      ...withoutGroup(firstItem, itemCount, [7]),
+      localeGroup,
+    });
 
     test("adjacent items with the same features and another group are separate runs", () => {
-      expect(runsOf(createItems("zone/de.res", "zone/de_AT.res", "zone/nb.res", "zone/no.res", "zone/sv.res"), classes, groupOfLanguage)).toStrictEqual([
-        inGroup(0, 2, 0),
-        inGroup(2, 2, 1),
-        inGroup(4, 1, 2),
-      ]);
+      expect(
+        runsOf(
+          createItems("zone/de.res", "zone/de_AT.res", "zone/nb.res", "zone/no.res", "zone/sv.res"),
+          classes,
+          groupOfLanguage,
+        ),
+      ).toStrictEqual([inGroup(0, 2, 0), inGroup(2, 2, 1), inGroup(4, 1, 2)]);
     });
 
     test("an item of a class that is not removed by locale has no group", () => {
-      expect(runsOf(createItems("de.res", "sv.res", "zone/sv.res"), classes, groupOfLanguage)).toStrictEqual([inGroup(0, 2, undefined), inGroup(2, 1, 2)]);
-    });
-
-    test("an item that belongs to no language, or to one without a group, has no group", () => {
-      expect(runsOf(createItems("unit/de.res", "unit/root.res", "units.res", "unit/fi.res"), classes, groupOfLanguage)).toStrictEqual([
-        inGroup(0, 1, 0),
-        inGroup(1, 3, undefined),
+      expect(runsOf(createItems("de.res", "sv.res", "zone/sv.res"), classes, groupOfLanguage)).toStrictEqual([
+        inGroup(0, 2, undefined),
+        inGroup(2, 1, 2),
       ]);
     });
 
+    test("an item that belongs to no language, or to one without a group, has no group", () => {
+      expect(
+        runsOf(createItems("unit/de.res", "unit/root.res", "units.res", "unit/fi.res"), classes, groupOfLanguage),
+      ).toStrictEqual([inGroup(0, 1, 0), inGroup(1, 3, undefined)]);
+    });
+
     test("without groups data leaves by feature only", () => {
-      expect(runsOf(createItems("zone/de.res", "zone/nb.res", "zone/sv.res"), classes, undefined)).toStrictEqual([inGroup(0, 3, undefined)]);
+      expect(runsOf(createItems("zone/de.res", "zone/nb.res", "zone/sv.res"), classes, undefined)).toStrictEqual([
+        inGroup(0, 3, undefined),
+      ]);
     });
   });
 
@@ -836,12 +853,21 @@ describe("the items of ICU's data package", () => {
     });
 
     test("with Bun's hook in ICU, the items of a class that is removed by locale get the group of their language", () => {
-      const { packages, languages } = icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(icuLinesByLocale, [["de", "nds"]]));
+      const { packages, languages } = icuPackagesOf(
+        linkedOf([entrySymbol, hookSymbol]),
+        graphOf("elf"),
+        modelOf(icuLinesByLocale, [["de", "nds"]]),
+      );
       expect(languages).toEqual([
         { name: "de", group: 0 },
         { name: "nds", group: 0 },
       ]);
-      expect(packages.map(({ runs }) => runs)).toEqual([[{ ...collationRun, localeGroup: 0 }, { ...zoneRun, localeGroup: 0 }]]);
+      expect(packages.map(({ runs }) => runs)).toEqual([
+        [
+          { ...collationRun, localeGroup: 0 },
+          { ...zoneRun, localeGroup: 0 },
+        ],
+      ]);
     });
 
     test("only the languages of classes that are removed by locale are listed", () => {
@@ -850,11 +876,15 @@ describe("the items of ICU's data package", () => {
       expect(elf.languages).toEqual([{ name: "de", group: 0 }]);
       expect(elf.packages.map(({ runs }) => runs)).toEqual([[collationRun, { ...zoneRun, localeGroup: 0 }]]);
       expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("coff"), modelOf(lines)).languages).toEqual([]);
-      expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(icuLines)).languages).toEqual([]);
+      expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(icuLines)).languages).toEqual(
+        [],
+      );
     });
 
     test("without the hook a removed language would be a silent fallback, so there are no languages and no groups", () => {
-      expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLinesByLocale, [["de", "nds"]]))).toEqual({
+      expect(
+        icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLinesByLocale, [["de", "nds"]])),
+      ).toEqual({
         packages: [{ start: packageStart, end: packageStart + data.length, items: 3, runs: [collationRun, zoneRun] }],
         languages: [],
       });

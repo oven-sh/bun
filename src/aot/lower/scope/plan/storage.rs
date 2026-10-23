@@ -31,24 +31,28 @@ pub(super) fn place_bindings(
         shared: &sharing.shared,
         initial_functions: &initial_functions,
     };
-    let place_stored = |binding: BindingRef| {
-        place(binding, &tables, is_immutable(context, binding))
-    };
-    let symbols = (0..).map(SymbolId).zip(forms).map(|(symbol, &form)| match form {
-        BindingForm::Stored => place_stored(BindingRef::Symbol(symbol)),
-        BindingForm::NotAValue
-        | BindingForm::Import
-        | BindingForm::Callee { .. }
-        | BindingForm::MappedArgument { .. }
-        | BindingForm::ContainerMember { .. } => Placement::LOCAL,
-    });
+    let place_stored =
+        |binding: BindingRef| place(binding, &tables, is_immutable(context, binding));
+    let symbols = (0..)
+        .map(SymbolId)
+        .zip(forms)
+        .map(|(symbol, &form)| match form {
+            BindingForm::Stored => place_stored(BindingRef::Symbol(symbol)),
+            BindingForm::NotAValue
+            | BindingForm::Import
+            | BindingForm::Callee { .. }
+            | BindingForm::MappedArgument { .. }
+            | BindingForm::ContainerMember { .. } => Placement::LOCAL,
+        });
     let symbols: Vec<Placement> = symbols.collect();
     let captured = sharing.captured.iter().map(|captured| captured.binding);
     let variables = sharing.variables.iter().map(|variable| variable.0);
-    let slots = captured.chain(variables).filter_map(|binding| match binding {
-        BindingRef::Symbol(_) => None,
-        BindingRef::Slot(scope, slot) => Some(((scope, slot), place_stored(binding))),
-    });
+    let slots = captured
+        .chain(variables)
+        .filter_map(|binding| match binding {
+            BindingRef::Symbol(_) => None,
+            BindingRef::Slot(scope, slot) => Some(((scope, slot), place_stored(binding))),
+        });
     let mut slots: Vec<(SlotKey, Placement)> = slots.collect();
     slots.sort_unstable_by_key(|slot| slot.0);
     Placements {

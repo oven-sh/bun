@@ -9,7 +9,7 @@ function writeLargeFile(path: string, blocks: number, tail: string) {
   const fd = openSync(path, "w");
   for (let index = 0; index < blocks; index++) {
     block.fill(index + 1);
-    block.writeUInt32LE(index * 2654435761 >>> 0, 12345);
+    block.writeUInt32LE((index * 2654435761) >>> 0, 12345);
     writeSync(fd, block);
     hasher.update(block);
   }

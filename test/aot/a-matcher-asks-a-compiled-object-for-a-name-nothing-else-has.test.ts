@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 // A string constant of compiled code is a static string that is no atom. The atom that native code makes of one is a block of its own, and it lives only as long as somebody holds it.
 // toHaveProperty() held the name of each step of its path by a bare pointer: the atom was freed before the lookup, and the lookup on a compiled object counted a reference on the freed block,

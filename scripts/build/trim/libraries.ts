@@ -79,7 +79,9 @@ function createLibrary(cfg: Config, dep: ResolvedDep): Library | undefined {
   const crates = entry.crate === undefined ? [] : [entry.crate];
   const compiledInto = entry.compiledInto === undefined ? undefined : libraryOf[entry.compiledInto]?.name;
   if (inputs.length === 0 && crates.length === 0 && compiledInto === undefined) {
-    throw new BuildError(`the library ${entry.name} has no inputs, so a trimmed executable cannot tell whether it was removed`);
+    throw new BuildError(
+      `the library ${entry.name} has no inputs, so a trimmed executable cannot tell whether it was removed`,
+    );
   }
   const version = definition.release ?? versionOfSource(dep.name, definition.source(cfg));
   return { name: entry.name, version, inputs, crates, ...(compiledInto === undefined ? {} : { compiledInto }) };
@@ -102,7 +104,13 @@ function isLibrary(value: unknown): value is Library {
   if (typeof value !== "object" || value === null) return false;
   const { name, version, inputs, crates, compiledInto } = value as Record<string, unknown>;
   const hasValidCompiledInto = compiledInto === undefined || typeof compiledInto === "string";
-  return typeof name === "string" && typeof version === "string" && isStringArray(inputs) && isStringArray(crates) && hasValidCompiledInto;
+  return (
+    typeof name === "string" &&
+    typeof version === "string" &&
+    isStringArray(inputs) &&
+    isStringArray(crates) &&
+    hasValidCompiledInto
+  );
 }
 
 export function readLibrariesFile(path: string): LibrariesFile {
@@ -162,23 +170,37 @@ function measureLibraries(count: number, owners: Map<string, number>, graph: Sec
   for (let node = 0; node < graph.placedCount; node++) {
     const libraries = new Set(namesOfNode(graph, node).flatMap(name => owners.get(name) ?? []));
     for (const library of libraries) {
-      if (partition.isRetained[node] || partition.setOf[node] === 0) measured[library]!.retainedBytes += graph.size[node]!;
+      if (partition.isRetained[node] || partition.setOf[node] === 0)
+        measured[library]!.retainedBytes += graph.size[node]!;
       else measured[library]!.sets.add(partition.setOf[node]!);
     }
   }
   return measured;
 }
 
-export function libraryBytes(file: LibrariesFile, linkInputs: string[], graph: SectionGraph, partition: Partition, workDirectory: string): LibraryBytes[] {
+export function libraryBytes(
+  file: LibrariesFile,
+  linkInputs: string[],
+  graph: SectionGraph,
+  partition: Partition,
+  workDirectory: string,
+): LibraryBytes[] {
   mkdirSync(workDirectory, { recursive: true });
   const symbols = file.libraries.map((library, index) =>
-    library.compiledInto === undefined ? readDefinedSymbols(file.nm, filesOfLibrary(library, linkInputs), join(workDirectory, `${index}.nm.rsp`)) : [],
+    library.compiledInto === undefined
+      ? readDefinedSymbols(file.nm, filesOfLibrary(library, linkInputs), join(workDirectory, `${index}.nm.rsp`))
+      : [],
   );
   const measured = measureLibraries(file.libraries.length, ownersOfSymbols(symbols), graph, partition);
-  const indexOfName = new Map(file.libraries.flatMap((library, index) => (library.compiledInto === undefined ? [[library.name, index] as const] : [])));
+  const indexOfName = new Map(
+    file.libraries.flatMap((library, index) =>
+      library.compiledInto === undefined ? [[library.name, index] as const] : [],
+    ),
+  );
   return file.libraries.map((library, index) => {
     const source = library.compiledInto === undefined ? index : indexOfName.get(library.compiledInto);
-    if (source === undefined) throw new BuildError(`${library.name} is compiled into ${library.compiledInto}, which is not a library`);
+    if (source === undefined)
+      throw new BuildError(`${library.name} is compiled into ${library.compiledInto}, which is not a library`);
     const { retainedBytes, sets } = measured[source]!;
     return { name: library.name, version: library.version, retainedBytes, sets: [...sets].sort((a, b) => a - b) };
   });

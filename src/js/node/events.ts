@@ -319,7 +319,12 @@ function addCatch(that: $Node.EventEmitter, promise: MaybeThenable, type: $Node.
   }
 }
 
-function emitUnhandledRejectionOrErr(emitter: $Node.EventEmitter, err: unknown, type: $Node.EventName, args: unknown[]) {
+function emitUnhandledRejectionOrErr(
+  emitter: $Node.EventEmitter,
+  err: unknown,
+  type: $Node.EventName,
+  args: unknown[],
+) {
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
@@ -343,7 +348,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
   if (type === "error") {
-    "unlikely";
+    ("unlikely");
     return emitError(this, args);
   }
   const events = this._events;
@@ -371,7 +376,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
         break;
     }
     if ($isObject(result) && this[kCapture]) {
-      "unlikely";
+      ("unlikely");
       addCatch(this, result, type, ...args);
     }
     return true;
@@ -400,7 +405,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
         break;
     }
     if ($isObject(result) && this[kCapture]) {
-      "unlikely";
+      ("unlikely");
       addCatch(this, result, type, ...args);
     }
   }
@@ -415,7 +420,7 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
     events = target._events = Object.create(null) as $Node.Events;
     target._eventsCount = 0;
   } else if (events.newListener) {
-    "unlikely";
+    ("unlikely");
     target.emit("newListener", type, fn.listener ?? fn);
     // A newListener handler can replace `_events` (e.g. a once wrapper's
     // removeListener dropping the count to 0 installs a fresh object).
@@ -436,7 +441,7 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
   }
   var m = _getMaxListeners(target);
   if (m > 0 && handlers.length > m && !(handlers as ListenerList).warned) {
-    "unlikely";
+    ("unlikely");
     overflowWarning(target, type, handlers);
   }
 }
@@ -596,10 +601,7 @@ EventEmitterPrototype.removeListener = removeListener;
 
 EventEmitterPrototype.off = removeListener;
 
-const removeAllListeners = function removeAllListeners(
-  this: $Node.EventEmitter,
-  type?: $Node.EventName,
-) {
+const removeAllListeners = function removeAllListeners(this: $Node.EventEmitter, type?: $Node.EventName) {
   const events = this._events;
   if (events === undefined) return this;
 
@@ -916,8 +918,12 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
 Object.defineProperty(on, "name", { value: "on" });
 
 function listenersController() {
-  const listeners: [emitter: EmitterOrTarget, event: $Node.EventName, handler: $Node.Listener, flags?: ListenerFlags][] =
-    [];
+  const listeners: [
+    emitter: EmitterOrTarget,
+    event: $Node.EventName,
+    handler: $Node.Listener,
+    flags?: ListenerFlags,
+  ][] = [];
 
   return {
     addEventListener(emitter: EmitterOrTarget, event: $Node.EventName, handler: $Node.Listener, flags?: ListenerFlags) {

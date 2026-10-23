@@ -13,7 +13,10 @@ fn parse_alone<'t, R>(
     let mut parser = Parser::new(text.as_bytes());
     let parsed = match parse(&mut parser) {
         Ok(parsed) => parsed,
-        Err(error) => panic!("{text}: column {}: expected {}", error.column, error.expected),
+        Err(error) => panic!(
+            "{text}: column {}: expected {}",
+            error.column, error.expected
+        ),
     };
     assert!(parser.at(TokenKind::EndOfLine), "{text}");
     (parser, parsed)
@@ -145,7 +148,11 @@ fn well_known_spellings_have_well_known_ids() {
     for (spelling, expected) in spellings {
         let (parser, id) = parse_alone(spelling, parse_type);
         assert_eq!(id, expected, "{spelling}");
-        assert_eq!(parser.program.types.len(), TypeTable::WELL_KNOWN_COUNT, "{spelling}");
+        assert_eq!(
+            parser.program.types.len(),
+            TypeTable::WELL_KNOWN_COUNT,
+            "{spelling}"
+        );
     }
 }
 
@@ -162,7 +169,10 @@ fn parts_in_any_order_normalize() {
         ("function|function", "function"),
         ("L1|function", "function|L1"),
         ("anything|L1|\"a\"", "anything"),
-        ("Map<string, number>|Array<number>", "Array<number>|Map<string, number>"),
+        (
+            "Map<string, number>|Array<number>",
+            "Array<number>|Map<string, number>",
+        ),
         ("Array<number>|Array<string>", "Array<number|string>"),
     ];
     for (written, printed) in spellings {
@@ -206,7 +216,10 @@ fn ranges_are_nonempty_and_tracked() {
     assert_type_error("4611686018427387904", 1, expected);
     assert_type_error("int[0, 4611686018427387904]", 1, expected);
     assert_type_error("int[-4611686018427387904, 0]", 1, expected);
-    assert_eq!(print_parsed_type("int[-4611686018427387903, 4611686018427387903]"), "int");
+    assert_eq!(
+        print_parsed_type("int[-4611686018427387903, 4611686018427387903]"),
+        "int"
+    );
     assert_eq!(print_parsed_type("int[5, 5]"), "5");
 }
 
@@ -256,7 +269,11 @@ fn deep_types_fail() {
     let deepest = nest_arrays(limit);
     assert_eq!(print_parsed_type(&deepest), deepest);
     let column = ("Array<".len() * (limit + 1) + 1) as u32;
-    assert_type_error(&nest_arrays(limit + 1), column, "type nesting within the limit");
+    assert_type_error(
+        &nest_arrays(limit + 1),
+        column,
+        "type nesting within the limit",
+    );
 }
 
 #[test]
@@ -305,12 +322,20 @@ fn printed_keys_parse_back() {
 #[test]
 fn parsed_keys_equal_constructed_keys() {
     let (parser, id) = parse_alone(r##"#"x"@L2"##, parse_property_key);
-    let x = parser.program.strings.find(b"x").expect("the text is interned");
+    let x = parser
+        .program
+        .strings
+        .find(b"x")
+        .expect("the text is interned");
     let private_name = PropertyKey::from_private_name(x, LayoutId::new(2));
     assert_eq!(*parser.program.property_keys.get(id), private_name);
 
     let (parser, id) = parse_alone(r#"symbol("x")@m1:7"#, parse_property_key);
-    let x = parser.program.strings.find(b"x").expect("the description is interned");
+    let x = parser
+        .program
+        .strings
+        .find(b"x")
+        .expect("the description is interned");
     let symbol = PropertyKey::from_created_symbol(ModuleId::new(1), 7, Some(x));
     assert_eq!(*parser.program.property_keys.get(id), symbol);
 }

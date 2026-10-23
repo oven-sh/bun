@@ -4,7 +4,9 @@ use std::borrow::Cow;
 use bun_exe_format::builtins::Image;
 use bun_exe_format::image::{AddressRange, KnownSection, SectionLocation};
 use bun_exe_format::section::{SectionError, find_known_section};
-use bun_removable_features::{FEATURES_HASH, Feature, FeatureSet, MAX_REMOVED_RANGES, RemovedRange};
+use bun_removable_features::{
+    FEATURES_HASH, Feature, FeatureSet, MAX_REMOVED_RANGES, RemovedRange,
+};
 
 use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
 use crate::model::{EdgeStrength, FeatureEdge, FeatureEdges};
@@ -115,7 +117,8 @@ impl<'a> Tiling<'a> {
         if u64::from(first_record) != self.next_record {
             return None;
         }
-        let tile_bytes = usize::try_from(u64::from(record_count) * self.record_bytes as u64).ok()?;
+        let tile_bytes =
+            usize::try_from(u64::from(record_count) * self.record_bytes as u64).ok()?;
         let (tile, remaining) = self.remaining.split_at_checked(tile_bytes)?;
         self.remaining = remaining;
         self.next_record += u64::from(record_count);
@@ -242,7 +245,7 @@ fn check_header(section: &[u8]) -> Result<&[u8], TableError> {
 fn parse_sections(table: &[u8]) -> Result<Sections<'_>, TableError> {
     const MALFORMED: TableError = TableError::Malformed(MalformedTable::Directory);
     let directory = &table[DIRECTORY_OFFSET..TABLE_HEADER_BYTES];
-    let mut entries = directory.chunks_exact(DIRECTORY_ENTRY_BYTES);
+    let mut entries = directory.as_chunks::<DIRECTORY_ENTRY_BYTES>().0.iter();
     let mut previous_end = TABLE_HEADER_BYTES as u64;
     let mut next_section = |record_bytes: usize| -> Result<&[u8], TableError> {
         let entry = entries.next().ok_or(MALFORMED)?;
@@ -273,7 +276,7 @@ fn parse_edges(sections: &Sections<'_>) -> Result<FeatureEdges, TableError> {
     const MALFORMED: TableError = TableError::Malformed(MalformedTable::Edges);
     let mut edges = Vec::with_capacity(sections.edges.len() / EDGE_RECORD_BYTES);
     let mut previous: Option<(u16, u16)> = None;
-    for record in sections.edges.chunks_exact(EDGE_RECORD_BYTES) {
+    for record in sections.edges.as_chunks::<EDGE_RECORD_BYTES>().0 {
         let pair = (read_u16(record, 0), read_u16(record, 2));
         if pair.0 == pair.1 || previous.is_some_and(|previous| previous >= pair) {
             return Err(MALFORMED);
@@ -298,7 +301,7 @@ fn parse_set_members(members: &[u8]) -> Result<FeatureSet, TableError> {
     const MALFORMED: TableError = TableError::Malformed(MalformedTable::FeatureSets);
     let mut set = FeatureSet::EMPTY;
     let mut previous: Option<u16> = None;
-    for record in members.chunks_exact(SET_MEMBER_RECORD_BYTES) {
+    for record in members.as_chunks::<SET_MEMBER_RECORD_BYTES>().0 {
         let index = read_u16(record, 0);
         if previous.is_some_and(|previous| previous >= index) {
             return Err(MALFORMED);
@@ -318,7 +321,11 @@ fn parse_feature_sets(sections: &Sections<'_>) -> Result<Vec<FeatureSet>, TableE
     let mut members = Tiling::new(sections.set_members, SET_MEMBER_RECORD_BYTES);
     let mut member_lists: Vec<&[u8]> = Vec::with_capacity(set_count);
     let mut sets = Vec::with_capacity(set_count);
-    for record in sections.feature_sets.chunks_exact(FEATURE_SET_RECORD_BYTES) {
+    for record in sections
+        .feature_sets
+        .as_chunks::<FEATURE_SET_RECORD_BYTES>()
+        .0
+    {
         let member_list = members
             .take(read_u32(record, 0), read_u32(record, 4))
             .ok_or(MALFORMED)?;
@@ -344,7 +351,7 @@ fn parse_ranges(
     const MALFORMED: TableError = TableError::Malformed(MalformedTable::Ranges);
     let mut ranges = Vec::with_capacity(sections.ranges.len() / RANGE_RECORD_BYTES);
     let mut previous = None;
-    for record in sections.ranges.chunks_exact(RANGE_RECORD_BYTES) {
+    for record in sections.ranges.as_chunks::<RANGE_RECORD_BYTES>().0 {
         let range = read_address_range(base_address, record, previous).ok_or(MALFORMED)?;
         let methods = read_removal_methods(record[11]).ok_or(MALFORMED)?;
         ranges.push(RemovableRange {
@@ -364,7 +371,11 @@ fn parse_icu_languages(sections: &Sections<'_>) -> Result<Vec<IcuLanguage>, Tabl
     let language_count = sections.icu_languages.len() / ICU_LANGUAGE_RECORD_BYTES;
     let mut languages = Vec::with_capacity(language_count);
     let mut previous: Option<[u8; 4]> = None;
-    for record in sections.icu_languages.chunks_exact(ICU_LANGUAGE_RECORD_BYTES) {
+    for record in sections
+        .icu_languages
+        .as_chunks::<ICU_LANGUAGE_RECORD_BYTES>()
+        .0
+    {
         let name = read_language_name(record).ok_or(MALFORMED)?;
         let group = read_u16(record, 4);
         let is_ascending = previous.is_none_or(|previous| previous < name);
@@ -388,7 +399,7 @@ fn parse_icu_runs(
     const MALFORMED: TableError = TableError::Malformed(MalformedTable::IcuRuns);
     let mut runs = Vec::with_capacity(package_runs.len() / ICU_RUN_RECORD_BYTES);
     let mut previous_end = 0u64;
-    for record in package_runs.chunks_exact(ICU_RUN_RECORD_BYTES) {
+    for record in package_runs.as_chunks::<ICU_RUN_RECORD_BYTES>().0 {
         let first_item = read_u32(record, 0);
         let item_count = read_u32(record, 4);
         let locale_group = read_u16(record, 10).checked_sub(1).map(LocaleGroup);
@@ -418,7 +429,11 @@ fn parse_icu_packages(
     let mut runs = Tiling::new(sections.icu_runs, ICU_RUN_RECORD_BYTES);
     let mut packages = Vec::with_capacity(sections.icu_packages.len() / ICU_PACKAGE_RECORD_BYTES);
     let mut previous = None;
-    for record in sections.icu_packages.chunks_exact(ICU_PACKAGE_RECORD_BYTES) {
+    for record in sections
+        .icu_packages
+        .as_chunks::<ICU_PACKAGE_RECORD_BYTES>()
+        .0
+    {
         let range = read_address_range(base_address, record, previous).ok_or(MALFORMED)?;
         let package_runs = runs
             .take(read_u32(record, 8), read_u32(record, 12))
@@ -439,7 +454,7 @@ fn parse_library_sets(library_sets: &[u8], set_count: usize) -> Result<Vec<SetIn
     const MALFORMED: TableError = TableError::Malformed(MalformedTable::LibrarySets);
     let mut sets = Vec::with_capacity(library_sets.len() / LIBRARY_SET_RECORD_BYTES);
     let mut previous: Option<SetIndex> = None;
-    for record in library_sets.chunks_exact(LIBRARY_SET_RECORD_BYTES) {
+    for record in library_sets.as_chunks::<LIBRARY_SET_RECORD_BYTES>().0 {
         let set = read_set_index(read_u16(record, 0), set_count).ok_or(MALFORMED)?;
         if previous.is_some_and(|previous| previous >= set) {
             return Err(MALFORMED);
@@ -456,7 +471,7 @@ fn parse_libraries(sections: &Sections<'_>, set_count: usize) -> Result<Vec<Libr
     let mut library_sets = Tiling::new(sections.library_sets, LIBRARY_SET_RECORD_BYTES);
     let mut libraries = Vec::with_capacity(sections.libraries.len() / LIBRARY_RECORD_BYTES);
     let mut previous_name: Option<&str> = None;
-    for record in sections.libraries.chunks_exact(LIBRARY_RECORD_BYTES) {
+    for record in sections.libraries.as_chunks::<LIBRARY_RECORD_BYTES>().0 {
         let name = read_text(&mut text, read_u32(record, 0), read_u32(record, 4))?;
         let version = read_text(&mut text, read_u32(record, 8), read_u32(record, 12))?;
         let sets = library_sets
@@ -496,7 +511,11 @@ fn parse_module_texts(
     let mut texts = Vec::with_capacity(text_count);
     let mut modules = Vec::with_capacity(text_count);
     let mut previous = None;
-    for record in sections.module_texts.chunks_exact(MODULE_TEXT_RECORD_BYTES) {
+    for record in sections
+        .module_texts
+        .as_chunks::<MODULE_TEXT_RECORD_BYTES>()
+        .0
+    {
         let range = read_address_range(base_address, record, previous).ok_or(MALFORMED)?;
         let module = read_u16(record, 8);
         let set = read_set_index(read_u16(record, 10), sets.len()).ok_or(MALFORMED)?;

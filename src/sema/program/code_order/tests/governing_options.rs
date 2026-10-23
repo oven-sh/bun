@@ -23,7 +23,10 @@ fn nested_project_is_governed_by_own_configuration() {
     let host = host_of(&[
         ("/main.ts", "import \"./packages/lib/index\""),
         ("/packages/lib/tsconfig.json", ES2020_CONFIG),
-        ("/packages/lib/index.ts", "import \"./util\"\nimport type t from \"./types\""),
+        (
+            "/packages/lib/index.ts",
+            "import \"./util\"\nimport type t from \"./types\"",
+        ),
         ("/packages/lib/util.ts", ""),
         ("/packages/lib/types.ts", ""),
     ]);
@@ -33,8 +36,14 @@ fn nested_project_is_governed_by_own_configuration() {
 
         let project = options_at(files, "/packages/lib/index.ts");
         assert_eq!(project.target, ScriptTarget::ES2020);
-        assert!(std::ptr::eq(options_at(files, "/packages/lib/util.ts"), project));
-        assert!(std::ptr::eq(options_at(files, "/packages/lib/types.ts"), project));
+        assert!(std::ptr::eq(
+            options_at(files, "/packages/lib/util.ts"),
+            project
+        ));
+        assert!(std::ptr::eq(
+            options_at(files, "/packages/lib/types.ts"),
+            project
+        ));
     });
 }
 
@@ -62,7 +71,10 @@ fn file_under_unreadable_configuration_has_options_of_program() {
         ("/app/index.ts", ""),
     ]);
     with_program(&host, &["/main.ts"], |files| {
-        assert!(std::ptr::eq(options_at(files, "/app/index.ts"), files.options));
+        assert!(std::ptr::eq(
+            options_at(files, "/app/index.ts"),
+            files.options
+        ));
     });
 }
 
@@ -86,7 +98,10 @@ fn dependency_without_configuration_is_checked_leniently() {
         let dep = options_at(files, "/node_modules/dep/index.ts");
         assert!(!dep.strict_null_checks && !dep.no_implicit_any);
         assert_eq!(dep.base_dir, b"/node_modules/dep");
-        assert!(std::ptr::eq(options_at(files, "/node_modules/dep/lib/util.ts"), dep));
+        assert!(std::ptr::eq(
+            options_at(files, "/node_modules/dep/lib/util.ts"),
+            dep
+        ));
 
         let other = options_at(files, "/node_modules/other/index.ts");
         assert!(!std::ptr::eq(other, dep));
@@ -136,7 +151,10 @@ fn configuration_above_node_modules_does_not_govern_dependency() {
         ("/app/node_modules/dep/index.ts", ""),
     ]);
     with_program(&host, &["/main.ts"], |files| {
-        assert_eq!(options_at(files, "/app/index.ts").target, ScriptTarget::ES2020);
+        assert_eq!(
+            options_at(files, "/app/index.ts").target,
+            ScriptTarget::ES2020
+        );
         let dep = options_at(files, "/app/node_modules/dep/index.ts");
         assert_eq!(dep.target, ScriptTarget::None);
         assert_eq!(dep.base_dir, b"/app/node_modules/dep");
@@ -159,7 +177,10 @@ fn declaration_file_has_options_of_program() {
 #[test]
 fn load_for_check_has_options_of_program_everywhere() {
     let host = host_of(&[
-        ("/main.ts", "import \"./packages/lib/index\"\nimport \"dep\""),
+        (
+            "/main.ts",
+            "import \"./packages/lib/index\"\nimport \"dep\"",
+        ),
         ("/packages/lib/tsconfig.json", ES2020_CONFIG),
         ("/packages/lib/index.ts", ""),
         ("/node_modules/dep/index.ts", ""),
@@ -176,7 +197,10 @@ fn load_for_check_has_options_of_program_everywhere() {
 #[test]
 fn tsconfig_override_replaces_configuration_files() {
     let host = host_of(&[
-        ("/main.ts", "import \"./packages/lib/index\"\nimport \"dep\""),
+        (
+            "/main.ts",
+            "import \"./packages/lib/index\"\nimport \"dep\"",
+        ),
         ("/tsconfig.build.json", ""),
         ("/packages/lib/tsconfig.json", ES2020_CONFIG),
         ("/packages/lib/index.ts", ""),

@@ -14,7 +14,11 @@ import { freshSeed } from "./fresh-seed";
 import { unsupported } from "./run-programs";
 
 const mutantCount = Number(process.env.AOT_FUZZ_MUTANTS) || 300;
-const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : freshSeed === undefined ? [1] : [1, freshSeed];
+const seeds = process.env.AOT_FUZZ_SEED
+  ? [Number(process.env.AOT_FUZZ_SEED)]
+  : freshSeed === undefined
+    ? [1]
+    : [1, freshSeed];
 
 function mulberry32(state: number) {
   return () => {
@@ -36,14 +40,32 @@ function singleFilePrograms(folder: string, into: string[] = []) {
 }
 
 const token = /[A-Za-z_$][\w$]*|\d[\w.]*|=>|\.\.\.|[{}()\[\];,.:?=<>!+\-*/%&|^~]/g;
-const types = ["number", "string", "boolean", "undefined", "null", "never", "unknown", "any", "object", "symbol", "bigint", "void", "this", "number[]", "{}", "() => void"];
+const types = [
+  "number",
+  "string",
+  "boolean",
+  "undefined",
+  "null",
+  "never",
+  "unknown",
+  "any",
+  "object",
+  "symbol",
+  "bigint",
+  "void",
+  "this",
+  "number[]",
+  "{}",
+  "() => void",
+];
 // prettier-ignore
 const keywords = ["const", "let", "var", "using", "class", "enum", "namespace", "interface", "type", "function", "export", "declare", "abstract", "static", "async", "await", "yield", "new", "super", "this", "return", "extends", "implements", "readonly", "get", "set", "import", "default", "as", "satisfies", "typeof", "keyof", "in", "of", "is", "asserts", "label:"];
 const punctuation = ["(", ")", "{", "}", "[", "]", "<", ">", ";", ",", ":", "?", "=", ".", "!", "#x", "@d", "`", '"'];
 
 function mutate(source: string, random: () => number): string {
   const pick = <T>(list: T[]) => list[Math.floor(random() * list.length)];
-  const replace = (match: RegExpMatchArray, text: string) => source.slice(0, match.index) + text + source.slice(match.index! + match[0].length);
+  const replace = (match: RegExpMatchArray, text: string) =>
+    source.slice(0, match.index) + text + source.slice(match.index! + match[0].length);
   const tokens = [...source.matchAll(token)];
   if (!tokens.length) return source;
   const lines = source.split("\n");
@@ -80,31 +102,45 @@ function mutate(source: string, random: () => number): string {
   }
 }
 
-for (const seed of seeds) test.skipIf(!!unsupported)(
-  `bun check --aot survives ${mutantCount} mutated programs, AOT_FUZZ_SEED=${seed}`,
-  async () => {
-    using root = tempDir("aot-mutated-programs", {});
-    const programs = singleFilePrograms(join(import.meta.dir, "programs"));
-    const random = mulberry32(seed);
-    const crashes: { from: string; outcome: string; source: string }[] = [];
-    let next = 0;
-    const worker = async (id: number) => {
-      const folder = join(String(root), String(id));
-      mkdirSync(folder);
-      const entryPoint = join(folder, "main.ts");
-      while (next++ < mutantCount) {
-        const from = programs[Math.floor(random() * programs.length)];
-        let source = mutate(readFileSync(from, "utf8"), random);
-        if (random() < 0.3) source = mutate(source, random);
-        writeFileSync(entryPoint, source);
-        await using spawned = Bun.spawn({ cmd: [bunExe(), "check", "--aot", entryPoint], cwd: folder, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000 });
-        const [stdout, stderr] = await Promise.all([spawned.stdout.text(), spawned.stderr.text(), spawned.exited]);
-        const panic = /\bpanic\w*\b.*/.exec(stdout + stderr)?.[0];
-        if (spawned.signalCode || panic) crashes.push({ from: from.slice(import.meta.dir.length + 1), outcome: panic ?? String(spawned.signalCode), source });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) }, (_, id) => worker(id)));
-    expect(crashes).toEqual([]);
-  },
-  Math.max(300_000, mutantCount * 400),
-);
+for (const seed of seeds)
+  test.skipIf(!!unsupported)(
+    `bun check --aot survives ${mutantCount} mutated programs, AOT_FUZZ_SEED=${seed}`,
+    async () => {
+      using root = tempDir("aot-mutated-programs", {});
+      const programs = singleFilePrograms(join(import.meta.dir, "programs"));
+      const random = mulberry32(seed);
+      const crashes: { from: string; outcome: string; source: string }[] = [];
+      let next = 0;
+      const worker = async (id: number) => {
+        const folder = join(String(root), String(id));
+        mkdirSync(folder);
+        const entryPoint = join(folder, "main.ts");
+        while (next++ < mutantCount) {
+          const from = programs[Math.floor(random() * programs.length)];
+          let source = mutate(readFileSync(from, "utf8"), random);
+          if (random() < 0.3) source = mutate(source, random);
+          writeFileSync(entryPoint, source);
+          await using spawned = Bun.spawn({
+            cmd: [bunExe(), "check", "--aot", entryPoint],
+            cwd: folder,
+            env: bunEnv,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 120_000,
+          });
+          const [stdout, stderr] = await Promise.all([spawned.stdout.text(), spawned.stderr.text(), spawned.exited]);
+          const panic = /\bpanic\w*\b.*/.exec(stdout + stderr)?.[0];
+          if (spawned.signalCode || panic)
+            crashes.push({
+              from: from.slice(import.meta.dir.length + 1),
+              outcome: panic ?? String(spawned.signalCode),
+              source,
+            });
+        }
+      };
+      await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) }, (_, id) => worker(id)));
+      expect(crashes).toEqual([]);
+    },
+    Math.max(300_000, mutantCount * 400),
+  );

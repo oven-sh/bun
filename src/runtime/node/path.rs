@@ -10,14 +10,14 @@ use bun_core::Utf8Bytes;
 use bun_node_path::{
     CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
     basename_posix_latin1, basename_posix_t, basename_windows_t,
-    basename_without_suffix_posix_latin1, dirname_posix_latin1,
-    dirname_posix_t, dirname_windows_t, extname_posix_latin1, extname_posix_t, extname_windows_t,
-    format_t, is_absolute_posix_t, is_absolute_windows_t, is_resolved_posix, is_tidy_posix,
-    join_buf_len, join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_t,
-    normalize_posix_latin1, normalize_windows_t, parse_posix_latin1, parse_posix_t,
-    parse_windows_t, path_size, relative_buf_len, relative_posix_latin1, relative_posix_t,
-    relative_windows_t, resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t,
-    resolve_windows_t, to_namespaced_path_buf_len, to_namespaced_path_windows_t,
+    basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
+    extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
+    is_absolute_windows_t, is_resolved_posix, is_tidy_posix, join_buf_len, join_posix_t,
+    join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
+    normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
+    relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
+    resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
+    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -39,8 +39,11 @@ impl PathScratch<'_> {
             return Self::Spill(vec![0; len].into_boxed_slice());
         }
         // SAFETY: the global object is only asked for its VM.
-        let pool: &mut RarePathBuf =
-            &mut unsafe { heap.global() }.bun_vm().as_mut().rare_data().path_buf;
+        let pool: &mut RarePathBuf = &mut unsafe { heap.global() }
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .path_buf;
         Self::Pooled(&mut pool.get(len)[..len])
     }
 
@@ -139,7 +142,11 @@ impl<'a> IntoAnswer<ParsedPath<'a>> for ParsedPath<'a> {
 
 /// The characters `range` of `text`. SAFETY: `range` is what a function of `bun_node_path` answered for `text.characters()`.
 #[inline(always)]
-unsafe fn part<'a>(heap: &JsHeap<'a>, text: &JsLatin1<'a>, range: core::ops::Range<usize>) -> Text<'a> {
+unsafe fn part<'a>(
+    heap: &JsHeap<'a>,
+    text: &JsLatin1<'a>,
+    range: core::ops::Range<usize>,
+) -> Text<'a> {
     // SAFETY: forwarded.
     unsafe { text.substring_unchecked(heap, range.start, range.end) }
 }
@@ -171,12 +178,16 @@ fn basename_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
         }));
     };
     // A suffix whose UTF-8 is longer than that of the path is not looked for. Of an ASCII suffix that is its length.
-    let Some(suffix) = latin1_of::<FLAT_ONLY>(heap, suffix)?.filter(|suffix| suffix.characters().is_ascii()) else {
+    let Some(suffix) =
+        latin1_of::<FLAT_ONLY>(heap, suffix)?.filter(|suffix| suffix.characters().is_ascii())
+    else {
         return Ok(None);
     };
     let (characters, suffix) = (text.characters(), suffix.characters());
     if WINDOWS {
-        return Ok(Some(text.part(heap, basename_windows_t(characters, Some(suffix)))));
+        return Ok(Some(
+            text.part(heap, basename_windows_t(characters, Some(suffix))),
+        ));
     }
     // SAFETY: the ranges are of these characters.
     Ok(Some(unsafe {
@@ -323,7 +334,13 @@ fn parse_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
             } else {
                 let [root, dir, base, ext, name] = text.substrings_unchecked(
                     heap,
-                    [parsed.root, parsed.dir, parsed.base, parsed.ext, parsed.name],
+                    [
+                        parsed.root,
+                        parsed.dir,
+                        parsed.base,
+                        parsed.ext,
+                        parsed.name,
+                    ],
                 );
                 ParsedPath {
                     root,
@@ -565,7 +582,9 @@ fn join_windows_latin1<'a, const FLAT_ONLY: bool>(
         }
     }
     // SAFETY: the first `count` are written.
-    Ok(join_windows_parts(heap, unsafe { written(&parts[..count]) }))
+    Ok(join_windows_parts(heap, unsafe {
+        written(&parts[..count])
+    }))
 }
 
 #[inline(never)]
@@ -717,7 +736,10 @@ fn relative_of_absolute_posix<'a>(
     let mut scratch = PathScratch::new(heap, buf_len * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len);
     let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
-    latin1_answer(heap, relative_posix_t(from, to, buf, from_buf, tmp_buf).ok()?)
+    latin1_answer(
+        heap,
+        relative_posix_t(from, to, buf, from_buf, tmp_buf).ok()?,
+    )
 }
 
 #[inline(never)]
@@ -814,7 +836,10 @@ fn resolve_joined_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
 
 #[inline(never)]
 fn resolve_untidy_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
-    heap.create_latin1_string(resolve_absolute_posix_latin1(joined, &mut normalized_buffer()))
+    heap.create_latin1_string(resolve_absolute_posix_latin1(
+        joined,
+        &mut normalized_buffer(),
+    ))
 }
 
 #[inline(never)]
@@ -845,7 +870,9 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     let parts: SmallVec<[&[u8]; FEW]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
     #[cfg(unix)]
-    if !WINDOWS && (parts.is_empty() || (parts.len() == 1 && (parts[0] == b"." || parts[0] == b"./"))) {
+    if !WINDOWS
+        && (parts.is_empty() || (parts.len() == 1 && (parts[0] == b"." || parts[0] == b"./")))
+    {
         // `process.cwd()`, which throws when `getcwd` fails (for example, a deleted working directory).
         let cwd = crate::jsc::call_zero_is_throw(global, || Process__getCachedCwd(global))?;
         let Some(cwd) = JsLocal::new(heap, cwd).as_string() else {
@@ -868,7 +895,10 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
 }
 by_form_of_operands!(resolve, resolve_other, resolve_latin1, resolve_utf8, <R: Resolved<'a>>(paths: &'a [JsLocal<'a>]) -> R);
 
-fn format<'a, const WINDOWS: bool>(cx: &mut JsScope<'a>, path_object: JsLocal<'a>) -> TextResult<'a> {
+fn format<'a, const WINDOWS: bool>(
+    cx: &mut JsScope<'a>,
+    path_object: JsLocal<'a>,
+) -> TextResult<'a> {
     let path_object = path_object.to_js();
     let members = {
         let global = cx.global();
@@ -879,7 +909,10 @@ fn format<'a, const WINDOWS: bool>(cx: &mut JsScope<'a>, path_object: JsLocal<'a
             Default::default(),
         )?;
         let mut members: [Option<Utf8Bytes<'static>>; 5] = Default::default();
-        for (member, name) in members.iter_mut().zip(["root", "dir", "base", "name", "ext"]) {
+        for (member, name) in members
+            .iter_mut()
+            .zip(["root", "dir", "base", "name", "ext"])
+        {
             if let Some(value) = path_object.get_truthy(global, name)? {
                 *member = Some(value.to_utf8(global)?);
             }
@@ -891,14 +924,17 @@ fn format<'a, const WINDOWS: bool>(cx: &mut JsScope<'a>, path_object: JsLocal<'a
         None => &[],
     });
     // One more for the separator.
-    let buf_len = (1
-        + (if dir.is_empty() { root.len() } else { dir.len() })
-        + (if base.is_empty() {
+    let buf_len =
+        (1 + (if dir.is_empty() {
+            root.len()
+        } else {
+            dir.len()
+        }) + (if base.is_empty() {
             name.len() + ext.len() + 1
         } else {
             base.len()
         }))
-    .max(path_size::<u8>());
+        .max(path_size::<u8>());
     let heap = &cx.heap;
     let mut scratch = PathScratch::new(heap, buf_len);
     heap.create_utf8_string(format_t(
@@ -944,7 +980,11 @@ on_both_platforms! {
 }
 
 #[inline(always)]
-pub(crate) fn relative_posix<'a>(heap: &JsHeap<'a>, from: Text<'a>, to: Text<'a>) -> TextResult<'a> {
+pub(crate) fn relative_posix<'a>(
+    heap: &JsHeap<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> TextResult<'a> {
     relative::<false, _>(heap, from, to)
 }
 

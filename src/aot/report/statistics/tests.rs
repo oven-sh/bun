@@ -42,16 +42,24 @@ fn none_has_no_line() {
 #[test]
 fn lines_follow_schema_order() {
     let lines = lines(|id| id as u64 * 3 + 1);
-    let ids = StatisticId::ALL.into_iter().filter(|&id| id != StatisticId::None);
+    let ids = StatisticId::ALL
+        .into_iter()
+        .filter(|&id| id != StatisticId::None);
     for (line, id) in lines.iter().zip(ids) {
-        assert_eq!(*line, format!("{} {}", id.name(), id as u64 * 3 + 1), "{id:?}");
+        assert_eq!(
+            *line,
+            format!("{} {}", id.name(), id as u64 * 3 + 1),
+            "{id:?}"
+        );
     }
 }
 
 #[test]
 fn name_resolves_to_statistic() {
     for line in lines(|_| 0) {
-        let name = bun_core::strings::split(&line, b" ").next().expect("a line has a name");
+        let name = bun_core::strings::split(&line, b" ")
+            .next()
+            .expect("a line has a name");
         let name = core::str::from_utf8(name).expect("statistic names are ASCII");
         let id = StatisticId::from_name(name).expect("a declared statistic");
         assert_eq!(id.name(), name);

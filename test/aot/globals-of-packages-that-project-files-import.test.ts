@@ -2,7 +2,14 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: ["bun"], strict: true };
+const options = {
+  target: "ESNext",
+  module: "Preserve",
+  moduleResolution: "bundler",
+  noEmit: true,
+  types: ["bun"],
+  strict: true,
+};
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -11,11 +18,18 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^error: (TS\d+): .*\n +at \S*?(test\/\S+?):(\d+):\d+$/gm)].map(match => `${match[2]}:${match[3]} ${match[1]}`).sort();
+const errors = (said: string) =>
+  [...said.matchAll(/^error: (TS\d+): .*\n +at \S*?(test\/\S+?):(\d+):\d+$/gm)]
+    .map(match => `${match[2]}:${match[3]} ${match[1]}`)
+    .sort();
 
 const project = {
   "tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["test"] }),
-  "node_modules/@types/shapes/package.json": JSON.stringify({ name: "@types/shapes", version: "1.0.0", types: "index.d.ts" }),
+  "node_modules/@types/shapes/package.json": JSON.stringify({
+    name: "@types/shapes",
+    version: "1.0.0",
+    types: "index.d.ts",
+  }),
   "node_modules/@types/shapes/index.d.ts": `interface FromScript {\n  a: number;\n}\ndeclare module "shapes" {\n  export const made: FromScript;\n}\n`,
   "node_modules/@types/shapes/register.d.ts": `declare global {\n  interface FromSubpath {\n    b: string;\n  }\n}\nexport {};\n`,
   "node_modules/@types/shapes/folder/index.d.ts": `interface FromFolder {\n  c: boolean;\n}\n`,

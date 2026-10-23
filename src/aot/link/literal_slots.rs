@@ -24,14 +24,18 @@ fn find_literal_layouts(input: &UseInput<'_>) -> Vec<AtomicBool> {
         }
     });
     let pairs = in_checked_files.into_iter().zip(in_other_files);
-    let is_literal_layout = pairs.map(|(checked, other)| checked.into_inner() && !other.into_inner());
+    let is_literal_layout =
+        pairs.map(|(checked, other)| checked.into_inner() && !other.into_inner());
     is_literal_layout.map(AtomicBool::new).collect()
 }
 
 fn keeps_typed_slot(ty: &Type) -> bool {
     let unboxed = Primitives::NUMBER | Primitives::BOOLEAN;
     *ty != Type::primitives(ty.primitives & Primitives::NULLISH)
-        && ty.primitives.without(unboxed | Primitives::NULLISH).is_empty()
+        && ty
+            .primitives
+            .without(unboxed | Primitives::NULLISH)
+            .is_empty()
         && ty.flags.without(TypeFlags::HAS_INTEGERS).is_empty()
         && ty.opaque.is_none()
         && ty.environment.is_none()
@@ -52,7 +56,8 @@ pub(super) fn widen_literal_slots(layouts: &mut [Layout], input: &UseInput<'_>, 
             if declared.ty == TypeTable::ANYTHING || keeps_typed_slot(types.get(declared.ty)) {
                 continue;
             }
-            declared.flags = declared.flags.without(PositionFlags::IS_INT32_PROMISE) | PositionFlags::IS_EXPECTED;
+            declared.flags = declared.flags.without(PositionFlags::IS_INT32_PROMISE)
+                | PositionFlags::IS_EXPECTED;
         }
     });
 }
@@ -71,12 +76,16 @@ export const values = [makeItem(), new Point()];
 "#;
 
     fn link() -> Program {
-        link_sources_without_bun_modules(&[("main.ts", MAIN)]).expect("the program links").program
+        link_sources_without_bun_modules(&[("main.ts", MAIN)])
+            .expect("the program links")
+            .program
     }
 
     fn find_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
         let has_name = |layout: &&Layout| {
-            layout.name.is_some_and(|id| program.strings.get(id) == name.as_bytes())
+            layout
+                .name
+                .is_some_and(|id| program.strings.get(id) == name.as_bytes())
         };
         program.layouts.iter().find(has_name).expect(name)
     }
@@ -87,7 +96,10 @@ export const values = [makeItem(), new Point()];
             text.is_some_and(|id| program.strings.get(id) == name.as_bytes())
         };
         let fields = &find_layout(program, layout).fields;
-        let field = fields.iter().find(|field| field.key.is_some_and(has_name)).expect(name);
+        let field = fields
+            .iter()
+            .find(|field| field.key.is_some_and(has_name))
+            .expect(name);
         field.declared.flags.contains(PositionFlags::IS_EXPECTED)
     }
 

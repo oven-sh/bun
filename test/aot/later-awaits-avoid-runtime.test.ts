@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const turns = 2000;
 const files = {
@@ -66,14 +66,27 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("an await after the first suspension registers its waiter without a call into the run time", async () => {
   using dir = tempDir("aot-later-awaits", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const counted = async (name: string) => {
     const path = join(String(dir), "counts-" + name);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
     const interpreted = await run([bunExe(), "main.mjs", name], String(dir), bunEnv);
-    expect(await run([executable, name], String(dir), env)).toEqual({ stdout: interpreted.stdout, stderr: "", exitCode: 0 });
-    const counts: Record<string, number> = Object.fromEntries([...firstSuspensions, ...laterSuspensions].map(operation => [operation, 0]));
+    expect(await run([executable, name], String(dir), env)).toEqual({
+      stdout: interpreted.stdout,
+      stderr: "",
+      exitCode: 0,
+    });
+    const counts: Record<string, number> = Object.fromEntries(
+      [...firstSuspensions, ...laterSuspensions].map(operation => [operation, 0]),
+    );
     let promises = 0;
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, operation] = line.split("\toperation:");
@@ -91,9 +104,15 @@ test("an await after the first suspension registers its waiter without a call in
   // Both make the promise of pending() each turn. A call that returns a promise after all would make one more.
   expect(pendingPromises.promises).toBeGreaterThan(turns * 0.9);
   expect(suspendedCalls.promises).toBeLessThan(pendingPromises.promises * 1.25);
-  expect({ pendingPromises: pendingPromises.later, suspendedCalls: suspendedCalls.later }).toEqual({ pendingPromises: "few", suspendedCalls: "few" });
+  expect({ pendingPromises: pendingPromises.later, suspendedCalls: suspendedCalls.later }).toEqual({
+    pendingPromises: "few",
+    suspendedCalls: "few",
+  });
 
   const promisesWithOtherReaction = await counted("promisesWithOtherReaction");
   const asyncContext = await counted("asyncContext");
-  expect({ promisesWithOtherReaction: promisesWithOtherReaction.later, asyncContext: asyncContext.later }).toEqual({ promisesWithOtherReaction: "every turn", asyncContext: "few" });
+  expect({ promisesWithOtherReaction: promisesWithOtherReaction.later, asyncContext: asyncContext.later }).toEqual({
+    promisesWithOtherReaction: "every turn",
+    asyncContext: "few",
+  });
 }, 240_000);

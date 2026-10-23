@@ -70,7 +70,9 @@ fn names_ascend_in_each_run() {
         .map(|name| (name_run(name), text_of_name(name)))
         .collect();
     assert!(names.is_sorted_by(|left, right| left < right));
-    let well_known = names.iter().filter(|name| name.0 == NameRun::WellKnownSymbol);
+    let well_known = names
+        .iter()
+        .filter(|name| name.0 == NameRun::WellKnownSymbol);
     assert_eq!(well_known.count(), WellKnownSymbol::COUNT);
 }
 
@@ -116,7 +118,10 @@ fn member_lookup() {
 #[test]
 fn member_is_absent_below_listed_chain() {
     let push = name("push");
-    assert_eq!(member(BuiltinId::ObjectPrototype, push), MemberLookup::Absent);
+    assert_eq!(
+        member(BuiltinId::ObjectPrototype, push),
+        MemberLookup::Absent
+    );
     assert_eq!(member(BuiltinId::Math, push), MemberLookup::Absent);
     assert_eq!(member(BuiltinId::Array, push), MemberLookup::Absent);
     assert_eq!(member(BuiltinId::Process, push), MemberLookup::Absent);
@@ -131,11 +136,15 @@ fn member_is_unknown_below_open_holder() {
     let push = name("push");
     assert_eq!(member(BuiltinId::Console, push), MemberLookup::Unknown);
     assert_eq!(member(BuiltinId::Bun, push), MemberLookup::Unknown);
-    let open_holders = all_ids().filter(|&id| {
-        canonical_id(id) == id && !has_flag(id, BuiltinFlags::LISTS_ALL_MEMBERS)
-    });
+    let open_holders = all_ids()
+        .filter(|&id| canonical_id(id) == id && !has_flag(id, BuiltinFlags::LISTS_ALL_MEMBERS));
     for holder in open_holders.filter(|&holder| own_member(holder, push).is_none()) {
-        assert_eq!(member(holder, push), MemberLookup::Unknown, "{}", text_of(holder));
+        assert_eq!(
+            member(holder, push),
+            MemberLookup::Unknown,
+            "{}",
+            text_of(holder)
+        );
     }
 }
 
@@ -170,7 +179,10 @@ fn symbol_members() {
     assert!(!is_symbol_name(name("iterator")));
     assert_eq!(find_name(b"@@iterator"), None);
     let found = member(BuiltinId::ArrayPrototype, iterator);
-    assert_eq!(found, MemberLookup::Found(BuiltinId::ArrayPrototypeSymbolIterator));
+    assert_eq!(
+        found,
+        MemberLookup::Found(BuiltinId::ArrayPrototypeSymbolIterator)
+    );
     assert_eq!(
         canonical_id(BuiltinId::ArrayPrototypeSymbolIterator),
         BuiltinId::ArrayPrototypeValues
@@ -185,7 +197,10 @@ fn every_well_known_symbol_has_name() {
         assert_eq!(well_known_symbol(constant), Some(symbol));
         assert_eq!(entry(constant).holder, Some(BuiltinId::Symbol));
         assert_eq!(name_run(name_of_symbol(symbol)), NameRun::WellKnownSymbol);
-        assert_eq!(text_of_name(name_of_symbol(symbol)), text_of_name(entry(constant).name));
+        assert_eq!(
+            text_of_name(name_of_symbol(symbol)),
+            text_of_name(entry(constant).name)
+        );
     }
     assert_eq!(
         well_known_symbol(BuiltinId::SymbolIterator),
@@ -209,7 +224,10 @@ fn canonical_ids() {
         canonical_id(BuiltinId::StringPrototypeTrimLeft),
         BuiltinId::StringPrototypeTrimStart
     );
-    assert_eq!(canonical_id(BuiltinId::NumberParseFloat), BuiltinId::ParseFloat);
+    assert_eq!(
+        canonical_id(BuiltinId::NumberParseFloat),
+        BuiltinId::ParseFloat
+    );
     assert_eq!(canonical_id(BuiltinId::MathMax), BuiltinId::MathMax);
     for id in all_ids() {
         let canonical = canonical_id(id);
@@ -220,7 +238,10 @@ fn canonical_ids() {
 
 #[test]
 fn global_object_locations_hold_global_object() {
-    assert!(has_flag(BuiltinId::GlobalThis, BuiltinFlags::IS_GLOBAL_OBJECT));
+    assert!(has_flag(
+        BuiltinId::GlobalThis,
+        BuiltinFlags::IS_GLOBAL_OBJECT
+    ));
     assert!(has_flag(BuiltinId::Global, BuiltinFlags::IS_GLOBAL_OBJECT));
     assert!(!has_flag(BuiltinId::Math, BuiltinFlags::IS_GLOBAL_OBJECT));
     for id in all_ids().filter(|&id| has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT)) {
@@ -280,13 +301,19 @@ fn mutability_is_ordered() {
 
 #[test]
 fn members_of_locked_object_are_locked() {
-    assert!(has_flag(BuiltinId::ObjectPrototype, BuiltinFlags::IS_LOCKED_OBJECT));
+    assert!(has_flag(
+        BuiltinId::ObjectPrototype,
+        BuiltinFlags::IS_LOCKED_OBJECT
+    ));
     for &member in members(BuiltinId::ObjectPrototype) {
         let mutability = entry(member).mutability;
         assert_eq!(mutability, Mutability::AlwaysLocked, "{}", text_of(member));
     }
     assert!(has_flag(BuiltinId::Math, BuiltinFlags::HAS_LOCKED_MEMBERS));
-    assert_eq!(entry(BuiltinId::MathFloor).mutability, Mutability::AlwaysLocked);
+    assert_eq!(
+        entry(BuiltinId::MathFloor).mutability,
+        Mutability::AlwaysLocked
+    );
     let locks = BuiltinFlags::IS_LOCKED_OBJECT | BuiltinFlags::HAS_LOCKED_MEMBERS;
     assert!(!entry(BuiltinId::Error).flags.intersects(locks));
     assert_eq!(
@@ -358,7 +385,11 @@ fn locking_holders_lock_members_of_their_own() {
     let locks_members = BuiltinFlags::IS_LOCKED_OBJECT | BuiltinFlags::HAS_LOCKED_MEMBERS;
     let exempt = MEMBERS_LEFT_WRITABLE;
     for holder in all_ids().filter(|&id| entry(id).flags.intersects(locks_members)) {
-        assert!(has_flag(holder, BuiltinFlags::LISTS_ALL_MEMBERS), "{}", text_of(holder));
+        assert!(
+            has_flag(holder, BuiltinFlags::LISTS_ALL_MEMBERS),
+            "{}",
+            text_of(holder)
+        );
         for &member in members(holder) {
             if exempt.contains(&member) {
                 assert_eq!(entry(member).mutability, Mutability::ConstantUnlessWritten);
@@ -368,7 +399,11 @@ fn locking_holders_lock_members_of_their_own() {
             let is_of_instances = has_flag(member, BuiltinFlags::IS_OWN_PROPERTY_OF_INSTANCES);
             let is_match_state = holder == BuiltinId::RegExp
                 && entry(member).mutability == Mutability::ChangesOnItsOwn;
-            assert!(is_locked || is_of_instances || is_match_state, "{}", text_of(member));
+            assert!(
+                is_locked || is_of_instances || is_match_state,
+                "{}",
+                text_of(member)
+            );
         }
     }
 }
@@ -377,7 +412,10 @@ fn locking_holders_lock_members_of_their_own() {
 fn own_property_of_instances_is_not_locked_by_holder() {
     let properties = [
         (BuiltinId::ArrayPrototypeLength, Mutability::ChangesOnItsOwn),
-        (BuiltinId::RegExpPrototypeLastIndex, Mutability::ChangesOnItsOwn),
+        (
+            BuiltinId::RegExpPrototypeLastIndex,
+            Mutability::ChangesOnItsOwn,
+        ),
         (BuiltinId::StringPrototypeLength, Mutability::AlwaysLocked),
     ];
     for (member, mutability) in properties {
@@ -390,10 +428,18 @@ fn own_property_of_instances_is_not_locked_by_holder() {
 fn only_holder_locked_by_name_leaves_member_writable() {
     for member in MEMBERS_LEFT_WRITABLE {
         let holder = entry(member).holder.unwrap();
-        assert!(has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS), "{}", text_of(member));
+        assert!(
+            has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS),
+            "{}",
+            text_of(member)
+        );
     }
     for holder in all_ids().filter(|&id| has_flag(id, BuiltinFlags::IS_LOCKED_OBJECT)) {
-        assert!(!has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS), "{}", text_of(holder));
+        assert!(
+            !has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS),
+            "{}",
+            text_of(holder)
+        );
         for &member in members(holder) {
             let is_locked = entry(member).mutability == Mutability::AlwaysLocked;
             let is_of_instances = has_flag(member, BuiltinFlags::IS_OWN_PROPERTY_OF_INSTANCES);
@@ -451,7 +497,11 @@ fn constructors_and_namespaces_lock_static_members() {
     ];
     for (member, mutability) in expected {
         let holder = entry(member).holder.unwrap();
-        assert!(has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS), "{}", text_of(holder));
+        assert!(
+            has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS),
+            "{}",
+            text_of(holder)
+        );
         assert_eq!(entry(member).mutability, mutability, "{}", text_of(member));
     }
 }
@@ -459,21 +509,47 @@ fn constructors_and_namespaces_lock_static_members() {
 #[test]
 fn error_constructors_and_intl_are_not_locked() {
     let locks_members = BuiltinFlags::IS_LOCKED_OBJECT | BuiltinFlags::HAS_LOCKED_MEMBERS;
-    for holder in [BuiltinId::Error, BuiltinId::TypeError, BuiltinId::Intl, BuiltinId::Function] {
-        assert!(!entry(holder).flags.intersects(locks_members), "{}", text_of(holder));
+    for holder in [
+        BuiltinId::Error,
+        BuiltinId::TypeError,
+        BuiltinId::Intl,
+        BuiltinId::Function,
+    ] {
+        assert!(
+            !entry(holder).flags.intersects(locks_members),
+            "{}",
+            text_of(holder)
+        );
         let mutability = entry(holder).mutability;
-        assert_eq!(mutability, Mutability::ConstantUnlessWritten, "{}", text_of(holder));
+        assert_eq!(
+            mutability,
+            Mutability::ConstantUnlessWritten,
+            "{}",
+            text_of(holder)
+        );
     }
 }
 
 #[test]
 fn weak_reference_and_error_prototypes_are_not_locked() {
     let locks_members = BuiltinFlags::IS_LOCKED_OBJECT | BuiltinFlags::HAS_LOCKED_MEMBERS;
-    for member in [BuiltinId::WeakRefPrototypeDeref, BuiltinId::ErrorPrototypeToString] {
+    for member in [
+        BuiltinId::WeakRefPrototypeDeref,
+        BuiltinId::ErrorPrototypeToString,
+    ] {
         let holder = entry(member).holder.unwrap();
-        assert!(!entry(holder).flags.intersects(locks_members), "{}", text_of(holder));
+        assert!(
+            !entry(holder).flags.intersects(locks_members),
+            "{}",
+            text_of(holder)
+        );
         let mutability = entry(member).mutability;
-        assert_eq!(mutability, Mutability::ConstantUnlessWritten, "{}", text_of(member));
+        assert_eq!(
+            mutability,
+            Mutability::ConstantUnlessWritten,
+            "{}",
+            text_of(member)
+        );
     }
 }
 
@@ -507,26 +583,58 @@ fn object_closed_to_other_names_locks_members() {
     expected.sort();
     assert_eq!(holders, expected);
     for holder in holders {
-        assert!(has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS), "{}", text_of(holder));
-        assert!(!has_flag(holder, BuiltinFlags::IS_LOCKED_OBJECT), "{}", text_of(holder));
+        assert!(
+            has_flag(holder, BuiltinFlags::HAS_LOCKED_MEMBERS),
+            "{}",
+            text_of(holder)
+        );
+        assert!(
+            !has_flag(holder, BuiltinFlags::IS_LOCKED_OBJECT),
+            "{}",
+            text_of(holder)
+        );
     }
 }
 
 #[test]
 fn generator_prototypes_are_closed_entirely() {
-    for prototype in [BuiltinId::GeneratorPrototype, BuiltinId::AsyncGeneratorPrototype] {
-        assert!(has_flag(prototype, BuiltinFlags::IS_LOCKED_OBJECT), "{}", text_of(prototype));
+    for prototype in [
+        BuiltinId::GeneratorPrototype,
+        BuiltinId::AsyncGeneratorPrototype,
+    ] {
+        assert!(
+            has_flag(prototype, BuiltinFlags::IS_LOCKED_OBJECT),
+            "{}",
+            text_of(prototype)
+        );
     }
     let links = [
-        (BuiltinId::GeneratorFunctionPrototypePrototype, BuiltinId::GeneratorPrototype),
-        (BuiltinId::AsyncGeneratorFunctionPrototypePrototype, BuiltinId::AsyncGeneratorPrototype),
-        (BuiltinId::GeneratorPrototypeConstructor, BuiltinId::GeneratorFunctionPrototype),
-        (BuiltinId::AsyncGeneratorPrototypeConstructor, BuiltinId::AsyncGeneratorFunctionPrototype),
+        (
+            BuiltinId::GeneratorFunctionPrototypePrototype,
+            BuiltinId::GeneratorPrototype,
+        ),
+        (
+            BuiltinId::AsyncGeneratorFunctionPrototypePrototype,
+            BuiltinId::AsyncGeneratorPrototype,
+        ),
+        (
+            BuiltinId::GeneratorPrototypeConstructor,
+            BuiltinId::GeneratorFunctionPrototype,
+        ),
+        (
+            BuiltinId::AsyncGeneratorPrototypeConstructor,
+            BuiltinId::AsyncGeneratorFunctionPrototype,
+        ),
     ];
     for (location, object) in links {
         assert_eq!(canonical_id(location), object, "{}", text_of(location));
         let mutability = entry(location).mutability;
-        assert_eq!(mutability, Mutability::AlwaysLocked, "{}", text_of(location));
+        assert_eq!(
+            mutability,
+            Mutability::AlwaysLocked,
+            "{}",
+            text_of(location)
+        );
     }
 }
 
@@ -545,20 +653,41 @@ fn bindings_that_no_package_replaces_are_locked() {
         BuiltinId::Uint8Array,
     ];
     for id in locked {
-        assert_eq!(entry(id).mutability, Mutability::AlwaysLocked, "{}", text_of(id));
+        assert_eq!(
+            entry(id).mutability,
+            Mutability::AlwaysLocked,
+            "{}",
+            text_of(id)
+        );
     }
-    let open = [BuiltinId::Date, BuiltinId::Promise, BuiltinId::WeakMap, BuiltinId::Intl];
+    let open = [
+        BuiltinId::Date,
+        BuiltinId::Promise,
+        BuiltinId::WeakMap,
+        BuiltinId::Intl,
+    ];
     for id in open {
         let mutability = entry(id).mutability;
-        assert_eq!(mutability, Mutability::ConstantUnlessWritten, "{}", text_of(id));
+        assert_eq!(
+            mutability,
+            Mutability::ConstantUnlessWritten,
+            "{}",
+            text_of(id)
+        );
     }
 }
 
 #[test]
 fn symbol_binding_is_locked() {
-    assert!(has_flag(BuiltinId::Symbol, BuiltinFlags::HAS_LOCKED_MEMBERS));
+    assert!(has_flag(
+        BuiltinId::Symbol,
+        BuiltinFlags::HAS_LOCKED_MEMBERS
+    ));
     assert!(!has_flag(BuiltinId::Symbol, BuiltinFlags::IS_LOCKED_OBJECT));
-    assert_eq!(entry(BuiltinId::Symbol).mutability, Mutability::AlwaysLocked);
+    assert_eq!(
+        entry(BuiltinId::Symbol).mutability,
+        Mutability::AlwaysLocked
+    );
     assert_eq!(
         entry(BuiltinId::SymbolIterator).mutability,
         Mutability::AlwaysLocked
@@ -642,7 +771,11 @@ fn platforms() {
         assert!(!entry(id).platforms.is_empty(), "{}", text_of(id));
         if let Some(holder) = entry(id).holder {
             let holder_platforms = entry(holder).platforms;
-            assert!(holder_platforms.contains(entry(id).platforms), "{}", text_of(id));
+            assert!(
+                holder_platforms.contains(entry(id).platforms),
+                "{}",
+                text_of(id)
+            );
         }
     }
 }
@@ -673,7 +806,11 @@ fn listed_functions_are_in_table() {
     for id in all_ids() {
         let data = entry(id);
         for list in [data.calls(), data.implemented_by()] {
-            assert!(list.is_sorted_by(|left, right| left < right), "{}", text_of(id));
+            assert!(
+                list.is_sorted_by(|left, right| left < right),
+                "{}",
+                text_of(id)
+            );
             let mut functions = list.iter();
             assert!(functions.all(|&function| runtime_function(function).is_some()));
         }

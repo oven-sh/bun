@@ -15,9 +15,17 @@ function calls(): void { try { untyped("x"); } catch {} }
 calls();
 `,
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot-log-type-mismatches", "main.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--aot-log-type-mismatches", "main.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(mismatches(stderr).map(line => line.replace(/^.*; from /, ""))).toEqual([expect.stringMatching(/^main\.ts:4 < main\.ts/)]);
+  expect(mismatches(stderr).map(line => line.replace(/^.*; from /, ""))).toEqual([
+    expect.stringMatching(/^main\.ts:4 < main\.ts/),
+  ]);
   expect(exitCode).toBe(0);
 }, 120_000);
 
@@ -31,11 +39,19 @@ function calls(): void { try { untyped("x"); } catch {} }
 calls();
 `,
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot-log-type-mismatches", "src/deep/main.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--aot-log-type-mismatches", "src/deep/main.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   const records = mismatches(stderr);
   expect(records.map(line => line.split(" ")[4])).toEqual(["src/deep/main.ts:2:17"]);
-  expect(records.map(line => line.replace(/^.*; from /, ""))).toEqual([expect.stringMatching(/^src\/deep\/main\.ts:4 < src\/deep\/main\.ts/)]);
+  expect(records.map(line => line.replace(/^.*; from /, ""))).toEqual([
+    expect.stringMatching(/^src\/deep\/main\.ts:4 < src\/deep\/main\.ts/),
+  ]);
   expect(exitCode).toBe(0);
 }, 120_000);
 
@@ -61,11 +77,33 @@ try { console.log("a string", untyped("x")); } catch (e) { console.log("a string
   });
   const said: Record<string, { stdout: string; lines: string[]; exitCode: number }> = {};
   for (const flags of [[], ["--aot"], ["--aot-log-type-mismatches"]]) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, "main.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...flags, "main.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    said[flags.join()] = { stdout, lines: mismatches(stderr).map(line => line.replace(/^\[aot\] type-mismatch [0-9a-f]{12} (\S+ \S+ \(.*?\)): .*; (continued|dropped); count .*$/, "$1 $2")), exitCode };
+    said[flags.join()] = {
+      stdout,
+      lines: mismatches(stderr).map(line =>
+        line.replace(
+          /^\[aot\] type-mismatch [0-9a-f]{12} (\S+ \S+ \(.*?\)): .*; (continued|dropped); count .*$/,
+          "$1 $2",
+        ),
+      ),
+      exitCode,
+    };
   }
-  expect(said[""]).toEqual({ stdout: "sealed null 1\nadopted 2\nan instance 1\na string NaN\n", lines: [], exitCode: 0 });
+  expect(said[""]).toEqual({
+    stdout: "sealed null 1\nadopted 2\nan instance 1\na string NaN\n",
+    lines: [],
+    exitCode: 0,
+  });
   expect(said["--aot"]).toEqual(said[""]);
-  expect(said["--aot-log-type-mismatches"]).toEqual({ ...said[""], lines: ["argument main.ts:12:17 (double) continued"] });
+  expect(said["--aot-log-type-mismatches"]).toEqual({
+    ...said[""],
+    lines: ["argument main.ts:12:17 (double) continued"],
+  });
 }, 120_000);

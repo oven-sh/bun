@@ -257,7 +257,10 @@ function instanceTestOf(columns: ClassColumns): InstanceTest {
 function pristineTestOf(builder: ModelBuilder, { name, columns }: ClassDeclaration, source: Source): PristineTest {
   const { pristineTest = "Mark" } = columns;
   if (pristineTests.includes(pristineTest)) return pristineTest;
-  builder.problems.add(source, `the class ${name}: ${pristineTest} is not one of the tests ${pristineTests.join(", ")}`);
+  builder.problems.add(
+    source,
+    `the class ${name}: ${pristineTest} is not one of the tests ${pristineTests.join(", ")}`,
+  );
   return "Mark";
 }
 
@@ -284,7 +287,8 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       hasClosureInstances: columns.hasClosureInstances ?? false,
       instancesAreEntries: columns.instancesAreEntries ?? false,
       definesCharactersOnNewInstances: columns.definesCharactersOnNewInstances ?? false,
-      namesDefinedOnNewInstances: columns.namesDefinedOnNewInstances?.map(text => builder.internComponent(text)) ?? null,
+      namesDefinedOnNewInstances:
+        columns.namesDefinedOnNewInstances?.map(text => builder.internComponent(text)) ?? null,
       typesOfNamesDefinedOnNewInstances: [],
       namesMadeByStaticMembers: Object.entries(columns.namesMadeByStaticMembers ?? {}).map(([name, member]) => ({
         name: builder.internComponent(name),
@@ -326,7 +330,10 @@ function createNamespace(
       namesOnlyInspected: namesOnlyInspectedByNativeCode.map(name => builder.internComponent(name)),
     });
   } else if (namesOnlyInspectedByNativeCode.length > 0) {
-    builder.problems.add(source, `${key} says which names native code only inspects and does not list the names that it reads`);
+    builder.problems.add(
+      source,
+      `${key} says which names native code only inspects and does not list the names that it reads`,
+    );
   }
 }
 
@@ -546,13 +553,16 @@ function resolveKind(
 
 // The table has one record for each text. What is written differs either by platform or by architecture.
 function resolveTargetTexts(builder: ModelBuilder, written: readonly TargetTextSpec[]): ModelTargetText[] {
-  return Array.from(Map.groupBy(written, ({ text }) => text), ([text, specs]) => ({
-    platforms: targetPlatforms.filter(platform => specs.some(spec => spec.platforms.includes(platform))),
-    architectures: targetArchitectures.filter(architecture =>
-      specs.some(spec => spec.architectures.includes(architecture)),
-    ),
-    text: builder.internName(text, "Text"),
-  }));
+  return Array.from(
+    Map.groupBy(written, ({ text }) => text),
+    ([text, specs]) => ({
+      platforms: targetPlatforms.filter(platform => specs.some(spec => spec.platforms.includes(platform))),
+      architectures: targetArchitectures.filter(architecture =>
+        specs.some(spec => spec.architectures.includes(architecture)),
+      ),
+      text: builder.internName(text, "Text"),
+    }),
+  );
 }
 
 function resolveConstant(builder: ModelBuilder, builtin: ModelBuiltin, constant: ConstantSpec): ModelConstant {
@@ -813,7 +823,9 @@ function takesOnlyInstances(builder: ModelBuilder, receiver: ParameterType | nul
   if (receiver === null) return true;
   const { accepted, conversion } = receiver;
   return (
-    conversion === "None" && accepted.type === "Instance" && extendsClass(builder.findClass(accepted.class), instanceClass)
+    conversion === "None" &&
+    accepted.type === "Instance" &&
+    extendsClass(builder.findClass(accepted.class), instanceClass)
   );
 }
 
@@ -876,7 +888,8 @@ function entersNativeMethod(
   instanceClass: ModelClass,
 ): boolean {
   if (mode !== "Call" || isUndeclared || directEntry !== undefined) return false;
-  if (implementation !== undefined && (implementation.how !== "HostCall" || implementation.customGetter !== undefined)) return false;
+  if (implementation !== undefined && (implementation.how !== "HostCall" || implementation.customGetter !== undefined))
+    return false;
   return takesOnlyInstances(builder, receiver, instanceClass);
 }
 
@@ -888,7 +901,10 @@ function enterNativeMethods({ builder }: EntryContext): void {
     const written = builder.writtenEntryOf(builtin);
     written.signatures = written.signatures.map(({ signature, source }) =>
       entersNativeMethod(builder, signature, instanceClass)
-        ? { signature: { ...signature, implementation: signature.implementation ?? { how: "HostCall" }, directEntry }, source }
+        ? {
+            signature: { ...signature, implementation: signature.implementation ?? { how: "HostCall" }, directEntry },
+            source,
+          }
         : { signature, source },
     );
   }
@@ -946,7 +962,8 @@ function closeFunctions({ builder }: EntryContext): void {
   for (const builtin of builder.builtins) {
     if (builtin.kind !== "Function" && builtin.kind !== "Method") continue;
     const described = builtin.sameObjectAs ?? builtin;
-    if (builder.functionsOfUnknownClass.has(described) || columnOf(builder, described, "hasUndeclaredMembers")) continue;
+    if (builder.functionsOfUnknownClass.has(described) || columnOf(builder, described, "hasUndeclaredMembers"))
+      continue;
     addFlag(builtin, "ListsAllMembers");
   }
 }
@@ -1155,7 +1172,10 @@ function copyConstructorSignatures(builder: ModelBuilder): void {
   for (const { target, signatures } of copies) target.signatures.push(...signatures);
   // The class that lends its signatures is abstract: constructed itself, it throws whatever it is given.
   for (const { signatures } of abstractConstructors) {
-    const own = signatures.map(written => ({ ...written, signature: { ...written.signature, onlyPropagatesErrors: false } }));
+    const own = signatures.map(written => ({
+      ...written,
+      signature: { ...written.signature, onlyPropagatesErrors: false },
+    }));
     signatures.splice(0, signatures.length, ...own);
   }
 }

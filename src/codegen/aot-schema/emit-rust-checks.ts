@@ -29,7 +29,8 @@ pub struct CheckFailure {
     pub record: u32,
 }`.split("\n");
 
-const checkReferences = `fn check_references<R>(list: ProgramList, records: &[R], sizes: &TableSizes, for_each_reference: fn(&R, &mut dyn FnMut(Reference))) -> Result<(), CheckFailure> {
+const checkReferences =
+  `fn check_references<R>(list: ProgramList, records: &[R], sizes: &TableSizes, for_each_reference: fn(&R, &mut dyn FnMut(Reference))) -> Result<(), CheckFailure> {
     for (index, record) in records.iter().enumerate() {
         let mut is_valid = true;
         for_each_reference(record, &mut |reference| is_valid &= sizes.contains(reference));
@@ -40,7 +41,8 @@ const checkReferences = `fn check_references<R>(list: ProgramList, records: &[R]
     Ok(())
 }`.split("\n");
 
-const checkOrder = `fn check_order(list: ProgramList, first_unsorted_record: Option<usize>) -> Result<(), CheckFailure> {
+const checkOrder =
+  `fn check_order(list: ProgramList, first_unsorted_record: Option<usize>) -> Result<(), CheckFailure> {
     match first_unsorted_record {
         Some(index) => Err(CheckFailure { kind: InternalErrorKind::UnsortedList, list, record: index as u32 }),
         None => Ok(()),
@@ -108,21 +110,27 @@ function tableChecks(table: Table): string[] {
   if (slice === null) return [];
   const records = slice.startsWith("&") ? slice.slice(1) : slice;
   const member = `ProgramList::${programListMemberName(table.list.name)}`;
-  const checks = [`check_references(${member}, ${slice}, &sizes, ${rustTypeName(nameOf(table.type))}::for_each_reference)?;`];
+  const checks = [
+    `check_references(${member}, ${slice}, &sizes, ${rustTypeName(nameOf(table.type))}::for_each_reference)?;`,
+  ];
   if (table.type.tag === "Record" && orderChecks(table.type.record).length > 0) {
     const strings = comparesTexts(table.type.record) ? "&program.strings" : "";
     checks.push(`check_order(${member}, ${records}.iter().position(|record| !record.has_sorted_lists(${strings})))?;`);
   }
   if (table.list.isSorted) {
     const key = sortKey(table.list.sortedBy);
-    checks.push(`check_order(${member}, ${records}.windows(2).position(|pair| pair[0]${key} >= pair[1]${key}).map(|index| index + 1))?;`);
+    checks.push(
+      `check_order(${member}, ${records}.windows(2).position(|pair| pair[0]${key} >= pair[1]${key}).map(|index| index + 1))?;`,
+    );
   }
   return checks;
 }
 
 function checksRs(schema: Schema): string[] {
   const kinds = idLists(schema);
-  const sortedRecords = listedTypesOf(schema).flatMap(type => (type.tag === "Record" && orderChecks(type.record).length > 0 ? [type.record] : []));
+  const sortedRecords = listedTypesOf(schema).flatMap(type =>
+    type.tag === "Record" && orderChecks(type.record).length > 0 ? [type.record] : [],
+  );
   return [
     rustMarker,
     "",
@@ -143,7 +151,9 @@ function checksRs(schema: Schema): string[] {
         `${indentation}fn contains(&self, reference: Reference) -> bool {`,
         `${twoLevels}match reference {`,
         ...kinds.map(({ kind, list }) => {
-          const pattern = idKindsWithRoles.has(kind.name) ? `Reference::${kind.name}(id, _)` : `Reference::${kind.name}(id)`;
+          const pattern = idKindsWithRoles.has(kind.name)
+            ? `Reference::${kind.name}(id, _)`
+            : `Reference::${kind.name}(id)`;
           return `${threeLevels}${pattern} => id.index() < self.${snakeCase(list.name)},`;
         }),
         `${threeLevels}Reference::Builtin(_) => true,`,

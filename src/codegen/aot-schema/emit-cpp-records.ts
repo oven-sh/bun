@@ -48,7 +48,9 @@ function comparisonOf(name: string, fields: readonly Field[]): string[] {
       ? `std::bit_cast<uint64_t>(a.${field.name}) == std::bit_cast<uint64_t>(b.${field.name})`
       : `a.${field.name} == b.${field.name}`,
   );
-  const lines = terms.map((term, index) => (index === 0 ? `${indentation}return ${term}` : `${indentation.repeat(2)}&& ${term}`));
+  const lines = terms.map((term, index) =>
+    index === 0 ? `${indentation}return ${term}` : `${indentation.repeat(2)}&& ${term}`,
+  );
   lines[lines.length - 1] += ";";
   return [`friend bool operator==(const ${name}& a, const ${name}& b)`, "{", ...lines, "}"];
 }
@@ -59,7 +61,10 @@ function engineStruct(name: string, fields: readonly Field[], hasComparison: boo
 }
 
 function isComparableCase(variant: Variant, variantCase: VariantCase): boolean {
-  return isComparable({ tag: "Variant", variant: { ...variant, name: `${variant.name}::${variantCase.name}`, cases: [variantCase] } });
+  return isComparable({
+    tag: "Variant",
+    variant: { ...variant, name: `${variant.name}::${variantCase.name}`, cases: [variantCase] },
+  });
 }
 
 function engineVariant(variant: Variant): string[] {
@@ -67,7 +72,8 @@ function engineVariant(variant: Variant): string[] {
   const caseNames = variant.cases.map(variantCase => variantCase.name);
   const caseStructs = variant.cases.flatMap(variantCase => {
     const caseName = variantCase.name;
-    if (variantCase.fields.length === 0) return [`struct ${caseName} { friend bool operator==(const ${caseName}&, const ${caseName}&) = default; };`];
+    if (variantCase.fields.length === 0)
+      return [`struct ${caseName} { friend bool operator==(const ${caseName}&, const ${caseName}&) = default; };`];
     return engineStruct(caseName, variantCase.fields, isComparableCase(variant, variantCase));
   });
   return [
@@ -119,7 +125,10 @@ function recordsHeaders(schema: Schema): OutputFile[] {
   const firstOfOtherFile = types.findIndex(type => schemaFileOf(type) !== schemaFileOf(types[0]));
   const numberOfLeadingTypes = firstOfOtherFile < 0 ? types.length : firstOfOtherFile;
   return [
-    { name: leadingRecordsHeaderName, lines: cppHeader(recordIncludes, definitionsOf(types.slice(0, numberOfLeadingTypes))) },
+    {
+      name: leadingRecordsHeaderName,
+      lines: cppHeader(recordIncludes, definitionsOf(types.slice(0, numberOfLeadingTypes))),
+    },
     {
       name: "AOTSchemaRecords.h",
       lines: cppHeader(
@@ -206,7 +215,13 @@ function variantCodec(variant: Variant): string[] {
       encode.push(label, "    return;");
       continue;
     }
-    decode.push(`${label} {`, `    ${caseType} value;`, ...indent(decodeStatements(variantCase.fields, "value", 1)), "    return value;", "}");
+    decode.push(
+      `${label} {`,
+      `    ${caseType} value;`,
+      ...indent(decodeStatements(variantCase.fields, "value", 1)),
+      "    return value;",
+      "}",
+    );
     encode.push(
       `${label} {`,
       `    const auto& value = variant.as<${caseType}>();`,
@@ -250,8 +265,13 @@ function caseNameFunction(variant: Variant): string[] {
 
 function recordsSource(schema: Schema): string[] {
   const variants = engineTypesInDependencyOrder(schema).flatMap(type => (type.tag === "Variant" ? [type.variant] : []));
-  const codecs = payloadTypesOf(schema).map(type => (type.tag === "Record" ? recordCodec(type.record) : variantCodec(type.variant)));
-  return cppSource(['"AOTSchemaRecords.h"', "<algorithm>", "<array>"], inNamespace("Typed", blocks(...variants.map(caseNameFunction), ...codecs)));
+  const codecs = payloadTypesOf(schema).map(type =>
+    type.tag === "Record" ? recordCodec(type.record) : variantCodec(type.variant),
+  );
+  return cppSource(
+    ['"AOTSchemaRecords.h"', "<algorithm>", "<array>"],
+    inNamespace("Typed", blocks(...variants.map(caseNameFunction), ...codecs)),
+  );
 }
 
 export function emitCppRecords(context: EmitContext): OutputFile[] {

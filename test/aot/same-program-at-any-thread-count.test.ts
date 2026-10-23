@@ -1,9 +1,9 @@
 // Many files say the same of the types that they share, and the link keeps what the first of them says. The program that the
 // front end emits does not depend on which thread gets where first: same bytes, whatever the number of threads.
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 setDefaultTimeout(240_000);
 
@@ -11,9 +11,14 @@ const moduleCount = 48;
 const typeModuleCount = 6;
 
 function typeModule(index: number): string {
-  const earlier = index > 0 ? `import type { Shared${index - 1}, Kind${index - 1} } from "./types${index - 1}.ts";\n` : "";
+  const earlier =
+    index > 0 ? `import type { Shared${index - 1}, Kind${index - 1} } from "./types${index - 1}.ts";\n` : "";
   const link = index > 0 ? `  earlier?: Shared${index - 1};\n  kinds: Kind${index - 1}[];\n` : "";
-  const fields = Array.from({ length: 12 }, (_, field) => `  field${field}${field % 3 == 0 ? "?" : ""}: ${["number", "string", "string[]", "() => number", "Map<string, number>"][field % 5]};\n`).join("");
+  const fields = Array.from(
+    { length: 12 },
+    (_, field) =>
+      `  field${field}${field % 3 == 0 ? "?" : ""}: ${["number", "string", "string[]", "() => number", "Map<string, number>"][field % 5]};\n`,
+  ).join("");
   return (
     earlier +
     `export interface Shared${index} {\n  id: number;\n  name: string;\n${fields}${link}  next?: Shared${index};\n}\n` +
@@ -25,7 +30,9 @@ function typeModule(index: number): string {
 }
 
 function codeModule(index: number): string {
-  const types = [index % typeModuleCount, (index * 5 + 1) % typeModuleCount].filter((type, at, all) => all.indexOf(type) == at);
+  const types = [index % typeModuleCount, (index * 5 + 1) % typeModuleCount].filter(
+    (type, at, all) => all.indexOf(type) == at,
+  );
   const next = [2 * index + 1, 2 * index + 2].filter(other => other < moduleCount);
   return (
     types.map(type => `import type { Shared${type}, Kind${type}, Box${type} } from "./types${type}.ts";\n`).join("") +
@@ -48,7 +55,17 @@ function codeModule(index: number): string {
 
 function program(): Record<string, string> {
   const files: Record<string, string> = {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", allowImportingTsExtensions: true, noEmit: true, types: [] } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        target: "esnext",
+        module: "esnext",
+        moduleResolution: "bundler",
+        allowImportingTsExtensions: true,
+        noEmit: true,
+        types: [],
+      },
+    }),
     "main.ts": `import { run0 } from "./module0.ts";\ndeclare const console: { log(...values: unknown[]): void };\nconsole.log(run0(1));\n`,
   };
   for (let index = 0; index < typeModuleCount; index++) files[`types${index}.ts`] = typeModule(index);
@@ -59,14 +76,27 @@ function program(): Record<string, string> {
 async function build(directory: string, threads: number, round: number) {
   const name = `threads-${threads}-${round}`;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, `--aot-out=${name}.program`, "main.ts", "--outfile", "app"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `--aot-threads=${threads}`,
+      `--aot-out=${name}.program`,
+      "main.ts",
+      "--outfile",
+      "app",
+    ],
     cwd: directory,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({ errors: [], exitCode: 0 });
+  expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
+    errors: [],
+    exitCode: 0,
+  });
   return {
     program: Bun.hash(await Bun.file(join(directory, `${name}.program`)).bytes()),
     executable: Bun.hash(await Bun.file(join(directory, "app")).bytes()),

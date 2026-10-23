@@ -192,7 +192,9 @@ fn load_types<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> Box<
         loader: HostLoader::default(),
     };
     let arena = context.session.arena();
-    context.answer_types_question(arena, key, load(context, path)).0
+    context
+        .answer_types_question(arena, key, load(context, path))
+        .0
 }
 
 fn program_question<'q, 's, 'r>(
@@ -287,7 +289,11 @@ fn other_loader_is_never_same_file() {
     };
     assert!(!is_same_file(&CASE_SENSITIVE, b"/real/x.ts", &as_text));
     assert!(!is_same_file(&CASE_SENSITIVE, b"/linked/x.ts", &as_text));
-    assert!(!is_same_file(&CASE_SENSITIVE, b"/real/typed/x.ts", &as_text));
+    assert!(!is_same_file(
+        &CASE_SENSITIVE,
+        b"/real/typed/x.ts",
+        &as_text
+    ));
 }
 
 #[test]
@@ -308,9 +314,15 @@ fn program_path_is_path_of_running_file() {
             code.program_path(&CASE_SENSITIVE, key, found)
         };
         assert_eq!(program_path(b"./lib.js", b"/real/lib.ts"), b"/real/lib.js");
-        assert_eq!(program_path(b"./lib.js", b"/linked/lib.js"), b"/real/lib.js");
+        assert_eq!(
+            program_path(b"./lib.js", b"/linked/lib.js"),
+            b"/real/lib.js"
+        );
         assert_eq!(program_path(b"./x", b"/linked/x.ts"), b"/real/x.ts");
-        assert_eq!(program_path(b"./lib.js", b"/real/lib.d.ts"), b"/real/lib.d.ts");
+        assert_eq!(
+            program_path(b"./lib.js", b"/real/lib.d.ts"),
+            b"/real/lib.d.ts"
+        );
         assert_eq!(program_path(b"./unknown", b"/linked/x.ts"), b"/linked/x.ts");
     });
 }
@@ -336,9 +348,18 @@ fn target_is_found_by_mode_then_by_other_kind() {
             let target = code.find_target(context.atoms.intern(specifier), mode)?;
             Some(code.targets[target as usize].key.path.as_bstr().to_string())
         };
-        assert_eq!(path_of(b"./x", ResolutionMode::Import).as_deref(), Some("/p/x.mjs"));
-        assert_eq!(path_of(b"./x", ResolutionMode::None).as_deref(), Some("/p/x.mjs"));
-        assert_eq!(path_of(b"./x", ResolutionMode::Require).as_deref(), Some("/p/x.cjs"));
+        assert_eq!(
+            path_of(b"./x", ResolutionMode::Import).as_deref(),
+            Some("/p/x.mjs")
+        );
+        assert_eq!(
+            path_of(b"./x", ResolutionMode::None).as_deref(),
+            Some("/p/x.mjs")
+        );
+        assert_eq!(
+            path_of(b"./x", ResolutionMode::Require).as_deref(),
+            Some("/p/x.cjs")
+        );
         let modes = [
             ResolutionMode::None,
             ResolutionMode::Import,
@@ -378,7 +399,10 @@ fn inferred_file_answers_each_name_and_mode_once() {
     ]);
     with_context(&host, |context| {
         let mut code = load(context, "/p/a.js").code;
-        let (x, missing) = (context.atoms.intern(b"./x"), context.atoms.intern(b"./missing"));
+        let (x, missing) = (
+            context.atoms.intern(b"./x"),
+            context.atoms.intern(b"./missing"),
+        );
         let names = [
             (x, ResolutionMode::Import, true),
             (missing, ResolutionMode::Import, true),
@@ -418,7 +442,9 @@ fn declaration_file_asks_program() {
 fn governing_project_answers_for_typescript_and_javascript() {
     with_projects(|context| {
         let typescript = ask(context, FileRole::Checked, "/packages/lib/index.ts");
-        let project = typescript.project.expect("the directory has a configuration file");
+        let project = typescript
+            .project
+            .expect("the directory has a configuration file");
         assert_eq!(project.target, ScriptTarget::ES2015);
         assert!(!std::ptr::eq(typescript.resolver, context.resolver));
         assert!(std::ptr::eq(typescript.resolver.options(), project));
@@ -426,7 +452,11 @@ fn governing_project_answers_for_typescript_and_javascript() {
 
         let javascript = ask(context, FileRole::Inferred, "/packages/lib/util.js");
         assert!(std::ptr::eq(javascript.resolver, typescript.resolver));
-        assert!(javascript.project.is_some_and(|it| std::ptr::eq(it, project)));
+        assert!(
+            javascript
+                .project
+                .is_some_and(|it| std::ptr::eq(it, project))
+        );
         assert_eq!(javascript.from, b"/packages/lib/util.js");
     });
 }
@@ -437,7 +467,11 @@ fn referenced_project_answers_for_own_source() {
         let referenced = &context.options.referenced_options[0];
         let question = ask(context, FileRole::Checked, REFERENCED_SOURCE);
         assert!(std::ptr::eq(question.resolver.options(), referenced));
-        assert!(question.project.is_some_and(|it| std::ptr::eq(it, referenced)));
+        assert!(
+            question
+                .project
+                .is_some_and(|it| std::ptr::eq(it, referenced))
+        );
         assert_eq!(question.from, REFERENCED_SOURCE.as_bytes());
         let current = program_question(context, REFERENCED_SOURCE.as_bytes());
         assert!(std::ptr::eq(question.resolver, current.resolver));
@@ -448,7 +482,10 @@ fn referenced_project_answers_for_own_source() {
 fn typed_version_asks_from_own_path() {
     with_projects(|context| {
         let parsed = load(context, INSTALLED);
-        assert_eq!(parsed.code.analyzed.typed_source_path, Some(TYPED.as_bytes()));
+        assert_eq!(
+            parsed.code.analyzed.typed_source_path,
+            Some(TYPED.as_bytes())
+        );
         let role = FileRole::of_tree(&parsed.parse.hir);
         assert_eq!(role, FileRole::Checked);
 
@@ -456,13 +493,17 @@ fn typed_version_asks_from_own_path() {
         let current = program_question(context, installed);
         let question = context.types_question(role, installed, Some(&*parsed.code), current);
         assert_eq!(question.from, TYPED.as_bytes());
-        let project = question.project.expect("the typed version has a configuration file");
+        let project = question
+            .project
+            .expect("the typed version has a configuration file");
         assert_eq!(project.target, ScriptTarget::ES2015);
         assert!(std::ptr::eq(question.resolver.options(), project));
 
         let without_typed_version = ask(context, FileRole::Inferred, INSTALLED);
         assert_eq!(without_typed_version.from, installed);
-        let lenient = without_typed_version.project.expect("the file is in a package");
+        let lenient = without_typed_version
+            .project
+            .expect("the file is in a package");
         assert_eq!(lenient.target, ScriptTarget::None);
     });
 }
@@ -487,7 +528,11 @@ fn module_resolver_agrees_with_types_question() {
             module_resolver("/packages/lib/util.js", false, "/packages/lib/util.js"),
             module_resolver("/packages/lib/index.ts", false, "/packages/lib/index.ts"),
             module_resolver(INSTALLED, false, TYPED),
-            module_resolver("/node_modules/dep/index.js", false, "/node_modules/dep/index.js"),
+            module_resolver(
+                "/node_modules/dep/index.js",
+                false,
+                "/node_modules/dep/index.js",
+            ),
             module_resolver(REFERENCED_SOURCE, false, REFERENCED_SOURCE),
             module_resolver("/main.ts", true, "/main.ts"),
         ];
@@ -538,7 +583,11 @@ fn declaration_file_is_parsed_with_options_of_program() {
         };
         assert_eq!(parse_options(b"/main.ts"), as_module);
         assert_eq!(parse_options(b"/packages/lib/types.d.ts"), of_program);
-        assert!(parse_options(b"/packages/lib/only-types.ts").bind.before_es2020);
+        assert!(
+            parse_options(b"/packages/lib/only-types.ts")
+                .bind
+                .before_es2020
+        );
     });
 }
 
@@ -581,6 +630,9 @@ fn javascript_is_not_predicted_without_allow_js() {
     ]);
     with_context(&host, |context| {
         let loaded = load_types(context, "/p/a.ts");
-        assert_eq!(predicted_type_files(context.host, &loaded), [(&b"/p/b.ts"[..], false)]);
+        assert_eq!(
+            predicted_type_files(context.host, &loaded),
+            [(&b"/p/b.ts"[..], false)]
+        );
     });
 }

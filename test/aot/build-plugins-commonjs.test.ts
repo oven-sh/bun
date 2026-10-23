@@ -35,7 +35,10 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
     prints: "plugin a plugin c plugin a undefined plugin c plugin a undefined plugin c\n",
   },
   "a name that only the file on the disk exports, imported": {
-    files: { "main.mjs": `import { b } from "./lib.cjs"; console.log(b);`, "lib.cjs": `exports.a = "disk a"; exports.b = "disk b";` },
+    files: {
+      "main.mjs": `import { b } from "./lib.cjs"; console.log(b);`,
+      "lib.cjs": `exports.a = "disk a"; exports.b = "disk b";`,
+    },
     plugins: [replace({ "lib.cjs": `exports.a = "plugin a";` })],
     options: entry("main.mjs"),
     prints: "undefined\n",
@@ -47,7 +50,9 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
       "main.cjs": `${describeModule}\nconst lib = require("./lib.cjs"); console.log(describe(lib), typeof lib === "function" && lib(2), lib.f, lib.extra);`,
       "lib.cjs": `exports.f = function f() { return "disk"; };`,
     },
-    plugins: [replace({ "lib.cjs": `module.exports = function twice(n) { return n * 2; }; module.exports.extra = "extra";` })],
+    plugins: [
+      replace({ "lib.cjs": `module.exports = function twice(n) { return n * 2; }; module.exports.extra = "extra";` }),
+    ],
     options: entry("main.cjs"),
     prints: `function twice ["extra"] 4 undefined extra\n`,
   },
@@ -65,7 +70,9 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
       "main.mjs": `import lib, { a } from "./lib.js"; console.log(a, JSON.stringify(lib));`,
       "lib.js": `export const a = "disk"; export default "disk default";`,
     },
-    plugins: [replace({ "lib.js": `exports.a = "plugin"; exports.more = typeof module + typeof require + typeof exports;` })],
+    plugins: [
+      replace({ "lib.js": `exports.a = "plugin"; exports.more = typeof module + typeof require + typeof exports;` }),
+    ],
     options: entry("main.mjs"),
     prints: `plugin {"a":"plugin","more":"objectfunctionobject"}\n`,
   },
@@ -74,7 +81,11 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
       "main.cjs": `${describeModule}\nconst lib = require("./lib.js"); console.log(lib.a, lib.default, lib.__esModule, Object.keys(lib).sort().join());`,
       "lib.js": `exports.a = "disk";`,
     },
-    plugins: [replace({ "lib.js": `export const a = "plugin"; export default "plugin default"; export let later; later = typeof module;` })],
+    plugins: [
+      replace({
+        "lib.js": `export const a = "plugin"; export default "plugin default"; export let later; later = typeof module;`,
+      }),
+    ],
     options: entry("main.cjs"),
   },
   "a .cjs file whose text becomes an ES module": {
@@ -83,7 +94,12 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
       "second.cjs": `const lib = require("./lib.cjs"); console.log("second", lib.a, lib.default);`,
       "lib.cjs": `exports.a = "disk";`,
     },
-    plugins: [replace({ "lib.cjs": `export const a = "plugin"; export default "plugin default";`, "main.mjs": `import "./second.cjs"; import lib, { a } from "./lib.cjs"; import * as all from "./lib.cjs"; console.log(a, lib, Object.keys(all).sort().join());` })],
+    plugins: [
+      replace({
+        "lib.cjs": `export const a = "plugin"; export default "plugin default";`,
+        "main.mjs": `import "./second.cjs"; import lib, { a } from "./lib.cjs"; import * as all from "./lib.cjs"; console.log(a, lib, Object.keys(all).sort().join());`,
+      }),
+    ],
     options: entry("main.mjs"),
   },
   "a .mjs file whose text becomes CommonJS": {
@@ -123,7 +139,9 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
       "b.cjs": `const a = require("./a.cjs"); exports.seen = JSON.stringify(a);`,
       "leaf.cjs": `exports.leaf = true;`,
     },
-    plugins: [`build.onResolve({ filter: /^\\.\\/a\\.cjs$/ }, (args: any) => (args.importer.endsWith("b.cjs") ? { path: join(folder, "leaf.cjs") } : undefined));`],
+    plugins: [
+      `build.onResolve({ filter: /^\\.\\/a\\.cjs$/ }, (args: any) => (args.importer.endsWith("b.cjs") ? { path: join(folder, "leaf.cjs") } : undefined));`,
+    ],
     options: entry("main.cjs"),
     prints: `{"early":1,"b":{"seen":"{\\"leaf\\":true}"},"late":2}\n`,
   },
@@ -133,7 +151,9 @@ buildBothWays("compile/aot/CommonJS that the plugins of Bun.build supply", {
       "a.cjs": `exports.a = "a"; exports.seenByB = require("./b.cjs").seen;`,
       "b.cjs": `exports.seen = "nothing";`,
     },
-    plugins: [replace({ "b.cjs": `const a = require("./a.cjs"); exports.seen = Object.keys(a).join() + ":" + a.seenByB;` })],
+    plugins: [
+      replace({ "b.cjs": `const a = require("./a.cjs"); exports.seen = Object.keys(a).join() + ":" + a.seenByB;` }),
+    ],
     options: entry("main.mjs"),
     prints: "a a:undefined\n",
   },
@@ -206,7 +226,9 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "for-b.cjs": `exports.name = "for b";`,
       "for-main.cjs": `exports.name = "for main";`,
     },
-    plugins: [`build.onResolve({ filter: /^dep$/ }, (args: any) => ({ path: join(folder, "for-" + basename(args.importer)) }));`],
+    plugins: [
+      `build.onResolve({ filter: /^dep$/ }, (args: any) => ({ path: join(folder, "for-" + basename(args.importer)) }));`,
+    ],
     options: entry("main.cjs"),
     prints: "for a for b for main\n",
   },
@@ -218,7 +240,11 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "c.cjs": `console.log("c");`,
       "d.cjs": `console.log("d");`,
     },
-    plugins: [replace({ "a.cjs": `require("./c.cjs"); console.log("a from the plugin"); require("./d.cjs"); if (globalThis.never) require("./b.cjs");` })],
+    plugins: [
+      replace({
+        "a.cjs": `require("./c.cjs"); console.log("a from the plugin"); require("./d.cjs"); if (globalThis.never) require("./b.cjs");`,
+      }),
+    ],
     options: entry("main.cjs"),
     prints: "main starts\nc\na from the plugin\nd\nmain ends\n",
   },
@@ -285,7 +311,11 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "main.cjs": `${describeModule}\nconst lib = require("./lib.cjs"); console.log(lib.count, lib.count, lib.computed, Object.isFrozen(lib), describe(lib));`,
       "lib.cjs": `exports.count = 0; exports.computed = "disk";`,
     },
-    plugins: [replace({ "lib.cjs": `let reads = 0; Object.defineProperty(exports, "count", { enumerable: true, get() { return ++reads; } }); exports["com" + "puted"] = "plugin"; Object.freeze(exports);` })],
+    plugins: [
+      replace({
+        "lib.cjs": `let reads = 0; Object.defineProperty(exports, "count", { enumerable: true, get() { return ++reads; } }); exports["com" + "puted"] = "plugin"; Object.freeze(exports);`,
+      }),
+    ],
     options: entry("main.cjs"),
   },
   "a package of type module whose file becomes CommonJS": {
@@ -294,7 +324,9 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "type": "module", "main": "./index.js" }`,
       "node_modules/pkg/index.js": `export const a = "disk"; export default { a };`,
     },
-    plugins: [`build.onLoad({ filter: /pkg\\/index\\.js$/ }, () => ({ contents: 'exports.a = "plugin"; exports.default = "the default";', loader: "js" }));`],
+    plugins: [
+      `build.onLoad({ filter: /pkg\\/index\\.js$/ }, () => ({ contents: 'exports.a = "plugin"; exports.default = "the default";', loader: "js" }));`,
+    ],
     options: entry("main.mjs"),
   },
   "a package without side effects whose text from the plugin has one": {
@@ -304,7 +336,9 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "node_modules/pkg/index.js": `exports.nothing = 1;`,
       "node_modules/pkg/other.js": `exports.unused = 1;`,
     },
-    plugins: [`build.onLoad({ filter: /pkg\\/(index|other)\\.js$/ }, (args: any) => ({ contents: '(globalThis.effects ??= []).push(' + JSON.stringify(basename(args.path)) + '); exports.unused = 1;', loader: "js" }));`],
+    plugins: [
+      `build.onLoad({ filter: /pkg\\/(index|other)\\.js$/ }, (args: any) => ({ contents: '(globalThis.effects ??= []).push(' + JSON.stringify(basename(args.path)) + '); exports.unused = 1;', loader: "js" }));`,
+    ],
     options: entry("main.mjs"),
   },
   "files required under a computed name get the text of the plugin": {
@@ -313,18 +347,24 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "mods/one.cjs": `exports.name = "one on the disk";`,
       "mods/two.cjs": `exports.name = "two on the disk";`,
     },
-    plugins: [`build.onLoad({ filter: /mods\\/\\w+\\.cjs$/ }, (args: any) => { tell("onLoad", args); return { contents: "exports.name = " + JSON.stringify(basename(args.path) + " from the plugin") + ";", loader: "js" }; });`],
+    plugins: [
+      `build.onLoad({ filter: /mods\\/\\w+\\.cjs$/ }, (args: any) => { tell("onLoad", args); return { contents: "exports.name = " + JSON.stringify(basename(args.path) + " from the plugin") + ";", loader: "js" }; });`,
+    ],
     options: entry("main.cjs"),
     arguments: ["one", "two"],
     prints: "one on the disk\ntwo on the disk\n",
     // Without `aot` the files are not in the executable: it reads them from the disk when it runs.
     differs: {
       stdout: "one.cjs from the plugin\ntwo.cjs from the plugin\n",
-      told: ["one", "two"].map(name => `onLoad path="<folder>/mods/${name}.cjs" namespace="file" loader="js" defer=function side="server"`),
+      told: ["one", "two"].map(
+        name => `onLoad path="<folder>/mods/${name}.cjs" namespace="file" loader="js" defer=function side="server"`,
+      ),
     },
   },
   "a module in a namespace required under a computed name": {
-    files: { "main.cjs": `require("virtual:a"); try { console.log(require("virtual:" + process.argv[2]).name); } catch (error) { console.log("thrown", error.code); }` },
+    files: {
+      "main.cjs": `require("virtual:a"); try { console.log(require("virtual:" + process.argv[2]).name); } catch (error) { console.log("thrown", error.code); }`,
+    },
     plugins: [
       `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "virtual" }));
 build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents: "exports.name = " + JSON.stringify(args.path) + ";", loader: "js" }));`,
@@ -346,7 +386,10 @@ build.onLoad({ filter: /\\.obj$/ }, () => ({ exports: { a: 1, default: { b: 2 } 
     options: entry("main.cjs"),
   },
   "text that a bundler wrote: wrappers of CommonJS modules": {
-    files: { "main.cjs": `const lib = require("./bundle.cjs"); console.log(lib.sum, lib.names);`, "bundle.cjs": `exports.sum = 0; exports.names = "disk";` },
+    files: {
+      "main.cjs": `const lib = require("./bundle.cjs"); console.log(lib.sum, lib.names);`,
+      "bundle.cjs": `exports.sum = 0; exports.names = "disk";`,
+    },
     plugins: [
       replace({
         "bundle.cjs": `var __commonJS = (cb, mod) => function __require() { return mod || (0, cb[Object.getOwnPropertyNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports; };
@@ -392,7 +435,11 @@ exports.sum = a.n + a.b.n; exports.names = a.b.seen;`,
   },
   "an entry point that is CommonJS only in the text of the plugin": {
     files: { "main.js": `export {}; console.log("disk", typeof module);` },
-    plugins: [replace({ "main.js": `console.log("plugin", typeof module, typeof exports, require.main === module, this === exports); exports.a = 1;` })],
+    plugins: [
+      replace({
+        "main.js": `console.log("plugin", typeof module, typeof exports, require.main === module, this === exports); exports.a = 1;`,
+      }),
+    ],
     options: entry("main.js"),
   },
 });

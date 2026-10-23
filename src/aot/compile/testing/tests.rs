@@ -103,7 +103,10 @@ fn find_defining_fragment<'a>(
 ) -> Option<&'a Fragment> {
     let mut fragments = lowered_files.iter().map(|(_, lowered)| &lowered.fragment);
     fragments.find(|fragment| {
-        let mut names = fragment.functions.iter().filter_map(|(_, function)| function.name);
+        let mut names = fragment
+            .functions
+            .iter()
+            .filter_map(|(_, function)| function.name);
         names.any(|name| fragment.strings.get(name) == function_name.as_bytes())
     })
 }
@@ -272,15 +275,25 @@ fn options_reach_lowering() {
 #[test]
 fn lowering_options_replace_build_options() {
     let lowered = lower_program(&[("main.js", DEBUG_CALL)], lowering_options(false));
-    assert!(find_probe_fragment(&lowered).module.function_text.is_empty());
+    assert!(
+        find_probe_fragment(&lowered)
+            .module
+            .function_text
+            .is_empty()
+    );
 }
 
 #[test]
 fn limits_reach_lowering() {
-    let files = [("a.ts", "export const x: { a: { b: number } } = { a: { b: 1 } };")];
+    let files = [(
+        "a.ts",
+        "export const x: { a: { b: number } } = { a: { b: 1 } };",
+    )];
     let count_losses = |limits: LimitValues| -> usize {
         let lowered = lower_program_with_limits(&files, limits);
-        let losses = lowered.iter().map(|(_, lowered)| lowered.counters.losses().len());
+        let losses = lowered
+            .iter()
+            .map(|(_, lowered)| lowered.counters.losses().len());
         losses.sum()
     };
     let mut lowered_limits = LimitValues::for_host();
@@ -364,9 +377,8 @@ fn project_view_shows_application_project() {
 #[test]
 fn link_returns_program_or_failure() {
     let settings = default_settings();
-    let link = |files: &[(&str, &str)]| {
-        link_program_with_options(files, &settings, AotOptions::default())
-    };
+    let link =
+        |files: &[(&str, &str)]| link_program_with_options(files, &settings, AotOptions::default());
     let statistics = link(&DEBUG_IMPORT).unwrap().summary.statistics;
     assert_eq!(statistics.get(StatisticId::SourceFilesInferred), 2);
     let stage = link(&TYPE_ERROR).err().map(|failed| failed.stage);
@@ -404,7 +416,10 @@ fn virtual_path_replaces_runtime_source() {
     ];
     with_runtime_bind_input(&files, |input| {
         let file = find_compiled_file(input, b"node:os").unwrap();
-        assert!(matches!(input.sources.kind(file), SourceKind::RuntimeModule(_)));
+        assert!(matches!(
+            input.sources.kind(file),
+            SourceKind::RuntimeModule(_)
+        ));
         assert_eq!(input.files.hir(file).source_len as usize, SOURCE.len());
     });
     let lowered = lower_runtime_project(&files);
@@ -420,8 +435,14 @@ fn virtual_path_replaces_runtime_source() {
 #[test]
 fn other_names_are_project_files() {
     assert_eq!(in_memory_path("src/a.ts"), b"/project/src/a.ts");
-    assert_eq!(in_memory_path("$bun/js/node/os.ts"), b"/project/$bun/js/node/os.ts");
-    assert_eq!(in_memory_path("/$bun/js/node/os.ts"), b"/$bun/js/node/os.ts");
+    assert_eq!(
+        in_memory_path("$bun/js/node/os.ts"),
+        b"/project/$bun/js/node/os.ts"
+    );
+    assert_eq!(
+        in_memory_path("/$bun/js/node/os.ts"),
+        b"/$bun/js/node/os.ts"
+    );
 }
 
 #[test]

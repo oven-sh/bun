@@ -24,8 +24,9 @@ pub use parser::keyword_suggestion;
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
-    COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches, parse_for_compile,
-    summarize, summarize_as, summarize_in, summarize_top_level, with_summary, with_summary_in_place,
+    COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches,
+    parse_for_compile, summarize, summarize_as, summarize_in, summarize_top_level, with_summary,
+    with_summary_in_place,
 };
 
 /// Why the parser rejected a text.

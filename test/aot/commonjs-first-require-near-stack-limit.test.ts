@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { describe, test } from "./supported";
 
 // A CommonJS module that is first required where the stack ends: the RangeError comes before its first statement. Whoever requires it
 // later gets the whole object, as in `bun run`: the module is evaluated again. An executable built without --aot hands out the empty
@@ -18,10 +18,18 @@ console.log(again === k, typeof again);
 `;
 
 const libraries: Record<string, Record<string, string>> = {
-  "only-values": { "lib.js": `"use strict";\nconst keys = { kState: Symbol("state"), kOptions: Symbol("options") };\nmodule.exports = keys;\n` },
-  "a-function-too": { "lib.js": `"use strict";\nlet n = 0;\nfunction f() { return n++; }\nmodule.exports = { f, kState: Symbol("state") };\n` },
-  "exports-dot": { "lib.js": `"use strict";\nexports.kState = Symbol("state");\nexports.kOptions = Symbol("options");\n` },
-  "a-class": { "lib.js": `"use strict";\nclass Box { constructor(v) { this.v = v; } }\nmodule.exports = { Box, kState: Symbol("state") };\n` },
+  "only-values": {
+    "lib.js": `"use strict";\nconst keys = { kState: Symbol("state"), kOptions: Symbol("options") };\nmodule.exports = keys;\n`,
+  },
+  "a-function-too": {
+    "lib.js": `"use strict";\nlet n = 0;\nfunction f() { return n++; }\nmodule.exports = { f, kState: Symbol("state") };\n`,
+  },
+  "exports-dot": {
+    "lib.js": `"use strict";\nexports.kState = Symbol("state");\nexports.kOptions = Symbol("options");\n`,
+  },
+  "a-class": {
+    "lib.js": `"use strict";\nclass Box { constructor(v) { this.v = v; } }\nmodule.exports = { Box, kState: Symbol("state") };\n`,
+  },
   "it-requires-another": {
     "lib.js": `"use strict";\nconst other = require("./other");\nmodule.exports = { kState: Symbol("state"), other };\n`,
     "other.js": `"use strict";\nmodule.exports = { kOther: Symbol("other") };\n`,

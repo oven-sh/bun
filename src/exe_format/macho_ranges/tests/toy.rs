@@ -183,7 +183,10 @@ fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
 }
 
 fn words(values: &[u32]) -> Vec<u8> {
-    values.iter().flat_map(|value| value.to_le_bytes()).collect()
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
 }
 
 fn pad_name(name: &[u8]) -> [u8; SEGMENT_NAME_SIZE] {
@@ -245,7 +248,12 @@ fn create_toy_segments(
             sections: vec![
                 create_section(b"__text", S_REGULAR, text_start, page(84) + 0x100),
                 create_section(b"__const", S_REGULAR, page(84) + 0x100, page(88) + 0x800),
-                create_section(b"__cstring", S_CSTRING_LITERALS, page(88) + 0x800, page(92) + 0x40),
+                create_section(
+                    b"__cstring",
+                    S_CSTRING_LITERALS,
+                    page(88) + 0x800,
+                    page(92) + 0x40,
+                ),
                 create_section(b"__bun_builtins", S_REGULAR, page(92) + 0x40, page(94)),
                 create_section(b"__bun_trim", S_REGULAR, page(94), page(94) + 0x200),
                 create_section(b"__bun_features", S_REGULAR, page(94) + 0x200, page(95)),
@@ -443,7 +451,10 @@ fn create_toy_commands(options: ToyOptions, text_start: u64) -> ToyCommands {
     let entry_point = [(PAGE + 0x40).to_le_bytes(), 0u64.to_le_bytes()].concat();
     let build_version = words(&[PLATFORM_MACOS, 0xd_0000, 0xf_0000, 0]);
     commands.extend(fixups.map(|blob| create_linkedit_data_command(LC::DYLD_CHAINED_FIXUPS, blob)));
-    commands.push(create_linkedit_data_command(LC::DYLD_EXPORTS_TRIE, exports_trie));
+    commands.push(create_linkedit_data_command(
+        LC::DYLD_EXPORTS_TRIE,
+        exports_trie,
+    ));
     commands.extend(symbol_table_commands);
     commands.extend([
         create_path_command(LC::LOAD_DYLINKER, &[], b"/usr/lib/dyld"),
@@ -458,7 +469,10 @@ fn create_toy_commands(options: ToyOptions, text_start: u64) -> ToyCommands {
 }
 
 pub(super) fn create_toy(options: ToyOptions) -> Vec<u8> {
-    let commands_size = create_toy_commands(options, IMAGE_BASE).commands.concat().len();
+    let commands_size = create_toy_commands(options, IMAGE_BASE)
+        .commands
+        .concat()
+        .len();
     let text_start = IMAGE_BASE + (HEADER_SIZE + commands_size + options.header_pad) as u64;
     let ToyCommands { commands, linkedit } = create_toy_commands(options, text_start);
     let header = mach_header_64 {

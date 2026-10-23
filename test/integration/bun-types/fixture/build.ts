@@ -24,17 +24,17 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotTypeErrors: "log", aotExplain: ["throws", "throws-json"] },
+  compile: { aot: true, aotTypeErrors: "log", aotExplain: ["guards", "guards-json"] },
 });
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotTypeErrors: "throw", aotExplain: "throws-json" },
+  compile: { aot: true, aotTypeErrors: "throw", aotExplain: "guards-json" },
 });
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotExplain: ["declines", "throws"] },
+  compile: { aot: true, aotExplain: ["missed-optimizations", "guards"] },
 });
 
 Bun.build({

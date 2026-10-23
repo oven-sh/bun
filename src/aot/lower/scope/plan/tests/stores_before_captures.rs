@@ -15,7 +15,10 @@ fn parameter_stored_before_the_closure_is_copied() {
     analyze_source("main.mjs", source, |probe| {
         assert_eq!(probe.placement_of("options").storage, Storage::Local);
         let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("options"))]);
+        assert_eq!(
+            probe.captures(arrow),
+            [Capture::Value(probe.binding("options"))]
+        );
     });
 }
 

@@ -25,14 +25,20 @@ pub(super) fn report_long_path(log: &mut Log, kind: &str, path: &[u8]) {
 }
 
 fn segments(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-    path.split(|&byte| is_sep_native(byte)).filter(|segment| !segment.is_empty())
+    path.split(|&byte| is_sep_native(byte))
+        .filter(|segment| !segment.is_empty())
 }
 
 fn max_relative_path_length(from: &[u8], to: &[u8]) -> usize {
-    let shared_count = segments(from).zip(segments(to)).take_while(|(a, b)| a == b).count();
+    let shared_count = segments(from)
+        .zip(segments(to))
+        .take_while(|(a, b)| a == b)
+        .count();
     let parent_count = segments(from).skip(shared_count).count();
-    let rest_length: usize =
-        segments(to).skip(shared_count).map(|segment| segment.len() + 1).sum();
+    let rest_length: usize = segments(to)
+        .skip(shared_count)
+        .map(|segment| segment.len() + 1)
+        .sum();
     3 * parent_count + rest_length
 }
 
@@ -48,20 +54,35 @@ mod tests {
 
     #[test]
     fn absolute_path_joins_and_normalizes() {
-        assert_eq!(absolute_path(WORKING_DIRECTORY, b"src/../a.ts"), b"/project/a.ts");
-        assert_eq!(absolute_path(WORKING_DIRECTORY, b"/other/a.ts"), b"/other/a.ts");
+        assert_eq!(
+            absolute_path(WORKING_DIRECTORY, b"src/../a.ts"),
+            b"/project/a.ts"
+        );
+        assert_eq!(
+            absolute_path(WORKING_DIRECTORY, b"/other/a.ts"),
+            b"/other/a.ts"
+        );
         assert_eq!(absolute_path(WORKING_DIRECTORY, b""), b"/project");
     }
 
     #[test]
     fn relative_path_descends_from_ancestor() {
-        assert_eq!(relative(b"/project/src", b"/project/src/a/b.ts"), Some(b"a/b.ts".to_vec()));
-        assert_eq!(relative(b"/", b"/project/a.ts"), Some(b"project/a.ts".to_vec()));
+        assert_eq!(
+            relative(b"/project/src", b"/project/src/a/b.ts"),
+            Some(b"a/b.ts".to_vec())
+        );
+        assert_eq!(
+            relative(b"/", b"/project/a.ts"),
+            Some(b"project/a.ts".to_vec())
+        );
     }
 
     #[test]
     fn relative_path_climbs_to_shared_directory() {
-        assert_eq!(relative(b"/project/src", b"/project/lib/b.ts"), Some(b"../lib/b.ts".to_vec()));
+        assert_eq!(
+            relative(b"/project/src", b"/project/lib/b.ts"),
+            Some(b"../lib/b.ts".to_vec())
+        );
         assert_eq!(
             relative(b"/project/src", b"/project/src-gen/b.ts"),
             Some(b"../src-gen/b.ts".to_vec())
@@ -76,9 +97,18 @@ mod tests {
 
     #[test]
     fn length_limit_counts_unshared_segments_only() {
-        assert_eq!(max_relative_path_length(b"/a/b", b"/a/b/c.ts"), b"c.ts/".len());
-        assert_eq!(max_relative_path_length(b"/a/b", b"/a/c.ts"), b"../c.ts/".len());
-        assert_eq!(max_relative_path_length(b"/a/b", b"/c/d.ts"), b"../../c/d.ts/".len());
+        assert_eq!(
+            max_relative_path_length(b"/a/b", b"/a/b/c.ts"),
+            b"c.ts/".len()
+        );
+        assert_eq!(
+            max_relative_path_length(b"/a/b", b"/a/c.ts"),
+            b"../c.ts/".len()
+        );
+        assert_eq!(
+            max_relative_path_length(b"/a/b", b"/c/d.ts"),
+            b"../../c/d.ts/".len()
+        );
     }
 
     #[test]
@@ -107,6 +137,9 @@ mod tests {
         let mut log = Log::init();
         report_long_path(&mut log, "entry point", b"a.ts");
         assert_eq!(log.errors, 1);
-        assert_eq!(&*log.msgs[0].data.text, b"the entry point \"a.ts\" is too long");
+        assert_eq!(
+            &*log.msgs[0].data.text,
+            b"the entry point \"a.ts\" is too long"
+        );
     }
 }

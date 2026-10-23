@@ -87,10 +87,20 @@ function program(idiom: string, withDefaults: boolean) {
 
 async function measure(folder: string, name: string) {
   const executable = join(folder, isWindows ? `${name}.exe` : name);
-  built(await spawned([bunExe(), "build", "--compile", "--aot", "--aot-count-arrivals", `./${name}.mjs`, "--outfile", executable], folder, bunEnv));
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", "--aot-count-arrivals", `./${name}.mjs`, "--outfile", executable],
+      folder,
+      bunEnv,
+    ),
+  );
   const counted = async (rounds: number) => {
     const path = join(folder, `${name}-${rounds}`);
-    const ran = await spawned([executable, String(rounds)], folder, { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path });
+    const ran = await spawned([executable, String(rounds)], folder, {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      BUN_JSC_aotCountsPath: path,
+    });
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
     const operations = new Map<string, number>();
     let byName = 0;
@@ -104,7 +114,10 @@ async function measure(folder: string, name: string) {
   const [few, many] = [await counted(500), await counted(4500)];
   return {
     byNameEachRound: Math.round((many.byName - few.byName) / 4000),
-    askedEachRound: [...many.operations].filter(([operation, count]) => count - (few.operations.get(operation) ?? 0) > 400).map(([operation]) => operation).sort(),
+    askedEachRound: [...many.operations]
+      .filter(([operation, count]) => count - (few.operations.get(operation) ?? 0) > 400)
+      .map(([operation]) => operation)
+      .sort(),
   };
 }
 
@@ -117,7 +130,10 @@ describe.concurrent("a default on the prototype costs the constructor nothing", 
     (name === "a class" ? test.todo : test)(
       name,
       async () => {
-        using dir = tempDir("aot-defaults-on-prototypes", { "with.mjs": program(idiom, true), "without.mjs": program(idiom, false) });
+        using dir = tempDir("aot-defaults-on-prototypes", {
+          "with.mjs": program(idiom, true),
+          "without.mjs": program(idiom, false),
+        });
         expect(await measure(String(dir), "with")).toEqual(await measure(String(dir), "without"));
       },
       240_000,

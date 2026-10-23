@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "../aot/supported";
-import { statSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { statSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../aot/supported";
 import { importingByName } from "./aot-builtin-modules";
 
 const wire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
@@ -17,10 +17,19 @@ async function built(entry: string, text: string) {
   using dir = tempDir("names-handed-to-a-parameter", { [entry]: text });
   const cwd = String(dir);
   const plain = await run([bunExe(), "run", `./${entry}`], cwd, bunEnv);
-  const build = await run([bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", "made.exe"], cwd, bunEnv);
+  const build = await run(
+    [bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", "made.exe"],
+    cwd,
+    bunEnv,
+  );
   expect({ entry, exitCode: build.exitCode }).toEqual({ entry, exitCode: 0 });
   const made = await run([join(cwd, "made.exe")], cwd, wire);
-  return { size: statSync(join(cwd, "made.exe")).size, stdout: made.stdout, exitCode: made.exitCode, plain: plain.stdout };
+  return {
+    size: statSync(join(cwd, "made.exe")).size,
+    stdout: made.stdout,
+    exitCode: made.exitCode,
+    plain: plain.stdout,
+  };
 }
 
 const known: Record<string, string> = {
@@ -42,13 +51,22 @@ test("a name that only written strings are handed to is a written name", async (
   const plain = await built("plain.mjs", `import { join } from "node:path";\nconsole.log(typeof join);\n`);
   for (const [entry, text] of Object.entries(known)) {
     const found = await built(entry, text);
-    expect({ entry, stdout: found.stdout, exitCode: found.exitCode, grows: found.size - plain.size > 2 * 1024 * 1024 }).toEqual({ entry, stdout: found.plain, exitCode: 0, grows: false });
+    expect({
+      entry,
+      stdout: found.stdout,
+      exitCode: found.exitCode,
+      grows: found.size - plain.size > 2 * 1024 * 1024,
+    }).toEqual({ entry, stdout: found.plain, exitCode: 0, grows: false });
   }
 }, 240_000);
 
 test("a name that anything else can reach stays a computed one", async () => {
   for (const [entry, text] of Object.entries(unknown)) {
     const found = await built(entry, text);
-    expect({ entry, stdout: found.stdout, exitCode: found.exitCode }).toEqual({ entry, stdout: found.plain, exitCode: 0 });
+    expect({ entry, stdout: found.stdout, exitCode: found.exitCode }).toEqual({
+      entry,
+      stdout: found.plain,
+      exitCode: 0,
+    });
   }
 }, 480_000);

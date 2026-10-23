@@ -6,13 +6,32 @@ import { test } from "./supported";
 async function buildAndRun(name: string, lib: string[] | undefined, main: string, dependency: string) {
   using directory = tempDir(name, {
     "package.json": JSON.stringify({ name: "app" }),
-    "tsconfig.json": JSON.stringify({ compilerOptions: { target: "esnext", lib, module: "preserve", moduleResolution: "bundler", types: [], strict: true } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        target: "esnext",
+        lib,
+        module: "preserve",
+        moduleResolution: "bundler",
+        types: [],
+        strict: true,
+      },
+    }),
     "main.ts": `${main}\ndeclare const console: { log(...values: unknown[]): void };\n`,
-    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/package.json": JSON.stringify({
+      name: "ships-typescript",
+      main: "index.ts",
+      types: "index.ts",
+    }),
     "node_modules/ships-typescript/index.ts": dependency,
   });
   const outfile = join(String(directory), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], cwd: String(directory), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    cwd: String(directory),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
   if (exitCode) return { stderr, exitCode, stdout: "" };
   await using ran = Bun.spawn({ cmd: [outfile], cwd: String(directory), env: bunEnv, stdout: "pipe", stderr: "pipe" });

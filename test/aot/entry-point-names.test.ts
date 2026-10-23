@@ -3,8 +3,8 @@
 // them from the executable. With --aot the same names find the same modules. What a module shows as its own path is another
 // matter: that is the path of its source below the virtual root.
 import { expect, setDefaultTimeout } from "bun:test";
-import { readFileSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./run-programs";
 import { test } from "./supported";
@@ -16,7 +16,9 @@ const stems = { typed: "ts", module: "mjs", plain: "js", common: "cjs" };
 const extensions = ["js", "ts", "mjs", "cjs"];
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"], allowJs: true } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"], allowJs: true },
+  }),
   "src/main.ts": `
     async function importedFrom(name: string): Promise<string> {
       try {
@@ -54,11 +56,19 @@ const files = {
   `,
 };
 
-const additional = ["src/sub/typed.ts", "src/sub/module.mjs", "src/sub/plain.js", "src/sub/common.cjs", "src/sub/worker.ts"];
+const additional = [
+  "src/sub/typed.ts",
+  "src/sub/module.mjs",
+  "src/sub/plain.js",
+  "src/sub/common.cjs",
+  "src/sub/worker.ts",
+];
 
 const expected = ["absolute", "relative"]
   .flatMap(kind => [
-    ...Object.entries(stems).flatMap(([stem, written]) => extensions.map(extension => `${kind} ${stem}.${extension} ${stem}.${written}`)),
+    ...Object.entries(stems).flatMap(([stem, written]) =>
+      extensions.map(extension => `${kind} ${stem}.${extension} ${stem}.${written}`),
+    ),
     `${kind} worker.js worker.ts`,
     `${kind} worker.ts worker.ts`,
   ])
@@ -66,7 +76,9 @@ const expected = ["absolute", "relative"]
 
 async function build(folder: string, flags: string[], entryPoints: string[], name: string): Promise<string> {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
-  built(await spawned([bunExe(), "build", "--compile", ...flags, ...entryPoints, "--outfile", executable], folder, bunEnv));
+  built(
+    await spawned([bunExe(), "build", "--compile", ...flags, ...entryPoints, "--outfile", executable], folder, bunEnv),
+  );
   return executable;
 }
 
@@ -96,13 +108,33 @@ test("compiled: a module shows the path of its source", async () => {
   using elsewhere = tempDir("aot-entry-point-names-shown-elsewhere", {});
   const executable = await build(String(dir), ["--aot"], ["src/shown.ts", "src/sub/typed.ts"], "shown");
   const run = await spawned([executable], String(elsewhere), bunEnv);
-  expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({ stdout: `${virtualRoot}shown.ts\n${virtualRoot}sub/typed.ts`, exitCode: 0 });
+  expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({
+    stdout: `${virtualRoot}shown.ts\n${virtualRoot}sub/typed.ts`,
+    exitCode: 0,
+  });
 });
 
 test("compiled: two entry points with one output name are an error, as in a bundle", async () => {
-  using dir = tempDir("aot-entry-point-names-equal", { ...files, "src/sub/typed.mjs": `export const who = "typed.mjs";` });
+  using dir = tempDir("aot-entry-point-names-equal", {
+    ...files,
+    "src/sub/typed.mjs": `export const who = "typed.mjs";`,
+  });
   for (const flags of [[], ["--aot"]]) {
-    const result = await spawned([bunExe(), "build", "--compile", ...flags, "src/main.ts", "src/sub/typed.ts", "src/sub/typed.mjs", "--outfile", join(String(dir), "equal")], String(dir), bunEnv);
+    const result = await spawned(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        ...flags,
+        "src/main.ts",
+        "src/sub/typed.ts",
+        "src/sub/typed.mjs",
+        "--outfile",
+        join(String(dir), "equal"),
+      ],
+      String(dir),
+      bunEnv,
+    );
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("Multiple files share the same output path");
   }

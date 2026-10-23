@@ -15,7 +15,14 @@ import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true },
+  compilerOptions: {
+    target: "esnext",
+    module: "preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  },
 });
 
 // The folder has Bun's types and not Node's.
@@ -45,13 +52,27 @@ declare module "node:module" {
 `;
 
 async function compileAndRun(text: string): Promise<{ report: BuildReport; stdout: string }> {
-  using dir = tempDir("aot-a-callback-type-does-not-hold-eval", { "main.ts": text, "node.d.ts": declarations, "tsconfig.json": tsconfig });
+  using dir = tempDir("aot-a-callback-type-does-not-hold-eval", {
+    "main.ts": text,
+    "node.d.ts": declarations,
+    "tsconfig.json": tsconfig,
+  });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "program.exe" : "program");
   const reportPath = join(folder, "report.json");
-  built(await spawned([bunExe(), ...compileCommand, ...withReport(reportPath, "summary"), "main.ts", "--outfile", executable], folder, bunEnv));
+  built(
+    await spawned(
+      [bunExe(), ...compileCommand, ...withReport(reportPath, "summary"), "main.ts", "--outfile", executable],
+      folder,
+      bunEnv,
+    ),
+  );
   const ran = await spawned([executable], folder, bunEnv);
-  expect({ signal: ran.signal, exitCode: ran.exitCode, stderr: ran.stderr }).toEqual({ signal: null, exitCode: 0, stderr: "" });
+  expect({ signal: ran.signal, exitCode: ran.exitCode, stderr: ran.stderr }).toEqual({
+    signal: null,
+    exitCode: 0,
+    stderr: "",
+  });
   return { report: readBuildReport(reportPath), stdout: ran.stdout };
 }
 
@@ -146,7 +167,8 @@ test("the library stores under a name of the module loader only into its own obj
   for (const file of readdirSync(root, { recursive: true, encoding: "utf8" })) {
     if (!/\.[jt]s$/.test(file) || file.endsWith(".d.ts") || file.includes("node_modules")) continue;
     const name = file.replaceAll("\\", "/");
-    for (const [text] of readFileSync(join(root, file), "utf8").matchAll(store)) found.add(`${name}: ${text.replace(/\s*=$/, " =")}`);
+    for (const [text] of readFileSync(join(root, file), "utf8").matchAll(store))
+      found.add(`${name}: ${text.replace(/\s*=$/, " =")}`);
   }
   expect([...found].sort()).toEqual(storesOfTheLibrary);
 });
@@ -171,7 +193,9 @@ describe.concurrent("compile/aot/a callback type does not hold eval", () => {
         slot(async () => {
           const { report, stdout } = await compileAndRun(text);
           expect(stdout).toBe(output);
-          expect(report.unseenCode).toContainEqual(expect.objectContaining(record ?? { cause: "EvaluatesText", builtin: "eval" }));
+          expect(report.unseenCode).toContainEqual(
+            expect.objectContaining(record ?? { cause: "EvaluatesText", builtin: "eval" }),
+          );
         }),
       600_000,
     );

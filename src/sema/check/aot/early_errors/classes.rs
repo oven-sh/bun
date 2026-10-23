@@ -70,7 +70,10 @@ impl Checker<'_, '_> {
             MemberKind::Property => {
                 self.check_grammar_computed_property_name(file, member.key);
             }
-            MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
+            MemberKind::Method
+            | MemberKind::Getter
+            | MemberKind::Setter
+            | MemberKind::Constructor
                 if func.is_none() => {}
             MemberKind::Method => {
                 self.check_grammar_method(file, func);
@@ -130,8 +133,8 @@ impl Checker<'_, '_> {
                 )
                 && !hir.is_ambient(hir.node(m))
             {
-                self.report_static_property_name_conflict(file, m, known::prototype).class =
-                    DiagnosticClass::EarlyError;
+                self.report_static_property_name_conflict(file, m, known::prototype)
+                    .class = DiagnosticClass::EarlyError;
             }
             if member.kind == MemberKind::Property
                 && member.key == PropKey::Name(known::constructor)

@@ -22,7 +22,11 @@ test("a method of a class of the host is entered at its native function where th
   using dir = tempDir("aot-methods-of-host-classes", { "main.ts": program });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
-  const build = await spawned([bunExe(), ...compileCommand, "--explain=statistics", "main.ts", "--outfile", executable], folder, env);
+  const build = await spawned(
+    [bunExe(), ...compileCommand, "--explain=statistics", "main.ts", "--outfile", executable],
+    folder,
+    env,
+  );
   built(build);
   expect(countIn(build.stdout + build.stderr)).toBeGreaterThanOrEqual(3);
 

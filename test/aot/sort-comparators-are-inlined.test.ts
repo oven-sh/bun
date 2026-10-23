@@ -20,10 +20,14 @@ import { describe, test } from "./supported";
 const program = join(import.meta.dir, "programs", "arrays", "sort-sites-do-not-slow-each-other.ts");
 const numberOfComparators = 5;
 
-const libraryFunctions = readFileSync(join(import.meta.dir, "..", "..", "src", "aot", "prelude", "array-sort.ts"), "utf8")
+const libraryFunctions = readFileSync(
+  join(import.meta.dir, "..", "..", "src", "aot", "prelude", "array-sort.ts"),
+  "utf8",
+)
   .split(/^(?=(?:export )?function \w)/m)
   .map(text => ({ name: /^(?:export )?function (\w+)/.exec(text)?.[1] ?? "", text }));
-const namesWhere = (holds: (text: string) => boolean) => new Set(libraryFunctions.filter(({ name, text }) => name !== "" && holds(text)).map(({ name }) => name));
+const namesWhere = (holds: (text: string) => boolean) =>
+  new Set(libraryFunctions.filter(({ name, text }) => name !== "" && holds(text)).map(({ name }) => name));
 const takesComparator = namesWhere(text => /^.*\bcomparator: unknown\)/.test(text));
 // The searches in long runs are rare, so the library asks for a call there.
 const asksForCalls = namesWhere(text => text.includes("$callNoInline<"));
@@ -53,8 +57,10 @@ const elementReads = ["GetDoubleIndex", "GetContiguousIndex"];
 // `v12: number = Sub v3, v4 form=Numbers @120`, `LoopHint @88`
 const opcodeOf = (operation: string) => /^(?:v\d+\b.*? = )?(\w+)/.exec(operation)?.[1] ?? "";
 const isCallByValue = (operation: string) => callsByValue.includes(opcodeOf(operation));
-const directCalleeOf = (operation: string) => (opcodeOf(operation) === "CallDirect" ? / function=(f\d+)\b/.exec(operation)?.[1] : undefined);
-const operationsOf = (body: Body, frequencies: Frequency[]) => body.blocks.filter(block => frequencies.includes(block.frequency)).flatMap(block => block.operations);
+const directCalleeOf = (operation: string) =>
+  opcodeOf(operation) === "CallDirect" ? / function=(f\d+)\b/.exec(operation)?.[1] : undefined;
+const operationsOf = (body: Body, frequencies: Frequency[]) =>
+  body.blocks.filter(block => frequencies.includes(block.frequency)).flatMap(block => block.operations);
 
 /** Every function as the build prints it after instruction selection. */
 function parseBodies(dump: string) {
@@ -77,7 +83,11 @@ function parseBodies(dump: string) {
       };
       bodies.set(body.id, body);
     } else if (line === "}") body = undefined;
-    else if (body && /^  b\d+\(/.test(line)) body.blocks.push({ frequency: (/ frequency=(Unlikely|Rare)\b/.exec(line)?.[1] ?? "Normal") as Frequency, operations: [] });
+    else if (body && /^  b\d+\(/.test(line))
+      body.blocks.push({
+        frequency: (/ frequency=(Unlikely|Rare)\b/.exec(line)?.[1] ?? "Normal") as Frequency,
+        operations: [],
+      });
     else if (body && line.startsWith("    ")) body.blocks.at(-1)!.operations.push(line.trim());
   }
   return bodies;
@@ -125,7 +135,11 @@ function find(bodies: Body[], frequencies: Frequency[], matches: (operation: str
 async function compile(folder: string, name: string, flags: string[]) {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
   const command = [bunExe(), ...compileCommand, "--explain=statistics", ...flags, program, "--outfile", executable];
-  const build = await spawned(command, dirname(program), { ...bunEnv, NO_COLOR: "1", [buildEnvironment.dumpsIR]: "Select" });
+  const build = await spawned(command, dirname(program), {
+    ...bunEnv,
+    NO_COLOR: "1",
+    [buildEnvironment.dumpsIR]: "Select",
+  });
   built(build);
   const lines = build.stderr.matchAll(/^(\w+) (\d+)$/gm);
   const statistics = new Map(Array.from(lines, ([, statistic, value]) => [statistic, Number(value)] as const));
@@ -134,9 +148,13 @@ async function compile(folder: string, name: string, flags: string[]) {
 
 describe.concurrent("compile/aot/sort comparators", () => {
   test("the library's text and the operations are what this file looks for", () => {
-    expect([...takesComparator]).toEqual(expect.arrayContaining(["sort", "toSorted", "insertionSortDoubles", "insertionSortValues", "gallopLeft"]));
+    expect([...takesComparator]).toEqual(
+      expect.arrayContaining(["sort", "toSorted", "insertionSortDoubles", "insertionSortValues", "gallopLeft"]),
+    );
     expect([...asksForCalls].sort()).toEqual(["gallopLeft", "gallopRight"]);
-    expect(["CallDirect", ...callsByValue, ...elementReads].filter(operation => !isDeclared("operations", operation))).toEqual([]);
+    expect(
+      ["CallDirect", ...callsByValue, ...elementReads].filter(operation => !isDeclared("operations", operation)),
+    ).toEqual([]);
     expect(isDeclared("statistics", "CalleeVersions")).toBe(true);
   });
 
@@ -156,9 +174,18 @@ describe.concurrent("compile/aot/sort comparators", () => {
         expect(comparators.length).toBe(numberOfComparators);
         for (const comparator of comparators) {
           const own = copies.filter(copy => copy.madeFor === comparator);
-          expect({ comparator, readsElements: find(own, normalBlocks, operation => elementReads.includes(opcodeOf(operation))).length > 0 }).toEqual({ comparator, readsElements: true });
+          expect({
+            comparator,
+            readsElements: find(own, normalBlocks, operation => elementReads.includes(opcodeOf(operation))).length > 0,
+          }).toEqual({ comparator, readsElements: true });
         }
-        expect(find(copies, blocksThatAreNotRare, (operation, copy) => (calleeOf(operation)?.madeFor ?? copy.madeFor) !== copy.madeFor)).toEqual([]);
+        expect(
+          find(
+            copies,
+            blocksThatAreNotRare,
+            (operation, copy) => (calleeOf(operation)?.madeFor ?? copy.madeFor) !== copy.madeFor,
+          ),
+        ).toEqual([]);
 
         expect(find(copies, normalBlocks, isCallByValue)).toEqual([]);
         expect(find(copies.filter(isInsertionSort), allBlocks, isCallByValue)).toEqual([]);
@@ -167,11 +194,20 @@ describe.concurrent("compile/aot/sort comparators", () => {
           const callee = calleeOf(operation);
           return callee !== undefined && isOfProgram(callee);
         };
-        expect(find(copies.filter(copy => !asksForCalls.has(copy.name)), blocksThatAreNotRare, callsProgram)).toEqual([]);
+        expect(
+          find(
+            copies.filter(copy => !asksForCalls.has(copy.name)),
+            blocksThatAreNotRare,
+            callsProgram,
+          ),
+        ).toEqual([]);
 
         const plain = await spawned([bunExe(), "run", program], dirname(program), bunEnv);
         expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        const compiled = await spawned(withoutCoreDump([executable]), dirname(program), { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" });
+        const compiled = await spawned(withoutCoreDump([executable]), dirname(program), {
+          ...bunEnv,
+          [runtimeEnvironment.forbidsInterpreter]: "1",
+        });
         expect({ signal: compiled.signal, ...told(compiled) }).toEqual({ signal: null, ...told(plain) });
       }),
     600_000,
@@ -185,10 +221,15 @@ describe.concurrent("compile/aot/sort comparators", () => {
         const { statistics, sorts } = await compile(String(dir), "shared", [withoutPass("InlineCalls")]);
         expect(statistics.get("CalleeVersions") ?? 0).toBe(0);
         expect(sorts.copies).toEqual([]);
-        expect(namesOf(sorts.shared)).toEqual(expect.arrayContaining(["insertionSortDoubles", "insertionSortValues", "sort", "toSorted"]));
+        expect(namesOf(sorts.shared)).toEqual(
+          expect.arrayContaining(["insertionSortDoubles", "insertionSortValues", "sort", "toSorted"]),
+        );
         for (const name of ["insertionSortDoubles", "insertionSortValues"]) {
           const bodies = sorts.shared.filter(body => body.name === name);
-          expect({ name, callsByValue: find(bodies, normalBlocks, isCallByValue).length > 0 }).toEqual({ name, callsByValue: true });
+          expect({ name, callsByValue: find(bodies, normalBlocks, isCallByValue).length > 0 }).toEqual({
+            name,
+            callsByValue: true,
+          });
         }
       }),
     600_000,

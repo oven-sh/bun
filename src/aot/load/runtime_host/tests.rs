@@ -181,7 +181,10 @@ fn internal_module_resolves_from_archive_importer() {
         assert_eq!(fixture.import(specifier, b""), unclaimed);
         let host = fixture.host;
         assert_eq!(host.resolve_runtime_module(specifier), unclaimed);
-        assert!(host.find_runtime_modules(b"internal/validators", b"").is_empty());
+        assert!(
+            host.find_runtime_modules(b"internal/validators", b"")
+                .is_empty()
+        );
     });
 }
 
@@ -260,7 +263,12 @@ fn entry_point_is_unclaimed() {
     with_host(|fixture| {
         for specifier in [&b"node:fs"[..], b"bun:jsc", b"bun:main", FS_SOURCE] {
             let resolution = fixture.resolve(specifier, b"", CodeImportKind::EntryPoint);
-            assert_eq!(resolution, HostResolution::Unclaimed, "{}", BStr::new(specifier));
+            assert_eq!(
+                resolution,
+                HostResolution::Unclaimed,
+                "{}",
+                BStr::new(specifier)
+            );
         }
     });
 }
@@ -290,7 +298,10 @@ fn other_paths_are_served_by_the_disk() {
         assert_eq!(host.read(PROGRAM_FILE).as_deref(), Some(PROGRAM_TEXT));
         assert_eq!(&*host.read_source(PROGRAM_FILE), PROGRAM_TEXT);
         assert!(host.is_dir(b"/project/src"));
-        assert_eq!(host.entries(b"/project/src"), (vec![b"a.ts".to_vec()], Vec::new()));
+        assert_eq!(
+            host.entries(b"/project/src"),
+            (vec![b"a.ts".to_vec()], Vec::new())
+        );
         assert_eq!(host.list_dir(b"/project/src"), [b"a.ts"]);
         assert!(!host.is_file(MISSING_PROGRAM_FILE));
         assert_eq!(host.read(MISSING_PROGRAM_FILE), None);
@@ -309,10 +320,19 @@ fn payload_kind_follows_file_kind() {
         for (path, kind) in cases {
             let parsed = fixture.parse(path);
             assert_eq!(parsed.hir.kind, FileKind::Ts, "{}", BStr::new(path));
-            assert!(!parsed.hir.is_js && !parsed.hir.has_errors, "{}", BStr::new(path));
+            assert!(
+                !parsed.hir.is_js && !parsed.hir.has_errors,
+                "{}",
+                BStr::new(path)
+            );
             assert!(parsed.host_values.is_empty());
             let source = payload_of(&parsed);
-            assert_eq!((source.kind, source.loader), (kind, Loader::Ts), "{}", BStr::new(path));
+            assert_eq!(
+                (source.kind, source.loader),
+                (kind, Loader::Ts),
+                "{}",
+                BStr::new(path)
+            );
             assert!(!source.is_from_plugin && source.plugin_module.is_none());
             assert!(source.web_assembly.is_none() && !source.is_page);
         }
@@ -326,10 +346,18 @@ fn declaration_root_is_types_only() {
     with_host(|fixture| {
         for path in fixture.runtime_modules().declaration_paths() {
             let parsed = fixture.parse(&path);
-            assert_eq!(parsed.hir.kind, FileKind::Declaration, "{}", BStr::new(&path));
+            assert_eq!(
+                parsed.hir.kind,
+                FileKind::Declaration,
+                "{}",
+                BStr::new(&path)
+            );
             assert!(parsed.hir.source_len > 0);
             let source = payload_of(&parsed);
-            assert_eq!((source.kind, source.loader), (SourceKind::TypesOnly, Loader::Ts));
+            assert_eq!(
+                (source.kind, source.loader),
+                (SourceKind::TypesOnly, Loader::Ts)
+            );
         }
         assert!(fixture.take_messages().is_empty());
     });
@@ -340,14 +368,21 @@ fn configuration_file_as_code_is_internal_error() {
     with_host(|fixture| {
         let cases: [(&[u8], &[u8]); 2] = [
             (CONFIGURATION, b"/$bun/js/tsconfig.json was loaded as code"),
-            (MISSING_SOURCE, b"/$bun/js/node/missing.ts was loaded as code"),
+            (
+                MISSING_SOURCE,
+                b"/$bun/js/node/missing.ts was loaded as code",
+            ),
         ];
         for (path, message) in cases {
             let parsed = fixture.parse(path);
             assert_eq!(payload_of(&parsed).kind, SourceKind::TypesOnly);
             let messages = fixture.take_messages();
             assert_eq!(messages.len(), 1, "{}", BStr::new(path));
-            assert!(messages[0].ends_with(message), "{}", BStr::new(&messages[0]));
+            assert!(
+                messages[0].ends_with(message),
+                "{}",
+                BStr::new(&messages[0])
+            );
         }
     });
 }
@@ -366,8 +401,11 @@ fn unknown_host_path_is_unreadable() {
             panic!("no read of the archive is deferred");
         };
         assert!(code.is_empty());
-        let unreadable: [&[u8]; 3] =
-            [MISSING_SOURCE, b"/$bun/plugin/v/config", MISSING_PROGRAM_FILE];
+        let unreadable: [&[u8]; 3] = [
+            MISSING_SOURCE,
+            b"/$bun/plugin/v/config",
+            MISSING_PROGRAM_FILE,
+        ];
         assert_eq!(host.take_unreadable(), unreadable);
         assert!(host.take_unreadable().is_empty());
         assert!(fixture.take_messages().is_empty());
@@ -416,7 +454,11 @@ fn only_modules_hoist_top_level_variables() {
             PROGRAM_FILE,
         ];
         for path in other_files {
-            assert!(!host.hoists_top_level_variables(path), "{}", BStr::new(path));
+            assert!(
+                !host.hoists_top_level_variables(path),
+                "{}",
+                BStr::new(path)
+            );
         }
     });
 }

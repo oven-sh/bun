@@ -2,7 +2,13 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", types: [] as string[], strict: true };
+const options = {
+  target: "ESNext",
+  module: "Preserve",
+  moduleResolution: "bundler",
+  types: [] as string[],
+  strict: true,
+};
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -26,23 +32,35 @@ test.each([
   ["TS5053", { sourceMap: true, inlineSourceMap: true }],
   ["TS5023", { importsNotUsedAsValues: "error" }],
   ["TS5023", { preserveValueImports: true }],
-])("%s for %j is about what tsc writes: it stops bun check and not a run under --aot", async (code, more) => {
-  using dir = tempDir("options-about-what-tsc-writes", files(more));
-  const [plain, tested, checked] = await Promise.all([run(String(dir), "check"), run(String(dir), "test", "--aot"), run(String(dir), "check", "--aot", "one.test.ts")]);
-  expect(errors(plain.said)).toContain(code);
-  expect({ errors: errors(tested.said), passed: passed(tested.said) }).toEqual({ errors: [], passed: ["one"] });
-  expect({ errors: errors(checked.said), exitCode: checked.exitCode }).toEqual({ errors: [], exitCode: 0 });
-  await Bun.write(`${dir}/wrong.ts`, `export const wrong: number = "text";\n`);
-  const wrong = await run(String(dir), "check", "--aot", "wrong.ts");
-  expect({ errors: errors(wrong.said), exitCode: wrong.exitCode }).toEqual({ errors: ["TS2322"], exitCode: 1 });
-}, 60_000);
+])(
+  "%s for %j is about what tsc writes: it stops bun check and not a run under --aot",
+  async (code, more) => {
+    using dir = tempDir("options-about-what-tsc-writes", files(more));
+    const [plain, tested, checked] = await Promise.all([
+      run(String(dir), "check"),
+      run(String(dir), "test", "--aot"),
+      run(String(dir), "check", "--aot", "one.test.ts"),
+    ]);
+    expect(errors(plain.said)).toContain(code);
+    expect({ errors: errors(tested.said), passed: passed(tested.said) }).toEqual({ errors: [], passed: ["one"] });
+    expect({ errors: errors(checked.said), exitCode: checked.exitCode }).toEqual({ errors: [], exitCode: 0 });
+    await Bun.write(`${dir}/wrong.ts`, `export const wrong: number = "text";\n`);
+    const wrong = await run(String(dir), "check", "--aot", "wrong.ts");
+    expect({ errors: errors(wrong.said), exitCode: wrong.exitCode }).toEqual({ errors: ["TS2322"], exitCode: 1 });
+  },
+  60_000,
+);
 
 test.each([
   ["TS5023", { noSuchOption: true }],
   ["TS5053", { lib: ["ESNext"], noLib: true }],
-])("%s for %j is not: it stops a run under --aot too", async (code, more) => {
-  using dir = tempDir("options-about-what-tsc-writes", files(more));
-  const tested = await run(String(dir), "test", "--aot");
-  expect(errors(tested.said)).toContain(code);
-  expect(passed(tested.said)).toEqual([]);
-}, 60_000);
+])(
+  "%s for %j is not: it stops a run under --aot too",
+  async (code, more) => {
+    using dir = tempDir("options-about-what-tsc-writes", files(more));
+    const tested = await run(String(dir), "test", "--aot");
+    expect(errors(tested.said)).toContain(code);
+    expect(passed(tested.said)).toEqual([]);
+  },
+  60_000,
+);

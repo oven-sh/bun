@@ -60,7 +60,10 @@ impl Diagnostics {
         if self.has_internal_errors() {
             return None;
         }
-        let errors = self.entries.iter().filter(|entry| entry.message.kind == Kind::Err);
+        let errors = self
+            .entries
+            .iter()
+            .filter(|entry| entry.message.kind == Kind::Err);
         errors
             .map(|entry| Some(entry.key.1.as_slice()).filter(|path| !path.is_empty()))
             .collect()
@@ -82,6 +85,7 @@ impl Diagnostics {
         self.add_with_locator(locator.as_mut(), diagnostic);
     }
 
+    #[allow(clippy::needless_pass_by_value)] // the end of the diagnostic
     pub(super) fn add_with_locator(
         &mut self,
         mut locator: Option<&mut SpanLocator<'_, '_>>,
@@ -92,7 +96,11 @@ impl Diagnostics {
             (Some(locator), Some(span)) => locator.view().origin(span.file),
             (None, Some(_)) | (Some(_) | None, None) => FileOrigin::NoFile,
         };
-        let effect = effect_of(origin, COMPILER_DIAGNOSTIC_CLASS, diagnostic.severity.category());
+        let effect = effect_of(
+            origin,
+            COMPILER_DIAGNOSTIC_CLASS,
+            diagnostic.severity.category(),
+        );
         match effect {
             // Roles are final when the compiler reports.
             Effect::StopsBuild | Effect::Warns | Effect::WithdrawsTrust => {
@@ -125,6 +133,7 @@ impl Diagnostics {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)] // the end of the diagnostic
     pub(crate) fn add_with_checker_note(
         &mut self,
         diagnostic: Diagnostic,
@@ -149,7 +158,8 @@ impl Diagnostics {
 
     pub(crate) fn write_to(mut self, log: &mut Log) {
         self.entries.sort_by(|a, b| a.key.cmp(&b.key));
-        self.entries.dedup_by(|next, previous| next.key == previous.key);
+        self.entries
+            .dedup_by(|next, previous| next.key == previous.key);
         for entry in self.entries {
             write_message(log, entry.message);
         }
@@ -231,7 +241,9 @@ pub(super) fn append_location(message: &mut Vec<u8>, path: &[u8], line: u32, col
 fn append_source_text(message: &mut Vec<u8>, files: &Files<'_>, span: Span) {
     let text = &files.module(span.file).hir.text[..];
     let end = (span.end as usize).min(span.start as usize + MAX_PRINTED_SOURCE_BYTES);
-    let Some(source) = text.get(span.start as usize..end).filter(|source| !source.is_empty())
+    let Some(source) = text
+        .get(span.start as usize..end)
+        .filter(|source| !source.is_empty())
     else {
         return;
     };

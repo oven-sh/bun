@@ -17,7 +17,11 @@ const rows = readFileSync(join(import.meta.dir, "one-line", "lines.txt"), "utf8"
   .filter(line => line.trim() && !line.startsWith("#"))
   .map(line => {
     const [opens, at] = [line.endsWith(" | opens"), line.indexOf(" | ")];
-    return { title: line.slice(0, at), code: line.slice(at + 3, opens ? -" | opens".length : undefined).replaceAll("\\n", "\n"), opens };
+    return {
+      title: line.slice(0, at),
+      code: line.slice(at + 3, opens ? -" | opens".length : undefined).replaceAll("\\n", "\n"),
+      opens,
+    };
   });
 
 const tsconfig = {
@@ -52,25 +56,29 @@ function findRegression(before: Typedness, after: Typedness): string {
 
 describe.skipIf(!!unsupported)("compile/aot/typedness/one-line", () => {
   // TODO: a write and a delete on a record cost one typed access elsewhere.
-  test.todo("a line costs no more than its own accesses", async () => {
-    using dir = tempDir("aot-one-line", { "tsconfig.json": JSON.stringify(tsconfig), "base.ts": base });
-    const before = await typednessOf(join(String(dir), "base.ts"));
-    expect(before.types).toEqual([]);
-    expect(before.line).toStartWith("0 open, ");
-    expect(typedAccessCount(before)).toBeGreaterThan(10);
-    const mine = rows.filter(row => !row.opens).filter((_, index) => wanted !== "quick" || index % 10 === 0);
-    const found = await Promise.all(
-      mine.map(({ title, code }, index) =>
-        slot(async () => {
-          const path = join(String(dir), `line-${index}.ts`);
-          writeFileSync(path, base + code + "\n");
-          const regression = findRegression(before, await typednessOf(path));
-          return regression ? [`${title}: ${regression}`] : [];
-        }),
-      ),
-    );
-    expect(found.flat()).toEqual([]);
-  }, 600_000);
+  test.todo(
+    "a line costs no more than its own accesses",
+    async () => {
+      using dir = tempDir("aot-one-line", { "tsconfig.json": JSON.stringify(tsconfig), "base.ts": base });
+      const before = await typednessOf(join(String(dir), "base.ts"));
+      expect(before.types).toEqual([]);
+      expect(before.line).toStartWith("0 open, ");
+      expect(typedAccessCount(before)).toBeGreaterThan(10);
+      const mine = rows.filter(row => !row.opens).filter((_, index) => wanted !== "quick" || index % 10 === 0);
+      const found = await Promise.all(
+        mine.map(({ title, code }, index) =>
+          slot(async () => {
+            const path = join(String(dir), `line-${index}.ts`);
+            writeFileSync(path, base + code + "\n");
+            const regression = findRegression(before, await typednessOf(path));
+            return regression ? [`${title}: ${regression}`] : [];
+          }),
+        ),
+      );
+      expect(found.flat()).toEqual([]);
+    },
+    600_000,
+  );
 
   test("reports a regression when JSON.parse data is pushed into a typed array", async () => {
     using dir = tempDir("aot-one-line-regression", {
@@ -78,7 +86,9 @@ describe.skipIf(!!unsupported)("compile/aot/typedness/one-line", () => {
       "base.ts": base,
       "interface.ts": base + `rows.push(JSON.parse('{"name":"Cy","n":3}'));\nconsole.log(total(rows));\n`,
     });
-    const [before, openInterface] = await Promise.all(["base.ts", "interface.ts"].map(file => typednessOf(join(String(dir), file))));
+    const [before, openInterface] = await Promise.all(
+      ["base.ts", "interface.ts"].map(file => typednessOf(join(String(dir), file))),
+    );
     expect(openInterface.line).toMatch(/^[1-9]\d* open, /);
     expect(findRegression(before, openInterface)).toContain("Row is open");
   }, 120_000);

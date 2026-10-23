@@ -45,7 +45,9 @@ fn default_options<'a>(log: &mut Log) -> BundleOptions<'a> {
     };
     // SAFETY: `FileSystem::init` returns the process-lifetime instance, and tests do not keep this borrow.
     let file_system = unsafe { &mut *file_system };
-    BundleOptions::from_api(file_system, log, transform).ok().expect("default options")
+    BundleOptions::from_api(file_system, log, transform)
+        .ok()
+        .expect("default options")
 }
 
 fn convert<R>(
@@ -78,17 +80,23 @@ fn convert<R>(
 
 fn errors(log: &Log) -> Vec<String> {
     let messages = log.msgs.iter();
-    messages.map(|message| bstr::BStr::new(&message.data.text).to_string()).collect()
+    messages
+        .map(|message| bstr::BStr::new(&message.data.text).to_string())
+        .collect()
 }
 
 fn convert_code(configure: impl FnOnce(&mut BundleOptions<'_>)) -> CodeOptions {
-    convert(Case::default(), configure, |result, _| result.expect("options").code)
+    convert(Case::default(), configure, |result, _| {
+        result.expect("options").code
+    })
 }
 
 #[test]
 fn options_about_what_can_be_removed_are_passed_on() {
     let convert_removable = |configure: fn(&mut BundleOptions<'_>)| {
-        convert(Case::default(), configure, |result, _| result.expect("options").removable)
+        convert(Case::default(), configure, |result, _| {
+            result.expect("options").removable
+        })
     };
     assert_eq!(convert_removable(|_| {}), RemovableOptions::default());
     let ignoring = convert_removable(|options| options.ignore_dce_annotations = true);
@@ -98,7 +106,9 @@ fn options_about_what_can_be_removed_are_passed_on() {
 }
 
 fn convert_load(configure: impl FnOnce(&mut BundleOptions<'_>)) -> LoadOptions {
-    convert(Case::default(), configure, |result, _| result.expect("options").load)
+    convert(Case::default(), configure, |result, _| {
+        result.expect("options").load
+    })
 }
 
 fn convert_paths(
@@ -125,7 +135,7 @@ fn byte_lists(texts: &[&str]) -> Vec<Vec<u8>> {
 
 fn set_framework(options: &mut BundleOptions<'_>) {
     let built_in_modules = bun_collections::StringArrayHashMap::new();
-    let framework = Framework::new(built_in_modules, None, None, false, Vec::new());
+    let framework = Framework::new(built_in_modules, None, None, Vec::new());
     options.framework = Some(Box::leak(Box::new(framework)));
 }
 
@@ -142,7 +152,10 @@ fn default_options_convert() {
         |result, log| {
             let options = result.expect("options");
             assert!(log.msgs.is_empty());
-            assert_eq!(options.code.conditions, byte_lists(&["bun", "node", "node-addons"]));
+            assert_eq!(
+                options.code.conditions,
+                byte_lists(&["bun", "node", "node-addons"])
+            );
             assert_eq!(options.load.loaders, default_loaders());
             assert_eq!(options.load.project_root, b"/project");
             assert!(options.load.runs_macros);
@@ -158,11 +171,20 @@ fn default_options_convert() {
 #[test]
 fn unsupported_values_report_argument() {
     let cases: [(Configure, &str); 23] = [
-        (|o| o.banner = Cow::Borrowed(b"let a;"), "--banner with code"),
-        (|o| o.footer = Cow::Borrowed(b"let a;"), "--footer with code"),
+        (
+            |o| o.banner = Cow::Borrowed(b"let a;"),
+            "--banner with code",
+        ),
+        (
+            |o| o.footer = Cow::Borrowed(b"let a;"),
+            "--footer with code",
+        ),
         (|o| o.output_format = Format::Cjs, "--format=cjs"),
         (|o| o.output_format = Format::Iife, "--format=iife"),
-        (|o| o.output_format = Format::InternalBakeDev, "a development server"),
+        (
+            |o| o.output_format = Format::InternalBakeDev,
+            "a development server",
+        ),
         (|o| o.target = Target::Browser, "--target=browser"),
         (|o| o.target = Target::Node, "--target=node"),
         (|o| o.target = Target::BunMacro, "this target"),
@@ -171,16 +193,28 @@ fn unsupported_values_report_argument() {
         (|o| o.metafile = true, "--metafile"),
         (|o| o.transform_only = true, "--no-bundle"),
         (|o| o.server_components = true, "--server-components"),
-        (|o| o.allow_unresolved = AllowUnresolved::None, "--allow-unresolved"),
+        (
+            |o| o.allow_unresolved = AllowUnresolved::None,
+            "--allow-unresolved",
+        ),
         (
             |o| o.macro_remap.put(b"a", Default::default()).expect("oom"),
             "the \"macros\" map of bunfig.toml",
         ),
-        (|o| o.inject = Some(Box::new([Box::from(&b"a"[..])])), "inject"),
-        (|o| o.react_compiler_parse_test_pragmas = true, "reactCompilerParseTestPragmas"),
+        (
+            |o| o.inject = Some(Box::new([Box::from(&b"a"[..])])),
+            "inject",
+        ),
+        (
+            |o| o.react_compiler_parse_test_pragmas = true,
+            "reactCompilerParseTestPragmas",
+        ),
         (set_framework, "a development server"),
         (|o| o.hot_module_reloading = true, "a development server"),
-        (|o| o.dev_server = core::ptr::NonNull::<()>::dangling().as_ptr(), "a development server"),
+        (
+            |o| o.dev_server = core::ptr::NonNull::<()>::dangling().as_ptr(),
+            "a development server",
+        ),
         (|o| o.ignore_module_resolution_errors = true, "this command"),
         (|o| o.disable_transpilation = true, "this command"),
         (|o| o.repl_mode = true, "this command"),
@@ -287,9 +321,15 @@ fn server_code_flags_change_nothing() {
 fn custom_conditions_append_once() {
     let code = convert_code(|options| {
         options.custom_conditions = vec![Box::from(&b"custom"[..]), Box::from(&b"bun"[..])];
-        options.conditions.append_slice(&[b"development" as &[u8]]).expect("oom");
+        options
+            .conditions
+            .append_slice(&[b"development" as &[u8]])
+            .expect("oom");
     });
-    assert_eq!(code.conditions, byte_lists(&["bun", "node", "node-addons", "custom"]));
+    assert_eq!(
+        code.conditions,
+        byte_lists(&["bun", "node", "node-addons", "custom"])
+    );
     assert_eq!(code.custom_conditions, byte_lists(&["custom", "bun"]));
 }
 
@@ -390,7 +430,10 @@ fn macros_and_react_compiler_follow_options() {
     });
     assert!(!load.runs_macros);
     assert_eq!(load.react_compiler, ReactCompilerMode::Ssr);
-    assert_eq!(convert_load(|_| {}).react_compiler, ReactCompilerMode::Disabled);
+    assert_eq!(
+        convert_load(|_| {}).react_compiler,
+        ReactCompilerMode::Disabled
+    );
 }
 
 #[test]
@@ -441,7 +484,11 @@ fn convert_in_memory_files(files: &[(&[u8], &[u8])]) -> Vec<(Vec<u8>, Vec<u8>)> 
         file_map: Some(&file_map),
         ..Case::default()
     };
-    convert(case, |_| {}, |result, _| result.expect("options").load.in_memory_files)
+    convert(
+        case,
+        |_| {},
+        |result, _| result.expect("options").load.in_memory_files,
+    )
 }
 
 #[test]
@@ -457,7 +504,10 @@ fn in_memory_files_are_absolute_and_sorted() {
 #[test]
 fn duplicate_in_memory_paths_keep_last_sorted_key() {
     let files = convert_in_memory_files(&[(b"a.ts", b"relative"), (b"/project/a.ts", b"absolute")]);
-    assert_eq!(files, vec![(b"/project/a.ts".to_vec(), b"relative".to_vec())]);
+    assert_eq!(
+        files,
+        vec![(b"/project/a.ts".to_vec(), b"relative".to_vec())]
+    );
 }
 
 #[test]
@@ -484,10 +534,14 @@ fn long_entry_point_is_an_error() {
         entry_points: &[&entry, b"main.ts"],
         ..Case::default()
     };
-    let messages = convert(case, |_| {}, |result, log| {
-        assert!(result.is_none());
-        errors(log)
-    });
+    let messages = convert(
+        case,
+        |_| {},
+        |result, log| {
+            assert!(result.is_none());
+            errors(log)
+        },
+    );
     assert_eq!(messages.len(), 1);
     assert!(messages[0].starts_with("the entry point \"aaa"));
     assert!(messages[0].ends_with("\" is too long"));
@@ -517,7 +571,10 @@ fn single_entry_point_directory_is_root() {
         (b"/main.ts", b"/"),
     ];
     for (entry_point, root_directory) in cases {
-        assert_eq!(convert_paths(&[entry_point], |_| {}).root_directory, root_directory);
+        assert_eq!(
+            convert_paths(&[entry_point], |_| {}).root_directory,
+            root_directory
+        );
     }
 }
 
@@ -532,7 +589,10 @@ fn common_entry_point_directory_is_root() {
         (&[b"a.ts", b"/other/b.ts"], b"/"),
     ];
     for (entry_points, root_directory) in cases {
-        assert_eq!(convert_paths(entry_points, |_| {}).root_directory, root_directory);
+        assert_eq!(
+            convert_paths(entry_points, |_| {}).root_directory,
+            root_directory
+        );
     }
 }
 
@@ -547,7 +607,9 @@ fn entry_point_count_does_not_change_root() {
 
 #[test]
 fn early_difference_among_nine_entry_points_decides_root() {
-    let mut files: Vec<String> = (0..9).map(|index| format!("src/deep/e{index}.ts")).collect();
+    let mut files: Vec<String> = (0..9)
+        .map(|index| format!("src/deep/e{index}.ts"))
+        .collect();
     files[1] = "lib/deep/e1.ts".to_owned();
     let entry_points: Vec<&[u8]> = files.iter().map(|file| file.as_bytes()).collect();
     let paths = convert_paths(&entry_points, |_| {});
@@ -605,26 +667,51 @@ fn embedded_names(
     let mut options = default_options(&mut log);
     configure(&mut options);
     let entry_points = byte_lists(entry_points);
-    let names =
-        embedded_entry_point_names(&options, b"/project", &entry_points, b"/project/src", &mut log);
+    let names = embedded_entry_point_names(
+        &options,
+        b"/project",
+        &entry_points,
+        b"/project/src",
+        &mut log,
+    );
     (names, errors(&log))
 }
 
 #[test]
 fn embedded_names_are_those_of_bundle() {
-    let entry_points =
-        ["/project/src/main.ts", "/project/src/workers/w.ts", "/project/src/data.mjs", "/project/src/c.cjs"];
+    let entry_points = [
+        "/project/src/main.ts",
+        "/project/src/workers/w.ts",
+        "/project/src/data.mjs",
+        "/project/src/c.cjs",
+    ];
     let (names, _) = embedded_names(&entry_points, |_| {});
-    assert_eq!(names, Some(byte_lists(&["main.js", "workers/w.js", "data.js", "c.js"])));
+    assert_eq!(
+        names,
+        Some(byte_lists(&["main.js", "workers/w.js", "data.js", "c.js"]))
+    );
     let (names, _) = embedded_names(&entry_points, set_root_and_compile_name);
-    assert_eq!(names, Some(byte_lists(&["app", "workers/w.js", "data.js", "c.js"])));
+    assert_eq!(
+        names,
+        Some(byte_lists(&["app", "workers/w.js", "data.js", "c.js"]))
+    );
 }
 
 #[test]
 fn equal_embedded_names_are_an_error() {
-    let (names, messages) = embedded_names(&["/project/src/main.ts", "/project/src/a.ts", "/project/src/a.mjs"], |_| {});
+    let (names, messages) = embedded_names(
+        &[
+            "/project/src/main.ts",
+            "/project/src/a.ts",
+            "/project/src/a.mjs",
+        ],
+        |_| {},
+    );
     assert_eq!(names, None);
-    assert_eq!(messages, ["Multiple files share the same output path: a.js"]);
+    assert_eq!(
+        messages,
+        ["Multiple files share the same output path: a.js"]
+    );
 }
 
 #[test]
@@ -639,7 +726,10 @@ fn equal_entry_names_are_an_error() {
         assert!(result.is_none());
         errors(log)
     });
-    assert_eq!(messages, ["Multiple files share the same output path: a.js"]);
+    assert_eq!(
+        messages,
+        ["Multiple files share the same output path: a.js"]
+    );
 }
 
 #[test]
@@ -691,11 +781,19 @@ impl TemporaryProject {
 
     fn expand(&self, entry_points: &[&[u8]]) -> (Option<Vec<Vec<u8>>>, Vec<String>) {
         let case = self.case(entry_points);
-        convert(case, |_| {}, |result, log| (result.map(|it| it.entry_points), errors(log)))
+        convert(
+            case,
+            |_| {},
+            |result, log| (result.map(|it| it.entry_points), errors(log)),
+        )
     }
 
     fn convert_paths(&self, entry_points: &[&[u8]]) -> PathOptions {
-        convert(self.case(entry_points), |_| {}, |result, _| result.expect("options").paths)
+        convert(
+            self.case(entry_points),
+            |_| {},
+            |result, _| result.expect("options").paths,
+        )
     }
 
     fn path_of(&self, name: &str) -> Vec<u8> {
@@ -726,7 +824,13 @@ const PROJECT_FILES: [&str; 9] = [
 fn patterns_expand_in_position() {
     let project = TemporaryProject::new("positions", &PROJECT_FILES);
     let (entries, messages) = project.expand(&[b"main.cjs", b"plugins/*", b"lib/**/*.{cjs,mjs}"]);
-    let expected = ["main.cjs", "plugins/a.cjs", "plugins/b.cjs", "lib/d.cjs", "lib/deep/e.mjs"];
+    let expected = [
+        "main.cjs",
+        "plugins/a.cjs",
+        "plugins/b.cjs",
+        "lib/d.cjs",
+        "lib/deep/e.mjs",
+    ];
     assert_eq!(entries, Some(byte_lists(&expected)), "{messages:?}");
 }
 
@@ -737,7 +841,10 @@ fn owned_entry_points_expand() {
     let working_directory = project.directory.as_os_str().as_bytes();
     let mut log = Log::init();
     let entries = expand_entry_points(&entry_points, working_directory, None, &mut log);
-    assert_eq!(entries, Some(byte_lists(&["main.cjs", "plugins/a.cjs", "plugins/b.cjs"])));
+    assert_eq!(
+        entries,
+        Some(byte_lists(&["main.cjs", "plugins/a.cjs", "plugins/b.cjs"]))
+    );
     assert!(log.msgs.is_empty());
 }
 
@@ -745,7 +852,10 @@ fn owned_entry_points_expand() {
 fn written_file_matching_pattern_is_listed_once() {
     let project = TemporaryProject::new("duplicates", &PROJECT_FILES);
     let (entries, _) = project.expand(&[b"plugins/a.cjs", b"plugins/*"]);
-    assert_eq!(entries, Some(byte_lists(&["plugins/a.cjs", "plugins/b.cjs"])));
+    assert_eq!(
+        entries,
+        Some(byte_lists(&["plugins/a.cjs", "plugins/b.cjs"]))
+    );
 }
 
 #[test]
@@ -771,7 +881,11 @@ fn in_memory_file_with_pattern_syntax_is_taken_as_written() {
         file_map: Some(&file_map),
         ..Case::default()
     };
-    let entries = convert(case, |_| {}, |result, _| result.expect("options").entry_points);
+    let entries = convert(
+        case,
+        |_| {},
+        |result, _| result.expect("options").entry_points,
+    );
     assert_eq!(entries, byte_lists(&["[id].ts"]));
 }
 
@@ -780,7 +894,10 @@ fn pattern_without_match_is_an_error() {
     let project = TemporaryProject::new("missing", &PROJECT_FILES);
     let (entries, messages) = project.expand(&[b"nothing/**/*.cjs", b"main.cjs"]);
     assert_eq!(entries, None);
-    assert_eq!(messages, ["no file matches the entry point \"nothing/**/*.cjs\""]);
+    assert_eq!(
+        messages,
+        ["no file matches the entry point \"nothing/**/*.cjs\""]
+    );
 }
 
 #[test]
@@ -789,7 +906,10 @@ fn pattern_and_written_files_get_equal_names() {
     let from_pattern = project.convert_paths(&[b"apps/*/main.ts"]);
     let from_files = project.convert_paths(&[b"apps/a/main.ts", b"apps/b/main.ts"]);
     assert_eq!(from_pattern.root_directory, project.path_of("apps"));
-    assert_eq!(from_pattern.entry_point_names, byte_lists(&["a/main.ts", "b/main.ts"]));
+    assert_eq!(
+        from_pattern.entry_point_names,
+        byte_lists(&["a/main.ts", "b/main.ts"])
+    );
     assert_eq!(from_files.root_directory, from_pattern.root_directory);
     assert_eq!(from_files.entry_point_names, from_pattern.entry_point_names);
 }
@@ -806,8 +926,11 @@ fn pattern_with_one_match_has_match_directory_as_root() {
 #[allow(clippy::disallowed_methods)]
 fn derived_root_directory_follows_symbolic_links() {
     let project = TemporaryProject::new("links", &["real/main.ts"]);
-    std::os::unix::fs::symlink(project.directory.join("real"), project.directory.join("link"))
-        .expect("symbolic link");
+    std::os::unix::fs::symlink(
+        project.directory.join("real"),
+        project.directory.join("link"),
+    )
+    .expect("symbolic link");
     let paths = project.convert_paths(&[b"link/main.ts"]);
     assert_eq!(paths.root_directory, project.path_of("real"));
 }

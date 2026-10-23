@@ -300,7 +300,12 @@ fn add_keyed_spread_element(file: &mut FileBuilder, is_key_first: bool) -> ExprI
     let key = file.expr(ExprKind::String(known::value), 0, 0);
     let mut attributes = [
         property(PropKind::Spread, PropKey::None, NameKind::Jsx, props),
-        property(PropKind::Init, PropKey::Name(known::key), NameKind::Jsx, key),
+        property(
+            PropKind::Init,
+            PropKey::Name(known::key),
+            NameKind::Jsx,
+            key,
+        ),
     ];
     if is_key_first {
         attributes.reverse();
@@ -616,7 +621,10 @@ fn import_meta_resolve_consults_resolver_for_bare_specifier() {
         let body = [file.stmt(StmtKind::Expr(call), 0)];
         with_scan(file, &body, |scan| {
             assert_eq!(site_kinds(scan), [ImportSiteKind::ImportMetaResolve(call)]);
-            assert_eq!(scan.sites[0].consults_resolver, consults_resolver, "case {index}");
+            assert_eq!(
+                scan.sites[0].consults_resolver, consults_resolver,
+                "case {index}"
+            );
         });
     }
 }

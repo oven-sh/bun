@@ -46,7 +46,11 @@ function declares(node: ts.Identifier): boolean {
 function positionOf(node: ts.Identifier, declared: Set<string>): Position | undefined {
   if (isInType(node)) return undefined;
   const parent = node.parent as any;
-  if ((ts.isPropertyAccessExpression(parent) && parent.name === node) || (ts.isQualifiedName(parent) && parent.right === node)) return "Member";
+  if (
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+    (ts.isQualifiedName(parent) && parent.right === node)
+  )
+    return "Member";
   const isKey =
     parent.name === node &&
     (ts.isPropertyAssignment(parent) ||
@@ -57,7 +61,13 @@ function positionOf(node: ts.Identifier, declared: Set<string>): Position | unde
       ts.isPropertySignature(parent) ||
       ts.isMethodSignature(parent));
   if (isKey || (ts.isBindingElement(parent) && parent.propertyName === node)) return "Member";
-  if (ts.isBindingElement(parent) && parent.name === node && !parent.propertyName && ts.isObjectBindingPattern(parent.parent)) return "Member";
+  if (
+    ts.isBindingElement(parent) &&
+    parent.name === node &&
+    !parent.propertyName &&
+    ts.isObjectBindingPattern(parent.parent)
+  )
+    return "Member";
   if (ts.isShorthandPropertyAssignment(parent)) return "Member";
   if (declared.has(node.text)) return undefined;
   return ts.isCallExpression(parent) && parent.expression === node ? "Call" : "Value";
@@ -76,7 +86,13 @@ export function censusOfText(file: string, text: string): Use[] {
   const visit = (node: ts.Node) => {
     if (isDollarName(node)) {
       const position = positionOf(node, declared);
-      if (position) uses.push({ file, line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, name: node.text.slice(1), position });
+      if (position)
+        uses.push({
+          file,
+          line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+          name: node.text.slice(1),
+          position,
+        });
     }
     ts.forEachChild(node, visit);
   };

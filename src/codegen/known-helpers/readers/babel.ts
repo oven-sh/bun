@@ -18,12 +18,24 @@ interface Feature {
 
 const features: readonly Feature[] = [
   { packages: ["@babel/plugin-proposal-class-static-block", "@babel/plugin-transform-class-static-block"] },
-  { packages: ["@babel/plugin-proposal-class-properties", "@babel/plugin-transform-class-properties"], takesLoose: true },
+  {
+    packages: ["@babel/plugin-proposal-class-properties", "@babel/plugin-transform-class-properties"],
+    takesLoose: true,
+  },
   { packages: ["@babel/plugin-proposal-private-methods", "@babel/plugin-transform-private-methods"], takesLoose: true },
-  { packages: ["@babel/plugin-proposal-private-property-in-object", "@babel/plugin-transform-private-property-in-object"], takesLoose: true },
+  {
+    packages: [
+      "@babel/plugin-proposal-private-property-in-object",
+      "@babel/plugin-transform-private-property-in-object",
+    ],
+    takesLoose: true,
+  },
   { packages: ["@babel/plugin-proposal-export-namespace-from", "@babel/plugin-transform-export-namespace-from"] },
   {
-    packages: ["@babel/plugin-proposal-explicit-resource-management", "@babel/plugin-transform-explicit-resource-management"],
+    packages: [
+      "@babel/plugin-proposal-explicit-resource-management",
+      "@babel/plugin-transform-explicit-resource-management",
+    ],
     isUsedBy: probe => probe.name.startsWith("using-"),
   },
   { packages: ["@babel/plugin-transform-react-jsx"], isUsedBy: probe => probe.hasJsx },

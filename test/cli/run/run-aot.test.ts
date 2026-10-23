@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { unsupported } from "../../aot/run-programs";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
@@ -7,11 +6,19 @@ import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
+import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
 
 // `warns`: the codes of the warnings that the build prints in front of what the program prints.
-type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; flags?: string[]; builds?: boolean; warns?: string[] };
+type Options = {
+  args?: string[];
+  env?: Record<string, string>;
+  stdin?: string;
+  flags?: string[];
+  builds?: boolean;
+  warns?: string[];
+};
 
 function expectToHaveUsedImage(stderr: string) {
   expect(stderr).toContain("[aot] image: ");
@@ -39,7 +46,9 @@ async function run(
 function withoutWarnings<T extends { stderr: string }>(ran: T, codes: string[] = []): T {
   for (const code of codes) expect(ran.stderr).toContain(`warn: ${code}: `);
   // A warning is the line of the source, a caret, the warning and where it is, then an empty line or the end.
-  return codes.length ? { ...ran, stderr: ran.stderr.replace(/^ *\d+ \| .*\n +\^\nwarn: TS\d+: .*\n +at .*\n\n?/gm, "") } : ran;
+  return codes.length
+    ? { ...ran, stderr: ran.stderr.replace(/^ *\d+ \| .*\n +\^\nwarn: TS\d+: .*\n +at .*\n\n?/gm, "") }
+    : ran;
 }
 
 async function expectSameAsBunRun(files: Record<string, string>, entry: string, options?: Options) {
@@ -66,7 +75,10 @@ async function expectBothToRun(files: Record<string, string>, entry: string, opt
     run(String(dir), true, "app/" + entry, options),
   ]);
   expect({ stderr: bunRun.stderr, exitCode: bunRun.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect({ stderr: withoutWarnings(actual, options?.warns).stderr, exitCode: actual.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect({ stderr: withoutWarnings(actual, options?.warns).stderr, exitCode: actual.exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+  });
   return { ...actual, bunRun };
 }
 
@@ -140,10 +152,19 @@ describe.skipIf(!supported)("a file that is imported for its path", () => {
           stdout: "ignore",
           stderr: "pipe",
         });
-        expect([flags, await build.stderr.text(), await build.exited]).toEqual([flags, expect.not.stringContaining("error"), 0]);
+        expect([flags, await build.stderr.text(), await build.exited]).toEqual([
+          flags,
+          expect.not.stringContaining("error"),
+          0,
+        ]);
         await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ flags, stdout, stderr, exitCode }).toEqual({ flags, stdout: expected[entry], stderr: "", exitCode: 0 });
+        expect({ flags, stdout, stderr, exitCode }).toEqual({
+          flags,
+          stdout: expected[entry],
+          stderr: "",
+          exitCode: 0,
+        });
       }
     });
   });
@@ -164,7 +185,10 @@ describe.skipIf(!supported)("bun run --aot", () => {
   });
 
   test.concurrent.each([
-    ["the entry point", `console.log("the entry point begins"); await Promise.resolve(); throw new Error("thrown behind an await");`],
+    [
+      "the entry point",
+      `console.log("the entry point begins"); await Promise.resolve(); throw new Error("thrown behind an await");`,
+    ],
     ["what it imports", `import "./imported"; console.log("never");`],
   ])("a throw behind a top-level await in %s is reported behind a preload", async (_where, entry) => {
     const { stderr, exitCode } = await expectSameAsBunRun(
@@ -293,9 +317,11 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toContain(join("sub", "thrower.ts") + ":3:");
   });
 
-  test.concurrent("stack traces through require(), CommonJS top-level code and an immediately invoked function", async () => {
-    const files = (withoutPositionOfRequire: string) => ({
-      "entry.cjs": `
+  test.concurrent(
+    "stack traces through require(), CommonJS top-level code and an immediately invoked function",
+    async () => {
+      const files = (withoutPositionOfRequire: string) => ({
+        "entry.cjs": `
           function load() {
             try {
               require("./throws.cjs");
@@ -305,19 +331,20 @@ describe.skipIf(!supported)("bun run --aot", () => {
           }
           console.log(load().replace(/\\n +at \\S+ \\((?:unknown|:?\\d+:\\d+)\\)/g, ""));
         `,
-      "throws.cjs": `
+        "throws.cjs": `
           exports.before = 1;
           (() => { throw new Error("thrown") })();
         `,
-    });
-    // The source map of bun run has no entry for a call of require(): its frame names the brace in front of the call, 3:17. A compiled program names the call, as it does for every other call.
-    await expectSameAsBunRun(files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1")`), "entry.cjs");
-    using dir = tempDir("run-aot", files(""));
-    const { stdout } = await run(String(dir), true, "entry.cjs");
-    expect(stdout.replaceAll("\\", "/")).toMatch(
-      /^Error: thrown\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at load \(\/entry\.cjs:4:15\)\n    at <anonymous> \(\/entry\.cjs:9:\d+\)\n$/,
-    );
-  });
+      });
+      // The source map of bun run has no entry for a call of require(): its frame names the brace in front of the call, 3:17. A compiled program names the call, as it does for every other call.
+      await expectSameAsBunRun(files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1")`), "entry.cjs");
+      using dir = tempDir("run-aot", files(""));
+      const { stdout } = await run(String(dir), true, "entry.cjs");
+      expect(stdout.replaceAll("\\", "/")).toMatch(
+        /^Error: thrown\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at load \(\/entry\.cjs:4:15\)\n    at <anonymous> \(\/entry\.cjs:9:\d+\)\n$/,
+      );
+    },
+  );
 
   test.concurrent("an error that nothing catches", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `import { inner } from "./sub/thrower"; inner();`, ...thrower });
@@ -420,28 +447,31 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toBe("lib is evaluated\nthe preload, the entry point true\n");
   });
 
-  test.concurrent("a file that was not compiled imports the compiled module that awaits the import() of it", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.ts": `import { said } from "./lib"; console.log("entry:", said);`,
-        "lib.ts": `
+  test.concurrent(
+    "a file that was not compiled imports the compiled module that awaits the import() of it",
+    async () => {
+      const { stdout } = await expectSameAsBunRun(
+        {
+          "entry.ts": `import { said } from "./lib"; console.log("entry:", said);`,
+          "lib.ts": `
           console.log("lib begins");
           const other = await import(import.meta.dirname + "/" + ["other", "ts"].join("."));
           export const said = "lib has " + other.word;
           console.log(other.later());
         `,
-        "other.ts": `
+          "other.ts": `
           import * as lib from "./lib";
           console.log("other runs");
           export const word = "a word";
           export const later = () => Object.keys(lib).join() + ": " + lib.said;
         `,
-      },
-      "entry.ts",
-      { warns: ["TS100064"] },
-    );
-    expect(stdout).toBe("lib begins\nother runs\nsaid: lib has a word\nentry: lib has a word\n");
-  });
+        },
+        "entry.ts",
+        { warns: ["TS100064"] },
+      );
+      expect(stdout).toBe("lib begins\nother runs\nsaid: lib has a word\nentry: lib has a word\n");
+    },
+  );
 
   test.concurrent("export default { fetch } behind a preload starts one server", async () => {
     using dir = tempDir("run-aot", {
@@ -660,11 +690,31 @@ describe.skipIf(!supported)("bun run --aot", () => {
   });
 
   test.concurrent.each<[string, string[], string]>([
-    ["a package.json script", ["run", "--debug-aot", "start"], "error: --aot does not apply to a package.json script (start). "],
-    ["a package.json script, without run", ["--debug-aot", "start"], "error: --aot does not apply to a package.json script (start). "],
-    ["--filter", ["run", "--debug-aot", "--filter", "*", "start"], "error: --aot does not apply to the processes that --filter, "],
-    ["--parallel", ["run", "--debug-aot", "--parallel", "start"], "error: --aot does not apply to the processes that --filter, "],
-    ["an executable in node_modules/.bin", ["run", "--debug-aot", "tool"], "error: --aot does not apply to an executable ("],
+    [
+      "a package.json script",
+      ["run", "--debug-aot", "start"],
+      "error: --aot does not apply to a package.json script (start). ",
+    ],
+    [
+      "a package.json script, without run",
+      ["--debug-aot", "start"],
+      "error: --aot does not apply to a package.json script (start). ",
+    ],
+    [
+      "--filter",
+      ["run", "--debug-aot", "--filter", "*", "start"],
+      "error: --aot does not apply to the processes that --filter, ",
+    ],
+    [
+      "--parallel",
+      ["run", "--debug-aot", "--parallel", "start"],
+      "error: --aot does not apply to the processes that --filter, ",
+    ],
+    [
+      "an executable in node_modules/.bin",
+      ["run", "--debug-aot", "tool"],
+      "error: --aot does not apply to an executable (",
+    ],
     ["a shell script", ["run", "--debug-aot", "./script.sh"], "error: --aot does not apply to a shell script ("],
   ])("--aot with %s is an error", async (_what, args, message) => {
     using dir = tempDir("run-aot", {
@@ -674,7 +724,14 @@ describe.skipIf(!supported)("bun run --aot", () => {
       "script.sh": "echo the shell script ran\n",
     });
     chmodSync(join(String(dir), "node_modules/.bin/tool"), 0o755);
-    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: String(dir), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(message);
     expect(stdout).toBe("");
@@ -698,16 +755,23 @@ describe.skipIf(!supported)("bun run --aot", () => {
     const hashOf = async (path: string) => Bun.hash(await Bun.file(join(String(dir), path)).bytes());
     expect(await hashOf("compiled/app1.exe")).toBe(await hashOf("plain/app1.exe"));
     expect(await hashOf("compiled/app2.exe")).toBe(await hashOf("plain/app2.exe"));
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "compiled/app1.exe")], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "compiled/app1.exe")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
     expect(await proc.stdout.text()).toBe("the executable runs false\n");
     expect(await proc.exited).toBe(0);
   });
 
-  test.concurrent("default exports, with and without a name of their own, can be imported from other files", async () => {
-    using dir = tempDir("run-aot", {
-      "anonymous-class.js": `export default class {}
+  test.concurrent(
+    "default exports, with and without a name of their own, can be imported from other files",
+    async () => {
+      using dir = tempDir("run-aot", {
+        "anonymous-class.js": `export default class {}
 `,
-      "anonymous-class-with-statics.js": `export default class {
+        "anonymous-class-with-statics.js": `export default class {
   static value = "static field";
   static {
     this.block = "static block";
@@ -717,72 +781,72 @@ describe.skipIf(!supported)("bun run --aot", () => {
   }
 }
 `,
-      "anonymous-class-with-constructor.js": `export default class {
+        "anonymous-class-with-constructor.js": `export default class {
   constructor(x) {
     this.x = x;
   }
 }
 `,
-      "anonymous-class-extended.js": `import Base from "./anonymous-class-with-constructor.js";
+        "anonymous-class-extended.js": `import Base from "./anonymous-class-with-constructor.js";
 export default class extends Base {
   get twice() {
     return this.x * 2;
   }
 }
 `,
-      "named-class.js": `export default class Named {}
+        "named-class.js": `export default class Named {}
 `,
-      "named-class-extends-anonymous.js": `import Base from "./anonymous-class.js";
+        "named-class-extends-anonymous.js": `import Base from "./anonymous-class.js";
 export default class Heir extends Base {}
 `,
-      "class-expression.js": `const Held = class {};
+        "class-expression.js": `const Held = class {};
 export { Held as default };
 `,
-      "anonymous-function.js": `export default function () {
+        "anonymous-function.js": `export default function () {
   return "anonymous function";
 }
 `,
-      "named-function.js": `export default function named() {
+        "named-function.js": `export default function named() {
   return "named function";
 }
 `,
-      "anonymous-generator.js": `export default function* () {
+        "anonymous-generator.js": `export default function* () {
   yield "anonymous generator";
 }
 `,
-      "anonymous-async-function.js": `export default async function () {
+        "anonymous-async-function.js": `export default async function () {
   return "anonymous async function";
 }
 `,
-      "arrow.js": `export default () => "arrow";
+        "arrow.js": `export default () => "arrow";
 `,
-      "reexports.js": `export { default } from "./anonymous-class.js";
+        "reexports.js": `export { default } from "./anonymous-class.js";
 export { default as WithStatics } from "./anonymous-class-with-statics.js";
 export { default as anonymousFunction } from "./anonymous-function.js";
 `,
-      "typed-anonymous-class.ts": `export default class {
+        "typed-anonymous-class.ts": `export default class {
   size: number = 1;
   grow(by: number): number {
     return (this.size += by);
   }
 }
 `,
-      "typed-anonymous-class-with-constructor.ts": `export default class {
+        "typed-anonymous-class-with-constructor.ts": `export default class {
   constructor(public readonly label: string) {}
 }
 `,
-      "typed-anonymous-class-extended.ts": `import Base from "./typed-anonymous-class";
+        "typed-anonymous-class-extended.ts": `import Base from "./typed-anonymous-class";
 export default class extends Base {
   shrink(by: number): number {
     return (this.size -= by);
   }
 }
 `,
-      "typed-anonymous-function.ts": `export default function (n: number): number {
+        "typed-anonymous-function.ts": `export default function (n: number): number {
   return n + 1;
 }
 `,
-      "entry.ts": `import Anonymous from "./anonymous-class.js";
+        "entry.ts": `import Anonymous from "./anonymous-class.js";
 import { default as AnonymousAgain } from "./anonymous-class.js";
 import WithStatics from "./anonymous-class-with-statics.js";
 import WithConstructor from "./anonymous-class-with-constructor.js";
@@ -815,27 +879,36 @@ row("functions", anonymousFunction.name, anonymousFunction(), anonymousFunction 
 row("generator and async", anonymousGenerator.name, [...anonymousGenerator()], anonymousAsyncFunction.name, await anonymousAsyncFunction());
 row("typed", Typed.name, new Typed().grow(2), TypedWithConstructor.name, new TypedWithConstructor("label").label, TypedExtended.name, new TypedExtended().shrink(1), new TypedExtended() instanceof Typed, typedFunction.name, typedFunction(1));
 `,
-    });
-    const { stdout, exitCode } = await run(String(dir), true, "entry.ts");
-    expect(stdout.trimEnd().split("\n")).toEqual([
-      'anonymous class: "default" true true true true',
-      'with statics: "default" "static field" "static block" "static method" true',
-      'with a constructor: "default" 3 1',
-      'extended: "default" 8 true',
-      'named class: "Named" true',
-      'named, extends anonymous: "Heir" true true',
-      'class expression: "Held" true',
-      'functions: "default" "anonymous function" true true "named" "named function" "default" "arrow"',
-      'generator and async: "default" ["anonymous generator"] "default" "anonymous async function"',
-      'typed: "default" 3 "default" "label" "default" 0 true "default" 2',
-    ]);
-    expect(exitCode).toBe(0);
-  });
+      });
+      const { stdout, exitCode } = await run(String(dir), true, "entry.ts");
+      expect(stdout.trimEnd().split("\n")).toEqual([
+        'anonymous class: "default" true true true true',
+        'with statics: "default" "static field" "static block" "static method" true',
+        'with a constructor: "default" 3 1',
+        'extended: "default" 8 true',
+        'named class: "Named" true',
+        'named, extends anonymous: "Heir" true true',
+        'class expression: "Held" true',
+        'functions: "default" "anonymous function" true true "named" "named function" "default" "arrow"',
+        'generator and async: "default" ["anonymous generator"] "default" "anonymous async function"',
+        'typed: "default" 3 "default" "label" "default" 0 true "default" 2',
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("globals that other sources of the project declare or bring in are seen", async () => {
     using dir = tempDir("run-aot", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [], skipLibCheck: true }, include: ["src"] }),
-      "node_modules/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, types: [], skipLibCheck: true },
+        include: ["src"],
+      }),
+      "node_modules/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        main: "index.js",
+        types: "index.d.ts",
+      }),
       "node_modules/lib/index.js": `exports.make = () => ({ size: 3 });`,
       "node_modules/lib/index.d.ts": `
         export as namespace Lib;

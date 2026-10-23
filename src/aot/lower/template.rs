@@ -51,7 +51,13 @@ pub(in crate::lower) fn lower_tagged_template(
     for substitution in hir.ids(site.args) {
         arguments.push(expression::lower_expression(lowering, substitution));
     }
-    call::emit_call_expression(lowering, expression, callee, Arguments::Values(arguments), tail)
+    call::emit_call_expression(
+        lowering,
+        expression,
+        callee,
+        Arguments::Values(arguments),
+        tail,
+    )
 }
 
 fn emit_cooked_string(
@@ -72,7 +78,10 @@ fn collect_template_strings(
 ) -> SmallVec<[TemplateString; 4]> {
     let hir = lowering.file.hir;
     let parts = hir.template_parts(template);
-    debug_assert!(!parts.is_empty(), "a template has one more part than substitutions");
+    debug_assert!(
+        !parts.is_empty(),
+        "a template has one more part than substitutions"
+    );
     let mut strings = SmallVec::with_capacity(parts.len());
     for part in parts {
         let cooked = part.cooked.map(|cooked| lowering.file.intern_atom(cooked));

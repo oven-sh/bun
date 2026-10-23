@@ -79,9 +79,9 @@ impl ProgramModule {
             }
             ProgramModule::Face(file) => (file, FunctionKey::FaceBody(file.file)),
             ProgramModule::Check(file) => (file, FunctionKey::CheckBody(file.file)),
-            ProgramModule::File(_)
-            | ProgramModule::Runtime(_)
-            | ProgramModule::External { .. } => return None,
+            ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
+                return None;
+            }
         };
         Some(InProject {
             project: file.project,
@@ -115,9 +115,15 @@ impl ProgramModule {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ProgramVariableKey {
     Declared(InProject<VariableKey>),
-    SyntheticExport { module: ProgramModule, name: Atom },
+    SyntheticExport {
+        module: ProgramModule,
+        name: Atom,
+    },
     /// What ES importers hold of a name of the CommonJS file `module`.
-    Copy { module: ProgramModule, name: Atom },
+    Copy {
+        module: ProgramModule,
+        name: Atom,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -169,12 +175,10 @@ impl KeyContext<'_> {
             | VariableKey::InnerModuleExports(_)
             | VariableKey::ClassSlot { .. }
             | VariableKey::ModulePath { .. }
-            | VariableKey::PrivateState { .. } => {
-                ProgramVariableKey::Declared(InProject {
-                    project: self.project,
-                    key,
-                })
-            }
+            | VariableKey::PrivateState { .. } => ProgramVariableKey::Declared(InProject {
+                project: self.project,
+                key,
+            }),
             VariableKey::SyntheticExport(id) => {
                 let export = self.graph.synthetic_export(id);
                 ProgramVariableKey::SyntheticExport {

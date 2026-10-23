@@ -1,9 +1,4 @@
-import type {
-  BuiltinEntry,
-  BuiltinFeatureUse,
-  BuiltinKind,
-  BuiltinUses,
-} from "../../../scripts/build/trim/types.ts";
+import type { BuiltinEntry, BuiltinFeatureUse, BuiltinKind, BuiltinUses } from "../../../scripts/build/trim/types.ts";
 import type { ModelBuiltin, ModelFeatureUse, ModelModule, TableModel } from "./model.ts";
 import { isHiddenRootComponent } from "./paths.ts";
 import type { FeatureName, TargetPlatform } from "./vocabulary.ts";

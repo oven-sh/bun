@@ -2,8 +2,8 @@ use core::cell::Cell;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::row_decoder::RowDecoder;
 use crate::shared::query_ctor_args::QueryCtorArgs;
+use crate::shared::row_decoder::RowDecoder;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
@@ -455,7 +455,8 @@ impl PostgresSQLQuery {
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
-        self.row_type.set(RowDecoder::expected_row_type(global_object, query));
+        self.row_type
+            .set(RowDecoder::expected_row_type(global_object, query));
 
         let this_value = this_value.to_js();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();

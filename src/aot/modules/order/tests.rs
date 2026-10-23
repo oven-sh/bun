@@ -34,12 +34,16 @@ impl Ordered<'_, '_, '_> {
 
     fn half_modules<'n>(&self, names: &[&'n str]) -> Vec<&'n str> {
         let names = names.iter().copied();
-        names.filter(|name| self.order.half(self.module(name))).collect()
+        names
+            .filter(|name| self.order.half(self.module(name)))
+            .collect()
     }
 
     fn exposed_modules<'n>(&self, names: &[&'n str]) -> Vec<&'n str> {
         let names = names.iter().copied();
-        names.filter(|name| self.order.exposed(self.module(name))).collect()
+        names
+            .filter(|name| self.order.exposed(self.module(name)))
+            .collect()
     }
 }
 
@@ -167,8 +171,14 @@ fn a_chain_of_requires_is_seen_whole() {
 fn the_modules_of_a_cycle_are_seen_half_done() {
     let files = [
         ("main.cjs", "require('./a.cjs');"),
-        ("a.cjs", "exports.first = 1; require('./b.cjs'); exports.second = 2;"),
-        ("b.cjs", "exports.seen = require('./a.cjs').second; require('./c.cjs');"),
+        (
+            "a.cjs",
+            "exports.first = 1; require('./b.cjs'); exports.second = 2;",
+        ),
+        (
+            "b.cjs",
+            "exports.seen = require('./a.cjs').second; require('./c.cjs');",
+        ),
         ("c.cjs", "exports.x = 1;"),
     ];
     with_order(&files, |ordered| {
@@ -179,7 +189,10 @@ fn the_modules_of_a_cycle_are_seen_half_done() {
 
 #[test]
 fn a_module_that_requires_itself_is_seen_half_done() {
-    let files = [("main.cjs", "require('./a.cjs');"), ("a.cjs", "require('./a.cjs');")];
+    let files = [
+        ("main.cjs", "require('./a.cjs');"),
+        ("a.cjs", "require('./a.cjs');"),
+    ];
     with_order(&files, |ordered| {
         assert_eq!(ordered.half_modules(&["main.cjs", "a.cjs"]), ["a.cjs"]);
     });
@@ -214,7 +227,10 @@ fn a_cycle_of_imports_and_requires_counts() {
 #[test]
 fn what_a_late_site_may_run_is_exposed() {
     let files = [
-        ("main.cjs", "exports.f = () => require('./a.cjs'); require('./c.cjs');"),
+        (
+            "main.cjs",
+            "exports.f = () => require('./a.cjs'); require('./c.cjs');",
+        ),
         ("a.cjs", "require('./b.cjs');"),
         ("b.cjs", "exports.x = 1;"),
         ("c.cjs", "exports.x = 1;"),
@@ -240,17 +256,26 @@ fn what_an_import_call_names_is_exposed() {
 #[test]
 fn what_a_computed_require_may_name_is_exposed() {
     let files = [
-        ("main.cjs", "module.exports = (name) => require(`./pages/${name}.js`);"),
+        (
+            "main.cjs",
+            "module.exports = (name) => require(`./pages/${name}.js`);",
+        ),
         ("pages/home.js", "exports.x = 1;"),
     ];
     with_order(&files, |ordered| {
-        assert_eq!(ordered.exposed_modules(&["main.cjs", "pages/home.js"]), ["pages/home.js"]);
+        assert_eq!(
+            ordered.exposed_modules(&["main.cjs", "pages/home.js"]),
+            ["pages/home.js"]
+        );
     });
 }
 
 #[test]
 fn a_site_in_a_branch_exposes_nothing() {
-    let files = [("main.cjs", "if (exports.y) require('./a.cjs');"), ("a.cjs", "exports.x = 1;")];
+    let files = [
+        ("main.cjs", "if (exports.y) require('./a.cjs');"),
+        ("a.cjs", "exports.x = 1;"),
+    ];
     with_order(&files, |ordered| {
         assert!(ordered.half_modules(&NAMES[..2]).is_empty());
     });
@@ -259,7 +284,10 @@ fn a_site_in_a_branch_exposes_nothing() {
 fn evaluates(files: &[(&str, &str)]) -> Vec<bool> {
     let mut found = Vec::new();
     with_order(files, |ordered| {
-        let sites = ordered.sites.of(file_named(ordered.input, files[0].0)).iter();
+        let sites = ordered
+            .sites
+            .of(file_named(ordered.input, files[0].0))
+            .iter();
         found = sites.map(|site| site.evaluates).collect();
     });
     found
@@ -277,7 +305,11 @@ fn the_loader_keeps_what_it_alone_can_load() {
     assert_eq!(evaluates(&data), [false]);
     let library = [("main.cjs", "require('node:path');")];
     assert_eq!(evaluates(&library), [false]);
-    let plain = [("main.cjs", "require('./a.mjs'); require('./leaf.cjs');"), ("a.mjs", ""), LEAF];
+    let plain = [
+        ("main.cjs", "require('./a.mjs'); require('./leaf.cjs');"),
+        ("a.mjs", ""),
+        LEAF,
+    ];
     assert_eq!(evaluates(&plain), [true, true]);
 }
 
@@ -285,8 +317,14 @@ fn the_loader_keeps_what_it_alone_can_load() {
 #[test]
 fn the_loader_keeps_an_es_module_that_may_be_seen_half_done() {
     let cycle = [
-        ("first.mjs", "const second = require('./second.mjs'); export const name = 'first';"),
-        ("second.mjs", "const first = require('./first.mjs'); console.log(first.name);"),
+        (
+            "first.mjs",
+            "const second = require('./second.mjs'); export const name = 'first';",
+        ),
+        (
+            "second.mjs",
+            "const first = require('./first.mjs'); console.log(first.name);",
+        ),
     ];
     assert_eq!(evaluates(&cycle), [false]);
     let late_cycle = [
@@ -294,8 +332,14 @@ fn the_loader_keeps_an_es_module_that_may_be_seen_half_done() {
         ("a.mjs", "import './main.cjs'; export {};"),
     ];
     assert_eq!(evaluates(&late_cycle), [false]);
-    let lazy = [("main.cjs", "exports.f = () => require('./a.mjs');"), ("a.mjs", "export {};")];
+    let lazy = [
+        ("main.cjs", "exports.f = () => require('./a.mjs');"),
+        ("a.mjs", "export {};"),
+    ];
     assert_eq!(evaluates(&lazy), [true]);
-    let lazy_commonjs = [("main.cjs", "exports.f = () => require('./leaf.cjs');"), LEAF];
+    let lazy_commonjs = [
+        ("main.cjs", "exports.f = () => require('./leaf.cjs');"),
+        LEAF,
+    ];
     assert_eq!(evaluates(&lazy_commonjs), [true]);
 }

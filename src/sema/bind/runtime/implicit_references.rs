@@ -11,7 +11,7 @@ impl ReferencePass<'_, '_> {
         let options = self.options;
         let is_classic = pragmas
             .classic
-            .unwrap_or(options.jsx_factory_root.is_some());
+            .unwrap_or_else(|| options.jsx_factory_root.is_some());
         if !is_classic || hir.jsx.is_empty() {
             return;
         }

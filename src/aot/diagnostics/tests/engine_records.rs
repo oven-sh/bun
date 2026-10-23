@@ -41,8 +41,7 @@ fn names() -> ProgramNames {
 }
 
 fn texts() -> SourceTexts {
-    let source =
-        |path: &str, text: &str| Some(ModuleSource::new(path.as_bytes(), text.as_bytes()));
+    let source = |path: &str, text: &str| Some(ModuleSource::new(path.as_bytes(), text.as_bytes()));
     SourceTexts::new(vec![
         source("/p/a.ts", "first;\nsecond;\n"),
         source("/p/node_modules/b/b.js", "dependency;\n"),
@@ -98,13 +97,21 @@ fn add_all(records: &[(UserDiagnosticRecord, &str)]) -> Diagnostics {
 }
 
 fn written_record(kind: UserDiagnosticKind, location: SourceLocation) -> Log {
-    written(add_all(&[(user_diagnostic(kind, location), "said by the engine")]))
+    written(add_all(&[(
+        user_diagnostic(kind, location),
+        "said by the engine",
+    )]))
 }
 
 fn internal_text(record: &InternalErrorRecord, engine_text: &str) -> String {
     let texts = texts();
     let mut locator = ModuleLocator::new(&texts);
-    text(&internal_error_text(record, engine_text.as_bytes(), &names(), &mut locator))
+    text(&internal_error_text(
+        record,
+        engine_text.as_bytes(),
+        &names(),
+        &mut locator,
+    ))
 }
 
 #[test]
@@ -119,7 +126,10 @@ fn engine_warning_prints_number_and_compiled_line() {
     assert!(!diagnostics.has_errors());
     let log = written(diagnostics);
     let number = WARNING.code();
-    assert_eq!(describe(&log), [format!("/p/a.ts:2:1 Warn TS{number}: runs slowly")]);
+    assert_eq!(
+        describe(&log),
+        [format!("/p/a.ts:2:1 Warn TS{number}: runs slowly")]
+    );
     let location = log.msgs[0].data.location.as_ref().expect("a location");
     assert_eq!(location.line_text.as_deref(), Some(&b"second;"[..]));
     assert_eq!((log.errors, log.warnings), (0, 1));
@@ -143,7 +153,9 @@ fn engine_error_in_dependency_stops_build() {
     let number = ERROR.code();
     assert_eq!(
         describe(&log),
-        [format!("/p/node_modules/b/b.js:1:1 Err TS{number}: said by the engine")]
+        [format!(
+            "/p/node_modules/b/b.js:1:1 Err TS{number}: said by the engine"
+        )]
     );
 }
 
@@ -209,7 +221,10 @@ fn equal_engine_records_print_once() {
     assert_eq!((log.msgs.len(), log.warnings), (1, 1));
 
     let elsewhere = user_diagnostic(WARNING, at(PROGRAM, 0));
-    let log = written(add_all(&[(record, "runs slowly"), (elsewhere, "runs slowly")]));
+    let log = written(add_all(&[
+        (record, "runs slowly"),
+        (elsewhere, "runs slowly"),
+    ]));
     assert_eq!((log.msgs.len(), log.warnings), (2, 2));
 }
 
@@ -239,7 +254,10 @@ fn unnamed_function_and_layout_print_ids() {
         "UseNotDominated: x in function f1 at /p/node_modules/b/b.js of layout L1"
     );
     let created_by_engine = internal_error(40, ABSENT_WORD, NO_LOCATION);
-    assert_eq!(internal_text(&created_by_engine, "x"), "UseNotDominated: x in function f40");
+    assert_eq!(
+        internal_text(&created_by_engine, "x"),
+        "UseNotDominated: x in function f40"
+    );
 }
 
 #[test]
@@ -247,5 +265,8 @@ fn internal_error_without_subject_has_kind_and_text() {
     let record = internal_error(ABSENT_WORD, ABSENT_WORD, NO_LOCATION);
     assert_eq!(internal_text(&record, "x"), "UseNotDominated: x");
     let template = InternalErrorKind::UseNotDominated.message();
-    assert_eq!(internal_text(&record, ""), format!("UseNotDominated: {template}"));
+    assert_eq!(
+        internal_text(&record, ""),
+        format!("UseNotDominated: {template}")
+    );
 }

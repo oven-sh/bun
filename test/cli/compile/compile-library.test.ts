@@ -14,7 +14,11 @@ const json = (path: string) => JSON.parse(readFileSync(path, "utf8"));
 const filesIn = (folder: string) =>
   readdirSync(folder, { recursive: true, withFileTypes: true })
     .filter(entry => entry.isFile())
-    .map(entry => join(entry.parentPath, entry.name).slice(folder.length + 1).replaceAll("\\", "/"))
+    .map(entry =>
+      join(entry.parentPath, entry.name)
+        .slice(folder.length + 1)
+        .replaceAll("\\", "/"),
+    )
     .sort();
 
 const tsconfig = JSON.stringify({
@@ -165,14 +169,7 @@ describe.concurrent("bun compile --library", () => {
       "src/tools/index.ts": `export const tool: string = "hammer";\n`,
       "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
     });
-    const built = await bun(
-      String(dir),
-      "compile",
-      "--library",
-      "src/index.ts",
-      "src/extra.ts",
-      "src/tools/index.ts",
-    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts", "src/tools/index.ts");
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const written = json(join(String(dir), "dist/package.json"));

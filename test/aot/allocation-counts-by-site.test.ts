@@ -102,71 +102,91 @@ async function countAllocations(folder: string, flags: string[]) {
 
 describe.concurrent("allocation counts by site", () => {
   // TODO: the file of counts names no layout and counts no cell for any of the places.
-  test.todo("a run that writes counts names the function, the line and the layout of each place that allocates", () =>
-    slot(async () => {
-      using dir = tempDir("aot-allocation-counts", { "main.ts": source });
-      const allocations = parseAllocations(await countAllocations(String(dir), []));
+  test.todo(
+    "a run that writes counts names the function, the line and the layout of each place that allocates",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-allocation-counts", { "main.ts": source });
+        const allocations = parseAllocations(await countAllocations(String(dir), []));
 
-      const at = (name: keyof typeof places) =>
-        allocations.filter(line => line.function === name && line.position === `main.ts:${lineOf(places[name])}`);
-      const found = (name: keyof typeof places) => ({
-        layouts: at(name).map(line => line.layout.replace(/^L\d+:/, "L:")),
-        cells: aboutAll(at(name).reduce((cells, line) => cells + line.cells, 0)),
-      });
-      // An object that a constructor allocates stands under the place that says `new`, not under the constructor.
-      expect({
-        makeSmall: found("makeSmall"),
-        makeMedium: found("makeMedium"),
-        makeLarge: found("makeLarge"),
-        makeClosure: found("makeClosure"),
-      }).toEqual({
-        makeSmall: { layouts: ["L:Small"], cells: "about all" },
-        makeMedium: { layouts: [expect.stringMatching(/^L:\S+$/)], cells: "about all" },
-        makeLarge: { layouts: ["L:Large"], cells: "about all" },
-        makeClosure: { layouts: [expect.stringMatching(/^closure(:\S+)?$/)], cells: "about all" },
-      });
+        const at = (name: keyof typeof places) =>
+          allocations.filter(line => line.function === name && line.position === `main.ts:${lineOf(places[name])}`);
+        const found = (name: keyof typeof places) => ({
+          layouts: at(name).map(line => line.layout.replace(/^L\d+:/, "L:")),
+          cells: aboutAll(at(name).reduce((cells, line) => cells + line.cells, 0)),
+        });
+        // An object that a constructor allocates stands under the place that says `new`, not under the constructor.
+        expect({
+          makeSmall: found("makeSmall"),
+          makeMedium: found("makeMedium"),
+          makeLarge: found("makeLarge"),
+          makeClosure: found("makeClosure"),
+        }).toEqual({
+          makeSmall: { layouts: ["L:Small"], cells: "about all" },
+          makeMedium: { layouts: [expect.stringMatching(/^L:\S+$/)], cells: "about all" },
+          makeLarge: { layouts: ["L:Large"], cells: "about all" },
+          makeClosure: { layouts: [expect.stringMatching(/^closure(:\S+)?$/)], cells: "about all" },
+        });
 
-      // The bytes are those of the cells in the heap, whose sizes are multiples of 16.
-      expect(allocations.filter(line => line.bytes % (16 * line.cells))).toEqual([]);
-      const cellSize = (name: keyof typeof places) => at(name)[0].bytes / at(name)[0].cells;
-      expect(cellSize("makeSmall")).toBeLessThan(cellSize("makeMedium"));
-      expect(cellSize("makeMedium")).toBeLessThan(cellSize("makeLarge"));
+        // The bytes are those of the cells in the heap, whose sizes are multiples of 16.
+        expect(allocations.filter(line => line.bytes % (16 * line.cells))).toEqual([]);
+        const cellSize = (name: keyof typeof places) => at(name)[0].bytes / at(name)[0].cells;
+        expect(cellSize("makeSmall")).toBeLessThan(cellSize("makeMedium"));
+        expect(cellSize("makeMedium")).toBeLessThan(cellSize("makeLarge"));
 
-      const bytes = allocations.map(line => line.bytes);
-      expect(bytes).toEqual(bytes.toSorted((a, b) => b - a));
-    }), 300_000);
+        const bytes = allocations.map(line => line.bytes);
+        expect(bytes).toEqual(bytes.toSorted((a, b) => b - a));
+      }),
+    300_000,
+  );
 
-  test("an obfuscated executable counts the same places and writes no name", () =>
-    slot(async () => {
-      using dir = tempDir("aot-allocation-counts-obfuscated", { "main.ts": source });
-      const counts = await countAllocations(String(dir), [buildFlags.obfuscate]);
-      const allocations = parseAllocations(counts);
+  test(
+    "an obfuscated executable counts the same places and writes no name",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-allocation-counts-obfuscated", { "main.ts": source });
+        const counts = await countAllocations(String(dir), [buildFlags.obfuscate]);
+        const allocations = parseAllocations(counts);
 
-      const words = allocations.map(line => `${line.function} ${line.position} ${line.layout}`);
-      expect(words.filter(line => !/^(-|module) \d+:\d+ (L\d+:(object|-)|closure(:-)?|Map)$/.test(line))).toEqual([]);
-      expect(allocations.filter(line => aboutAll(line.cells) === "about all")).toHaveLength(Object.keys(places).length);
-    }), 300_000);
+        const words = allocations.map(line => `${line.function} ${line.position} ${line.layout}`);
+        expect(words.filter(line => !/^(-|module) \d+:\d+ (L\d+:(object|-)|closure(:-)?|Map)$/.test(line))).toEqual([]);
+        expect(allocations.filter(line => aboutAll(line.cells) === "about all")).toHaveLength(
+          Object.keys(places).length,
+        );
+      }),
+    300_000,
+  );
 
-  test("an executable that counts branches counts every cell, by layout or by stub, and the same in every run", () =>
-    slot(async () => {
-      using dir = tempDir("aot-allocation-counts-exact", { "main.ts": source });
-      const folder = String(dir);
-      const allocations = parseAllocations(await countAllocations(folder, ["--aot-count-branches"]));
-      const again = join(folder, "counts-again.txt");
-      const ran = await spawned([join(folder, isWindows ? "app.exe" : "app")], folder, { ...env, [runtimeEnvironment.countsPath]: again });
-      expect(ran).toMatchObject({ stderr: "", exitCode: 0 });
-      expect(parseAllocations(readFileSync(again, "utf8"))).toEqual(allocations);
+  test(
+    "an executable that counts branches counts every cell, by layout or by stub, and the same in every run",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-allocation-counts-exact", { "main.ts": source });
+        const folder = String(dir);
+        const allocations = parseAllocations(await countAllocations(folder, ["--aot-count-branches"]));
+        const again = join(folder, "counts-again.txt");
+        const ran = await spawned([join(folder, isWindows ? "app.exe" : "app")], folder, {
+          ...env,
+          [runtimeEnvironment.countsPath]: again,
+        });
+        expect(ran).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(parseAllocations(readFileSync(again, "utf8"))).toEqual(allocations);
 
-      // No place is named: a stub counts the cell, under the layout where it knows one and under its own name elsewhere.
-      expect(allocations.filter(line => line.function !== "-" || line.position !== "-")).toEqual([]);
-      expect(allocations.filter(line => !/^(L\d+:\S+|closure|code|stub:\w+)$/.test(line.layout))).toEqual([]);
-      const cells = (layout: RegExp) => allocations.filter(line => layout.test(line.layout)).map(line => line.cells);
-      expect({ small: cells(/^L\d+:Small$/), large: cells(/^L\d+:Large$/) }).toEqual({ small: [rounds], large: [rounds] });
-      // Small, Medium and Large.
-      expect(allocations.filter(line => line.layout.startsWith("L") && line.cells === rounds)).toHaveLength(3);
-      // The modules of the run time make closures too.
-      const closures = cells(/^(closure|stub:New\w*Closure)$/).reduce((sum, count) => sum + count, 0);
-      expect(closures).toBeGreaterThanOrEqual(rounds);
-      expect(closures).toBeLessThan(rounds + rounds / 20);
-    }), 300_000);
+        // No place is named: a stub counts the cell, under the layout where it knows one and under its own name elsewhere.
+        expect(allocations.filter(line => line.function !== "-" || line.position !== "-")).toEqual([]);
+        expect(allocations.filter(line => !/^(L\d+:\S+|closure|code|stub:\w+)$/.test(line.layout))).toEqual([]);
+        const cells = (layout: RegExp) => allocations.filter(line => layout.test(line.layout)).map(line => line.cells);
+        expect({ small: cells(/^L\d+:Small$/), large: cells(/^L\d+:Large$/) }).toEqual({
+          small: [rounds],
+          large: [rounds],
+        });
+        // Small, Medium and Large.
+        expect(allocations.filter(line => line.layout.startsWith("L") && line.cells === rounds)).toHaveLength(3);
+        // The modules of the run time make closures too.
+        const closures = cells(/^(closure|stub:New\w*Closure)$/).reduce((sum, count) => sum + count, 0);
+        expect(closures).toBeGreaterThanOrEqual(rounds);
+        expect(closures).toBeLessThan(rounds + rounds / 20);
+      }),
+    300_000,
+  );
 });

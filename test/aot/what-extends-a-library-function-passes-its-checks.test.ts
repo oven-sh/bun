@@ -55,7 +55,13 @@ describe("what extends a function of the library passes the checks of the librar
   test.concurrent.each(Object.entries(programs))("%s", async (_, { file = "main.mjs", text, output }) => {
     using dir = tempDir("aot-what-extends-a-library-function", { [file]: text });
     const ran = await spawned([bunExe(), "run", "--aot-log-type-mismatches", file], String(dir), bunEnv);
-    const turnedAway = ran.stderr.split("\n").filter(line => /type-mismatch .* got (untyped )?(Numbers|Bus)\b/.test(line));
-    expect({ turnedAway, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ turnedAway: [], stdout: output, exitCode: 0 });
+    const turnedAway = ran.stderr
+      .split("\n")
+      .filter(line => /type-mismatch .* got (untyped )?(Numbers|Bus)\b/.test(line));
+    expect({ turnedAway, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+      turnedAway: [],
+      stdout: output,
+      exitCode: 0,
+    });
   });
 });

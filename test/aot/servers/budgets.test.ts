@@ -43,7 +43,19 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { dirname, join } from "path";
-import { alwaysFailing, buildCounted, codeOf, countScript, countServer, entryThatExitsWhenTold, run, testsAddedByTheCompiler, type CountedTest, type CountedWork, type Exchange } from "../harness/counted-run";
+import {
+  alwaysFailing,
+  buildCounted,
+  codeOf,
+  countScript,
+  countServer,
+  entryThatExitsWhenTold,
+  run,
+  testsAddedByTheCompiler,
+  type CountedTest,
+  type CountedWork,
+  type Exchange,
+} from "../harness/counted-run";
 import { unsupported } from "../run-programs";
 import { routes } from "./answers";
 import { filterRequested, installPackages, requestedServers } from "./run-servers";
@@ -68,7 +80,9 @@ type StoredBudget = Omit<Budget, Later> & Partial<Pick<Budget, Later>>;
 
 const servers = filterRequested(["node", "express", "hono", "fastify", "elysia", "tanstack", "typescript"]);
 const budgetsPath = process.env.AOT_BUDGETS_FILE ?? join(import.meta.dir, "budgets.json");
-const budgets: Record<string, StoredBudget> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
+const budgets: Record<string, StoredBudget> = existsSync(budgetsPath)
+  ? JSON.parse(readFileSync(budgetsPath, "utf8"))
+  : {};
 const mode = process.env.AOT_BUDGETS;
 const measuresThisPlatform = isLinux && process.arch === "x64";
 
@@ -86,7 +100,10 @@ const sum = (tests: CountedTest[]) => ({
 
 const placeOf = (test: CountedTest) => `${test.kind} ${test.position}`;
 
-function measured({ codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>, { tests, uneven, calls, accessesByName, runtimeOperations, allocated, closures }: CountedWork): Budget {
+function measured(
+  { codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>,
+  { tests, uneven, calls, accessesByName, runtimeOperations, allocated, closures }: CountedWork,
+): Budget {
   const added = tests.filter(test => testsAddedByTheCompiler.has(test.kind));
   const failing = alwaysFailing(added);
   const bun: Record<string, string[]> = {};
@@ -96,9 +113,16 @@ function measured({ codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>
     bytesAValue,
     tests: sum(added),
     typeTests: sum(added.filter(test => test.kind === "TypeTest")),
-    alwaysFailing: { bun, packages: failing.filter(test => test.owner === "packages").length, program: failing.filter(test => test.owner === "program").length },
+    alwaysFailing: {
+      bun,
+      packages: failing.filter(test => test.owner === "packages").length,
+      program: failing.filter(test => test.owner === "program").length,
+    },
     uneven: uneven.filter(test => testsAddedByTheCompiler.has(test.kind)).length,
-    calls: { all: Object.values(calls).reduce((total, count) => total + count, 0), ofFunctionsNotExpectedToRun: calls.cold + calls.once + calls.behindFailedTest },
+    calls: {
+      all: Object.values(calls).reduce((total, count) => total + count, 0),
+      ofFunctionsNotExpectedToRun: calls.cold + calls.once + calls.behindFailedTest,
+    },
     accessesByName,
     runtimeOperations,
     allocated,
@@ -106,9 +130,11 @@ function measured({ codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>
   };
 }
 
-const countOf = (byModule: Record<string, string[]>) => Object.values(byModule).reduce((total, places) => total + places.length, 0);
+const countOf = (byModule: Record<string, string[]>) =>
+  Object.values(byModule).reduce((total, places) => total + places.length, 0);
 
-const total = (counts: Record<string, number> | undefined) => counts && Object.values(counts).reduce((sum, count) => sum + count, 0);
+const total = (counts: Record<string, number> | undefined) =>
+  counts && Object.values(counts).reduce((sum, count) => sum + count, 0);
 
 const numbersOf = (budget: StoredBudget) => ({
   "codeBytes": budget.codeBytes,
@@ -137,8 +163,14 @@ function lowered(budget: StoredBudget, now: Budget, onlyWhatIsMissing: boolean):
   return {
     codeBytes: lower(budget.codeBytes, now.codeBytes),
     bytesAValue: now.bytesAValue === undefined ? budget.bytesAValue : lower(budget.bytesAValue, now.bytesAValue),
-    tests: { executed: written(budget.tests.executed, now.tests.executed), failed: lower(budget.tests.failed, now.tests.failed) },
-    typeTests: { executed: written(budget.typeTests.executed, now.typeTests.executed), failed: lower(budget.typeTests.failed, now.typeTests.failed) },
+    tests: {
+      executed: written(budget.tests.executed, now.tests.executed),
+      failed: lower(budget.tests.failed, now.tests.failed),
+    },
+    typeTests: {
+      executed: written(budget.typeTests.executed, now.typeTests.executed),
+      failed: lower(budget.typeTests.failed, now.typeTests.failed),
+    },
     alwaysFailing: {
       bun: keepsItsPlaces ? bun : now.alwaysFailing.bun,
       ...(keepsItsPlaces && bunAtMost !== undefined ? { bunAtMost } : {}),
@@ -148,13 +180,25 @@ function lowered(budget: StoredBudget, now: Budget, onlyWhatIsMissing: boolean):
     uneven: lower(budget.uneven, now.uneven),
     calls: {
       all: written(budget.calls?.all, now.calls.all),
-      ofFunctionsNotExpectedToRun: lower(budget.calls?.ofFunctionsNotExpectedToRun, now.calls.ofFunctionsNotExpectedToRun),
+      ofFunctionsNotExpectedToRun: lower(
+        budget.calls?.ofFunctionsNotExpectedToRun,
+        now.calls.ofFunctionsNotExpectedToRun,
+      ),
     },
     accessesByName: lower(budget.accessesByName, now.accessesByName),
     runtimeOperations:
-      !budget.runtimeOperations || (!onlyWhatIsMissing && total(now.runtimeOperations)! <= total(budget.runtimeOperations)!) ? now.runtimeOperations : budget.runtimeOperations,
-    allocated: { cells: lower(budget.allocated?.cells, now.allocated.cells), bytes: lower(budget.allocated?.bytes, now.allocated.bytes) },
-    closures: { aRound: lower(budget.closures?.aRound, now.closures.aRound), once: lower(budget.closures?.once, now.closures.once) },
+      !budget.runtimeOperations ||
+      (!onlyWhatIsMissing && total(now.runtimeOperations)! <= total(budget.runtimeOperations)!)
+        ? now.runtimeOperations
+        : budget.runtimeOperations,
+    allocated: {
+      cells: lower(budget.allocated?.cells, now.allocated.cells),
+      bytes: lower(budget.allocated?.bytes, now.allocated.bytes),
+    },
+    closures: {
+      aRound: lower(budget.closures?.aRound, now.closures.aRound),
+      once: lower(budget.closures?.once, now.closures.once),
+    },
   };
 }
 
@@ -163,13 +207,31 @@ function writeTable(name: string, tests: CountedTest[], uneven: CountedTest[]) {
   if (!folder) return;
   mkdirSync(folder, { recursive: true });
   const row = (test: CountedTest, isWhole: boolean) =>
-    [test.owner, test.path, test.position, test.kind, test.executed, test.failed, test.failedEveryTime, isWhole ? "" : "uneven", test.functions.join(" ")].join("\t");
-  const head = "owner\tpath\tposition\tkind\texecuted a round\tfailed a round\tfailed by copies that never pass\t\tcompiled functions that hold a copy";
-  writeFileSync(join(folder, `${name}.tsv`), [head, ...tests.map(test => row(test, true)), ...uneven.map(test => row(test, false))].join("\n") + "\n");
+    [
+      test.owner,
+      test.path,
+      test.position,
+      test.kind,
+      test.executed,
+      test.failed,
+      test.failedEveryTime,
+      isWhole ? "" : "uneven",
+      test.functions.join(" "),
+    ].join("\t");
+  const head =
+    "owner\tpath\tposition\tkind\texecuted a round\tfailed a round\tfailed by copies that never pass\t\tcompiled functions that hold a copy";
+  writeFileSync(
+    join(folder, `${name}.tsv`),
+    [head, ...tests.map(test => row(test, true)), ...uneven.map(test => row(test, false))].join("\n") + "\n",
+  );
 }
 
-if (!requestedServers) console.error("SKIPPED: test/aot/servers/budgets.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
-else if (!measuresThisPlatform) console.error("SKIPPED: test/aot/servers/budgets.test.ts: the budgets are those of Linux on x64");
+if (!requestedServers)
+  console.error(
+    "SKIPPED: test/aot/servers/budgets.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it",
+  );
+else if (!measuresThisPlatform)
+  console.error("SKIPPED: test/aot/servers/budgets.test.ts: the budgets are those of Linux on x64");
 
 describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("compile/aot/servers/budgets", () => {
   const app = String(tempDir("aot-servers-budgets", {}));
@@ -180,7 +242,8 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
   let somethingGotWorse = false;
   afterAll(() => {
     for (const folder of [app, tanstack, typescript]) rmSync(folder, { recursive: true, force: true });
-    for (const [name, now] of Object.entries(measuredNow)) if (mode === "lower") budgets[name] = lowered(budgets[name], now, somethingGotWorse);
+    for (const [name, now] of Object.entries(measuredNow))
+      if (mode === "lower") budgets[name] = lowered(budgets[name], now, somethingGotWorse);
     if (mode) writeFileSync(budgetsPath, JSON.stringify(budgets, null, 2) + "\n");
   });
 
@@ -194,13 +257,19 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
       cpSync(join(import.meta.dir, "app", "shared.ts"), join(tanstack, "src", "utils", "shared.ts"));
       await installPackages(tanstack);
       const vite = await run([bunExe(), "node_modules/vite/bin/vite.js", "build"], tanstack, bunEnv);
-      expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({ output: expect.any(String), exitCode: 0 });
+      expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({
+        output: expect.any(String),
+        exitCode: 0,
+      });
     }
     if (servers.includes("typescript")) {
       cpSync(join(import.meta.dir, "typescript-check.ts"), join(typescript, "typescript-check.ts"));
       mkdirSync(join(typescript, "node_modules"));
       const modules = process.env.AOT_SERVERS_MODULES;
-      symlinkSync(modules ? join(modules, "typescript") : dirname(require.resolve("typescript/package.json")), join(typescript, "node_modules", "typescript"));
+      symlinkSync(
+        modules ? join(modules, "typescript") : dirname(require.resolve("typescript/package.json")),
+        join(typescript, "node_modules", "typescript"),
+      );
     }
   }, 900_000);
 
@@ -210,8 +279,15 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
       const folder = name === "tanstack" ? tanstack : name === "typescript" ? typescript : app;
       const source = name === "tanstack" ? "serve.ts" : name === "typescript" ? "typescript-check.ts" : `${name}.ts`;
       const code = await codeOf(folder, `./${source}`, flags);
-      const build = await buildCounted(folder, name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source), flags);
-      const work = name === "typescript" ? await countScript(build, folder, "2322 2345 2322\n", { warmUp: 5, units: 20 }) : await countServer(build, folder, exchanges);
+      const build = await buildCounted(
+        folder,
+        name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source),
+        flags,
+      );
+      const work =
+        name === "typescript"
+          ? await countScript(build, folder, "2322 2345 2322\n", { warmUp: 5, units: 20 })
+          : await countServer(build, folder, exchanges);
       rmSync(build.executable);
       writeTable(name, work.tests, work.uneven);
 
@@ -227,7 +303,10 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
       measuredNow[name] = now;
 
       const allowed = numbersOf(budget);
-      const numbers = Object.entries(numbersOf(now)).filter(([, value]) => value !== undefined) as [keyof typeof allowed, number][];
+      const numbers = Object.entries(numbersOf(now)).filter(([, value]) => value !== undefined) as [
+        keyof typeof allowed,
+        number,
+      ][];
       const worse = numbers.filter(([what, value]) => value > (allowed[what] ?? Infinity));
       somethingGotWorse ||= worse.length > 0;
       const newPlaces = Object.entries(now.alwaysFailing.bun).flatMap(([path, places]) =>
@@ -237,9 +316,17 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
       const operationsCalledMore = Object.entries(now.runtimeOperations)
         .filter(([operation, count]) => count > (budget.runtimeOperations?.[operation] ?? 0))
         .map(([operation, count]) => `${operation}: ${count}, it was ${budget.runtimeOperations?.[operation] ?? 0}`);
-      const details: Partial<Record<keyof typeof allowed, string[]>> = { "alwaysFailing.bun": newPlaces, "runtimeOperations": operationsCalledMore };
+      const details: Partial<Record<keyof typeof allowed, string[]>> = {
+        "alwaysFailing.bun": newPlaces,
+        "runtimeOperations": operationsCalledMore,
+      };
       const moved = (those: typeof numbers, withDetails = false) =>
-        those.map(([what, value]) => `${what} ${allowed[what]} -> ${value}${withDetails && details[what]?.length ? ` (${details[what].join("; ")})` : ""}`).join(", ");
+        those
+          .map(
+            ([what, value]) =>
+              `${what} ${allowed[what]} -> ${value}${withDetails && details[what]?.length ? ` (${details[what].join("; ")})` : ""}`,
+          )
+          .join(", ");
       console.error(
         `BUDGET ${name}: ${[worse.length ? `WORSE: ${moved(worse, true)}` : "", better.length ? `better: ${moved(better)}` : ""].filter(Boolean).join("; ") || "within"}`,
       );

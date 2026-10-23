@@ -74,9 +74,15 @@ impl FileBinder<'_, '_> {
         let mut holders: Vec<Holder> = holders.into_iter().flatten().collect();
         holders.shared_sort_unstable_by_key(|holder| holder.symbol);
         self.imports.holders = holders;
-        self.imports.unread_sites.shared_sort_unstable_by_key(|&(call, _)| call);
-        self.imports.accessed.shared_sort_unstable_by_key(|&(member, _)| member);
-        self.imports.fixed_members.shared_sort_unstable_by_key(|&(member, _)| member);
+        self.imports
+            .unread_sites
+            .shared_sort_unstable_by_key(|&(call, _)| call);
+        self.imports
+            .accessed
+            .shared_sort_unstable_by_key(|&(member, _)| member);
+        self.imports
+            .fixed_members
+            .shared_sort_unstable_by_key(|&(member, _)| member);
     }
 
     fn collect_imported_roots(&self) -> Vec<Root> {
@@ -292,7 +298,9 @@ impl FileBinder<'_, '_> {
         }
         let module = answer.module();
         for (name, found) in names.into_iter().zip(resolved) {
-            self.imports.named_members.push(((module, name), found.into_named()));
+            self.imports
+                .named_members
+                .push(((module, name), found.into_named()));
         }
         true
     }
@@ -318,7 +326,12 @@ impl FileBinder<'_, '_> {
     /// An object finds the other names without having them, or keeps what is stored under them elsewhere.
     fn is_plain_name(&self, name: Atom) -> bool {
         let context = self.context;
-        let is_index = context.files.atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let is_index = context
+            .files
+            .atoms
+            .bytes(name)
+            .first()
+            .is_some_and(u8::is_ascii_digit);
         let is_inherited = context
             .builtin_names
             .get(name)
@@ -358,9 +371,7 @@ impl FileBinder<'_, '_> {
             Ok(BoundName {
                 binding,
                 required_name: None,
-            }) => {
-                (!is_exports || has_variable(binding)).then_some(Resolved::Binding(binding))
-            }
+            }) => (!is_exports || has_variable(binding)).then_some(Resolved::Binding(binding)),
             // The namespace object of a module whose names are all known has no such property.
             Err(_) if matches!(stands_for, StandsFor::RequiredNamespace(_)) => {
                 Some(Resolved::Fixed(Member::Undefined))
@@ -520,7 +531,9 @@ fn add_holder(
 
 fn imported_module(binding: PendingBinding) -> Option<StandsFor> {
     match binding {
-        PendingBinding::Bound(ImportBinding::Exports { module }) => Some(StandsFor::Exports(module)),
+        PendingBinding::Bound(ImportBinding::Exports { module }) => {
+            Some(StandsFor::Exports(module))
+        }
         _ => eager_namespace_module(binding).map(StandsFor::ImportedNamespace),
     }
 }

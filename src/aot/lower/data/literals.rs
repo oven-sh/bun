@@ -4,8 +4,8 @@ use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKey, Span};
 use rustc_hash::FxHashMap;
 
 use super::values::{create_leaf, create_node as create_value_node};
-use crate::ir::{PositionFlags, PropertyKeyId};
 use crate::ir::generated::{DataMember, DataNode};
+use crate::ir::{PositionFlags, PropertyKeyId};
 use crate::lower::{
     FileLowering, FunctionLowering, convert, expression, layouts, member, positions, types,
 };
@@ -169,7 +169,10 @@ fn create_folded_node(
         Decision::Constant(constant) => return Some(create_leaf(file, constant)),
         Decision::Data(value) => return Some(create_value_node(file, value)),
         Decision::DeferredData | Decision::GlobalPath(_) => {
-            debug_assert!(false, "every part of a data literal has its value at build time");
+            debug_assert!(
+                false,
+                "every part of a data literal has its value at build time"
+            );
             return Some(DataNode::Undefined);
         }
         Decision::Unknown => {}
@@ -251,7 +254,11 @@ fn finish_object(
     properties: Span<PropId>,
     values: Vec<DataNode>,
 ) -> DataNode {
-    debug_assert_eq!(properties.len(), values.len(), "each property has one finished node");
+    debug_assert_eq!(
+        properties.len(),
+        values.len(),
+        "each property has one finished node"
+    );
     let layout = layouts::literal_layout(file, literal);
     let searches_linearly = properties.len() <= MAX_LINEAR_SEARCH_MEMBERS;
     let mut members: Vec<DataMember> = Vec::with_capacity(values.len());

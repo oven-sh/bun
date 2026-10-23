@@ -84,7 +84,9 @@ fn is_loose(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool 
 }
 
 fn is_never(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
-    file.queries.type_shape(ty).is_ok_and(|shape| shape.kind == ShapeKind::Never)
+    file.queries
+        .type_shape(ty)
+        .is_ok_and(|shape| shape.kind == ShapeKind::Never)
 }
 
 fn is_inside_position(
@@ -152,8 +154,9 @@ fn classify_call_result(
             let bound = files.bound(declaration.file);
             let is_implemented_elsewhere = match bound.fns[declaration.function.idx()].owner {
                 FnOwner::Member(member) => {
-                    let is_abstract =
-                        files.hir(declaration.file)[member].flags.contains(Flags::ABSTRACT);
+                    let is_abstract = files.hir(declaration.file)[member]
+                        .flags
+                        .contains(Flags::ABSTRACT);
                     is_abstract || bound.member_class(member).is_none()
                 }
                 FnOwner::None | FnOwner::Expr(_) | FnOwner::Stmt(_) | FnOwner::Type(_) => false,

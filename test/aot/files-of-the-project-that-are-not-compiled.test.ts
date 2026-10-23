@@ -7,7 +7,14 @@ import { test } from "./supported";
 // level of such a file alone, and the whole file once a file that it compiles or checks refers to it.
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "bundler", jsx: "preserve", noEmit: true, strict: true },
+  compilerOptions: {
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    jsx: "preserve",
+    noEmit: true,
+    strict: true,
+  },
   include: ["*.ts", "*.tsx"],
 });
 
@@ -21,7 +28,11 @@ async function buildAndRun(name: string, files: Record<string, string>) {
   using dir = tempDir(name, { "tsconfig.json": tsconfig, ...files });
   const executable = join(String(dir), "program");
   const built = await run(String(dir), bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable);
-  expect({ stderr: built.stderr, exitCode: built.exitCode, signalCode: built.signalCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0, signalCode: null });
+  expect({ stderr: built.stderr, exitCode: built.exitCode, signalCode: built.signalCode }).toEqual({
+    stderr: expect.not.stringContaining("error"),
+    exitCode: 0,
+    signalCode: null,
+  });
   return await run(String(dir), executable);
 }
 
@@ -30,7 +41,7 @@ test("a type that is inferred from the body of a function in a file that is impo
     "main.ts": `import type { Made } from "./types";\nconst made: Made = { width: 2, name: "a" };\nconsole.log(made.width + 1, made.name);\n`,
     "types.ts": [
       `import { twice } from "./helper";`,
-      "export function make() { const text = \"}\"; const pattern = /[}]/; return { width: twice(text.length), name: `${pattern.source}}` }; }",
+      'export function make() { const text = "}"; const pattern = /[}]/; return { width: twice(text.length), name: `${pattern.source}}` }; }',
       `export type Made = ReturnType<typeof make>;`,
       ``,
     ].join("\n"),
@@ -52,7 +63,8 @@ test("what stands in the bodies of functions in files that nobody imports", asyn
   const ran = await buildAndRun("aot-bodies-nobody-reads", {
     "main.ts": `import { a } from "./a";\nconsole.log(a);\n`,
     "a.ts": `export const a: number = 1;\n`,
-    "braces.ts": "import { a } from \"./a\";\nexport function f() { const s = '}' + \"{\" + `}${a}{${`{`}`; /* } */ // }\n return /[/}]\\}/.test(s) ? (a) / 2 : a++ / 2; }\nexport const after = 1;\n",
+    "braces.ts":
+      'import { a } from "./a";\nexport function f() { const s = \'}\' + "{" + `}${a}{${`{`}`; /* } */ // }\n return /[/}]\\}/.test(s) ? (a) / 2 : a++ / 2; }\nexport const after = 1;\n',
     "members.ts": `import { a } from "./a";\nexport class C { #p = a; m() { return () => { return { b: { c: this.#p } }; }; } get g() { return 1; } static { a; } }\nexport const after = () => { return a; };\n`,
     "tags.tsx": `import { a } from "./a";\ndeclare namespace JSX { interface IntrinsicElements { p: {}; } }\nexport function f() { return <p>don't {a} http://x }</p>; }\nexport const after = 1;\n`,
     "broken.ts": `import { a } from "./a";\nexport function f() { return a + ); }\nexport const after = 1;\n`,

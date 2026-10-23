@@ -286,7 +286,8 @@ describe("a link that --trim can remove features from", () => {
   const targets = [cfg(), cfg({ abi: "musl" }), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)];
 
   it("reads no file of an earlier build but the order file", () => {
-    for (const target of targets) expect(linkDepends({ ...target, trimmable: true })).toEqual(linkDepends({ ...target, trimmable: false }));
+    for (const target of targets)
+      expect(linkDepends({ ...target, trimmable: true })).toEqual(linkDepends({ ...target, trimmable: false }));
   });
 
   it("still relinks when the order file changes", () => {

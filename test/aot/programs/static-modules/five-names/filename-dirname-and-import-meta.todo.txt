@@ -1,1 +1,0 @@
-The executable does not do what plain Bun does: expected a.cjs,string,6 | got a.cjs,string,5

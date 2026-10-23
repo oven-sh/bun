@@ -32,7 +32,11 @@ async function generateInto(directory: string, typesOnly: readonly string[]) {
 test.skipIf(generated === undefined).each([
   ["without assertions", testSchemas],
   ["with assertions", []],
-])("the table of built-ins is generated for a build %s", async (_, typesOnly) => {
-  using directory = tempDir("builtins-table", {});
-  expect(await generateInto(String(directory), typesOnly)).toEqual({ errors: [], exitCode: 0 });
-}, 120_000);
+])(
+  "the table of built-ins is generated for a build %s",
+  async (_, typesOnly) => {
+    using directory = tempDir("builtins-table", {});
+    expect(await generateInto(String(directory), typesOnly)).toEqual({ errors: [], exitCode: 0 });
+  },
+  120_000,
+);

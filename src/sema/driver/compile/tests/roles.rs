@@ -66,32 +66,42 @@ fn evaluated_text_with_early_error_is_demoted_and_not_reported() {
         evaluated_texts: &["failing.cjs", "valid.cjs"],
         ..HostScript::default()
     };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.js", |program| {
-        let [failing, valid] = ["failing.cjs", "valid.cjs"].map(|path| program.file(path));
-        for text in [failing, valid] {
-            assert_eq!(program.loaded.origin(text), FileOrigin::EvaluatedText);
-            assert_eq!(program.files().role(text), FileRole::Inferred);
-        }
-        let main = program.file("main.js");
-        assert_eq!(program.loaded.origin(main), FileOrigin::ProgramJavaScript);
+    with_host(
+        &ScriptedHost(&disk, script),
+        PROJECT,
+        "./main.js",
+        |program| {
+            let [failing, valid] = ["failing.cjs", "valid.cjs"].map(|path| program.file(path));
+            for text in [failing, valid] {
+                assert_eq!(program.loaded.origin(text), FileOrigin::EvaluatedText);
+                assert_eq!(program.files().role(text), FileRole::Inferred);
+            }
+            let main = program.file("main.js");
+            assert_eq!(program.loaded.origin(main), FileOrigin::ProgramJavaScript);
 
-        let compiled_files = program.files().compiled_files();
-        let (loaded, host, request) = (program.loaded, program.host, program.request);
-        let roles = decide_roles(loaded, host, request, compiled_files);
-        let early_error = Demotion {
-            file: failing,
-            cause: DemotionCause::EarlyError,
-        };
-        assert_eq!(roles.demoted, [early_error]);
-        assert!(roles.has_early_error(failing));
-        assert!(!roles.has_early_error(valid) && !roles.has_early_error(main));
-        assert!(roles.is_checked(failing) && roles.is_checked(valid) && !roles.is_checked(main));
-        assert!(roles.diagnostics.is_empty());
+            let compiled_files = program.files().compiled_files();
+            let (loaded, host, request) = (program.loaded, program.host, program.request);
+            let roles = decide_roles(loaded, host, request, compiled_files);
+            let early_error = Demotion {
+                file: failing,
+                cause: DemotionCause::EarlyError,
+            };
+            assert_eq!(roles.demoted, [early_error]);
+            assert!(roles.has_early_error(failing));
+            assert!(!roles.has_early_error(valid) && !roles.has_early_error(main));
+            assert!(
+                roles.is_checked(failing) && roles.is_checked(valid) && !roles.is_checked(main)
+            );
+            assert!(roles.diagnostics.is_empty());
 
-        let files_to_lower = [main, valid];
-        let checked = check_and_lower(loaded, host, request, &roles, &files_to_lower, &|_, _| Some(()));
-        assert!(checked.diagnostics.is_empty());
-    });
+            let files_to_lower = [main, valid];
+            let checked =
+                check_and_lower(loaded, host, request, &roles, &files_to_lower, &|_, _| {
+                    Some(())
+                });
+            assert!(checked.diagnostics.is_empty());
+        },
+    );
 }
 
 #[test]
@@ -105,10 +115,15 @@ fn early_error_in_file_of_the_program_stops_the_build() {
         let build = check_only(program);
         assert!(build.roles.demoted.is_empty());
         assert!(!build.roles.has_early_error(failing));
-        let in_file = build.diagnostics().filter(|it| it.diagnostic.file == Some(failing));
+        let in_file = build
+            .diagnostics()
+            .filter(|it| it.diagnostic.file == Some(failing));
         let reported: Vec<(DiagnosticClass, Effect)> =
             in_file.map(|it| (it.diagnostic.class, it.effect)).collect();
-        assert_eq!(reported, [(DiagnosticClass::EarlyError, Effect::StopsBuild)]);
+        assert_eq!(
+            reported,
+            [(DiagnosticClass::EarlyError, Effect::StopsBuild)]
+        );
     });
 }
 
@@ -140,7 +155,10 @@ fn demotion_lowers_each_file_once() {
         let build = check(program, &|_, file| {
             calls[file.idx()].fetch_add(1, Ordering::Relaxed);
         });
-        assert_eq!(build.demoted_files(), [program.file("node_modules/dep/index.ts")]);
+        assert_eq!(
+            build.demoted_files(),
+            [program.file("node_modules/dep/index.ts")]
+        );
         let calls: Vec<usize> = calls.iter().map(|it| it.load(Ordering::Relaxed)).collect();
         for &file in files.compiled_files() {
             assert_eq!(calls[file.idx()], 1, "{file:?}");
@@ -287,7 +305,10 @@ export const value = 2;
 
 #[test]
 fn dependency_is_not_held_to_strict_function_types_of_the_program() {
-    assert_stays_checked(&dependency_with(NARROWER_PARAMETER), "node_modules/dep/index.ts");
+    assert_stays_checked(
+        &dependency_with(NARROWER_PARAMETER),
+        "node_modules/dep/index.ts",
+    );
 }
 
 #[test]
@@ -312,17 +333,26 @@ fn project_without_strict_function_types_is_not_held_to_it() {
     let files = [
         ("main.ts", IMPORTS_LIB),
         ("lib/index.ts", NARROWER_PARAMETER),
-        ("lib/tsconfig.json", r#"{ "compilerOptions": { "strictFunctionTypes": false } }"#),
+        (
+            "lib/tsconfig.json",
+            r#"{ "compilerOptions": { "strictFunctionTypes": false } }"#,
+        ),
     ];
     assert_stays_checked(&files, "lib/index.ts");
 }
 
 #[test]
 fn file_of_the_program_is_held_to_strict_function_types() {
-    let files = [("main.ts", IMPORTS_LIB), ("lib/index.ts", NARROWER_PARAMETER)];
+    let files = [
+        ("main.ts", IMPORTS_LIB),
+        ("lib/index.ts", NARROWER_PARAMETER),
+    ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let build = check_only(program);
-        assert_eq!(build.reported(program.file("lib/index.ts"), 2322), [STOPS_BUILD]);
+        assert_eq!(
+            build.reported(program.file("lib/index.ts"), 2322),
+            [STOPS_BUILD]
+        );
     });
 }
 
@@ -429,7 +459,9 @@ fn assert_shipped_typed_version_is_demoted(files: &[(&str, &str)], installed: &s
         assert_eq!(build.roles.demoted, [type_error_in(shapes)]);
         assert_eq!(build.reported(shapes, 2322), [WITHDRAWS_TRUST]);
         let in_shapes = |file: Option<FileId>| file == Some(shapes);
-        let mut reported = build.diagnostics().filter(|it| in_shapes(it.diagnostic.file));
+        let mut reported = build
+            .diagnostics()
+            .filter(|it| in_shapes(it.diagnostic.file));
         assert!(reported.all(|it| it.diagnostic.path == typed_source_path.as_bytes()));
     });
 }
@@ -460,7 +492,10 @@ fn shipped_typed_version_outside_nearest_manifest_is_demoted() {
     let files = [
         ("main.ts", r#"import "shapes";"#),
         ("node_modules/shapes/package.json", manifest),
-        ("node_modules/shapes/dist/esm/package.json", r#"{ "type": "module" }"#),
+        (
+            "node_modules/shapes/dist/esm/package.json",
+            r#"{ "type": "module" }"#,
+        ),
         ("node_modules/shapes/dist/esm/index.js", INSTALLED_SHAPES),
         ("node_modules/shapes/src/index.ts", MISTYPED_SHAPES),
     ];
@@ -481,14 +516,19 @@ fn project_typed_version_is_demoted() {
         typed_versions: &[("node_modules/shapes/index.js", ".sound/shapes/index.ts")],
         ..HostScript::default()
     };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.ts", |program| {
-        let shapes = program.file("node_modules/shapes/index.js");
-        assert!(program.files().module(shapes).is_from_external_library);
-        let build = check_only(program);
-        assert_eq!(build.roles.demoted, [type_error_in(shapes)]);
-        assert_eq!(build.roles.role(shapes), FileRole::Inferred);
-        assert_eq!(build.reported(shapes, 2322), [WITHDRAWS_TRUST]);
-    });
+    with_host(
+        &ScriptedHost(&disk, script),
+        PROJECT,
+        "./main.ts",
+        |program| {
+            let shapes = program.file("node_modules/shapes/index.js");
+            assert!(program.files().module(shapes).is_from_external_library);
+            let build = check_only(program);
+            assert_eq!(build.roles.demoted, [type_error_in(shapes)]);
+            assert_eq!(build.roles.role(shapes), FileRole::Inferred);
+            assert_eq!(build.reported(shapes, 2322), [WITHDRAWS_TRUST]);
+        },
+    );
 }
 
 const TYPED_SHAPES_PACKAGE: [(&str, &str); 2] = [
@@ -498,7 +538,10 @@ const TYPED_SHAPES_PACKAGE: [(&str, &str); 2] = [
 
 fn with_typed_shapes_package(typed_b_text: &str, then: impl FnOnce(&TestProgram<'_, '_>)) {
     let files = [
-        ("main.ts", "import \"shapes/a.js\";\nimport \"shapes/b.js\";\n"),
+        (
+            "main.ts",
+            "import \"shapes/a.js\";\nimport \"shapes/b.js\";\n",
+        ),
         (
             "node_modules/shapes/package.json",
             r#"{ "name": "shapes", "version": "1.0.0" }"#,
@@ -658,10 +701,20 @@ export type Both = [Size, Shape];
         let build = check_only(program);
         assert!(build.roles.demoted.is_empty());
         for path in ["main.ts", "typed.ts", "size.ts"] {
-            assert_eq!(build.roles.role(program.file(path)), FileRole::Checked, "{path}");
+            assert_eq!(
+                build.roles.role(program.file(path)),
+                FileRole::Checked,
+                "{path}"
+            );
         }
-        assert_eq!(build.roles.role(program.file("plain.js")), FileRole::Inferred);
-        assert_eq!(build.roles.role(program.file("shape.d.ts")), FileRole::TypesOnly);
+        assert_eq!(
+            build.roles.role(program.file("plain.js")),
+            FileRole::Inferred
+        );
+        assert_eq!(
+            build.roles.role(program.file("shape.d.ts")),
+            FileRole::TypesOnly
+        );
         assert!(!program.files().is_compiled(program.file("size.ts")));
         let mut checked = ["main.ts", "typed.ts"].map(|path| program.file(path));
         checked.shared_sort_unstable();
@@ -679,7 +732,10 @@ import "./unchecked.ts";
         ("main.ts", main_text),
         ("right.ts", "export const right: number = 1;\n"),
         ("wrong.ts", "export const wrong: number = \"text\";\n"),
-        ("unchecked.ts", "// @ts-nocheck\nexport const unchecked: number = \"text\";\n"),
+        (
+            "unchecked.ts",
+            "// @ts-nocheck\nexport const unchecked: number = \"text\";\n",
+        ),
     ];
     with_runtime_project(&files, &["main.ts"], |program| {
         let (right, wrong) = (program.file("right.ts"), program.file("wrong.ts"));
@@ -690,7 +746,10 @@ import "./unchecked.ts";
         assert_eq!(build.roles.role(unchecked), FileRole::Inferred);
         let cause_of = |file: FileId| {
             let demotions = build.roles.demoted.iter();
-            demotions.filter(|it| it.file == file).map(|it| it.cause).collect::<Vec<_>>()
+            demotions
+                .filter(|it| it.file == file)
+                .map(|it| it.cause)
+                .collect::<Vec<_>>()
         };
         assert!(cause_of(right).is_empty());
         assert_eq!(cause_of(wrong), [DemotionCause::TypeError]);
@@ -731,7 +790,10 @@ fn generated_dependency() -> Vec<(String, String)> {
     }
     let manifest = "node_modules/dep/package.json".to_owned();
     let mut files = vec![
-        ("main.ts".to_owned(), format!("{imports}export const all = [{names}];\n")),
+        (
+            "main.ts".to_owned(),
+            format!("{imports}export const all = [{names}];\n"),
+        ),
         (manifest, DEPENDENCY_MANIFEST.to_owned()),
     ];
     files.extend((0..DEPENDENCY_FILE_COUNT).map(|index| {
@@ -764,6 +826,10 @@ fn check_generated_dependency(threads: usize) -> BuildSummary<Vec<u8>> {
 fn demotions_do_not_depend_on_threads() {
     let on_one_thread = check_generated_dependency(1);
     for threads in [2, 8] {
-        assert_eq!(check_generated_dependency(threads), on_one_thread, "{threads} threads");
+        assert_eq!(
+            check_generated_dependency(threads),
+            on_one_thread,
+            "{threads} threads"
+        );
     }
 }

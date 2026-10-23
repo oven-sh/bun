@@ -1,7 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{
-    Binding, BindingKind, Decl, InitialState, ModuleInstanceState, SymbolId,
-};
+use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ModuleInstanceState, SymbolId};
 use bun_sema::hir::{self, Flags, ModuleName};
 
 use crate::ir::ValueId;

@@ -83,8 +83,10 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 }
 
 if (!mode) console.error("SKIPPED: test/aot/perf/front-end.test.ts: it wants a quiet machine. AOT_PERF=1 runs it");
-else if (process.platform !== "linux" || process.arch !== "x64") console.error("SKIPPED: test/aot/perf/front-end.test.ts: its numbers are of Linux x64");
-else if (!cc || !python) console.error(`SKIPPED: test/aot/perf/front-end.test.ts: ${cc ? "python3" : "cc"} is not installed`);
+else if (process.platform !== "linux" || process.arch !== "x64")
+  console.error("SKIPPED: test/aot/perf/front-end.test.ts: its numbers are of Linux x64");
+else if (!cc || !python)
+  console.error(`SKIPPED: test/aot/perf/front-end.test.ts: ${cc ? "python3" : "cc"} is not installed`);
 
 test.skipIf(!mode || !cc || !python || process.platform !== "linux" || process.arch !== "x64")(
   "compile/aot/perf/front-end",
@@ -93,21 +95,44 @@ test.skipIf(!mode || !cc || !python || process.platform !== "linux" || process.a
     const folder = String(dir);
     const map = join(folder, "server.map");
     const trace = join(folder, "trace");
-    expect(await spawned([cc!, "-O2", "-o", join(folder, "steps"), join(tools, "steps.c")], folder)).toMatchObject({ exitCode: 0 });
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", "./server.js", "--outfile", join(folder, "server")], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+    expect(await spawned([cc!, "-O2", "-o", join(folder, "steps"), join(tools, "steps.c")], folder)).toMatchObject({
+      exitCode: 0,
+    });
+    const build = await spawned(
+      [bunExe(), "build", "--compile", "--aot", "./server.js", "--outfile", join(folder, "server")],
+      folder,
+      { ...bunEnv, BUN_JSC_aotMapFilePath: map },
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
 
     // Without the collector every request does the same work.
-    await using server = Bun.spawn({ cmd: [join(folder, "server")], cwd: folder, env: { ...bunEnv, BUN_JSC_useAOTPerfMap: "1", BUN_JSC_useGC: "0" }, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+    await using server = Bun.spawn({
+      cmd: [join(folder, "server")],
+      cwd: folder,
+      env: { ...bunEnv, BUN_JSC_useAOTPerfMap: "1", BUN_JSC_useGC: "0" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
     const reader = server.stdout.getReader();
     const port = Number(new TextDecoder().decode((await reader.read()).value));
     expect(port).toBeGreaterThan(0);
-    const ask = async () => (await fetch(`http://127.0.0.1:${port}/users/u7?a=1&b=two`, { headers: { accept: "application/json" } })).text();
+    const ask = async () =>
+      (await fetch(`http://127.0.0.1:${port}/users/u7?a=1&b=two`, { headers: { accept: "application/json" } })).text();
     let answer = "";
     for (let i = 0; i < 3000; i++) answer = await ask();
     expect(JSON.parse(answer)).toMatchObject({ id: "u7", tags: ["A", "B", "ODD"], query: { a: "1", b: "two" } });
 
-    const steps = Bun.spawn({ cmd: [join(folder, "steps"), trace, String(server.pid)], cwd: folder, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    const steps = Bun.spawn({
+      cmd: [join(folder, "steps"), trace, String(server.pid)],
+      cwd: folder,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
     while (!existsSync(trace + ".ready")) await Bun.sleep(20);
     for (let i = 0; i < 5; i++) {
       steps.kill("SIGUSR2");
@@ -119,10 +144,18 @@ test.skipIf(!mode || !cc || !python || process.platform !== "linux" || process.a
     server.kill();
 
     const table = join(folder, "model.txt");
-    expect(await spawned([python!, join(tools, "front-end-model.py"), trace, map, table], folder)).toMatchObject({ exitCode: 0 });
+    expect(await spawned([python!, join(tools, "front-end-model.py"), trace, map, table], folder)).toMatchObject({
+      exitCode: 0,
+    });
     const lines = readFileSync(table, "utf8").split("\n");
     console.log(lines.slice(0, 11).join("\n"));
-    const row = (name: string) => lines.find(line => line.startsWith(name))!.slice(16).trim().split(/\s+/).map(text => Number(text.replaceAll(",", "")));
+    const row = (name: string) =>
+      lines
+        .find(line => line.startsWith(name))!
+        .slice(16)
+        .trim()
+        .split(/\s+/)
+        .map(text => Number(text.replaceAll(",", "")));
     const [, missesInFunctions, , missesInStubs] = row("L1i miss");
     const now = { instructions: row("instructions")[4], missesInFunctions, missesInStubs };
     expect(now.instructions).toBeGreaterThan(1000);

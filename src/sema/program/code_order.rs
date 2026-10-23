@@ -51,13 +51,19 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
                 tables.root_tasks.push(Some(file));
                 continue;
             }
-            let resolutions = entry.loaded.get_mut().iter().flat_map(|loaded| &loaded.imports);
+            let resolutions = entry
+                .loaded
+                .get_mut()
+                .iter()
+                .flat_map(|loaded| &loaded.imports);
             for resolution in resolutions.filter(|it| {
                 it.should_add_file && it.is_importable && it.unsupported_extension.is_none()
             }) {
                 let path = resolution.path;
                 let target = add(path, false, tables.modules, tables.depths, tables.found);
-                entry.jsdoc_imports.push((resolution.spec, resolution.mode, target));
+                entry
+                    .jsdoc_imports
+                    .push((resolution.spec, resolution.mode, target));
                 let task = SubTask {
                     file: target,
                     increases_depth: resolution.increases_depth,

@@ -4,11 +4,27 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { unsupported } from "../aot/run-programs";
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [] } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    strict: true,
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    noEmit: true,
+    types: [],
+  },
+});
 const reports = "text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
 
 // Adding a name to Array.prototype is allowed. Replacing one is not, and here the store always runs.
@@ -18,7 +34,12 @@ describe.concurrent.skipIf(!!unsupported)("a store that replaces a member of a b
   test("is an error of bun check --aot, at its line", async () => {
     using dir = tempDir("aot-check-errors", { "wrong.ts": replaces, "tsconfig.json": tsconfig });
     const { stdout, stderr, exitCode } = await bun(String(dir), "check", "--aot", "wrong.ts");
-    expect([...(stdout + stderr).matchAll(/wrong\.ts\((\d+),\d+\): error (TS1000\d\d)/g)].map(([, line, code]) => [line, code])).toEqual([["2", "TS100014"]]);
+    expect(
+      [...(stdout + stderr).matchAll(/wrong\.ts\((\d+),\d+\): error (TS1000\d\d)/g)].map(([, line, code]) => [
+        line,
+        code,
+      ]),
+    ).toEqual([["2", "TS100014"]]);
     expect(exitCode).toBe(1);
   }, 120_000);
 
@@ -29,7 +50,15 @@ describe.concurrent.skipIf(!!unsupported)("a store that replaces a member of a b
 
   test("stops the build", async () => {
     using dir = tempDir("aot-build-errors", { "wrong.ts": replaces, "tsconfig.json": tsconfig });
-    const { stdout, stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot", "wrong.ts", "--outfile", "wrong");
+    const { stdout, stderr, exitCode } = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--aot",
+      "wrong.ts",
+      "--outfile",
+      "wrong",
+    );
     expect(stdout + stderr).toContain("TS100014");
     expect(exitCode).toBe(1);
   }, 120_000);
@@ -52,9 +81,18 @@ describe.concurrent("bun check flags that --aot governs", () => {
     [["--define", "A=1", "a.ts"], "error: --define requires --aot"],
     [["--aot"], "error: --aot needs an entry point: bun check --aot src/index.ts"],
     [["--aot", "--build"], "error: --aot does not support --build"],
-    [["--aot", "--strict", "a.ts"], "error: --aot does not take compiler options (--strict). It checks with the tsconfig.json that bun compile would use"],
-    [["--aot", "--explain=nonsense", "a.ts"], `error: Invalid value for --explain: "nonsense". Must be one of ${reports}`],
-    [["--aot", "--disallow-code-generation-from-strings=strcit", "a.ts"], 'error: Invalid value for --disallow-code-generation-from-strings: "strcit". Must be "strict", or no value'],
+    [
+      ["--aot", "--strict", "a.ts"],
+      "error: --aot does not take compiler options (--strict). It checks with the tsconfig.json that bun compile would use",
+    ],
+    [
+      ["--aot", "--explain=nonsense", "a.ts"],
+      `error: Invalid value for --explain: "nonsense". Must be one of ${reports}`,
+    ],
+    [
+      ["--aot", "--disallow-code-generation-from-strings=strcit", "a.ts"],
+      'error: Invalid value for --disallow-code-generation-from-strings: "strcit". Must be "strict", or no value',
+    ],
   ] as [string[], string][])("bun check %p", async (flags, message) => {
     using dir = tempDir("aot-check-usage", { "a.ts": "export const a = 1;\n" });
     const { stderr, exitCode } = await bun(String(dir), "check", ...flags);
@@ -63,12 +101,25 @@ describe.concurrent("bun check flags that --aot governs", () => {
   });
 });
 
-test.skipIf(!!unsupported)("an unknown report name is an error of the build that lists the valid names", async () => {
-  using dir = tempDir("aot-build-unknown", { "a.ts": "export const a = 1;\n" });
-  const { stdout, stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot", "--explain=nonsense", "a.ts", "--outfile", "a");
-  expect(stdout + stderr).toContain(`Must be one of ${reports}`);
-  expect(exitCode).not.toBe(0);
-}, 120_000);
+test.skipIf(!!unsupported)(
+  "an unknown report name is an error of the build that lists the valid names",
+  async () => {
+    using dir = tempDir("aot-build-unknown", { "a.ts": "export const a = 1;\n" });
+    const { stdout, stderr, exitCode } = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--aot",
+      "--explain=nonsense",
+      "a.ts",
+      "--outfile",
+      "a",
+    );
+    expect(stdout + stderr).toContain(`Must be one of ${reports}`);
+    expect(exitCode).not.toBe(0);
+  },
+  120_000,
+);
 
 describe.concurrent("--help", () => {
   test.each([
@@ -82,6 +133,13 @@ describe.concurrent("--help", () => {
     const { stdout, stderr } = await bun(String(dir), ...command, "--help");
     const help = stdout + stderr;
     for (const flag of flags) expect(help).toContain(flag);
-    for (const flag of ["--aot-graph-fd", "--compile-run", "--rewrite-jest-for-tests", "--expose-internals", "--builtins-manifest"]) expect(help).not.toContain(flag);
+    for (const flag of [
+      "--aot-graph-fd",
+      "--compile-run",
+      "--rewrite-jest-for-tests",
+      "--expose-internals",
+      "--builtins-manifest",
+    ])
+      expect(help).not.toContain(flag);
   });
 });

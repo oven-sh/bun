@@ -6,10 +6,7 @@ use crate::ir::generated::ForInStepResult;
 use crate::lower::control::{self, BreakTargetKind};
 use crate::lower::{FunctionLowering, call, statement};
 
-pub(super) fn lower_for_in(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    statement: StmtId,
-) {
+pub(super) fn lower_for_in(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, statement: StmtId) {
     let StmtKind::ForIn { left, expr, body } = lowering.file.hir[statement].kind else {
         unreachable!("lower_for_in takes a ForIn statement");
     };

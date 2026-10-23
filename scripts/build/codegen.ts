@@ -707,7 +707,9 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
 }
 
 /** What says which types a native member may declare, and writes the check of one. */
-const declaredTypeInputs = (cfg: Ctx["cfg"]): string[] => [resolve(cfg.cwd, "src", "codegen", "declared-type-checks.ts")];
+const declaredTypeInputs = (cfg: Ctx["cfg"]): string[] => [
+  resolve(cfg.cwd, "src", "codegen", "declared-type-checks.ts"),
+];
 function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");

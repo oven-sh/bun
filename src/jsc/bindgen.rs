@@ -506,7 +506,9 @@ impl<'a> JsLocal<'a, JSString> {
     /// The characters of any string. A rope is resolved, which fails when there is no memory for it.
     #[inline]
     pub fn view(self, heap: &JsHeap<'a>) -> Result<'a, crate::JSStringView<'a>> {
-        self.cell().view(heap.global_object()).map_err(Error::pending)
+        self.cell()
+            .view(heap.global_object())
+            .map_err(Error::pending)
     }
 
     /// How many of the first characters were written to `characters`: all that fit. Nothing is resolved.
@@ -566,6 +568,7 @@ impl<'a> JsLatin1<'a> {
 
     /// As [`substring_unchecked`](Self::substring_unchecked), several with one call. SAFETY: `start <= end <= self.characters().len()` of each range.
     #[inline(always)]
+    #[allow(clippy::needless_pass_by_value)] // written at the call
     pub unsafe fn substrings_unchecked<const N: usize>(
         &self,
         heap: &JsHeap<'a>,
@@ -589,7 +592,11 @@ impl<'a> JsLatin1<'a> {
                 .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
         };
         // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        unsafe { (&raw const substrings).cast::<[JsLocal<'a, JSString>; N]>().read() }
+        unsafe {
+            (&raw const substrings)
+                .cast::<[JsLocal<'a, JSString>; N]>()
+                .read()
+        }
     }
 
     /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.

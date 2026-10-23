@@ -74,7 +74,10 @@ function checkedWords(record: SchemaRecord, base: number): CheckedWord[] {
       return elements.flatMap(element => checkedWords(kind.record, base + offsets[index] + element * size));
     }
     if ((kind.tag !== "Enum" && kind.tag !== "Flags") || field.isOptional) return [];
-    return elements.map(element => ({ offset: base + offsets[index] + element * bytesPerWord, type: rustTypeName(kind.type.name) }));
+    return elements.map(element => ({
+      offset: base + offsets[index] + element * bytesPerWord,
+      type: rustTypeName(kind.type.name),
+    }));
   });
 }
 
@@ -83,7 +86,8 @@ function idGetters(record: SchemaRecord): string[] {
     if (field.kind.tag !== "Id" || field.arrayLength !== null) return [];
     const name = rustIdentifier(field.name);
     const type = rustIdTypeName(field.kind.id.name);
-    if (field.isOptional) return [`pub fn ${name}_id(&self) -> Option<${type}> { optional_id_from_word(self.${name}) }`];
+    if (field.isOptional)
+      return [`pub fn ${name}_id(&self) -> Option<${type}> { optional_id_from_word(self.${name}) }`];
     return [`pub fn ${name}_id(&self) -> ${type} { ${type}::from_word(self.${name}) }`];
   });
 }
@@ -114,7 +118,10 @@ function abiRecord(record: SchemaRecord): string[] {
     `    pub fn slice_from_bytes(bytes: &[u8]) -> Option<&[${type}]> {`,
     "        if bytes.is_empty() { return Some(&[]); }",
     "        if !bytes.len().is_multiple_of(size_of::<Self>()) || !bytes.as_ptr().addr().is_multiple_of(align_of::<Self>()) { return None; }",
-    ...indent(checks.length > 0 ? ["for record in bytes.chunks_exact(size_of::<Self>()) {", ...indent(checks), "}"] : [], 2),
+    ...indent(
+      checks.length > 0 ? ["for record in bytes.chunks_exact(size_of::<Self>()) {", ...indent(checks), "}"] : [],
+      2,
+    ),
     "        // SAFETY: length and alignment were checked, every enum field holds a declared discriminant, and every other field is valid for all bit patterns.",
     "        Some(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len() / size_of::<Self>()) })",
     "    }",

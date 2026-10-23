@@ -2,9 +2,7 @@ use super::*;
 use crate::builtins::RuntimeModule;
 use crate::load::EntryPointKind;
 use crate::modules::testing::{file_named, with_graph, with_runtime_graph};
-use crate::modules::{
-    BindInput, ExportBinding, ImportBinding, ModuleGraph, ModuleRef, SiteAnswer,
-};
+use crate::modules::{BindInput, ExportBinding, ImportBinding, ModuleGraph, ModuleRef, SiteAnswer};
 use bun_sema::bind::Decl;
 use bun_sema::hir::ImportId;
 use bun_sema::import_sites::ImportSiteKind;
@@ -41,8 +39,13 @@ fn first_import_target(graph: &ModuleGraph, input: &BindInput<'_, '_>) -> Module
 fn first_named_import(graph: &ModuleGraph, input: &BindInput<'_, '_>) -> ImportBinding {
     let main = file_named(input, "main.js");
     let mut specifiers = input.files.hir(main)[ImportId(0)].named.iter();
-    let specifier = specifiers.next().expect("the first import has no named specifier");
-    let symbol = input.files.bound(main).declared_symbol(Decl::ImportSpec(specifier));
+    let specifier = specifiers
+        .next()
+        .expect("the first import has no named specifier");
+    let symbol = input
+        .files
+        .bound(main)
+        .declared_symbol(Decl::ImportSpec(specifier));
     graph.import_binding(main, symbol)
 }
 
@@ -106,7 +109,10 @@ fn runtime_module_with_source_exports_own_keys() {
 
 #[test]
 fn es_module_of_the_runtime_has_export_table() {
-    let files = [("main.js", "import { __toESM, __using } from 'bun:wrap'; __toESM; __using;")];
+    let files = [(
+        "main.js",
+        "import { __toESM, __using } from 'bun:wrap'; __toESM; __using;",
+    )];
     with_graph(&files, |graph, input| {
         let module = first_import_target(graph, input);
         assert_eq!(module, ModuleRef::Runtime(RuntimeModule::BunWrap));
@@ -133,7 +139,11 @@ fn es_module_of_the_runtime_has_export_table() {
 
 #[test]
 fn this_of_the_file_makes_it_commonjs() {
-    let commonjs = ["this.f = 1;", "const self = () => this;", "class A { [this.key]() {} }"];
+    let commonjs = [
+        "this.f = 1;",
+        "const self = () => this;",
+        "class A { [this.key]() {} }",
+    ];
     for text in commonjs {
         let files = [("main.js", "import './other.js';"), ("other.js", text)];
         check_interop(&files, "other.js", COMMONJS);
@@ -153,13 +163,19 @@ fn this_of_the_file_makes_it_commonjs() {
 #[test]
 fn json_file_exports_keys() {
     let files = [
-        ("main.js", "import * as data from './data.json'; console.log(data);"),
+        (
+            "main.js",
+            "import * as data from './data.json'; console.log(data);",
+        ),
         ("data.json", r#"{ "x": 1, "a": 2 }"#),
     ];
     check_interop(&files, "data.json", DATA_WITH_DEFAULT);
     with_graph(&files, |graph, input| {
         let data = file_named(input, "data.json");
-        assert_eq!(export_names(graph, input, "data.json"), [&b"a"[..], b"default", b"x"]);
+        assert_eq!(
+            export_names(graph, input, "data.json"),
+            [&b"a"[..], b"default", b"x"]
+        );
         for export in graph.exports(data) {
             assert!(matches!(
                 export.binding,
@@ -177,14 +193,19 @@ fn json_export_names(main: &str) -> Vec<Vec<u8>> {
         ("middle.js", "export { x as renamed } from './data.json';"),
         ("data.json", r#"{ "x": 1, "a": 2, "b-c": 3 }"#),
     ];
-    with_graph(&files, |graph, input| export_names(graph, input, "data.json"))
+    with_graph(&files, |graph, input| {
+        export_names(graph, input, "data.json")
+    })
 }
 
 #[test]
 fn json_file_exports_only_keys_that_can_be_read() {
     let only_default = [&b"default"[..]];
     assert_eq!(json_export_names("import './data.json';"), only_default);
-    assert_eq!(json_export_names("import data from './data.json'; data.a;"), only_default);
+    assert_eq!(
+        json_export_names("import data from './data.json'; data.a;"),
+        only_default
+    );
     assert_eq!(json_export_names("require('./data.json').a;"), only_default);
     let names = json_export_names("import { a } from './data.json'; a;");
     assert_eq!(names, [&b"a"[..], b"default"]);

@@ -19,7 +19,10 @@ fn bigint_property_name_is_decimal_text() {
         ("({ 1n() {} })", &[Some("1")]),
         ("({ get 1n() { return a } })", &[Some("1")]),
         ("({ 1n: a } = b)", &[Some("1")]),
-        ("({ a: { 2n: b }, 3n: c })", &[Some("2"), Some("a"), Some("3")]),
+        (
+            "({ a: { 2n: b }, 3n: c })",
+            &[Some("2"), Some("a"), Some("3")],
+        ),
         ("({ 1: a })", &[Some("1")]),
         ("({ \"1n\": a })", &[Some("1n")]),
         ("({ [1n]: a })", &[None]),
@@ -77,7 +80,10 @@ fn bigint_binding_key_is_decimal_text() {
         ("const { 0o17n: a } = b", "15"),
         ("const { 0b101n: a } = b", "5"),
         ("const { 1n: a = c } = b", "1"),
-        ("const { 12345678901234567890n: a } = b", "12345678901234567890"),
+        (
+            "const { 12345678901234567890n: a } = b",
+            "12345678901234567890",
+        ),
         ("const { '1n': a } = b", "1n"),
         ("const { a } = b", "a"),
     ] {
@@ -88,13 +94,20 @@ fn bigint_binding_key_is_decimal_text() {
         let atoms = scratch.atoms(text.as_bytes());
         let key = file.runtime_binding_key(PatPropId(0));
         assert_eq!(name_text(&atoms, key), Some(name), "{text}");
-        assert!(matches!(file[property.value].kind, PatKind::Ident(_)), "{text}");
+        assert!(
+            matches!(file[property.value].kind, PatKind::Ident(_)),
+            "{text}"
+        );
     }
 }
 
 #[test]
 fn speculation_leaves_one_entry() {
-    for text in ["({ 1n: a }) => a", "({ 1n: a })", "x = ({ 1n: a } = b) => a"] {
+    for text in [
+        "({ 1n: a }) => a",
+        "({ 1n: a })",
+        "x = ({ 1n: a } = b) => a",
+    ] {
         let (file, _) = parsed(text, typescript());
         assert_eq!(file.bigint_names.len(), 1, "{text}");
     }

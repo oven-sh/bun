@@ -85,7 +85,8 @@ impl ModuleItems {
         position: u32,
     ) -> (Vec<StmtId>, Vec<StmtId>) {
         // Every function names the `Fragment` import, also one without a fragment.
-        self.imports.retain(|import| is_referenced(file, import.local));
+        self.imports
+            .retain(|import| is_referenced(file, import.local));
         let mut before = Vec::new();
         for (index, first) in self.imports.iter().enumerate() {
             let (earlier, rest) = self.imports.split_at(index);

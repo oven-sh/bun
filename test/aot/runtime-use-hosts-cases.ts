@@ -402,6 +402,10 @@ group("Bun.serve", () => {
     const use = await runtimeUse(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, declared + `declare const Response: any;\n` + text])));
     return { ...completeness(use), named: use.lines.includes("Bun serve"), retained: retainsFeature(use.lines, "Serve") };
   };
+  const bundles = async (text: string) => {
+    const use = await runtimeUse({ "main.ts": declared + `declare const Response: any;\n` + text });
+    return retainsFeature(use.lines, "Bundler");
+  };
 
   test.each([
     ["a call", `Bun.serve({ port: 0, ${fetch} });`],
@@ -456,6 +460,14 @@ group("Bun.serve", () => {
     ["copied into the literal", `const development = { app: { framework: "react" } };\nBun.serve({ port: 0, ...development });`],
   ])("the option app starts the development server, which runs code that is not in the executable: %s", async (_, text) => {
     expect(await serves({ "main.ts": text })).toMatchObject({ whyOpen: expect.arrayContaining([expect.stringMatching(/^runtime-code: /)]), named: true, retained: true });
+    expect(await bundles(text)).toBe(true);
+  });
+
+  test.each([
+    ["a plain server", `Bun.serve({ port: 0, ${fetch} });`],
+    ["a plain server beside evaluated text", `new Function("return 1")();\nBun.serve({ port: 0, ${fetch} });`],
+  ])("the bundler is not retained for %s", async (_, text) => {
+    expect(await bundles(text)).toBe(false);
   });
 
   test("is listed where another file exports it again under another name", async () => {

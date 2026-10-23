@@ -152,7 +152,10 @@ pub(super) fn emit_module_value(
     match value {
         ModuleValue::Nothing => lowering.builder.undefined(),
         ModuleValue::DefaultExpression(statement) => {
-            let symbol = lowering.file.bound.declared_symbol(Decl::ExportExpr(*statement));
+            let symbol = lowering
+                .file
+                .bound
+                .declared_symbol(Decl::ExportExpr(*statement));
             scope::get_binding(lowering, Binding::Symbol(symbol), known::default)
         }
         ModuleValue::DefaultDeclaration(binding) => {

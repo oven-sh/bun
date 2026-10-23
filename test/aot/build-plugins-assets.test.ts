@@ -21,7 +21,10 @@ export async function answer<T>(args: { path: string }, value: T): Promise<T> {
 }
 `;
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] }, include: ["*.ts"] });
+const tsconfig = JSON.stringify({
+  compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] },
+  include: ["*.ts"],
+});
 
 const plugin = (setup: string) => `import { answer, calls } from "./helpers";
 export { calls };
@@ -41,14 +44,31 @@ async function buildIn(folder: string, delay: string) {
 type Case = { naming?: string; files: Record<string, string>; prints: string; calls: Record<string, number> };
 
 async function expectSameExecutable({ naming = byName, files, prints, calls }: Case) {
-  using dir = tempDir("aot-plugin-assets", { "build.ts": build(naming), "helpers.ts": helpers, "tsconfig.json": tsconfig, ...files });
+  using dir = tempDir("aot-plugin-assets", {
+    "build.ts": build(naming),
+    "helpers.ts": helpers,
+    "tsconfig.json": tsconfig,
+    ...files,
+  });
   const folder = String(dir);
   const hashes: string[] = [];
   for (const delay of ["0", "40", "700"]) {
     const { executable, built, hash, calls: made } = await buildIn(folder, delay);
-    expect({ delay, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode, calls: made }).toEqual({ delay, stdout: expect.any(String), stderr: expect.any(String), exitCode: 0, calls });
+    expect({ delay, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode, calls: made }).toEqual({
+      delay,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+      exitCode: 0,
+      calls,
+    });
     const ran = await spawned([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect({ delay, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ delay, stdout: prints, stderr: expect.any(String), exitCode: 0, signal: null });
+    expect({ delay, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      delay,
+      stdout: prints,
+      stderr: expect.any(String),
+      exitCode: 0,
+      signal: null,
+    });
     hashes.push(hash);
   }
   expect(hashes).toEqual(hashes.map(() => hashes[0]));
@@ -67,7 +87,9 @@ import { one } from "./one";
 console.log(one, big.endsWith("big.bin"), text(big));`,
       "one.ts": `export const one: number = 1;`,
       "big.bin": "on disk",
-      "plugin.ts": plugin(`  b.onLoad({ filter: /big\\.bin$/ }, async (a: any) => answer(a, { contents: (await Bun.file(a.path).text()).toUpperCase(), loader: "file" }));`),
+      "plugin.ts": plugin(
+        `  b.onLoad({ filter: /big\\.bin$/ }, async (a: any) => answer(a, { contents: (await Bun.file(a.path).text()).toUpperCase(), loader: "file" }));`,
+      ),
     },
     prints: "1 true ON DISK\n",
     calls: { "big.bin": 1 },
@@ -78,7 +100,9 @@ console.log(one, big.endsWith("big.bin"), text(big));`,
 import script from "./script.min.js" with { type: "file" };
 console.log(text(script));`,
       "script.min.js": "throw 1",
-      "plugin.ts": plugin(`  b.onLoad({ filter: /script\\.min\\.js$/ }, async (a: any) => answer(a, { contents: "[" + (await Bun.file(a.path).text()) + "]", loader: "file" }));`),
+      "plugin.ts": plugin(
+        `  b.onLoad({ filter: /script\\.min\\.js$/ }, async (a: any) => answer(a, { contents: "[" + (await Bun.file(a.path).text()) + "]", loader: "file" }));`,
+      ),
     },
     prints: "[throw 1]\n",
     calls: { "script.min.js": 1 },
@@ -100,7 +124,9 @@ console.log(text(plain));`,
 import nothing from "./nothing.bin" with { type: "file" };
 console.log(JSON.stringify(text(nothing)));`,
       "nothing.bin": "something",
-      "plugin.ts": plugin(`  b.onLoad({ filter: /nothing\\.bin$/ }, (a: any) => answer(a, { contents: "", loader: "file" }));`),
+      "plugin.ts": plugin(
+        `  b.onLoad({ filter: /nothing\\.bin$/ }, (a: any) => answer(a, { contents: "", loader: "file" }));`,
+      ),
     },
     prints: `""\n`,
     calls: { "nothing.bin": 1 },
@@ -114,13 +140,18 @@ console.log([${Array.from({ length: 90 }, (_, index) => `asset${index}`).join(",
       ...Object.fromEntries(Array.from({ length: 90 }, (_, index) => [`asset${index}.bin`, String(index % 10)])),
       "wrapped.tmpl": "",
       "decode.ts": `${reads}export function decode(path: string): string { return "<" + text(path) + ">"; }`,
-      "plugin.ts": plugin(`  b.onLoad({ filter: /asset\\d+\\.bin$/ }, async (a: any) => answer(a, { contents: String(9 - Number(await Bun.file(a.path).text())), loader: "file" }));
+      "plugin.ts":
+        plugin(`  b.onLoad({ filter: /asset\\d+\\.bin$/ }, async (a: any) => answer(a, { contents: String(9 - Number(await Bun.file(a.path).text())), loader: "file" }));
   b.onLoad({ filter: /wrapped\\.tmpl$/ }, (a: any) => answer(a, { contents: 'import made from "made:inner.bin" with { type: "file" }; import { decode } from "./decode"; export default decode(made);', loader: "ts" }));
   b.onResolve({ filter: /^made:/ }, (a: any) => ({ path: a.path.slice(5), namespace: "made" }));
   b.onLoad({ filter: /.*/, namespace: "made" }, (a: any) => answer(a, { contents: "made up", loader: "file" }));`),
     },
     prints: `${Array.from({ length: 90 }, (_, index) => String(9 - (index % 10))).join("")} <made up>\n`,
-    calls: { ...Object.fromEntries(Array.from({ length: 90 }, (_, index) => [`asset${index}.bin`, 1])), "wrapped.tmpl": 1, "inner.bin": 1 },
+    calls: {
+      ...Object.fromEntries(Array.from({ length: 90 }, (_, index) => [`asset${index}.bin`, 1])),
+      "wrapped.tmpl": 1,
+      "inner.bin": 1,
+    },
   },
   "a plugin that returns code for a file import: each callback runs once": {
     files: {
@@ -135,7 +166,8 @@ console.log(late, note, text(real));`,
       "real.bin": "real",
       "note.tmpl": "",
       "other.ts": `export const other: string = "other";`,
-      "plugin.ts": plugin(`  b.onLoad({ filter: /late\\.bin$/ }, (a: any) => answer(a, { contents: 'import { other } from "./other"; const made: string = "code and " + other; export default made;', loader: "ts" }));
+      "plugin.ts":
+        plugin(`  b.onLoad({ filter: /late\\.bin$/ }, (a: any) => answer(a, { contents: 'import { other } from "./other"; const made: string = "code and " + other; export default made;', loader: "ts" }));
   b.onLoad({ filter: /real\\.bin$/ }, async (a: any) => answer(a, { contents: (await Bun.file(a.path).text()) + "!", loader: "file" }));
   b.onLoad({ filter: /note\\.tmpl$/ }, (a: any) => answer(a, { contents: 'export default "note";', loader: "js" }));
   b.onLoad({ filter: /other\\.ts$/ }, (a: any) => answer(a, undefined));`),
@@ -149,7 +181,9 @@ console.log(late, note, text(real));`,
 import words from "./words.bin" with { type: "file" };
 console.log(words);`,
       "words.bin": "the words themselves",
-      "plugin.ts": plugin(`  b.onLoad({ filter: /words\\.bin$/ }, async (a: any) => answer(a, { contents: await Bun.file(a.path).text(), loader: "text" }));`),
+      "plugin.ts": plugin(
+        `  b.onLoad({ filter: /words\\.bin$/ }, async (a: any) => answer(a, { contents: await Bun.file(a.path).text(), loader: "text" }));`,
+      ),
     },
     prints: "the words themselves\n",
     calls: { "words.bin": 1 },
@@ -161,7 +195,9 @@ console.log(words);`,
 import hashed from "./hashed.bin" with { type: "file" };
 console.log(/hashed-[0-9a-z]+\\.bin$/.test(hashed), text(hashed));`,
       "hashed.bin": "on disk",
-      "plugin.ts": plugin(`  b.onLoad({ filter: /hashed\\.bin$/ }, (a: any) => answer(a, { contents: "from the plugin", loader: "file" }));`),
+      "plugin.ts": plugin(
+        `  b.onLoad({ filter: /hashed\\.bin$/ }, (a: any) => answer(a, { contents: "from the plugin", loader: "file" }));`,
+      ),
     },
     prints: "true from the plugin\n",
     calls: { "hashed.bin": 1 },
@@ -196,7 +232,9 @@ export function count(): number {
   return readFileSync(file, "utf8").length;
 }`,
       "late.bin": "",
-      "plugin.ts": plugin(`  b.onLoad({ filter: /late\\.bin$/ }, (a: any) => answer(a, { contents: 'export default "code";', loader: "js" }));`),
+      "plugin.ts": plugin(
+        `  b.onLoad({ filter: /late\\.bin$/ }, (a: any) => answer(a, { contents: 'export default "code";', loader: "js" }));`,
+      ),
     },
     prints: "1 code\n",
     calls: { "late.bin": 1 },
@@ -217,11 +255,17 @@ describe.concurrent("compile/aot/assets loaded by plugins", () => {
           "tsconfig.json": tsconfig,
           "main.ts": `// @ts-ignore\nimport broken from "./broken.bin" with { type: "file" };\nconsole.log(broken);`,
           "broken.bin": "",
-          "plugin.ts": plugin(`  b.onLoad({ filter: /broken\\.bin$/ }, async (a: any) => { await answer(a, 0); throw new Error("the plugin gave up"); });`),
+          "plugin.ts": plugin(
+            `  b.onLoad({ filter: /broken\\.bin$/ }, async (a: any) => { await answer(a, 0); throw new Error("the plugin gave up"); });`,
+          ),
         });
         for (const delay of ["0", "400"]) {
           const { built } = await buildIn(String(dir), delay);
-          expect({ delay, stdout: built.stdout, exitCode: built.exitCode }).toEqual({ delay, stdout: expect.stringContaining("the plugin gave up"), exitCode: 1 });
+          expect({ delay, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
+            delay,
+            stdout: expect.stringContaining("the plugin gave up"),
+            exitCode: 1,
+          });
         }
       }),
     600_000,
@@ -238,11 +282,17 @@ describe.concurrent("compile/aot/assets loaded by plugins", () => {
           "main.ts": `// @ts-ignore\nimport first from "./a/same.bin" with { type: "file" };\n// @ts-ignore\nimport second from "./b/same.bin" with { type: "file" };\nconsole.log(first, second);`,
           "a/same.bin": "same",
           "b/same.bin": "same",
-          "plugin.ts": plugin(`  b.onLoad({ filter: /same\\.bin$/ }, (a: any) => answer(a, { contents: a.path, loader: "file" }));`),
+          "plugin.ts": plugin(
+            `  b.onLoad({ filter: /same\\.bin$/ }, (a: any) => answer(a, { contents: a.path, loader: "file" }));`,
+          ),
         });
         for (const delay of ["0", "400"]) {
           const { built } = await buildIn(String(dir), delay);
-          expect({ delay, stdout: built.stdout, exitCode: built.exitCode }).toEqual({ delay, stdout: expect.stringContaining("same.bin"), exitCode: 1 });
+          expect({ delay, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
+            delay,
+            stdout: expect.stringContaining("same.bin"),
+            exitCode: 1,
+          });
         }
       }),
     600_000,

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const rounds = 30;
 
@@ -60,13 +60,21 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("a request after an Eden collection makes no Structure and fills no property cache again", async () => {
   using dir = tempDir("aot-requests-after-eden-collections", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
   expect(built.exitCode, built.stderr).toBe(0);
   const counted = async (collections: "none" | "eden" | "full") => {
     const path = join(String(dir), "counts-" + collections);
     const env = { ...bunEnv, BUN_JSC_aotCountsPath: path };
     const total = (60 + 20 + rounds * 4) * "hello".length;
-    expect(await run([executable, collections], String(dir), env)).toEqual({ stdout: total + "\n", stderr: "", exitCode: 0 });
+    expect(await run([executable, collections], String(dir), env)).toEqual({
+      stdout: total + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
     const counts: Record<string, number> = Object.fromEntries([...learned, filedAgain].map(name => [name, 0]));
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, name] = line.split("\t");
@@ -83,6 +91,8 @@ test("a request after an Eden collection makes no Structure and fills no propert
   expect(full[filedAgain]! - none[filedAgain]!).toBeGreaterThan(rounds);
   expect(eden[filedAgain]).toBe(none[filedAgain]!);
   const perRound = (name: string) => Math.round((eden[name]! - none[name]!) / rounds) + 0;
-  expect(Object.fromEntries(learned.map(name => [name, perRound(name)]))).toEqual(Object.fromEntries(learned.map(name => [name, 0])));
+  expect(Object.fromEntries(learned.map(name => [name, perRound(name)]))).toEqual(
+    Object.fromEntries(learned.map(name => [name, 0])),
+  );
   expect(eden["counter:CompiledStructuresMade"]).toBe(none["counter:CompiledStructuresMade"]!);
 }, 240_000);

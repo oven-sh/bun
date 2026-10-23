@@ -160,7 +160,7 @@ fn has_live_export_assignment(hir: &File<'_>, decisions: &Decisions<'_>) -> bool
 }
 
 fn has_runtime_import_statement(hir: &File<'_>) -> bool {
-    hir.ids(hir.body).any(|stmt| {
-        matches!(hir[stmt].kind, StmtKind::Import(import) if is_runtime_import(hir, import))
-    })
+    hir.ids(hir.body).any(
+        |stmt| matches!(hir[stmt].kind, StmtKind::Import(import) if is_runtime_import(hir, import)),
+    )
 }

@@ -31,11 +31,7 @@ unsafe extern "C" {
         count: usize,
         substrings: *mut JSValue,
     );
-    fn JSC__JSString__firstCharacters(
-        this: &JSString,
-        characters: *mut u16,
-        capacity: u32,
-    ) -> u32;
+    fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32) -> u32;
     fn JSC__JSString__createUninitializedLatin1(
         global: &JSGlobalObject,
         length: u32,
@@ -165,7 +161,8 @@ impl JSString {
             let upper: u16 = self.read_at(layout::FIBER1_UPPER);
             let offset: u32 = self.read_at(layout::FIBER2_LOWER);
             let owner = &*(((upper as usize) << 32 | lower as usize) as *const JSString);
-            let text = &*(owner.read_at::<usize>(layout::FIBER) as *const bun_core::WTFStringImplStruct);
+            let text =
+                &*(owner.read_at::<usize>(layout::FIBER) as *const bun_core::WTFStringImplStruct);
             Some(Latin1Characters {
                 owner,
                 offset,
@@ -233,8 +230,9 @@ impl JSString {
         assert!(length >= 2 && length <= Self::MAX_LENGTH);
         let mut characters = core::ptr::null_mut();
         // SAFETY: `characters` receives the address of `length` bytes that the new string owns.
-        let string =
-            unsafe { JSC__JSString__createUninitializedLatin1(global, length as u32, &mut characters) };
+        let string = unsafe {
+            JSC__JSString__createUninitializedLatin1(global, length as u32, &raw mut characters)
+        };
         fill(characters);
         string
     }

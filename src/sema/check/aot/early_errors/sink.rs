@@ -1,7 +1,7 @@
+use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
 use crate::check::errors_type_nodes::has_parse_diagnostics;
 use crate::check::sink::{Arg, Reported};
-use crate::check::Checker;
 use crate::check::spans::{skip_trivia, start_of_token_before};
 use crate::node::ToNode;
 use crate::program::FileId;

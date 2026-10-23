@@ -211,8 +211,7 @@ export interface Variant {
 }
 
 export type SchemaType =
-  | { readonly tag: "Record"; readonly record: SchemaRecord }
-  | { readonly tag: "Variant"; readonly variant: Variant };
+  { readonly tag: "Record"; readonly record: SchemaRecord } | { readonly tag: "Variant"; readonly variant: Variant };
 
 export interface ProgramList {
   readonly name: string;

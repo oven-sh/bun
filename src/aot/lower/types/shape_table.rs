@@ -11,9 +11,7 @@ use crate::builtins::id::BuiltinClass;
 use crate::builtins::table::{class_data, contents_index};
 use crate::builtins::{builtin_class_of, type_name_of};
 use crate::ir::generated::{MAX_TRACKED_INTEGER, NameClass};
-use crate::ir::{
-    LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeTable, classify_name,
-};
+use crate::ir::{LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeTable, classify_name};
 use crate::lower::{CheckerTypeId, FileLowering, convert, function_types, layouts};
 
 const ACCEPTED_PRIMITIVE_TYPES: [(PrimitiveKinds, TypeId); 5] = [
@@ -87,7 +85,11 @@ fn map_shape_kind(
         ShapeKind::Null => Mapped::checked(TypeTable::NULL),
         ShapeKind::Boolean => Mapped::checked(TypeTable::BOOLEAN),
         ShapeKind::BooleanLiteral(value) => {
-            let primitive = if value { Primitives::TRUE } else { Primitives::FALSE };
+            let primitive = if value {
+                Primitives::TRUE
+            } else {
+                Primitives::FALSE
+            };
             map_literal(file, Type::primitives(primitive))
         }
         ShapeKind::Number => Mapped::checked(TypeTable::NUMBER),
@@ -108,12 +110,14 @@ fn map_shape_kind(
             let function_type = function_types::find_class_function_type(file, class);
             Mapped::checked(file.fragment.types.intern(Type::function(function_type)))
         }
-        ShapeKind::Function(signatures) => match function_types::find_function_type(file, signatures) {
-            Some(function_type) => {
-                Mapped::checked(file.fragment.types.intern(Type::function(function_type)))
+        ShapeKind::Function(signatures) => {
+            match function_types::find_function_type(file, signatures) {
+                Some(function_type) => {
+                    Mapped::checked(file.fragment.types.intern(Type::function(function_type)))
+                }
+                None => Mapped::checked(TypeTable::FUNCTION),
             }
-            None => Mapped::checked(TypeTable::FUNCTION),
-        },
+        }
         ShapeKind::Array { element, .. } => {
             let contents = map_child(file, children, EdgeKind::Contents, element);
             intern_class(file, BuiltinClass::Array, &[contents])
@@ -170,7 +174,10 @@ fn intern_class(
 }
 
 fn union_all(file: &mut FileLowering<'_, '_, '_, '_>, members: &[Mapped]) -> Mapped {
-    let ty = file.fragment.types.union_all(members.iter().map(|mapped| mapped.ty));
+    let ty = file
+        .fragment
+        .types
+        .union_all(members.iter().map(|mapped| mapped.ty));
     match members.iter().all(|mapped| mapped.is_checked) {
         true => Mapped::checked(ty),
         false => Mapped::expected(ty),
@@ -235,7 +242,10 @@ fn map_builtin(
     let (Some(builtin_class), Some(type_name)) =
         (builtin_class_of(class.class), type_name_of(class))
     else {
-        debug_assert!(false, "a built-in type names a class and a type name of the table");
+        debug_assert!(
+            false,
+            "a built-in type names a class and a type name of the table"
+        );
         return Mapped::expected(TypeTable::OBJECT);
     };
     let mut contents: SmallVec<[Mapped; 2]> =
@@ -316,7 +326,9 @@ fn requires_field(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) ->
     let Ok(members) = file.queries.member_presence(ty) else {
         return true;
     };
-    members.iter().any(|member| !member.is_optional && names_field(file, member.name))
+    members
+        .iter()
+        .any(|member| !member.is_optional && names_field(file, member.name))
 }
 
 fn has_exact_type(class: BuiltinClass) -> bool {
@@ -376,8 +388,14 @@ pub(super) fn has_layout_in_every_value(
     ty: CheckerTypeId,
 ) -> bool {
     requires_field(file, ty)
-        && file.queries.accepted_builtins(ty).is_ok_and(|builtins| builtins.is_empty())
-        && file.queries.accepted_class_constructors(ty).is_ok_and(|classes| classes.is_empty())
+        && file
+            .queries
+            .accepted_builtins(ty)
+            .is_ok_and(|builtins| builtins.is_empty())
+        && file
+            .queries
+            .accepted_class_constructors(ty)
+            .is_ok_and(|classes| classes.is_empty())
 }
 
 fn is_seen_alike_in_every_file(
@@ -407,13 +425,11 @@ fn is_seen_alike_in_every_file(
         | ShapeKind::ClassConstructor(_)
         | ShapeKind::Class(_)
         | ShapeKind::TypeVariable {
-            parameter: Some(_),
-            ..
+            parameter: Some(_), ..
         } => false,
         ShapeKind::Anything(_)
         | ShapeKind::TypeVariable {
-            parameter: None,
-            ..
+            parameter: None, ..
         }
         | ShapeKind::Never
         | ShapeKind::Undefined
@@ -447,7 +463,9 @@ pub(super) struct AlikeWalkTables {
 }
 
 fn find_known_alike(file: &FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Option<bool> {
-    let kept = file.queries.find_kept_fact(ty, KeptFact::IsMappedAlikeInEveryFile);
+    let kept = file
+        .queries
+        .find_kept_fact(ty, KeptFact::IsMappedAlikeInEveryFile);
     kept.or_else(|| file.types.mapped_alike.get(&ty).copied())
 }
 
@@ -503,7 +521,9 @@ fn holds_every_number(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId
         return false;
     };
     if let ShapeKind::Union(members) = shape.kind {
-        return members.iter().any(|&member| holds_every_number(file, member));
+        return members
+            .iter()
+            .any(|&member| holds_every_number(file, member));
     }
     matches!(shape.kind, ShapeKind::Number)
 }
@@ -519,7 +539,9 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
         // `int32 | number` holds every number: there is nothing to prove.
         ShapeKind::Union(members) => {
             members.iter().any(|&member| lists_int32(file, member))
-                && !members.iter().any(|&member| holds_every_number(file, member))
+                && !members
+                    .iter()
+                    .any(|&member| holds_every_number(file, member))
         }
         ShapeKind::Anything(_)
         | ShapeKind::TypeVariable { .. }
@@ -578,7 +600,10 @@ mod tests {
         assert_eq!(enum_member_type(0.0), Type::integers(0, 0));
         assert_eq!(enum_member_type(4.0), Type::integers(4, 4));
         for value in [-0.0, 1.5] {
-            assert_eq!(enum_member_type(value), Type::primitives(Primitives::NUMBER));
+            assert_eq!(
+                enum_member_type(value),
+                Type::primitives(Primitives::NUMBER)
+            );
         }
     }
 
@@ -587,7 +612,10 @@ mod tests {
         assert_eq!(number_literal_type(1.0), Type::integers(1, 1));
         assert_eq!(number_literal_type(-1.0), Type::integers(-1, -1));
         for value in [1.5, 0.0, -0.0, 4611686018427387904.0, f64::NAN] {
-            assert_eq!(number_literal_type(value), Type::primitives(Primitives::NUMBER));
+            assert_eq!(
+                number_literal_type(value),
+                Type::primitives(Primitives::NUMBER)
+            );
         }
     }
 

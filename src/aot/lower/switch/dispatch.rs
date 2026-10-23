@@ -101,7 +101,12 @@ fn partition_run(file: &mut FileLowering<'_, '_, '_, '_>, run: &[CaseTest]) -> C
         };
         match classify_constant(constant) {
             CaseKey::Integer(integer) => {
-                add_case(&mut lists.integers, &mut seen_integers, integer, test.target);
+                add_case(
+                    &mut lists.integers,
+                    &mut seen_integers,
+                    integer,
+                    test.target,
+                );
             }
             CaseKey::String(text) => {
                 let string = file.intern_atom(text);
@@ -142,9 +147,13 @@ fn emit_evaluated_test(
         FoldedValue::Unknown | FoldedValue::ConstantOutsideDeadZone(_) => {}
         FoldedValue::Constant(_) => unreachable!("a constant test belongs to a run"),
     }
-    let before = subject.local.map(|local| scope::read_local(lowering, local));
+    let before = subject
+        .local
+        .map(|local| scope::read_local(lowering, local));
     let tested = expression::lower_expression(lowering, test.expression);
-    let after = subject.local.map(|local| scope::read_local(lowering, local));
+    let after = subject
+        .local
+        .map(|local| scope::read_local(lowering, local));
     if before != after {
         subject.local = None;
     }
@@ -208,7 +217,9 @@ fn emit_integer_switch(
     let integers: Vec<i64> = cases.iter().map(|case| case.0).collect();
     let edges: Vec<Edge<'static>> = case_edges.iter().map(CaseEdge::to_edge).collect();
     let otherwise = Edge::to(next);
-    lowering.builder.switch(subject.value, &integers, &edges, otherwise);
+    lowering
+        .builder
+        .switch(subject.value, &integers, &edges, otherwise);
     finish_case_edges(lowering, subject, &case_edges);
     lowering.continue_in(next);
 }
@@ -226,7 +237,9 @@ fn emit_string_switch(
     let strings: Vec<StringId> = cases.iter().map(|case| case.0).collect();
     let edges: Vec<Edge<'static>> = case_edges.iter().map(CaseEdge::to_edge).collect();
     let otherwise = Edge::to(next);
-    lowering.builder.switch_string(subject.value, &strings, &edges, otherwise);
+    lowering
+        .builder
+        .switch_string(subject.value, &strings, &edges, otherwise);
     finish_case_edges(lowering, subject, &case_edges);
     lowering.continue_in(next);
 }
@@ -241,13 +254,17 @@ fn emit_comparison(
     let taken = create_case_edge(lowering, subject, target);
     let next = lowering.create_block();
     if !subject.is_narrowed_on_edges() {
-        lowering.builder.branch(is_equal, taken.to_edge(), Edge::to(next));
+        lowering
+            .builder
+            .branch(is_equal, taken.to_edge(), Edge::to(next));
         lowering.continue_in(next);
         return;
     }
     let remaining = lowering.builder.add_edge_result(next);
     let not_taken = Edge::with_proofs(next, &SUBJECT_PROOF);
-    lowering.builder.branch(is_equal, taken.to_edge(), not_taken);
+    lowering
+        .builder
+        .branch(is_equal, taken.to_edge(), not_taken);
     finish_case_edges(lowering, subject, &[taken]);
     lowering.continue_in(next);
     if let Some(local) = subject.local {

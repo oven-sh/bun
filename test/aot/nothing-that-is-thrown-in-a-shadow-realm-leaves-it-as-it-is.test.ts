@@ -5,7 +5,12 @@ import { test } from "./supported";
 
 // The engine turned what was thrown into a TypeError where the stack walk for a handler passes over the frame of the wrapped function. Compiled code finds its handler without such a walk, and a native
 // caller has popped that frame before one begins: both were handed the inner realm's own object, and through it the realm's Error, its Function and its global object.
-const program = join(import.meta.dir, "programs", "host-classes", "nothing-that-is-thrown-in-a-shadow-realm-leaves-it-as-it-is.mjs");
+const program = join(
+  import.meta.dir,
+  "programs",
+  "host-classes",
+  "nothing-that-is-thrown-in-a-shadow-realm-leaves-it-as-it-is.mjs",
+);
 const answers = `throwsError(): caught a TypeError of the outer realm
 throwsNumber(): caught a TypeError of the outer realm
 throwsLiteral(): caught a TypeError of the outer realm

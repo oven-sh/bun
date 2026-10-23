@@ -8,7 +8,10 @@ import { buildBothWays } from "./build-both-ways";
 import { spawned } from "./run-programs";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-if (!systemCC || isWindows) console.error("SKIPPED: test/aot/build-plugins-native.test.ts: it needs a C compiler ($CC, cc, gcc or clang), and is not written for Windows");
+if (!systemCC || isWindows)
+  console.error(
+    "SKIPPED: test/aot/build-plugins-native.test.ts: it needs a C compiler ($CC, cc, gcc or clang), and is not written for Windows",
+  );
 else {
   const folder = String(tempDir("aot-build-plugins-native", {}));
   const addon = join(folder, "shout.node");
@@ -29,7 +32,10 @@ else {
       folder,
       bunEnv,
     );
-    expect({ stderr: compile.stderr, exitCode: compile.exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+    expect({ stderr: compile.stderr, exitCode: compile.exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
   });
 
   const napiModule = `const napiModule = require(${JSON.stringify(addon)});`;

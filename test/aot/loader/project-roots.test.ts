@@ -32,7 +32,12 @@ test("root files are loaded and not compiled", () => {
   using graph = describeTree(projectFiles, ["src/main.ts"]);
 
   expect(graph.file("types/globals.d.ts").role).toBe("TypesOnly");
-  expect(graph.file("src/main.test.ts")).toMatchObject({ role: "Checked", isCompiled: false, codeEdges: [], sites: [] });
+  expect(graph.file("src/main.test.ts")).toMatchObject({
+    role: "Checked",
+    isCompiled: false,
+    codeEdges: [],
+    sites: [],
+  });
   expect(graph.file("src/test-helper.ts")).toMatchObject({ role: "Checked", isCompiled: false });
   expect(graph.has("node_modules/test-only-package/index.js")).toBe(false);
   expect(graph.compiledFiles).toEqual(["src/used.ts", "src/main.ts"]);

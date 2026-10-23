@@ -2347,7 +2347,9 @@ pub fn is_declaration_file_name(path: &[u8]) -> bool {
         return !get_declaration_file_extension(path).is_empty();
     }
     // The base name is the end of such a path, from its last separator on.
-    SUPPORTED_DECLARATION_EXTENSIONS.into_iter().any(|extension| path.ends_with(extension))
+    SUPPORTED_DECLARATION_EXTENSIONS
+        .into_iter()
+        .any(|extension| path.ends_with(extension))
         || (path.ends_with(b".ts") && strings::contains(get_base_file_name(path), b".d."))
 }
 
@@ -5356,7 +5358,12 @@ mod tests {
         ];
         for path in paths {
             let has_extension = !get_declaration_file_extension(path).is_empty();
-            assert_eq!(is_declaration_file_name(path), has_extension, "{}", bstr::BStr::new(path));
+            assert_eq!(
+                is_declaration_file_name(path),
+                has_extension,
+                "{}",
+                bstr::BStr::new(path)
+            );
         }
     }
 }

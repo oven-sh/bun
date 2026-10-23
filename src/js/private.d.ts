@@ -831,10 +831,7 @@ declare var Response: {
     body?: $Node.BodyInit,
     init?: number | { status?: number; statusText?: string; headers?: $Node.HeadersInit },
   ): Response;
-  json(
-    body?: unknown,
-    init?: number | { status?: number; statusText?: string; headers?: $Node.HeadersInit },
-  ): Response;
+  json(body?: unknown, init?: number | { status?: number; statusText?: string; headers?: $Node.HeadersInit }): Response;
   redirect(url: string, status?: number | { status?: number; headers?: $Node.HeadersInit }): Response;
   error(): Response;
 };
@@ -1503,7 +1500,9 @@ interface $BunModules {
   "internal/net/isIP": $ModuleValue<typeof import("./internal/net/isIP")>;
   "internal/net/server_abort_signal": $ModuleValue<typeof import("./internal/net/server_abort_signal")>;
   "internal/net/symbols": $ModuleValue<typeof import("./internal/net/symbols")>;
-  "internal/perf_hooks/monitorEventLoopDelay": $ModuleValue<typeof import("./internal/perf_hooks/monitorEventLoopDelay")>;
+  "internal/perf_hooks/monitorEventLoopDelay": $ModuleValue<
+    typeof import("./internal/perf_hooks/monitorEventLoopDelay")
+  >;
   "internal/primordials": $ModuleValue<typeof import("./internal/primordials")>;
   "internal/process/next_tick_queue": $ModuleValue<typeof import("./internal/process/next_tick_queue")>;
   "internal/process/tick_ring": $ModuleValue<typeof import("./internal/process/tick_ring")>;
@@ -1855,7 +1854,13 @@ declare namespace $Node {
   type ReadFileOptions = string | { encoding?: string | null; flag?: string | number; signal?: AbortSignal } | null;
   type WriteFileOptions =
     | string
-    | { encoding?: string | null; mode?: number | string; flag?: string | number; flush?: boolean; signal?: AbortSignal }
+    | {
+        encoding?: string | null;
+        mode?: number | string;
+        flag?: string | number;
+        flush?: boolean;
+        signal?: AbortSignal;
+      }
     | null;
   type FileData = string | AnyView;
 
@@ -2019,13 +2024,7 @@ declare namespace $Node {
     readFileSync(path: PathLike | number, options: ReadFileOptions | undefined): string | Buffer;
     readlinkSync(path: PathLike, options?: TextEncodingOption): string;
     readlinkSync(path: PathLike, options: EncodingOption | undefined): string | Buffer;
-    readSync(
-      fd: number,
-      buffer: AnyView,
-      offset?: number,
-      length?: number,
-      position?: number | bigint | null,
-    ): number;
+    readSync(fd: number, buffer: AnyView, offset?: number, length?: number, position?: number | bigint | null): number;
     readvSync(fd: number, buffers: readonly AnyView[], position?: number | null): number;
     realpathSync(path: PathLike, options?: TextEncodingOption): string;
     realpathSync(path: PathLike, options: EncodingOption | undefined): string | Buffer;
@@ -2152,12 +2151,7 @@ declare namespace $Bindgen {
     ): void;
   }
   interface NativeBrotli extends CompressionStream {
-    init(
-      params: Uint32Array,
-      writeResult: Uint32Array,
-      writeCallback: () => void,
-      dictionary?: $Node.AnyView,
-    ): boolean;
+    init(params: Uint32Array, writeResult: Uint32Array, writeCallback: () => void, dictionary?: $Node.AnyView): boolean;
   }
   interface NativeZstd extends CompressionStream {
     init(
@@ -2195,7 +2189,12 @@ interface Buffer<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> extends
   /** A view of the same memory, as `subarray` is. */
   slice(start?: number, end?: number): Buffer<ArrayBuffer>;
   subarray(start?: number, end?: number): Buffer<TArrayBuffer>;
-  fill(value: string | number | Buffer | Uint8Array, offset?: number | string, end?: number | string, encoding?: string): this;
+  fill(
+    value: string | number | Buffer | Uint8Array,
+    offset?: number | string,
+    end?: number | string,
+    encoding?: string,
+  ): this;
   indexOf(value: string | number | Buffer | Uint8Array, byteOffset?: number | string, encoding?: string): number;
   lastIndexOf(value: string | number | Buffer | Uint8Array, byteOffset?: number | string, encoding?: string): number;
   includes(value: string | number | Buffer | Uint8Array, byteOffset?: number | string, encoding?: string): boolean;
@@ -2720,12 +2719,7 @@ declare namespace $Bindgen {
     readonly signalCode: string | null;
     readonly exited: Promise<number>;
     kill(signal?: number | string): void;
-    send(
-      message: unknown,
-      handle?: unknown,
-      options?: object,
-      callback?: (error: Error | null) => void,
-    ): boolean;
+    send(message: unknown, handle?: unknown, options?: object, callback?: (error: Error | null) => void): boolean;
     disconnect(): void;
     ref(): void;
     unref(): void;

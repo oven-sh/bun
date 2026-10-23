@@ -50,24 +50,51 @@ fn resolves_private_spellings_by_position() {
         ));
         assert!(matches!(
             spellings.intrinsic("$call", IntrinsicPosition::Member),
-            Some(Intrinsic::Call { is_never_inlined: false })
+            Some(Intrinsic::Call {
+                is_never_inlined: false
+            })
         ));
         assert!(matches!(
             spellings.intrinsic("$callNoInline", IntrinsicPosition::Call),
-            Some(Intrinsic::Call { is_never_inlined: true })
+            Some(Intrinsic::Call {
+                is_never_inlined: true
+            })
         ));
-        assert_eq!(spellings.native_call_kind("$cpp"), Some(NativeCallKind::Cpp));
+        assert_eq!(
+            spellings.native_call_kind("$cpp"),
+            Some(NativeCallKind::Cpp)
+        );
     });
 }
 
 #[test]
 fn rejects_other_positions_and_spellings() {
     with_names(|spellings| {
-        assert!(spellings.intrinsic("$isObject", IntrinsicPosition::Member).is_none());
-        assert!(spellings.intrinsic("$isObject", IntrinsicPosition::Value).is_none());
-        assert!(spellings.intrinsic("isObject", IntrinsicPosition::Call).is_none());
-        assert!(spellings.intrinsic("$$isObject", IntrinsicPosition::Call).is_none());
-        assert!(spellings.intrinsic("$notAnIntrinsic", IntrinsicPosition::Call).is_none());
+        assert!(
+            spellings
+                .intrinsic("$isObject", IntrinsicPosition::Member)
+                .is_none()
+        );
+        assert!(
+            spellings
+                .intrinsic("$isObject", IntrinsicPosition::Value)
+                .is_none()
+        );
+        assert!(
+            spellings
+                .intrinsic("isObject", IntrinsicPosition::Call)
+                .is_none()
+        );
+        assert!(
+            spellings
+                .intrinsic("$$isObject", IntrinsicPosition::Call)
+                .is_none()
+        );
+        assert!(
+            spellings
+                .intrinsic("$notAnIntrinsic", IntrinsicPosition::Call)
+                .is_none()
+        );
         assert_eq!(spellings.native_call_kind("$isObject"), None);
         assert_eq!(spellings.native_call_kind("cpp"), None);
     });
@@ -82,7 +109,9 @@ fn position_selects_entry() {
         ));
         assert!(matches!(
             spellings.intrinsic("$isArray", IntrinsicPosition::Value),
-            Some(Intrinsic::Builtin(table::BuiltinId::LinkTimeConstantIsArray))
+            Some(Intrinsic::Builtin(
+                table::BuiltinId::LinkTimeConstantIsArray
+            ))
         ));
     });
 }
@@ -110,15 +139,26 @@ fn conversions_and_throws() {
             spellings.intrinsic("$undefined", IntrinsicPosition::Value),
             Some(Intrinsic::Undefined)
         ));
-        assert!(spellings.intrinsic("$toNumber", IntrinsicPosition::Value).is_none());
-        assert!(spellings.intrinsic("$undefined", IntrinsicPosition::Call).is_none());
+        assert!(
+            spellings
+                .intrinsic("$toNumber", IntrinsicPosition::Value)
+                .is_none()
+        );
+        assert!(
+            spellings
+                .intrinsic("$undefined", IntrinsicPosition::Call)
+                .is_none()
+        );
     });
 }
 
 #[test]
 fn symbol_keys() {
     with_names(|spellings| {
-        assert_eq!(spellings.symbol_key("$$iterator"), Some(WellKnownSymbol::Iterator));
+        assert_eq!(
+            spellings.symbol_key("$$iterator"),
+            Some(WellKnownSymbol::Iterator)
+        );
         assert_eq!(
             spellings.symbol_key("$$asyncIterator"),
             Some(WellKnownSymbol::AsyncIterator)
@@ -126,15 +166,27 @@ fn symbol_keys() {
         assert_eq!(spellings.symbol_key("$iterator"), None);
         assert_eq!(spellings.symbol_key("iterator"), None);
         assert_eq!(spellings.symbol_key("$$call"), None);
-        assert!(spellings.intrinsic("$iterator", IntrinsicPosition::Member).is_none());
-        assert!(spellings.intrinsic("$$iterator", IntrinsicPosition::Member).is_none());
+        assert!(
+            spellings
+                .intrinsic("$iterator", IntrinsicPosition::Member)
+                .is_none()
+        );
+        assert!(
+            spellings
+                .intrinsic("$$iterator", IntrinsicPosition::Member)
+                .is_none()
+        );
     });
 }
 
 #[test]
 fn native_call_is_no_intrinsic() {
     with_names(|spellings| {
-        assert!(spellings.intrinsic("$cpp", IntrinsicPosition::Call).is_none());
+        assert!(
+            spellings
+                .intrinsic("$cpp", IntrinsicPosition::Call)
+                .is_none()
+        );
         let mut native_call_count = 0;
         for name in table::intrinsic_names() {
             let found = table::intrinsic_of(name, IntrinsicPosition::Call);
@@ -162,7 +214,11 @@ fn native_call_kinds() {
             ("$newRustFunction", NativeCallKind::NewRustFunction),
         ];
         for (spelling, kind) in kinds {
-            assert_eq!(spellings.native_call_kind(spelling), Some(kind), "{spelling}");
+            assert_eq!(
+                spellings.native_call_kind(spelling),
+                Some(kind),
+                "{spelling}"
+            );
         }
     });
 }

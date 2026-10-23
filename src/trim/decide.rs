@@ -15,11 +15,8 @@ const ALWAYS_ENTERED: [Feature; 4] = [
     Feature::Profilers,
 ];
 
-const ENGINE_FEATURES_OUTSIDE_LANGUAGE: [Feature; 3] = [
-    Feature::WebAssembly,
-    Feature::Inspector,
-    Feature::Profilers,
-];
+const ENGINE_FEATURES_OUTSIDE_LANGUAGE: [Feature; 3] =
+    [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
 
 // `Bun.build` checks types, compiles ahead of time, and copies this executable's runtime into the executables it writes.
 const ENTERED_BY_BUNDLER: [Feature; 4] = [
@@ -157,7 +154,9 @@ fn language_features() -> FeatureSet {
         .iter()
         .filter(|feature| feature.is_engine())
         .collect();
-    features.subtract(&FeatureSet::from_features(&ENGINE_FEATURES_OUTSIDE_LANGUAGE));
+    features.subtract(&FeatureSet::from_features(
+        &ENGINE_FEATURES_OUTSIDE_LANGUAGE,
+    ));
     features
 }
 
@@ -181,11 +180,11 @@ fn close(retained: &mut RetainedFeatures, edges: &FeatureEdges) {
 
 fn collect_retained(present: &FeatureSet, mut reasons: Vec<Retained>) -> Vec<Retained> {
     reasons.sort_unstable_by_key(|retained| retained.feature);
-    let reason_of = |feature: Feature| {
-        match reasons.binary_search_by_key(&feature, |retained| retained.feature) {
-            Ok(position) => reasons[position].reason,
-            Err(_) => RetainReason::NotRequested,
-        }
+    let reason_of = |feature: Feature| match reasons
+        .binary_search_by_key(&feature, |retained| retained.feature)
+    {
+        Ok(position) => reasons[position].reason,
+        Err(_) => RetainReason::NotRequested,
     };
     present
         .iter()
@@ -560,12 +559,22 @@ mod tests {
             for &feature in Feature::ALL {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
-                    _ => outside.contains(feature) && !(opens_whole_runtime && ENTERED_BY_BUNDLER.contains(&feature)),
+                    _ => {
+                        outside.contains(feature)
+                            && !(opens_whole_runtime && ENTERED_BY_BUNDLER.contains(&feature))
+                    }
                 };
-                assert_eq!(decision.unused.contains(feature), is_expected, "{cause:?} {feature:?}");
+                assert_eq!(
+                    decision.unused.contains(feature),
+                    is_expected,
+                    "{cause:?} {feature:?}"
+                );
             }
         }
-        assert_eq!(decide_request(&using(&[Feature::Sql]), &TrimRequest::default()).unused, outside);
+        assert_eq!(
+            decide_request(&using(&[Feature::Sql]), &TrimRequest::default()).unused,
+            outside
+        );
     }
 
     #[test]
@@ -582,7 +591,9 @@ mod tests {
                 "{feature:?}"
             );
         }
-        assert!(decision.unused.contains(Feature::Tools) && decision.unused.contains(Feature::Lint));
+        assert!(
+            decision.unused.contains(Feature::Tools) && decision.unused.contains(Feature::Lint)
+        );
 
         let trimmed = decide_request(&used, &removing_unused());
         assert!(FeatureSet::from_features(&ENTERED_BY_BUNDLER).is_subset_of(&trimmed.unused));
@@ -592,7 +603,10 @@ mod tests {
     fn option_keeps_part_of_command_line_in_compiled_program() {
         let helping = RuntimeRequirement::Feature(Feature::Tools);
         let decision = decide_with_option(helping, &TrimRequest::default());
-        assert_eq!(decision.reason_of(Feature::Tools), Some(RetainReason::RequiredByOption(0)));
+        assert_eq!(
+            decision.reason_of(Feature::Tools),
+            Some(RetainReason::RequiredByOption(0))
+        );
         assert!(decision.unused.contains(Feature::Lint));
     }
 
@@ -631,7 +645,10 @@ mod tests {
         for (feature, reason) in expected {
             assert_eq!(internal_only.reason_of(feature), reason, "{feature:?}");
         }
-        assert_eq!(internal_only.retained.len(), Feature::ALL.len() - removed.len());
+        assert_eq!(
+            internal_only.retained.len(),
+            Feature::ALL.len() - removed.len()
+        );
         let is_ascending = |pair: &[Retained]| pair[0].feature < pair[1].feature;
         assert!(internal_only.retained.windows(2).all(is_ascending));
 
@@ -739,10 +756,8 @@ mod tests {
             allow: vec![TrimFeature::Ffi],
             ..removing_unused()
         };
-        let requirements = references(&[
-            (Feature::Sql, Feature::Ffi),
-            (Feature::Sql, Feature::Glob),
-        ]);
+        let requirements =
+            references(&[(Feature::Sql, Feature::Ffi), (Feature::Sql, Feature::Glob)]);
         let decision = decide_with_edges(&used, &request, &requirements);
         let expected = [
             (Feature::Ffi, RetainReason::Allowed(TrimFeature::Ffi)),

@@ -81,7 +81,10 @@ fn namespace_member_class_is_found() {
     let main = "import * as ns from './a.js';\nconst used = ns.A;\nconsole.log(used);\n";
     with_program(&[("main.js", main), CLASS_FILE], |program| {
         assert_eq!(program.referent("main.js", "ns"), program.namespace("a.js"));
-        assert_eq!(program.referent("main.js", "used"), program.first_class("a.js"));
+        assert_eq!(
+            program.referent("main.js", "used"),
+            program.first_class("a.js")
+        );
     });
 }
 
@@ -103,7 +106,11 @@ fn re_exported_class_is_found() {
     with_program(&files, |program| {
         let class = program.first_class("a.js");
         for local_name in ["named", "star", "member"] {
-            assert_eq!(program.referent("main.js", local_name), class, "{local_name}");
+            assert_eq!(
+                program.referent("main.js", local_name),
+                class,
+                "{local_name}"
+            );
         }
     });
 }
@@ -121,7 +128,10 @@ fn nested_namespace_member_is_found() {
         CLASS_FILE,
     ];
     with_program(&files, |program| {
-        assert_eq!(program.referent("main.js", "used"), program.first_class("a.js"));
+        assert_eq!(
+            program.referent("main.js", "used"),
+            program.first_class("a.js")
+        );
     });
 }
 
@@ -156,10 +166,7 @@ fn commonjs_import_is_unknown() {
         const member = ns.A;
         console.log(A, member);
     ";
-    let files = [
-        ("main.js", main),
-        ("legacy.cjs", "exports.A = class {};\n"),
-    ];
+    let files = [("main.js", main), ("legacy.cjs", "exports.A = class {};\n")];
     with_program(&files, |program| {
         assert_eq!(program.referent("main.js", "A"), UNLINKED_IMPORT);
         assert_eq!(program.referent("main.js", "member"), UNLINKED_IMPORT);
@@ -179,7 +186,10 @@ fn uncompiled_code_import_is_unknown() {
     ";
     let files = [
         ("main.js", main),
-        ("barrel.js", "export { A } from 'https://example.com/a.js';\n"),
+        (
+            "barrel.js",
+            "export { A } from 'https://example.com/a.js';\n",
+        ),
     ];
     with_program(&files, |program| {
         assert_eq!(program.referent("main.js", "A"), UNLINKED_IMPORT);

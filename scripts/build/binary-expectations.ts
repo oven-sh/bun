@@ -279,7 +279,10 @@ function runtimeInitializers(cfg: Config): string[] {
  */
 function requiredImports(cfg: Config): string[] {
   if (!cfg.hardened) return [];
-  return ["__stack_chk_fail", ...(cfg.abi === "gnu" && cfg.release && !cfg.asan ? ["__memcpy_chk", "__snprintf_chk"] : [])];
+  return [
+    "__stack_chk_fail",
+    ...(cfg.abi === "gnu" && cfg.release && !cfg.asan ? ["__memcpy_chk", "__snprintf_chk"] : []),
+  ];
 }
 
 function forbiddenImports(cfg: Config): string[] {

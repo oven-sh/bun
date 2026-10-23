@@ -1680,7 +1680,9 @@ mod draft {
         if !ENABLE {
             return;
         }
-        bun_core::debug::set_compiled_frame_at_return_address(crate::compiled_frames::frame_at_return_address);
+        bun_core::debug::set_compiled_frame_at_return_address(
+            crate::compiled_frames::frame_at_return_address,
+        );
         #[cfg(windows)]
         {
             let range = bun_sys::windows::exe_image_range();
@@ -2719,7 +2721,8 @@ mod draft {
         let mut names_build = true;
         for &addr in &opts.trace.instruction_addresses[0..opts.trace.index] {
             let mut line = StackLine::from_address(addr, &mut name_bytes);
-            let is_compiled = crate::compiled_frames::offset_in_code(addr.saturating_sub(1)).is_some();
+            let is_compiled =
+                crate::compiled_frames::offset_in_code(addr.saturating_sub(1)).is_some();
             if let Some(line) = line.as_mut().filter(|_| is_compiled && names_build) {
                 line.object = Some(crate::compiled_frames::object_name(true));
                 names_build = false;

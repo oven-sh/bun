@@ -3,11 +3,13 @@ import { checkOperandTypes } from "../../../src/codegen/builtins/check-operand-t
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type { ModelOperand, ModelOverload, ModelParameter, ModelType } from "../../../src/codegen/builtins/model.ts";
 
-const typeOf = (columns: Partial<ModelType> = {}) => ({ hasPlainData: false, parts: [], ...columns }) as unknown as ModelType;
+const typeOf = (columns: Partial<ModelType> = {}) =>
+  ({ hasPlainData: false, parts: [], ...columns }) as unknown as ModelType;
 
 const primitives = typeOf();
 const plainData = typeOf({ hasPlainData: true });
-const arrayOf = (held: ModelType) => typeOf({ parts: [{ part: "Instance", contents: [{ type: held }] }] } as unknown as Partial<ModelType>);
+const arrayOf = (held: ModelType) =>
+  typeOf({ parts: [{ part: "Instance", contents: [{ type: held }] }] } as unknown as Partial<ModelType>);
 
 const parameterOf = (operand: ModelOperand, types: Partial<ModelParameter>) =>
   ({ operand, accepted: primitives, converted: primitives, refused: primitives, ...types }) as ModelParameter;
@@ -38,11 +40,17 @@ test("a result may be plain data", () => {
 
 test("no operand is tested for plain data", () => {
   expect(problemsOf({ parameters: [argument(0, { accepted: plainData })] })).toEqual([problemAt("argument 0")]);
-  expect(problemsOf({ parameters: [argument(0, {}), argument(1, { converted: plainData })] })).toEqual([problemAt("argument 1")]);
+  expect(problemsOf({ parameters: [argument(0, {}), argument(1, { converted: plainData })] })).toEqual([
+    problemAt("argument 1"),
+  ]);
   expect(problemsOf({ parameters: [argument(0, { refused: plainData })] })).toEqual([problemAt("argument 0")]);
-  expect(problemsOf({ receiver: parameterOf({ operand: "Receiver" }, { accepted: plainData }) })).toEqual([problemAt("the receiver")]);
+  expect(problemsOf({ receiver: parameterOf({ operand: "Receiver" }, { accepted: plainData }) })).toEqual([
+    problemAt("the receiver"),
+  ]);
 });
 
 test("nor are the contents of an operand", () => {
-  expect(problemsOf({ parameters: [argument(0, { accepted: arrayOf(arrayOf(plainData)) })] })).toEqual([problemAt("argument 0")]);
+  expect(problemsOf({ parameters: [argument(0, { accepted: arrayOf(arrayOf(plainData)) })] })).toEqual([
+    problemAt("argument 0"),
+  ]);
 });

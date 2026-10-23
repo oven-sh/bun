@@ -114,8 +114,11 @@ pub(super) fn lower_parts_for_effect(
     let tag = hir[jsx].tag.some();
     let tag = tag.filter(|&tag| find_intrinsic_tag_name(lowering.file, tag).is_none());
     let values = hir[jsx].attrs.iter().filter_map(|it| hir[it].value.some());
-    let parts: SmallVec<[ExprId; 8]> =
-        tag.into_iter().chain(values).chain(hir.ids(hir[jsx].children)).collect();
+    let parts: SmallVec<[ExprId; 8]> = tag
+        .into_iter()
+        .chain(values)
+        .chain(hir.ids(hir[jsx].children))
+        .collect();
     for part in parts {
         expression::lower_expression_for_effect(lowering, part);
     }
@@ -187,7 +190,11 @@ fn get_jsx_import(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     import: JsxImport,
 ) -> Callee {
-    let binding = lowering.file.inputs.modules.jsx_binding(lowering.file.file, import);
+    let binding = lowering
+        .file
+        .inputs
+        .modules
+        .jsx_binding(lowering.file.file, import);
     let name = lowering.file.intern_bytes(import.export_name());
     Callee {
         function: module::emit_import_binding(lowering, binding, name),
@@ -303,7 +310,11 @@ fn lower_create_element_arguments(
         return Arguments::List(list);
     }
     let mut arguments: SmallVec<[ValueId; 4]> = smallvec![tag, props];
-    arguments.extend(children.iter().map(|&child| expression::lower_expression(lowering, child)));
+    arguments.extend(
+        children
+            .iter()
+            .map(|&child| expression::lower_expression(lowering, child)),
+    );
     Arguments::Values(arguments)
 }
 
@@ -347,7 +358,10 @@ mod tests {
             (ExprId(9), JsxRoot::Factory),
         ];
         for (index, (expression, root)) in roots.into_iter().enumerate() {
-            assert_eq!(find_jsx_reference(&references, expression, root), references[index]);
+            assert_eq!(
+                find_jsx_reference(&references, expression, root),
+                references[index]
+            );
         }
     }
 

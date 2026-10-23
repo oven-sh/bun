@@ -61,7 +61,9 @@ impl TreeWriter<'_, '_> {
     fn find_last_required_parameter(&self, parameters: Span<ParamId>) -> Option<usize> {
         parameters.iter().rposition(|id| {
             let parameter = &self.file[id];
-            let is_omittable = parameter.flags.intersects(Flags::OPTIONAL.union(Flags::REST));
+            let is_omittable = parameter
+                .flags
+                .intersects(Flags::OPTIONAL.union(Flags::REST));
             parameter.default.is_none() && !is_omittable
         })
     }
@@ -192,6 +194,8 @@ impl TreeWriter<'_, '_> {
     }
 
     fn end_with_default(&self, end: u32, default: ExprId) -> u32 {
-        default.some().map_or(end, |default| end.max(self.file[default].end))
+        default
+            .some()
+            .map_or(end, |default| end.max(self.file[default].end))
     }
 }

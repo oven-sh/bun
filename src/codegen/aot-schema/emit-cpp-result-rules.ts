@@ -76,7 +76,7 @@ function naturalType(schema: Schema, type: TypeExpression): string {
     String(type.isObject),
     String(type.isFunction),
     opaque === null ? "std::nullopt" : `OpaqueKind::${opaque.name}`,
-    builtinClass === null ? "{ }" : namedExternalMemberOf(schema,"BuiltinClass", builtinClass),
+    builtinClass === null ? "{ }" : namedExternalMemberOf(schema, "BuiltinClass", builtinClass),
   ];
   return `NaturalType { ${parts.join(", ")} }`;
 }
@@ -102,10 +102,10 @@ function allocationCall(schema: Schema, allocation: AllocationResult, subject: s
       return `rules.allocation(${subject}, ${payloadOf(subject, allocation.layout)})`;
     case "Class": {
       const contents = allocation.contents === null ? "" : `, ${payloadOf(subject, allocation.contents)}`;
-      return `rules.allocation(${subject}, ${namedExternalMemberOf(schema,"BuiltinClass", allocation.builtinClass)}${contents})`;
+      return `rules.allocation(${subject}, ${namedExternalMemberOf(schema, "BuiltinClass", allocation.builtinClass)}${contents})`;
     }
     case "BuiltinLayout":
-      return `rules.allocation(${subject}, ${namedExternalMemberOf(schema,"BuiltinLayout", allocation.builtinLayout)})`;
+      return `rules.allocation(${subject}, ${namedExternalMemberOf(schema, "BuiltinLayout", allocation.builtinLayout)})`;
   }
 }
 

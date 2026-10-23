@@ -42,7 +42,11 @@ fn entry_parameters_follow_function() {
     assert!(!builder.is_unreachable());
 
     let (function, _) = builder.finish();
-    let entry = function.body.blocks().next().expect("the body has an entry block");
+    let entry = function
+        .body
+        .blocks()
+        .next()
+        .expect("the body has an entry block");
     let parameter_types: Vec<Option<TypeId>> = entry.parameter_types().collect();
     let expected = [
         TypeTable::BOOLEAN,
@@ -80,8 +84,14 @@ fn emit_appends_to_current_block_at_position() {
         let called = emit_call(builder, callee);
         builder.return_value(Some(called));
     });
-    let entry = function.body.blocks().next().expect("the body has an entry block");
-    let values = entry.values().map(|value| (value.id, value.opcode, value.position));
+    let entry = function
+        .body
+        .blocks()
+        .next()
+        .expect("the body has an entry block");
+    let values = entry
+        .values()
+        .map(|value| (value.id, value.opcode, value.position));
     let values: Vec<(ValueId, Opcode, Option<u32>)> = values.collect();
     let expected = [
         (ValueId::new(1), Opcode::Undefined, None),
@@ -105,7 +115,11 @@ fn every_value_takes_an_id() {
     });
     assert!(!Opcode::PutModuleVariable.has_result());
     assert_eq!(function.body.value_count, 3);
-    let entry = function.body.blocks().next().expect("the body has an entry block");
+    let entry = function
+        .body
+        .blocks()
+        .next()
+        .expect("the body has an entry block");
     let values = entry.values().map(|value| (value.id, value.opcode));
     let values: Vec<(ValueId, Opcode)> = values.collect();
     let expected = [
@@ -151,7 +165,11 @@ fn jump_passes_arguments_to_explicit_parameters() {
 #[test]
 fn return_without_value_has_absent_operand() {
     let function = build_function(&[], |builder| builder.return_value(None));
-    let entry = function.body.blocks().next().expect("the body has an entry block");
+    let entry = function
+        .body
+        .blocks()
+        .next()
+        .expect("the body has an entry block");
     assert_eq!(entry.terminator().fields, [ABSENT_WORD]);
 }
 
@@ -170,7 +188,11 @@ fn second_terminator_is_ignored() {
         builder.seal(second);
     });
     assert_eq!(function.body.block_count, 2);
-    let entry = function.body.blocks().next().expect("the body has an entry block");
+    let entry = function
+        .body
+        .blocks()
+        .next()
+        .expect("the body has an entry block");
     let terminator = entry.terminator();
     assert_eq!(terminator.kind, TerminatorKind::Jump);
     assert_eq!(terminator.target_count(), 1);
@@ -179,7 +201,11 @@ fn second_terminator_is_ignored() {
 #[test]
 fn open_block_ends_unreachable() {
     let function = build_function(&[], |_| {});
-    let entry = function.body.blocks().next().expect("the body has an entry block");
+    let entry = function
+        .body
+        .blocks()
+        .next()
+        .expect("the body has an entry block");
     assert_eq!(entry.terminator().kind, TerminatorKind::Unreachable);
 }
 
@@ -304,14 +330,20 @@ fn recycled_scratch_builds_same_body() {
 }
 
 #[test]
-#[cfg_attr(debug_assertions, should_panic(expected = "emitted into an open block"))]
+#[cfg_attr(
+    debug_assertions,
+    should_panic(expected = "emitted into an open block")
+)]
 fn value_after_terminator_is_dropped() {
     let function = build_function(&[], |builder| {
         builder.return_value(None);
         builder.integer(1);
         assert!(builder.is_unreachable());
     });
-    assert_eq!((function.body.block_count, function.body.value_count), (1, 0));
+    assert_eq!(
+        (function.body.block_count, function.body.value_count),
+        (1, 0)
+    );
 }
 
 #[cfg(debug_assertions)]

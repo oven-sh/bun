@@ -55,17 +55,23 @@ async function readVersion(packages: string, version: FetchedVersion): Promise<V
   const sources = hashOfSources(readers[version.name]);
   const kept = path.join(packages, "read", `${folderNameOf(version.name, version.version)}.${sources}.json`);
   if (existsSync(kept)) return { version, found: await Bun.file(kept).json() };
-  const worker = Bun.spawn([process.execPath, path.join(import.meta.dir, "read-version.ts"), packages, version.name, version.version], {
-    stdout: "pipe",
-    stderr: "inherit",
-  });
+  const worker = Bun.spawn(
+    [process.execPath, path.join(import.meta.dir, "read-version.ts"), packages, version.name, version.version],
+    {
+      stdout: "pipe",
+      stderr: "inherit",
+    },
+  );
   const output = await new Response(worker.stdout).text();
   if ((await worker.exited) !== 0) return undefined;
   await Bun.write(kept, output);
   return { version, found: JSON.parse(output) as FoundFunction[] };
 }
 
-async function readVersions(packages: string, versions: readonly FetchedVersion[]): Promise<(VersionRead | undefined)[]> {
+async function readVersions(
+  packages: string,
+  versions: readonly FetchedVersion[],
+): Promise<(VersionRead | undefined)[]> {
   const read = new Array<VersionRead | undefined>(versions.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(versions.length, availableParallelism()) }, async () => {
@@ -107,8 +113,13 @@ if (values.fetch !== undefined) {
     for (const line of await writeFixtures(values.packages, fetched, table, values.fixtures)) console.log(line);
   }
   const functionCount = read.reduce((sum, one) => sum + one.found.length, 0);
-  console.log(`${read.length} versions, ${functionCount} functions, ${table.entries.length} trees named, ${table.unnamed.length} unnamed`);
-  const complaints = [...unread.map(version => `${version.name}@${version.version} could not be read`), ...table.complaints];
+  console.log(
+    `${read.length} versions, ${functionCount} functions, ${table.entries.length} trees named, ${table.unnamed.length} unnamed`,
+  );
+  const complaints = [
+    ...unread.map(version => `${version.name}@${version.version} could not be read`),
+    ...table.complaints,
+  ];
   for (const complaint of complaints) console.error(complaint);
   process.exit(complaints.length > 0 ? 1 : 0);
 }

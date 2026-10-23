@@ -120,7 +120,8 @@ fn parse_block_attributes(
                 attributes.subject.replace(subject).is_some()
             }
             "frequency" => {
-                let frequency = parser.parse_enum(BlockFrequency::from_name, "a block frequency")?;
+                let frequency =
+                    parser.parse_enum(BlockFrequency::from_name, "a block frequency")?;
                 attributes.frequency.replace(frequency).is_some()
             }
             "handler" => {

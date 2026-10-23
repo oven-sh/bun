@@ -15,7 +15,8 @@ fn file_text(stem: &str) -> &'static str {
     let file = FILES
         .iter()
         .find(|file| file.0.strip_suffix(EXTENSION) == Some(stem));
-    file.unwrap_or_else(|| panic!("{stem}{EXTENSION} is not in FILES")).1
+    file.unwrap_or_else(|| panic!("{stem}{EXTENSION} is not in FILES"))
+        .1
 }
 
 fn exported_functions(text: &str) -> impl Iterator<Item = &str> {
@@ -73,7 +74,11 @@ fn every_compiler_function_is_exported() {
     assert!(compiler_functions().next().is_some());
     for (stem, data) in compiler_functions() {
         let name = data.export_name;
-        assert_eq!(data.role, RuntimeFunctionRole::CompilerFunction, "{stem} {name}");
+        assert_eq!(
+            data.role,
+            RuntimeFunctionRole::CompilerFunction,
+            "{stem} {name}"
+        );
         assert!(
             exports_function(file_text(stem), name),
             "{stem}{EXTENSION} has no line `export function {name}`"
@@ -87,12 +92,18 @@ fn every_compiler_function_is_exported() {
 fn every_export_is_a_compiler_function() {
     for (file, text) in FILES {
         let stem = file.strip_suffix(EXTENSION);
-        assert!(exported_functions(text).next().is_some(), "{file} exports nothing");
+        assert!(
+            exported_functions(text).next().is_some(),
+            "{file} exports nothing"
+        );
         for name in exported_functions(text) {
             let mut functions = compiler_functions();
             let is_listed = functions
                 .any(|(listed_stem, data)| Some(listed_stem) == stem && data.export_name == name);
-            assert!(is_listed, "{file} exports {name}, which the table does not name");
+            assert!(
+                is_listed,
+                "{file} exports {name}, which the table does not name"
+            );
         }
     }
 }
@@ -119,7 +130,10 @@ fn chain_shape_constants() {
         "const hasInitialValueShift = 10;",
     ];
     for line in lines {
-        assert!(has_line(text, line), "array-traversal.ts has no line `{line}`");
+        assert!(
+            has_line(text, line),
+            "array-traversal.ts has no line `{line}`"
+        );
     }
     assert!(!has_line(text, "const linkMap = 2;"));
 }

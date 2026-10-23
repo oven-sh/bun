@@ -99,7 +99,10 @@ fn assert_remove_error(elf: &[u8], cuts: &[AddressRange], expected: ImageError) 
 
 fn assert_no_cuts(elf: &[u8], alignment: u64, reason: NoCutReason) {
     let model = cut_model(elf);
-    assert_eq!(model, CutModel::without_cuts(ExecutableFormat::Elf, alignment, reason));
+    assert_eq!(
+        model,
+        CutModel::without_cuts(ExecutableFormat::Elf, alignment, reason)
+    );
     assert_eq!(model.max_cuts(), 0);
 }
 
@@ -170,10 +173,7 @@ fn assert_dynamic_segment(original: &[u8], trimmed: &[u8]) {
 fn assert_notes_outside_room(original: &[u8], trimmed: &[u8]) {
     for (old, new) in pair_unsplit_segments(original, trimmed, PT_NOTE) {
         let build_id_note = old.p_filesz - BUILD_ID_NOTE_SIZE;
-        let extents = [
-            (0, NOTE_HEADER_SIZE),
-            (build_id_note, BUILD_ID_NOTE_SIZE),
-        ];
+        let extents = [(0, NOTE_HEADER_SIZE), (build_id_note, BUILD_ID_NOTE_SIZE)];
         for (distance, size) in extents {
             let old_bytes = bytes_at(original, old.p_offset + distance, size);
             let new_bytes = bytes_at(trimmed, new.p_offset + distance, size);
@@ -186,12 +186,22 @@ fn assert_reserved_segment(trimmed: &[u8], cuts: &[AddressRange]) {
     let reserved = find_reserved_segment(trimmed).unwrap();
     let last_load = *segments_of_type(trimmed, PT_LOAD).last().unwrap();
     let image_end = last_load.p_vaddr + last_load.p_memsz;
-    assert_eq!(reserved.address, align_up(image_end, cut_model(trimmed).alignment));
+    assert_eq!(
+        reserved.address,
+        align_up(image_end, cut_model(trimmed).alignment)
+    );
     assert!(cuts.iter().all(|cut| cut.end <= reserved.address));
     let ehdr = read_header(trimmed).unwrap();
-    let is_table_full = ProgramHeaderTable::read(trimmed, &ehdr).unwrap().capacity() == usize::from(ehdr.e_phnum);
-    assert_eq!(segments_of_type(trimmed, PT_BUN_RESERVED).len(), reserved.header_count);
-    assert!(reserved.header_count == PAYLOAD_SEGMENT_COUNT || (is_table_full && reserved.header_count >= 1));
+    let is_table_full =
+        ProgramHeaderTable::read(trimmed, &ehdr).unwrap().capacity() == usize::from(ehdr.e_phnum);
+    assert_eq!(
+        segments_of_type(trimmed, PT_BUN_RESERVED).len(),
+        reserved.header_count
+    );
+    assert!(
+        reserved.header_count == PAYLOAD_SEGMENT_COUNT
+            || (is_table_full && reserved.header_count >= 1)
+    );
     assert!(segments_of_type(trimmed, PT_NULL).is_empty());
 
     let mut with_payload = trimmed.to_vec();
@@ -335,7 +345,10 @@ fn cut_at_first_whole_page_of_text() {
         let cut = text_pages(original, 0..1);
         let trimmed = remove_from_linked_toy(original, &[cut]);
         let first_piece = segments_of_type(&trimmed, PT_LOAD)[1];
-        assert_eq!(first_piece.p_vaddr, section_named(original, ".text").sh_addr);
+        assert_eq!(
+            first_piece.p_vaddr,
+            section_named(original, ".text").sh_addr
+        );
         assert_eq!(first_piece.p_vaddr + first_piece.p_memsz, cut.start);
     });
 }
@@ -386,7 +399,10 @@ fn reserves_payload_segments_without_cuts() {
         assert_reserved_segment(&reserved, &[]);
         assert_section_table(original, &reserved, &[]);
         assert_table_at(&reserved, ROOM_OFFSET);
-        assert_eq!(find_reserved_segment(&reserved).unwrap().header_count, PAYLOAD_SEGMENT_COUNT);
+        assert_eq!(
+            find_reserved_segment(&reserved).unwrap().header_count,
+            PAYLOAD_SEGMENT_COUNT
+        );
 
         let once = reserved.clone();
         assert_eq!(reserve_payload_segments(&mut reserved), Ok(true));
@@ -412,7 +428,10 @@ fn reserved_segment_lies_past_image() {
     let long = text_pages(&original, 1..4);
     for cuts in [&[short][..], &[long][..], &[short, long][..]] {
         let trimmed = remove_and_verify(&original, cuts);
-        assert_eq!(find_reserved_segment(&trimmed).unwrap().address, first_free_page);
+        assert_eq!(
+            find_reserved_segment(&trimmed).unwrap().address,
+            first_free_page
+        );
     }
 }
 
@@ -422,7 +441,10 @@ fn second_call_replaces_reserved_segment() {
     let first = text_pages(&original, 1..2);
     let second = text_pages(&original, 3..6);
     let once = remove_and_verify(&original, &[first]);
-    assert_eq!(cut_model(&once).max_cuts(), cut_model(&original).max_cuts() - 1);
+    assert_eq!(
+        cut_model(&once).max_cuts(),
+        cut_model(&original).max_cuts() - 1
+    );
 
     let twice = remove_and_verify(&once, &[second]);
     assert_retained_bytes(&original, &twice, &[first, second]);
@@ -487,7 +509,9 @@ fn table_without_room_reuses_null_headers() {
     assert_remove_error(&original, &[cut], ImageError::HeaderRoomExhausted);
 
     for index in [DYNAMIC_INDEX, STACK_INDEX] {
-        edit_segment(&mut original, index, |segment| *segment = Elf64_Phdr::ZEROED);
+        edit_segment(&mut original, index, |segment| {
+            *segment = Elf64_Phdr::ZEROED
+        });
     }
     assert_eq!(cut_model(&original).capacity, CutCapacity::Cuts(1));
     let trimmed = remove_and_verify(&original, &[cut]);
@@ -506,7 +530,11 @@ fn previous_table_after_cuts_is_cleared() {
     let trimmed = remove_and_verify(&original, &[cut]);
     let moved_table_offset = appended_table_offset - cut.len();
     assert_table_at(&trimmed, ROOM_OFFSET);
-    assert!(is_zero_at(&trimmed, moved_table_offset, NOTES_OFFSET - EHDR_SIZE));
+    assert!(is_zero_at(
+        &trimmed,
+        moved_table_offset,
+        NOTES_OFFSET - EHDR_SIZE
+    ));
 }
 
 #[test]
@@ -514,8 +542,16 @@ fn malformed_files_leave_no_cuts() {
     let cut = text_pages(&toy(), 2..4);
     let elf = edited(&toy(), |elf| edit_header(elf, |ehdr| ehdr.e_phentsize = 32));
     assert_eq!(mapped_spans(&elf), Err(ImageError::MalformedHeaders));
-    assert_no_cuts(&elf, UNREADABLE_FILE_ALIGNMENT, NoCutReason::HeadersUnreadable);
-    assert_no_cuts(&elf[..63], UNREADABLE_FILE_ALIGNMENT, NoCutReason::HeadersUnreadable);
+    assert_no_cuts(
+        &elf,
+        UNREADABLE_FILE_ALIGNMENT,
+        NoCutReason::HeadersUnreadable,
+    );
+    assert_no_cuts(
+        &elf[..63],
+        UNREADABLE_FILE_ALIGNMENT,
+        NoCutReason::HeadersUnreadable,
+    );
     assert_remove_error(&elf, &[cut], ImageError::MalformedHeaders);
 
     let mut misaligned = toy();
@@ -547,7 +583,9 @@ fn malformed_segments_are_errors() {
 #[test]
 fn segment_alignment_follows_moved_offset() {
     let mut original = toy();
-    edit_segment(&mut original, DATA_INDEX, |segment| segment.p_align = 0x2000);
+    edit_segment(&mut original, DATA_INDEX, |segment| {
+        segment.p_align = 0x2000
+    });
     assert_load_segments(&original);
     let find_data_alignment = |pages: Range<u64>| {
         let trimmed = remove_and_verify(&original, &[text_pages(&original, pages)]);
@@ -572,7 +610,11 @@ fn section_inside_cut_becomes_null() {
 
     let trimmed = remove_from_linked_toy(&original, &[cut]);
     let header_offset = read_ehdr(&trimmed).e_shoff + (index * SECTION_HEADER_SIZE) as u64;
-    assert!(is_zero_at(&trimmed, header_offset, SECTION_HEADER_SIZE as u64));
+    assert!(is_zero_at(
+        &trimmed,
+        header_offset,
+        SECTION_HEADER_SIZE as u64
+    ));
     assert_eq!(sections(&trimmed).len(), sections(&original).len());
     assert_eq!(section_named(&trimmed, ".bun_trim").sh_addr, cut.end);
 }
@@ -580,7 +622,9 @@ fn section_inside_cut_becomes_null() {
 #[test]
 fn cut_in_structured_section_fails() {
     let retype = |name: &str| {
-        edited(&toy(), |elf| edit_section(elf, name, |section| section.sh_type = SHT_DYNSYM))
+        edited(&toy(), |elf| {
+            edit_section(elf, name, |section| section.sh_type = SHT_DYNSYM)
+        })
     };
     let split = retype(".rodata");
     let cut = whole_pages(&split, ".rodata", 3..4);
@@ -614,7 +658,10 @@ fn too_many_section_headers_fail() {
         let updated = removal.update_section_headers(&vec![text; section_count]);
         updated.map(|headers| headers.len())
     };
-    assert_eq!(count_updated_headers(SHN_LORESERVE / 2 - 1), Ok(SHN_LORESERVE - 2));
+    assert_eq!(
+        count_updated_headers(SHN_LORESERVE / 2 - 1),
+        Ok(SHN_LORESERVE - 2)
+    );
     let too_many = count_updated_headers(SHN_LORESERVE / 2);
     assert_eq!(too_many, Err(ImageError::HeaderRoomExhausted));
 }
@@ -644,7 +691,11 @@ fn section_table_before_end_of_file() {
     let old_ehdr = read_ehdr(&original);
     let old_table_size = u64::from(old_ehdr.e_shnum) * SECTION_HEADER_SIZE as u64;
     let old_end = original.len() as u64 - cut.len();
-    assert!(is_zero_at(&trimmed, old_ehdr.e_shoff - cut.len(), old_table_size));
+    assert!(is_zero_at(
+        &trimmed,
+        old_ehdr.e_shoff - cut.len(),
+        old_table_size
+    ));
     assert_eq!(bytes_at(&trimmed, old_end - 12, 12), Some(&[0xaa; 12][..]));
 
     let new_ehdr = read_ehdr(&trimmed);

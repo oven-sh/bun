@@ -187,7 +187,13 @@ impl<'s> Folder<'_, 's> {
     fn is_delete_operand(&self, e: ExprId) -> bool {
         let parent = self.parent_expr(self.find_outermost_cast(e));
         let parent_kind = parent.map(|parent| self.hir[parent].kind);
-        matches!(parent_kind, Some(ExprKind::Unary { op: UnOp::Delete, .. }))
+        matches!(
+            parent_kind,
+            Some(ExprKind::Unary {
+                op: UnOp::Delete,
+                ..
+            })
+        )
     }
 
     fn is_define_root(&self, ident: ExprId) -> bool {

@@ -78,7 +78,9 @@ impl Checker<'_, '_> {
                 let class = &hir[c];
                 if class.name.is_none()
                     && !class.flags.contains(Flags::DEFAULT)
-                    && hir.find_modifier(hir.stmt_modifiers(s), Flags::DEFAULT).is_none()
+                    && hir
+                        .find_modifier(hir.stmt_modifiers(s), Flags::DEFAULT)
+                        .is_none()
                 {
                     self.early_grammar_error_at((file, class.start, 0), 1211, &[]);
                 }
@@ -125,7 +127,10 @@ impl Checker<'_, '_> {
     ) {
         let hir = self.hir(file);
         // An ambient declaration has no early error, and its check may compute a type.
-        for d in decls.iter().filter(|&d| !hir[d].flags.contains(Flags::AMBIENT)) {
+        for d in decls
+            .iter()
+            .filter(|&d| !hir[d].flags.contains(Flags::AMBIENT))
+        {
             self.check_grammar_variable_declaration(file, d, list_parent);
         }
     }
@@ -252,7 +257,11 @@ impl Checker<'_, '_> {
             let is_string = matches!(hir[value].kind, ExprKind::String(_))
                 && !hir.expr_flags(value).intersects(not_string_literal);
             if !is_string && !matches!(hir[value].kind, ExprKind::Missing) {
-                let at = (file, self.start_of(file, value), self.end_of_expr(file, value));
+                let at = (
+                    file,
+                    self.start_of(file, value),
+                    self.end_of_expr(file, value),
+                );
                 self.early_error_at(at, 2858, &[]);
             }
         }

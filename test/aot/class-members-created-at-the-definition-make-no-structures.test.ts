@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const numberOfMethods = 120;
 const numbers = Array.from({ length: numberOfMethods }, (_, index) => index + 1);
@@ -75,14 +75,21 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-test.each(["required-late.cjs", "imported.mjs"])("the members that the operations of a class definition create are added to one Structure: %s", async entry => {
-  using dir = tempDir("aot-class-members-created-at-the-definition", files);
-  const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", executable], String(dir));
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
-  const ran = await run([executable], String(dir));
-  expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const [sum, structuresMade] = ran.stdout.trim().split(" ").map(Number);
-  expect(sum).toBe(numbers.reduce((total, number) => total + number + 1, 0));
-  expect(structuresMade).toBeLessThan(numberOfMethods);
-}, 240_000);
+test.each(["required-late.cjs", "imported.mjs"])(
+  "the members that the operations of a class definition create are added to one Structure: %s",
+  async entry => {
+    using dir = tempDir("aot-class-members-created-at-the-definition", files);
+    const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
+    const built = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", executable], String(dir));
+    expect({
+      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
+    const ran = await run([executable], String(dir));
+    expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const [sum, structuresMade] = ran.stdout.trim().split(" ").map(Number);
+    expect(sum).toBe(numbers.reduce((total, number) => total + number + 1, 0));
+    expect(structuresMade).toBeLessThan(numberOfMethods);
+  },
+  240_000,
+);

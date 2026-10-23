@@ -157,11 +157,20 @@ mod tests {
 
     const EXPECTED_FOR_ERRORS: [(DiagnosticClass, [Effect; FileOrigin::COUNT]); 7] = [
         (DiagnosticClass::EarlyError, [S, S, S, S, S, S, S, I, T]),
-        (DiagnosticClass::TypeScriptGrammar, [S, S, D, T, D, D, D, D, D]),
+        (
+            DiagnosticClass::TypeScriptGrammar,
+            [S, S, D, T, D, D, D, D, D],
+        ),
         (DiagnosticClass::Semantic, [S, S, D, T, T, D, D, T, D]),
-        (DiagnosticClass::MissingDeclaration, [S, S, D, D, D, D, D, D, D]),
+        (
+            DiagnosticClass::MissingDeclaration,
+            [S, S, D, D, D, D, D, D, D],
+        ),
         (DiagnosticClass::Style, [S, S, D, D, D, D, D, D, D]),
-        (DiagnosticClass::DeclarationFile, [D, D, D, D, D, D, D, D, D]),
+        (
+            DiagnosticClass::DeclarationFile,
+            [D, D, D, D, D, D, D, D, D],
+        ),
         (DiagnosticClass::EmittedOutput, [D, D, D, D, D, D, D, D, D]),
     ];
 
@@ -174,7 +183,11 @@ mod tests {
         for (class, by_origin) in EXPECTED_FOR_ERRORS {
             for (origin, for_error) in FileOrigin::ALL.into_iter().zip(by_origin) {
                 let cell = format!("{class:?} {origin:?}");
-                assert_eq!(effect_of(origin, class, Category::Error), for_error, "{cell}");
+                assert_eq!(
+                    effect_of(origin, class, Category::Error),
+                    for_error,
+                    "{cell}"
+                );
                 let is_early_error = class == DiagnosticClass::EarlyError;
                 let for_warning = match for_error {
                     S | W => W,
@@ -186,8 +199,16 @@ mod tests {
                     for_warning,
                     "{cell}"
                 );
-                assert_eq!(effect_of(origin, class, Category::Suggestion), for_note, "{cell}");
-                assert_eq!(effect_of(origin, class, Category::Message), for_note, "{cell}");
+                assert_eq!(
+                    effect_of(origin, class, Category::Suggestion),
+                    for_note,
+                    "{cell}"
+                );
+                assert_eq!(
+                    effect_of(origin, class, Category::Message),
+                    for_note,
+                    "{cell}"
+                );
             }
         }
     }

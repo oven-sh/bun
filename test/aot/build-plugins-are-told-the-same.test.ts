@@ -31,9 +31,32 @@ console.log(a, b.b, d.d, e.e, f.f, typeof g, typeof h);`,
     // What import.meta.resolve names is in the executable too.
     differs: {
       told: [
-        ...["a.ts ts", "b.js jsx", "c.ts ts", "d.cjs js", "e.cjs js", "f.ts ts", "g.cjs js", "h.ts ts", "main.ts ts"].map(file => `onLoad path="<folder>/${file.split(" ")[0]}" namespace="file" loader="${file.split(" ")[1]}" defer=function side="server"`),
-        ...["./a import-statement", "./b.js import-statement", "./c import-statement", "./d.cjs import-statement", "./e.cjs require-call", "./f dynamic-import", "./g.cjs require-resolve", "./h require-resolve"].map(
-          it => `onResolve path="${it.split(" ")[0]}" importer="<folder>/main.ts" namespace="file" resolveDir="<folder>" kind="${it.split(" ")[1]}"`,
+        ...[
+          "a.ts ts",
+          "b.js jsx",
+          "c.ts ts",
+          "d.cjs js",
+          "e.cjs js",
+          "f.ts ts",
+          "g.cjs js",
+          "h.ts ts",
+          "main.ts ts",
+        ].map(
+          file =>
+            `onLoad path="<folder>/${file.split(" ")[0]}" namespace="file" loader="${file.split(" ")[1]}" defer=function side="server"`,
+        ),
+        ...[
+          "./a import-statement",
+          "./b.js import-statement",
+          "./c import-statement",
+          "./d.cjs import-statement",
+          "./e.cjs require-call",
+          "./f dynamic-import",
+          "./g.cjs require-resolve",
+          "./h require-resolve",
+        ].map(
+          it =>
+            `onResolve path="${it.split(" ")[0]}" importer="<folder>/main.ts" namespace="file" resolveDir="<folder>" kind="${it.split(" ")[1]}"`,
         ),
         `onResolve path="./main.ts" importer="" namespace="file" resolveDir="." kind="entry-point-build"`,
       ],
@@ -124,7 +147,9 @@ build.onLoad({ filter: /main\\.ts$/ }, (args: any) => { tell("onLoad", args); re
   },
   "an entry point that a plugin resolves to another file": {
     files: { "main.ts": `console.log("main");`, "other.ts": `console.log("other");` },
-    plugins: [`build.onResolve({ filter: /main/ }, (args: any) => { tell("onResolve", args); return { path: join(folder, "other.ts") }; });`],
+    plugins: [
+      `build.onResolve({ filter: /main/ }, (args: any) => { tell("onResolve", args); return { path: join(folder, "other.ts") }; });`,
+    ],
     prints: "other\n",
   },
   "an entry point in a namespace": {

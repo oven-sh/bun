@@ -329,10 +329,8 @@ mod tests {
     #[should_panic]
     fn unsorted_external_patterns_are_invalid() {
         assert_valid_after(|options| {
-            options.load.externals.patterns = vec![
-                (b"b".to_vec(), Vec::new()),
-                (b"a".to_vec(), Vec::new()),
-            ];
+            options.load.externals.patterns =
+                vec![(b"b".to_vec(), Vec::new()), (b"a".to_vec(), Vec::new())];
         });
     }
 }

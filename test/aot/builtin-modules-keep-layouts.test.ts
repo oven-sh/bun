@@ -26,7 +26,11 @@ async function findPointMutations(source: string) {
 }
 
 test("importing a typed built-in module mutates no layout of the program", async () => {
-  expect(await findPointMutations(`import { EventEmitter } from "node:events";\nconsole.log(typeof EventEmitter);\n` + points)).toEqual({ exitCode: 0, mutations: [] });
+  expect(
+    await findPointMutations(
+      `import { EventEmitter } from "node:events";\nconsole.log(typeof EventEmitter);\n` + points,
+    ),
+  ).toEqual({ exitCode: 0, mutations: [] });
 }, 120_000);
 
 test("Object.freeze of a parsed value mutates no layout of the program", async () => {
@@ -35,11 +39,17 @@ test("Object.freeze of a parsed value mutates no layout of the program", async (
 }, 120_000);
 
 // TODO: the report lists no layout that the program changes.
-test.todo("deleting a field of a Point lists Point", async () => {
-  expect(await findPointMutations(points + `delete (points[0] as any).y;\nconsole.log(points[0]!.x);\n`)).toEqual({
-    exitCode: 0,
-    mutations: expect.arrayContaining(["delete-field"]),
-  });
-}, 120_000);
+test.todo(
+  "deleting a field of a Point lists Point",
+  async () => {
+    expect(await findPointMutations(points + `delete (points[0] as any).y;\nconsole.log(points[0]!.x);\n`)).toEqual({
+      exitCode: 0,
+      mutations: expect.arrayContaining(["delete-field"]),
+    });
+  },
+  120_000,
+);
 
-test.todo("freezing a Point lists Point (a frozen object keeps its layout, and no report names the place that freezes it)");
+test.todo(
+  "freezing a Point lists Point (a frozen object keeps its layout, and no report names the place that freezes it)",
+);

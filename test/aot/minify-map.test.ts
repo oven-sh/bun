@@ -51,8 +51,27 @@ export class RepositoryOfTheTest {
 }
 `,
 };
-const printed = ["lookUpTwiceInTheTest", "readsLimitOfTheTest", "limitOfTheTest", "refuseInTheTest", "folderOfTheTest/classOfTheTest.ts", "entryOfTheTest.ts"];
-const hidden = ["lookUpTwiceInTheTest", "readsLimitOfTheTest", "limitOfTheTest", "refuseInTheTest", "RepositoryOfTheTest", "RecordOfTheTest", "timesAskedInTheTest", "countInTheTest", "folderOfTheTest", "classOfTheTest", "entryOfTheTest"];
+const printed = [
+  "lookUpTwiceInTheTest",
+  "readsLimitOfTheTest",
+  "limitOfTheTest",
+  "refuseInTheTest",
+  "folderOfTheTest/classOfTheTest.ts",
+  "entryOfTheTest.ts",
+];
+const hidden = [
+  "lookUpTwiceInTheTest",
+  "readsLimitOfTheTest",
+  "limitOfTheTest",
+  "refuseInTheTest",
+  "RepositoryOfTheTest",
+  "RecordOfTheTest",
+  "timesAskedInTheTest",
+  "countInTheTest",
+  "folderOfTheTest",
+  "classOfTheTest",
+  "entryOfTheTest",
+];
 
 describe.skipIf(!!unsupported)("compile/aot/minify-map", () => {
   const folder = String(tempDir("aot-minify-map", sources));
@@ -60,7 +79,23 @@ describe.skipIf(!!unsupported)("compile/aot/minify-map", () => {
 
   async function build(name: string, flags: string[]) {
     const executable = join(folder, isWindows ? `${name}.exe` : name);
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "--no-compile-function-source", ...flags, "./entryOfTheTest.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          "--no-compile-function-source",
+          ...flags,
+          "./entryOfTheTest.ts",
+          "--outfile",
+          executable,
+        ],
+        folder,
+        bunEnv,
+      ),
+    );
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable).toString("latin1");
     rmSync(executable);
@@ -69,27 +104,47 @@ describe.skipIf(!!unsupported)("compile/aot/minify-map", () => {
   }
 
   // An --aot build writes no <outfile>.map.
-  test.todo("what a minified executable prints is restored by the file that --sourcemap=external writes", async () => {
-    await slot(async () => {
-      const whole = await build("whole", []);
-      const minified = await build("minified", ["--minify", "--sourcemap=external"]);
-      const map = JSON.parse(readFileSync(minified.executable + ".map", "utf8"));
-      expect(map.version).toBe(3);
-      expect(map.x_bun_aot.positions).toBe("original");
-      const tokens: Record<string, string> = map.x_bun_aot.tokens;
-      const restore = (text: string) => text.replace(/[a-z][A-Za-z0-9]*/g, word => (Object.hasOwn(tokens, word) ? tokens[word] : word));
+  test.todo(
+    "what a minified executable prints is restored by the file that --sourcemap=external writes",
+    async () => {
+      await slot(async () => {
+        const whole = await build("whole", []);
+        const minified = await build("minified", ["--minify", "--sourcemap=external"]);
+        const map = JSON.parse(readFileSync(minified.executable + ".map", "utf8"));
+        expect(map.version).toBe(3);
+        expect(map.x_bun_aot.positions).toBe("original");
+        const tokens: Record<string, string> = map.x_bun_aot.tokens;
+        const restore = (text: string) =>
+          text.replace(/[a-z][A-Za-z0-9]*/g, word => (Object.hasOwn(tokens, word) ? tokens[word] : word));
 
-      for (const name of printed) expect(whole.printed).toContain(name);
-      for (const name of hidden) expect(minified.printed).not.toContain(name);
-      expect(restore(minified.printed)).toBe(whole.printed);
+        for (const name of printed) expect(whole.printed).toContain(name);
+        for (const name of hidden) expect(minified.printed).not.toContain(name);
+        expect(restore(minified.printed)).toBe(whole.printed);
 
-      expect(hidden.filter(name => minified.bytes.includes(name))).toEqual([]);
-      expect(Object.values(tokens)).toEqual(expect.arrayContaining(["lookUpTwiceInTheTest", "refuseInTheTest", "RepositoryOfTheTest", "limitOfTheTest", "timesAskedInTheTest", "folderOfTheTest/classOfTheTest.ts"]));
-      expect(map.x_bun_aot.types.filter((type: { name: string }) => tokens[type.name] === "RepositoryOfTheTest")).toEqual([
-        { name: expect.any(String), at: "folderOfTheTest/classOfTheTest.ts:8", members: { lastAnswer: "string | undefined" } },
-      ]);
-    });
-  }, 600_000);
+        expect(hidden.filter(name => minified.bytes.includes(name))).toEqual([]);
+        expect(Object.values(tokens)).toEqual(
+          expect.arrayContaining([
+            "lookUpTwiceInTheTest",
+            "refuseInTheTest",
+            "RepositoryOfTheTest",
+            "limitOfTheTest",
+            "timesAskedInTheTest",
+            "folderOfTheTest/classOfTheTest.ts",
+          ]),
+        );
+        expect(
+          map.x_bun_aot.types.filter((type: { name: string }) => tokens[type.name] === "RepositoryOfTheTest"),
+        ).toEqual([
+          {
+            name: expect.any(String),
+            at: "folderOfTheTest/classOfTheTest.ts:8",
+            members: { lastAnswer: "string | undefined" },
+          },
+        ]);
+      });
+    },
+    600_000,
+  );
 
   test("--keep-names keeps them", async () => {
     await slot(async () => {

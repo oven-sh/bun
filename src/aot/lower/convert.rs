@@ -10,8 +10,8 @@ mod supertypes;
 
 use bun_sema::check::aot::{CheckedType, PositionTypes, WrittenType};
 use bun_sema::hir::{ExprId, ExprKind, TypeNodeId};
-use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::rc::Rc;
 
 use self::edges::{Construct, Edge, classify_edge};
 use self::int32_flows::FlowingValue;
@@ -142,7 +142,9 @@ pub(in crate::lower) fn is_converted_within(
     let function = lowering.function;
     let values = &mut lowering.file.types.conversions.converted_values;
     match values.type_of(function, value) {
-        Some(converted) => lowering.file.fragment.types.union(position.ty, converted) == position.ty,
+        Some(converted) => {
+            lowering.file.fragment.types.union(position.ty, converted) == position.ty
+        }
         None => false,
     }
 }
@@ -187,7 +189,9 @@ fn find_cause(
     let source = source.and_then(|source| file.queries.expression_type(source).ok());
     if let (Some(source), Construct::Flow) = (source, construct) {
         let source = map_type_at(file, source, source_position).ty;
-        file.fragment.family_facts.record_conversion(source, position.ty);
+        file.fragment
+            .family_facts
+            .record_conversion(source, position.ty);
     }
     classify_edge(
         file,
@@ -209,7 +213,8 @@ fn rests_on_unclaimed_narrowing(
     let Some(&before) = lowering.unclaimed_narrowings.get(&value) else {
         return false;
     };
-    !position.is_expected() && lowering.file.fragment.types.union(position.ty, before) != position.ty
+    !position.is_expected()
+        && lowering.file.fragment.types.union(position.ty, before) != position.ty
 }
 
 fn convert_as(
@@ -285,7 +290,10 @@ fn is_literal_type(ty: &Type) -> bool {
     if has_objects || ty.is_internal() {
         return false;
     }
-    let has_whole_kind = !ty.primitives.without(Primitives::NULLISH | Primitives::BOOLEAN).is_empty();
+    let has_whole_kind = !ty
+        .primitives
+        .without(Primitives::NULLISH | Primitives::BOOLEAN)
+        .is_empty();
     ty.integer_range().is_none() && !has_whole_kind && !ty.primitives.contains(Primitives::BOOLEAN)
 }
 

@@ -144,7 +144,9 @@ pub(super) fn collect_element_types_from(
     first: usize,
 ) -> SmallVec<[CheckerTypeId; 4]> {
     let Some(elements) = find_tuple_elements(file, list) else {
-        return find_contents_type(file, list, ContentsSlot::Element).into_iter().collect();
+        return find_contents_type(file, list, ContentsSlot::Element)
+            .into_iter()
+            .collect();
     };
     let mut types = SmallVec::new();
     for (position, element) in elements.iter().enumerate() {

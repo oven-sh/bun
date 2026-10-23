@@ -47,9 +47,16 @@ test("a program compiled in place sees the paths that bun run shows it", async (
 test("__filename and __dirname of an executable lie under the root that its files have, and do not tell where it was built", async () => {
   using dir = tempDir("aot-own-paths-executable", files);
   const executable = join(String(dir), "compiled" + (isWindows ? ".exe" : ""));
-  const build = await spawned([bunExe(), "build", "--compile", "--aot", "own.cjs", "--outfile", executable], String(dir), bunEnv);
+  const build = await spawned(
+    [bunExe(), "build", "--compile", "--aot", "own.cjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
   expect(build.exitCode).toBe(0);
   const run = await spawned([executable], String(dir), bunEnv);
   const root = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: [join(root, "own.cjs"), root, join(root, "data.json")].join(" | ") + "\n", exitCode: 0 });
+  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({
+    stdout: [join(root, "own.cjs"), root, join(root, "data.json")].join(" | ") + "\n",
+    exitCode: 0,
+  });
 });

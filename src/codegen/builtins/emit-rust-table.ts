@@ -367,7 +367,10 @@ function emitStartup({ modules, loads, functionsCalledWithLoads, moduleLoaderFun
   return [
     emitSlice("pub static STARTUP_MODULES: &[RuntimeModule]", sortModules(modules).map(formatModule)),
     emitSlice("pub static STARTUP_LOADS: &[StartupLoad]", loads.map(formatStartupLoad)),
-    emitSlice("pub static STARTUP_FUNCTIONS: &[RuntimeFunction]", formatFunctions(functionsCalledWithLoads.map(called => called.function))),
+    emitSlice(
+      "pub static STARTUP_FUNCTIONS: &[RuntimeFunction]",
+      formatFunctions(functionsCalledWithLoads.map(called => called.function)),
+    ),
     emitSlice("pub static MODULE_LOADER_FUNCTIONS: &[RuntimeFunction]", formatFunctions(moduleLoaderFunctions)),
   ].join("");
 }
@@ -430,7 +433,9 @@ export function emitRustTable(model: TableModel): string {
     emitStartup(model.startup),
     emitSlice(
       "pub static ACCESSOR_FUNCTIONS: &[RuntimeFunction]",
-      formatFunctions(model.functions.filter(({ implements: implemented }) => implemented.some(({ kind }) => kind === "Accessor"))),
+      formatFunctions(
+        model.functions.filter(({ implements: implemented }) => implemented.some(({ kind }) => kind === "Accessor")),
+      ),
     ),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
     emitRemovableCalls(model),

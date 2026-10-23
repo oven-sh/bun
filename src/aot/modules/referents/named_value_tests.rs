@@ -65,7 +65,9 @@ impl LinkedProgram<'_, '_, '_> {
         let file = file_named(self.input, name);
         let hir = self.input.files.hir(file);
         let calls = self.statement_calls(file).into_iter();
-        calls.map(|site| self.named_value(file, hir[site].callee)).collect()
+        calls
+            .map(|site| self.named_value(file, hir[site].callee))
+            .collect()
     }
 
     fn files_declaring_last_arguments(&self, name: &str) -> Vec<Option<FileId>> {
@@ -224,7 +226,10 @@ fn spellings_of_runtime_modules_are_operations() {
     let files = [
         ("main.js", "import 'node:path';\n"),
         ("/$bun/js/node/path.ts", path),
-        ("/$bun/js/node/os.ts", "function Base() {}\nexport default Base;\n"),
+        (
+            "/$bun/js/node/os.ts",
+            "function Base() {}\nexport default Base;\n",
+        ),
     ];
     with_runtime_program(&files, |program| {
         let call_function = named(PrototypeOperation::CallFunction { receiver: 0 });
@@ -239,7 +244,11 @@ fn spellings_of_runtime_modules_are_operations() {
         let file = |name| Some(file_named(program.input, name));
         assert_eq!(
             program.files_declaring_last_arguments("/$bun/js/node/path.ts"),
-            [file("/$bun/js/node/path.ts"), None, file("/$bun/js/node/os.ts")]
+            [
+                file("/$bun/js/node/path.ts"),
+                None,
+                file("/$bun/js/node/os.ts")
+            ]
         );
     });
 }

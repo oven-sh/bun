@@ -236,7 +236,9 @@ fn lower_static_member(
         return None;
     }
     let value = match lowering.file.queries.constant_enum_access(access) {
-        Ok(Some(EnumValue::Number(bits))) => expression::emit_number(lowering, f64::from_bits(bits)),
+        Ok(Some(EnumValue::Number(bits))) => {
+            expression::emit_number(lowering, f64::from_bits(bits))
+        }
         Ok(Some(EnumValue::String(text))) => {
             expression::emit_constant(lowering, Constant::String(text))
         }

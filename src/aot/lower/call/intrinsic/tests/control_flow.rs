@@ -27,7 +27,9 @@ fn type_test_intrinsic_passes_local_on_both_edges() {
     edge_results.sort_unstable();
 
     let returns = probe.terminators(TerminatorKind::Return);
-    let returned = returns.iter().flat_map(|(_, returned)| terminator_operands(*returned));
+    let returned = returns
+        .iter()
+        .flat_map(|(_, returned)| terminator_operands(*returned));
     let mut returned: Vec<ValueId> = returned.map(|value| probe.skip_requests(value)).collect();
     returned.sort_unstable();
     assert_eq!(returned, edge_results, "{probe}");
@@ -52,7 +54,10 @@ fn throw_with_constant_message() {
 export function probeRange() { $throwRangeError(\"m\"); }
 ",
     );
-    let kinds = [("probeType", ErrorKind::TypeError), ("probeRange", ErrorKind::RangeError)];
+    let kinds = [
+        ("probeType", ErrorKind::TypeError),
+        ("probeRange", ErrorKind::RangeError),
+    ];
     for (name, kind) in kinds {
         let probe = module.function(name);
         let thrown = probe.only(Opcode::ThrowNewError);
@@ -61,18 +66,24 @@ export function probeRange() { $throwRangeError(\"m\"); }
         let end = probe.block(thrown.block).terminator();
         assert_eq!(end.kind, TerminatorKind::Unreachable, "{probe}");
         assert_eq!(probe.count(Opcode::Construct), 0, "{probe}");
-        assert!(probe.terminators(TerminatorKind::Return).is_empty(), "{probe}");
+        assert!(
+            probe.terminators(TerminatorKind::Return).is_empty(),
+            "{probe}"
+        );
     }
 }
 
 #[test]
 fn throw_with_computed_message() {
-    let module = lower_runtime_module(
-        "export function probe(x: any) { $throwTypeError(\"a\" + x); }",
-    );
+    let module =
+        lower_runtime_module("export function probe(x: any) { $throwTypeError(\"a\" + x); }");
     let probe = module.function("probe");
     let constructor = probe.only(Opcode::Builtin);
-    assert_eq!(constructor.references(), [Reference::Builtin(BuiltinId::TypeError)], "{probe}");
+    assert_eq!(
+        constructor.references(),
+        [Reference::Builtin(BuiltinId::TypeError)],
+        "{probe}"
+    );
     let error = probe.only(Opcode::Construct);
     assert_eq!(error.operands().len(), 2, "{probe}");
     assert_eq!(error.operands()[0], constructor.id(), "{probe}");
@@ -96,7 +107,10 @@ fn if_abrupt_close_iterator() {
     let cleanup = cleanup.expect("the second argument is evaluated under a handler");
     let cleanup = probe.block(cleanup.block);
     assert_eq!(cleanup.role, BlockRole::CleanupHandler, "{probe}");
-    let exception = cleanup.values().next().expect("the handler takes the exception");
+    let exception = cleanup
+        .values()
+        .next()
+        .expect("the handler takes the exception");
     assert_eq!(exception.opcode, Opcode::CatchException, "{probe}");
 
     let method = probe.only(Opcode::PropGet);
@@ -104,7 +118,11 @@ fn if_abrupt_close_iterator() {
     assert_eq!(method.keys(), [probe.text_key("return")], "{probe}");
     let ignored = probe.block(method.block).handler();
     let ignored = ignored.expect("what closing the iterator throws is caught");
-    assert_eq!(probe.block(ignored.block).role, BlockRole::CatchHandler, "{probe}");
+    assert_eq!(
+        probe.block(ignored.block).role,
+        BlockRole::CatchHandler,
+        "{probe}"
+    );
     let close = probe.call_of(probe.value_unless_nullish(method.id()));
     assert_eq!(close.operands()[1..], [probe.parameter(0)], "{probe}");
 

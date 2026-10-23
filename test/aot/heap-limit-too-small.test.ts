@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // The first 16 MB of the range of address space that holds the objects of an ahead-of-time compiled program are left unused. A range that is
 // no larger has room for no object: the program says so and ends, it does not crash.
@@ -18,7 +18,10 @@ test.concurrent.each(["16", "1"])(
       stderr: "pipe",
     });
     const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-    expect({ stderr: buildErrors, exitCode: buildExitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+    expect({ stderr: buildErrors, exitCode: buildExitCode }).toEqual({
+      stderr: expect.not.stringMatching(/^error\b/m),
+      exitCode: 0,
+    });
     await using program = Bun.spawn({
       cmd: [join(String(folder), "program")],
       cwd: String(folder),
@@ -26,7 +29,11 @@ test.concurrent.each(["16", "1"])(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([program.stdout.text(), program.stderr.text(), program.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      program.stdout.text(),
+      program.stderr.text(),
+      program.exited,
+    ]);
     expect(stderr).toContain(`don't fit in BUN_JSC_markedBlockCageSizeInMB=${size}`);
     expect({ stdout, exitCode, signalCode: program.signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
   },

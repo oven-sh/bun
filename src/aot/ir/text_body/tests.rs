@@ -166,7 +166,12 @@ fn fill_function(builder: &mut FunctionBuilder) {
     builder.put_module_variable(VariableId::new(2), subject);
     let constant = builder.integer(-7);
     let cases = [Edge::with_proofs(case, &[0])];
-    builder.switch(subject, &[5], &cases, Edge::with_arguments(otherwise, &[constant]));
+    builder.switch(
+        subject,
+        &[5],
+        &cases,
+        Edge::with_arguments(otherwise, &[constant]),
+    );
     builder.set_position(None);
     for block in [covered, case, otherwise, cleanup.block()] {
         builder.seal(block);
@@ -284,7 +289,10 @@ fn position_is_optional() {
     assert_eq!(parse_position(&mut Parser::new(b"@12")), Ok(Some(12)));
     assert_eq!(parse_position(&mut Parser::new(b"@0")), Ok(Some(0)));
     let last_position = ABSENT_WORD - 1;
-    assert_eq!(parse_position(&mut Parser::new(b"@4294967294")), Ok(Some(last_position)));
+    assert_eq!(
+        parse_position(&mut Parser::new(b"@4294967294")),
+        Ok(Some(last_position))
+    );
     assert_eq!(parse_position(&mut Parser::new(b"")), Ok(None));
     let mut parser = Parser::new(b"12");
     assert_eq!(parse_position(&mut parser), Ok(None));
@@ -322,7 +330,12 @@ fn value_ids_ascend() {
     assert_head_error("  b0(v0, ", "v0):", expected);
     assert_head_error("  b0(", "b1):", expected);
     assert_head_error("  b0(v0,", "):", expected);
-    assert_blocks_error("  b0(v0):\n    Return\n  b1(v0):\n    Return\n", 4, 6, expected);
+    assert_blocks_error(
+        "  b0(v0):\n    Return\n  b1(v0):\n    Return\n",
+        4,
+        6,
+        expected,
+    );
     assert_line_error("    ", "v0 = Undefined", expected);
     assert_line_error("    ", "v2 = Undefined", expected);
 }
@@ -384,7 +397,11 @@ fn block_head_errors_name_offending_token() {
 
 #[test]
 fn attribute_errors_name_offending_token() {
-    assert_head_error("  b0() color=", "Red:", "role, subject, frequency or handler");
+    assert_head_error(
+        "  b0() color=",
+        "Red:",
+        "role, subject, frequency or handler",
+    );
     assert_head_error("  b0() role=", "Red:", "a block role");
     assert_head_error("  b0() role=", "catchHandler:", "a block role");
     assert_head_error("  b0() frequency=", "Often:", "a block frequency");
@@ -398,7 +415,11 @@ fn attribute_occurs_at_most_once() {
     let expected = "each block attribute at most once";
     assert_head_error("  b0() subject=v0 subject=v1", ":", expected);
     assert_head_error("  b0() frequency=Unlikely frequency=Normal", ":", expected);
-    assert_head_error("  b0() handler=b0() role=CatchHandler handler=b0()", ":", expected);
+    assert_head_error(
+        "  b0() handler=b0() role=CatchHandler handler=b0()",
+        ":",
+        expected,
+    );
 }
 
 #[test]
@@ -431,7 +452,11 @@ fn position_errors_name_offending_token() {
     assert_line_error("    Return @", "-1", "an unsigned 32-bit integer");
     assert_line_error("    v1 = Undefined @", "x", "an unsigned 32-bit integer");
     assert_line_error("    Return @", "4294967295", "a position below 4294967295");
-    assert_line_error("    v1 = Undefined @", "4294967295", "a position below 4294967295");
+    assert_line_error(
+        "    v1 = Undefined @",
+        "4294967295",
+        "a position below 4294967295",
+    );
 }
 
 #[test]

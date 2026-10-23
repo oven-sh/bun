@@ -3,4 +3,7 @@
 import { programsBuiltWith } from "./run-programs";
 
 programsBuiltWith("site-records", "every-function-cold", ["--aot-heat=everything-is-cold"]);
-programsBuiltWith("site-records", "every-function-cold-types-erased", ["--aot-heat=everything-is-cold", "--aot-erase-types"]);
+programsBuiltWith("site-records", "every-function-cold-types-erased", [
+  "--aot-heat=everything-is-cold",
+  "--aot-erase-types",
+]);

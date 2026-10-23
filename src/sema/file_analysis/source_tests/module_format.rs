@@ -53,8 +53,16 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"__filename;"#, CommonJs),
     ("a.js", r#""use strict";"#, CommonJs),
     ("a.js", r#"'use strict'; 1;"#, CommonJs),
-    ("a.ts", r#"import type { A } from "m"; require("x");"#, CommonJs),
-    ("a.ts", r#"import { type A } from "m"; require("x");"#, CommonJs),
+    (
+        "a.ts",
+        r#"import type { A } from "m"; require("x");"#,
+        CommonJs,
+    ),
+    (
+        "a.ts",
+        r#"import { type A } from "m"; require("x");"#,
+        CommonJs,
+    ),
     ("a.ts", r#"import r = require("m"); r;"#, CommonJs),
     ("a.ts", r#"import r = require("m");"#, CommonJs),
     (
@@ -72,11 +80,19 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"require.main === module;"#, CommonJs),
     ("a.mjs", r#"require.main === module.parent;"#, CommonJs),
     ("a.mjs", r#"other === module;"#, CommonJs),
-    ("a.js", r#"var exports = exports || {}; exports.x = 1;"#, CommonJs),
+    (
+        "a.js",
+        r#"var exports = exports || {}; exports.x = 1;"#,
+        CommonJs,
+    ),
     ("a.mjs", r#"var module = module || {};"#, CommonJs),
     ("a.js", r#"var exports = 1;"#, Esm),
     ("a.js", r#"let exports = {}; exports.x = 1;"#, Esm),
-    ("a.js", r#"import "m"; var exports = {}; exports.x = 1;"#, Esm),
+    (
+        "a.js",
+        r#"import "m"; var exports = {}; exports.x = 1;"#,
+        Esm,
+    ),
     ("a.js", r#"var require = 1; require;"#, Esm),
 ];
 
@@ -124,21 +140,66 @@ const UNUSED_IMPORTS: &[(&str, &str, &[&str], usize)] = &[
     ("a.ts", r#"import { A } from "m"; if (false) A;"#, &["A"], 1),
     ("a.ts", r#"import { A } from "m"; export { A };"#, &[], 1),
     ("a.mjs", r#"import { a } from "m";"#, &[], 1),
-    ("a.ts", r#"import * as n from "m"; import a = n.b; a;"#, &[], 1),
-    ("a.ts", r#"import * as n from "m"; import a = n.b;"#, &["n", "a"], 1),
-    ("a.ts", r#"import * as n from "m"; import a = n.b; if (false) a;"#, &["n", "a"], 1),
-    ("a.ts", r#"import * as n from "m"; import type a = n.b;"#, &["n"], 0),
-    ("a.ts", r#"import * as n from "m"; import a = n.b; import c = a.d; c;"#, &[], 1),
-    ("a.ts", r#"import * as n from "m"; import c = a.d; import a = n.b; c;"#, &[], 1),
-    ("a.ts", r#"import * as n from "m"; export import a = n.b;"#, &[], 1),
+    (
+        "a.ts",
+        r#"import * as n from "m"; import a = n.b; a;"#,
+        &[],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; import a = n.b;"#,
+        &["n", "a"],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; import a = n.b; if (false) a;"#,
+        &["n", "a"],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; import type a = n.b;"#,
+        &["n"],
+        0,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; import a = n.b; import c = a.d; c;"#,
+        &[],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; import c = a.d; import a = n.b; c;"#,
+        &[],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; export import a = n.b;"#,
+        &[],
+        1,
+    ),
     (
         "a.ts",
         r#"import * as n from "m"; namespace N { import a = n.b; export const c = 1; }"#,
         &[],
         1,
     ),
-    ("a.ts", r#"import * as n from "m"; namespace N { import a = n.b; }"#, &["n", "a"], 0),
-    ("a.ts", r#"import r = require("m"); import a = r.b; a;"#, &[], 1),
+    (
+        "a.ts",
+        r#"import * as n from "m"; namespace N { import a = n.b; }"#,
+        &["n", "a"],
+        0,
+    ),
+    (
+        "a.ts",
+        r#"import r = require("m"); import a = r.b; a;"#,
+        &[],
+        1,
+    ),
     ("a.ts", r#"import r = require("m");"#, &["r"], 1),
 ];
 
@@ -188,7 +249,10 @@ const ONE_SITE: &[(&str, &str)] = &[
     ("a.ts", r#"(module as any).require!("a");"#),
     ("a.cjs", r#"eval(s); require("a");"#),
     ("a.cjs", r#"function f() { eval(s); require("a"); }"#),
-    ("a.cjs", r#"function f() { eval(s); require.resolve("a"); }"#),
+    (
+        "a.cjs",
+        r#"function f() { eval(s); require.resolve("a"); }"#,
+    ),
     ("a.cjs", r#"function f() { eval(s); module.require("a"); }"#),
 ];
 
@@ -254,8 +318,7 @@ const REPEATED_ANALYSES: &[(&str, &str)] = &[
     ("a.cjs", VAR_AND_FUNCTION),
 ];
 
-const MACRO_FORMAT: &str =
-    r#"import { flag } from "./m" with { type: "macro" }; function g() {} if (flag()) require("a");"#;
+const MACRO_FORMAT: &str = r#"import { flag } from "./m" with { type: "macro" }; function g() {} if (flag()) require("a");"#;
 
 const TOP_LEVEL_AWAITS: &[(&str, bool, bool)] = &[
     ("await 0;", true, true),
@@ -461,11 +524,17 @@ fn positions_of_this_answer_as_the_walk_does() {
         let names_of = |test: &dyn Fn(FnId) -> bool| -> Vec<String> {
             let functions = (0..s.hir.fns.len() as u32).map(FnId).filter(|&it| test(it));
             let declared = functions.filter(|&it| s.hir[it].kind == FnKind::Decl);
-            declared.map(|it| s.workspace.text(s.hir[it].name).to_owned()).collect()
+            declared
+                .map(|it| s.workspace.text(s.hir[it].name).to_owned())
+                .collect()
         };
         for function in (0..s.hir.fns.len() as u32).map(FnId) {
             let by_walk = evaluates_own_this(&s.hir, function);
-            assert_eq!(positions.evaluates_own_this(&s.hir, function), by_walk, "{function:?}");
+            assert_eq!(
+                positions.evaluates_own_this(&s.hir, function),
+                by_walk,
+                "{function:?}"
+            );
         }
         let by_positions = names_of(&|it| positions.evaluates_own_this(&s.hir, it));
         let expected = [
@@ -633,7 +702,11 @@ fn kinds_and_order() {
         for (index, &(kind, _)) in found.iter().enumerate() {
             assert_eq!(s.analysis.import_site_index(kind), Some(index), "{kind:?}");
             if let Some(call) = site_call(kind) {
-                assert_eq!(s.analysis.import_site_of_call(call), Some(index), "{kind:?}");
+                assert_eq!(
+                    s.analysis.import_site_of_call(call),
+                    Some(index),
+                    "{kind:?}"
+                );
             }
         }
     });
@@ -671,7 +744,10 @@ fn dead_code_has_no_site() {
 #[test]
 fn specifiers() {
     analyzed("a.cjs", "require(x);", |s| {
-        assert_eq!(only_site(s, "require(x)").specifier, ImportSpecifier::Unknown);
+        assert_eq!(
+            only_site(s, "require(x)").specifier,
+            ImportSpecifier::Unknown
+        );
     });
     analyzed("a.cjs", r#"require("./" + x + ".js");"#, |s| {
         let expected = ImportSpecifier::Pattern {
@@ -691,16 +767,40 @@ fn specifiers() {
 #[test]
 fn own_directory_at_the_head_of_a_specifier_is_the_folder_of_the_file() {
     const CONSTANTS: &[(&str, &str, &str)] = &[
-        ("a.cjs", r#"require(__dirname + "/lib/a.js");"#, "./lib/a.js"),
-        ("a.cjs", r#"require(__dirname + "/lib" + "/a" + ".js");"#, "./lib/a.js"),
+        (
+            "a.cjs",
+            r#"require(__dirname + "/lib/a.js");"#,
+            "./lib/a.js",
+        ),
+        (
+            "a.cjs",
+            r#"require(__dirname + "/lib" + "/a" + ".js");"#,
+            "./lib/a.js",
+        ),
         ("a.cjs", "require(`${__dirname}/lib/a.js`);", "./lib/a.js"),
-        ("a.cjs", r#"require.resolve(__dirname + "/lib/a.js");"#, "./lib/a.js"),
+        (
+            "a.cjs",
+            r#"require.resolve(__dirname + "/lib/a.js");"#,
+            "./lib/a.js",
+        ),
         ("a.cjs", r#"require(__dirname + "/../a.js");"#, "./../a.js"),
         ("a.cjs", "require(__dirname);", "."),
-        ("a.cjs", r#"function f() { return require(__dirname + "/a.js"); }"#, "./a.js"),
+        (
+            "a.cjs",
+            r#"function f() { return require(__dirname + "/a.js"); }"#,
+            "./a.js",
+        ),
         ("a.mjs", r#"import(__dirname + "/lib/a.js");"#, "./lib/a.js"),
-        ("a.mjs", r#"import(import.meta.dir + "/lib/a.js");"#, "./lib/a.js"),
-        ("a.mjs", "import(`${import.meta.dirname}/lib/a.js`);", "./lib/a.js"),
+        (
+            "a.mjs",
+            r#"import(import.meta.dir + "/lib/a.js");"#,
+            "./lib/a.js",
+        ),
+        (
+            "a.mjs",
+            "import(`${import.meta.dirname}/lib/a.js`);",
+            "./lib/a.js",
+        ),
     ];
     for &(path, text, specifier) in CONSTANTS {
         analyzed(path, text, |s| {
@@ -708,13 +808,17 @@ fn own_directory_at_the_head_of_a_specifier_is_the_folder_of_the_file() {
             assert_eq!(only_site(s, text).specifier, expected, "{text}");
         });
     }
-    analyzed("a.cjs", r#"require(__dirname + "/lib/" + x + ".js");"#, |s| {
-        let expected = ImportSpecifier::Pattern {
-            prefix: s.workspace.atom("./lib/"),
-            suffix: s.workspace.atom(".js"),
-        };
-        assert_eq!(only_site(s, "require").specifier, expected);
-    });
+    analyzed(
+        "a.cjs",
+        r#"require(__dirname + "/lib/" + x + ".js");"#,
+        |s| {
+            let expected = ImportSpecifier::Pattern {
+                prefix: s.workspace.atom("./lib/"),
+                suffix: s.workspace.atom(".js"),
+            };
+            assert_eq!(only_site(s, "require").specifier, expected);
+        },
+    );
     analyzed("a.cjs", r#"require(__dirname + "2/a.js");"#, |s| {
         let expected = ImportSpecifier::Pattern {
             prefix: s.workspace.atom(""),
@@ -730,7 +834,11 @@ fn own_directory_at_the_head_of_a_specifier_is_the_folder_of_the_file() {
     ];
     for &text in UNKNOWN {
         analyzed("a.cjs", text, |s| {
-            assert_eq!(only_site(s, text).specifier, ImportSpecifier::Unknown, "{text}");
+            assert_eq!(
+                only_site(s, text).specifier,
+                ImportSpecifier::Unknown,
+                "{text}"
+            );
         });
     }
     const NOT_AT_THE_HEAD: &[&str] = &[
@@ -799,7 +907,11 @@ fn macro_call_forms() {
     for &(clause, call, pending_count) in MACRO_CALL_FORMS {
         let text = format!(r#"import {clause} from "./m" with {{ type: "macro" }}; {call}"#);
         analyzed("a.ts", &text, |s| {
-            assert_eq!(s.analysis.pending_macro_calls.len(), pending_count, "{text}");
+            assert_eq!(
+                s.analysis.pending_macro_calls.len(),
+                pending_count,
+                "{text}"
+            );
         });
     }
 }

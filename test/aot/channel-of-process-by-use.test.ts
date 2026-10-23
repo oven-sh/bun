@@ -50,9 +50,13 @@ test.concurrent.each([
   ["another-variable", "[process][process.argv.length - process.argv.length]"],
   ["parameter", "(emitter => emitter)(process)"],
   ["weak-reference", "new WeakRef(process).deref()"],
-])("the channel works where the receiver of the call lists process: %s", async (name, self) => {
-  expect(await startWithChannel(name, self)).toEqual(received);
-}, 120_000);
+])(
+  "the channel works where the receiver of the call lists process: %s",
+  async (name, self) => {
+    expect(await startWithChannel(name, self)).toEqual(received);
+  },
+  120_000,
+);
 
 // What comes out of `cause` is any value to the compiler. It does not take a method called on such a value for one of `process`.
 test("a listener added through a value that the compiler can't follow leaves the channel's JavaScript out, and the error says so", async () => {

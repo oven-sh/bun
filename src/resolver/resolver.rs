@@ -1128,7 +1128,8 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
-        self.standalone_module_graph?.resolve_module(source_dir, specifier, &search)
+        self.standalone_module_graph?
+            .resolve_module(source_dir, specifier, &search)
     }
 
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
@@ -1147,21 +1148,31 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
-        let is_require = matches!(kind, ast::ImportKind::Require | ast::ImportKind::RequireResolve);
-        self.standalone_module_graph?.resolve_package(source_dir, specifier, is_require, &search)
+        let is_require = matches!(
+            kind,
+            ast::ImportKind::Require | ast::ImportKind::RequireResolve
+        );
+        self.standalone_module_graph?
+            .resolve_package(source_dir, specifier, is_require, &search)
     }
 
     /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
     fn resolve_at_source_path(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
         use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let graph = self.standalone_module_graph?;
-        let program = graph.compiled_program().filter(|program| program.preserves_source_paths)?;
+        let program = graph
+            .compiled_program()
+            .filter(|program| program.preserves_source_paths)?;
         let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
         if !is_relative && !bun_paths::is_absolute(specifier) {
             return None;
         }
         let mut buffer = bun_paths::path_buffer_pool::get();
-        let path = join_abs_string_buf_checked::<platform::Auto>(source_dir, &mut buffer[..], &[specifier])?;
+        let path = join_abs_string_buf_checked::<platform::Auto>(
+            source_dir,
+            &mut buffer[..],
+            &[specifier],
+        )?;
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
             extra_extensions: &self.opts.extra_cjs_extensions,
@@ -1171,7 +1182,9 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
-        program.resolve_module_at_source_path(path, &search).or_else(|| graph.file_at_source_path(path))
+        program
+            .resolve_module_at_source_path(path, &search)
+            .or_else(|| graph.file_at_source_path(path))
     }
 
     pub fn resolve_and_auto_install(
@@ -1439,8 +1452,8 @@ impl<'a> Resolver<'a> {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
                 let embedded = self.resolve_embedded_module(source_dir, import_path);
-                if let Some(file_name) =
-                    embedded.or_else(|| self.resolve_embedded_package(source_dir, import_path, kind))
+                if let Some(file_name) = embedded
+                    .or_else(|| self.resolve_embedded_package(source_dir, import_path, kind))
                 {
                     self.extension_order = original_order;
                     return ResultUnion::Success(Result {
@@ -1462,8 +1475,9 @@ impl<'a> Resolver<'a> {
                         return ResultUnion::NotFound;
                     }
                     let top_level_dir = Fs::FileSystem::instance().top_level_dir();
-                    let mut directories =
-                        graph.directories_of_importer(source_dir, top_level_dir).into_iter();
+                    let mut directories = graph
+                        .directories_of_importer(source_dir, top_level_dir)
+                        .into_iter();
                     if let Some(directory) = directories
                         .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
                     {

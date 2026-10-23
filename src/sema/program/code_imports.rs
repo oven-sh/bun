@@ -42,11 +42,15 @@ pub(super) fn resolve_code_imports<'s, 'r>(
                 let target = add_target(context, &mut targets, origin_of(file), file);
                 if let ImportSpecifier::Constant(specifier) = site.specifier {
                     let kind = CodeImportKind::from_site(site.kind);
-                    targets_by_specifier.entry((specifier, kind)).or_insert(target);
+                    targets_by_specifier
+                        .entry((specifier, kind))
+                        .or_insert(target);
                 }
             }
             SiteResolution::Computed(resolution) => {
-                let files = candidates_of(resolution).iter().filter_map(file_of_candidate);
+                let files = candidates_of(resolution)
+                    .iter()
+                    .filter_map(file_of_candidate);
                 for file in files {
                     add_target(context, &mut targets, origin_of(file), file);
                 }
@@ -209,14 +213,16 @@ fn resolve_pattern<'r>(
     suffix: &[u8],
     (kind, form): (CodeImportKind, CodeImportForm),
 ) -> ComputedResolution<'r> {
-    context.resolver.resolve_computed_code(&ComputedCodeRequest {
-        prefix,
-        suffix,
-        importer: key.path,
-        directory: &context.host.directory_of(key.path),
-        kind,
-        form,
-    })
+    context
+        .resolver
+        .resolve_computed_code(&ComputedCodeRequest {
+            prefix,
+            suffix,
+            importer: key.path,
+            directory: &context.host.directory_of(key.path),
+            kind,
+            form,
+        })
 }
 
 fn constant_prefix<'a>(atoms: &'a Interner<'_>, specifier: ImportSpecifier) -> &'a [u8] {

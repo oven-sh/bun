@@ -203,7 +203,8 @@ impl FinishScratch {
         let successor_count_of = |block: BlockId| successor_count(&blocks[block.index()]) as u32;
         self.is_reached.resize(blocks.len(), false);
         self.is_reached[ENTRY_BLOCK.index()] = true;
-        self.stack.push((ENTRY_BLOCK, successor_count_of(ENTRY_BLOCK)));
+        self.stack
+            .push((ENTRY_BLOCK, successor_count_of(ENTRY_BLOCK)));
         while let Some((block, unvisited_successor_count)) = self.stack.last_mut() {
             let Some(next) = unvisited_successor_count.checked_sub(1) else {
                 self.order.push(*block);
@@ -307,7 +308,12 @@ impl Encoder<'_> {
         let fields = &field_words[fields.start as usize..fields.end as usize];
         debug_assert_eq!(
             find_operand_places(opcode, fields),
-            Some(operations.operand_words(id).map(|(place, _)| place).collect::<Vec<usize>>()),
+            Some(
+                operations
+                    .operand_words(id)
+                    .map(|(place, _)| place)
+                    .collect::<Vec<usize>>()
+            ),
             "the fields have their wire form, and what was taken apart names its operands"
         );
         let start = self.words.len();

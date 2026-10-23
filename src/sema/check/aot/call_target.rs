@@ -115,9 +115,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 });
                 SignatureShape {
                     declaration: None,
-                    this_type: this.map_or(UNTYPED, |ty| {
-                        PositionTypes::unwritten(self.resolved(ty))
-                    }),
+                    this_type: this
+                        .map_or(UNTYPED, |ty| PositionTypes::unwritten(self.resolved(ty))),
                     parameters: self.list(&parameters),
                     result: PositionTypes::unwritten(result),
                     has_type_parameters: !type_params.is_empty(),

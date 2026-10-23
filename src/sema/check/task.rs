@@ -282,7 +282,8 @@ impl<'s> Task<'s> {
         is_reachable_only_by_importers: impl FnOnce() -> bool,
         members: impl Iterator<Item = u64>,
     ) {
-        self.closed_cycles.set(self.closed_cycles.get().wrapping_add(1));
+        self.closed_cycles
+            .set(self.closed_cycles.get().wrapping_add(1));
         if self.was_discarded() {
             return;
         }

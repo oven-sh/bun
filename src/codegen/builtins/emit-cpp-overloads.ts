@@ -21,7 +21,6 @@ import {
 import {
   overloadFlags,
   type ModelCallback,
-  type ModelHandlerCall,
   type ModelCode,
   type ModelDispatch,
   type ModelDispatchBranch,
@@ -29,6 +28,7 @@ import {
   type ModelDispatchTarget,
   type ModelEffects,
   type ModelFlow,
+  type ModelHandlerCall,
   type ModelImplementation,
   type ModelKey,
   type ModelName,
@@ -290,7 +290,10 @@ function formatResultType({ type, typesByPlatform }: ModelResult): string {
   if (first === undefined) return formatId("BuiltinTypeID", type);
   const exceptions = others
     .filter(other => other.type !== first.type)
-    .map(other => `targetOfThisBuild().platform == BuiltinPlatform::${other.platform} ? ${formatId("BuiltinTypeID", other.type)} : `);
+    .map(
+      other =>
+        `targetOfThisBuild().platform == BuiltinPlatform::${other.platform} ? ${formatId("BuiltinTypeID", other.type)} : `,
+    );
   return `${exceptions.join("")}${formatId("BuiltinTypeID", first.type)}`;
 }
 
@@ -412,8 +415,16 @@ function formatOverload(overload: ModelOverload, pools: Pools): string {
     ["builtin", formatId("BuiltinID", overload.builtin)],
     ["mode", formatUnlessDefault("BuiltinCallMode", overload.mode, "Call")],
     ["flags", formatOptionSet("BuiltinOverloadFlag", orderWords(overloadFlags, overload.flags)) ?? "{ }"],
-    ["receiver", receiver === null ? null : pools.parameters.addIndexedElement(receiverPointerType, formatParameter(receiver, pools))],
-    ["parameters", pools.parameters.addStretch(overload.parameters.map(parameter => formatParameter(parameter, pools)))],
+    [
+      "receiver",
+      receiver === null
+        ? null
+        : pools.parameters.addIndexedElement(receiverPointerType, formatParameter(receiver, pools)),
+    ],
+    [
+      "parameters",
+      pools.parameters.addStretch(overload.parameters.map(parameter => formatParameter(parameter, pools))),
+    ],
     ["result", pools.results.addNumberedElement(formatResult(overload.result, pools))],
     ["effects", pools.effects.addNumberedElement(formatEffects(overload.effects) ?? "{ }")],
     ["flow", pools.flows.addNumberedElement(formatFlow(overload.flow, pools) ?? "{ }")],

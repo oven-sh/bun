@@ -39,7 +39,10 @@ pub(crate) fn bundle_pages<'s>(
     if pages.is_empty() {
         return Ok(Vec::new());
     }
-    let PageOutputs { manifests, output_files } = create_page_outputs(context, pages, log)?;
+    let PageOutputs {
+        manifests,
+        output_files,
+    } = create_page_outputs(context, pages, log)?;
     embedded.embed_page_outputs(collect_client_files(output_files));
     pages
         .iter()
@@ -107,6 +110,7 @@ fn create_page_outputs(
     })
 }
 
+#[allow(clippy::mut_from_ref)] // allocated in the arena
 fn create_page_transpiler<'h>(
     context: &BuildContext,
     heap: &'h Arena,
@@ -114,9 +118,8 @@ fn create_page_transpiler<'h>(
 ) -> &'h mut Transpiler<'h> {
     // SAFETY: the carrier's transpiler outlives this one, which `create_page_outputs` destroys before it returns, and
     // `log` is non-null and outlives it too.
-    let transpiler = heap.alloc(unsafe {
-        Transpiler::for_worker(context.bundle().transpiler(), heap, log)
-    });
+    let transpiler =
+        heap.alloc(unsafe { Transpiler::for_worker(context.bundle().transpiler(), heap, log) });
 
     let options = &mut transpiler.options;
     options.type_check = None;
@@ -128,7 +131,7 @@ fn create_page_transpiler<'h>(
     options.output_dir_handle = None;
     options.entry_points = Box::default();
     options.compile_mode = CompileMode::Executable;
-    options.public_path = context.module_prefix.clone();
+    options.public_path.clone_from(&context.module_prefix);
     options.banner = Cow::Borrowed(b"");
     options.footer = Cow::Borrowed(b"");
 
@@ -145,7 +148,9 @@ fn create_entry_source(pages: &[&[u8]], heap: &Arena) -> Source {
             .expect("writing to a Vec cannot fail");
         text.extend_from_slice(b" with { type: \"html\" };\n");
     }
-    let names: Vec<String> = (0..pages.len()).map(|index| format!("page{index}")).collect();
+    let names: Vec<String> = (0..pages.len())
+        .map(|index| format!("page{index}"))
+        .collect();
     text.extend_from_slice(format!("export default [{}];\n", names.join(", ")).as_bytes());
 
     let first_page = pages.first().copied().unwrap_or_default();
@@ -208,7 +213,10 @@ fn run(
     )?;
 
     let manifests = write_page_manifests(bundle, &chunks, &output_files, pages)?;
-    Ok(PageOutputs { manifests, output_files })
+    Ok(PageOutputs {
+        manifests,
+        output_files,
+    })
 }
 
 fn write_page_manifests(
@@ -219,7 +227,11 @@ fn write_page_manifests(
 ) -> Result<Vec<Vec<u8>>, crate::Error> {
     let server_source_indices = &bundle.graph.html_imports.server_source_indices;
     if server_source_indices.len() != pages.len() {
-        return Err(report_page_count(bundle, server_source_indices.len(), pages.len()));
+        return Err(report_page_count(
+            bundle,
+            server_source_indices.len(),
+            pages.len(),
+        ));
     }
 
     let mut positions_by_path: Vec<(&[u8], usize)> = pages.iter().copied().zip(0..).collect();
@@ -337,8 +349,8 @@ fn collect_client_files(outputs: Vec<OutputFile>) -> Vec<OutputFile> {
         .filter(|(_, kept)| *kept)
         .map(|(mut file, _)| {
             if file.source_map_index != NO_OUTPUT_FILE {
-                file.source_map_index = new_positions[file.source_map_index as usize]
-                    .unwrap_or(NO_OUTPUT_FILE);
+                file.source_map_index =
+                    new_positions[file.source_map_index as usize].unwrap_or(NO_OUTPUT_FILE);
             }
             file.bytecode_index = NO_OUTPUT_FILE;
             file.module_info_index = NO_OUTPUT_FILE;
@@ -376,11 +388,26 @@ mod tests {
     fn collect_client_files_drops_server_outputs() {
         let kept = collect_client_files(vec![
             output(b"server.js", OutputKind::EntryPoint, Some(Side::Server), 1),
-            output(b"server.map", OutputKind::Sourcemap, Some(Side::Server), NO_OUTPUT_FILE),
+            output(
+                b"server.map",
+                OutputKind::Sourcemap,
+                Some(Side::Server),
+                NO_OUTPUT_FILE,
+            ),
             output(b"client.js", OutputKind::Chunk, Some(Side::Client), 3),
-            output(b"client.map", OutputKind::Sourcemap, Some(Side::Client), NO_OUTPUT_FILE),
+            output(
+                b"client.map",
+                OutputKind::Sourcemap,
+                Some(Side::Client),
+                NO_OUTPUT_FILE,
+            ),
             output(b"logo.svg", OutputKind::Asset, None, NO_OUTPUT_FILE),
-            output(b"graph", OutputKind::PrelinkedModuleGraph, None, NO_OUTPUT_FILE),
+            output(
+                b"graph",
+                OutputKind::PrelinkedModuleGraph,
+                None,
+                NO_OUTPUT_FILE,
+            ),
         ]);
 
         assert_eq!(
@@ -407,8 +434,18 @@ mod tests {
     #[test]
     fn collect_client_files_drops_unreferenced_source_map() {
         let kept = collect_client_files(vec![
-            output(b"orphan.map", OutputKind::Sourcemap, Some(Side::Client), NO_OUTPUT_FILE),
-            output(b"client.js", OutputKind::Chunk, Some(Side::Client), NO_OUTPUT_FILE),
+            output(
+                b"orphan.map",
+                OutputKind::Sourcemap,
+                Some(Side::Client),
+                NO_OUTPUT_FILE,
+            ),
+            output(
+                b"client.js",
+                OutputKind::Chunk,
+                Some(Side::Client),
+                NO_OUTPUT_FILE,
+            ),
         ]);
 
         assert_eq!(names(&kept), [&b"client.js"[..]]);

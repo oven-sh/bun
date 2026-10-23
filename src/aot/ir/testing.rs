@@ -34,10 +34,7 @@ pub fn function_with_parameters(flags: FunctionFlags, parameters: &[TypeId]) -> 
     }
 }
 
-pub fn build_function(
-    parameters: &[TypeId],
-    fill: impl FnOnce(&mut FunctionBuilder),
-) -> Function {
+pub fn build_function(parameters: &[TypeId], fill: impl FnOnce(&mut FunctionBuilder)) -> Function {
     let function = function_with_parameters(FunctionFlags::default(), parameters);
     let mut builder = FunctionBuilder::new(function, BuilderScratch::default());
     fill(&mut builder);
@@ -56,7 +53,10 @@ fn parse_named_reports_name_and_position() {
 fn parse_reads_program_lines() {
     let program = parse("entry module=m1\nentry module=m0\n");
     let modules = program.entries.iter().map(|entry| entry.module);
-    assert_eq!(modules.collect::<Vec<_>>(), [ModuleId::new(1), ModuleId::new(0)]);
+    assert_eq!(
+        modules.collect::<Vec<_>>(),
+        [ModuleId::new(1), ModuleId::new(0)]
+    );
 }
 
 #[test]

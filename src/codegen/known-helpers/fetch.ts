@@ -54,7 +54,9 @@ async function unpack(archive: string, into: string, files: readonly string[] | 
   if (members.length > 0) command.push("--wildcards", "*/package.json", ...members);
   const tar = Bun.spawn(command, { stdout: "ignore", stderr: "pipe" });
   const complaint = await new Response(tar.stderr).text();
-  const missingOnly = complaint.split("\n").every(line => line === "" || /Not found in archive|previous errors/.test(line));
+  const missingOnly = complaint
+    .split("\n")
+    .every(line => line === "" || /Not found in archive|previous errors/.test(line));
   if ((await tar.exited) !== 0 && !missingOnly) throw new Error(complaint.trim());
 }
 
@@ -90,25 +92,45 @@ function readPackument(name: string): Promise<Packument | number> {
 async function wasPublishedBy(name: string, time: number): Promise<boolean> {
   const packument = await readPackument(name);
   if (typeof packument === "number") return false;
-  return Object.keys(packument.versions).some(version => /^\d+\.\d+\.\d+$/.test(version) && Date.parse(packument.time[version]) <= time);
+  return Object.keys(packument.versions).some(
+    version => /^\d+\.\d+\.\d+$/.test(version) && Date.parse(packument.time[version]) <= time,
+  );
 }
 
 const oneDay = 24 * 60 * 60 * 1000;
 
-async function install(into: string, rule: PackageRule, version: string, publishedAt: string): Promise<string | undefined> {
+async function install(
+  into: string,
+  rule: PackageRule,
+  version: string,
+  publishedAt: string,
+): Promise<string | undefined> {
   const cutoff = Date.parse(publishedAt) + oneDay;
   const companions: string[] = [];
   for (const companion of rule.with!) if (await wasPublishedBy(companion, cutoff)) companions.push(companion);
   await mkdir(into, { recursive: true });
   await Bun.write(path.join(into, "package.json"), JSON.stringify({ private: true }) + "\n");
   const age = Math.max(0, Math.floor((Date.now() - cutoff) / 1000));
-  const command = [process.execPath, "add", "--ignore-scripts", "--minimum-release-age", String(age), `${rule.name}@${version}`, ...companions];
+  const command = [
+    process.execPath,
+    "add",
+    "--ignore-scripts",
+    "--minimum-release-age",
+    String(age),
+    `${rule.name}@${version}`,
+    ...companions,
+  ];
   const adding = Bun.spawn(command, { cwd: into, stdout: "ignore", stderr: "pipe" });
   const complaint = await new Response(adding.stderr).text();
   return (await adding.exited) === 0 ? undefined : complaint.trim().split("\n").slice(-3).join(" ");
 }
 
-async function fetchRule(folder: string, rule: PackageRule, fetched: FetchedVersion[], failed: string[]): Promise<void> {
+async function fetchRule(
+  folder: string,
+  rule: PackageRule,
+  fetched: FetchedVersion[],
+  failed: string[],
+): Promise<void> {
   const packument = await readPackument(rule.name);
   if (typeof packument === "number") {
     failed.push(`${rule.name}: ${packument}`);
@@ -124,7 +146,9 @@ async function fetchRule(folder: string, rule: PackageRule, fetched: FetchedVers
     }
     let complaint: string | undefined;
     try {
-      complaint = rule.with ? await install(into, rule, version, entry.publishedAt) : await download(into, rule, packument.versions[version].dist);
+      complaint = rule.with
+        ? await install(into, rule, version, entry.publishedAt)
+        : await download(into, rule, packument.versions[version].dist);
     } catch (error) {
       complaint = error instanceof Error ? error.message : String(error);
     }
@@ -141,7 +165,9 @@ export async function fetchPackages(folder: string, only: readonly string[]): Pr
   await mkdir(folder, { recursive: true });
   const versionsFile = path.join(folder, versionsFileName);
   const known: FetchedVersion[] = existsSync(versionsFile) ? await Bun.file(versionsFile).json() : [];
-  const fetched = known.filter(entry => packageRules.some(rule => rule.name === entry.name) && !isChosen(entry.name, only));
+  const fetched = known.filter(
+    entry => packageRules.some(rule => rule.name === entry.name) && !isChosen(entry.name, only),
+  );
   const failed: string[] = [];
   for (const rule of packageRules.filter(rule => isChosen(rule.name, only))) {
     const before = fetched.length;

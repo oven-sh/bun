@@ -44,7 +44,8 @@ fn type_of(variable: CommonJsVariable) -> Atom {
 
 impl<'s> Folder<'_, 's> {
     fn loader_names(&self) -> &LoaderNames {
-        self.loader_names.get_or_init(|| LoaderNames::of(self.hir, self.bound))
+        self.loader_names
+            .get_or_init(|| LoaderNames::of(self.hir, self.bound))
     }
 
     pub(super) fn is_replaced_by_define(&self, e: ExprId) -> bool {
@@ -77,7 +78,10 @@ impl<'s> Folder<'_, 's> {
     fn is_this_of_commonjs_file(&self, e: ExprId) -> bool {
         matches!(self.hir[e].kind, ExprKind::This)
             && self.loader_names().esm_syntax == EsmSyntax::None
-            && self.this_of_file.get_or_init(|| collect_this_of_file(self.hir)).contains(e.idx())
+            && self
+                .this_of_file
+                .get_or_init(|| collect_this_of_file(self.hir))
+                .contains(e.idx())
     }
 
     // An object, a function or a path: true in a test, and reading it does nothing.

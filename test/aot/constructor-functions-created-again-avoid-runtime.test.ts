@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // Nothing proves that a module which is required inside a function is evaluated once, so nothing proves that its constructor functions are created once.
 const files = {
@@ -63,12 +63,23 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("what a constructor function of a module that is required late stores into this stops asking the run time", async () => {
   using dir = tempDir("aot-constructor-functions-created-again", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const counted = async (rounds: number) => {
     const path = join(String(dir), "counts" + rounds);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
-    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: "2 13 4\n", stderr: "", exitCode: 0 });
+    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({
+      stdout: "2 13 4\n",
+      stderr: "",
+      exitCode: 0,
+    });
     let sum = 0;
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, name] = line.split("\toperation:");

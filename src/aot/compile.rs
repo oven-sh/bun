@@ -26,9 +26,7 @@ use self::import_graph::ImportGraph;
 use self::program_reach::LeftOutCode;
 use crate::builtins::{BuiltinNames, Platforms};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{
-    Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView,
-};
+use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
 use crate::engine::{self, EngineOptions, EngineRequest, EngineResult};
 use crate::ir::Program;
@@ -296,7 +294,13 @@ pub fn compile(
                 stage: Stage::Any,
                 message: rejected.sentence,
             });
-            return Err(fail(Stage::Any, diagnostics, Statistics::default(), None, log));
+            return Err(fail(
+                Stage::Any,
+                diagnostics,
+                Statistics::default(),
+                None,
+                log,
+            ));
         }
     };
     let caches = ThreadCaches::default();
@@ -390,7 +394,9 @@ impl<'a> Build<'a> {
 
     fn find_refused_entry_points(&self) -> Option<Vec<u32>> {
         let paths = self.diagnostics.paths_of_errors()?;
-        self.import_graph.as_ref()?.find_entry_points_that_reach(paths.into_iter())
+        self.import_graph
+            .as_ref()?
+            .find_entry_points_that_reach(paths.into_iter())
     }
 
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {
@@ -508,7 +514,10 @@ impl<'a> Build<'a> {
         self.statistics.add_values(engine.statistics());
         self.diagnostics
             .add_engine_records(&engine, &output.names, &output.texts);
-        if engine_options.makes_image() && engine.image().is_none() && !self.diagnostics.has_errors() {
+        if engine_options.makes_image()
+            && engine.image().is_none()
+            && !self.diagnostics.has_errors()
+        {
             self.diagnostics.add_internal_error(InternalError {
                 stage: Stage::Any,
                 message: b"the engine returned neither an image nor an error".to_vec(),
@@ -565,9 +574,13 @@ impl<'a> Build<'a> {
                 self.diagnostics.write_to(log);
                 Ok((value, self.statistics))
             }
-            Err(stage) => {
-                Err(fail(stage, self.diagnostics, self.statistics, refused_entry_points, log))
-            }
+            Err(stage) => Err(fail(
+                stage,
+                self.diagnostics,
+                self.statistics,
+                refused_entry_points,
+                log,
+            )),
         }
     }
 }

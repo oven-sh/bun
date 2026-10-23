@@ -114,7 +114,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
-        if !candidates.stores.iter().any(StoreCandidate::is_of_constructor_function) {
+        if !candidates
+            .stores
+            .iter()
+            .any(StoreCandidate::is_of_constructor_function)
+        {
             return None;
         }
         let mut members = Vec::new();
@@ -141,11 +145,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn names_stored_in_prototype(&self, candidates: &StoreCandidates) -> Vec<MemberName> {
         let stores = candidates.stores.iter();
-        let stored = stores.filter(|store| store.place == StorePlace::Prototype).map(|store| store.name);
-        let mut names: Vec<Atom> = stored.chain(candidates.prototype_accessor_names.iter().copied()).collect();
+        let stored = stores
+            .filter(|store| store.place == StorePlace::Prototype)
+            .map(|store| store.name);
+        let mut names: Vec<Atom> = stored
+            .chain(candidates.prototype_accessor_names.iter().copied())
+            .collect();
         names.sort_unstable_by_key(|&name| self.atom_bytes(name));
         names.dedup();
-        names.into_iter().map(|name| self.member_name(name)).collect()
+        names
+            .into_iter()
+            .map(|name| self.member_name(name))
+            .collect()
     }
 
     fn add_parameter_properties(
@@ -203,7 +214,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 PropKey::Computed(key) => {
                     let is_field = member.kind == MemberKind::Property
                         && !member.flags.contains(Flags::ACCESSOR);
-                    match is_field.then(|| self.symbol_member_name(file, key)).flatten() {
+                    match is_field
+                        .then(|| self.symbol_member_name(file, key))
+                        .flatten()
+                    {
                         Some(name) => {
                             members.extend(self.written_member(ClassRef { file, class }, id, name));
                         }
@@ -218,12 +232,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         computed
     }
 
-    fn written_member(
-        &mut self,
-        class: ClassRef,
-        id: MemberId,
-        name: Atom,
-    ) -> Option<ClassMember> {
+    fn written_member(&mut self, class: ClassRef, id: MemberId, name: Atom) -> Option<ClassMember> {
         let file = class.file;
         let hir = self.c.hir(file);
         let member = &hir[id];
@@ -261,7 +270,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let node = hir[member.func].effective_set_accessor_type_annotation_node(hir);
                 let value = hir[member.func].set_accessor_value_parameter().some();
                 let types = self.declared_position(file, node, |queries| {
-                    let ty = queries.c.type_of_param(file, value.ok_or(GaveUp::ErrorType)?);
+                    let ty = queries
+                        .c
+                        .type_of_param(file, value.ok_or(GaveUp::ErrorType)?);
                     queries.resolved(ty)
                 });
                 (ObjectMemberKind::Setter, types, false)
@@ -476,9 +487,12 @@ fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) 
         return is_accessor_of_descriptor
             || is_stored_into(hir, bound, literal, |place| is_prototype_object(hir, place));
     }
-    is_stored_into(hir, bound, expression, |place| {
-        matches!(hir.member_key(place), Some((object, _)) if is_prototype_object(hir, object))
-    })
+    is_stored_into(
+        hir,
+        bound,
+        expression,
+        |place| matches!(hir.member_key(place), Some((object, _)) if is_prototype_object(hir, object)),
+    )
 }
 
 fn store_candidates(

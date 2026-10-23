@@ -89,7 +89,10 @@ function typeLines(type: SchemaType): string[] {
   if (type.tag === "Variant") {
     const variant = type.variant;
     if (variant.form === "engine") return [];
-    const cases = variant.cases.flatMap(variantCase => [`case ${variantCase.name}`, ...variantCase.fields.map(fieldLine)]);
+    const cases = variant.cases.flatMap(variantCase => [
+      `case ${variantCase.name}`,
+      ...variantCase.fields.map(fieldLine),
+    ]);
     return [`variant ${variant.name} ${variant.form}`, ...cases];
   }
   const record = type.record;
@@ -135,7 +138,9 @@ function entryLines(entry: Entry): string[] {
     head.join(" "),
     ...wireParametersOf(entry).map(parameterLine),
     ...wireFlagsOf(entry).map(flag => `flag ${flag.name}`),
-    ...entry.targets.map(target => `target ${target.name}${target.isVariadic ? "..." : ""}${target.takesProofs ? " proof" : ""}`),
+    ...entry.targets.map(
+      target => `target ${target.name}${target.isVariadic ? "..." : ""}${target.takesProofs ? " proof" : ""}`,
+    ),
   ];
 }
 

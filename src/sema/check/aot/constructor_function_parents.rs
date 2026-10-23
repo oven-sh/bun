@@ -1,6 +1,6 @@
 use super::answers::{
-    CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef, ClassShape,
-    FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes,
+    CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef,
+    ClassShape, FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes,
 };
 use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
 use super::queries::Queries;
@@ -75,7 +75,9 @@ impl<'s> LinkedFunctions<'s> {
     fn find_only_parent(&self, function: FnId) -> Option<ClassParent> {
         let mut links = self.links_of(function).iter();
         let parent = links.next()?.parent?;
-        links.all(|link| link.parent == Some(parent)).then_some(parent)
+        links
+            .all(|link| link.parent == Some(parent))
+            .then_some(parent)
     }
 
     fn is_end(&self, function: FnId) -> bool {
@@ -197,23 +199,30 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !files.flags(class).contains(SymFlags::CLASS) {
             return None;
         }
-        let is_declared = |&(file, _): &(FileId, Decl)| files.hir(file).kind == FileKind::Declaration;
+        let is_declared =
+            |&(file, _): &(FileId, Decl)| files.hir(file).kind == FileKind::Declaration;
         if !files.decls_of(class).iter().all(is_declared) {
             return None;
         }
-        let specifier = files.decls_of(class).iter().find_map(|&(file, declaration)| {
-            let Decl::Class(declared) = declaration else {
-                return None;
-            };
-            find_ambient_module_around(files.hir(file), declared)
-        })?;
+        let specifier = files
+            .decls_of(class)
+            .iter()
+            .find_map(|&(file, declaration)| {
+                let Decl::Class(declared) = declaration else {
+                    return None;
+                };
+                find_ambient_module_around(files.hir(file), declared)
+            })?;
         let name = files.symbol(class).name;
         let module = files.try_find_ambient_module(specifier)?;
-        let exported = files.resolve_alias_as(files.namespace_member(module, name)?, SymFlags::TYPE)?;
+        let exported =
+            files.resolve_alias_as(files.namespace_member(module, name)?, SymFlags::TYPE)?;
         if files.canonical(exported) != files.canonical(class) {
             return None;
         }
-        self.inputs.named_values.find_library_export(specifier, name)
+        self.inputs
+            .named_values
+            .find_library_export(specifier, name)
     }
 
     /// Whether the program gives members to the prototype object of `function` or links it to another one, as it does for a function that it constructs with.
@@ -225,16 +234,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn is_end_of_prototype_link(&mut self, function: FunctionRef) -> bool {
-        self.linked_functions(function.file).is_end(function.function)
+        self.linked_functions(function.file)
+            .is_end(function.function)
     }
 
     fn find_linked_parent(&mut self, function: FunctionRef) -> Option<ClassParent> {
-        self.linked_functions(function.file).find_only_parent(function.function)
+        self.linked_functions(function.file)
+            .find_only_parent(function.function)
     }
 
     fn linked_functions(&mut self, file: FileId) -> &'s LinkedFunctions<'s> {
         let of_file = self.prototype_links(file);
-        of_file.linked_functions.get_or_init(|| self.compute_linked_functions(file, of_file))
+        of_file
+            .linked_functions
+            .get_or_init(|| self.compute_linked_functions(file, of_file))
     }
 
     fn compute_linked_functions(
@@ -299,7 +312,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         followed.in_progress.pop();
         let links: Rc<[PrototypeLink]> = links.into();
-        followed.links_of_parameters.insert(function, Rc::clone(&links));
+        followed
+            .links_of_parameters
+            .insert(function, Rc::clone(&links));
         Some(links)
     }
 
@@ -339,9 +354,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut members = MembersByPosition {
             instance_names: instance_members.map(|member| member.name).collect(),
             by_position: Vec::from_iter(
-                own_members.iter().map(|&member| (find_position(hir, member.source), member)),
+                own_members
+                    .iter()
+                    .map(|&member| (find_position(hir, member.source), member)),
             ),
-            names_stored_in_prototype: own.map_or(Vec::new(), |own| own.names_stored_in_prototype.to_vec()),
+            names_stored_in_prototype: own
+                .map_or(Vec::new(), |own| own.names_stored_in_prototype.to_vec()),
         };
         let mut given_this = vec![function];
         for &(_, call) in calls {
@@ -390,7 +408,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             None => &[],
         };
         let of_file = self.prototype_links(function.file);
-        let mut calls = of_file.calls_passing_this_of(function.function).iter().peekable();
+        let mut calls = of_file
+            .calls_passing_this_of(function.function)
+            .iter()
+            .peekable();
         for member in own_members {
             let Some(store) = find_store_into_this(member) else {
                 continue;
@@ -540,10 +561,13 @@ mod tests {
             link(parameter, Some(function(1))),
         ];
         let linked = LinkedFunctions::new(&arena, FILE, &links);
-        assert_eq!(linked.links_of(FnId(4)), [FunctionLink {
-            child: FnId(4),
-            parent: None,
-        }]);
+        assert_eq!(
+            linked.links_of(FnId(4)),
+            [FunctionLink {
+                child: FnId(4),
+                parent: None,
+            }]
+        );
         assert!(!linked.is_end(FnId(9)));
         assert!(linked.is_end(FnId(1)));
     }
@@ -557,14 +581,23 @@ mod tests {
             class: ClassId(0),
         });
         let links = [
-            link(function(4), Some(LinkEnd::Declaration(function_in(other, 4)))),
+            link(
+                function(4),
+                Some(LinkEnd::Declaration(function_in(other, 4))),
+            ),
             link(function(5), Some(LinkEnd::Declaration(class))),
-            link(LinkEnd::Declaration(function_in(other, 6)), Some(function(1))),
+            link(
+                LinkEnd::Declaration(function_in(other, 6)),
+                Some(function(1)),
+            ),
         ];
         let linked = LinkedFunctions::new(&arena, FILE, &links);
         let parent = ClassParent::Declared(function_in(other, 4));
         assert_eq!(linked.find_only_parent(FnId(4)), Some(parent));
-        assert_eq!(linked.find_only_parent(FnId(5)), Some(ClassParent::Declared(class)));
+        assert_eq!(
+            linked.find_only_parent(FnId(5)),
+            Some(ClassParent::Declared(class))
+        );
         assert_eq!(linked.find_only_parent(FnId(6)), None);
         assert_eq!(linked.ends, [FnId(1), FnId(4), FnId(5)]);
     }
@@ -579,7 +612,10 @@ mod tests {
             link(LinkEnd::LibraryDeclaration(of_library), Some(function(5))),
         ];
         let linked = LinkedFunctions::new(&arena, FILE, &links);
-        assert_eq!(linked.find_only_parent(FnId(4)), Some(ClassParent::Library(of_library)));
+        assert_eq!(
+            linked.find_only_parent(FnId(4)),
+            Some(ClassParent::Library(of_library))
+        );
         assert_eq!(linked.find_only_parent(FnId(1)), None);
         assert_eq!(linked.ends, [FnId(4), FnId(5)]);
     }

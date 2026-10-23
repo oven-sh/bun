@@ -53,22 +53,51 @@ const EVERY_ORIGIN: [(&str, &str); 11] = [
 const APPLICATION_FILES: [(FileOrigin, &str); 6] = [
     (FileOrigin::ProgramSource, "/project/main.ts"),
     (FileOrigin::ProgramJavaScript, "/project/plain.js"),
-    (FileOrigin::ProjectTypedVersion, "/project/node_modules/p/x.js"),
-    (FileOrigin::DependencySource, "/project/node_modules/dep/index.ts"),
-    (FileOrigin::DependencyJavaScript, "/project/node_modules/untyped/index.js"),
+    (
+        FileOrigin::ProjectTypedVersion,
+        "/project/node_modules/p/x.js",
+    ),
+    (
+        FileOrigin::DependencySource,
+        "/project/node_modules/dep/index.ts",
+    ),
+    (
+        FileOrigin::DependencyJavaScript,
+        "/project/node_modules/untyped/index.js",
+    ),
     (FileOrigin::Declarations, "/project/globals.d.ts"),
 ];
 
 const COMPILER_DIAGNOSTIC_EFFECTS: [(FileOrigin, Effect, Effect); FileOrigin::COUNT] = [
     (FileOrigin::NoFile, Effect::StopsBuild, Effect::Warns),
     (FileOrigin::ProgramSource, Effect::StopsBuild, Effect::Warns),
-    (FileOrigin::ProgramJavaScript, Effect::StopsBuild, Effect::Warns),
-    (FileOrigin::ProjectTypedVersion, Effect::StopsBuild, Effect::Warns),
-    (FileOrigin::DependencySource, Effect::StopsBuild, Effect::Warns),
-    (FileOrigin::DependencyJavaScript, Effect::StopsBuild, Effect::Warns),
+    (
+        FileOrigin::ProgramJavaScript,
+        Effect::StopsBuild,
+        Effect::Warns,
+    ),
+    (
+        FileOrigin::ProjectTypedVersion,
+        Effect::StopsBuild,
+        Effect::Warns,
+    ),
+    (
+        FileOrigin::DependencySource,
+        Effect::StopsBuild,
+        Effect::Warns,
+    ),
+    (
+        FileOrigin::DependencyJavaScript,
+        Effect::StopsBuild,
+        Effect::Warns,
+    ),
     (FileOrigin::Declarations, Effect::StopsBuild, Effect::Warns),
     (FileOrigin::Runtime, Effect::InternalError, Effect::Dropped),
-    (FileOrigin::EvaluatedText, Effect::WithdrawsTrust, Effect::Dropped),
+    (
+        FileOrigin::EvaluatedText,
+        Effect::WithdrawsTrust,
+        Effect::Dropped,
+    ),
 ];
 
 fn start_of(file: FileId) -> Option<Span> {
@@ -220,7 +249,10 @@ fn diagnostics_in_runtime_files_are_not_shown_to_users() {
             "internal compiler error (Lower): \
              TS100301: This code is nested more than 500 levels deep. at {path}:1:1"
         );
-        assert_eq!(kinds_and_texts(&written(diagnostics)), [(Kind::Err, internal)]);
+        assert_eq!(
+            kinds_and_texts(&written(diagnostics)),
+            [(Kind::Err, internal)]
+        );
     });
 }
 
@@ -256,7 +288,8 @@ fn type_error_in_program_source_stops_build() {
 
 #[test]
 fn signatures_of_compiler_declarations_take_no_parameter_types_away() {
-    let source = "export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);
+    let source =
+        "export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);
 export const count = JSON.parse<number>(\"1\");
 ";
     assert_eq!(check(&[("main.ts", source)]), NOTHING);
@@ -275,7 +308,10 @@ export const same: Overloaded = value => value;
 
 #[test]
 fn type_error_in_program_javascript_is_dropped() {
-    assert_eq!(check(&[("main.js", CHECKED_JAVASCRIPT_TYPE_ERROR)]), NOTHING);
+    assert_eq!(
+        check(&[("main.js", CHECKED_JAVASCRIPT_TYPE_ERROR)]),
+        NOTHING
+    );
 }
 
 #[test]
@@ -285,7 +321,10 @@ fn type_error_in_dependency_source_withdraws_trust() {
 
 #[test]
 fn type_error_in_dependency_javascript_is_dropped() {
-    assert_eq!(check_dependency_javascript(CHECKED_JAVASCRIPT_TYPE_ERROR), NOTHING);
+    assert_eq!(
+        check_dependency_javascript(CHECKED_JAVASCRIPT_TYPE_ERROR),
+        NOTHING
+    );
 }
 
 #[test]
@@ -305,7 +344,10 @@ fn early_error_stops_build_in_every_compiled_file() {
 
 #[test]
 fn missing_declaration_stops_build_only_in_program_source() {
-    assert_eq!(check(&[("main.ts", MISSING_DECLARATION)]), [(Kind::Err, 2304)]);
+    assert_eq!(
+        check(&[("main.ts", MISSING_DECLARATION)]),
+        [(Kind::Err, 2304)]
+    );
     assert_eq!(check_dependency_source(MISSING_DECLARATION), NOTHING);
 }
 
@@ -323,7 +365,10 @@ fn style_error_stops_build_only_in_program_source() {
 #[test]
 fn errors_in_declaration_files_are_dropped() {
     let shown = check(&[
-        ("main.ts", "/// <reference path=\"./globals.d.ts\" />\nexport {};\n"),
+        (
+            "main.ts",
+            "/// <reference path=\"./globals.d.ts\" />\nexport {};\n",
+        ),
         ("globals.d.ts", "declare const declared: Missing;\n"),
         ("tsconfig.json", CHECKS_DECLARATION_FILES),
     ]);
@@ -332,5 +377,8 @@ fn errors_in_declaration_files_are_dropped() {
 
 #[test]
 fn program_without_errors_shows_nothing() {
-    assert_eq!(check(&[("main.ts", "export const x: number = 1;\n")]), NOTHING);
+    assert_eq!(
+        check(&[("main.ts", "export const x: number = 1;\n")]),
+        NOTHING
+    );
 }

@@ -48,7 +48,12 @@ import {
   textOfNativeSymbol,
   textOfStaticTableEntry,
 } from "./builtins/guards.ts";
-import { checkOfDeclaredType, nativeInstances, parseDeclaredAlternative, typeScriptOf } from "./declared-type-checks.ts";
+import {
+  checkOfDeclaredType,
+  nativeInstances,
+  parseDeclaredAlternative,
+  typeScriptOf,
+} from "./declared-type-checks.ts";
 import { cap, low } from "./helpers.ts";
 import {
   guardedCall,
@@ -695,7 +700,10 @@ function cppContext({ name, expected, validatorExpects }: Argument, i: number, v
   }
   if (validatorExpects) {
     const fields = [asciiLiteral(name), asciiLiteral(validatorExpects), value, ...(index ? [index] : [])];
-    return { ctx: `Bun::Bindgen::asLvalue(Bun::Bindgen::ValidatorArgumentContext { ${fields.join(", ")} })`, lines: [] };
+    return {
+      ctx: `Bun::Bindgen::asLvalue(Bun::Bindgen::ValidatorArgumentContext { ${fields.join(", ")} })`,
+      lines: [],
+    };
   }
   return { ctx, lines: [cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`)] };
 }
@@ -741,7 +749,9 @@ function getHeadersOfCheckedResult(type: Type, out: Set<string>): void {
     const alternative = parseDeclaredAlternative(word);
     if (typeof alternative !== "object") continue;
     const generated = classesByName.get(alternative.instance);
-    const header = generated ? `Generated${generated.origin!.namespace}.h` : nativeInstances[alternative.instance]?.header;
+    const header = generated
+      ? `Generated${generated.origin!.namespace}.h`
+      : nativeInstances[alternative.instance]?.header;
     if (header !== undefined) out.add(header);
   }
 }
@@ -762,7 +772,9 @@ function cppCallBody(
 ): string {
   const indented = (lines: readonly string[]) => lines.map(line => `    ${line}`).join("\n");
   if (signature.cppInlineBody) {
-    return indented(finish(`${signature.cppInlineBody.name}(globalObject, Bun::Bindgen::ArgumentsInFrame { *callFrame })`));
+    return indented(
+      finish(`${signature.cppInlineBody.name}(globalObject, Bun::Bindgen::ArgumentsInFrame { *callFrame })`),
+    );
   }
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
@@ -785,7 +797,10 @@ function cppCallBody(
     const { value } = cppHeldArgument(type, i);
     const { ctx, lines } = cppContext(argument, i, value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
-    return [...lines, ...cppDeclareConverted(type, `converted${i}`, value, ctx, name, "RETURN_IF_EXCEPTION(scope, {});")];
+    return [
+      ...lines,
+      ...cppDeclareConverted(type, `converted${i}`, value, ctx, name, "RETURN_IF_EXCEPTION(scope, {});"),
+    ];
   };
   const lines = [
     ...signature.args.flatMap(cppDeclareArgument),
@@ -1187,7 +1202,8 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
   const pointer = (isStatic: boolean, member: string, symbol: string) => {
     const guard = guardOfMember(isStatic, member);
     const table = `JS${name}${isStatic ? "Constructor" : "Prototype"}TableValues`;
-    if (guard) records.push(tableEntryRecord(removableFeatures(), table, guard.feature, "Throw", symbol, guard.builtin));
+    if (guard)
+      records.push(tableEntryRecord(removableFeatures(), table, guard.feature, "Throw", symbol, guard.builtin));
     return symbol;
   };
   const functionPointer = (fn: FunctionDefinition) =>
@@ -1503,9 +1519,7 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.
     )
     .join("")}${file.functions
     .map(fn => cppSourceForFunction(fn, guardOfFunction(fn, namespaceOf.get(fn), guards)))
-    .join("")}${file.namespaces
-    .map(namespace => cppSourceForNamespace(namespace, file.origin))
-    .join("")}`;
+    .join("")}${file.namespaces.map(namespace => cppSourceForNamespace(namespace, file.origin)).join("")}`;
 }
 
 /** Included by headers most of the C++ includes, so it holds only what sizes their members. */
@@ -1840,7 +1854,7 @@ const rustImplJsClass = (type: ClassType, toJS: string) => `impl bun_jsc::JsClas
 }`;
 
 /** Thunks call the struct's inherent methods by path. */
-function rustForClass(type: ClassType, scope: RustScope): string {
+function rustForClass(type: ClassType, scope: RustScope, guards: Guards): string {
   const { rustPath, refCounted } = type;
   const receiverArgument = {
     ref: [refCounted ? "wrapped" : "this.payload_ref()"],
@@ -1921,7 +1935,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
   }
 
-  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type)}
+  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type, guardOfClass(type, guards) !== null)}
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
 ${(["memoryCost", "estimatedSize"] as const)
@@ -1953,7 +1967,8 @@ unsafe impl bindgen::JsCreateWithStructure for ${rustPath} {
   }${rustForModule(type)}${thunks}`;
 }
 
-function rustForPayload(type: ClassType): string {
+/** `isGuarded`: the call in C++ stands in a guard that names the function. LTO removes the call of one that it can see does nothing. */
+function rustForPayload(type: ClassType, isGuarded: boolean): string {
   const { rustPath } = type;
   return `
 unsafe extern "C" {
@@ -1980,7 +1995,7 @@ ${type.sharedThis ? rustImplJsClass(type, "bindgen::JsPayload::into_js_wrapper(s
 // A cell is at a multiple of 8, and so is the payload in it.
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 const _: () = assert!(${offsetOfPayload(type)} + size_of::<${rustPath}>() <= ${maxCellSize}, "too large to be stored in its JS object: box its largest field");
-#[unsafe(no_mangle)]
+#[unsafe(no_mangle)]${isGuarded ? "\n#[inline(never)]" : ""}
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe { core::ptr::drop_in_place(payload) }
@@ -2043,8 +2058,8 @@ ${checkedFields.map(field => `    fn ${symbolName(type, `${field}SetCached`)}(th
 `
     : ""
 }${
-  type.sharedThis || type.internalFields.length > 0
-    ? `unsafe extern "C" {
+    type.sharedThis || type.internalFields.length > 0
+      ? `unsafe extern "C" {
     safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;${
       type.sharedThis
         ? `
@@ -2052,8 +2067,8 @@ ${checkedFields.map(field => `    fn ${symbolName(type, `${field}SetCached`)}(th
         : ""
     }
 }`
-    : ""
-}
+      : ""
+  }
 pub mod js_${name} {
     use super::*;
 ${
@@ -2159,7 +2174,7 @@ const rustTraitImports = (file: SchemaFile) =>
 const hasRust = (file: SchemaFile) =>
   file.types.length > 0 || file.functions.some(fn => fn.signatures.some(signature => !signature.cppSymbol));
 
-export function rustForCrate(files: readonly SchemaFile[]): string {
+export function rustForCrate(files: readonly SchemaFile[], guards: Guards): string {
   return (
     banner(null) +
     files
@@ -2190,7 +2205,7 @@ ${indent(
         : type instanceof UnionType
           ? rustForUnion(type, file.origin)
           : type instanceof ClassType
-            ? rustForClass(type, file.origin)
+            ? rustForClass(type, file.origin, guards)
             : rustForDictionary(type as DictionaryType, file.origin),
     )
     .join("") + file.functions.map(fn => rustForFunction(fn, file)).join(""),

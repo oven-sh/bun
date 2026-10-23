@@ -60,7 +60,8 @@ function scanToken(line: string, index: number, location: Location): { token: To
   const integer = matchAt(integerPattern, line, index);
   if (integer !== null) return { token: { kind: "integer", text: integer, location }, end: index + integer.length };
   for (const text of punctuation) {
-    if (line.startsWith(text, index)) return { token: { kind: "punctuation", text, location }, end: index + text.length };
+    if (line.startsWith(text, index))
+      return { token: { kind: "punctuation", text, location }, end: index + text.length };
   }
   throw new SchemaError(location, `unexpected character '${line[index]}'`);
 }
@@ -94,7 +95,8 @@ function trackBracket(token: Token, open: Token[]): void {
   }
   if (!closers.has(token.text)) return;
   const opener = open.pop();
-  if (opener === undefined || closerOf[opener.text] !== token.text) throw new SchemaError(token.location, `unexpected '${token.text}'`);
+  if (opener === undefined || closerOf[opener.text] !== token.text)
+    throw new SchemaError(token.location, `unexpected '${token.text}'`);
 }
 
 export function tokenize(path: string, text: string): Token[][] {
@@ -154,7 +156,8 @@ export class Cursor {
 
   expected(description: string): SchemaError {
     const token = this.peek();
-    if (token === undefined) return new SchemaError(this.location, `expected ${description} at the end of the declaration`);
+    if (token === undefined)
+      return new SchemaError(this.location, `expected ${description} at the end of the declaration`);
     return new SchemaError(token.location, `expected ${description}, found '${token.text}'`);
   }
 

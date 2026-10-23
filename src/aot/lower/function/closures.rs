@@ -65,7 +65,9 @@ pub(super) fn emit_direct_call(
                 operands.extend(captures::collect_capture_values(lowering, key, None));
             }
             EntryParameter::This => {
-                let this = arguments.this.unwrap_or_else(|| lowering.builder.undefined());
+                let this = arguments
+                    .this
+                    .unwrap_or_else(|| lowering.builder.undefined());
                 operands.push(convert::convert(lowering, this, this_type, None));
             }
             EntryParameter::Callee => operands.push(emit_closure(lowering, function, None)),
@@ -103,7 +105,9 @@ fn add_parameter_operands(
         !has_rest_parameter || !parameters.is_empty(),
         "a rest parameter is a declared parameter"
     );
-    let positional = parameters.len().saturating_sub(usize::from(has_rest_parameter));
+    let positional = parameters
+        .len()
+        .saturating_sub(usize::from(has_rest_parameter));
     for (index, &position) in parameters[..positional].iter().enumerate() {
         let value = match values.get(index) {
             Some(&value) => value,
@@ -162,10 +166,7 @@ fn has_own_name(func: &Func) -> bool {
     }
 }
 
-fn find_header_name(
-    file: &FileLowering<'_, '_, '_, '_>,
-    name: PropertyName,
-) -> Option<StringId> {
+fn find_header_name(file: &FileLowering<'_, '_, '_, '_>, name: PropertyName) -> Option<StringId> {
     match name {
         PropertyName::Constant(key) => member::find_function_name(file, key),
         PropertyName::Computed(_) => None,

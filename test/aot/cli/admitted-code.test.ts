@@ -65,7 +65,10 @@ const needsFunctionSource = (option: string) =>
     " because it was built with --no-compile-function-source, so it only runs code that was compiled into it. Rebuild without that flag",
   );
 const runsOnlyCompiledCode = (option: string) =>
-  rejected(option, " because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code");
+  rejected(
+    option,
+    " because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code",
+  );
 const needsInspector = (option: string) => rejected(option, ". Rebuild it with --compile-inspector");
 const alone = { stdout: "ran nothing loaded\n", stderr: "", exitCode: 0, signal: null };
 const preloaded = { stdout: "before\nran preloaded\n", stderr: "", exitCode: 0, signal: null };
@@ -111,7 +114,9 @@ describe.each([
   });
 
   test("rejects the preload of a bunfig.toml", async () => {
-    expect(await started(name, {}, join(folder, "configured"))).toEqual(needsFunctionSource(`"preload" in bunfig.toml`));
+    expect(await started(name, {}, join(folder, "configured"))).toEqual(
+      needsFunctionSource(`"preload" in bunfig.toml`),
+    );
   });
 
   test("rejects the plugins that a bunfig.toml passes to servers", async () => {
@@ -241,7 +246,9 @@ describe("the build", () => {
     ["--obfuscate", "--preload ./before.ts", "--preload"],
   ])("%s rejects --compile-exec-argv=%j", async (flag, execArgv, option) => {
     const { stderr, exitCode } = await build("rejected", ["--aot", flag, "--compile-exec-argv=" + execArgv]);
-    expect(stderr).toContain(`error: ${flag} does not support ${option} in --compile-exec-argv ${onlyRunsCompiledCode}\n`);
+    expect(stderr).toContain(
+      `error: ${flag} does not support ${option} in --compile-exec-argv ${onlyRunsCompiledCode}\n`,
+    );
     expect(exitCode).toBe(1);
   });
 
@@ -250,7 +257,9 @@ describe("the build", () => {
     ["-e 1", "--eval"],
   ])("--aot alone rejects --compile-exec-argv=%j", async (execArgv, option) => {
     const { stderr, exitCode } = await build("rejected", ["--aot", "--compile-exec-argv=" + execArgv]);
-    expect(stderr).toContain(`error: --aot does not support ${option} in --compile-exec-argv ${onlyRunsCompiledCode}\n`);
+    expect(stderr).toContain(
+      `error: --aot does not support ${option} in --compile-exec-argv ${onlyRunsCompiledCode}\n`,
+    );
     expect(exitCode).toBe(1);
   });
 
@@ -262,7 +271,9 @@ describe("the build", () => {
   test("--no-compile-function-source is the flag in the message where --obfuscate is passed too", async () => {
     const flags = ["--aot", "--obfuscate", "--no-compile-function-source", "--compile-exec-argv=--preload ./before.ts"];
     const { stderr, exitCode } = await build("rejected", flags);
-    expect(stderr).toContain(`error: --no-compile-function-source does not support --preload in --compile-exec-argv ${onlyRunsCompiledCode}\n`);
+    expect(stderr).toContain(
+      `error: --no-compile-function-source does not support --preload in --compile-exec-argv ${onlyRunsCompiledCode}\n`,
+    );
     expect(exitCode).toBe(1);
   });
 

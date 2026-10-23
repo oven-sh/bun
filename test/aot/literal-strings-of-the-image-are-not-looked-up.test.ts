@@ -24,7 +24,9 @@ const declarations = Array.from({ length: groups }, (_, group) => {
 });
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "main.ts": `${declarations.join("")}
     const made = process.argv[2] === "made";
     const pass = (text: string): string => made ? text.slice(0, 4) + text.slice(4) : text;
@@ -43,15 +45,30 @@ async function measure() {
   using dir = tempDir("aot-literal-strings-of-the-image", files);
   const cwd = String(dir);
   const executable = join(cwd, "main" + (isWindows ? ".exe" : ""));
-  const build = await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], cwd, bunEnv);
-  expect({ errors: build.stderr.split("\n").filter(line => line.includes("error")), exitCode: build.exitCode }).toEqual({ errors: [], exitCode: 0 });
+  const build = await spawned(
+    [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+    cwd,
+    bunEnv,
+  );
+  expect({ errors: build.stderr.split("\n").filter(line => line.includes("error")), exitCode: build.exitCode }).toEqual(
+    { errors: [], exitCode: 0 },
+  );
 
   const run = async (kind: string) => {
     const path = join(cwd, "counts-" + kind);
     const ran = await spawned([executable, kind], cwd, { ...bunEnv, BUN_JSC_aotCountsPath: path });
-    expect(ran).toEqual({ stdout: "y".repeat(rounds) + " " + 2 * rounds * namesInGroup + "\n", stderr: "", exitCode: 0, signal: null });
-    const entries = readFileSync(path, "utf8").split("\n").map(line => line.split("\t"));
-    return entries.filter(([, name]) => name === "operation:operationAOTToLiteralString").reduce((sum, [count]) => sum + Number(count), 0);
+    expect(ran).toEqual({
+      stdout: "y".repeat(rounds) + " " + 2 * rounds * namesInGroup + "\n",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+    const entries = readFileSync(path, "utf8")
+      .split("\n")
+      .map(line => line.split("\t"));
+    return entries
+      .filter(([, name]) => name === "operation:operationAOTToLiteralString")
+      .reduce((sum, [count]) => sum + Number(count), 0);
   };
   return { held: await run("held"), made: await run("made") };
 }

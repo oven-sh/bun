@@ -215,7 +215,10 @@ export function resolveCondition(
 ): ModelCondition | null {
   if ("buildAdmitsRuntimeCode" in condition) return { ...conditionOnNoOperand, buildAdmitsRuntimeCode: true };
   if ("objectNobodyKnowsIsWritten" in condition) {
-    builder.problems.add(source, `${builtin.text}: only loads and callsFunctions can depend on the stores of the program`);
+    builder.problems.add(
+      source,
+      `${builtin.text}: only loads and callsFunctions can depend on the stores of the program`,
+    );
     return null;
   }
   if ("callRunsOtherCode" in condition) {
@@ -321,7 +324,8 @@ function findHolderFeatureUses(builder: ModelBuilder, builtin: ModelBuiltin): re
     const { holder } = owner;
     const isCovered =
       holder.kind !== "Prototype" ||
-      (holder.holder !== null && writtenColumn(builder, holder.holder, "prototypeUsesFeature").some(({ value }) => value));
+      (holder.holder !== null &&
+        writtenColumn(builder, holder.holder, "prototypeUsesFeature").some(({ value }) => value));
     if (!isCovered) return [];
     if (holder.attachments.featureUses.length > 0) return holder.attachments.featureUses;
   }
@@ -404,8 +408,11 @@ function mergeExports(
 ): WrittenExportRead[] | null {
   if (left === null || right === null) return null;
   const reads = new Map<ModelName, WrittenHostUses>();
-  for (const { name, uses } of [...left, ...right]) reads.set(name, mergeWrittenHostUses(reads.get(name) ?? "Unsaid", uses));
-  return Array.from(reads, ([name, uses]) => ({ name, uses })).sort((first, second) => compareNames(first.name, second.name));
+  for (const { name, uses } of [...left, ...right])
+    reads.set(name, mergeWrittenHostUses(reads.get(name) ?? "Unsaid", uses));
+  return Array.from(reads, ([name, uses]) => ({ name, uses })).sort((first, second) =>
+    compareNames(first.name, second.name),
+  );
 }
 
 const readsAtNativeSite = (builder: ModelBuilder, texts: readonly string[]): WrittenExportRead[] =>
@@ -483,7 +490,11 @@ function resolveHostUsesAt(
 }
 
 // null: a reference did not resolve, and the problem is reported.
-function resolveHostUses(context: AttachmentContext, specs: readonly HostUseSpec[], source: Source): ModelHostUse[] | null {
+function resolveHostUses(
+  context: AttachmentContext,
+  specs: readonly HostUseSpec[],
+  source: Source,
+): ModelHostUse[] | null {
   return resolveHostUsesAt(context, specs, [], source);
 }
 
@@ -573,7 +584,8 @@ function collectNativeCalls(builder: ModelBuilder): NativeCalls {
       for (const entry of onBehalfOf) {
         const builtin = resolveObject(builder, typeof entry === "string" ? entry : entry.path, source);
         if (builtin === null) continue;
-        const value = typeof entry === "string" ? calls : calls.map(called => ({ ...calledFunctionOf(called), when: entry.when }));
+        const value =
+          typeof entry === "string" ? calls : calls.map(called => ({ ...calledFunctionOf(called), when: entry.when }));
         byBuiltin.set(builtin, [...(byBuiltin.get(builtin) ?? []), { value, source }]);
       }
     }
@@ -605,7 +617,8 @@ function buildCalledFunctions(context: AttachmentContext, builtin: ModelBuiltin)
   for (const { value, source } of written) {
     for (const spec of value.map(calledFunctionOf)) {
       const called = builder.resolveFunction(spec.function, source);
-      const condition = spec.when === undefined ? null : resolveDependencyCondition(builder, builtin, spec.when, source);
+      const condition =
+        spec.when === undefined ? null : resolveDependencyCondition(builder, builtin, spec.when, source);
       const uses = spec.uses === undefined ? null : resolveHostUses(context, spec.uses, source);
       if (called === null || (spec.when !== undefined && condition === null)) continue;
       if (spec.uses !== undefined && uses === null) continue;
@@ -765,7 +778,10 @@ function findFunctionObjectCode(
   if (builtin.kind === "NativeBinding") return null;
   const length = builder.lengthOf(builtin);
   if (length !== null) return { symbol, length, header: header ?? null };
-  builder.problems.add(source, `${builtin.text} names the native code of its function object and not the length of that function`);
+  builder.problems.add(
+    source,
+    `${builtin.text} names the native code of its function object and not the length of that function`,
+  );
   return null;
 }
 
@@ -856,7 +872,8 @@ function buildStartup(context: AttachmentContext): ModelStartup {
   const namesOfMethodsCallingLoads = new Set<ModelName>();
   const moduleLoaderFunctions = new Set<ModelFunction>();
   for (const { value: startup, source } of declarationsOf(builder, "Startup")) {
-    for (const name of startup.namesOfMethodsCallingLoads) namesOfMethodsCallingLoads.add(builder.internComponent(name));
+    for (const name of startup.namesOfMethodsCallingLoads)
+      namesOfMethodsCallingLoads.add(builder.internComponent(name));
     for (const specifier of startup.modules) {
       const module = builder.resolveModule(specifier, source);
       if (module === null) continue;
@@ -882,7 +899,8 @@ function buildStartup(context: AttachmentContext): ModelStartup {
     for (const spec of startup.functionsCalledWithLoads.map(calledFunctionOf)) {
       const resolved = resolveOnce(spec.function);
       const uses = spec.uses === undefined ? null : resolveHostUses(context, spec.uses, source);
-      if (spec.when !== undefined) builder.problems.add(source, `${spec.function.name}: a start-up function has no condition`);
+      if (spec.when !== undefined)
+        builder.problems.add(source, `${spec.function.name}: a start-up function has no condition`);
       if (resolved === null || (spec.uses !== undefined && uses === null)) continue;
       functionsCalledWithLoads.set(resolved, { function: resolved, condition: null, uses });
     }
@@ -895,7 +913,9 @@ function buildStartup(context: AttachmentContext): ModelStartup {
   return {
     modules: [...modules].sort(compareIds),
     loads: mergeModuleLoads(loads),
-    functionsCalledWithLoads: [...functionsCalledWithLoads.values()].sort((left, right) => compareIds(left.function, right.function)),
+    functionsCalledWithLoads: [...functionsCalledWithLoads.values()].sort((left, right) =>
+      compareIds(left.function, right.function),
+    ),
     namesOfMethodsCallingLoads: [...namesOfMethodsCallingLoads].sort(compareNames),
     moduleLoaderFunctions: [...moduleLoaderFunctions].sort(compareIds),
   };
@@ -911,7 +931,8 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
     }));
     const described = declared.function === null ? null : builder.resolve(declared.function, source);
     const prototype = declared.prototype === null ? null : resolveObject(builder, declared.prototype, source);
-    if ((declared.function !== null && described === null) || (declared.prototype !== null && prototype === null)) continue;
+    if ((declared.function !== null && described === null) || (declared.prototype !== null && prototype === null))
+      continue;
     objects.push({
       cell: builder.internName(declared.cell, "Text"),
       function: described,
@@ -947,7 +968,9 @@ function buildHostMethodCalls(context: AttachmentContext): ModelHostMethodCall[]
     .flatMap(({ value: declared, source }) => {
       const call = resolveHostCall(context, declared.call, source);
       if (call === null) return [];
-      return [{ name: builder.internComponent(declared.name), cell: builder.internName(declared.cell, "Text"), call, source }];
+      return [
+        { name: builder.internComponent(declared.name), cell: builder.internName(declared.cell, "Text"), call, source },
+      ];
     })
     .sort((left, right) => compareNames(left.name, right.name) || compareNames(left.cell, right.cell));
 }

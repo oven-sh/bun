@@ -44,10 +44,7 @@ pub(super) fn entries_of<K: Copy + Ord, V>(list: &[(K, V)], key: K) -> &[(K, V)]
     &list[start..start + length]
 }
 
-pub(super) fn bindings_of<K: Copy + Ord>(
-    list: &[(K, Binding)],
-    key: K,
-) -> SmallVec<[Binding; 4]> {
+pub(super) fn bindings_of<K: Copy + Ord>(list: &[(K, Binding)], key: K) -> SmallVec<[Binding; 4]> {
     entries_of(list, key).iter().map(|entry| entry.1).collect()
 }
 

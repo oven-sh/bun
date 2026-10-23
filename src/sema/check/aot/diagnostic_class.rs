@@ -152,7 +152,11 @@ mod tests {
         assert_eq!(DiagnosticClass::of_code(6133), DiagnosticClass::Style);
         // They say nothing about a type: a condition that is always true, `override` where nothing is overridden.
         for code in [1313, 2774, 2869, 2872, 4112, 4113] {
-            assert_eq!(DiagnosticClass::of_code(code), DiagnosticClass::Style, "{code}");
+            assert_eq!(
+                DiagnosticClass::of_code(code),
+                DiagnosticClass::Style,
+                "{code}"
+            );
         }
         for code in [2304, 2307, 2550, 2552, 2663, 2882, 7016, 18004] {
             assert_eq!(
@@ -166,7 +170,11 @@ mod tests {
             DiagnosticClass::TypeScriptGrammar
         );
         for code in [1203, 1309, 1343, 1479, 1544, 2354, 2725, 2854, 6142, 17004] {
-            assert_eq!(DiagnosticClass::of_code(code), DiagnosticClass::EmittedOutput, "{code}");
+            assert_eq!(
+                DiagnosticClass::of_code(code),
+                DiagnosticClass::EmittedOutput,
+                "{code}"
+            );
         }
     }
 }

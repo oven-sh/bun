@@ -321,9 +321,13 @@ impl Shape {
             Shape::DisposeResourcesAwaitsEveryAsyncEntry => Helper::DisposeResources,
             Shape::DisposeResourcesAwaitsOnceForEmptyAsyncEntries => Helper::DisposeResources,
             Shape::DisposeResourcesFactoryAwaitsEveryAsyncEntry => Helper::DisposeResources,
-            Shape::DisposeResourcesFactoryAwaitsOnceForEmptyAsyncEntries => Helper::DisposeResources,
+            Shape::DisposeResourcesFactoryAwaitsOnceForEmptyAsyncEntries => {
+                Helper::DisposeResources
+            }
             Shape::SuppressedErrorBuildsPlainError => Helper::SuppressedError,
-            Shape::RewriteRelativeImportExtensionMapsTsToJs => Helper::RewriteRelativeImportExtension,
+            Shape::RewriteRelativeImportExtensionMapsTsToJs => {
+                Helper::RewriteRelativeImportExtension
+            }
             Shape::ThrowTypeErrorWithMessage => Helper::ThrowTypeError,
             Shape::AccessCheckThrows => Helper::AccessCheck,
             Shape::AccessCheckThrowsThroughThrowTypeError => Helper::AccessCheck,
@@ -470,31 +474,62 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::ImportStarBindsDefaultToo,
         text: "function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);\n__setModuleDefault(result, mod);\nreturn result;\n}",
-        references: &[("__createBinding", Reference::Helper(Helper::CreateBinding)), ("__setModuleDefault", Reference::Helper(Helper::SetModuleDefault))],
+        references: &[
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
         origin: "tslib 1.12.0, 2.0.0",
     },
     PublishedFunction {
         shape: Shape::ImportStarBindsOwnNamesAskingObjectHasOwnProperty,
         text: "function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k in mod) if (k !== \"default\" && Object.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);\n__setModuleDefault(result, mod);\nreturn result;\n}",
-        references: &[("__createBinding", Reference::Helper(Helper::CreateBinding)), ("__setModuleDefault", Reference::Helper(Helper::SetModuleDefault))],
+        references: &[
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
         origin: "typescript 3.9",
     },
     PublishedFunction {
         shape: Shape::ImportStarBindsOwnNames,
         text: "function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k in mod) if (k !== \"default\" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);\n__setModuleDefault(result, mod);\nreturn result;\n}",
-        references: &[("__createBinding", Reference::Helper(Helper::CreateBinding)), ("__setModuleDefault", Reference::Helper(Helper::SetModuleDefault))],
+        references: &[
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
         origin: "tslib 2.0.1 to 2.8.0; typescript 4.0 to 5.6",
     },
     PublishedFunction {
         shape: Shape::ImportStarBindsOwnPropertyNames,
         text: "function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== \"default\") __createBinding(result, mod, k[i]);\n__setModuleDefault(result, mod);\nreturn result;\n}",
-        references: &[("ownKeys", Reference::Helper(Helper::OwnPropertyNames)), ("__createBinding", Reference::Helper(Helper::CreateBinding)), ("__setModuleDefault", Reference::Helper(Helper::SetModuleDefault))],
+        references: &[
+            ("ownKeys", Reference::Helper(Helper::OwnPropertyNames)),
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
         origin: "tslib 2.8.1",
     },
     PublishedFunction {
         shape: Shape::ImportStarFactoryBindsOwnPropertyNames,
         text: "function () {\nvar ownKeys = function(o) {\nownKeys = Object.getOwnPropertyNames || function (o) {\nvar ar = [];\nfor (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;\nreturn ar;\n};\nreturn ownKeys(o);\n};\nreturn function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== \"default\") __createBinding(result, mod, k[i]);\n__setModuleDefault(result, mod);\nreturn result;\n};\n}",
-        references: &[("__createBinding", Reference::Helper(Helper::CreateBinding)), ("__setModuleDefault", Reference::Helper(Helper::SetModuleDefault))],
+        references: &[
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
         origin: "typescript 5.7 to 6.0",
     },
     PublishedFunction {
@@ -944,13 +979,19 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::DisposeResourcesAwaitsEveryAsyncEntry,
         text: "function (env) {\nfunction fail(e) {\nenv.error = env.hasError ? new _SuppressedError(e, env.error, \"An error was suppressed during disposal.\") : e;\nenv.hasError = true;\n}\nfunction next() {\nwhile (env.stack.length) {\nvar rec = env.stack.pop();\ntry {\nvar result = rec.dispose && rec.dispose.call(rec.value);\nif (rec.async) return Promise.resolve(result).then(next, function(e) { fail(e); return next(); });\n}\ncatch (e) {\nfail(e);\n}\n}\nif (env.hasError) throw env.error;\n}\nreturn next();\n}",
-        references: &[("_SuppressedError", Reference::Helper(Helper::SuppressedError))],
+        references: &[(
+            "_SuppressedError",
+            Reference::Helper(Helper::SuppressedError),
+        )],
         origin: "tslib 2.6.0 to 2.6.3",
     },
     PublishedFunction {
         shape: Shape::DisposeResourcesAwaitsOnceForEmptyAsyncEntries,
         text: "function (env) {\nfunction fail(e) {\nenv.error = env.hasError ? new _SuppressedError(e, env.error, \"An error was suppressed during disposal.\") : e;\nenv.hasError = true;\n}\nvar r, s = 0;\nfunction next() {\nwhile (r = env.stack.pop()) {\ntry {\nif (!r.async && s === 1) return s = 0, env.stack.push(r), Promise.resolve().then(next);\nif (r.dispose) {\nvar result = r.dispose.call(r.value);\nif (r.async) return s |= 2, Promise.resolve(result).then(next, function(e) { fail(e); return next(); });\n}\nelse s |= 1;\n}\ncatch (e) {\nfail(e);\n}\n}\nif (s === 1) return env.hasError ? Promise.reject(env.error) : Promise.resolve();\nif (env.hasError) throw env.error;\n}\nreturn next();\n}",
-        references: &[("_SuppressedError", Reference::Helper(Helper::SuppressedError))],
+        references: &[(
+            "_SuppressedError",
+            Reference::Helper(Helper::SuppressedError),
+        )],
         origin: "tslib 2.7.0 to 2.8.1",
     },
     PublishedFunction {
@@ -1064,79 +1105,172 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::PrivateWrapperGivesAccessor,
         text: "(obj, member, setter, getter) => {\nreturn {\nset _(value) {\n__privateSet(obj, member, value, setter);\n},\nget _() {\nreturn __privateGet(obj, member, getter);\n}\n};\n}",
-        references: &[("__privateSet", Reference::Helper(Helper::PrivateSet)), ("__privateGet", Reference::Helper(Helper::PrivateGet))],
+        references: &[
+            ("__privateSet", Reference::Helper(Helper::PrivateSet)),
+            ("__privateGet", Reference::Helper(Helper::PrivateGet)),
+        ],
         origin: "esbuild 0.12 to 0.28",
     },
     PublishedFunction {
         shape: Shape::DefineNormalPropertyDefinesWhatIsThere,
         text: "(obj, key, value) => key in obj ? __defProp(obj, key, {enumerable: true, configurable: true, writable: true, value}) : obj[key] = value",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "esbuild 0.9 to 0.28; bun 1.3.10 to 1.4.3",
     },
     PublishedFunction {
         shape: Shape::SpreadValuesDefinesOwnEnumerableKeys,
         text: "(a, b) => {\nfor (var prop in b || (b = {}))\nif (__hasOwnProp.call(b, prop))\n__defNormalProp(a, prop, b[prop]);\nif (__getOwnPropSymbols)\nfor (var prop of __getOwnPropSymbols(b)) {\nif (__propIsEnum.call(b, prop))\n__defNormalProp(a, prop, b[prop]);\n}\nreturn a;\n}",
-        references: &[("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defNormalProp", Reference::Helper(Helper::DefineNormalProperty)), ("__getOwnPropSymbols", Reference::Global(&["Object", "getOwnPropertySymbols"])), ("__propIsEnum", Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]))],
+        references: &[
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defNormalProp",
+                Reference::Helper(Helper::DefineNormalProperty),
+            ),
+            (
+                "__getOwnPropSymbols",
+                Reference::Global(&["Object", "getOwnPropertySymbols"]),
+            ),
+            (
+                "__propIsEnum",
+                Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]),
+            ),
+        ],
         origin: "esbuild 0.9 to 0.28",
     },
     PublishedFunction {
         shape: Shape::SpreadValuesDefinesOwnEnumerableKeys,
         text: "(a, b) => {\nfor (var prop in b || (b = {}))\n__hasOwnProp.call(b, prop) && __defNormalProp(a, prop, b[prop]);\nif (__getOwnPropSymbols)\nfor (var prop of __getOwnPropSymbols(b))\n__propIsEnum.call(b, prop) && __defNormalProp(a, prop, b[prop]);\nreturn a;\n}",
-        references: &[("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defNormalProp", Reference::Helper(Helper::DefineNormalProperty)), ("__getOwnPropSymbols", Reference::Global(&["Object", "getOwnPropertySymbols"])), ("__propIsEnum", Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]))],
+        references: &[
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defNormalProp",
+                Reference::Helper(Helper::DefineNormalProperty),
+            ),
+            (
+                "__getOwnPropSymbols",
+                Reference::Global(&["Object", "getOwnPropertySymbols"]),
+            ),
+            (
+                "__propIsEnum",
+                Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]),
+            ),
+        ],
         origin: "esbuild 0.9 to 0.28",
     },
     PublishedFunction {
         shape: Shape::SpreadPropertiesDefinesOwnDescriptors,
         text: "(a, b) => __defProps(a, __getOwnPropDescs(b))",
-        references: &[("__defProps", Reference::Global(&["Object", "defineProperties"])), ("__getOwnPropDescs", Reference::Global(&["Object", "getOwnPropertyDescriptors"]))],
+        references: &[
+            (
+                "__defProps",
+                Reference::Global(&["Object", "defineProperties"]),
+            ),
+            (
+                "__getOwnPropDescs",
+                Reference::Global(&["Object", "getOwnPropertyDescriptors"]),
+            ),
+        ],
         origin: "esbuild 0.11 to 0.28",
     },
     PublishedFunction {
         shape: Shape::RestWalksSymbolsWithForOf,
         text: "(source, exclude) => {\nvar target = {};\nfor (var prop in source)\nif (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)\ntarget[prop] = source[prop];\nif (source != null && __getOwnPropSymbols)\nfor (var prop of __getOwnPropSymbols(source)) {\nif (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))\ntarget[prop] = source[prop];\n}\nreturn target;\n}",
-        references: &[("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__getOwnPropSymbols", Reference::Global(&["Object", "getOwnPropertySymbols"])), ("__propIsEnum", Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]))],
+        references: &[
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__getOwnPropSymbols",
+                Reference::Global(&["Object", "getOwnPropertySymbols"]),
+            ),
+            (
+                "__propIsEnum",
+                Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]),
+            ),
+        ],
         origin: "esbuild 0.8 to 0.28",
     },
     PublishedFunction {
         shape: Shape::RestWalksSymbolsWithForOf,
         text: "(source, exclude) => {\nvar target = {};\nfor (var prop in source)\n__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0 && (target[prop] = source[prop]);\nif (source != null && __getOwnPropSymbols)\nfor (var prop of __getOwnPropSymbols(source))\nexclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop) && (target[prop] = source[prop]);\nreturn target;\n}",
-        references: &[("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__getOwnPropSymbols", Reference::Global(&["Object", "getOwnPropertySymbols"])), ("__propIsEnum", Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]))],
+        references: &[
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__getOwnPropSymbols",
+                Reference::Global(&["Object", "getOwnPropertySymbols"]),
+            ),
+            (
+                "__propIsEnum",
+                Reference::Global(&["Object", "prototype", "propertyIsEnumerable"]),
+            ),
+        ],
         origin: "esbuild 0.8 to 0.28",
     },
     PublishedFunction {
         shape: Shape::PublicFieldDefinesAndReturnsValue,
         text: "(obj, key, value) => {\n__defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value);\nreturn value;\n}",
-        references: &[("__defNormalProp", Reference::Helper(Helper::DefineNormalProperty))],
+        references: &[(
+            "__defNormalProp",
+            Reference::Helper(Helper::DefineNormalProperty),
+        )],
         origin: "esbuild 0.18 to 0.20",
     },
     PublishedFunction {
         shape: Shape::PublicFieldDefinesAndReturnsValue,
         text: "(obj, key, value) => (__defNormalProp(obj, typeof key != \"symbol\" ? key + \"\" : key, value), value)",
-        references: &[("__defNormalProp", Reference::Helper(Helper::DefineNormalProperty))],
+        references: &[(
+            "__defNormalProp",
+            Reference::Helper(Helper::DefineNormalProperty),
+        )],
         origin: "esbuild 0.18 to 0.20",
     },
     PublishedFunction {
         shape: Shape::PublicFieldDefines,
         text: "(obj, key, value) => __defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value)",
-        references: &[("__defNormalProp", Reference::Helper(Helper::DefineNormalProperty))],
+        references: &[(
+            "__defNormalProp",
+            Reference::Helper(Helper::DefineNormalProperty),
+        )],
         origin: "esbuild 0.21 to 0.28; bun 1.3.10 to 1.4.3",
     },
     PublishedFunction {
         shape: Shape::KeepNameDefinesName,
         text: "(target, value) => __defProp(target, \"name\", {value, configurable: true})",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "esbuild 0.8 to 0.28; rolldown 1.0.0-beta.18 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::MarkAsModuleDefinesFlag,
         text: "(target) => __defProp(target, \"__esModule\", {value: true})",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "esbuild 0.8 to 0.13",
     },
     PublishedFunction {
         shape: Shape::ExportDefinesGetters,
         text: "(target, all) => {\nfor (var name in all)\n__defProp(target, name, {get: all[name], enumerable: true});\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "esbuild 0.8 to 0.11, 0.14 to 0.28; rolldown 1.0.0-beta.18 to 1.0.0-beta.35, 1.2.12",
     },
     PublishedFunction {
@@ -1148,19 +1282,34 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::ExportMarksModuleAndDefinesGetters,
         text: "(target, all) => {\n__markAsModule(target);\nfor (var name in all)\n__defProp(target, name, { get: all[name], enumerable: true });\n}",
-        references: &[("__markAsModule", Reference::Helper(Helper::MarkAsModule)), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            ("__markAsModule", Reference::Helper(Helper::MarkAsModule)),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "esbuild 0.12 to 0.13",
     },
     PublishedFunction {
         shape: Shape::ExportDefinesGettersAndSettersOfTheLastName,
         text: "(target, all) => {\nfor (var name in all)\n__defProp(target, name, {\nget: all[name],\nenumerable: true,\nconfigurable: true,\nset: (newValue) => (all[name] = () => newValue),\n});\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "bun 1.0.0 to 1.3.9",
     },
     PublishedFunction {
         shape: Shape::ExportDefinesGettersAndBoundSetters,
         text: "(target, all) => {\nfor (var name in all)\n__defProp(target, name, {\nget: all[name],\nenumerable: true,\nconfigurable: true,\nset: __exportSetter.bind(all, name),\n});\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__exportSetter", Reference::Helper(Helper::ExportSetter))],
+        references: &[
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            ("__exportSetter", Reference::Helper(Helper::ExportSetter)),
+        ],
         origin: "bun 1.3.10 to 1.4.3",
     },
     PublishedFunction {
@@ -1184,61 +1333,175 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::ExportAllDefinesGetters,
         text: "(all) => {\nlet target = {};\nfor (var name in all) __defProp(target, name, {\nget: all[name],\nenumerable: true\n});\nreturn target;\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "rolldown between 1.0.0-beta.35 and 1.0.0-beta.51",
     },
     PublishedFunction {
         shape: Shape::ExportAllTagsModuleWhenAsked,
         text: "(all, symbols) => {\nlet target = {};\nfor (var name in all) {\n__defProp(target, name, { get: all[name], enumerable: true });\n}\nif (symbols) {\n__defProp(target, Symbol.toStringTag, { value: 'Module' });\n}\nreturn target;\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "rolldown 1.0.0-beta.51 to 1.0.0-rc.1",
     },
     PublishedFunction {
         shape: Shape::ExportAllTagsModuleUnlessRefused,
         text: "(all, no_symbols) => {\nlet target = {};\nfor (var name in all) {\n__defProp(target, name, { get: all[name], enumerable: true });\n}\nif (!no_symbols) {\n__defProp(target, Symbol.toStringTag, { value: 'Module' });\n}\nreturn target;\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "rolldown 1.0.0-rc.4 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::ExportAllTagsModuleUnlessRefused,
         text: "(all, no_symbols) => {\nlet target = {};\nfor (var name in all) __defProp(target, name, {\nget: all[name],\nenumerable: !0\n});\nreturn no_symbols || __defProp(target, Symbol.toStringTag, { value: \"Module\" }), target;\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[(
+            "__defProp",
+            Reference::Global(&["Object", "defineProperty"]),
+        )],
         origin: "rolldown 1.0.0-rc.4 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::CopyPropertiesDefinesGetters,
         text: "(to, from, except, desc) => {\nif (from && typeof from === \"object\" || typeof from === \"function\") {\nfor (let key of __getOwnPropNames(from))\nif (!__hasOwnProp.call(to, key) && key !== except)\n__defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n}\nreturn to;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "esbuild 0.14 to 0.28",
     },
     PublishedFunction {
         shape: Shape::CopyPropertiesDefinesGetters,
         text: "(to, from, except, desc) => {\nif (from && typeof from == \"object\" || typeof from == \"function\")\nfor (let key of __getOwnPropNames(from))\n!__hasOwnProp.call(to, key) && key !== except && __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\nreturn to;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "esbuild 0.14 to 0.28",
     },
     PublishedFunction {
         shape: Shape::CopyPropertiesDefinesBoundGetters,
         text: "(to, from, except, desc) => {\nif (from && typeof from === 'object' || typeof from === 'function')\nfor (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {\nkey = keys[i]\nif (!__hasOwnProp.call(to, key) && key !== except)\n__defProp(to, key, { get: (k => from[k]).bind(null, key), enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable })\n}\nreturn to\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "rolldown 1.0.0-beta.18 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::CopyPropertiesDefinesBoundGetters,
         text: "(to, from, except, desc) => {\nif (from && typeof from == \"object\" || typeof from == \"function\") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) key = keys[i], !__hasOwnProp.call(to, key) && key !== except && __defProp(to, key, {\nget: ((k) => from[k]).bind(null, key),\nenumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable\n});\nreturn to;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "rolldown 1.0.0-beta.18 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::ReExportDefinesGettersReturnsTarget,
         text: "(target, module2, desc) => {\nif (module2 && typeof module2 === \"object\" || typeof module2 === \"function\") {\nfor (let key of __getOwnPropNames(module2))\nif (!__hasOwnProp.call(target, key) && key !== \"default\")\n__defProp(target, key, {get: () => module2[key], enumerable: !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable});\n}\nreturn target;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "esbuild 0.8 to 0.13",
     },
     PublishedFunction {
         shape: Shape::ReExportDefinesGettersReturnsTarget,
         text: "(target, module2, desc) => {\nif (module2 && typeof module2 == \"object\" || typeof module2 == \"function\")\nfor (let key of __getOwnPropNames(module2))\n!__hasOwnProp.call(target, key) && key !== \"default\" && __defProp(target, key, {get: () => module2[key], enumerable: !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable});\nreturn target;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "esbuild 0.8 to 0.13",
     },
     PublishedFunction {
@@ -1250,91 +1513,290 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::ReExportThroughCopyPropertiesTagsModule,
         text: "(target, mod, secondTarget, symbols) => {\nif (symbols) {\n__defProp(target, Symbol.toStringTag, { value: 'Module' });\nsecondTarget &&\n__defProp(secondTarget, Symbol.toStringTag, { value: 'Module' });\n}\n__copyProps(target, mod, 'default'),\nsecondTarget && __copyProps(secondTarget, mod, 'default');\n}",
-        references: &[("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__copyProps", Reference::Helper(Helper::CopyProperties))],
+        references: &[
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+        ],
         origin: "rolldown 1.0.0-beta.51",
     },
     PublishedFunction {
         shape: Shape::ReExportDefinesEnumerableGetters,
         text: "(target, mod, secondTarget) => {\nfor (let key of __getOwnPropNames(mod))\nif (!__hasOwnProp.call(target, key) && key !== \"default\")\n__defProp(target, key, {\nget: () => mod[key],\nenumerable: true,\n});\nif (secondTarget) {\nfor (let key of __getOwnPropNames(mod))\nif (!__hasOwnProp.call(secondTarget, key) && key !== \"default\")\n__defProp(secondTarget, key, {\nget: () => mod[key],\nenumerable: true,\n});\nreturn secondTarget;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "bun 1.0.0 to 1.3.9",
     },
     PublishedFunction {
         shape: Shape::ReExportDefinesBoundGetters,
         text: "(target, mod, secondTarget) => {\nvar keys = __getOwnPropNames(mod);\nfor (let key of keys)\nif (!__hasOwnProp.call(target, key) && key !== \"default\")\n__defProp(target, key, {\nget: __accessProp.bind(mod, key),\nenumerable: true,\n});\nif (secondTarget) {\nfor (let key of keys)\nif (!__hasOwnProp.call(secondTarget, key) && key !== \"default\")\n__defProp(secondTarget, key, {\nget: __accessProp.bind(mod, key),\nenumerable: true,\n});\nreturn secondTarget;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__accessProp", Reference::Helper(Helper::AccessProperty))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            ("__accessProp", Reference::Helper(Helper::AccessProperty)),
+        ],
         origin: "bun 1.3.10 to 1.3.14",
     },
     PublishedFunction {
         shape: Shape::ReExportDefinesBoundGettersOfObjects,
         text: "(target, mod, secondTarget) => {\nvar keys = (mod && typeof mod === \"object\") || typeof mod === \"function\" ? __getOwnPropNames(mod) : [];\nfor (let key of keys)\nif (!__hasOwnProp.call(target, key) && key !== \"default\")\n__defProp(target, key, {\nget: __accessProp.bind(mod, key),\nenumerable: true,\n});\nif (secondTarget) {\nfor (let key of keys)\nif (!__hasOwnProp.call(secondTarget, key) && key !== \"default\")\n__defProp(secondTarget, key, {\nget: __accessProp.bind(mod, key),\nenumerable: true,\n});\nreturn secondTarget;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__accessProp", Reference::Helper(Helper::AccessProperty))],
+        references: &[
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            ("__accessProp", Reference::Helper(Helper::AccessProperty)),
+        ],
         origin: "bun 1.4.0 to 1.4.3",
     },
     PublishedFunction {
         shape: Shape::ToModuleBindsDefaultOfEsModules,
         text: "(module2) => {\nreturn __exportStar(__markAsModule(__defProp(module2 != null ? __create(__getProtoOf(module2)) : {}, \"default\", module2 && module2.__esModule && \"default\" in module2 ? {get: () => module2.default, enumerable: true} : {value: module2, enumerable: true})), module2);\n}",
-        references: &[("__exportStar", Reference::Helper(Helper::ReExport)), ("__markAsModule", Reference::Helper(Helper::MarkAsModule)), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"]))],
+        references: &[
+            ("__exportStar", Reference::Helper(Helper::ReExport)),
+            ("__markAsModule", Reference::Helper(Helper::MarkAsModule)),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+        ],
         origin: "esbuild 0.8 to 0.13",
     },
     PublishedFunction {
         shape: Shape::ToEsmThroughCopyProperties,
         text: "(mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(\nisNodeMode || !mod || !mod.__esModule ? __defProp(target, \"default\", { value: mod, enumerable: true }) : target,\nmod\n))",
-        references: &[("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"])), ("__copyProps", Reference::Helper(Helper::CopyProperties)), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "esbuild 0.14 to 0.28; rolldown 1.0.0-beta.18 to 1.2.0",
     },
     PublishedFunction {
         shape: Shape::ToEsmThroughCopyProperties,
         text: "(mod, isNodeMode, target) => (target = mod == null ? {} : __create(__getProtoOf(mod)), __copyProps(isNodeMode || !mod || !mod.__esModule ? __defProp(target, \"default\", {\nvalue: mod,\nenumerable: !0\n}) : target, mod))",
-        references: &[("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"])), ("__copyProps", Reference::Helper(Helper::CopyProperties)), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "rolldown 1.0.0-beta.18 to 1.2.0",
     },
     PublishedFunction {
         shape: Shape::ToEsmThroughCopyPropertiesAsksForOwnDefault,
         text: "(mod, isNodeMode, target) => (\n(target = mod != null ? __create(__getProtoOf(mod)) : {}),\n__copyProps(\nisNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, 'default')\n? __defProp(target, 'default', { value: mod, enumerable: true })\n: target,\nmod,\n)\n)",
-        references: &[("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"])), ("__copyProps", Reference::Helper(Helper::CopyProperties)), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "rolldown 1.2.4 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::ToEsmThroughCopyPropertiesAsksForOwnDefault,
         text: "(mod, isNodeMode, target) => (target = mod == null ? {} : __create(__getProtoOf(mod)), __copyProps(isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, \"default\") ? __defProp(target, \"default\", {\nvalue: mod,\nenumerable: !0\n}) : target, mod))",
-        references: &[("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"])), ("__copyProps", Reference::Helper(Helper::CopyProperties)), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "rolldown 1.2.4 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::ToEsmDefinesEnumerableGetters,
         text: "(mod, isNodeMode, target) => {\ntarget = mod != null ? __create(__getProtoOf(mod)) : {};\nconst to =\nisNodeMode || !mod || !mod.__esModule ? __defProp(target, \"default\", { value: mod, enumerable: true }) : target;\nfor (let key of __getOwnPropNames(mod))\nif (!__hasOwnProp.call(to, key))\n__defProp(to, key, {\nget: () => mod[key],\nenumerable: true,\n});\nreturn to;\n}",
-        references: &[("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"]))],
+        references: &[
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+        ],
         origin: "bun 1.0.0 to 1.3.9",
     },
     PublishedFunction {
         shape: Shape::ToEsmDefinesEnumerableGetters,
         text: "(mod, isNodeMode, target) => {\ntarget = mod != null ? __create(__getProtoOf(mod)) : {};\nlet to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, \"default\", { value: mod, enumerable: !0 }) : target;\nfor (let key of __getOwnPropNames(mod))\nif (!__hasOwnProp.call(to, key))\n__defProp(to, key, {\nget: () => mod[key],\nenumerable: !0\n});\nreturn to;\n}",
-        references: &[("__create", Reference::Global(&["Object", "create"])), ("__getProtoOf", Reference::Global(&["Object", "getPrototypeOf"])), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"]))],
+        references: &[
+            ("__create", Reference::Global(&["Object", "create"])),
+            (
+                "__getProtoOf",
+                Reference::Global(&["Object", "getPrototypeOf"]),
+            ),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+        ],
         origin: "bun 1.1.38 to 1.3.9",
     },
     PublishedFunction {
         shape: Shape::ToCommonJsThroughCopyProperties,
         text: "(mod) => __copyProps(__defProp({}, \"__esModule\", { value: true }), mod)",
-        references: &[("__copyProps", Reference::Helper(Helper::CopyProperties)), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "esbuild 0.14 to 0.28; rolldown 1.0.0-beta.18 to 1.0.0-beta.35",
     },
     PublishedFunction {
         shape: Shape::ToCommonJsPrefersModuleExportsMember,
         text: "(mod) =>\n__hasOwnProp.call(mod, 'module.exports')\n? mod['module.exports']\n: __copyProps(__defProp({}, '__esModule', { value: true }), mod)",
-        references: &[("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__copyProps", Reference::Helper(Helper::CopyProperties)), ("__defProp", Reference::Global(&["Object", "defineProperty"]))],
+        references: &[
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            ("__copyProps", Reference::Helper(Helper::CopyProperties)),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+        ],
         origin: "rolldown 1.0.0-beta.51 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::ToCommonJsKeepsCopiesOnItself,
         text: "from => {\nconst moduleCache = (__toCommonJS.moduleCache ??= new WeakMap());\nvar cached = moduleCache.get(from);\nif (cached) return cached;\nvar to = __defProp({}, \"__esModule\", { value: true });\nvar desc = { enumerable: false };\nif ((from && typeof from === \"object\") || typeof from === \"function\")\nfor (let key of __getOwnPropNames(from))\nif (!__hasOwnProp.call(to, key))\n__defProp(to, key, {\nget: () => from[key],\nenumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,\n});\nmoduleCache.set(from, to);\nreturn to;\n}",
-        references: &[("__toCommonJS", Reference::Itself), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            ("__toCommonJS", Reference::Itself),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "bun 1.0.0 to 1.1.20",
     },
     PublishedFunction {
         shape: Shape::ToCommonJsKeepsCopiesOnItself,
         text: "(from) => {\nconst moduleCache = __toCommonJS.moduleCache ??= new WeakMap;\nvar cached = moduleCache.get(from);\nif (cached)\nreturn cached;\nvar to = __defProp({}, \"__esModule\", { value: !0 }), desc = { enumerable: !1 };\nif (from && typeof from === \"object\" || typeof from === \"function\") {\nfor (let key of __getOwnPropNames(from))\nif (!__hasOwnProp.call(to, key))\n__defProp(to, key, {\nget: () => from[key],\nenumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable\n});\n}\nreturn moduleCache.set(from, to), to;\n}",
-        references: &[("__toCommonJS", Reference::Itself), ("__defProp", Reference::Global(&["Object", "defineProperty"])), ("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"])), ("__hasOwnProp", Reference::Global(&["Object", "prototype", "hasOwnProperty"])), ("__getOwnPropDesc", Reference::Global(&["Object", "getOwnPropertyDescriptor"]))],
+        references: &[
+            ("__toCommonJS", Reference::Itself),
+            (
+                "__defProp",
+                Reference::Global(&["Object", "defineProperty"]),
+            ),
+            (
+                "__getOwnPropNames",
+                Reference::Global(&["Object", "getOwnPropertyNames"]),
+            ),
+            (
+                "__hasOwnProp",
+                Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+            ),
+            (
+                "__getOwnPropDesc",
+                Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+            ),
+        ],
         origin: "bun 1.1.10 to 1.1.20",
     },
     PublishedFunction {
@@ -1376,31 +1838,46 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::CommonJsRunsFirstOwnNameOnce,
         text: "(cb, mod) => function __require() {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.14 to 0.27",
     },
     PublishedFunction {
         shape: Shape::CommonJsRunsFirstOwnNameOnce,
         text: "(cb, mod) => function() {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.14 to 0.27; rolldown 1.0.0-beta.18 to 1.0.0-rc.15",
     },
     PublishedFunction {
         shape: Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt,
         text: "(cb, mod) =>\nfunction () {\nreturn (\nmod || ((0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), cb = null), mod.exports\n);\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "rolldown 1.0.0-rc.17 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::CommonJsRunsFirstOwnNameAgainAfterThrow,
         text: "(cb, mod) => function __require() {\ntry {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n} catch (e) {\nthrow mod = 0, e;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.28",
     },
     PublishedFunction {
         shape: Shape::CommonJsRunsFirstOwnNameAgainAfterThrow,
         text: "(cb, mod) => function() {\ntry {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n} catch (e) {\nthrow mod = 0, e;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.28",
     },
     PublishedFunction {
@@ -1436,25 +1913,37 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     PublishedFunction {
         shape: Shape::EsmRunsFirstOwnNameOnce,
         text: "(fn, res) => function __init() {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.14 to 0.27",
     },
     PublishedFunction {
         shape: Shape::EsmRunsFirstOwnNameOnce,
         text: "(fn, res) => function() {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.14 to 0.27; rolldown 1.0.0-beta.18 to 1.1.0",
     },
     PublishedFunction {
         shape: Shape::EsmRunsFirstOwnNameOnceRethrows,
         text: "(fn, res, err) => function __init() {\nif (err) throw err[0];\ntry {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n} catch (e) {\nthrow err = [e], e;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.28",
     },
     PublishedFunction {
         shape: Shape::EsmRunsFirstOwnNameOnceRethrows,
         text: "(fn, res, err) => function() {\nif (err) throw err[0];\ntry {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n} catch (e) {\nthrow err = [e], e;\n}\n}",
-        references: &[("__getOwnPropNames", Reference::Global(&["Object", "getOwnPropertyNames"]))],
+        references: &[(
+            "__getOwnPropNames",
+            Reference::Global(&["Object", "getOwnPropertyNames"]),
+        )],
         origin: "esbuild 0.28; rolldown 1.1.3 to 1.2.12",
     },
     PublishedFunction {

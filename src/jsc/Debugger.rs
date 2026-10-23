@@ -197,7 +197,12 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
-        bun_removable_features::call_removable!(Inspector, ReturnDefault, Debugger::wait_for_debugger, this)
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
     }
 
     #[inline(never)]
@@ -376,7 +381,13 @@ impl Debugger {
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> crate::CrateResult<()> {
-        bun_removable_features::call_removable!(Inspector, Abort, Debugger::create_debugger, this, global_object)
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            this,
+            global_object
+        )
     }
 
     #[inline(never)]
@@ -991,7 +1002,13 @@ unsafe extern "C" {
 
 impl LifecycleHandle {
     pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
-        bun_removable_features::call_removable!(Inspector, ReturnDefault, LifecycleHandle::report_error_to_agent, self, exception)
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
     }
 
     #[inline(never)]

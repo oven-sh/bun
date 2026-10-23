@@ -39,7 +39,10 @@ fn limits_list_every_limit_once() {
 fn limit_has_five_members_in_order() {
     let limits = LimitValues::for_host();
     let document = object_with(|json| write_limits(json, &limits));
-    for limit in LimitId::ALL.into_iter().filter(|&limit| limit != LimitId::None) {
+    for limit in LimitId::ALL
+        .into_iter()
+        .filter(|&limit| limit != LimitId::None)
+    {
         let degrades_to = BString::from(lower_camel_case(limit.degrades_to().name()));
         let element = format!(
             concat!(
@@ -61,7 +64,10 @@ fn limit_values_come_from_build() {
     let mut limits = LimitValues::for_host();
     limits.lower(LimitId::MaxTypeNodes, 3);
     let document = object_with(|json| write_limits(json, &limits));
-    assert_eq!(count_of(&document, r#"{"name":"MaxTypeNodes","value":3,"#), 1);
+    assert_eq!(
+        count_of(&document, r#"{"name":"MaxTypeNodes","value":3,"#),
+        1
+    );
 }
 
 #[test]

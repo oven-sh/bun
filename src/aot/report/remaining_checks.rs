@@ -58,7 +58,12 @@ pub(super) fn collect_json(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) 
     let type_positions = resolve_type_positions(&checks, &mut positions);
     for (record, type_position) in checks.iter().zip(&type_positions) {
         let type_position = type_position.as_ref();
-        out.push(json_entry(record, type_position, input.names, &mut positions));
+        out.push(json_entry(
+            record,
+            type_position,
+            input.names,
+            &mut positions,
+        ));
     }
 }
 

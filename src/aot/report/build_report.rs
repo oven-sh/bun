@@ -113,7 +113,10 @@ fn write_summary(json: &mut JsonWriter, input: &ReportInput<'_>) {
     write_counts(json, input.statistics, &ENVIRONMENT_OUTCOMES);
     json.end_object();
     json.number("typeTests", totals.combined().type_tests);
-    json.number("sitesWithoutOrigin", count_sites_without_origin(input.engine.accesses()));
+    json.number(
+        "sitesWithoutOrigin",
+        count_sites_without_origin(input.engine.accesses()),
+    );
     write_counts(json, input.statistics, &PROGRAM_SIZES);
     json.end_object();
 }
@@ -251,11 +254,7 @@ fn write_unseen_code(
     json.end_array();
 }
 
-pub(super) fn write_position(
-    json: &mut JsonWriter,
-    key: &str,
-    position: Option<&SourcePosition>,
-) {
+pub(super) fn write_position(json: &mut JsonWriter, key: &str, position: Option<&SourcePosition>) {
     let Some(position) = position else {
         json.null(key);
         return;
@@ -297,7 +296,10 @@ mod tests {
             column: 5,
         };
         let object = object_with(|json| write_position(json, "witness", Some(&position)));
-        assert_eq!(object, r#"{"witness":{"file":"src/a.ts","line":3,"column":5}}"#);
+        assert_eq!(
+            object,
+            r#"{"witness":{"file":"src/a.ts","line":3,"column":5}}"#
+        );
     }
 
     #[test]

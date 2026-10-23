@@ -39,8 +39,15 @@ fn collect_loads(files: &Files<'_>) -> Option<Loads> {
         is_held_early: vec![false; file_count],
     };
     for &file in files.compiled_files() {
-        let compiled = files.compiled(file).expect("the loader analyzes every compiled file");
-        for (site, &answer) in compiled.analysis.import_sites.iter().zip(compiled.code_answers) {
+        let compiled = files
+            .compiled(file)
+            .expect("the loader analyzes every compiled file");
+        for (site, &answer) in compiled
+            .analysis
+            .import_sites
+            .iter()
+            .zip(compiled.code_answers)
+        {
             let load = classify(site.kind);
             let loaded = match answer {
                 _ if load == Load::NotInTime => &[][..],
@@ -99,8 +106,13 @@ fn mark_cycles(loads: &mut Loads) {
             if lowest[file] != order[file] {
                 continue;
             }
-            let start = open.iter().rposition(|&it| it == file).expect("the file is open");
-            let loads_itself = loads.targets[file].iter().any(|target| target.0.idx() == file);
+            let start = open
+                .iter()
+                .rposition(|&it| it == file)
+                .expect("the file is open");
+            let loads_itself = loads.targets[file]
+                .iter()
+                .any(|target| target.0.idx() == file);
             let is_cycle = open.len() - start > 1 || loads_itself;
             for member in open.drain(start..) {
                 is_open[member] = false;
@@ -113,8 +125,11 @@ fn mark_cycles(loads: &mut Loads) {
 // A function declaration of a file that has not run yet calls those of the files that it imports.
 fn mark_imports_of_marked_files(loads: &mut Loads) {
     let is_marked = loads.is_held_early.iter();
-    let mut pending: Vec<usize> =
-        is_marked.enumerate().filter(|(_, is_marked)| **is_marked).map(|(file, _)| file).collect();
+    let mut pending: Vec<usize> = is_marked
+        .enumerate()
+        .filter(|(_, is_marked)| **is_marked)
+        .map(|(file, _)| file)
+        .collect();
     while let Some(file) = pending.pop() {
         for &(target, load) in &loads.targets[file] {
             if load == Load::AheadOfTheBody && !loads.is_held_early[target.idx()] {

@@ -17,7 +17,12 @@ const rows: [loop: string, baseline: string, allowance: number, iterations: numb
   ["a copy of a kind never met", "no copy of a kind never met", 3_700, 8_000],
 ];
 
-const skipped = isDebug || isASAN ? "a debug or ASAN build counts other instructions" : isWindows ? "it counts with perf_event_open or /usr/bin/time -l" : undefined;
+const skipped =
+  isDebug || isASAN
+    ? "a debug or ASAN build counts other instructions"
+    : isWindows
+      ? "it counts with perf_event_open or /usr/bin/time -l"
+      : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/copies-in-cold-code.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/copies-in-cold-code", () => {
@@ -27,7 +32,23 @@ describe.skipIf(!!skipped)("compile/aot/perf/copies-in-cold-code", () => {
   const costs = new Map<string, Promise<number | undefined>>();
 
   beforeAll(async () => {
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "--aot-heat=EverythingIsCold", ...withoutDebugInformation(), join(root, "main.ts"), "--outfile", executable], root, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          "--aot-heat=EverythingIsCold",
+          ...withoutDebugInformation(),
+          join(root, "main.ts"),
+          "--outfile",
+          executable,
+        ],
+        root,
+        bunEnv,
+      ),
+    );
     const compiled = await spawned([executable], root, bunEnv);
     const plain = await spawned([bunExe(), "run", join(root, "main.ts")], root, bunEnv);
     expect(compiled.stdout).toBe(plain.stdout);
@@ -49,15 +70,16 @@ describe.skipIf(!!skipped)("compile/aot/perf/copies-in-cold-code", () => {
   }
 
   for (const [loop, baseline, allowance, iterations] of rows) {
-    test(
-      `${loop}: at most ${allowance} instructions`,
-      async () => {
-        const [expected, measured] = [await costOf(baseline, iterations), await costOf(loop, iterations)];
-        if (expected === undefined || measured === undefined) return void console.error(`SKIPPED: ${loop}: instructions cannot be counted here`);
-        console.error(`COPIES IN COLD CODE ${baseline}\t${expected}\t| ${loop}\t${measured}`);
-        expect({ loop, measured, isWithinAllowance: measured <= expected + allowance }).toEqual({ loop, measured, isWithinAllowance: true });
-      },
-      900_000,
-    );
+    test(`${loop}: at most ${allowance} instructions`, async () => {
+      const [expected, measured] = [await costOf(baseline, iterations), await costOf(loop, iterations)];
+      if (expected === undefined || measured === undefined)
+        return void console.error(`SKIPPED: ${loop}: instructions cannot be counted here`);
+      console.error(`COPIES IN COLD CODE ${baseline}\t${expected}\t| ${loop}\t${measured}`);
+      expect({ loop, measured, isWithinAllowance: measured <= expected + allowance }).toEqual({
+        loop,
+        measured,
+        isWithinAllowance: true,
+      });
+    }, 900_000);
   }
 });

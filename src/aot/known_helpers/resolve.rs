@@ -107,7 +107,9 @@ impl KnownCallee {
             .iter()
             .map(|&function| Some(self.shape_of(helpers, function)?.helper()));
         let first = families.next()??;
-        families.all(|family| family == Some(first)).then_some(first)
+        families
+            .all(|family| family == Some(first))
+            .then_some(first)
     }
 
     pub fn needs_guard(&self) -> bool {
@@ -342,11 +344,7 @@ fn resolve_import(input: &ResolveInput<'_, '_>, binding: ImportBinding) -> Optio
     }
 }
 
-fn resolve_export(
-    input: &ResolveInput<'_, '_>,
-    file: FileId,
-    name: Atom,
-) -> Option<KnownCallee> {
+fn resolve_export(input: &ResolveInput<'_, '_>, file: FileId, name: Atom) -> Option<KnownCallee> {
     let (mut module, mut name) = (ModuleRef::File(file), name);
     for _ in 0..MAX_INDIRECT_EXPORTS {
         match input.modules.find_export(module, name, &input.files.atoms) {
@@ -508,7 +506,10 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         with_last_call(&files, "main.mjs", |input, file, call| {
             let described = resolve_private_field_call(input, file, call)?;
             let access = described.access(PrivateStateKind::Field)?;
-            Some((access, described.supports_private_state(PrivateStateKind::Field)))
+            Some((
+                access,
+                described.supports_private_state(PrivateStateKind::Field),
+            ))
         })
     }
 
@@ -537,7 +538,10 @@ get({}, new WeakMap(), "f");"#;
 helpers.__classPrivateFieldGet({}, new WeakMap(), "f");"#;
         let files = [("main.mjs", namespace), ("helpers.mjs", helpers.as_str())];
         let (helper, certainty, _) = describe_last_call(&files, "main.mjs").expect("resolved");
-        assert_eq!((helper, certainty), (Helper::ClassPrivateFieldGet, Certainty::Always));
+        assert_eq!(
+            (helper, certainty),
+            (Helper::ClassPrivateFieldGet, Certainty::Always)
+        );
     }
 
     #[test]
@@ -548,16 +552,26 @@ helpers.__classPrivateFieldGet({}, new WeakMap(), "f");"#;
                 let ExprKind::Call(site) = hir[call].kind else {
                     panic!("the last statement is a call");
                 };
-                resolve_callee(input, file, hir[site].callee).expect("resolved").needs_guard()
+                resolve_callee(input, file, hir[site].callee)
+                    .expect("resolved")
+                    .needs_guard()
             })
         };
-        let body = PRIVATE_FIELD_GET.strip_prefix("function __classPrivateFieldGet").expect("a declaration");
+        let body = PRIVATE_FIELD_GET
+            .strip_prefix("function __classPrivateFieldGet")
+            .expect("a declaration");
         let call = "__classPrivateFieldGet({}, new WeakMap(), \"f\");";
         let import = format!("import {{ __classPrivateFieldGet }} from \"./helpers.mjs\";\n{call}");
         let variable = format!("export var __classPrivateFieldGet = function{body}");
-        assert!(needs_guard(&[("main.mjs", import.as_str()), ("helpers.mjs", variable.as_str())]));
+        assert!(needs_guard(&[
+            ("main.mjs", import.as_str()),
+            ("helpers.mjs", variable.as_str())
+        ]));
         let declaration = format!("export {PRIVATE_FIELD_GET}");
-        assert!(!needs_guard(&[("main.mjs", import.as_str()), ("helpers.mjs", declaration.as_str())]));
+        assert!(!needs_guard(&[
+            ("main.mjs", import.as_str()),
+            ("helpers.mjs", declaration.as_str())
+        ]));
         let own = format!("var __classPrivateFieldGet = function{body};\n{call}");
         assert!(!needs_guard(&[("main.mjs", own.as_str())]));
     }

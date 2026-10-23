@@ -92,7 +92,11 @@ impl Counters {
 
     fn add_loss(&mut self, loss: Loss) {
         debug_assert!(loss.limit != LimitId::None);
-        match self.losses.iter_mut().find(|known| known.limit == loss.limit) {
+        match self
+            .losses
+            .iter_mut()
+            .find(|known| known.limit == loss.limit)
+        {
             Some(known) => {
                 known.count = known.count.saturating_add(loss.count);
                 if is_lower_subject(&loss.subject, &known.subject) {

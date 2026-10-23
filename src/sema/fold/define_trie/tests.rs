@@ -177,7 +177,11 @@ fn dropped_member_path_excludes_siblings() {
     assert!(!follow(&[]).unwrap().is_dropped);
     assert_eq!(follow(&[("log", PLAIN)]), None);
     assert!(follow(&[("debug", PLAIN)]).unwrap().is_dropped);
-    assert!(follow(&[("debug", PLAIN), ("bind", PLAIN)]).unwrap().is_dropped);
+    assert!(
+        follow(&[("debug", PLAIN), ("bind", PLAIN)])
+            .unwrap()
+            .is_dropped
+    );
 }
 
 #[test]
@@ -192,7 +196,11 @@ fn optional_link_breaks_dropped_path() {
     assert!(!is_dropped(&[("log", OPTIONAL), ("trace", PLAIN)]));
     assert!(!is_dropped(&[("log", PLAIN), ("trace", OPTIONAL)]));
     assert!(!is_dropped(&[("log", OPTIONAL), ("trace", OPTIONAL)]));
-    assert!(is_dropped(&[("log", PLAIN), ("trace", PLAIN), ("deep", OPTIONAL)]));
+    assert!(is_dropped(&[
+        ("log", PLAIN),
+        ("trace", PLAIN),
+        ("deep", OPTIONAL)
+    ]));
 }
 
 #[test]
@@ -297,7 +305,10 @@ fn define_values_keep_their_kind() {
     let target = slice_in(&[workspace.atom("a"), workspace.atom("b")], workspace.arena);
     let data: &DataValue<'_> = workspace.arena.alloc(DataValue::Array(&[]));
     let values = [
-        ("TEXT", DefineValue::Constant(Constant::String(workspace.atom("t")))),
+        (
+            "TEXT",
+            DefineValue::Constant(Constant::String(workspace.atom("t"))),
+        ),
         ("ABSENT", DefineValue::Constant(Constant::Undefined)),
         ("RENAMED", DefineValue::GlobalPath(target)),
         ("LIST", DefineValue::Data(data)),
@@ -322,7 +333,9 @@ fn state_below_dropped_path_has_no_node() {
     let console = workspace.global("console");
     let root = workspace.follow(&inputs, console, &[]).unwrap();
     assert!(root.node.is_some());
-    let log = workspace.follow(&inputs, console, &[("log", PLAIN)]).unwrap();
+    let log = workspace
+        .follow(&inputs, console, &[("log", PLAIN)])
+        .unwrap();
     let expected = PathState {
         node: None,
         has_optional_link: false,

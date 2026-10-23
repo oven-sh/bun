@@ -55,7 +55,9 @@ for (const [key, value] of Object.entries({ ...define, ...fixed })) {
 
 for (let id = 0; id < moduleList.length; id++) {
   const file = moduleList[id];
-  lines.push(id < nativeStartIndex ? `module\t${id}\t${file}\t${specifierOf(file) ?? "-"}` : `module\t${id}\t-\t${file}`);
+  lines.push(
+    id < nativeStartIndex ? `module\t${id}\t${file}\t${specifierOf(file) ?? "-"}` : `module\t${id}\t-\t${file}`,
+  );
 }
 for (const helper of helperModules) {
   lines.push(`module\t${helper.id}\t${helper.path}\t${helper.specifier ?? "-"}`);

@@ -8,75 +8,58 @@ type Members = {
 
 export const membersChangingNothing: Readonly<Record<string, Members>> = {
   "%DNSResolver%": {
-    methods: {
-    },
+    methods: {},
     getters: {},
     accessors: {},
   },
   "%DebugHTTPSServer%": {
-    methods: {
-    },
+    methods: {},
     getters: {},
     accessors: {},
   },
   "%DebugHTTPServer%": {
-    methods: {
-    },
+    methods: {},
     getters: {},
     accessors: {},
   },
   "%HTTPSServer%": {
-    methods: {
-    },
+    methods: {},
     getters: {},
     accessors: {},
   },
   "%HTTPServer%": {
-    methods: {
-    },
+    methods: {},
     getters: {},
     accessors: {},
   },
   "%Listener%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%NodeHTTPResponse%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%NodeJSFS%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%Subprocess%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%TCPSocket%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%TLSSocket%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%UDPSocket%": {
@@ -84,49 +67,37 @@ export const membersChangingNothing: Readonly<Record<string, Members>> = {
       setBroadcast: { sets: 189, returned: 184, taken: [0], refused: [] },
       setMulticastLoopback: { sets: 189, returned: 184, taken: [0], refused: [] },
     },
-    getters: {
-    },
+    getters: {},
     accessors: {},
   },
   "%BlockList%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%H2FrameParser%": {
-    methods: {
-    },
+    methods: {},
     getters: {},
     accessors: {},
   },
   "%ServerWebSocket%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   "%SocketAddress%": {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   BuildMessage: {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
   ResolveMessage: {
-    methods: {
-    },
-    getters: {
-    },
+    methods: {},
+    getters: {},
     accessors: {},
   },
 };
@@ -135,23 +106,137 @@ export const membersChangingNothing: Readonly<Record<string, Members>> = {
 type Binding = Calls & { functions: number; taken: readonly number[]; refused: readonly number[] };
 
 export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
-  "native:Cpp:NodeURL.cpp:Bun::createNodeICUBinding": { functions: 2, sets: 520, returned: 518, taken: [0], refused: [] },
-  "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding": { functions: 3, sets: 780, returned: 777, taken: [0], refused: [] },
-  "native:Cpp:NodeV8.cpp:Bun::createNodeV8Binding": { functions: 4, sets: 1040, returned: 786, taken: [0, 1], refused: [] },
-  "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners": { functions: 1, sets: 252, returned: 4, taken: [0, 1], refused: [] },
-  "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_isCPUProfilerRunning": { functions: 1, sets: 192, returned: 192, taken: [], refused: [] },
-  "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_setCPUSamplingInterval": { functions: 1, sets: 324, returned: 74, taken: [], refused: [0] },
-  "native:NewCppFunction:JSNodePerformanceHooksHistogram.cpp:jsFunction_createHistogram": { functions: 1, sets: 830, returned: 638, taken: [], refused: [] },
-  "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_monitorEventLoopDelay": { functions: 1, sets: 324, returned: 75, taken: [0], refused: [] },
-  "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled": { functions: 1, sets: 192, returned: 192, taken: [], refused: [] },
-  "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": { functions: 1, sets: 192, returned: 192, taken: [], refused: [] },
-  "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": { functions: 1, sets: 316, returned: 5, taken: [0], refused: [] },
-  "native:NewCppFunction:NodeTLS.cpp:setDefaultCiphers": { functions: 1, sets: 324, returned: 75, taken: [0], refused: [] },
-  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": { functions: 1, sets: 1065, returned: 1065, taken: [0, 1], refused: [] },
-  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual": { functions: 1, sets: 360, returned: 360, taken: [0, 1], refused: [] },
-  "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": { functions: 1, sets: 192, returned: 192, taken: [0], refused: [] },
-  "native:NewCppFunction:stringWidth.cpp:jsFunctionBunStringWidth": { functions: 1, sets: 342, returned: 340, taken: [0, 1], refused: [] },
-  "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExp": { functions: 1, sets: 258, returned: 75, taken: [0], refused: [] },
-  "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExpForPackageNameMatching": { functions: 1, sets: 258, returned: 75, taken: [0], refused: [] },
-  "native:NewRustFunction:runtime/socket/socket.rs:jsCreateSocketPair": { functions: 1, sets: 192, returned: 192, taken: [], refused: [] },
+  "native:Cpp:NodeURL.cpp:Bun::createNodeICUBinding": {
+    functions: 2,
+    sets: 520,
+    returned: 518,
+    taken: [0],
+    refused: [],
+  },
+  "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding": {
+    functions: 3,
+    sets: 780,
+    returned: 777,
+    taken: [0],
+    refused: [],
+  },
+  "native:Cpp:NodeV8.cpp:Bun::createNodeV8Binding": {
+    functions: 4,
+    sets: 1040,
+    returned: 786,
+    taken: [0, 1],
+    refused: [],
+  },
+  "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners": {
+    functions: 1,
+    sets: 252,
+    returned: 4,
+    taken: [0, 1],
+    refused: [],
+  },
+  "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_isCPUProfilerRunning": {
+    functions: 1,
+    sets: 192,
+    returned: 192,
+    taken: [],
+    refused: [],
+  },
+  "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_setCPUSamplingInterval": {
+    functions: 1,
+    sets: 324,
+    returned: 74,
+    taken: [],
+    refused: [0],
+  },
+  "native:NewCppFunction:JSNodePerformanceHooksHistogram.cpp:jsFunction_createHistogram": {
+    functions: 1,
+    sets: 830,
+    returned: 638,
+    taken: [],
+    refused: [],
+  },
+  "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_monitorEventLoopDelay": {
+    functions: 1,
+    sets: 324,
+    returned: 75,
+    taken: [0],
+    refused: [],
+  },
+  "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled": {
+    functions: 1,
+    sets: 192,
+    returned: 192,
+    taken: [],
+    refused: [],
+  },
+  "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": {
+    functions: 1,
+    sets: 192,
+    returned: 192,
+    taken: [],
+    refused: [],
+  },
+  "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": {
+    functions: 1,
+    sets: 316,
+    returned: 5,
+    taken: [0],
+    refused: [],
+  },
+  "native:NewCppFunction:NodeTLS.cpp:setDefaultCiphers": {
+    functions: 1,
+    sets: 324,
+    returned: 75,
+    taken: [0],
+    refused: [],
+  },
+  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": {
+    functions: 1,
+    sets: 1065,
+    returned: 1065,
+    taken: [0, 1],
+    refused: [],
+  },
+  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual": {
+    functions: 1,
+    sets: 360,
+    returned: 360,
+    taken: [0, 1],
+    refused: [],
+  },
+  "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": {
+    functions: 1,
+    sets: 192,
+    returned: 192,
+    taken: [0],
+    refused: [],
+  },
+  "native:NewCppFunction:stringWidth.cpp:jsFunctionBunStringWidth": {
+    functions: 1,
+    sets: 342,
+    returned: 340,
+    taken: [0, 1],
+    refused: [],
+  },
+  "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExp": {
+    functions: 1,
+    sets: 258,
+    returned: 75,
+    taken: [0],
+    refused: [],
+  },
+  "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExpForPackageNameMatching": {
+    functions: 1,
+    sets: 258,
+    returned: 75,
+    taken: [0],
+    refused: [],
+  },
+  "native:NewRustFunction:runtime/socket/socket.rs:jsCreateSocketPair": {
+    functions: 1,
+    sets: 192,
+    returned: 192,
+    taken: [],
+    refused: [],
+  },
 };

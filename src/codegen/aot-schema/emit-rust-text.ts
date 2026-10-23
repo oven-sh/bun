@@ -111,7 +111,11 @@ function printedOperand(kind: Kind, value: string, byReference: boolean): string
 function printField(schema: Schema, field: Field, value: string, byReference: boolean): string[] {
   const kind = field.kind;
   const begin = `begin_field(printer, &mut needs_blank, ${rustLiteral(field.name)});`;
-  const printedIf = (condition: string, statements: readonly string[]) => [`if ${condition} {`, ...indent([begin, ...statements]), "}"];
+  const printedIf = (condition: string, statements: readonly string[]) => [
+    `if ${condition} {`,
+    ...indent([begin, ...statements]),
+    "}",
+  ];
   if (kind.tag === "Span") {
     const source = byReference ? value : `&${value}`;
     if (isByte(kind.element)) return printedIf(`!${value}.is_empty()`, [`printer.print_bytes(${source});`]);
@@ -122,7 +126,8 @@ function printField(schema: Schema, field: Field, value: string, byReference: bo
       "printer.out.push(']');",
     ]);
   }
-  if (field.isOptional) return printedIf(`let Some(value) = ${byReference ? `*${value}` : value}`, [printValue(schema, kind, "value")]);
+  if (field.isOptional)
+    return printedIf(`let Some(value) = ${byReference ? `*${value}` : value}`, [printValue(schema, kind, "value")]);
   const statement = printValue(schema, kind, printedOperand(kind, value, byReference));
   const test = zeroTest(schema, field, value, byReference);
   if (test === null) return [begin, statement];
@@ -192,16 +197,28 @@ function textFields(record: SchemaRecord): Field[] {
 function parseFieldsLoop(arms: readonly string[], owner: string): string[] {
   return [
     "while let Some(name) = parser.next_field_name()? {",
-    ...indent(["match name {", ...indent([...arms, `_ => return parser.fail(${rustLiteral(`a field of ${owner}`)}),`]), "}"]),
+    ...indent([
+      "match name {",
+      ...indent([...arms, `_ => return parser.fail(${rustLiteral(`a field of ${owner}`)}),`]),
+      "}",
+    ]),
     "}",
   ];
 }
 
 function isZeroFunction(schema: Schema, record: SchemaRecord): string[] {
   if (!canBeZero(schema, { tag: "Record", record })) return [];
-  const tests = textFields(record).flatMap(field => zeroTest(schema, field, `self.${rustIdentifier(field.name)}`, false) ?? []);
-  const conjuncts = (tests.length > 0 ? tests : ["true"]).map((test, index, all) => (index + 1 < all.length ? `${test} &&` : test));
-  return [`${indentation}pub(super) fn is_zero(&self) -> bool {`, ...pack(conjuncts, indentation.repeat(2)), `${indentation}}`];
+  const tests = textFields(record).flatMap(
+    field => zeroTest(schema, field, `self.${rustIdentifier(field.name)}`, false) ?? [],
+  );
+  const conjuncts = (tests.length > 0 ? tests : ["true"]).map((test, index, all) =>
+    index + 1 < all.length ? `${test} &&` : test,
+  );
+  return [
+    `${indentation}pub(super) fn is_zero(&self) -> bool {`,
+    ...pack(conjuncts, indentation.repeat(2)),
+    `${indentation}}`,
+  ];
 }
 
 function recordTextImpl(schema: Schema, record: SchemaRecord): string[] {
@@ -231,7 +248,10 @@ function recordTextImpl(schema: Schema, record: SchemaRecord): string[] {
       ...indent([
         `let mut record = ${name}::default();`,
         ...parseFieldsLoop(
-          fields.map(field => `${rustLiteral(field.name)} => record.${rustIdentifier(field.name)} = ${parseFieldValue(schema, field)},`),
+          fields.map(
+            field =>
+              `${rustLiteral(field.name)} => record.${rustIdentifier(field.name)} = ${parseFieldValue(schema, field)},`,
+          ),
           record.name,
         ),
         ...following.map(({ member, suffix }) => `record.${member} = parser.parse_${suffix}()?;`),
@@ -267,9 +287,13 @@ function parseCaseArm(schema: Schema, variant: Variant, variantCase: VariantCase
   return [
     `${rustLiteral(variantCase.name)} => parser.parse_nested(|parser| {`,
     ...indent([
-      ...variantCase.fields.map(field => `let mut ${rustIdentifier(field.name)} = <${rustTypeOf(field.kind, field.isOptional)}>::default();`),
+      ...variantCase.fields.map(
+        field => `let mut ${rustIdentifier(field.name)} = <${rustTypeOf(field.kind, field.isOptional)}>::default();`,
+      ),
       ...parseFieldsLoop(
-        variantCase.fields.map(field => `${rustLiteral(field.name)} => ${rustIdentifier(field.name)} = ${parseFieldValue(schema, field)},`),
+        variantCase.fields.map(
+          field => `${rustLiteral(field.name)} => ${rustIdentifier(field.name)} = ${parseFieldValue(schema, field)},`,
+        ),
         `${variant.name}::${variantCase.name}`,
       ),
       `Ok(${caseValue})`,
@@ -288,12 +312,19 @@ function variantTextImpl(schema: Schema, variant: Variant): string[] {
       `${indentation}matches!(self, ${name}::${variant.cases[0].name})`,
       "}",
       "pub(super) fn print_variant(&self, printer: &mut Printer<'_>) {",
-      ...indent(["match self {", ...indent(variant.cases.flatMap(variantCase => printCaseArm(schema, variant, variantCase))), "}"]),
+      ...indent([
+        "match self {",
+        ...indent(variant.cases.flatMap(variantCase => printCaseArm(schema, variant, variantCase))),
+        "}",
+      ]),
       "}",
       `pub(super) fn parse_variant(parser: &mut Parser<'_>) -> Parsed<${name}> {`,
       ...indent([
         `match parser.parse_word(${expected})? {`,
-        ...indent([...variant.cases.flatMap(variantCase => parseCaseArm(schema, variant, variantCase)), `_ => parser.fail(${expected}),`]),
+        ...indent([
+          ...variant.cases.flatMap(variantCase => parseCaseArm(schema, variant, variantCase)),
+          `_ => parser.fail(${expected}),`,
+        ]),
         "}",
       ]),
       "}",
@@ -332,7 +363,9 @@ pub(super) fn parse_external<T>(parser: &mut Parser<'_>, from_wire: impl FnOnce(
 
 function recordTextRs(schema: Schema): string[] {
   const types = textTypes(schema);
-  const impls = types.map(type => (type.tag === "Record" ? recordTextImpl(schema, type.record) : variantTextImpl(schema, type.variant)));
+  const impls = types.map(type =>
+    type.tag === "Record" ? recordTextImpl(schema, type.record) : variantTextImpl(schema, type.variant),
+  );
   return [
     rustMarker,
     "",

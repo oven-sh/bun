@@ -430,9 +430,9 @@ pub mod virtual_machine_exports;
 pub mod any_promise;
 #[path = "BytecodeOrderRecorder.rs"]
 pub mod bytecode_order_recorder;
-pub mod compiled_program;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
+pub mod compiled_program;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
 #[path = "host_object.rs"]
@@ -793,7 +793,10 @@ pub mod resolved_source_tag {
             if self.0 & (1 << 9) == 0 {
                 return None;
             }
-            INTERNAL_MODULE_FEATURE.get((self.0 & !(1 << 9)) as usize).copied().flatten()
+            INTERNAL_MODULE_FEATURE
+                .get((self.0 & !(1 << 9)) as usize)
+                .copied()
+                .flatten()
         }
 
         /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
@@ -841,8 +844,18 @@ mod resolved_source_tag_tests {
     fn tag_feature() {
         assert_eq!(ResolvedSourceTag::Esm.feature(), None);
         assert_eq!(ResolvedSourceTag(u32::MAX).feature(), None);
-        assert_eq!(ResolvedSourceTag::try_from_name(b"bun:sqlite").unwrap().feature(), Some(Feature::Sqlite));
-        assert_eq!(ResolvedSourceTag::try_from_name(b"node:path").unwrap().feature(), None);
+        assert_eq!(
+            ResolvedSourceTag::try_from_name(b"bun:sqlite")
+                .unwrap()
+                .feature(),
+            Some(Feature::Sqlite)
+        );
+        assert_eq!(
+            ResolvedSourceTag::try_from_name(b"node:path")
+                .unwrap()
+                .feature(),
+            None
+        );
     }
 }
 

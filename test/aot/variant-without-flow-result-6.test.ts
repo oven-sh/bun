@@ -4,7 +4,10 @@ import { flowResultKinds } from "./flow-result-kinds";
 import { variant } from "./run-programs";
 
 const file = 6;
-const notYet: Record<string, string> = { ReachedFunctions: "every build, that of console.log(1) too, stops with an internal compiler error (NumberAndEncode: ProgramTableCheckFailed)" };
+const notYet: Record<string, string> = {
+  ReachedFunctions:
+    "every build, that of console.log(1) too, stops with an internal compiler error (NumberAndEncode: ProgramTableCheckFailed)",
+};
 flowResultKinds.forEach((kind, index) => {
   if (index % 8 !== file - 1) return;
   if (kind in notYet) return void test.todo(`compile/aot/variant/without-flow-result/${kind} (${notYet[kind]})`);

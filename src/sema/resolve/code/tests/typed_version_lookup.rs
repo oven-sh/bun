@@ -77,7 +77,10 @@ fn dist_typed_version(manifest: &str, dist_manifest: &str) -> Found {
 
 #[test]
 fn typed_version_comes_from_host_then_condition() {
-    assert_eq!(typed_version(&typed_package(), INSTALLED), by(FromPackage, TYPED));
+    assert_eq!(
+        typed_version(&typed_package(), INSTALLED),
+        by(FromPackage, TYPED)
+    );
 
     let sound = "/p/.sound/pkg/index.ts";
     let host = typed_package().typed(INSTALLED, sound);
@@ -110,7 +113,10 @@ fn condition_name_comes_from_options() {
         typed_condition: Some(b"other-condition".to_vec()),
         ..bun_run()
     };
-    assert_eq!(typed_version_with(&typed_package(), &options, INSTALLED), None);
+    assert_eq!(
+        typed_version_with(&typed_package(), &options, INSTALLED),
+        None
+    );
 }
 
 #[test]
@@ -200,7 +206,10 @@ fn manifest_must_export_file_and_other_typed_file() {
 #[test]
 fn unexported_file_has_no_typed_version() {
     let host = package_with_dist(MAIN_IN_DIST, DIST_TYPED_EXPORTS);
-    assert_eq!(typed_version(&host, DIST_FILE), by(FromPackage, DIST_TYPED_FILE));
+    assert_eq!(
+        typed_version(&host, DIST_FILE),
+        by(FromPackage, DIST_TYPED_FILE)
+    );
     assert_eq!(typed_version(&host, DIST_OTHER_FILE), None);
 }
 
@@ -209,11 +218,19 @@ fn pattern_key_names_typed_version() {
     let manifest = r#"{
         "exports": {"./*": {"bun-aot": "./typed/*.ts", "default": "./dist/*.js"}}
     }"#;
-    let names = ["dist/a/b.js", "typed/a/b.ts", "dist/untyped.js", "src/a/b.js"];
+    let names = [
+        "dist/a/b.js",
+        "typed/a/b.ts",
+        "dist/untyped.js",
+        "src/a/b.js",
+    ];
     let host = package_files(manifest, &names);
     let typed = typed_version(&host, "/p/node_modules/pkg/dist/a/b.js");
     assert_eq!(typed, by(FromPackage, "/p/node_modules/pkg/typed/a/b.ts"));
-    assert_eq!(typed_version(&host, "/p/node_modules/pkg/dist/untyped.js"), None);
+    assert_eq!(
+        typed_version(&host, "/p/node_modules/pkg/dist/untyped.js"),
+        None
+    );
     assert_eq!(typed_version(&host, "/p/node_modules/pkg/src/a/b.js"), None);
 }
 
@@ -225,7 +242,10 @@ fn directory_key_names_typed_version() {
     let host = package_files(manifest, &["dist/x.js", "typed/x.ts", "dist/untyped.js"]);
     let typed = typed_version(&host, "/p/node_modules/pkg/dist/x.js");
     assert_eq!(typed, by(FromPackage, "/p/node_modules/pkg/typed/x.ts"));
-    assert_eq!(typed_version(&host, "/p/node_modules/pkg/dist/untyped.js"), None);
+    assert_eq!(
+        typed_version(&host, "/p/node_modules/pkg/dist/untyped.js"),
+        None
+    );
 }
 
 #[test]
@@ -256,7 +276,10 @@ fn application_exports_name_typed_version_of_own_file() {
         ("/p/typed/own.ts", ""),
         (INSTALLED, ""),
     ]);
-    assert_eq!(typed_version(&host, "/p/own.js"), by(FromPackage, "/p/typed/own.ts"));
+    assert_eq!(
+        typed_version(&host, "/p/own.js"),
+        by(FromPackage, "/p/typed/own.ts")
+    );
     assert_eq!(typed_version(&host, INSTALLED), None);
 }
 

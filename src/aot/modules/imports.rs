@@ -28,8 +28,15 @@ use core::ops::Range;
 #[derive(Copy, Clone, Debug)]
 pub(super) enum PendingBinding {
     Bound(ImportBinding),
-    Synthetic { module: ModuleRef, name: Atom },
-    CapturedBuiltin { module: ModuleRef, name: Atom, member: BuiltinId },
+    Synthetic {
+        module: ModuleRef,
+        name: Atom,
+    },
+    CapturedBuiltin {
+        module: ModuleRef,
+        name: Atom,
+        member: BuiltinId,
+    },
 }
 
 /// What a name of a module comes to where no expression spells the access: a key of `const { n } = require(K)`.
@@ -134,7 +141,10 @@ pub(super) fn find_imported_value_site(
     let analysis = files.analysis(file);
     let site = analysis.import_site_index(ImportSiteKind::Import(import))?;
     let has_value_meaning = || may_name_value(files, Sym { file, id: symbol });
-    let is_elided = analysis.unused_import_symbols.binary_search(&symbol).is_ok()
+    let is_elided = analysis
+        .unused_import_symbols
+        .binary_search(&symbol)
+        .is_ok()
         || !files.bound(file).has_runtime_value(symbol)
         || scan.sites[site] == ScannedSite::Erased
         || (files.role(file) == FileRole::Checked && !has_value_meaning());
@@ -153,9 +163,10 @@ pub(super) fn finish_imports(
         fixed_members: imports.fixed_members,
         named_members: named_members
             .map(|(key, member)| match member {
-                NamedMember::Binding(binding) => {
-                    (key, NamedMember::Binding(finish_binding(binding, synthetic)))
-                }
+                NamedMember::Binding(binding) => (
+                    key,
+                    NamedMember::Binding(finish_binding(binding, synthetic)),
+                ),
                 NamedMember::Fixed(member) => (key, NamedMember::Fixed(member)),
             })
             .collect(),
@@ -173,7 +184,11 @@ fn finish_binding(binding: PendingBinding, synthetic: &SyntheticExports) -> Impo
         PendingBinding::Synthetic { module, name } => {
             ImportBinding::Synthetic(synthetic.id_of(module, name))
         }
-        PendingBinding::CapturedBuiltin { module, name, member } => {
+        PendingBinding::CapturedBuiltin {
+            module,
+            name,
+            member,
+        } => {
             let export = synthetic.id_of(module, name);
             ImportBinding::CapturedBuiltin { member, export }
         }
@@ -185,7 +200,9 @@ fn finish_bindings<K>(
     synthetic: &SyntheticExports,
 ) -> Vec<(K, ImportBinding)> {
     let bindings = bindings.into_iter();
-    bindings.map(|(key, binding)| (key, finish_binding(binding, synthetic))).collect()
+    bindings
+        .map(|(key, binding)| (key, finish_binding(binding, synthetic)))
+        .collect()
 }
 
 const UNUSED: PendingBinding = PendingBinding::Bound(ImportBinding::Unused);
@@ -402,7 +419,9 @@ impl<'a, 's> FileBinder<'a, 's> {
             return None;
         };
         let context = self.context;
-        let is_deferred = context.deferred_exports.contains(module, context.files.atoms.bytes(name));
+        let is_deferred = context
+            .deferred_exports
+            .contains(module, context.files.atoms.bytes(name));
         is_deferred.then(|| RequiredName::new(ModuleRef::Runtime(module), name))
     }
 
@@ -438,7 +457,9 @@ impl<'a, 's> FileBinder<'a, 's> {
             start: range.start,
             end: range.end,
         };
-        self.imports.failures.push(PendingFailure { order, failure });
+        self.imports
+            .failures
+            .push(PendingFailure { order, failure });
     }
 
     fn add_required_name(&mut self, required_name: RequiredName) {
@@ -547,9 +568,7 @@ fn compute_required_name(
 /// A property of the object of a built-in module holds what the module has put there until a store replaces it, whether the body of the module or native code makes the object.
 fn is_property_that_a_store_replaces(member: BuiltinId) -> bool {
     let entry = table::entry(member);
-    entry.module.is_none()
-        && entry.holder.is_some()
-        && entry.mutability != Mutability::AlwaysLocked
+    entry.module.is_none() && entry.holder.is_some() && entry.mutability != Mutability::AlwaysLocked
 }
 
 fn bind_runtime_member(
@@ -563,7 +582,11 @@ fn bind_runtime_member(
             if name != known::default && is_property_that_a_store_replaces(member) =>
         {
             let module = ModuleRef::Runtime(module);
-            return Ok(PendingBinding::CapturedBuiltin { module, name, member });
+            return Ok(PendingBinding::CapturedBuiltin {
+                module,
+                name,
+                member,
+            });
         }
         ModuleExport::Found(member) => ImportBinding::Builtin(member),
         ModuleExport::PropertyOfNamespace(holder) => ImportBinding::BuiltinMember { holder, name },

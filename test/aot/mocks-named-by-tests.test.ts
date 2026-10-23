@@ -5,7 +5,9 @@ import { join } from "path";
 setDefaultTimeout(120_000);
 
 const service = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "service.ts": `
     export interface Job { id: number; done: boolean; label: string }
     export function load(id: number): Job { return { id, done: true, label: "real" }; }
@@ -115,9 +117,17 @@ async function seen(cwd: string, args: string[]) {
 // The compiler itself has no support for mocks: the debugging option that runs the tests as compiled code refuses them.
 test("bun test --debug-aot refuses a spy on an export of a compiled module", async () => {
   using dir = tempDir("mocks-named-by-tests", cases["what a spy returns lacks members that the type requires"]);
-  await using ran = Bun.spawn({ cmd: [bunExe(), "test", "--debug-aot", "./main.test.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using ran = Bun.spawn({
+    cmd: [bunExe(), "test", "--debug-aot", "./main.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([ran.stderr.text(), ran.exited]);
-  expect(stderr).toContain("TypeError: Cannot spy on 'load' because module exports can't be replaced in a compiled executable");
+  expect(stderr).toContain(
+    "TypeError: Cannot spy on 'load' because module exports can't be replaced in a compiled executable",
+  );
   expect(exitCode).toBe(1);
 }, 120_000);
 

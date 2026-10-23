@@ -31,7 +31,11 @@ fn block(index: usize) -> BlockId {
 }
 
 fn describe_target(target: TargetView<'_>) -> Target {
-    (target.block, target.arguments().collect(), target.proofs.to_vec())
+    (
+        target.block,
+        target.arguments().collect(),
+        target.proofs.to_vec(),
+    )
 }
 
 fn build_guarded_body() -> Body {
@@ -98,12 +102,18 @@ fn views_decode_block_heads() {
     let ordinary = BlockRole::Ordinary;
     let roles = collect_from_blocks(&body, |view| view.role);
     let cleanup = BlockRole::IterationCleanup;
-    assert_eq!(roles, [ordinary, ordinary, ordinary, ordinary, ordinary, cleanup]);
+    assert_eq!(
+        roles,
+        [ordinary, ordinary, ordinary, ordinary, ordinary, cleanup]
+    );
     let subjects = collect_from_blocks(&body, |view| view.subject);
     assert_eq!(subjects, [None, None, None, None, None, Some(value(0))]);
     let (normal, unlikely) = (BlockFrequency::Normal, BlockFrequency::Unlikely);
     let frequencies = collect_from_blocks(&body, |view| view.frequency);
-    assert_eq!(frequencies, [normal, unlikely, unlikely, normal, normal, normal]);
+    assert_eq!(
+        frequencies,
+        [normal, unlikely, unlikely, normal, normal, normal]
+    );
 }
 
 #[test]
@@ -156,7 +166,11 @@ fn views_decode_terminators() {
     let body = build_guarded_body();
     let terminators = collect_from_blocks(&body, |view| {
         let terminator = view.terminator();
-        (terminator.kind, terminator.position, terminator.fields.to_vec())
+        (
+            terminator.kind,
+            terminator.position,
+            terminator.fields.to_vec(),
+        )
     });
     let expected = [
         (TerminatorKind::Jump, None, Vec::new()),
@@ -252,7 +266,12 @@ fn build_body_with_references(offset: usize) -> Body {
     let function = build_function(&[ty(5)], |builder| {
         let operand = builder.parameter(0);
         builder.prop_get(operand, PropertyKeyId::new(20 + offset), true, true);
-        builder.new_object(LayoutId::new(30 + offset), &[0, 1], None, &[operand, operand]);
+        builder.new_object(
+            LayoutId::new(30 + offset),
+            &[0, 1],
+            None,
+            &[operand, operand],
+        );
         builder.new_closure(function_id(40), &[operand]);
         builder.call_direct(function_id(41), &[operand]);
         builder.import_module(module(50), module(51));

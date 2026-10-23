@@ -84,7 +84,13 @@ server.stop(true);`,
 };
 
 // What leaves the file with each at the least, in KB: the native library behind it, not only the functions that JavaScript calls.
-const smallest: Record<string, number> = { "ffi": 256, "native-addons": 128, "sqlite": 1024, "image": 512, "brotli": 256 };
+const smallest: Record<string, number> = {
+  "ffi": 256,
+  "native-addons": 128,
+  "sqlite": 1024,
+  "image": 512,
+  "brotli": 256,
+};
 
 const buildScript = `const [entry, outfile, trim] = process.argv.slice(2);
 try {
@@ -97,25 +103,39 @@ try {
 const libc = isLinux ? "libc.so.6" : "/usr/lib/libSystem.B.dylib";
 
 describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
-  const files = { "build.mjs": buildScript, ...Object.fromEntries(Object.entries(programs).map(([name, { text }]) => [name, text])) };
-  const build = (folder: string, entry: string, outfile: string, trim: object) => spawned([bunExe(), "build.mjs", `./${entry}`, join(folder, outfile), JSON.stringify(trim)], folder, bunEnv);
+  const files = {
+    "build.mjs": buildScript,
+    ...Object.fromEntries(Object.entries(programs).map(([name, { text }]) => [name, text])),
+  };
+  const build = (folder: string, entry: string, outfile: string, trim: object) =>
+    spawned([bunExe(), "build.mjs", `./${entry}`, join(folder, outfile), JSON.stringify(trim)], folder, bunEnv);
 
-  test.each(Object.keys(programs))("%s: the names stay, a call says that the feature is not there, and the executable is smaller", async entry => {
-    const { remove, whole, cut } = programs[entry]!;
-    using dir = tempDirForAotBuilds("compile-trim-remove", files);
-    const folder = String(dir);
-    const env = { ...bunEnv, LIBC: libc };
-    expect(await build(folder, entry, "kept", {})).toMatchObject({ stdout: "built\n", exitCode: 0 });
-    expect(await build(folder, entry, "cut", { remove: [remove] })).toMatchObject({ stdout: "built\n", exitCode: 0 });
-    expect(await spawned([join(folder, "kept")], folder, env)).toMatchObject({ stdout: whole, exitCode: 0 });
-    expect(await spawned([join(folder, "cut")], folder, env)).toMatchObject({ stdout: cut, exitCode: 0 });
-    expect(statSync(join(folder, "kept")).size - statSync(join(folder, "cut")).size).toBeGreaterThan(smallest[remove]! * 1024);
-  }, 240_000);
+  test.each(Object.keys(programs))(
+    "%s: the names stay, a call says that the feature is not there, and the executable is smaller",
+    async entry => {
+      const { remove, whole, cut } = programs[entry]!;
+      using dir = tempDirForAotBuilds("compile-trim-remove", files);
+      const folder = String(dir);
+      const env = { ...bunEnv, LIBC: libc };
+      expect(await build(folder, entry, "kept", {})).toMatchObject({ stdout: "built\n", exitCode: 0 });
+      expect(await build(folder, entry, "cut", { remove: [remove] })).toMatchObject({ stdout: "built\n", exitCode: 0 });
+      expect(await spawned([join(folder, "kept")], folder, env)).toMatchObject({ stdout: whole, exitCode: 0 });
+      expect(await spawned([join(folder, "cut")], folder, env)).toMatchObject({ stdout: cut, exitCode: 0 });
+      expect(statSync(join(folder, "kept")).size - statSync(join(folder, "cut")).size).toBeGreaterThan(
+        smallest[remove]! * 1024,
+      );
+    },
+    240_000,
+  );
 
   test("a name in both lists, and a name that Bun doesn't know, fail the build", async () => {
     using dir = tempDirForAotBuilds("compile-trim-remove", files);
     const folder = String(dir);
-    expect((await build(folder, "image.ts", "both", { allow: ["image"], remove: ["image"] })).stdout).toBe('compile.trim: "image" is listed in both allow and remove\n');
-    expect((await build(folder, "image.ts", "unknown", { remove: ["imag"] })).stdout).toBe('compile.trim: unknown name "imag". Did you mean "image"?\n');
+    expect((await build(folder, "image.ts", "both", { allow: ["image"], remove: ["image"] })).stdout).toBe(
+      'compile.trim: "image" is listed in both allow and remove\n',
+    );
+    expect((await build(folder, "image.ts", "unknown", { remove: ["imag"] })).stdout).toBe(
+      'compile.trim: unknown name "imag". Did you mean "image"?\n',
+    );
   }, 120_000);
 });

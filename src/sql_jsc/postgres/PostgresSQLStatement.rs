@@ -121,7 +121,9 @@ impl PostgresSQLStatement {
             .fields
             .iter()
             .map(|field| {
-                let ColumnIdentifier::Name(name) = &field.name_or_index else { return None };
+                let ColumnIdentifier::Name(name) = &field.name_or_index else {
+                    return None;
+                };
                 let tag = field.type_tag();
                 let is_binary = field.binary || tag.is_binary_in(types::ResultFormats::Decodable);
                 let format = match (tag, is_binary) {
@@ -130,10 +132,15 @@ impl PostgresSQLStatement {
                     (T::float8, true) => WireFormat::Float64,
                     (T::bool, true) => WireFormat::Boolean,
                     (T::timestamp | T::timestamptz, true) => WireFormat::TimestampMicroseconds,
-                    (T::text | T::varchar | T::bpchar | T::name, _) | (T::uuid | T::int8, false) => WireFormat::Text,
+                    (T::text | T::varchar | T::bpchar | T::name, _)
+                    | (T::uuid | T::int8, false) => WireFormat::Text,
                     _ => return None,
                 };
-                Some(RowColumn { name: name.slice().as_ptr(), name_length: name.slice().len() as u32, format })
+                Some(RowColumn {
+                    name: name.slice().as_ptr(),
+                    name_length: name.slice().len() as u32,
+                    format,
+                })
             })
             .collect();
         self.row_decoder = RowDecoder::new(global_object, row_type, columns.as_deref());

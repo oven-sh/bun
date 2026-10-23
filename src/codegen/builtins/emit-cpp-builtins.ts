@@ -1,6 +1,6 @@
 import { GeneratorError, Problems } from "./declarations.ts";
 import { collectArrayDeclarations } from "./emit-cpp-ids.ts";
-import { textNameSlotsArray, textNamesArray } from "./emit-cpp-names.ts";
+import { textNamesArray, textNameSlotsArray } from "./emit-cpp-names.ts";
 import {
   checkDenseIds,
   emitArray,
@@ -204,7 +204,9 @@ interface ClassPools {
 function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
   const { slots: classSlots, names: classNames } = pools;
   const names = builtinClass.namesDefinedOnNewInstances?.toSorted((left, right) => left.number - right.number);
-  const typesOfNames = builtinClass.typesOfNamesDefinedOnNewInstances.toSorted((left, right) => left.name.number - right.name.number);
+  const typesOfNames = builtinClass.typesOfNamesDefinedOnNewInstances.toSorted(
+    (left, right) => left.name.number - right.name.number,
+  );
   return formatAggregate([
     ["id", formatId("BuiltinClassID", builtinClass)],
     ["origin", formatUnlessDefault("BuiltinOrigin", builtinClass.origin, "Engine")],
@@ -246,7 +248,10 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
         ),
       ),
     ],
-    ["constructorOnlyReadsPrototypeOfNewTarget", formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget)],
+    [
+      "constructorOnlyReadsPrototypeOfNewTarget",
+      formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),
+    ],
     ["slots", classSlots.add(builtinClass.slots.map(slot => formatId("BuiltinSlotID", slot)))],
     ["stateHeap", formatHeap(builtinClass.stateHeap)],
   ]);

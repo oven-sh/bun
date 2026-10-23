@@ -16,7 +16,8 @@ async function runFile(source: string) {
   return await spawned([bunExe(), "run", "main.mjs"], String(dir), bunEnv);
 }
 
-const mismatches = 'import { aotBuiltinMismatches } from "bun:internal-for-testing";\nconsole.log(JSON.stringify(aotBuiltinMismatches()));';
+const mismatches =
+  'import { aotBuiltinMismatches } from "bun:internal-for-testing";\nconsole.log(JSON.stringify(aotBuiltinMismatches()));';
 
 // TODO: the table says that self is a value, and names another object above the prototype of EventEmitter than the realm has.
 test.todo("the table agrees with the realm of bun run", async () => {
@@ -32,7 +33,11 @@ test.todo(
       const folder = String(dir);
       const executable = await buildExecutable(folder);
       const ran = await spawned([executable], folder, bunEnv);
-      expect({ mismatches: JSON.parse(ran.stdout), exitCode: ran.exitCode, signal: ran.signal }).toEqual({ mismatches: [], exitCode: 0, signal: null });
+      expect({ mismatches: JSON.parse(ran.stdout), exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+        mismatches: [],
+        exitCode: 0,
+        signal: null,
+      });
     }),
   600_000,
 );
@@ -54,7 +59,10 @@ const namesOfGlobalObject = [
 ].join("\n");
 
 test("the table lists every own name of the global object", async () => {
-  expect(JSON.parse((await runFile(namesOfGlobalObject)).stdout)).toEqual({ unlisted: [], isBelowObjectPrototype: true });
+  expect(JSON.parse((await runFile(namesOfGlobalObject)).stdout)).toEqual({
+    unlisted: [],
+    isBelowObjectPrototype: true,
+  });
 });
 
 test(
@@ -100,7 +108,8 @@ test.todo(
   () =>
     slot(async () => {
       using dir = tempDir("aot-realm-agreement", {
-        "main.mjs": 'try {\n  new Date(0).toTemporalInstant();\n  console.log("returned");\n} catch (error) {\n  console.log(error instanceof TypeError);\n}\n',
+        "main.mjs":
+          'try {\n  new Date(0).toTemporalInstant();\n  console.log("returned");\n} catch (error) {\n  console.log(error instanceof TypeError);\n}\n',
       });
       const folder = String(dir);
       const executable = await buildExecutable(folder);

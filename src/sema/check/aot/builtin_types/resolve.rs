@@ -4,8 +4,7 @@ use crate::bind::{Decl, PatParent, ScopeId, SymFlags};
 use crate::check::aot::answers::FunctionRef;
 use crate::hir::{
     ExprId, ExprKind, File, FileKind, Flags, FnBody, FnId, MemberId, MemberKind, PropKey, Span,
-    TypeNodeId, TypeNodeKind,
-    is_entity_name_expression,
+    TypeNodeId, TypeNodeKind, is_entity_name_expression,
 };
 use crate::program::{FileId, Files, Sym};
 use crate::util::{FxHashMap, FxHashSet};
@@ -76,7 +75,12 @@ fn find_symbol(
         None => None,
     };
     for &name in holders {
-        holder = Some(find_member(files, holder, name, meaning | SymFlags::NAMESPACE)?);
+        holder = Some(find_member(
+            files,
+            holder,
+            name,
+            meaning | SymFlags::NAMESPACE,
+        )?);
     }
     find_member(files, holder, last, meaning)
 }
@@ -289,7 +293,11 @@ pub(super) fn collect_static_members(files: &Files<'_>) -> FxHashMap<Atom, Small
         if hir.kind == FileKind::Declaration {
             continue;
         }
-        for (class, symbol) in hir.classes.iter().zip(files.bound(file).class_symbol.iter()) {
+        for (class, symbol) in hir
+            .classes
+            .iter()
+            .zip(files.bound(file).class_symbol.iter())
+        {
             let Some(symbol) = symbol.some() else {
                 continue;
             };

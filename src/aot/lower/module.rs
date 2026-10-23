@@ -100,7 +100,10 @@ pub fn collect_library_functions(
 
 pub(in crate::lower) fn file_scope(file: &FileLowering<'_, '_, '_, '_>) -> ScopeId {
     let scope = file.bound.scope_of_declaration(file.hir, Decl::File);
-    debug_assert!(matches!(file.bound.scopes[scope.idx()].kind, ScopeKind::File));
+    debug_assert!(matches!(
+        file.bound.scopes[scope.idx()].kind,
+        ScopeKind::File
+    ));
     scope
 }
 

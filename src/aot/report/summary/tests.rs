@@ -37,7 +37,10 @@ impl Modules {
         Modules {
             records: records.collect(),
             paths: files.iter().map(|&(path, _)| native(path)).collect(),
-            origins: files.iter().map(|&(path, _)| origin_of_file(path)).collect(),
+            origins: files
+                .iter()
+                .map(|&(path, _)| origin_of_file(path))
+                .collect(),
         }
     }
 
@@ -153,7 +156,10 @@ fn program_line_is_last() {
         "210 free, 0 tested, 6,564 by name (6,774)\n",
         "92.4% of property accesses are one load: 1,204 free, 0 tested, 99 by name (1,303)\n",
     ];
-    assert_eq!(Modules::new(&files).summary(false, &["validate"]), expected.concat());
+    assert_eq!(
+        Modules::new(&files).summary(false, &["validate"]),
+        expected.concat()
+    );
 }
 
 #[test]
@@ -178,7 +184,10 @@ fn hint_starts_below_threshold() {
         "95% of property accesses are one load: 19 free, 0 tested, 1 by name (20)\n"
     );
     let line = "94.9% of property accesses are one load: 949 free, 0 tested, 51 by name (1,000)\n";
-    assert_eq!(summary(&[(MAIN, [51, 0, 949])]), format!("{HINT_LINE}{line}"));
+    assert_eq!(
+        summary(&[(MAIN, [51, 0, 949])]),
+        format!("{HINT_LINE}{line}")
+    );
 }
 
 #[test]
@@ -231,7 +240,8 @@ fn developer_options_come_first() {
 #[test]
 fn columns_line_matches_documented_form() {
     let accesses = CostCounts::from_words([38, 41, 20, 1204]);
-    let line = "92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)\n";
+    let line =
+        "92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)\n";
     assert_eq!(written(|out| write_columns_line(out, "", &accesses)), line);
     assert_eq!(
         written(|out| write_columns_line(out, "Dependencies: ", &accesses)),
@@ -326,8 +336,13 @@ fn details_omit_empty_sections() {
 fn five_untyped_files_are_all_listed() {
     let paths = ["/p/a.ts", "/p/b.ts", "/p/c.ts", "/p/d.ts", "/p/e.ts"];
     let modules = Modules::new(&paths.map(|path| (path, [1, 0, 0])));
-    let details = modules.details(&Statistics::default()).expect("counted accesses");
-    assert!(details.ends_with(b"\n  e.ts  0% typed (0 of 1)"), "{details}");
+    let details = modules
+        .details(&Statistics::default())
+        .expect("counted accesses");
+    assert!(
+        details.ends_with(b"\n  e.ts  0% typed (0 of 1)"),
+        "{details}"
+    );
 }
 
 #[test]
@@ -335,7 +350,10 @@ fn details_need_counted_access() {
     let mut statistics = Statistics::default();
     statistics.gave_up(LimitId::MaxValueFlowEdgesLogged, None);
     assert_eq!(Modules::new(&[]).details(&statistics), None);
-    assert_eq!(Modules::new(&[(RUNTIME, [1, 2, 3])]).details(&statistics), None);
+    assert_eq!(
+        Modules::new(&[(RUNTIME, [1, 2, 3])]).details(&statistics),
+        None
+    );
 }
 
 #[test]

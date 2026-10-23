@@ -99,16 +99,23 @@ fn expand_variable(lowered: &LoweredFile, name: &str) -> PositionTree {
         let text = variable.name.map(|name| fragment.strings.get(name));
         text == Some(name.as_bytes())
     });
-    let declared = variable.expect("the fragment defines the variable").declared;
+    let declared = variable
+        .expect("the fragment defines the variable")
+        .declared;
     expand_position(fragment, declared)
 }
 
 /// The declared types of the fields called `name`, in every definition of a layout of the file.
 fn declared_types_of_fields(lowered: &LoweredFile, name: &str) -> Vec<DeclaredType> {
     let fragment = &lowered.fragment;
-    let fields = fragment.layouts.iter().flat_map(|(_, layout)| layout.fields.iter());
+    let fields = fragment
+        .layouts
+        .iter()
+        .flat_map(|(_, layout)| layout.fields.iter());
     let named = fields.filter(|field| {
-        let text = field.key.and_then(|key| fragment.property_keys.get(key).text);
+        let text = field
+            .key
+            .and_then(|key| fragment.property_keys.get(key).text);
         text.map(|text| fragment.strings.get(text)) == Some(name.as_bytes())
     });
     named.map(|field| field.declared).collect()
@@ -159,8 +166,18 @@ fn assert_order_independent(aliases: &str, types: [&str; 2], max_type_nodes: Opt
     };
     let forward = declare(types[0], types[1]);
     let backward = declare(types[1], types[0]);
-    assert_eq!(expand_variable(&forward, "a"), expand_variable(&backward, "b"), "{}", types[0]);
-    assert_eq!(expand_variable(&forward, "b"), expand_variable(&backward, "a"), "{}", types[1]);
+    assert_eq!(
+        expand_variable(&forward, "a"),
+        expand_variable(&backward, "b"),
+        "{}",
+        types[0]
+    );
+    assert_eq!(
+        expand_variable(&forward, "b"),
+        expand_variable(&backward, "a"),
+        "{}",
+        types[1]
+    );
 }
 
 fn mutually_recursive_tuple_aliases(count: usize) -> String {
@@ -174,7 +191,9 @@ fn mutually_recursive_tuple_aliases(count: usize) -> String {
 }
 
 fn map_aliases_sharing_union(literal_count: usize, alias_count: usize) -> String {
-    let literals: Vec<String> = (0..literal_count).map(|index| format!("\"i{index}\"")).collect();
+    let literals: Vec<String> = (0..literal_count)
+        .map(|index| format!("\"i{index}\""))
+        .collect();
     let mut source = format!("type Icon = {};\n", literals.join(" | "));
     for alias in 0..alias_count {
         let _ = writeln!(source, "type F{alias} = Map<Icon, {alias}>;");
@@ -200,11 +219,17 @@ fn recursive_alias_is_cut_to_shallow_form() {
     let lowered = lower("type Json = string | Json[];\nexport let v: Json;\n", None);
     assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
-    assert_eq!(ty.value_primitives(), Primitives::STRING | Primitives::NULLISH);
+    assert_eq!(
+        ty.value_primitives(),
+        Primitives::STRING | Primitives::NULLISH
+    );
     let [(BuiltinClass::Array, contents)] = &ty.classes[..] else {
         panic!("the alias names one array: {ty:?}");
     };
-    assert_eq!(contents[0].primitives, Primitives::STRING | Primitives::NULLISH);
+    assert_eq!(
+        contents[0].primitives,
+        Primitives::STRING | Primitives::NULLISH
+    );
     let [(BuiltinClass::Array, cut_contents)] = &contents[0].classes[..] else {
         panic!("the contents name the alias: {ty:?}");
     };
@@ -213,7 +238,10 @@ fn recursive_alias_is_cut_to_shallow_form() {
 
 #[test]
 fn dense_cycle_is_one_component_and_below_limit() {
-    let source = format!("{}export let v: F0;\n", mutually_recursive_tuple_aliases(12));
+    let source = format!(
+        "{}export let v: F0;\n",
+        mutually_recursive_tuple_aliases(12)
+    );
     let lowered = lower(&source, None);
     assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
@@ -239,7 +267,10 @@ fn expanding_alias_is_exhausted() {
     };
     assert_eq!(contents.len(), 2);
     for part in contents {
-        assert!(part.primitives == Primitives::NULLISH && part.is_map(), "{part:?}");
+        assert!(
+            part.primitives == Primitives::NULLISH && part.is_map(),
+            "{part:?}"
+        );
     }
 }
 
@@ -253,7 +284,10 @@ export let v: Tree<string> = { leaf: \"a\", left: { leaf: [\"b\"] } };
     assert!(!ty.is_anything(), "{ty:?}");
     let leaves = declared_types_of_fields(&lowered, "leaf");
     assert!(!leaves.is_empty());
-    assert!(leaves.iter().all(|&leaf| leaf == DeclaredType::untyped()), "{leaves:?}");
+    assert!(
+        leaves.iter().all(|&leaf| leaf == DeclaredType::untyped()),
+        "{leaves:?}"
+    );
 }
 
 #[test]
@@ -263,7 +297,10 @@ export let v: Box<Box<Box<Box<number>>>> = { value: { value: { value: { value: 1
 ";
     let values = declared_types_of_fields(&lower(source, None), "value");
     assert!(!values.is_empty());
-    assert!(values.iter().all(|&value| value != DeclaredType::untyped()), "{values:?}");
+    assert!(
+        values.iter().all(|&value| value != DeclaredType::untyped()),
+        "{values:?}"
+    );
 }
 
 #[test]
@@ -279,7 +316,10 @@ export function read(): number | undefined { return v?.list.first.next.list.firs
 ";
     let counts = declared_types_of_fields(&lower(source, None), "count");
     assert!(!counts.is_empty());
-    assert!(counts.iter().all(|&count| count != DeclaredType::untyped()), "{counts:?}");
+    assert!(
+        counts.iter().all(|&count| count != DeclaredType::untyped()),
+        "{counts:?}"
+    );
 }
 
 #[test]
@@ -292,7 +332,10 @@ fn part_beside_oversized_part_stays() {
         panic!("the type names one map: {ty:?}");
     };
     assert_eq!(contents.len(), 2);
-    assert_eq!(contents[0].primitives, Primitives::STRING | Primitives::NULLISH);
+    assert_eq!(
+        contents[0].primitives,
+        Primitives::STRING | Primitives::NULLISH
+    );
     assert!(contents[0].classes.is_empty(), "{ty:?}");
     assert!(contents[1].is_map(), "{ty:?}");
 }
@@ -340,7 +383,10 @@ fn type_mapped_twice_is_charged_once() {
     let twice = format!("{once}export let w: G<number>;\n");
     let expected = count_type_node_losses(&lower(&once, LOWERED_LIMIT));
     assert!(expected > 0);
-    assert_eq!(count_type_node_losses(&lower(&twice, LOWERED_LIMIT)), expected);
+    assert_eq!(
+        count_type_node_losses(&lower(&twice, LOWERED_LIMIT)),
+        expected
+    );
 }
 
 #[test]
@@ -358,9 +404,15 @@ fn references_take_nullish_and_numbers_do_not() {
 fn number_takes_the_nullish_that_its_type_lists() {
     let source = "export let a: number = 1;\nexport let b: number | undefined = 1;\n";
     let lowered = lower(source, None);
-    assert_eq!(expand_variable(&lowered, "a").ty.value_primitives(), Primitives::NUMBER);
+    assert_eq!(
+        expand_variable(&lowered, "a").ty.value_primitives(),
+        Primitives::NUMBER
+    );
     let optional = Primitives::NUMBER | Primitives::UNDEFINED;
-    assert_eq!(expand_variable(&lowered, "b").ty.value_primitives(), optional);
+    assert_eq!(
+        expand_variable(&lowered, "b").ty.value_primitives(),
+        optional
+    );
 }
 
 #[test]
@@ -370,7 +422,10 @@ fn variable_without_initializer_holds_undefined() {
     let number = Primitives::NUMBER | Primitives::UNDEFINED;
     assert_eq!(expand_variable(&lowered, "a").ty.value_primitives(), number);
     let boolean = Primitives::BOOLEAN | Primitives::UNDEFINED;
-    assert_eq!(expand_variable(&lowered, "b").ty.value_primitives(), boolean);
+    assert_eq!(
+        expand_variable(&lowered, "b").ty.value_primitives(),
+        boolean
+    );
 }
 
 #[test]
@@ -379,7 +434,10 @@ fn class_type_is_its_layout() {
     assert!(!position.is_expected, "{position:?}");
     assert_eq!(position.ty.layout_count, 1);
     assert_eq!(position.ty.value_primitives(), Primitives::NULLISH);
-    assert!(!position.ty.flags.contains(TypeFlags::ANY_OBJECT), "{position:?}");
+    assert!(
+        !position.ty.flags.contains(TypeFlags::ANY_OBJECT),
+        "{position:?}"
+    );
 }
 
 #[test]
@@ -412,7 +470,10 @@ fn inferred_type_is_checked_in_checked_file() {
     let position = expand_variable(&lower(source, None), "v");
     assert!(!position.is_expected, "{position:?}");
     assert_eq!(position.ty.value_primitives(), Primitives::NUMBER);
-    assert!(!position.ty.flags.contains(TypeFlags::ANY_OBJECT), "{position:?}");
+    assert!(
+        !position.ty.flags.contains(TypeFlags::ANY_OBJECT),
+        "{position:?}"
+    );
 }
 
 #[test]
@@ -462,7 +523,10 @@ fn array_literal_without_a_declared_type_takes_the_checked_elements() {
 #[test]
 fn empty_array_literal_without_annotation_holds_anything() {
     let source = "export function probe() { const v = []; v.push(1); return v; }\n";
-    assert_eq!(collect_array_literal_contents(source), [TypeTable::ANYTHING]);
+    assert_eq!(
+        collect_array_literal_contents(source),
+        [TypeTable::ANYTHING]
+    );
 }
 
 #[test]
@@ -481,5 +545,8 @@ fn array_literal_in_a_tuple_position_holds_what_the_elements_hold() {
 #[test]
 fn array_literal_under_a_tuple_with_a_variadic_element_holds_anything() {
     let source = "export function probe<T extends unknown[]>(a: number, rest: T) { const v: [number, ...T] = [a, ...rest]; return v; }\n";
-    assert_eq!(collect_array_literal_contents(source), [TypeTable::ANYTHING]);
+    assert_eq!(
+        collect_array_literal_contents(source),
+        [TypeTable::ANYTHING]
+    );
 }

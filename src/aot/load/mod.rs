@@ -6,6 +6,7 @@ pub(crate) mod evaluated_texts;
 pub(crate) mod externals;
 pub(crate) mod fold_inputs;
 pub(crate) mod host;
+pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
 pub(crate) mod macros;

@@ -34,8 +34,15 @@ fn names_above<'a>(linked: &'a Linked, name: &str) -> Vec<&'a [u8]> {
     let mut base: Option<LayoutId> = find_instance_layout(program, name).base;
     while let Some(id) = base {
         let layout = &program.layouts[id.index()];
-        assert!(layout.flags.contains(LayoutFlags::IS_CONSTRUCTOR_FUNCTION), "{name}");
-        assert_eq!(linked.keys.layouts[id.index()].project, ProjectId::Runtime, "{name}");
+        assert!(
+            layout.flags.contains(LayoutFlags::IS_CONSTRUCTOR_FUNCTION),
+            "{name}"
+        );
+        assert_eq!(
+            linked.keys.layouts[id.index()].project,
+            ProjectId::Runtime,
+            "{name}"
+        );
         names.push(name_of(program, layout));
         base = layout.base;
     }
@@ -59,7 +66,11 @@ fn what_is_below_a_function_begins_with_the_fields_of_that_function() {
         let fields = find_instance_layout(&linked.program, name).fields.iter();
         fields.map(|field| field.key).collect()
     };
-    for (name, base) in [("Bus", "EventEmitter"), ("Old", "EventEmitter"), ("Numbers", "Readable")] {
+    for (name, base) in [
+        ("Bus", "EventEmitter"),
+        ("Old", "EventEmitter"),
+        ("Numbers", "Readable"),
+    ] {
         let (keys, base_keys) = (keys_of(name), keys_of(base));
         assert!(!base_keys.is_empty(), "{base}");
         assert_eq!(keys[..base_keys.len()], base_keys[..], "{name}");

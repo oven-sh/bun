@@ -23,8 +23,8 @@ use bun_paths::resolve_path::dirname;
 mod build_options;
 
 pub use self::build_options::{
-    compile_build_overrides, load_for_build, load_for_build_with_unlisted_files, load_options_for_build,
-    load_referenced_projects_for_build,
+    compile_build_overrides, load_for_build, load_for_build_with_unlisted_files,
+    load_options_for_build, load_referenced_projects_for_build,
 };
 
 /// A configuration file error: TypeScript's message code and the message arguments.
@@ -1213,7 +1213,13 @@ fn file_names_from_specs(
     include: &[Vec<u8>],
     exclude: &[Vec<u8>],
 ) -> Vec<Vec<u8>> {
-    file_names_from_specs_noting(host, base, options, (literal, include, exclude), &mut |_| {})
+    file_names_from_specs_noting(
+        host,
+        base,
+        options,
+        (literal, include, exclude),
+        &mut |_| {},
+    )
 }
 
 /// `getFileNamesFromConfigSpecs`. See `RootFileSpecs::list`.
@@ -1246,7 +1252,15 @@ fn file_names_from_specs_noting(
             extensions.push(b".json");
         }
         let mut json_only: Option<Vec<GlobPattern>> = None;
-        for file in match_files(host, base, &extensions, exclude, include, case_sensitive, on_match) {
+        for file in match_files(
+            host,
+            base,
+            &extensions,
+            exclude,
+            include,
+            case_sensitive,
+            on_match,
+        ) {
             if file.ends_with(b".json") {
                 let patterns = json_only.get_or_insert_with(|| {
                     include
@@ -1669,7 +1683,9 @@ impl GlobMatcher {
 
     fn in_directory<'a>(&'a self, directory: &'a [&'a [u8]]) -> DirectoryMatcher<'a> {
         let starts_of = |patterns: &'a [GlobPattern]| {
-            let starts = patterns.iter().map(|pattern| (pattern, pattern.match_start(directory)));
+            let starts = patterns
+                .iter()
+                .map(|pattern| (pattern, pattern.match_start(directory)));
             starts.collect()
         };
         DirectoryMatcher {
@@ -1702,23 +1718,35 @@ impl DirectoryMatcher<'_> {
 
     /// Returns the index of the include pattern that the file matches.
     fn matches_file(&self, name: &[u8]) -> Option<usize> {
-        if self.excludes.iter().any(|&pattern| self.matches(pattern, name, false)) {
+        if self
+            .excludes
+            .iter()
+            .any(|&pattern| self.matches(pattern, name, false))
+        {
             return None;
         }
         if self.includes.is_empty() {
             return (!self.matcher.had_includes).then_some(0);
         }
-        self.includes.iter().position(|&pattern| self.matches(pattern, name, false))
+        self.includes
+            .iter()
+            .position(|&pattern| self.matches(pattern, name, false))
     }
 
     fn matches_directory(&self, name: &[u8]) -> bool {
-        if self.excludes.iter().any(|&pattern| self.matches(pattern, name, false)) {
+        if self
+            .excludes
+            .iter()
+            .any(|&pattern| self.matches(pattern, name, false))
+        {
             return false;
         }
         if self.includes.is_empty() {
             return !self.matcher.had_includes;
         }
-        self.includes.iter().any(|&pattern| self.matches(pattern, name, true))
+        self.includes
+            .iter()
+            .any(|&pattern| self.matches(pattern, name, true))
     }
 }
 

@@ -211,7 +211,8 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         origin: Option<Origin>,
     ) -> Result<u32, ValidationError> {
         if self.nodes.len() as u64 >= self.file.inputs.limits.get(LimitId::MaxValidationNodes) {
-            self.file.gave_up(LimitId::MaxValidationNodes, self.position);
+            self.file
+                .gave_up(LimitId::MaxValidationNodes, self.position);
             return Err(ValidationError::TooLarge);
         }
         let node = self.nodes.len() as u32;
@@ -348,7 +349,8 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         for &place in &places {
             builders.push((arms[place], self.find_written_type(arms[place])?));
         }
-        self.orders.sort_members_by(union, &mut builders[..], |&(_, written)| written);
+        self.orders
+            .sort_members_by(union, &mut builders[..], |&(_, written)| written);
         let mut ordered: SmallVec<[CheckerTypeId; 8]> = SmallVec::from_slice(arms);
         for (&place, (builder, _)) in places.iter().zip(builders) {
             ordered[place] = builder;
@@ -433,9 +435,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         let value_type = match signatures.map_err(ValidationError::GaveUp)? {
             [] => None,
             [signature] => match signature.key {
-                IndexKey::String => {
-                    Some(signature.types.checked.map_err(ValidationError::GaveUp)?)
-                }
+                IndexKey::String => Some(signature.types.checked.map_err(ValidationError::GaveUp)?),
                 IndexKey::Number | IndexKey::Symbol | IndexKey::Pattern => {
                     return Err(self.unsupported(source));
                 }
@@ -481,7 +481,12 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         let ty = member.types.checked.map_err(ValidationError::GaveUp)?;
         match member.kind {
             ObjectMemberKind::Method => {
-                return Err(describe_unsupported(self.file, &self.origins, Some(origin), ty));
+                return Err(describe_unsupported(
+                    self.file,
+                    &self.origins,
+                    Some(origin),
+                    ty,
+                ));
             }
             ObjectMemberKind::Field
             | ObjectMemberKind::Getter

@@ -5,7 +5,14 @@ import { test } from "./supported";
 
 const files = {
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, target: "ESNext", module: "Preserve", noEmit: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types", "bun-types/test-globals"] },
+    compilerOptions: {
+      strict: true,
+      target: "ESNext",
+      module: "Preserve",
+      noEmit: true,
+      typeRoots: [join(import.meta.dir, "..", "..", "packages")],
+      types: ["bun-types", "bun-types/test-globals"],
+    },
   }),
   "shared.ts": `export const one: number = 1;`,
   "broken.ts": `export const two: number = "two";`,
@@ -18,10 +25,17 @@ const files = {
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const ran = (said: string) => [...said.matchAll(/^\((?:pass|fail)\) .*$/gm)].map(match => match[0]);
 /** `error: TS2322: ..` and under it `    at <path>:<line>:<column>` */
-const errors = (said: string) => [...said.matchAll(/^error: (TS\d+): .*\n +at .*[\\/]([^\\/\n]+)$/gm)].map(match => `${match[2]} ${match[1]}`).sort();
+const errors = (said: string) =>
+  [...said.matchAll(/^error: (TS\d+): .*\n +at .*[\\/]([^\\/\n]+)$/gm)].map(match => `${match[2]} ${match[1]}`).sort();
 
 async function run(dir: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--aot", ...args], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--aot", ...args],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { said: stdout + stderr, exitCode };
 }

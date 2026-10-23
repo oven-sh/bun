@@ -1,3 +1,4 @@
+import type { TargetArchitecture } from "./model.ts";
 import type {
   BuiltinKind,
   BuiltinPath,
@@ -18,8 +19,8 @@ import type {
   IntrinsicSpec,
   LayoutName,
   ModuleLoadSpec,
-  NativeCallKind,
   NativeCallerSpec,
+  NativeCallKind,
   NativeMentionSpec,
   Origin,
   ParameterType,
@@ -29,7 +30,6 @@ import type {
   TargetPlatform,
   TypeSpec,
 } from "./vocabulary.ts";
-import type { TargetArchitecture } from "./model.ts";
 
 export const proofs = ["Structure", "ByConstruction", "HandWritten"] as const;
 export type Proof = (typeof proofs)[number];
@@ -73,8 +73,7 @@ export interface SignatureDeclaration extends SignatureColumns {
 }
 
 export type DispatchDeclaration =
-  | { signature: number }
-  | { argument: number; branches: readonly { tested: TypeSpec; then: DispatchDeclaration }[] };
+  { signature: number } | { argument: number; branches: readonly { tested: TypeSpec; then: DispatchDeclaration }[] };
 
 export interface ModeDispatchDeclaration {
   mode: CallMode;

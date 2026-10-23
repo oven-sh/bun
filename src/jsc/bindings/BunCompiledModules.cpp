@@ -104,10 +104,10 @@ JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const Strin
 {
     auto module = compiledModuleForPath(path);
     if (!module)
-        return { };
+        return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     AOT::evaluateModuleSynchronously(globalObject, *module);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, AOT::moduleNamespace(globalObject, *module));
 }
 
@@ -278,12 +278,12 @@ static JSValue resolveSpecifier(JSGlobalObject* realm, JSObject* holder, JSValue
         auto& vm = getVM(realm);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue from = holder->get(realm, WebCore::builtinNames(vm).filenamePublicName());
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, {});
         JSValue resolved = JSValue::decode(Bun__resolveSync(realm, JSValue::encode(specifier), JSValue::encode(from), false, false));
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, {});
         if (!resolved.isString()) {
             throwException(realm, scope, resolved);
-            return { };
+            return {};
         }
         return resolved;
     }
@@ -328,16 +328,16 @@ static JSValue requireNativeModule(JSGlobalObject* realm, JSString* specifier)
     auto& vm = getVM(realm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String text = specifier->value(realm);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     BunString name = Bun::toString(text);
     JSValue exports = resolveAndFetchBuiltinModule(uncheckedDowncast<Zig::GlobalObject>(realm), &name);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     if (exports)
         return exports;
 
     // The name of a built-in module resolves to itself from every file.
     JSObject* require = JSCommonJSModule::createBoundRequireFunction(vm, realm, text, nullptr);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, requireSpecifier(realm, boundModuleOf(require), specifier));
 }
 
@@ -389,14 +389,14 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)
 {
     if (!hasCompiledModules() || !AOT::refusesCodeOutsideImage(globalObject))
-        return { };
+        return {};
     return createNotInExecutableError(globalObject, code, path);
 }
 
 JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)
 {
     if (!hasCompiledModules() || !AOT::refusesHostObjectsOutsideImage(globalObject))
-        return { };
+        return {};
     return createNotInExecutableError(globalObject, code, path);
 }
 
@@ -410,9 +410,9 @@ JSValue parentSeenBy(Zig::GlobalObject* globalObject, JSString* id, JSValue pare
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSString* pathOfRequirer = asString(requirer->filename());
     auto path = pathOfRequirer->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     auto required = id->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     if (!isCompiledModule(path) || isCompiledModule(required))
         return parent;
     RELEASE_AND_RETURN(scope, JSCommonJSModule::create(globalObject, pathOfRequirer, constructEmptyObject(globalObject), true, jsUndefined()));
@@ -430,7 +430,7 @@ JSValue errorIfUnseenCodeIsRefused(JSGlobalObject* globalObject, ASCIILiteral bu
 {
     const AOT::Image* image = AOT::Image::current();
     if (!image || image->admitsUnknownJavaScript()) [[likely]]
-        return { };
+        return {};
     return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": this executable only runs code that was compiled into it."_s, adviceToKeepFunctionSource()));
 }
 
@@ -443,14 +443,14 @@ bool isDebuggerAdmitted()
 JSValue errorIfDebuggerIsRefused(JSGlobalObject* globalObject, ASCIILiteral builtin)
 {
     if (isDebuggerAdmitted()) [[likely]]
-        return { };
+        return {};
     return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": rebuild this executable with --compile-inspector."_s));
 }
 
 String firstCompiledModuleMatching(JSGlobalObject* globalObject, RegExp* filter)
 {
     if (!hasCompiledModules())
-        return { };
+        return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     String found;
     AOT::forEachModule([&](AOT::ModuleID module) {

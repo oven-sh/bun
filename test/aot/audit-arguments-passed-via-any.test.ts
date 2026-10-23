@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // Built with --aot-log-type-mismatches, an executable reports a value that contradicts its type and goes on. The type that
 // a parameter is held to may be named nowhere else in the program.
@@ -26,7 +26,10 @@ test("a log build reports an argument that does not fit its parameter and goes o
     stderr: "pipe",
   });
   const [, buildErrors, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-  expect({ buildErrors: buildErrors.split("\n").filter(line => line.startsWith("error")), buildCode }).toEqual({ buildErrors: [], buildCode: 0 });
+  expect({ buildErrors: buildErrors.split("\n").filter(line => line.startsWith("error")), buildCode }).toEqual({
+    buildErrors: [],
+    buildCode: 0,
+  });
   await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   expect({ last: stdout.trim().split("\n").at(-1), exitCode }).toEqual({ last: "went on", exitCode: 0 });

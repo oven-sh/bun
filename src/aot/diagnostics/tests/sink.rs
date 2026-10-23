@@ -116,7 +116,10 @@ fn internal_error_alone_fails_build() {
     assert!(diagnostics.has_errors());
     assert_eq!(
         kinds_and_texts(&written(diagnostics)),
-        [(Kind::Err, "internal compiler error (Any): broken".to_string())]
+        [(
+            Kind::Err,
+            "internal compiler error (Any): broken".to_string()
+        )]
     );
 }
 

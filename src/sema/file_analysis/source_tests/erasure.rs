@@ -1,9 +1,9 @@
 mod support;
 use support::*;
 
+use ErasureMismatchKind::{ChildCount, EmitsCode, Flags, Literal, Name, NodeKind, Operator};
 use std::borrow::Cow;
 use std::sync::Mutex;
-use ErasureMismatchKind::{ChildCount, EmitsCode, Flags, Literal, Name, NodeKind, Operator};
 
 type Row = (&'static str, &'static str);
 
@@ -43,7 +43,10 @@ const EXACT_PAIRS: &[Row] = &[
         r#"function o(a: number): void; function o(a: string): void; function o(a: any) {}"#,
         r#"function o(a) {}"#,
     ),
-    (r#"function t(this: Window, a: number) {}"#, r#"function t(a) {}"#),
+    (
+        r#"function t(this: Window, a: number) {}"#,
+        r#"function t(a) {}"#,
+    ),
     (
         r#"abstract class C<T> extends B<T> implements I { declare x: number; abstract y: number; abstract n(): void; private p = 1; readonly z: string = "a"; protected static w?: number; v!: number; public override m(): void {} m2(a: number): void; m2(a: any) {} [k: string]: any; }"#,
         r#"class C extends B { p = 1; z = "a"; static w; v; m() {} m2(a) {} }"#,
@@ -57,9 +60,18 @@ const EXACT_PAIRS: &[Row] = &[
         r#"const f = (x) => x; const g = x => x; const h = () => ({});"#,
     ),
     (r#"a?.b!.c; (a?.b as T).c;"#, r#"a?.b.c; (a?.b).c;"#),
-    (r#"import { a } from "m"; a();"#, r#"import { a } from "m"; a();"#),
-    (r#""use strict"; f( a )  // c"#, "\"use strict\";\n/* d */ f(a);"),
-    (r#"let a: number = 1;"#, r#"/** @type {number} */ let a = 1;"#),
+    (
+        r#"import { a } from "m"; a();"#,
+        r#"import { a } from "m"; a();"#,
+    ),
+    (
+        r#""use strict"; f( a )  // c"#,
+        "\"use strict\";\n/* d */ f(a);",
+    ),
+    (
+        r#"let a: number = 1;"#,
+        r#"/** @type {number} */ let a = 1;"#,
+    ),
     (
         r#"x = `a${b as any}c`; y = /r/g; z = t`u`; w = 1n;"#,
         r#"x = `a${b}c`; y = /r/g; z = t`u`; w = 1n;"#,
@@ -146,7 +158,10 @@ const FLAGS_ROWS: &[Row] = &[
     (r#"function f(...a) {}"#, r#"function f(a) {}"#),
     (r#"for await (const a of b);"#, r#"for (const a of b);"#),
     (r#"export const a = 1;"#, r#"const a = 1;"#),
-    (r#"function* f() { yield* a; }"#, r#"function* f() { yield a; }"#),
+    (
+        r#"function* f() { yield* a; }"#,
+        r#"function* f() { yield a; }"#,
+    ),
     (r#"a = function () {};"#, r#"(a) = function () {};"#),
     (r#"(a) = function () {};"#, r#"a = function () {};"#),
     (r#"(a as T) = function () {};"#, r#"a = function () {};"#),
@@ -176,7 +191,10 @@ const EMITS_CODE_ROWS: &[Row] = &[
     (r#"namespace N { export interface I {} }"#, r#";"#),
     (r#"import r = require("m");"#, r#"const r = require("m");"#),
     (r#"export = a;"#, r#"module.exports = a;"#),
-    (r#"class A { constructor(private x: number) {} }"#, r#"class A { constructor(x) {} }"#),
+    (
+        r#"class A { constructor(private x: number) {} }"#,
+        r#"class A { constructor(x) {} }"#,
+    ),
     (r#"class A { accessor x = 1; }"#, r#"class A { x = 1; }"#),
     (r#"@d class A {}"#, r#"class A {}"#),
     (r#"class A { @d m() {} }"#, r#"class A { m() {} }"#),
@@ -185,8 +203,14 @@ const EMITS_CODE_ROWS: &[Row] = &[
     (r#"a(); namespace N { export const v = 1; }"#, r#"a();"#),
     (r#"a(); import r = require("m");"#, r#"a();"#),
     (r#"a(); export = a;"#, r#"a();"#),
-    (r#"class A { accessor x = 1; y = 2; }"#, r#"class A { y = 2; }"#),
-    (r#"class A { constructor(private x: number, y) {} }"#, r#"class A { constructor(y) {} }"#),
+    (
+        r#"class A { accessor x = 1; y = 2; }"#,
+        r#"class A { y = 2; }"#,
+    ),
+    (
+        r#"class A { constructor(private x: number, y) {} }"#,
+        r#"class A { constructor(y) {} }"#,
+    ),
 ];
 
 const TYPED_TEXTS: &[&str] = &[
@@ -222,17 +246,28 @@ const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
         "class A { constructor(private readonly x: T, public y?: U) {} }",
         "class A { constructor(x, y) {} }",
     ),
-    ("a.ts", "class A { accessor x: T = 1; }", "class A { accessor x = 1; }"),
+    (
+        "a.ts",
+        "class A { accessor x: T = 1; }",
+        "class A { accessor x = 1; }",
+    ),
     (
         "a.ts",
         "import r = require(\"m\"); export = r as T;",
         "import r = require(\"m\"); export = r;",
     ),
-    ("a.tsx", "const e = <A<T> b={c as U} />;", "const e = <A b={c} />;"),
+    (
+        "a.tsx",
+        "const e = <A<T> b={c as U} />;",
+        "const e = <A b={c} />;",
+    ),
 ];
 
 fn source<'a>(path: &'a str, text: &'a [u8], reads_jsdoc: bool) -> Source<'a> {
-    Source { reads_jsdoc, ..Source::from_bytes(path, text) }
+    Source {
+        reads_jsdoc,
+        ..Source::from_bytes(path, text)
+    }
 }
 
 fn parse_typed_version<'s>(w: &Workspace<'s>, path: &str, text: &[u8]) -> File<'s> {
@@ -280,13 +315,20 @@ fn assert_kind(
     let Erasure::Mismatch(mismatch) = result else {
         panic!("{typed:?} => {untyped:?}: expected {expected:?}, got {result:?}");
     };
-    assert_eq!(mismatch.kind, expected, "{typed:?} => {untyped:?}: {mismatch:?}");
+    assert_eq!(
+        mismatch.kind, expected,
+        "{typed:?} => {untyped:?}: {mismatch:?}"
+    );
     mismatch
 }
 
 fn assert_emits_code(typed: (&str, &str), untyped: (&str, &str)) {
     let mismatch = assert_kind(EmitsCode, typed, untyped);
-    assert_ne!(mismatch.typed, NodeData::None, "{typed:?} => {untyped:?}: {mismatch:?}");
+    assert_ne!(
+        mismatch.typed,
+        NodeData::None,
+        "{typed:?} => {untyped:?}: {mismatch:?}"
+    );
 }
 
 fn operator_chain(last_operand: &str) -> String {
@@ -310,7 +352,10 @@ fn nested_blocks<'s>(w: &Workspace<'s>, depth: usize) -> File<'s> {
 }
 
 fn has_jsx(hir: &File<'_>) -> bool {
-    !find_exprs(hir, |kind| matches!(kind, ExprKind::Jsx(..) | ExprKind::JsxText(..))).is_empty()
+    !find_exprs(hir, |kind| {
+        matches!(kind, ExprKind::Jsx(..) | ExprKind::JsxText(..))
+    })
+    .is_empty()
 }
 
 fn has_typescript_syntax(javascript: &File<'_>) -> bool {
@@ -396,7 +441,11 @@ fn syntax_errors_are_unknown() {
 fn symmetric_cases_are_not_assumed() {
     assert_eq!(of("a();", "a();"), Erasure::Exact);
     for &(_, text) in EXACT_PAIRS {
-        assert_eq!(erasure(("a.js", text), ("b.js", text)), Erasure::Exact, "{text}");
+        assert_eq!(
+            erasure(("a.js", text), ("b.js", text)),
+            Erasure::Exact,
+            "{text}"
+        );
     }
 }
 
@@ -411,9 +460,16 @@ fn without_types(w: &Workspace<'_>, typed: &File<'_>) -> (Erasure, String) {
     if let Erasure::Mismatch(mismatch) = check_erasure(typed, &still_typescript)
         && mismatch.kind == EmitsCode
     {
-        return (Erasure::Mismatch(mismatch), String::from_utf8_lossy(&kept).into_owned());
+        return (
+            Erasure::Mismatch(mismatch),
+            String::from_utf8_lossy(&kept).into_owned(),
+        );
     }
-    let at = untyped.diagnostics.first().map_or(0, |it| it.start as usize).min(kept.len());
+    let at = untyped
+        .diagnostics
+        .first()
+        .map_or(0, |it| it.start as usize)
+        .min(kept.len());
     let around = &kept[at.saturating_sub(60)..(at + 40).min(kept.len())];
     (erasure, String::from_utf8_lossy(around).replace('\n', " "))
 }
@@ -448,7 +504,11 @@ fn is_mismatch_by_design(typed: &File<'_>, mismatch: &ErasureMismatch) -> bool {
 #[test]
 fn text_without_type_ranges_is_same_code() {
     with_workspace(|w| {
-        for text in EXACT_PAIRS.iter().map(|pair| pair.0).chain(TYPED_TEXTS.iter().copied()) {
+        for text in EXACT_PAIRS
+            .iter()
+            .map(|pair| pair.0)
+            .chain(TYPED_TEXTS.iter().copied())
+        {
             let typed = parse_typed_version(w, "a.ts", text.as_bytes());
             let (erasure, kept) = without_types(w, &typed);
             assert_eq!(erasure, Erasure::Exact, "{text} => {kept}");
@@ -471,13 +531,20 @@ fn syntax_that_emits_code_is_kept_without_its_types() {
 #[test]
 fn assertions_that_hold_the_syntax_together_are_mismatches_by_design() {
     with_workspace(|w| {
-        for text in ["a! = function () {};", "[a! = class {}] = [];", "const f = () => <T>{ a: 1 };"] {
+        for text in [
+            "a! = function () {};",
+            "[a! = class {}] = [];",
+            "const f = () => <T>{ a: 1 };",
+        ] {
             let typed = parse_typed_version(w, "a.ts", text.as_bytes());
             let (erasure, kept) = without_types(w, &typed);
             let Erasure::Mismatch(mismatch) = erasure else {
                 panic!("{text} => {kept}: expected a mismatch, got {erasure:?}");
             };
-            assert!(is_mismatch_by_design(&typed, &mismatch), "{text} => {kept}: {mismatch:?}");
+            assert!(
+                is_mismatch_by_design(&typed, &mismatch),
+                "{text} => {kept}: {mismatch:?}"
+            );
         }
     });
 }
@@ -527,7 +594,12 @@ fn test_programs_without_type_ranges_are_same_code() {
     });
     let mut different = different.into_inner().unwrap();
     different.sort();
-    assert!(different.is_empty(), "{} differ:\n{}", different.len(), different.join("\n"));
+    assert!(
+        different.is_empty(),
+        "{} differ:\n{}",
+        different.len(),
+        different.join("\n")
+    );
 }
 
 #[test]
@@ -570,12 +642,27 @@ fn token_offsets_lead_from_typed_text_to_untyped_text() {
         let untyped = w.parse(&source("a.js", untyped_text.as_bytes(), false));
         let (erasure, ranges) = check_erasure_with_ranges(&typed, &untyped);
         assert_eq!(erasure, Erasure::Exact);
-        assert!(ranges.token_offsets.is_sorted_by(|first, second| first.0 < second.0));
-        let tokens = [("export", "export"), ("return", "return"), ("g<I>", "g(a)"), ("a!", "a)."), ("b;", "b;")];
+        assert!(
+            ranges
+                .token_offsets
+                .is_sorted_by(|first, second| first.0 < second.0)
+        );
+        let tokens = [
+            ("export", "export"),
+            ("return", "return"),
+            ("g<I>", "g(a)"),
+            ("a!", "a)."),
+            ("b;", "b;"),
+        ];
         for (typed_token, untyped_token) in tokens {
             let typed_offset = typed_text.find(typed_token).unwrap() as u32;
             let untyped_offset = untyped_text.find(untyped_token).unwrap() as u32;
-            assert!(ranges.token_offsets.contains(&(typed_offset, untyped_offset)), "{typed_token}");
+            assert!(
+                ranges
+                    .token_offsets
+                    .contains(&(typed_offset, untyped_offset)),
+                "{typed_token}"
+            );
         }
     });
 }
@@ -633,11 +720,10 @@ fn every_javascript_program_with_and_without_jsdoc() {
         {
             return;
         }
-        let is_accessor_field = |node: NodeData| {
-            matches!(node, NodeData::Member(member) if typed[member].flags.contains(bun_sema::hir::Flags::ACCESSOR))
-        };
+        let is_accessor_field = |node: NodeData| matches!(node, NodeData::Member(member) if typed[member].flags.contains(bun_sema::hir::Flags::ACCESSOR));
         match check_erasure(&typed, &untyped) {
-            Erasure::Mismatch(found) if found.kind == EmitsCode && is_accessor_field(found.typed) => {}
+            Erasure::Mismatch(found)
+                if found.kind == EmitsCode && is_accessor_field(found.typed) => {}
             result => assert_eq!(result, Erasure::Exact, "{path}"),
         }
     });

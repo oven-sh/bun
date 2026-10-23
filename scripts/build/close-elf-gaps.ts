@@ -15,7 +15,8 @@ const mayWrite = 2;
 
 const path = process.argv[2]!;
 let file: Buffer = readFileSync(path);
-if (file.readUInt32BE(0) !== 0x7f454c46 || file[4] !== 2 || file[5] !== 1) throw new Error(`${path} is not a little-endian ELF64 file`);
+if (file.readUInt32BE(0) !== 0x7f454c46 || file[4] !== 2 || file[5] !== 1)
+  throw new Error(`${path} is not a little-endian ELF64 file`);
 
 const word = (at: number) => Number(file.readBigUInt64LE(at));
 const setWord = (at: number, value: number) => file.writeBigUInt64LE(BigInt(value), at);
@@ -27,12 +28,18 @@ for (let index = 0; index < file.readUInt16LE(56); index++) {
   const sectionHeaders = tableAt(40, 58, 60);
   const segment = programHeaders[index]!;
   const [start, size] = [word(segment + programHeader.offset), word(segment + programHeader.fileSize)];
-  if (file.readUInt32LE(segment + programHeader.type) !== loadable || file.readUInt32LE(segment + programHeader.flags) & mayWrite) continue;
+  if (
+    file.readUInt32LE(segment + programHeader.type) !== loadable ||
+    file.readUInt32LE(segment + programHeader.flags) & mayWrite
+  )
+    continue;
   if (size !== word(segment + programHeader.memorySize)) continue;
 
   const ranges = (
     [
-      ...programHeaders.filter(header => header !== segment).map(header => [word(header + programHeader.offset), word(header + programHeader.fileSize)]),
+      ...programHeaders
+        .filter(header => header !== segment)
+        .map(header => [word(header + programHeader.offset), word(header + programHeader.fileSize)]),
       ...sectionHeaders
         .filter(header => file.readUInt32LE(header + sectionHeader.type) !== noBits)
         .map(header => [word(header + sectionHeader.offset), word(header + sectionHeader.size)]),
@@ -51,8 +58,12 @@ for (let index = 0; index < file.readUInt16LE(56); index++) {
 
   setWord(segment + programHeader.fileSize, used - start);
   setWord(segment + programHeader.memorySize, used - start);
-  for (const header of programHeaders) if (word(header + programHeader.offset) >= to) setWord(header + programHeader.offset, word(header + programHeader.offset) - (to - from));
-  for (const header of sectionHeaders) if (word(header + sectionHeader.offset) >= to) setWord(header + sectionHeader.offset, word(header + sectionHeader.offset) - (to - from));
+  for (const header of programHeaders)
+    if (word(header + programHeader.offset) >= to)
+      setWord(header + programHeader.offset, word(header + programHeader.offset) - (to - from));
+  for (const header of sectionHeaders)
+    if (word(header + sectionHeader.offset) >= to)
+      setWord(header + sectionHeader.offset, word(header + sectionHeader.offset) - (to - from));
   for (const at of [32, 40]) if (word(at) >= to) setWord(at, word(at) - (to - from));
   file = Buffer.concat([file.subarray(0, from), file.subarray(to)]);
 }

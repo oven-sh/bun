@@ -72,6 +72,7 @@ impl<'h> Resolver<'h> {
 }
 
 impl<'a, 'h> CandidateSearch<'a, 'h> {
+    #[allow(clippy::large_types_passed_by_value)] // kept in the search
     fn new(
         resolver: &'a Resolver<'h>,
         request: ComputedCodeRequest<'a>,
@@ -526,7 +527,7 @@ fn specifier_spellings(written: &[u8], extensions: &[Vec<u8>]) -> Vec<Vec<u8>> {
     }
     let is_rewritten_to_extension = |written_extension: &&[u8]| {
         let rewritten = rewritten_extensions(written_extension, false);
-        rewritten.iter().any(|it| *it == extension)
+        rewritten.contains(&extension)
     };
     let written_extensions = REWRITABLE_EXTENSIONS.iter().copied();
     let written_extensions = written_extensions.filter(is_rewritten_to_extension);

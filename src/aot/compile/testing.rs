@@ -183,7 +183,11 @@ pub fn lower_program_with_entry_points(
     settings: &TranspileSettings,
     entry_point_count: usize,
 ) -> Vec<(FileId, LoweredFile)> {
-    lower_application(&TestProject::with_entry_points(files, entry_point_count, settings))
+    lower_application(&TestProject::with_entry_points(
+        files,
+        entry_point_count,
+        settings,
+    ))
 }
 
 #[cfg(test)]
@@ -277,7 +281,10 @@ pub(crate) fn with_loaded_build_and_react_compiler<R>(
     mode: ReactCompilerMode,
     then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
 ) -> R {
-    with_loaded_project(&TestProject::new(files, settings).with_react_compiler(mode), then)
+    with_loaded_project(
+        &TestProject::new(files, settings).with_react_compiler(mode),
+        then,
+    )
 }
 
 #[cfg(test)]
@@ -296,7 +303,10 @@ pub(crate) fn with_loaded_build_and_options<R>(
     aot: AotOptions,
     then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
 ) -> R {
-    with_loaded_project(&TestProject::new(files, settings).with_aot_options(aot), then)
+    with_loaded_project(
+        &TestProject::new(files, settings).with_aot_options(aot),
+        then,
+    )
 }
 
 #[cfg(test)]
@@ -429,7 +439,12 @@ fn lower_project_files(
 
 pub(super) fn decide_project_roles(project: &LoadedProject<'_, '_>) -> RoleDecision {
     let files_to_lower = project.loaded.files().compiled_files();
-    decide_roles(project.loaded, project.host, project.request, files_to_lower)
+    decide_roles(
+        project.loaded,
+        project.host,
+        project.request,
+        files_to_lower,
+    )
 }
 
 pub(super) fn with_bound_build<R>(

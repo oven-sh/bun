@@ -30,7 +30,10 @@ fn namespace_blocks_in(bound: &Bound<'_>, scope: ScopeId) -> Vec<ModuleId> {
 
 fn exported_member(bound: &Bound<'_>, binding: SymbolId) -> SymbolId {
     let member = bound.export_symbol_of_value_symbol_if_exported(binding);
-    assert_ne!(member, binding, "the block binds another symbol than the member");
+    assert_ne!(
+        member, binding,
+        "the block binds another symbol than the member"
+    );
     member
 }
 
@@ -43,8 +46,15 @@ fn namespace_member_is_container_member() {
         let form = BindingForm::ContainerMember { container };
         assert_eq!(probe.analysis.form(probe.symbol("inner")), form);
         assert_eq!(probe.analysis.placement(probe.binding("inner")), None);
-        assert!(matches!(probe.placement_of("Box").storage, Storage::Variable(_)));
-        assert!(probe.captures(probe.only_function(FnKind::Arrow)).is_empty());
+        assert!(matches!(
+            probe.placement_of("Box").storage,
+            Storage::Variable(_)
+        ));
+        assert!(
+            probe
+                .captures(probe.only_function(FnKind::Arrow))
+                .is_empty()
+        );
     });
 
     let uncaptured = "namespace Box { export const inner = 1; console.log(inner); } \
@@ -55,7 +65,10 @@ fn namespace_member_is_container_member() {
                     module.exports = Box;";
     analyze_source("main.cts", commonjs, |probe| {
         let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("Box"))]);
+        assert_eq!(
+            probe.captures(arrow),
+            [Capture::Value(probe.binding("Box"))]
+        );
         assert_eq!(probe.placement_of("Box").storage, Storage::Local);
     });
 }
@@ -72,7 +85,10 @@ fn exported_namespace_declarations_are_block_bindings() {
         let container = bound.declared_symbol(Decl::Module(outer));
         let inner = namespace_blocks_in(bound, block)[0];
         let declarations = [
-            (Decl::Fn(probe.only_function(FnKind::Decl)), BindingKind::Function),
+            (
+                Decl::Fn(probe.only_function(FnKind::Decl)),
+                BindingKind::Function,
+            ),
             (Decl::Class(ClassId(0)), BindingKind::Class),
             (Decl::Enum(EnumId(0)), BindingKind::TypeScriptContainer),
             (Decl::Module(inner), BindingKind::TypeScriptContainer),
@@ -82,9 +98,17 @@ fn exported_namespace_declarations_are_block_bindings() {
             let member = analysis.form(exported_member(bound, binding));
             let binding_ref = BindingRef::Symbol(binding);
             assert_eq!(bound.binding_kind(binding), kind, "{decl:?}");
-            assert_eq!(probe.placement(binding_ref).storage, Storage::Local, "{decl:?}");
+            assert_eq!(
+                probe.placement(binding_ref).storage,
+                Storage::Local,
+                "{decl:?}"
+            );
             assert!(analysis.bindings(block).contains(&binding_ref), "{decl:?}");
-            assert_eq!(member, BindingForm::ContainerMember { container }, "{decl:?}");
+            assert_eq!(
+                member,
+                BindingForm::ContainerMember { container },
+                "{decl:?}"
+            );
         }
     });
 }
@@ -98,8 +122,16 @@ fn exported_namespace_variable_is_only_member() {
         let outer = namespace_blocks_in(bound, probe.file_scope())[0];
         let container = bound.declared_symbol(Decl::Module(outer));
         let member = bound.declared_symbol(Decl::Var(first_name(probe.hir)));
-        assert_eq!(probe.analysis.form(member), BindingForm::ContainerMember { container });
-        assert!(probe.analysis.bindings(bound.module_scope[outer.idx()]).is_empty());
+        assert_eq!(
+            probe.analysis.form(member),
+            BindingForm::ContainerMember { container }
+        );
+        assert!(
+            probe
+                .analysis
+                .bindings(bound.module_scope[outer.idx()])
+                .is_empty()
+        );
     });
 }
 
@@ -112,7 +144,9 @@ fn exported_namespace_function_is_hoisted_in_block() {
         let outer = namespace_blocks_in(bound, probe.file_scope())[0];
         let function = probe.only_function(FnKind::Decl);
         let binding = bound.declared_symbol(Decl::Fn(function));
-        let hoisted = probe.analysis.hoisted_functions(bound.module_scope[outer.idx()]);
+        let hoisted = probe
+            .analysis
+            .hoisted_functions(bound.module_scope[outer.idx()]);
         assert_eq!(hoisted, [(binding, function)]);
         let callee = only_identifier(probe.hir, probe.hir[function].name);
         assert_eq!(bound.binding(callee), Binding::Symbol(binding));
@@ -132,7 +166,10 @@ fn other_namespace_block_reads_member() {
         let member = exported_member(bound, bound.declared_symbol(Decl::Fn(function)));
         let callee = only_identifier(probe.hir, probe.hir[function].name);
         assert_eq!(bound.binding(callee), Binding::Symbol(member));
-        assert_eq!(probe.analysis.form(member), BindingForm::ContainerMember { container });
+        assert_eq!(
+            probe.analysis.form(member),
+            BindingForm::ContainerMember { container }
+        );
         assert!(probe.analysis.bindings(other).is_empty());
         assert!(probe.analysis.hoisted_functions(other).is_empty());
     });
@@ -151,13 +188,19 @@ fn reopened_namespace_has_binding_per_block() {
             let binding = bound.declared_symbol(Decl::Module(namespace_blocks_in(bound, block)[0]));
             let binding_ref = BindingRef::Symbol(binding);
             assert_eq!(probe.analysis.bindings(block), [binding_ref]);
-            assert_eq!(bound.binding_kind(binding), BindingKind::TypeScriptContainer);
+            assert_eq!(
+                bound.binding_kind(binding),
+                BindingKind::TypeScriptContainer
+            );
             assert_eq!(probe.placement(binding_ref).storage, Storage::Local);
             binding
         };
         let (first, second) = (binding_in(blocks[0]), binding_in(blocks[1]));
         assert_ne!(first, second);
-        assert_eq!(exported_member(bound, first), exported_member(bound, second));
+        assert_eq!(
+            exported_member(bound, first),
+            exported_member(bound, second)
+        );
     });
 }
 
@@ -180,7 +223,10 @@ fn captured_block_binding_is_shared() {
         let function = probe.only_function(FnKind::Decl);
         let binding = BindingRef::Symbol(probe.bound.declared_symbol(Decl::Fn(function)));
         assert_eq!(probe.placement(binding).storage, Storage::Local);
-        assert_eq!(probe.captures(probe.only_function(FnKind::Arrow)), [Capture::Value(binding)]);
+        assert_eq!(
+            probe.captures(probe.only_function(FnKind::Arrow)),
+            [Capture::Value(binding)]
+        );
     });
 }
 
@@ -209,7 +255,10 @@ fn closure_in_nested_namespace_captures_block_binding() {
             field: 0,
         };
         assert_eq!(storage, field);
-        assert_eq!(probe.captures(function), [Capture::Environment(outer_block)]);
+        assert_eq!(
+            probe.captures(function),
+            [Capture::Environment(outer_block)]
+        );
         let container_storage = probe.placement(BindingRef::Symbol(container)).storage;
         assert_eq!(container_storage, Storage::Local);
     });

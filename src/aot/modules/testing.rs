@@ -2,8 +2,8 @@ use super::{
     BindInput, ExportBinding, ImportPhase, ModuleExport, ModuleGraph, ModuleRef, ModuleRequest,
     bind_modules,
 };
-use crate::ir::generated::ModuleRequestKind;
 use crate::compile::testing::{default_settings, with_bind_input, with_runtime_bind_input};
+use crate::ir::generated::ModuleRequestKind;
 use bstr::BStr;
 use bun_sema::atom::Atom;
 use bun_sema::program::FileId;
@@ -76,7 +76,9 @@ pub(crate) fn describe_requests_of(
     module: ModuleRef,
 ) -> Vec<String> {
     let requests = graph.requests_of(module).iter();
-    requests.map(|&request| describe_request(input, request)).collect()
+    requests
+        .map(|&request| describe_request(input, request))
+        .collect()
 }
 
 fn describe_request(input: &BindInput<'_, '_>, request: ModuleRequest) -> String {
@@ -248,8 +250,14 @@ mod tests {
     #[test]
     fn describes_star_exports() {
         let files = [
-            ("main.js", "export * from './es.js';\nexport * from './one.cjs';\n"),
-            ("es.js", "export * from './inner.js';\nexport const x = 1;\n"),
+            (
+                "main.js",
+                "export * from './es.js';\nexport * from './one.cjs';\n",
+            ),
+            (
+                "es.js",
+                "export * from './inner.js';\nexport const x = 1;\n",
+            ),
             ("inner.js", "export const y = 1;\n"),
             ("one.cjs", "exports.x = 1;\n"),
         ];

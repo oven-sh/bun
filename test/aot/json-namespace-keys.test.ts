@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { describe, test } from "./supported";
 
 // The keys of `import * as ns from "./data.json"`. A module namespace lists its names sorted. `bun run` exports every key of the
 // object; the bundler only those that are identifiers. Nothing is bundled under --aot: `bun run --aot` and an executable built with
@@ -71,7 +71,11 @@ console.log(Object.keys(held).join(), held.a, held.own);
 };
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
-  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "resolveJsonModule": true, "module": "preserve", "moduleResolution": "bundler" } }` };
+  const tree = {
+    ...files,
+    [entry]: programs[entry],
+    "tsconfig.json": `{ "compilerOptions": { "resolveJsonModule": true, "module": "preserve", "moduleResolution": "bundler" } }`,
+  };
 
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("json-namespace-keys", tree);

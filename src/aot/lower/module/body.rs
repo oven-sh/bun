@@ -126,7 +126,10 @@ pub(super) fn lower_export_default(
 ) {
     let name = PropertyName::Constant(lowering.file.atom_key(known::default));
     let value = expression::lower_named_evaluation(lowering, expression, name);
-    let symbol = lowering.file.bound.declared_symbol(Decl::ExportExpr(statement));
+    let symbol = lowering
+        .file
+        .bound
+        .declared_symbol(Decl::ExportExpr(statement));
     scope::initialize_binding(lowering, Binding::Symbol(symbol), known::default, value);
 }
 

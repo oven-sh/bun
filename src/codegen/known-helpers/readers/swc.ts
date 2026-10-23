@@ -19,10 +19,27 @@ interface Choice {
   readonly module?: object;
 }
 
-const targets = ["es3", "es5", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021", "es2022", "es2023", "es2024", "esnext"];
+const targets = [
+  "es3",
+  "es5",
+  "es2015",
+  "es2016",
+  "es2017",
+  "es2018",
+  "es2019",
+  "es2020",
+  "es2021",
+  "es2022",
+  "es2023",
+  "es2024",
+  "esnext",
+];
 
 const targetChoices: readonly Choice[] = targets.map(target => ({ label: `target: ${target}`, jsc: { target } }));
-const moduleChoices: readonly Choice[] = ["commonjs", "es6"].map(type => ({ label: `module: ${type}`, module: { type } }));
+const moduleChoices: readonly Choice[] = ["commonjs", "es6"].map(type => ({
+  label: `module: ${type}`,
+  module: { type },
+}));
 const looseChoices: readonly Choice[] = [{ label: "" }, { label: "loose", jsc: { loose: true } }];
 const classFieldChoices: readonly Choice[] = [
   { label: "" },

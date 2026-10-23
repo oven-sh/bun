@@ -32,6 +32,7 @@ fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
         .copied()
         .collect();
     let mut imports_uncompiled_code = false;
+    let mut named: Vec<RuntimeModule> = Vec::new();
     for &file in application.compiled_files() {
         if let Some(compiled) = application.compiled(file) {
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
@@ -39,8 +40,10 @@ fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
         }
         if let Some(source) = parsed_source(application, file) {
             functions.extend(source.builtins.called_functions());
+            named.extend(source.named_modules().iter().map(|it| it.module));
         }
     }
+    host_loaded.extend(named.iter().copied());
     host_loaded.extend(STARTUP_MODULES);
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
     host_loaded_modules.shared_sort_unstable_by_key(|module| module.registry_id());
@@ -48,7 +51,7 @@ fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
     functions.shared_sort_unstable();
     let imported = application.host_modules().iter().copied();
     RootUses {
-        imported_modules: imported.map(to_runtime_module).collect(),
+        imported_modules: imported.map(to_runtime_module).chain(named).collect(),
         host_loaded_modules,
         functions,
         imports_uncompiled_code,
@@ -107,7 +110,13 @@ fn order_root_paths(
 }
 
 fn is_uncompiled_code(answer: &CodeAnswer<'_>) -> bool {
-    matches!(*answer, CodeAnswer::External { kind: ExternalKind::UncompiledCode, .. })
+    matches!(
+        *answer,
+        CodeAnswer::External {
+            kind: ExternalKind::UncompiledCode,
+            ..
+        }
+    )
 }
 
 fn implied_module(answer: &CodeAnswer<'_>) -> Option<RuntimeModule> {
@@ -189,10 +198,16 @@ mod tests {
         let runtime = runtime_modules();
         let imports_uncompiled_code =
             |source: &str| collect_roots_of(source, &runtime).imports_uncompiled_code;
-        assert!(imports_uncompiled_code("import 'https://example.com/a.js';"));
-        assert!(imports_uncompiled_code("export const a = import('data:text/javascript,1');"));
+        assert!(imports_uncompiled_code(
+            "import 'https://example.com/a.js';"
+        ));
+        assert!(imports_uncompiled_code(
+            "export const a = import('data:text/javascript,1');"
+        ));
         assert!(!imports_uncompiled_code("import 'node:os';"));
-        assert!(!imports_uncompiled_code("export const url = 'https://example.com/a.js';"));
+        assert!(!imports_uncompiled_code(
+            "export const url = 'https://example.com/a.js';"
+        ));
     }
 
     #[test]
@@ -221,7 +236,10 @@ mod tests {
             assert_eq!(runtime.file_kind(path), Some(RuntimeFileKind::Functions));
             assert_eq!(runtime.read(path).unwrap(), text.as_bytes());
         }
-        assert_eq!(others[0], runtime.module_path(RuntimeModule::NodeFs).unwrap());
+        assert_eq!(
+            others[0],
+            runtime.module_path(RuntimeModule::NodeFs).unwrap()
+        );
     }
 
     #[test]

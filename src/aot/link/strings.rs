@@ -71,8 +71,9 @@ fn build_string_table(
     let first_occurrences = merge_sorted_entries(shards);
     let unit_of = |entry: u32| first_occurrences[entry as usize].0;
     let mut order: Vec<u32> = (0..first_occurrences.len() as u32).collect();
-    let mut runs: Vec<&mut [u32]> =
-        order.chunk_by_mut(|&a, &b| unit_of(a) == unit_of(b)).collect();
+    let mut runs: Vec<&mut [u32]> = order
+        .chunk_by_mut(|&a, &b| unit_of(a) == unit_of(b))
+        .collect();
     for_each_mut(&mut runs, in_parallel, &|run| {
         let strings = &units[unit_of(run[0]) as usize].strings;
         run.sort_unstable_by_key(|&entry| strings.get(first_occurrences[entry as usize].1));

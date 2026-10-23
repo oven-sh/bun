@@ -6,7 +6,8 @@ import type { BuiltinKind } from "../../../src/codegen/builtins/vocabulary.ts";
 
 const named = (text: string, kind: NameKind = "Text") => ({ text, kind }) as ModelName;
 const heldBy = (kind: BuiltinKind | null) => (kind === null ? null : ({ kind } as ModelBuiltin));
-const typeOf = (name: ModelName, holder: BuiltinKind | null) => typeOfPropertyWithoutWrittenType({ name, holder: heldBy(holder) });
+const typeOf = (name: ModelName, holder: BuiltinKind | null) =>
+  typeOfPropertyWithoutWrittenType({ name, holder: heldBy(holder) });
 
 test("the length and the name of a function have the types that every built-in function is created with", () => {
   for (const kind of ["Constructor", "Function", "Method"] as const) {
@@ -23,7 +24,8 @@ test("a length or a name of what is no function is anything", () => {
 });
 
 test("a @@toStringTag is a string on every holder", () => {
-  for (const kind of ["Namespace", "Prototype", "Constructor"] as const) expect(typeOf(named("toStringTag", "WellKnownSymbol"), kind)).toEqual(b.string.spec);
+  for (const kind of ["Namespace", "Prototype", "Constructor"] as const)
+    expect(typeOf(named("toStringTag", "WellKnownSymbol"), kind)).toEqual(b.string.spec);
 });
 
 test("no other property gets a type, and a symbol is not taken for the text of its name", () => {

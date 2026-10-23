@@ -305,9 +305,9 @@ fn try_lower_intrinsic_call(
             Ok(lower_call_with_rest(lowering, site, callee, site.arguments))
         }
         Intrinsic::LinkedFunction(linked) => lower_linked_function_call(lowering, site, linked),
-        Intrinsic::PrependArgument { callee, argument } => {
-            Ok(lower_prepended_argument_call(lowering, site, callee, argument))
-        }
+        Intrinsic::PrependArgument { callee, argument } => Ok(lower_prepended_argument_call(
+            lowering, site, callee, argument,
+        )),
         Intrinsic::HasPromiseStatus(status) => lower_promise_status_test(lowering, site, status),
         Intrinsic::Conversion(conversion) => lower_conversion(lowering, site, conversion),
         Intrinsic::Throw(kind) => lower_throw(lowering, site, kind),
@@ -385,7 +385,10 @@ fn lower_argument_count(
     site: IntrinsicCall<'_>,
 ) -> Lowered<ValueId> {
     let [] = get_named_arguments(lowering.file, site)?;
-    lowering.builder.argument_count().ok_or((site.call, Misuse::Position))
+    lowering
+        .builder
+        .argument_count()
+        .ok_or((site.call, Misuse::Position))
 }
 
 fn lower_argument_read(
@@ -428,7 +431,9 @@ fn report_misuse(
         Misuse::Position => b"intrinsic is not valid in this position",
         Misuse::ArgumentCount => b"wrong number of arguments to intrinsic",
         Misuse::ArgumentNotLiteral => b"intrinsic argument must be a literal",
-        Misuse::UnknownLinkedFunction => b"the function of this name is not marked $linkTimeConstant",
+        Misuse::UnknownLinkedFunction => {
+            b"the function of this name is not marked $linkTimeConstant"
+        }
         Misuse::UnsupportedConversion => b"no operation converts this way",
         Misuse::BundleError => b"$bundleError is reachable",
     };

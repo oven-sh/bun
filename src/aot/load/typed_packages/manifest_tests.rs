@@ -33,13 +33,16 @@ impl Project {
 
     fn install(&self, at: &str, name: &str, version: &str) {
         let package_json = format!(r#"{{"name":"{name}","version":"{version}"}}"#);
-        self.directory.write(&format!("{at}/package.json"), &package_json);
+        self.directory
+            .write(&format!("{at}/package.json"), &package_json);
         self.directory.write(&format!("{at}/x.js"), CODE);
     }
 
     fn add_typed_version(&self, name: &str, manifest: &str) {
-        self.directory.write(&format!(".sound/{name}/sound.json"), manifest);
-        self.directory.write(&format!(".sound/{name}/lay/x.js"), CODE);
+        self.directory
+            .write(&format!(".sound/{name}/sound.json"), manifest);
+        self.directory
+            .write(&format!(".sound/{name}/lay/x.js"), CODE);
     }
 
     fn with_packages<R>(&self, then: impl FnOnce(&TypedPackages<'_>, &[u8]) -> R) -> R {
@@ -100,7 +103,10 @@ fn scoped_package_is_checked() {
     project.add_typed_version("@s/p", &manifest("@s/p", ""));
     project.add_typed_version("p", &manifest("p", r#","needs":["@s/p"]"#));
     assert_eq!(project.find_mismatch(("@s/p", "1.0.0"), &[]), None);
-    assert_eq!(project.find_mismatch(("@s/p", "1.0.1"), &[]).as_deref(), Some(OTHER_VERSION));
+    assert_eq!(
+        project.find_mismatch(("@s/p", "1.0.1"), &[]).as_deref(),
+        Some(OTHER_VERSION)
+    );
     assert_eq!(project.find_mismatch(P, &[]), None);
 }
 
@@ -121,7 +127,11 @@ fn text_that_is_no_manifest_is_mismatch() {
         (r#"{"sound":2,"name":"p","version":"1.0.0"}"#, EMPTY_LAY),
     ] {
         project.add_typed_version("p", text);
-        assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(expected), "{text}");
+        assert_eq!(
+            project.find_mismatch(P, &[]).as_deref(),
+            Some(expected),
+            "{text}"
+        );
     }
 }
 
@@ -152,7 +162,11 @@ fn field_of_wrong_shape_is_mismatch() {
         ),
     ] {
         project.add_typed_version("p", &manifest("p", more));
-        assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(expected), "{more}");
+        assert_eq!(
+            project.find_mismatch(P, &[]).as_deref(),
+            Some(expected),
+            "{more}"
+        );
     }
 }
 
@@ -169,17 +183,27 @@ fn first_mismatch_is_reported() {
             "\"../x\" in its sound.json is not a path inside the package",
         ),
         (r#","lay":{"x.js":"","y.ts":"new"}"#, ADDS_FILE),
-        (r#","when":{"MODE":"test"},"lay":{"y.js":""},"needs":["q"]"#, OTHER_VERSION),
+        (
+            r#","when":{"MODE":"test"},"lay":{"y.js":""},"needs":["q"]"#,
+            OTHER_VERSION,
+        ),
     ] {
         project.add_typed_version("p", &manifest("p", more));
-        assert_eq!(project.find_mismatch(installed, &[]).as_deref(), Some(expected), "{more}");
+        assert_eq!(
+            project.find_mismatch(installed, &[]).as_deref(),
+            Some(expected),
+            "{more}"
+        );
     }
     let more = r#","when":{"MODE":"test"},"lay":{"y.js":""},"needs":["q"]"#;
     project.add_typed_version("p", &manifest("p", more));
     let needs_define = "it needs MODE to be defined as \"test\". Pass --define 'MODE=\"test\"'";
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(needs_define));
     let defines = [("MODE", "test")];
-    assert_eq!(project.find_mismatch(P, &defines).as_deref(), Some("lay/y.js is missing"));
+    assert_eq!(
+        project.find_mismatch(P, &defines).as_deref(),
+        Some("lay/y.js is missing")
+    );
     project.directory.write(".sound/p/lay/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &defines).as_deref(), Some(NEEDS_Q));
 }
@@ -187,7 +211,10 @@ fn first_mismatch_is_reported() {
 #[test]
 fn other_installed_version_is_mismatch() {
     let project = Project::new("other_version");
-    assert_eq!(project.find_mismatch(("p", "1.0.1"), &[]).as_deref(), Some(OTHER_VERSION));
+    assert_eq!(
+        project.find_mismatch(("p", "1.0.1"), &[]).as_deref(),
+        Some(OTHER_VERSION)
+    );
 }
 
 #[test]
@@ -213,7 +240,10 @@ fn listed_file_must_be_below_lay() {
     let project = Project::new("typed_file");
     let more = r#","lay":{"x.js":"","cjs/y.js":""}"#;
     project.add_typed_version("p", &manifest("p", more));
-    assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some("lay/cjs/y.js is missing"));
+    assert_eq!(
+        project.find_mismatch(P, &[]).as_deref(),
+        Some("lay/cjs/y.js is missing")
+    );
     project.directory.write(".sound/p/lay/cjs/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &[]), None);
 }
@@ -223,7 +253,9 @@ fn installed_bytes_are_not_compared() {
     let project = Project::new("installed_bytes");
     let more = r#","basis":{"missing.js":"00"},"lay":{"x.js":"00"}"#;
     project.add_typed_version("p", &manifest("p", more));
-    project.directory.write("node_modules/p/x.js", "exports.x = 1; // patched\n");
+    project
+        .directory
+        .write("node_modules/p/x.js", "exports.x = 1; // patched\n");
     assert_eq!(project.find_mismatch(P, &[]), None);
 }
 
@@ -240,7 +272,10 @@ fn needed_package_must_have_matching_typed_version() {
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(NEEDS_Q));
     assert_eq!(project.find_mismatch(P, &[("MODE", "test")]), None);
     project.install("node_modules/q", "q", "1.0.1");
-    assert_eq!(project.find_mismatch(P, &[("MODE", "test")]).as_deref(), Some(NEEDS_Q));
+    assert_eq!(
+        project.find_mismatch(P, &[("MODE", "test")]).as_deref(),
+        Some(NEEDS_Q)
+    );
 }
 
 #[test]
@@ -253,7 +288,10 @@ fn packages_that_need_each_other_are_both_used() {
     assert_eq!(project.find_mismatch(Q, &[]), None);
     project.install("node_modules/q", "q", "1.0.1");
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(NEEDS_Q));
-    assert_eq!(project.find_mismatch(("q", "1.0.1"), &[]).as_deref(), Some(OTHER_VERSION));
+    assert_eq!(
+        project.find_mismatch(("q", "1.0.1"), &[]).as_deref(),
+        Some(OTHER_VERSION)
+    );
 }
 
 #[test]
@@ -285,6 +323,9 @@ fn package_is_shown_below_sound_directory() {
     let project = Project::new("display_directory");
     project.with_packages(|packages, _| {
         assert_eq!(packages.display_directory_of_package(b"p"), b".sound/p");
-        assert_eq!(packages.display_directory_of_package(b"@s/p"), b".sound/@s/p");
+        assert_eq!(
+            packages.display_directory_of_package(b"@s/p"),
+            b".sound/@s/p"
+        );
     });
 }

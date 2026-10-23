@@ -217,7 +217,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         written
             .iter()
             .rfind(is_async)
-            .map_or(self.pos(), |it| it.pos)
+            .map_or_else(|| self.pos(), |it| it.pos)
     }
 
     /// A `with { .. }` that is nested in another comes before it.

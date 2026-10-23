@@ -26,12 +26,16 @@ struct UsedName {
 }
 
 fn loads_test_runner(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -> bool {
-    request.analysis.import_sites.iter().any(|site| match site.specifier {
-        ImportSpecifier::Constant(specifier) => {
-            MODULES_OF_TEST_RUNNERS.contains(&atoms.bytes(specifier))
-        }
-        ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
-    })
+    request
+        .analysis
+        .import_sites
+        .iter()
+        .any(|site| match site.specifier {
+            ImportSpecifier::Constant(specifier) => {
+                MODULES_OF_TEST_RUNNERS.contains(&atoms.bytes(specifier))
+            }
+            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
+        })
 }
 
 // `typeof a.b` holds `a` as an expression, and asks for its type alone.
@@ -75,7 +79,14 @@ fn write_use(file: &mut FileBuilder, expression: ExprId, written: Atom, local: A
     let (pos, end) = (file[expression].pos, file[expression].end);
     let value = file.expr(ExprKind::Ident(local), pos, end);
     let any = file.ty(TypeNodeKind::Keyword(Keyword::Any), pos, end);
-    let untyped = file.expr(ExprKind::As { expr: value, ty: any }, pos, end);
+    let untyped = file.expr(
+        ExprKind::As {
+            expr: value,
+            ty: any,
+        },
+        pos,
+        end,
+    );
     let queried = file.expr(ExprKind::Ident(written), pos, end);
     let name = file.entity_name([(written, pos)].into_iter());
     let query = TypeNodeKind::Typeof {
@@ -183,8 +194,12 @@ fn write_require(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[UsedName
 
 fn put_behind_directives(file: &mut FileBuilder, added: StmtId) {
     let body: Vec<StmtId> = file.ids(file.body).collect();
-    let is_directive = |&statement: &StmtId| matches!(file[statement].kind, StmtKind::Directive { .. });
-    let prologue_len = body.iter().rposition(is_directive).map_or(0, |last| last + 1);
+    let is_directive =
+        |&statement: &StmtId| matches!(file[statement].kind, StmtKind::Directive { .. });
+    let prologue_len = body
+        .iter()
+        .rposition(is_directive)
+        .map_or(0, |last| last + 1);
     let (prologue, rest) = body.split_at(prologue_len);
     let statements = [prologue, &[added][..], rest].concat();
     file.body = file.list(&statements);
@@ -203,14 +218,17 @@ pub(crate) fn import_used_names<'s>(
     if uses.is_empty() {
         return TreeChange::Unchanged;
     }
-    let locals = NAMES_OF_EVERY_TEST_FILE.map(|name| atoms.intern(&[LOCAL_NAME_PREFIX, name].concat()));
+    let locals =
+        NAMES_OF_EVERY_TEST_FILE.map(|name| atoms.intern(&[LOCAL_NAME_PREFIX, name].concat()));
     let mut file = FileBuilder::from_file(request.hir);
     for &(expression, name) in &uses {
         write_use(&mut file, expression, names[name], locals[name]);
     }
     // `{ test }` has the key `test` and the value of the import.
     for property in &mut file.props {
-        let is_renamed = uses.iter().any(|&(expression, _)| expression == property.value);
+        let is_renamed = uses
+            .iter()
+            .any(|&(expression, _)| expression == property.value);
         if property.kind == PropKind::Shorthand && is_renamed {
             property.kind = PropKind::Init;
         }
@@ -249,64 +267,140 @@ mod tests {
         with_loaded_test_run(&[(name, text)], &default_settings(), |_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
             let path = format!("/project/{name}");
-            let file = files.by_path.get(path.as_bytes()).expect("the file is in the program");
+            let file = files
+                .by_path
+                .get(path.as_bytes())
+                .expect("the file is in the program");
             let hir = files.hir(file);
             let text_of = |atom| BStr::new(files.atoms.bytes(atom)).to_string();
             let is_directive = |kind| matches!(kind, StmtKind::Directive { .. });
-            let first = hir.ids(hir.body).find(|&statement| !is_directive(hir[statement].kind));
+            let first = hir
+                .ids(hir.body)
+                .find(|&statement| !is_directive(hir[statement].kind));
             let taken: Vec<String> = match first.map(|statement| hir[statement].kind) {
                 Some(StmtKind::Import(import)) if text_of(hir[import].spec) == "bun:test" => {
                     let items = hir[import].named.iter().map(|item| hir[item]);
                     let added = items.filter(|item| text_of(item.local).starts_with("%test:"));
-                    added.map(|item| format!("{} as {}", text_of(item.imported), text_of(item.local))).collect()
+                    added
+                        .map(|item| {
+                            format!("{} as {}", text_of(item.imported), text_of(item.local))
+                        })
+                        .collect()
                 }
                 Some(StmtKind::Var(declarations)) => {
-                    let patterns = declarations.iter().map(|declaration| hir[hir[declaration].pat].kind);
+                    let patterns = declarations
+                        .iter()
+                        .map(|declaration| hir[hir[declaration].pat].kind);
                     let properties = patterns.filter_map(|kind| match kind {
                         PatKind::Object(properties) => Some(properties),
                         _ => None,
                     });
-                    let locals = properties.flat_map(|properties| properties.iter()).map(|it| hir[hir[it].value].kind);
+                    let locals = properties
+                        .flat_map(|properties| properties.iter())
+                        .map(|it| hir[hir[it].value].kind);
                     let locals = locals.filter_map(|kind| match kind {
                         PatKind::Ident(local) => Some(text_of(local)),
                         _ => None,
                     });
-                    locals.filter(|local| local.starts_with("%test:")).map(|local| format!("require {local}")).collect()
+                    locals
+                        .filter(|local| local.starts_with("%test:"))
+                        .map(|local| format!("require {local}"))
+                        .collect()
                 }
                 _ => Vec::new(),
             };
             let in_type_queries = super::find_names_in_type_queries(hir);
-            let written = (0..).map(ExprId).zip(hir.exprs.iter()).filter(|&(expression, node)| match node.kind {
-                ExprKind::Ident(name) => {
-                    super::NAMES_OF_EVERY_TEST_FILE.contains(&files.atoms.bytes(name))
-                        && in_type_queries.binary_search(&expression).is_err()
-                }
-                _ => false,
-            });
+            let written = (0..)
+                .map(ExprId)
+                .zip(hir.exprs.iter())
+                .filter(|&(expression, node)| match node.kind {
+                    ExprKind::Ident(name) => {
+                        super::NAMES_OF_EVERY_TEST_FILE.contains(&files.atoms.bytes(name))
+                            && in_type_queries.binary_search(&expression).is_err()
+                    }
+                    _ => false,
+                });
             let typed = hir.exprs.iter().filter(|node| match node.kind {
                 ExprKind::As { ty, .. } => matches!(hir[ty].kind, TypeNodeKind::Typeof { .. }),
                 _ => false,
             });
-            format!("{} | {} written | {} typed", taken.join(", "), written.count(), typed.count())
+            format!(
+                "{} | {} written | {} typed",
+                taken.join(", "),
+                written.count(),
+                typed.count()
+            )
         })
     }
 
     #[test]
     fn free_names_come_out_of_the_module() {
         let rows = [
-            ("a.test.js", "test('a', () => { expect(1).toBe(1); });", "test as %test:test, expect as %test:expect | 0 written | 0 typed"),
-            ("a.test.js", "expect(1); expect(2);", "expect as %test:expect | 0 written | 0 typed"),
-            ("a.test.js", "typeof describe;", "describe as %test:describe | 0 written | 0 typed"),
-            ("a.test.js", "({ vi });", "vi as %test:vi | 0 written | 0 typed"),
-            ("a.test.ts", "declare const test: (name: string) => void; test('a');", "test as %test:test | 0 written | 1 typed"),
-            ("a.test.ts", "declare var vi: { answer: number }; vi.answer; vi.answer;", "vi as %test:vi | 0 written | 2 typed"),
-            ("a.test.ts", "let e: typeof expect; let f: typeof expect.extend; expect(1);", "expect as %test:expect | 0 written | 1 typed"),
-            ("a.test.ts", "({ vi });", "vi as %test:vi | 0 written | 1 typed"),
-            ("a.test.ts", "import type { Mock } from 'bun:test'; let m: Mock<() => void> | undefined; it('a', () => {});", "it as %test:it | 0 written | 1 typed"),
-            ("a.test.mjs", "'use strict'; it('a', () => {});", "it as %test:it | 0 written | 0 typed"),
-            ("a.test.js", "'use strict'; it('a', () => {});", "require %test:it | 0 written | 0 typed"),
-            ("a.test.cjs", "module.exports = 1; test('a', () => {});", "require %test:test | 0 written | 0 typed"),
-            ("a.test.cjs", "'use strict'; exports.a = 1; jest.fn();", "require %test:jest | 0 written | 0 typed"),
+            (
+                "a.test.js",
+                "test('a', () => { expect(1).toBe(1); });",
+                "test as %test:test, expect as %test:expect | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "expect(1); expect(2);",
+                "expect as %test:expect | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "typeof describe;",
+                "describe as %test:describe | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "({ vi });",
+                "vi as %test:vi | 0 written | 0 typed",
+            ),
+            (
+                "a.test.ts",
+                "declare const test: (name: string) => void; test('a');",
+                "test as %test:test | 0 written | 1 typed",
+            ),
+            (
+                "a.test.ts",
+                "declare var vi: { answer: number }; vi.answer; vi.answer;",
+                "vi as %test:vi | 0 written | 2 typed",
+            ),
+            (
+                "a.test.ts",
+                "let e: typeof expect; let f: typeof expect.extend; expect(1);",
+                "expect as %test:expect | 0 written | 1 typed",
+            ),
+            (
+                "a.test.ts",
+                "({ vi });",
+                "vi as %test:vi | 0 written | 1 typed",
+            ),
+            (
+                "a.test.ts",
+                "import type { Mock } from 'bun:test'; let m: Mock<() => void> | undefined; it('a', () => {});",
+                "it as %test:it | 0 written | 1 typed",
+            ),
+            (
+                "a.test.mjs",
+                "'use strict'; it('a', () => {});",
+                "it as %test:it | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "'use strict'; it('a', () => {});",
+                "require %test:it | 0 written | 0 typed",
+            ),
+            (
+                "a.test.cjs",
+                "module.exports = 1; test('a', () => {});",
+                "require %test:test | 0 written | 0 typed",
+            ),
+            (
+                "a.test.cjs",
+                "'use strict'; exports.a = 1; jest.fn();",
+                "require %test:jest | 0 written | 0 typed",
+            ),
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe(name, text), expected, "{text}");
@@ -317,17 +411,61 @@ mod tests {
     fn names_of_the_file_and_files_that_load_a_runner_stay_as_written() {
         let rows = [
             ("a.test.js", "console.log(1);", " | 0 written | 0 typed"),
-            ("a.test.ts", "let e: typeof expect;", " | 0 written | 0 typed"),
-            ("a.test.js", "function test() {} test();", " | 1 written | 0 typed"),
-            ("a.test.js", "(expect => expect)(1);", " | 1 written | 0 typed"),
-            ("a.test.js", "x.test; ({ test: 1 });", " | 0 written | 0 typed"),
-            ("a.test.js", "import { test } from 'bun:test'; test('a', () => {}); describe;", " | 2 written | 0 typed"),
-            ("a.test.js", "import { test } from 'vitest'; test('a', () => {}); describe;", " | 2 written | 0 typed"),
-            ("a.test.js", "import { test } from '@jest/globals'; test('a', () => {}); describe;", " | 2 written | 0 typed"),
-            ("a.test.js", "import 'bun:test'; describe;", " | 1 written | 0 typed"),
-            ("a.test.js", "export * from 'bun:test'; describe;", " | 1 written | 0 typed"),
-            ("a.test.js", "await import('bun:test'); describe;", " | 1 written | 0 typed"),
-            ("a.test.cjs", "require('bun:test'); describe;", " | 1 written | 0 typed"),
+            (
+                "a.test.ts",
+                "let e: typeof expect;",
+                " | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "function test() {} test();",
+                " | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "(expect => expect)(1);",
+                " | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "x.test; ({ test: 1 });",
+                " | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import { test } from 'bun:test'; test('a', () => {}); describe;",
+                " | 2 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import { test } from 'vitest'; test('a', () => {}); describe;",
+                " | 2 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import { test } from '@jest/globals'; test('a', () => {}); describe;",
+                " | 2 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import 'bun:test'; describe;",
+                " | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "export * from 'bun:test'; describe;",
+                " | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "await import('bun:test'); describe;",
+                " | 1 written | 0 typed",
+            ),
+            (
+                "a.test.cjs",
+                "require('bun:test'); describe;",
+                " | 1 written | 0 typed",
+            ),
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe(name, text), expected, "{text}");

@@ -4,7 +4,13 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { ClassType, FunctionDefinition, Getter, type ClassMember } from "../../../src/codegen/bindgen-lib-internal";
 import { loadSchemaFile } from "../../../src/codegen/bindgen-load";
-import type { DumpedClass, DumpedEntry, DumpedParameter, DumpedType, Primitive } from "../../../src/codegen/builtins/dump";
+import type {
+  DumpedClass,
+  DumpedEntry,
+  DumpedParameter,
+  DumpedType,
+  Primitive,
+} from "../../../src/codegen/builtins/dump";
 import type { TypeSpec } from "../../../src/codegen/builtins/vocabulary";
 import { parseDeclaredType } from "../../../src/codegen/declared-type-checks";
 import { test } from "../supported";
@@ -23,7 +29,11 @@ const typeScriptNames: Record<Primitive, string> = {
 const table = aotBuiltinEntries();
 const entriesByToken = new Map(table.entries.map(entry => [entry.token, entry]));
 const classesByToken = new Map(table.classes.map(builtinClass => [builtinClass.token, builtinClass]));
-const classesByPrototype = new Map(table.classes.flatMap(builtinClass => (builtinClass.prototype === null ? [] : [[builtinClass.prototype, builtinClass] as const])));
+const classesByPrototype = new Map(
+  table.classes.flatMap(builtinClass =>
+    builtinClass.prototype === null ? [] : [[builtinClass.prototype, builtinClass] as const],
+  ),
+);
 
 // No program can name a class whose path is written between percent signs, so bun-types says nothing about it.
 const hasPublicPath = (entry: DumpedEntry) => !entry.path.includes("%");
@@ -33,7 +43,9 @@ const typeOfValueAt = (path: string) => `typeof ${path.replace(/^(\w+:[^.]+)\./,
 
 function instanceTypeOf(builtinClass: DumpedClass | undefined): string | undefined {
   const classConstructor = builtinClass?.constructor ? entriesByToken.get(builtinClass.constructor) : undefined;
-  return classConstructor === undefined || !hasPublicPath(classConstructor) ? undefined : `InstanceType<${typeOfValueAt(classConstructor.path)}>`;
+  return classConstructor === undefined || !hasPublicPath(classConstructor)
+    ? undefined
+    : `InstanceType<${typeOfValueAt(classConstructor.path)}>`;
 }
 
 function holderTypeOf(entry: DumpedEntry): string | undefined {
@@ -44,15 +56,27 @@ function holderTypeOf(entry: DumpedEntry): string | undefined {
 }
 
 // An operand that is handed back is whatever the call takes for it.
-function typeScriptOfPart(part: DumpedType["parts"][number], receiverType: string | undefined, parameters: readonly DumpedParameter[]): string | undefined {
+function typeScriptOfPart(
+  part: DumpedType["parts"][number],
+  receiverType: string | undefined,
+  parameters: readonly DumpedParameter[],
+): string | undefined {
   if (part.part === "Instance") return instanceTypeOf(classesByToken.get(part.class)) ?? "object";
   if (part.part !== "Operand") return undefined;
   if (part.operand === "this") return receiverType;
   const parameter = parameters.find(({ operand }) => Bun.deepEquals(operand, part.operand));
-  return parameter === undefined ? undefined : parameter.accepted.isAnything ? "unknown" : typeScriptOf(parameter.accepted, receiverType, []);
+  return parameter === undefined
+    ? undefined
+    : parameter.accepted.isAnything
+      ? "unknown"
+      : typeScriptOf(parameter.accepted, receiverType, []);
 }
 
-function typeScriptOf(type: DumpedType, receiverType: string | undefined, parameters: readonly DumpedParameter[]): string | undefined {
+function typeScriptOf(
+  type: DumpedType,
+  receiverType: string | undefined,
+  parameters: readonly DumpedParameter[],
+): string | undefined {
   if (type.hasAnyFunction || type.hasPlainData) return undefined;
   const names = new Set<string | undefined>(type.primitives.map(primitive => typeScriptNames[primitive]));
   if (type.hasAnyObject) names.add("object");
@@ -64,8 +88,21 @@ function typeScriptOf(type: DumpedType, receiverType: string | undefined, parame
 
 const described = table.entries
   .filter(entry => entry.origin === "Host")
-  .flatMap(entry => entry.overloads.map(overload => ({ ...overload, name: entry.name, isSymbolName: entry.isSymbolName, holderType: holderTypeOf(entry) })))
-  .filter(o => o.isProvenByConstruction && !o.result.type.isAnything && o.receiver !== null && (o.mode === "Get" || o.mode === "Call"))
+  .flatMap(entry =>
+    entry.overloads.map(overload => ({
+      ...overload,
+      name: entry.name,
+      isSymbolName: entry.isSymbolName,
+      holderType: holderTypeOf(entry),
+    })),
+  )
+  .filter(
+    o =>
+      o.isProvenByConstruction &&
+      !o.result.type.isAnything &&
+      o.receiver !== null &&
+      (o.mode === "Get" || o.mode === "Call"),
+  )
   .map(o => ({ ...o, resultType: typeScriptOf(o.result.type, o.holderType, o.parameters) }));
 // What holds a member of a class without a public name to its type is the proof or the check where the value leaves native code.
 const named = described.filter(o => o.holderType !== undefined);
@@ -80,7 +117,8 @@ test("a result type that is proven by construction agrees with bun-types", async
   expect(described.filter(o => o.holderType === undefined && !o.path.includes("%")).map(o => o.path)).toEqual([]);
   expect(named.filter(o => o.resultType === undefined).map(o => o.path)).toEqual([]);
   expect(overloads.length).toBeGreaterThan(20);
-  for (const path of ["Request.prototype.url", "Buffer.prototype.readInt8", "Bun.CryptoHasher.algorithms"]) expect(overloads.map(o => o.path)).toContain(path);
+  for (const path of ["Request.prototype.url", "Buffer.prototype.readInt8", "Bun.CryptoHasher.algorithms"])
+    expect(overloads.map(o => o.path)).toContain(path);
   expect((await errorsOf(lines)).map(line => overloads[line - 2].path)).toEqual([]);
 });
 
@@ -109,16 +147,34 @@ async function errorsOf(lines: string[]) {
       },
     }),
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "check"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return [...(stdout + stderr).matchAll(/(agree\.ts)[":( ]+(?:line=")?(\d+)/g)].map(match => Number(match[2]));
 }
 
-const primitivesOfAlternative: Record<string, Primitive> = { string: "String", number: "Number", int32: "Number", bigint: "BigInt", boolean: "Boolean", undefined: "Undefined", null: "Null" };
+const primitivesOfAlternative: Record<string, Primitive> = {
+  string: "String",
+  number: "Number",
+  int32: "Number",
+  bigint: "BigInt",
+  boolean: "Boolean",
+  undefined: "Undefined",
+  null: "Null",
+};
 
 // An instance of a class is one of every class that its class extends: an S3File is a Blob.
 function isInstanceOfOneOf(token: string, classes: Set<string>): boolean {
-  for (let builtinClass = classesByToken.get(token); builtinClass; builtinClass = builtinClass.parent === null ? undefined : classesByToken.get(builtinClass.parent)) {
+  for (
+    let builtinClass = classesByToken.get(token);
+    builtinClass;
+    builtinClass = builtinClass.parent === null ? undefined : classesByToken.get(builtinClass.parent)
+  ) {
     if (classes.has(builtinClass.token)) return true;
   }
   return classes.has(token);
@@ -127,8 +183,16 @@ function isInstanceOfOneOf(token: string, classes: Set<string>): boolean {
 // What a type of the table admits and a declared type does not. The receiver is an instance of `receiverClass`.
 function partsOutside(type: DumpedType, declared: string, receiverClass: string | undefined): string[] {
   const alternatives = parseDeclaredType(declared);
-  const primitives = new Set(alternatives.flatMap(alternative => (typeof alternative === "string" ? (primitivesOfAlternative[alternative] ?? []) : [])));
-  const instances = new Set(alternatives.flatMap(alternative => (typeof alternative === "object" ? alternative.instance : alternative === "Promise" ? alternative : [])));
+  const primitives = new Set(
+    alternatives.flatMap(alternative =>
+      typeof alternative === "string" ? (primitivesOfAlternative[alternative] ?? []) : [],
+    ),
+  );
+  const instances = new Set(
+    alternatives.flatMap(alternative =>
+      typeof alternative === "object" ? alternative.instance : alternative === "Promise" ? alternative : [],
+    ),
+  );
   const admitsEveryObject = alternatives.includes("object");
   const outside: string[] = type.primitives.filter(primitive => !primitives.has(primitive));
   if (type.isAnything) outside.push("anything");
@@ -137,7 +201,12 @@ function partsOutside(type: DumpedType, declared: string, receiverClass: string 
   if ((type.hasAnyObject || type.hasAnyFunction || type.hasPlainData) && !admitsEveryObject) outside.push("any object");
   for (const part of type.parts) {
     if (part.part === "Operand" && part.operand === "this") {
-      if (alternatives.includes("this") || admitsEveryObject || (receiverClass !== undefined && isInstanceOfOneOf(receiverClass, instances))) continue;
+      if (
+        alternatives.includes("this") ||
+        admitsEveryObject ||
+        (receiverClass !== undefined && isInstanceOfOneOf(receiverClass, instances))
+      )
+        continue;
     }
     if (part.part === "Instance" && (admitsEveryObject || isInstanceOfOneOf(part.class, instances))) continue;
     outside.push(part.part === "Instance" ? part.class : part.part);
@@ -145,7 +214,14 @@ function partsOutside(type: DumpedType, declared: string, receiverClass: string 
   return outside;
 }
 
-const wordsOfPrimitives: Partial<Record<Primitive, string>> = { Undefined: "undefined", Null: "null", Boolean: "boolean", Number: "number", String: "string", BigInt: "bigint" };
+const wordsOfPrimitives: Partial<Record<Primitive, string>> = {
+  Undefined: "undefined",
+  Null: "null",
+  Boolean: "boolean",
+  Number: "number",
+  String: "string",
+  BigInt: "bigint",
+};
 
 // A type of a schema in the words of parseDeclaredType, if they can say it.
 function wordsOf(spec: TypeSpec): string[] | undefined {
@@ -174,7 +250,12 @@ function wordsOf(spec: TypeSpec): string[] | undefined {
 }
 
 function declaredResultOf(member: ClassMember | undefined): string | undefined {
-  const types = member instanceof Getter ? [member.type] : member instanceof FunctionDefinition ? member.signatures.map(signature => signature.returns) : [];
+  const types =
+    member instanceof Getter
+      ? [member.type]
+      : member instanceof FunctionDefinition
+        ? member.signatures.map(signature => signature.returns)
+        : [];
   const words = types.map(type => wordsOf(type.resultType));
   return words.length === 0 || words.includes(undefined) ? undefined : [...new Set(words.flat())].join(" | ");
 }
@@ -183,7 +264,8 @@ async function loadClassesOfSchemas(): Promise<Map<string, ClassType>> {
   const root = join(import.meta.dir, "../../..");
   const classes = new Map<string, ClassType>();
   for (const file of [...new Bun.Glob("src/**/*.bind.ts").scanSync({ cwd: root, absolute: true })].sort()) {
-    for (const type of (await loadSchemaFile(`bun_runtime=${file}`)).types) if (type instanceof ClassType) classes.set(type.name, type);
+    for (const type of (await loadSchemaFile(`bun_runtime=${file}`)).types)
+      if (type instanceof ClassType) classes.set(type.name, type);
   }
   return classes;
 }
@@ -191,16 +273,27 @@ async function loadClassesOfSchemas(): Promise<Map<string, ClassType>> {
 // The schema is the one source of what a member returns. A row that is written by hand for some operands may say more, never something else.
 test("a result that is written by hand lies inside the type that the schema declares", async () => {
   const definitions = await loadClassesOfSchemas();
-  const classesByConstructor = new Map(table.classes.flatMap(builtinClass => (builtinClass.constructor === null ? [] : [[builtinClass.constructor, builtinClass] as const])));
+  const classesByConstructor = new Map(
+    table.classes.flatMap(builtinClass =>
+      builtinClass.constructor === null ? [] : [[builtinClass.constructor, builtinClass] as const],
+    ),
+  );
   let compared = 0;
   const disagreements = table.entries.flatMap(entry => {
     if (entry.holder === null) return [];
     const ofPrototype = classesByPrototype.get(entry.holder);
     const definition = definitions.get((ofPrototype ?? classesByConstructor.get(entry.holder))?.token ?? "");
-    const declared = declaredResultOf((ofPrototype ? definition?.protoMembers : definition?.staticMembers)?.find(member => member.name === entry.name));
+    const declared = declaredResultOf(
+      (ofPrototype ? definition?.protoMembers : definition?.staticMembers)?.find(member => member.name === entry.name),
+    );
     if (!declared) return [];
     return entry.overloads.flatMap(overload => {
-      if (overload.isProvenByConstruction || overload.isUndeclared || (overload.mode !== "Call" && overload.mode !== "Get")) return [];
+      if (
+        overload.isProvenByConstruction ||
+        overload.isUndeclared ||
+        (overload.mode !== "Call" && overload.mode !== "Get")
+      )
+        return [];
       compared++;
       const outside = partsOutside(overload.result.type, declared, ofPrototype?.token);
       return outside.length === 0 ? [] : [`${entry.path}: ${declared} admits no ${outside.join(", ")}`];
@@ -219,23 +312,67 @@ const checkedMembers: Record<string, { type: string; inside: string[]; outside: 
   boolean: { type: "boolean", inside: ["true", "false"], outside: ["0", "undefined"] },
   undefined: { type: "undefined", inside: ["undefined"], outside: ["null", "0"] },
   null: { type: "null", inside: ["null"], outside: ["undefined", "{}"] },
-  object: { type: "object", inside: ["{}", "[]", "() => {}", "new Proxy({}, {})"], outside: ["null", '"a"', "Symbol()"] },
-  promise: { type: "Promise", inside: ["Promise.resolve(1)", "new (class extends Promise {})(() => {})"], outside: ["{ then() {} }", "undefined"] },
+  object: {
+    type: "object",
+    inside: ["{}", "[]", "() => {}", "new Proxy({}, {})"],
+    outside: ["null", '"a"', "Symbol()"],
+  },
+  promise: {
+    type: "Promise",
+    inside: ["Promise.resolve(1)", "new (class extends Promise {})(() => {})"],
+    outside: ["{ then() {} }", "undefined"],
+  },
   receiver: { type: "this", inside: ["instance"], outside: ["new DeclaredTypesForTesting()", "undefined"] },
-  sameClass: { type: "DeclaredTypesForTesting", inside: ["instance", "new DeclaredTypesForTesting()", "new (class extends DeclaredTypesForTesting {})()"], outside: ["Object.create(DeclaredTypesForTesting.prototype)", "{}"] },
-  abortSignal: { type: "AbortSignal", inside: ["new AbortController().signal"], outside: ["new AbortController()", "new EventTarget()"] },
-  array: { type: "Array", inside: ["[]", "[1, , 3]"], outside: ["new Uint8Array(1)", "{ length: 0 }", "new Proxy([], {})"] },
-  arrayBuffer: { type: "ArrayBuffer", inside: ["new ArrayBuffer(1)"], outside: ["new SharedArrayBuffer(1)", "new Uint8Array(1)"] },
-  blob: { type: "Blob", inside: ["new Blob([])", "Bun.file('a')", "new File([], 'a')"], outside: ["new Response('')", "artifact"] },
-  buffer: { type: "Buffer", inside: ["Buffer.alloc(1)", "Buffer.alloc(2).subarray(1)"], outside: ["new Uint8Array(1)", "new ArrayBuffer(1)"] },
+  sameClass: {
+    type: "DeclaredTypesForTesting",
+    inside: ["instance", "new DeclaredTypesForTesting()", "new (class extends DeclaredTypesForTesting {})()"],
+    outside: ["Object.create(DeclaredTypesForTesting.prototype)", "{}"],
+  },
+  abortSignal: {
+    type: "AbortSignal",
+    inside: ["new AbortController().signal"],
+    outside: ["new AbortController()", "new EventTarget()"],
+  },
+  array: {
+    type: "Array",
+    inside: ["[]", "[1, , 3]"],
+    outside: ["new Uint8Array(1)", "{ length: 0 }", "new Proxy([], {})"],
+  },
+  arrayBuffer: {
+    type: "ArrayBuffer",
+    inside: ["new ArrayBuffer(1)"],
+    outside: ["new SharedArrayBuffer(1)", "new Uint8Array(1)"],
+  },
+  blob: {
+    type: "Blob",
+    inside: ["new Blob([])", "Bun.file('a')", "new File([], 'a')"],
+    outside: ["new Response('')", "artifact"],
+  },
+  buffer: {
+    type: "Buffer",
+    inside: ["Buffer.alloc(1)", "Buffer.alloc(2).subarray(1)"],
+    outside: ["new Uint8Array(1)", "new ArrayBuffer(1)"],
+  },
   date: { type: "Date", inside: ["new Date(0)", "new Date(NaN)"], outside: ["0", "Object.create(Date.prototype)"] },
-  error: { type: "Error", inside: ["new Error('a')", "new TypeError('a')"], outside: ["Object.create(Error.prototype)", "{ message: 'a' }"] },
+  error: {
+    type: "Error",
+    inside: ["new Error('a')", "new TypeError('a')"],
+    outside: ["Object.create(Error.prototype)", "{ message: 'a' }"],
+  },
   headers: { type: "Headers", inside: ["new Headers()"], outside: ["{}", "new Map()"] },
   readableStream: { type: "ReadableStream", inside: ["new ReadableStream()"], outside: ["new WritableStream()", "{}"] },
-  uint8Array: { type: "Uint8Array", inside: ["new Uint8Array(1)", "Buffer.alloc(1)"], outside: ["new Int8Array(1)", "new Uint8ClampedArray(1)", "[]"] },
+  uint8Array: {
+    type: "Uint8Array",
+    inside: ["new Uint8Array(1)", "Buffer.alloc(1)"],
+    outside: ["new Int8Array(1)", "new Uint8ClampedArray(1)", "[]"],
+  },
   url: { type: "URL", inside: ["new URL('http://a')"], outside: ['"http://a"', "new URLSearchParams()"] },
   numberOrUndefined: { type: "number | undefined", inside: ["1", "undefined"], outside: ["null", '"1"'] },
-  stringOrBufferOrNull: { type: "string | Buffer | null", inside: ['"a"', "Buffer.alloc(1)", "null"], outside: ["undefined", "new Uint8Array(1)"] },
+  stringOrBufferOrNull: {
+    type: "string | Buffer | null",
+    inside: ['"a"', "Buffer.alloc(1)", "null"],
+    outside: ["undefined", "new Uint8Array(1)"],
+  },
 };
 
 const prelude = `
@@ -248,7 +385,13 @@ const buildArtifact = `const artifact = (await Bun.build({ entrypoints: [process
 async function run(body: string) {
   using dir = tempDir("checked-returns", { "entry.js": "export default 1;" });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--expose-internals", "-e", prelude + (body.includes("artifact") ? buildArtifact : "") + body, join(String(dir), "entry.js")],
+    cmd: [
+      bunExe(),
+      "--expose-internals",
+      "-e",
+      prelude + (body.includes("artifact") ? buildArtifact : "") + body,
+      join(String(dir), "entry.js"),
+    ],
     env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
     stdout: "pipe",
     stderr: "pipe",
@@ -257,11 +400,15 @@ async function run(body: string) {
   return { stdout, stderr, exitCode };
 }
 
-const messageOf = (member: string, type: string) => `DeclaredTypesForTesting.${member} is declared as ${type}, but its value has another type`;
+const messageOf = (member: string, type: string) =>
+  `DeclaredTypesForTesting.${member} is declared as ${type}, but its value has another type`;
 
 test("a value inside the declared type passes the check", async () => {
   const calls = Object.entries(checkedMembers).flatMap(([member, { inside }]) =>
-    inside.map(value => `{ const value = ${value}; if (!Object.is(instance.${member}(value), value)) throw new Error(${JSON.stringify(`${member}(${value})`)}); }`),
+    inside.map(
+      value =>
+        `{ const value = ${value}; if (!Object.is(instance.${member}(value), value)) throw new Error(${JSON.stringify(`${member}(${value})`)}); }`,
+    ),
   );
   const { stdout, stderr, exitCode } = await run(`
     ${calls.join("\n")}
@@ -272,20 +419,25 @@ test("a value inside the declared type passes the check", async () => {
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a a a\n", stderr: "", exitCode: 0 });
 });
 
-test.concurrent.each(Object.entries(checkedMembers).flatMap(([member, { type, outside }]) => outside.map(value => [member, value, type] as const)))(
-  "%s(%s) ends the process and names the member",
-  async (member, value, type) => {
-    const { stdout, stderr, exitCode } = await run(`instance.${member}(${value}); console.log("returned");`);
-    expect(stderr).toContain(messageOf(member, type));
-    expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
-  },
-);
+test.concurrent.each(
+  Object.entries(checkedMembers).flatMap(([member, { type, outside }]) =>
+    outside.map(value => [member, value, type] as const),
+  ),
+)("%s(%s) ends the process and names the member", async (member, value, type) => {
+  const { stdout, stderr, exitCode } = await run(`instance.${member}(${value}); console.log("returned");`);
+  expect(stderr).toContain(messageOf(member, type));
+  expect(stdout).toBe("");
+  expect(exitCode).not.toBe(0);
+});
 
 test.concurrent.each([
   ["a static function", `DeclaredTypesForTesting.number("1");`, messageOf("number", "number")],
   ["a getter", `instance.hold(1); instance.heldString;`, messageOf("heldString", "string")],
-  ["a getter that keeps its first answer", `instance.hold(1); instance.firstHeldString;`, messageOf("firstHeldString", "string")],
+  [
+    "a getter that keeps its first answer",
+    `instance.hold(1); instance.firstHeldString;`,
+    messageOf("firstHeldString", "string"),
+  ],
 ])("%s is checked too", async (_, body, message) => {
   const { stdout, stderr, exitCode } = await run(`${body} console.log("returned");`);
   expect(stderr).toContain(message);

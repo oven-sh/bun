@@ -42,11 +42,23 @@ pub(crate) fn parse_data<'s>(
         Loader::Toml => parse_structured(StructuredFormat::Toml, &source, arena, atoms, log),
         Loader::Yaml => parse_structured(StructuredFormat::Yaml, &source, arena, atoms, log),
         Loader::Xml => parse_structured(StructuredFormat::Xml, &source, arena, atoms, log),
-        Loader::Text => Ok(create_string_module(&decode_utf8_lossy(file.contents), arena, atoms)),
+        Loader::Text => Ok(create_string_module(
+            &decode_utf8_lossy(file.contents),
+            arena,
+            atoms,
+        )),
         Loader::Md => match bun_md::root::render_to_html(file.contents) {
-            Ok(html) => Ok(create_string_module(&decode_utf8_lossy(&html), arena, atoms)),
+            Ok(html) => Ok(create_string_module(
+                &decode_utf8_lossy(&html),
+                arena,
+                atoms,
+            )),
             Err(_) => {
-                log.add_error(Some(&source), Loc::EMPTY, b"Failed to render markdown to HTML");
+                log.add_error(
+                    Some(&source),
+                    Loc::EMPTY,
+                    b"Failed to render markdown to HTML",
+                );
                 Err(Failed)
             }
         },
@@ -108,7 +120,10 @@ fn parse_structured<'s>(
     } else {
         parse_structured_value(format, source, arena, atoms, log)?
     };
-    Ok(DataModule::Value { default, exports_keys: true })
+    Ok(DataModule::Value {
+        default,
+        exports_keys: true,
+    })
 }
 
 fn parse_structured_value<'s>(
@@ -145,7 +160,9 @@ fn parse_tree<'a>(
     scratch: &'a Arena,
 ) -> Option<Expr> {
     match format {
-        StructuredFormat::Json => bun_parsers::json::parse_json_into_arena(source, log, scratch).ok(),
+        StructuredFormat::Json => {
+            bun_parsers::json::parse_json_into_arena(source, log, scratch).ok()
+        }
         StructuredFormat::Jsonc => {
             bun_parsers::json::parse_jsonc_into_arena(source, log, scratch).ok()
         }
@@ -172,11 +189,7 @@ fn parse_tree<'a>(
     }
 }
 
-fn create_string_module<'s>(
-    text: &[u8],
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
-) -> DataModule<'s> {
+fn create_string_module<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> DataModule<'s> {
     DataModule::Value {
         default: arena.alloc(DataValue::String(atoms.intern(text))),
         exports_keys: false,
@@ -205,13 +218,20 @@ mod tests {
 
     impl Outcome<'_, '_> {
         fn embedded_path_of(&self, contents: &[u8], loader: Loader) -> Vec<u8> {
-            let file = SourceFile { path: PATH, contents, loader };
+            let file = SourceFile {
+                path: PATH,
+                contents,
+                loader,
+            };
             let name = embedded_name(self.context, &file, ContentHasher::run(contents));
             embedded_path(&self.context.module_prefix, &name)
         }
 
         fn has_message_prefix(&self, prefix: &[u8]) -> bool {
-            self.log.msgs.iter().any(|message| message.data.text.starts_with(prefix))
+            self.log
+                .msgs
+                .iter()
+                .any(|message| message.data.text.starts_with(prefix))
         }
     }
 
@@ -228,9 +248,19 @@ mod tests {
                 let arena = Arena::new();
                 let embedded = EmbeddedFiles::default();
                 let mut log = Log::init();
-                let file = SourceFile { path: PATH, contents, loader };
+                let file = SourceFile {
+                    path: PATH,
+                    contents,
+                    loader,
+                };
                 let result = parse_data(context, &embedded, &file, &arena, &atoms, &mut log);
-                check(Outcome { context, atoms: &atoms, log: &log, embedded, result })
+                check(Outcome {
+                    context,
+                    atoms: &atoms,
+                    log: &log,
+                    embedded,
+                    result,
+                })
             },
         )
     }
@@ -245,7 +275,10 @@ mod tests {
     fn assert_string_module(loader: Loader, contents: &[u8], expected: &[u8]) {
         load(loader, contents, |outcome| {
             let text = DataValue::String(outcome.atoms.intern(expected));
-            let module = DataModule::Value { default: &text, exports_keys: false };
+            let module = DataModule::Value {
+                default: &text,
+                exports_keys: false,
+            };
             assert_eq!(outcome.result.unwrap(), module);
         });
     }
@@ -262,7 +295,10 @@ mod tests {
             load(loader, contents, |outcome| {
                 let properties = [(outcome.atoms.intern(b"a"), DataValue::Number(1.0))];
                 let value = DataValue::Object(&properties);
-                let module = DataModule::Value { default: &value, exports_keys: true };
+                let module = DataModule::Value {
+                    default: &value,
+                    exports_keys: true,
+                };
                 assert_eq!(outcome.result.unwrap(), module);
             });
         }
@@ -270,7 +306,10 @@ mod tests {
             let text = DataValue::String(outcome.atoms.intern(b"1"));
             let properties = [(outcome.atoms.intern(b"a"), text)];
             let value = DataValue::Object(&properties);
-            let module = DataModule::Value { default: &value, exports_keys: true };
+            let module = DataModule::Value {
+                default: &value,
+                exports_keys: true,
+            };
             assert_eq!(outcome.result.unwrap(), module);
         });
     }
@@ -278,8 +317,16 @@ mod tests {
     #[test]
     fn scalar_keys_are_property_keys() {
         for (loader, contents, names) in [
-            (Loader::Yaml, &b"404: 0\ntrue: 1\n~: 2\n"[..], [&b"404"[..], b"true", b"null"]),
-            (Loader::Json5, &b"{ a: 0, true: 1, null: 2 }"[..], [&b"a"[..], b"true", b"null"]),
+            (
+                Loader::Yaml,
+                &b"404: 0\ntrue: 1\n~: 2\n"[..],
+                [&b"404"[..], b"true", b"null"],
+            ),
+            (
+                Loader::Json5,
+                &b"{ a: 0, true: 1, null: 2 }"[..],
+                [&b"a"[..], b"true", b"null"],
+            ),
         ] {
             load(loader, contents, |outcome| {
                 let properties: Vec<(Atom, DataValue<'_>)> = names
@@ -290,7 +337,10 @@ mod tests {
                     })
                     .collect();
                 let value = DataValue::Object(&properties);
-                let module = DataModule::Value { default: &value, exports_keys: true };
+                let module = DataModule::Value {
+                    default: &value,
+                    exports_keys: true,
+                };
                 assert_eq!(outcome.result.unwrap(), module);
             });
         }
@@ -306,7 +356,10 @@ mod tests {
                 let text = DataValue::String(outcome.atoms.intern("caf\u{FFFD}".as_bytes()));
                 let properties = [(outcome.atoms.intern(b"a"), text)];
                 let expected = DataValue::Object(&properties);
-                let module = DataModule::Value { default: &expected, exports_keys: true };
+                let module = DataModule::Value {
+                    default: &expected,
+                    exports_keys: true,
+                };
                 assert_eq!(outcome.result.unwrap(), module);
             });
         }
@@ -315,8 +368,10 @@ mod tests {
     #[test]
     fn css_is_empty_object_without_embedded_file() {
         load(Loader::Css, b".c { color: red }", |outcome| {
-            let module =
-                DataModule::Value { default: &DataValue::Object(&[]), exports_keys: false };
+            let module = DataModule::Value {
+                default: &DataValue::Object(&[]),
+                exports_keys: false,
+            };
             assert_eq!(outcome.result.unwrap(), module);
             assert!(outcome.embedded.into_output_files().is_empty());
         });
@@ -324,11 +379,15 @@ mod tests {
 
     #[test]
     fn html_is_a_page() {
-        load(Loader::Html, b"<script src=\"./client.ts\"></script>", |outcome| {
-            assert_eq!(outcome.result.unwrap(), DataModule::Page);
-            assert_eq!(outcome.log.errors, 0);
-            assert!(outcome.embedded.into_output_files().is_empty());
-        });
+        load(
+            Loader::Html,
+            b"<script src=\"./client.ts\"></script>",
+            |outcome| {
+                assert_eq!(outcome.result.unwrap(), DataModule::Page);
+                assert_eq!(outcome.log.errors, 0);
+                assert!(outcome.embedded.into_output_files().is_empty());
+            },
+        );
     }
 
     #[test]
@@ -381,7 +440,10 @@ mod tests {
                 let path = outcome.embedded_path_of(b"contents", loader);
                 assert!(path.starts_with(&outcome.context.module_prefix));
                 let text = DataValue::String(outcome.atoms.intern(&path));
-                let module = DataModule::Value { default: &text, exports_keys: false };
+                let module = DataModule::Value {
+                    default: &text,
+                    exports_keys: false,
+                };
                 assert_eq!(outcome.result.unwrap(), module);
                 assert_eq!(outcome.embedded.into_output_files().len(), 1);
             });
@@ -392,7 +454,9 @@ mod tests {
     fn napi_loads_embedded_file() {
         load(Loader::Napi, b"addon", |outcome| {
             let path = outcome.embedded_path_of(b"addon", Loader::Napi);
-            let module = DataModule::NativeAddon { path: outcome.atoms.intern(&path) };
+            let module = DataModule::NativeAddon {
+                path: outcome.atoms.intern(&path),
+            };
             assert_eq!(outcome.result.unwrap(), module);
         });
     }

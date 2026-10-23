@@ -324,7 +324,9 @@ export function buildDispatches(builder: ModelBuilder, types: TypeInterner): voi
       // A dispatch goes with the signatures of its file, in whose place there may be some that are written by hand.
       const written = declared
         .get(describedAs)
-        ?.find(dispatch => dispatch.mode === mode && overloads.every(({ source }) => source.file === dispatch.source.file));
+        ?.find(
+          dispatch => dispatch.mode === mode && overloads.every(({ source }) => source.file === dispatch.source.file),
+        );
       const root =
         written === undefined
           ? dispatchOn(overloads, types, builder.problems)

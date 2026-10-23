@@ -37,10 +37,7 @@ pub struct HostLoader(pub u8);
 pub enum CodeAnswer<'s> {
     File(FileId),
     HostModule(HostModuleId),
-    External {
-        specifier: Atom,
-        kind: ExternalKind,
-    },
+    External { specifier: Atom, kind: ExternalKind },
     Erased,
     Computed(ComputedTargets<'s>),
     NotFound(CodeFailure),

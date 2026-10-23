@@ -17,7 +17,12 @@ const pairs: [baseline: string, other: string, allowance: number][] = [
   ["switch on a number tag", "switch on a text tag", 8],
 ];
 
-const skipped = isDebug || isASAN ? "a debug or ASAN build counts other instructions" : isWindows ? "it counts with perf_event_open or /usr/bin/time -l" : undefined;
+const skipped =
+  isDebug || isASAN
+    ? "a debug or ASAN build counts other instructions"
+    : isWindows
+      ? "it counts with perf_event_open or /usr/bin/time -l"
+      : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/equivalent-forms.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/equivalent-forms", () => {
@@ -27,7 +32,22 @@ describe.skipIf(!!skipped)("compile/aot/perf/equivalent-forms", () => {
   const costs = new Map<string, Promise<number | undefined>>();
 
   beforeAll(async () => {
-    built(await spawned([bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), join(root, "main.ts"), "--outfile", executable], root, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          ...withoutDebugInformation(),
+          join(root, "main.ts"),
+          "--outfile",
+          executable,
+        ],
+        root,
+        bunEnv,
+      ),
+    );
     const compiled = await spawned([executable], root, bunEnv);
     const plain = await spawned([bunExe(), "run", join(root, "main.ts")], root, bunEnv);
     expect(compiled.stdout).toBe(plain.stdout);
@@ -49,15 +69,16 @@ describe.skipIf(!!skipped)("compile/aot/perf/equivalent-forms", () => {
   }
 
   for (const [baseline, other, allowance] of pairs) {
-    test(
-      `${other}: at most ${allowance} instructions more than ${baseline}`,
-      async () => {
-        const [expected, measured] = [await costOf(baseline), await costOf(other)];
-        if (expected === undefined || measured === undefined) return void console.error(`SKIPPED: ${other}: instructions cannot be counted here`);
-        console.error(`EQUIVALENT FORMS ${baseline}\t${expected}\t| ${other}\t${measured}`);
-        expect({ other, measured, isWithinAllowance: measured <= expected + allowance }).toEqual({ other, measured, isWithinAllowance: true });
-      },
-      900_000,
-    );
+    test(`${other}: at most ${allowance} instructions more than ${baseline}`, async () => {
+      const [expected, measured] = [await costOf(baseline), await costOf(other)];
+      if (expected === undefined || measured === undefined)
+        return void console.error(`SKIPPED: ${other}: instructions cannot be counted here`);
+      console.error(`EQUIVALENT FORMS ${baseline}\t${expected}\t| ${other}\t${measured}`);
+      expect({ other, measured, isWithinAllowance: measured <= expected + allowance }).toEqual({
+        other,
+        measured,
+        isWithinAllowance: true,
+      });
+    }, 900_000);
   }
 });

@@ -83,7 +83,10 @@ pub(in crate::lower) fn apply_legacy_decorators(
         is_legacy_decorated_member(hir, member)
             && hir.runtime_member_kind(member) != MemberKind::Constructor
     });
-    for member in decorated_members.clone().filter(|member| !is_static(member)) {
+    for member in decorated_members
+        .clone()
+        .filter(|member| !is_static(member))
+    {
         decorate_member(lowering, evaluation, member);
     }
     for member in decorated_members.filter(is_static) {
@@ -169,7 +172,11 @@ fn lower_parameter_decorators(
             let index = lowering.builder.integer(index as i64);
             let decorator = expression::lower_expression(lowering, decorator);
             let helper = BuiltinId::CompilerHelpersDecorateParameter;
-            list.push(call::emit_builtin_call(lowering, helper, &[index, decorator]));
+            list.push(call::emit_builtin_call(
+                lowering,
+                helper,
+                &[index, decorator],
+            ));
         }
     }
 }

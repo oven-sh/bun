@@ -254,7 +254,9 @@ pub fn set_compiled_frame_at_return_address(lookup: fn(usize) -> Option<Compiled
 }
 
 fn compiled_frame_at_return_address(return_address: usize) -> Option<CompiledFrame> {
-    COMPILED_FRAME_AT_RETURN_ADDRESS.get().and_then(|lookup| lookup(return_address))
+    COMPILED_FRAME_AT_RETURN_ADDRESS
+        .get()
+        .and_then(|lookup| lookup(return_address))
 }
 
 /// The registers of the caller of a frame of compiled code, given those in the frame: (pc, sp, fp).
@@ -275,7 +277,11 @@ fn caller_of_compiled_frame(
     if place_of_record % WORD != 0 || place_of_record.checked_add(WORD)? < sp {
         return None;
     }
-    let caller_fp = if frame.has_frame_record { load(place_of_record)? } else { fp };
+    let caller_fp = if frame.has_frame_record {
+        load(place_of_record)?
+    } else {
+        fp
+    };
     let caller_pc = load(place_of_record.checked_add(WORD)?)?;
     let caller_sp = place_of_record.checked_add(2 * WORD + frame.bytes_above_return_address)?;
     Some((caller_pc, caller_sp, caller_fp))
@@ -344,7 +350,10 @@ impl StackIterator {
         }
         let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
 
-        self.returned_to = Some((new_pc, fp.checked_add(Self::PC_OFFSET + core::mem::size_of::<usize>())?));
+        self.returned_to = Some((
+            new_pc,
+            fp.checked_add(Self::PC_OFFSET + core::mem::size_of::<usize>())?,
+        ));
         self.fp = new_fp;
 
         Some(new_pc)
@@ -478,7 +487,11 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             let rf = unsafe {
                 ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
             };
-            let compiled_frame = if rf.is_null() { compiled_frame_at_return_address(control_pc as usize) } else { None };
+            let compiled_frame = if rf.is_null() {
+                compiled_frame_at_return_address(control_pc as usize)
+            } else {
+                None
+            };
             if let Some(compiled_frame) = compiled_frame {
                 #[cfg(target_arch = "x86_64")]
                 let frame_pointer = ctx.Rbp;
@@ -491,9 +504,12 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                     // SAFETY: the word is aligned, so it lies in the one page that is_valid_memory found committed and readable.
                     Some(unsafe { *(address as *const usize) })
                 };
-                let Some((caller_pc, caller_sp, caller_fp)) =
-                    caller_of_compiled_frame(compiled_frame, control_sp as usize, frame_pointer as usize, load)
-                else {
+                let Some((caller_pc, caller_sp, caller_fp)) = caller_of_compiled_frame(
+                    compiled_frame,
+                    control_sp as usize,
+                    frame_pointer as usize,
+                    load,
+                ) else {
                     break;
                 };
                 #[cfg(target_arch = "x86_64")]

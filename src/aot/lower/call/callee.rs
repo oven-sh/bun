@@ -3,8 +3,8 @@ use bun_sema::fold::Decision;
 use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind};
 
 use super::Callee;
-use crate::builtins::id::BuiltinId;
 use crate::builtins::Resolved;
+use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
 use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::{

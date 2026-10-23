@@ -172,8 +172,15 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("aot-request-without-a-body", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
+    expect({
+      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
     const compiledEnv = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
     const [general, plain, compiledGeneral, compiled] = await Promise.all([
       run([bunExe(), "run", "main.cjs", "general"], String(dir), bunEnv),

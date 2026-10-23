@@ -132,9 +132,9 @@ fn member_named(input: &BindInput<'_, '_>, file: FileId, name: &str) -> ExprId {
     let name = input.files.atoms.intern(name.as_bytes());
     let hir = input.files.hir(file);
     let mut exprs = (0..hir.exprs.len() as u32).map(ExprId);
-    let member = exprs.find(|&expr| {
-        matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name)
-    });
+    let member = exprs.find(
+        |&expr| matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name),
+    );
     member.expect("the file reads no property with this name")
 }
 
@@ -232,7 +232,10 @@ fn possibly_ambiguous_export_is_unknown() {
     };
     let file = FileParts {
         has_dynamic_names: true,
-        exports: vec![star_export(ambiguous, 1, true), star_export(single, 2, false)],
+        exports: vec![
+            star_export(ambiguous, 1, true),
+            star_export(single, 2, false),
+        ],
         ..source_text_file(FileId(0))
     };
     let graph = ModuleGraph::new(graph_parts(1, vec![file]), &run_serially);
@@ -266,14 +269,23 @@ fn modules_without_files_have_no_export_table() {
         importer: FileId(0),
         specifier,
     };
-    let graph = ModuleGraph::new(GraphParts {
-        other_modules: vec![runtime, external],
-        external_kinds: vec![((FileId(0), specifier), ExternalKind::HostValue)],
-        ..graph_parts(0, Vec::new())
-    }, &run_serially);
+    let graph = ModuleGraph::new(
+        GraphParts {
+            other_modules: vec![runtime, external],
+            external_kinds: vec![((FileId(0), specifier), ExternalKind::HostValue)],
+            ..graph_parts(0, Vec::new())
+        },
+        &run_serially,
+    );
     assert_eq!(graph.interop(runtime), Interop::RUNTIME);
-    assert_eq!(graph.find_export(runtime, name, &atoms), ExportLookup::Unknown);
-    assert_eq!(graph.find_export(external, name, &atoms), ExportLookup::Unknown);
+    assert_eq!(
+        graph.find_export(runtime, name, &atoms),
+        ExportLookup::Unknown
+    );
+    assert_eq!(
+        graph.find_export(external, name, &atoms),
+        ExportLookup::Unknown
+    );
     assert_eq!(graph.other_modules(), [runtime, external]);
 }
 
@@ -286,14 +298,17 @@ fn external_kind_is_found_by_importer_and_specifier() {
         importer: FileId(importer),
         specifier,
     };
-    let graph = ModuleGraph::new(GraphParts {
-        external_kinds: vec![
-            ((FileId(1), first), ExternalKind::UncompiledCode),
-            ((FileId(0), second), ExternalKind::UncompiledCode),
-            ((FileId(0), first), ExternalKind::HostValue),
-        ],
-        ..graph_parts(2, Vec::new())
-    }, &run_serially);
+    let graph = ModuleGraph::new(
+        GraphParts {
+            external_kinds: vec![
+                ((FileId(1), first), ExternalKind::UncompiledCode),
+                ((FileId(0), second), ExternalKind::UncompiledCode),
+                ((FileId(0), first), ExternalKind::HostValue),
+            ],
+            ..graph_parts(2, Vec::new())
+        },
+        &run_serially,
+    );
     let host_value = Some(ExternalKind::HostValue);
     let uncompiled_code = Some(ExternalKind::UncompiledCode);
     assert_eq!(graph.external_kind(external(0, first)), host_value);
@@ -317,8 +332,14 @@ fn external_kind_is_found_by_importer_and_specifier() {
 #[test]
 fn site_answer_accepts_sites_in_any_order() {
     let sites = vec![
-        (ImportSiteKind::Require(ExprId(9)), StoredSiteAnswer::AllModules),
-        (ImportSiteKind::Import(ImportId(1)), StoredSiteAnswer::Erased),
+        (
+            ImportSiteKind::Require(ExprId(9)),
+            StoredSiteAnswer::AllModules,
+        ),
+        (
+            ImportSiteKind::Import(ImportId(1)),
+            StoredSiteAnswer::Erased,
+        ),
         (
             ImportSiteKind::Import(ImportId(0)),
             StoredSiteAnswer::Module(file_module(1)),
@@ -335,7 +356,10 @@ fn site_answer_accepts_sites_in_any_order() {
         answer_at(ImportSiteKind::Require(ExprId(9))),
         SiteAnswer::Computed(Candidates::All)
     );
-    assert_eq!(answer_at(ImportSiteKind::Import(ImportId(1))), SiteAnswer::Erased);
+    assert_eq!(
+        answer_at(ImportSiteKind::Import(ImportId(1))),
+        SiteAnswer::Erased
+    );
     assert_eq!(
         answer_at(ImportSiteKind::Import(ImportId(0))),
         SiteAnswer::Module(file_module(1))
@@ -358,8 +382,14 @@ fn candidates_are_rebased_per_file() {
         ..file_with_sites(
             0,
             vec![
-                (ImportSiteKind::Require(ExprId(2)), StoredSiteAnswer::Candidates(1..2)),
-                (ImportSiteKind::ImportCall(ExprId(1)), StoredSiteAnswer::Candidates(0..1)),
+                (
+                    ImportSiteKind::Require(ExprId(2)),
+                    StoredSiteAnswer::Candidates(1..2),
+                ),
+                (
+                    ImportSiteKind::ImportCall(ExprId(1)),
+                    StoredSiteAnswer::Candidates(0..1),
+                ),
             ],
         )
     };
@@ -367,7 +397,10 @@ fn candidates_are_rebased_per_file() {
         spellings: vec![spelled(1, file_module(0)), spelled(3, runtime)],
         ..file_with_sites(
             1,
-            vec![(ImportSiteKind::ImportCall(ExprId(1)), StoredSiteAnswer::Candidates(0..2))],
+            vec![(
+                ImportSiteKind::ImportCall(ExprId(1)),
+                StoredSiteAnswer::Candidates(0..2),
+            )],
         )
     };
     let files = vec![first, second, source_text_file(FileId(2))];
@@ -394,7 +427,10 @@ fn computed_site_without_candidates_is_all() {
         (unknown, StoredSiteAnswer::AllModules),
         (matches_nothing, StoredSiteAnswer::Candidates(0..0)),
     ];
-    let graph = ModuleGraph::new(graph_parts(1, vec![file_with_sites(0, sites)]), &run_serially);
+    let graph = ModuleGraph::new(
+        graph_parts(1, vec![file_with_sites(0, sites)]),
+        &run_serially,
+    );
     assert_eq!(
         graph.site_answer(FileId(0), unknown),
         SiteAnswer::Computed(Candidates::All)
@@ -426,12 +462,18 @@ fn member_binding_is_found_by_expression() {
     };
     let graph = ModuleGraph::new(graph_parts(2, vec![first, second]), &run_serially);
     let variable_of_second = Some(ImportBinding::Variable(symbol(1, 0)));
-    assert_eq!(graph.member_binding(FileId(0), ExprId(3)), variable_of_second);
+    assert_eq!(
+        graph.member_binding(FileId(0), ExprId(3)),
+        variable_of_second
+    );
     let synthetic = Some(ImportBinding::Synthetic(SyntheticExportId(0)));
     assert_eq!(graph.member_binding(FileId(0), ExprId(7)), synthetic);
     assert_eq!(graph.member_binding(FileId(0), ExprId(5)), None);
     let variable_of_first = Some(ImportBinding::Variable(symbol(0, 5)));
-    assert_eq!(graph.member_binding(FileId(1), ExprId(3)), variable_of_first);
+    assert_eq!(
+        graph.member_binding(FileId(1), ExprId(3)),
+        variable_of_first
+    );
     assert_eq!(graph.member_binding(FileId(1), ExprId(7)), None);
 }
 
@@ -451,7 +493,10 @@ fn namespace_member_has_member_binding() {
             member,
             Some(ImportBinding::Variable(symbol)) if symbol.file == exporter
         ));
-        assert_eq!(graph.member_binding(main, member_named(input, main, "x")), None);
+        assert_eq!(
+            graph.member_binding(main, member_named(input, main, "x")),
+            None
+        );
     });
 }
 
@@ -478,7 +523,10 @@ fn jsx_binding_is_found_by_import() {
 #[test]
 #[should_panic(expected = "a JSX import that is not in use")]
 fn jsx_binding_panics_for_unused_import() {
-    let graph = ModuleGraph::new(graph_parts(1, vec![source_text_file(FileId(0))]), &run_serially);
+    let graph = ModuleGraph::new(
+        graph_parts(1, vec![source_text_file(FileId(0))]),
+        &run_serially,
+    );
     graph.jsx_binding(FileId(0), JsxImport::Jsx);
 }
 
@@ -507,9 +555,18 @@ fn lists_are_read_per_file() {
     );
     assert_eq!(graph.requests(FileId(1)), [request(file_module(3))]);
     assert!(graph.requests(FileId(3)).is_empty());
-    assert_eq!(graph.import_binding(FileId(0), SymbolId(4)), ImportBinding::Unused);
-    assert_eq!(graph.import_binding(FileId(1), SymbolId(4)), ImportBinding::Unbound);
-    assert_eq!(graph.import_binding(FileId(3), SymbolId(4)), ImportBinding::Local);
+    assert_eq!(
+        graph.import_binding(FileId(0), SymbolId(4)),
+        ImportBinding::Unused
+    );
+    assert_eq!(
+        graph.import_binding(FileId(1), SymbolId(4)),
+        ImportBinding::Unbound
+    );
+    assert_eq!(
+        graph.import_binding(FileId(3), SymbolId(4)),
+        ImportBinding::Local
+    );
     assert_eq!(graph.required_names(FileId(0)), [required_name]);
     assert!(graph.required_names(FileId(1)).is_empty());
     assert!(graph.exports(FileId(0)).is_empty());
@@ -531,10 +588,13 @@ fn file_flags_are_read_per_file() {
         runtime_module: Some(RuntimeModule::NodePath),
         ..source_text_file(FileId(2))
     };
-    let graph = ModuleGraph::new(GraphParts {
-        project: ProjectId::Runtime,
-        ..graph_parts(3, vec![plain, flagged, runtime_source])
-    }, &run_serially);
+    let graph = ModuleGraph::new(
+        GraphParts {
+            project: ProjectId::Runtime,
+            ..graph_parts(3, vec![plain, flagged, runtime_source])
+        },
+        &run_serially,
+    );
     assert_eq!(graph.project(), ProjectId::Runtime);
     for (file, expected) in [(FileId(0), false), (FileId(1), true)] {
         assert_eq!(graph.is_library(file), expected);
@@ -546,7 +606,10 @@ fn file_flags_are_read_per_file() {
     }
     assert_eq!(graph.kind(FileId(2)), ModuleKind::RuntimeSource);
     assert_eq!(graph.interop(file_module(2)), Interop::RUNTIME_SOURCE);
-    assert_eq!(graph.runtime_module(FileId(2)), Some(RuntimeModule::NodePath));
+    assert_eq!(
+        graph.runtime_module(FileId(2)),
+        Some(RuntimeModule::NodePath)
+    );
 }
 
 #[test]
@@ -558,24 +621,33 @@ fn errors_and_failures_are_separate_lists() {
         name: known::default,
         is_known_member: false,
     };
-    let graph = ModuleGraph::new(GraphParts {
-        synthetic_exports: vec![synthetic_export],
-        errors: vec![unresolved_at(0, statement)],
-        failures: calls.map(|call| unresolved_at(0, call)).to_vec(),
-        ..graph_parts(1, vec![source_text_file(FileId(0))])
-    }, &run_serially);
+    let graph = ModuleGraph::new(
+        GraphParts {
+            synthetic_exports: vec![synthetic_export],
+            errors: vec![unresolved_at(0, statement)],
+            failures: calls.map(|call| unresolved_at(0, call)).to_vec(),
+            ..graph_parts(1, vec![source_text_file(FileId(0))])
+        },
+        &run_serially,
+    );
     let error_sites: Vec<ImportSiteKind> = graph.errors().iter().map(|error| error.site).collect();
     assert_eq!(error_sites, [statement]);
     assert_eq!(graph.failures().len(), 2);
     assert_eq!(graph.failure(ModuleFailureId(0)).site, calls[0]);
     assert_eq!(graph.failure(ModuleFailureId(1)).site, calls[1]);
     assert_eq!(graph.synthetic_exports(), [synthetic_export]);
-    assert_eq!(*graph.synthetic_export(SyntheticExportId(0)), synthetic_export);
+    assert_eq!(
+        *graph.synthetic_export(SyntheticExportId(0)),
+        synthetic_export
+    );
 }
 
 #[test]
 fn has_record_is_false_for_other_files() {
-    let graph = ModuleGraph::new(graph_parts(2, vec![source_text_file(FileId(1))]), &run_serially);
+    let graph = ModuleGraph::new(
+        graph_parts(2, vec![source_text_file(FileId(1))]),
+        &run_serially,
+    );
     assert!(graph.has_record(FileId(1)));
     assert!(!graph.has_record(FileId(0)));
     assert!(!graph.has_record(FileId(2)));
@@ -584,7 +656,10 @@ fn has_record_is_false_for_other_files() {
 #[test]
 #[should_panic(expected = "a file without a module record")]
 fn reader_panics_for_file_without_record() {
-    let graph = ModuleGraph::new(graph_parts(2, vec![source_text_file(FileId(1))]), &run_serially);
+    let graph = ModuleGraph::new(
+        graph_parts(2, vec![source_text_file(FileId(1))]),
+        &run_serially,
+    );
     graph.kind(FileId(0));
 }
 

@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { slot } from "../aot/run-programs";
-import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { slot } from "../aot/run-programs";
+import { test } from "../aot/supported";
 import { importingByName } from "./aot-builtin-modules";
 
 const plain = "plain.mjs";
@@ -32,16 +32,30 @@ test("what only reads written properties of process, or tests a global, brings n
   const programs = { ...withoutADoor, ...withADoor };
   using dir = tempDir("builtin-modules-and-the-globals", programs);
   const sizes: Record<string, number> = {};
-  await Promise.all(Object.keys(programs).map(entry => slot(async () => {
-    const outfile = join(String(dir), entry + ".exe");
-    await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
-    expect({ entry, stderr, exitCode }).toEqual({ entry, stderr: expect.not.stringContaining("error"), exitCode: 0 });
-    await using proc = Bun.spawn({ cmd: [outfile], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, ranWith] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
-    sizes[entry] = statSync(outfile).size;
-  })));
+  await Promise.all(
+    Object.keys(programs).map(entry =>
+      slot(async () => {
+        const outfile = join(String(dir), entry + ".exe");
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+        expect({ entry, stderr, exitCode }).toEqual({
+          entry,
+          stderr: expect.not.stringContaining("error"),
+          exitCode: 0,
+        });
+        await using proc = Bun.spawn({ cmd: [outfile], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+        const [stdout, ranWith] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
+        sizes[entry] = statSync(outfile).size;
+      }),
+    ),
+  );
   for (const entry of Object.keys(withoutADoor)) {
     expect({ entry, grows: sizes[entry] - sizes[plain] > 64 * 1024 }).toEqual({ entry, grows: false });
   }
@@ -50,9 +64,19 @@ test("what only reads written properties of process, or tests a global, brings n
 test("bun run --aot interprets nothing of them", async () => {
   const programs = { ...withoutADoor, ...withADoor };
   using dir = tempDir("builtin-modules-and-the-globals", programs);
-  await Promise.all(Object.keys(programs).map(entry => slot(async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
-  })));
+  await Promise.all(
+    Object.keys(programs).map(entry =>
+      slot(async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "--debug-aot", entry],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
+      }),
+    ),
+  );
 }, 180_000);

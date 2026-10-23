@@ -4,8 +4,8 @@ pub mod shared;
 use bun_trim::UsedFeatures;
 
 pub use self::shared::{
-    EngineModuleId, ExecutableIdentity, RejectedOptionWord, has_compiler, image_alignment,
-    relocate_image,
+    EngineModuleId, ExecutableIdentity, RejectedOptionWord, describe_difference_of_runtime,
+    has_compiler, image_alignment, relocate_image,
 };
 use crate::Opaque;
 use crate::linked;

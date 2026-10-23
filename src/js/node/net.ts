@@ -1553,7 +1553,7 @@ const ServerHandlers = {
     if (typeof cb !== "function") return false;
     const wire: Buffer = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
-    for (let i = 0; i + 1 <= wire.length; ) {
+    for (let i = 0; i + 1 <= wire.length;) {
       const n = wire[i];
       protocols.push(wire.toString("latin1", i + 1, i + 1 + n));
       i += 1 + n;

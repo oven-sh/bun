@@ -37,8 +37,11 @@ interface SharedArrays {
   readonly byEntry: ReadonlyMap<Entry, string>;
 }
 
-const wirePredicates = `constexpr bool isWire(Opcode opcode) { return static_cast<unsigned>(opcode) < numberOfWireOpcodes; }
-constexpr bool isWire(TerminatorKind kind) { return static_cast<unsigned>(kind) < numberOfWireTerminatorKinds; }`.split("\n");
+const wirePredicates =
+  `constexpr bool isWire(Opcode opcode) { return static_cast<unsigned>(opcode) < numberOfWireOpcodes; }
+constexpr bool isWire(TerminatorKind kind) { return static_cast<unsigned>(kind) < numberOfWireTerminatorKinds; }`.split(
+    "\n",
+  );
 
 const entryInfoDeclarations = `JS_EXPORT_PRIVATE std::span<const uint32_t> defaultPayloadOf(Opcode);
 JS_EXPORT_PRIVATE std::span<const uint32_t> defaultPayloadOf(TerminatorKind);
@@ -202,13 +205,25 @@ function operationsHeader(schema: Schema): string[] {
     wirePredicates,
     both(schema, lookup("OperationFamily", "familyOf", family, "most common")),
     both(schema, lookup("IRFormSet", "formsOf", forms, "most common")),
-    forOperations(schema, lookup("ResultRule", "resultRuleOf", entry => rule(entry.result.unproven), "most common")),
+    forOperations(
+      schema,
+      lookup("ResultRule", "resultRuleOf", entry => rule(entry.result.unproven), "most common"),
+    ),
     forOperations(schema, lookup("std::optional<ResultRule>", "provenResultRuleOf", provenRule, "std::nullopt")),
     both(schema, lookup("EffectRule", "effectRuleOf", effectRule, "EffectRule::Declared")),
     both(schema, lookup("uint32_t", "numberOfNamedOperandsOf", namedOperandCount, "most common")),
-    both(schema, lookup("bool", "hasVariadicOperand", entry => truth(entry.variadicOperand !== null), "false")),
-    both(schema, lookup("uint16_t", "declaredFlagsOf", entry => flagMask(entry.flags), "0x0")),
-    both(schema, lookup("uint16_t", "wireFlagsOf", entry => flagMask(wireFlagsOf(entry)), "0x0")),
+    both(
+      schema,
+      lookup("bool", "hasVariadicOperand", entry => truth(entry.variadicOperand !== null), "false"),
+    ),
+    both(
+      schema,
+      lookup("uint16_t", "declaredFlagsOf", entry => flagMask(entry.flags), "0x0"),
+    ),
+    both(
+      schema,
+      lookup("uint16_t", "wireFlagsOf", entry => flagMask(wireFlagsOf(entry)), "0x0"),
+    ),
     entryInfoDeclarations,
     forTerminators(schema, lookup("std::optional<uint32_t>", "numberOfFixedTargetsOf", fixedTargets, null)),
     declaredPosition,
@@ -403,7 +418,9 @@ function operationsSource(schema: Schema): string[] {
   const namedMemberArrays = new Map<string, string>();
   const namedMembersOf = (operand: Operand) => {
     if (operand.uses.namedMembers.length === 0) return "{ }";
-    const elements = operand.uses.namedMembers.map(member => namedExternalMemberOf(schema, "BuiltinName", member)).join(", ");
+    const elements = operand.uses.namedMembers
+      .map(member => namedExternalMemberOf(schema, "BuiltinName", member))
+      .join(", ");
     const name = namedMemberArrays.get(elements) ?? `namedMembers${namedMemberArrays.size}`;
     namedMemberArrays.set(elements, name);
     return name;
@@ -416,7 +433,9 @@ function operationsSource(schema: Schema): string[] {
     operandsOf(entry).map(operand => operandInfo(operand, namedMembersOf(operand))),
   );
   const defaults = arrays("uint32_t", "defaultPayload", defaultPayload);
-  const payload = arrays("PayloadFieldInfo", "payloadFields", entry => entry.payload.map(field => payloadFieldInfo(entry, field)));
+  const payload = arrays("PayloadFieldInfo", "payloadFields", entry =>
+    entry.payload.map(field => payloadFieldInfo(entry, field)),
+  );
   const flags = arrays("ASCIILiteral", "flagNames", entry => entry.flags.map(flag => cppLiteral(flag.name)));
   const targetContents = contents(schema.terminators, entry => entry.targets.map(targetInfo));
   const targets = sharedArrays("TargetInfo", "targetInfos", targetContents);
@@ -458,8 +477,17 @@ export function emitCppOperations(context: EmitContext): OutputFile[] {
     { name: "AOTSchemaEntryMacros.h", lines: entryMacrosHeader(schema) },
     { name: "AOTSchemaOperandIndexes.h", lines: operandIndexesHeader(schema) },
     { name: "AOTSchemaOperations.h", lines: operationsHeader(schema) },
-    { name: "AOTSchemaOperationColumns.h", lines: columnsHeader(schema, schema.entryColumns.filter(column => !namesRuntimeOperation(column))) },
-    { name: "AOTSchemaRuntimeColumns.h", lines: columnsHeader(schema, schema.entryColumns.filter(namesRuntimeOperation)) },
+    {
+      name: "AOTSchemaOperationColumns.h",
+      lines: columnsHeader(
+        schema,
+        schema.entryColumns.filter(column => !namesRuntimeOperation(column)),
+      ),
+    },
+    {
+      name: "AOTSchemaRuntimeColumns.h",
+      lines: columnsHeader(schema, schema.entryColumns.filter(namesRuntimeOperation)),
+    },
     { name: "AOTSchemaOperations.cpp", lines: operationsSource(schema) },
   ];
 }

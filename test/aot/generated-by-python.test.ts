@@ -6,7 +6,7 @@
 //   AOT_GENERATED=all AOT_GENERATED_SEEDS=1000..1200 bun test test/aot/generated-by-python
 //   AOT_GENERATED="tail-calls 7" bun test test/aot/generated-by-python     one program
 import { test } from "bun:test";
-import { generators, program, python, headingOf } from "./generated/python-generators";
+import { generators, headingOf, program, python } from "./generated/python-generators";
 import { generated } from "./generated/run-generated";
 
 const [first, last] = (process.env.AOT_GENERATED_SEEDS ?? "1..30").split("..").map(Number);

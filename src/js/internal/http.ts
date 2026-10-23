@@ -118,7 +118,6 @@ const http1ServerPipeline: {
   mustCloseConnection?: (res: $Node.ServerResponse) => boolean;
 } = {};
 
-
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -198,7 +197,7 @@ function emitEOFIncomingMessageOuter(self: $Node.IncomingMessage) {
   if (!self[noBodySymbol] && self[kHandle] !== undefined) {
     const rawTrailers = takeRequestTrailers(self, self[kHandle]);
     if (rawTrailers !== undefined) {
-      "unlikely";
+      ("unlikely");
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
   }
@@ -255,7 +254,7 @@ function onDataIncomingMessage(
 
   if (chunk && !this._dumped) {
     if (!this.push(chunk)) {
-      "unlikely";
+      ("unlikely");
       // Like Node's parserOnBody: pause the connection once the buffer fills.
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
@@ -278,7 +277,7 @@ function onDataIncomingMessage(
     if (!this.upgrade && socket && !socket._paused && socket.readable) {
       if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing]();
       else {
-        "unlikely";
+        ("unlikely");
         socket.resume();
       }
     }
@@ -398,7 +397,9 @@ function hasServerResponseFinished(
   const finished = self.finished;
 
   // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
-  if (typeof chunk === "string" ? chunk.length !== 0 || !fromEnd : typeof chunk === "object" ? chunk !== null : !!chunk) {
+  if (
+    typeof chunk === "string" ? chunk.length !== 0 || !fromEnd : typeof chunk === "object" ? chunk !== null : !!chunk
+  ) {
     const destroyed = self.destroyed;
 
     if (finished || destroyed) {
@@ -753,10 +754,10 @@ export {
   STATUS_CODES,
   abortedSymbol,
   checkShouldUseProxy,
+  clearServerParserIncoming,
   drainMicrotasks,
   emitEOFIncomingMessage,
   emitEOFIncomingMessageOuter,
-  clearServerParserIncoming,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
@@ -765,17 +766,22 @@ export {
   headerStateSymbol,
   http1ServerPipeline,
   isTlsSymbol,
+  kBytesWritten,
+  kChunkedBuffer,
+  kChunkedLength,
   kCloseCallback,
-  kErrored,
   kClosedWithUnsentData,
+  kCorked,
+  kErrored,
+  kExchange,
   kHandle,
   kHandoffResponse,
-  kResumeUnlessFlowing,
-  kHighWaterMark,
-  kIncomingMessage,
   kHasQueuedReads,
   kHeaderSource,
+  kHighWaterMark,
+  kIncomingMessage,
   kInternalSocketData,
+  kLenientValidation,
   kNeedDrain,
   kOnReadParsed,
   kOutHeaders,
@@ -784,19 +790,12 @@ export {
   kProxyConfig,
   kRealListen,
   kRejectNonStandardBodyWrites,
-  kReqShouldKeepAlive,
   kRememberPeer,
+  kReqShouldKeepAlive,
   kRequest,
+  kResumeUnlessFlowing,
   kSkipPendingData,
   kSocket,
-  kCorked,
-  kChunkedBuffer,
-  kChunkedLength,
-  kBytesWritten,
-  kLenientValidation,
-  requestRoad,
-  responseRoad,
-  kExchange,
   kUniqueHeaders,
   kWaitForProxyTunnel,
   noBodySymbol,
@@ -805,6 +804,8 @@ export {
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,
+  requestRoad,
+  responseRoad,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

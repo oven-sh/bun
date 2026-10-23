@@ -121,7 +121,12 @@ impl Walker<'_, '_> {
         }
     }
 
-    pub(super) fn record_binding_use(&mut self, context: Context, binding: Binding, is_store: bool) {
+    pub(super) fn record_binding_use(
+        &mut self,
+        context: Context,
+        binding: Binding,
+        is_store: bool,
+    ) {
         match binding {
             Binding::Symbol(symbol) => {
                 self.record_symbol_use(context, symbol);
@@ -240,7 +245,10 @@ impl Walker<'_, '_> {
             return false;
         };
         let site = analysis.import_sites[site];
-        if hir.ids(call.args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+        if hir
+            .ids(call.args)
+            .any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
+        {
             return false;
         }
         let require_call = match site.kind {
@@ -264,7 +272,11 @@ impl Walker<'_, '_> {
             },
             None => call.args,
         };
-        let Some(answer) = self.input.modules.find_site_answer(self.input.file, site.kind) else {
+        let Some(answer) = self
+            .input
+            .modules
+            .find_site_answer(self.input.file, site.kind)
+        else {
             return false;
         };
         has_module_operation(&site, answer, given.len()) && self.is_bound_module_callee(call.callee)
@@ -285,7 +297,10 @@ impl Walker<'_, '_> {
         };
         matches!(hir[root].kind, ExprKind::Ident(_))
             && matches!(self.bound.binding(root), Binding::CommonJs(_))
-            && self.bound.dynamic_lookup_scope(NodeData::Expr(root)).is_none()
+            && self
+                .bound
+                .dynamic_lookup_scope(NodeData::Expr(root))
+                .is_none()
             && table::entry(root_path.id).scope == Scope::Module
             && root_path.mutability == Mutability::AlwaysLocked
     }
@@ -299,7 +314,9 @@ impl Walker<'_, '_> {
             }
             Some(_) | None => None,
         };
-        self.walk.argument_reads.extend(read.map(|read| (context.function, read)));
+        self.walk
+            .argument_reads
+            .extend(read.map(|read| (context.function, read)));
     }
 
     fn visit_jsx(&mut self, expression: ExprId, jsx: JsxId, context: Context) {

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { test } from "./supported";
 
 // The atom that native code makes of a string constant of compiled code is held by the atom table of its thread, so that it lives as long as the constant does for that thread.
 // A Worker's thread has a table of its own: what it holds has to go when the Worker ends. Held for ever, 4,000 texts cost 128 KB a Worker: 38 MB here.
@@ -44,13 +44,26 @@ if (Bun.isMainThread) {
 }
 `;
 
-test.skipIf(!isLinux)("what a Worker's atom table holds of the program's texts goes with the Worker", async () => {
-  using dir = tempDir("atoms-of-a-worker", { "workers.ts": program });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", "workers.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr: stderr.split("\n").filter(line => line.startsWith("error") || line.startsWith("panic")), exitCode }).toEqual({ stderr: [], exitCode: 0 });
-  const { found, anonymousKB } = JSON.parse(stdout);
-  expect(found).toBe(numberOfWorkers);
-  expect(anonymousKB).toBeGreaterThan(0);
-  expect(anonymousKB).toBeLessThan(25 * 1024);
-}, 120_000);
+test.skipIf(!isLinux)(
+  "what a Worker's atom table holds of the program's texts goes with the Worker",
+  async () => {
+    using dir = tempDir("atoms-of-a-worker", { "workers.ts": program });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--debug-aot", "workers.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stderr: stderr.split("\n").filter(line => line.startsWith("error") || line.startsWith("panic")),
+      exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
+    const { found, anonymousKB } = JSON.parse(stdout);
+    expect(found).toBe(numberOfWorkers);
+    expect(anonymousKB).toBeGreaterThan(0);
+    expect(anonymousKB).toBeLessThan(25 * 1024);
+  },
+  120_000,
+);

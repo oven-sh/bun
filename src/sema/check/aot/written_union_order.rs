@@ -78,8 +78,8 @@ impl WrittenUnionOrders {
     }
 
     fn add_union(&mut self, union: TypeId, members: &[TypeId]) {
-        if !self.members.contains_key(&union) {
-            self.members.insert(union, members.into());
+        if let std::collections::hash_map::Entry::Vacant(e) = self.members.entry(union) {
+            e.insert(members.into());
             self.written.push(union);
         }
     }

@@ -30,15 +30,23 @@ pub fn main_module_operand(
     let ExprKind::Binary { op, left, right } = hir[comparison].kind else {
         return None;
     };
-    if !matches!(op, BinOp::EqEq | BinOp::EqEqEq | BinOp::NotEq | BinOp::NotEqEq) {
+    if !matches!(
+        op,
+        BinOp::EqEq | BinOp::EqEqEq | BinOp::NotEq | BinOp::NotEqEq
+    ) {
         return None;
     }
-    let (left, right) = (hir.skip_type_assertions(left), hir.skip_type_assertions(right));
-    [(left, right), (right, left)].into_iter().find_map(|(module, main)| {
-        let is_match = is_free_common_js(hir, bound, module, CommonJsVariable::Module)
-            && is_require_main(hir, bound, main);
-        is_match.then_some(module)
-    })
+    let (left, right) = (
+        hir.skip_type_assertions(left),
+        hir.skip_type_assertions(right),
+    );
+    [(left, right), (right, left)]
+        .into_iter()
+        .find_map(|(module, main)| {
+            let is_match = is_free_common_js(hir, bound, module, CommonJsVariable::Module)
+                && is_require_main(hir, bound, main);
+            is_match.then_some(module)
+        })
 }
 
 fn is_require_main(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

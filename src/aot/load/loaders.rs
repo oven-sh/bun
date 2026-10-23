@@ -223,7 +223,10 @@ mod tests {
                     true => HostLoaderKind::ByName,
                     false => HostLoaderKind::Loader(loader),
                 };
-                assert_eq!(host_loader_kind(to_host_loader(loader, path)), Some(expected));
+                assert_eq!(
+                    host_loader_kind(to_host_loader(loader, path)),
+                    Some(expected)
+                );
             }
         }
     }
@@ -240,7 +243,12 @@ mod tests {
 
     #[test]
     fn script_loader_inverts_script_kind() {
-        for kind in [ScriptKind::Js, ScriptKind::Jsx, ScriptKind::Ts, ScriptKind::Tsx] {
+        for kind in [
+            ScriptKind::Js,
+            ScriptKind::Jsx,
+            ScriptKind::Ts,
+            ScriptKind::Tsx,
+        ] {
             assert_eq!(script_kind_of(script_loader(kind)), Some(kind));
         }
     }

@@ -13,9 +13,9 @@ pub use bun_sema::messages::Category;
 pub use compile::{
     BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, DemotionCause, EntryPointFailure,
     EntryPoints, LoadFailure, LoadedProgram, Locator, RoleDecision, TextLocator, check_and_lower,
-    check_and_lower_noting_commits,
-    decide_roles, drop_thread_caches, keep_verified_roles, load_program, log_message,
-    run_on_one_thread_while, run_on_region_thread, wake_idle_region_threads,
+    check_and_lower_noting_commits, decide_roles, drop_thread_caches, keep_verified_roles,
+    load_program, log_message, run_on_one_thread_while, run_on_region_thread,
+    wake_idle_region_threads,
 };
 
 use bstr::ByteSlice;
@@ -507,23 +507,30 @@ impl JoinableRegion {
     const ONE_HELPER: u32 = 2;
 
     fn help(&self) {
-        let joined = self.state.try_update(Ordering::Acquire, Ordering::Relaxed, |state| {
-            (state & JoinableRegion::IS_CLOSED == 0).then_some(state + JoinableRegion::ONE_HELPER)
-        });
+        let joined = self
+            .state
+            .try_update(Ordering::Acquire, Ordering::Relaxed, |state| {
+                (state & JoinableRegion::IS_CLOSED == 0)
+                    .then_some(state + JoinableRegion::ONE_HELPER)
+            });
         if joined.is_err() {
             return;
         }
         // SAFETY: `state` counts this thread.
         unsafe { (*self.region).work_off() };
-        self.state.fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
-        let before = self.state.fetch_sub(JoinableRegion::ONE_HELPER, Ordering::Release);
+        self.state
+            .fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
+        let before = self
+            .state
+            .fetch_sub(JoinableRegion::ONE_HELPER, Ordering::Release);
         if before == JoinableRegion::IS_CLOSED | JoinableRegion::ONE_HELPER {
             bun_threading::Futex::wake(&self.state, 1);
         }
     }
 
     fn close_and_wait_for_helpers(&self) {
-        self.state.fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
+        self.state
+            .fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
         loop {
             let state = self.state.load(Ordering::Acquire);
             if state == JoinableRegion::IS_CLOSED {
@@ -4253,9 +4260,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
     let boxed_checker = |spare| Box::new(program.checker_reusing(spare));
     let checker = boxed_checker(None);
-    let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) =
-        (to_check.into_iter())
-            .partition(|&file| file_work.is_some() || checker.reports_semantic_errors(file));
+    let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) = (to_check.into_iter())
+        .partition(|&file| file_work.is_some() || checker.reports_semantic_errors(file));
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
     let (to_check, only_emitted) = match is_any_type_checked {
@@ -4908,53 +4914,59 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         });
     };
     // The last round is believed because one thread checks its files in order.
-    let work_after_last_round =
-        |work: &compile::FileWork<'_, 's>, files: &[usize], expected: Requested| {
-            // The last round has checked the files, and that is all this pass wants of them.
-            let Some(after_file) = work.after_file else {
-                return;
-            };
-            const ROUND: u32 = 1 << 30;
-            let cost_of_run = |run: &[usize]| run.iter().map(|&file| size_of(file)).sum::<usize>();
-            let (others, lost_at_limit): (Vec<usize>, Vec<usize>) = {
-                let visits = visits.lock();
-                (files.iter().copied()).partition(|&file| visits[file].can_recheck_early)
-            };
-            let mut tasks: Vec<&[usize]> = others.chunks(1).collect();
-            if !lost_at_limit.is_empty() {
-                tasks.push(&lost_at_limit);
-            }
-            // The dearest tasks begin first, so that no thread begins one when the others are nearly done.
-            tasks.shared_sort_by_cached_key(|&task| Reverse(cost_of_run(task)));
-            // See `run_tasks`.
-            let spares = Guarded::new(Vec::new());
-            host.parallel(tasks.len(), &|at| {
-                let thread = std::thread::current().id();
-                let spare = {
-                    let mut spares = spares.lock();
-                    let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
-                    own.map(|at| spares.swap_remove(at).1)
-                };
-                let mut checker = new_checker(expected, spare);
-                checker.begin_task(first_round + ROUND, tasks[at][0] as u32);
-                checker.see_commits(true);
-                checker.set_first_in_order(true, true);
-                for &index in tasks[at] {
-                    let file = to_check[index];
-                    checker.set_requested((work.requested)(file));
-                    checker.check_file(file);
-                    after_file(&mut checker, file);
-                    (work.after_commit)(file);
-                    checker.take_ran_out_of_stack();
-                }
-                checker.end_task_after_commits();
-                spares.lock().push((thread, checker.into_spare()));
-            });
-            let is_freed = |file: &FileId| {
-                program.files.modules[file.idx()].is_leaf && (work.frees_tree)(*file)
-            };
-            free_trees(files.iter().map(|&index| to_check[index]).filter(is_freed).collect());
+    let work_after_last_round = |work: &compile::FileWork<'_, 's>,
+                                 files: &[usize],
+                                 expected: Requested| {
+        // The last round has checked the files, and that is all this pass wants of them.
+        let Some(after_file) = work.after_file else {
+            return;
         };
+        const ROUND: u32 = 1 << 30;
+        let cost_of_run = |run: &[usize]| run.iter().map(|&file| size_of(file)).sum::<usize>();
+        let (others, lost_at_limit): (Vec<usize>, Vec<usize>) = {
+            let visits = visits.lock();
+            (files.iter().copied()).partition(|&file| visits[file].can_recheck_early)
+        };
+        let mut tasks: Vec<&[usize]> = others.chunks(1).collect();
+        if !lost_at_limit.is_empty() {
+            tasks.push(&lost_at_limit);
+        }
+        // The dearest tasks begin first, so that no thread begins one when the others are nearly done.
+        tasks.shared_sort_by_cached_key(|&task| Reverse(cost_of_run(task)));
+        // See `run_tasks`.
+        let spares = Guarded::new(Vec::new());
+        host.parallel(tasks.len(), &|at| {
+            let thread = std::thread::current().id();
+            let spare = {
+                let mut spares = spares.lock();
+                let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
+                own.map(|at| spares.swap_remove(at).1)
+            };
+            let mut checker = new_checker(expected, spare);
+            checker.begin_task(first_round + ROUND, tasks[at][0] as u32);
+            checker.see_commits(true);
+            checker.set_first_in_order(true, true);
+            for &index in tasks[at] {
+                let file = to_check[index];
+                checker.set_requested((work.requested)(file));
+                checker.check_file(file);
+                after_file(&mut checker, file);
+                (work.after_commit)(file);
+                checker.take_ran_out_of_stack();
+            }
+            checker.end_task_after_commits();
+            spares.lock().push((thread, checker.into_spare()));
+        });
+        let is_freed =
+            |file: &FileId| program.files.modules[file.idx()].is_leaf && (work.frees_tree)(*file);
+        free_trees(
+            files
+                .iter()
+                .map(|&index| to_check[index])
+                .filter(is_freed)
+                .collect(),
+        );
+    };
     let run_all_rounds = |expected: Requested| {
         let all: Vec<usize> = (0..to_check.len()).collect();
         run_tasks(0, &all, expected, false);

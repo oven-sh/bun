@@ -172,9 +172,19 @@ fn file_without_typed_version_is_none() {
     project.write("node_modules/p/x.js", INSTALLED_CODE);
     project.install("node_modules/other", "other", "1.0.0");
     with_packages(&project, |fixture| {
-        assert!(fixture.typed_version(&project.path(INSTALLED_FILE)).is_some());
-        assert_eq!(fixture.typed_version(&project.path("node_modules/p/index.js")), None);
-        assert_eq!(fixture.typed_version(&project.path("node_modules/p/x.js")), None);
+        assert!(
+            fixture
+                .typed_version(&project.path(INSTALLED_FILE))
+                .is_some()
+        );
+        assert_eq!(
+            fixture.typed_version(&project.path("node_modules/p/index.js")),
+            None
+        );
+        assert_eq!(
+            fixture.typed_version(&project.path("node_modules/p/x.js")),
+            None
+        );
         let file_of_other_package = project.path("node_modules/other/cjs/x.js");
         assert_eq!(fixture.typed_version(&file_of_other_package), None);
     });
@@ -196,7 +206,12 @@ fn other_version_still_has_typed_files() {
     with_packages(&project, |fixture| {
         let typed = project.path(".sound/p/lay/cjs/x.js");
         let nested_file = project.path("node_modules/q/node_modules/p/cjs/x.js");
-        assert_eq!(fixture.typed_version(&project.path(INSTALLED_FILE)).as_ref(), Some(&typed));
+        assert_eq!(
+            fixture
+                .typed_version(&project.path(INSTALLED_FILE))
+                .as_ref(),
+            Some(&typed)
+        );
         assert_eq!(fixture.typed_version(&nested_file).as_ref(), Some(&typed));
 
         let directory = project.path("node_modules/p");
@@ -206,7 +221,9 @@ fn other_version_still_has_typed_files() {
             version: b"9.9.9",
         };
         let installed_file = project.path(INSTALLED_FILE);
-        let found = fixture.packages.typed_version(&installed_file, Some(package));
+        let found = fixture
+            .packages
+            .typed_version(&installed_file, Some(package));
         assert_eq!(found, Some(typed));
         let mismatch = fixture.packages.find_manifest_mismatch(package, &|_| None);
         let expected = b"it is for version 1.0.0, but 9.9.9 is installed. \
@@ -222,7 +239,10 @@ fn package_manifest_has_no_typed_version() {
     project.write("node_modules/p/dist/package.json", "{}");
     project.write(".sound/p/lay/dist/package.json", "{}");
     with_packages(&project, |fixture| {
-        assert_eq!(fixture.typed_version(&project.path("node_modules/p/package.json")), None);
+        assert_eq!(
+            fixture.typed_version(&project.path("node_modules/p/package.json")),
+            None
+        );
         let nested_manifest = project.path("node_modules/p/dist/package.json");
         let typed = project.path(".sound/p/lay/dist/package.json");
         assert_eq!(fixture.typed_version(&nested_manifest), Some(typed));
@@ -246,7 +266,10 @@ fn scoped_package_is_found() {
         assert_eq!(found.as_ref(), Some(&typed));
         assert_eq!(fixture.packages.script_kind(&typed), Some(ScriptKind::Ts));
         assert_eq!(fixture.packages.display_directory(&typed), b".sound/@s/p");
-        assert_eq!(fixture.packages.display_relative_path(&typed), b"lay/cjs/x.js");
+        assert_eq!(
+            fixture.packages.display_relative_path(&typed),
+            b"lay/cjs/x.js"
+        );
     });
 }
 
@@ -331,7 +354,10 @@ fn shipped_version_directory_is_relative_to_project() {
         assert_eq!(packages.display_relative_path(&typed), b"index.aot.ts");
         let outside_project = b"/other/s/index.aot.ts";
         assert_eq!(packages.display_directory(outside_project), b"/other/s");
-        assert_eq!(packages.display_relative_path(outside_project), b"index.aot.ts");
+        assert_eq!(
+            packages.display_relative_path(outside_project),
+            b"index.aot.ts"
+        );
     });
 }
 
@@ -366,7 +392,17 @@ fn relative_paths_stay_inside_package() {
     for path in ["x.js", "cjs/x.js", "dist/package.json", "..x/.y"] {
         assert!(is_valid_path(path.as_bytes()), "{path}");
     }
-    for path in ["", "/x", "x/", "x//y", "./x", "..", "x/../y", "x\\y", "package.json"] {
+    for path in [
+        "",
+        "/x",
+        "x/",
+        "x//y",
+        "./x",
+        "..",
+        "x/../y",
+        "x\\y",
+        "package.json",
+    ] {
         assert!(!is_valid_path(path.as_bytes()), "{path}");
     }
     for name in ["react", "@s/p", "@s"] {
@@ -385,7 +421,10 @@ fn one_rejected_file_is_compiled_from_the_installed_file() {
     project.write("node_modules/p/y.js", "export const y = 2;\n");
     let typed_with_extra_statement = "export const y: number = 2;\nexport const z = 3;\n";
     project.write(".sound/p/lay/y.js", typed_with_extra_statement);
-    project.write(".sound/p/sound.json", &sound_manifest("p", &["x.js", "y.js"]));
+    project.write(
+        ".sound/p/sound.json",
+        &sound_manifest("p", &["x.js", "y.js"]),
+    );
     let main = "import { x } from \"p\";\n\
                 import { y } from \"p/y.js\";\n\
                 export const sum = x + y;\n";

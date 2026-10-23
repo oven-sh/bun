@@ -13,7 +13,9 @@ pub struct AddressRange {
 
 impl AddressRange {
     pub(crate) fn from_size(start: u64, size: u64) -> Result<AddressRange, ImageError> {
-        let end = start.checked_add(size).ok_or(ImageError::MalformedHeaders)?;
+        let end = start
+            .checked_add(size)
+            .ok_or(ImageError::MalformedHeaders)?;
         Ok(AddressRange { start, end })
     }
 
@@ -66,6 +68,7 @@ pub enum KnownSection {
     TrimTable,
     RemovableFeatureState,
     BuildId,
+    RuntimeDescription,
 }
 
 #[derive(Copy, Clone)]
@@ -108,6 +111,12 @@ impl KnownSection {
                 macho_segment: b"__TEXT",
                 macho_section: b"__bun_build_id",
                 pe: *b".bunid\0\0",
+            },
+            KnownSection::RuntimeDescription => SectionNames {
+                elf: b".bun_aot",
+                macho_segment: b"__TEXT",
+                macho_section: b"__bun_aot",
+                pe: *b".bunaot\0",
             },
         }
     }
@@ -398,7 +407,10 @@ impl<'a> ImageEditor<'a> {
     /// Drops the load-time relocations whose target is in `ranges`. Returns the number dropped.
     pub fn remove_relocations_in(&mut self, ranges: &[AddressRange]) -> Result<u64, Error> {
         match self.format {
-            ExecutableFormat::Elf => Ok(crate::elf_relocations::remove_relative_relocations(self.bytes, &merge_ranges(ranges.to_vec()))?),
+            ExecutableFormat::Elf => Ok(crate::elf_relocations::remove_relative_relocations(
+                self.bytes,
+                &merge_ranges(ranges.to_vec()),
+            )?),
             ExecutableFormat::MachO | ExecutableFormat::Pe => Ok(0),
         }
     }
@@ -419,7 +431,9 @@ impl<'a> ImageEditor<'a> {
     }
 
     fn vector(&mut self) -> Result<&mut Vec<u8>, ImageError> {
-        self.bytes.as_vec().ok_or(ImageError::UnrecognizedExecutable)
+        self.bytes
+            .as_vec()
+            .ok_or(ImageError::UnrecognizedExecutable)
     }
 
     fn check_cuts(&self, cuts: &[AddressRange]) -> Result<(), ImageError> {
@@ -550,7 +564,10 @@ mod tests {
     #[test]
     fn address_range_from_size_rejects_overflow() {
         assert_eq!(AddressRange::from_size(8, 16), Ok(range(8, 24)));
-        assert_eq!(AddressRange::from_size(u64::MAX, 0), Ok(range(u64::MAX, u64::MAX)));
+        assert_eq!(
+            AddressRange::from_size(u64::MAX, 0),
+            Ok(range(u64::MAX, u64::MAX))
+        );
         let overflow = AddressRange::from_size(u64::MAX, 1);
         assert_eq!(overflow, Err(ImageError::MalformedHeaders));
     }
@@ -638,7 +655,11 @@ mod tests {
         ];
         for (offset, expected, expected_floor) in moved {
             assert_eq!(removed.moved(offset), expected, "offset {offset}");
-            assert_eq!(removed.moved_floor(offset), expected_floor, "offset {offset}");
+            assert_eq!(
+                removed.moved_floor(offset),
+                expected_floor,
+                "offset {offset}"
+            );
         }
 
         let nothing_removed = RemovedFileRanges::new(Vec::new()).unwrap();
@@ -803,9 +824,15 @@ mod tests {
         let mut editor = ImageEditor::open(&mut bytes).unwrap();
         let (text, rdata) = (editor.spans[0].addresses, editor.spans[1].addresses);
         assert_eq!(text.end, rdata.start);
-        assert_eq!(read(&mut editor, range(text.end - 1, rdata.start + 1)), None);
+        assert_eq!(
+            read(&mut editor, range(text.end - 1, rdata.start + 1)),
+            None
+        );
         assert_eq!(read(&mut editor, range(text.start, rdata.end)), None);
-        assert_eq!(read(&mut editor, range(text.end, text.end)), Some(Vec::new()));
+        assert_eq!(
+            read(&mut editor, range(text.end, text.end)),
+            Some(Vec::new())
+        );
     }
 
     #[test]
@@ -997,9 +1024,19 @@ mod tests {
                 })
                 .collect();
             let plan = editor.cut_model().choose(&removable);
-            assert!(!plan.cuts.is_empty(), "{:?} {:?}", toy.format, toy.architecture);
+            assert!(
+                !plan.cuts.is_empty(),
+                "{:?} {:?}",
+                toy.format,
+                toy.architecture
+            );
             let result = editor.remove_ranges(&plan.cuts);
-            assert!(result.is_ok(), "{:?} {:?}: {result:?}", toy.format, toy.architecture);
+            assert!(
+                result.is_ok(),
+                "{:?} {:?}: {result:?}",
+                toy.format,
+                toy.architecture
+            );
         }
     }
 }

@@ -74,13 +74,22 @@ const scalarColumnKinds = ["Bool", "UInt32", "UInt64", "Text", "Name"] as const;
 const maximumColumnIntegers = { UInt32: 0xffffffffn, UInt64: 0xffffffffffffffffn } as const;
 const placeholderKind: Kind = { tag: "Scalar", scalar: "UInt32" };
 
-function findDeclared<Value extends { readonly location: Location }>(table: ReadonlyMap<string, Value>, name: Name): Value | null {
+function findDeclared<Value extends { readonly location: Location }>(
+  table: ReadonlyMap<string, Value>,
+  name: Name,
+): Value | null {
   const value = table.get(name.text);
   return value !== undefined && value.location === name.location ? value : null;
 }
 
 function otherTypeTables(scope: Scope, table: ReadonlyMap<string, unknown>): ReadonlyMap<string, unknown>[] {
-  const tables: ReadonlyMap<string, unknown>[] = [scope.enums, scope.externals, scope.opaqueKinds, scope.records, scope.variants];
+  const tables: ReadonlyMap<string, unknown>[] = [
+    scope.enums,
+    scope.externals,
+    scope.opaqueKinds,
+    scope.records,
+    scope.variants,
+  ];
   return tables.filter(other => other !== table);
 }
 
@@ -93,17 +102,35 @@ function roundUp(offset: number, alignment: number): number {
 }
 
 function createEnum(name: string, file: SchemaFile, location: Location): MutableEnum {
-  return { name, isFlags: false, isAbi: false, isGenerated: false, columns: [], members: [], wireMemberCount: 0, file, location };
+  return {
+    name,
+    isFlags: false,
+    isAbi: false,
+    isGenerated: false,
+    columns: [],
+    members: [],
+    wireMemberCount: 0,
+    file,
+    location,
+  };
 }
 
 function declareGeneratedEnums(scope: Scope): void {
   const file = scope.files[0];
   const location: Location = { path: file.path, line: 1, column: 1 };
-  for (const name of generatedEnumNames) scope.enums.set(name, { ...createEnum(name, file, location), isGenerated: true });
+  for (const name of generatedEnumNames)
+    scope.enums.set(name, { ...createEnum(name, file, location), isGenerated: true });
 }
 
 function appendMember(type: MutableEnum, name: string, isEngine: boolean, location: Location): Mutable<Member> {
-  const member: Mutable<Member> = { name, number: type.members.length, isEngine, isFromExtension: false, values: [], location };
+  const member: Mutable<Member> = {
+    name,
+    number: type.members.length,
+    isEngine,
+    isFromExtension: false,
+    values: [],
+    location,
+  };
   type.members.push(member);
   if (!isEngine) type.wireMemberCount += 1;
   return member;
@@ -253,7 +280,9 @@ function zeroValueOf(kind: ColumnKind): ColumnValue {
     case "Name":
       return { tag: "Text", value: "" };
     case "Enum":
-      return kind.type.members.length === 0 ? { tag: "Members", members: [] } : { tag: "Member", member: kind.type.members[0] };
+      return kind.type.members.length === 0
+        ? { tag: "Members", members: [] }
+        : { tag: "Member", member: kind.type.members[0] };
     case "Flags":
       return { tag: "Members", members: [] };
   }
@@ -336,11 +365,20 @@ function findColumnValue(scope: Scope, kind: ColumnKind, value: ValueSyntax): Co
   }
 }
 
-function resolveColumnValue(scope: Scope, type: SchemaEnum, member: Member, column: EnumColumn, value: ValueSyntax): ColumnValue {
+function resolveColumnValue(
+  scope: Scope,
+  type: SchemaEnum,
+  member: Member,
+  column: EnumColumn,
+  value: ValueSyntax,
+): ColumnValue {
   const resolved = findColumnValue(scope, column.kind, value);
   if (resolved !== null) return resolved;
   const kindName = column.kind.tag === "Enum" || column.kind.tag === "Flags" ? column.kind.type.name : column.kind.tag;
-  scope.errors.add(value.location, `value ${valueText(value)} of member ${member.name} of ${type.name} is not a valid ${kindName}`);
+  scope.errors.add(
+    value.location,
+    `value ${valueText(value)} of member ${member.name} of ${type.name} is not a valid ${kindName}`,
+  );
   return zeroValueOf(column.kind);
 }
 
@@ -351,7 +389,9 @@ function resolveMemberValues(scope: Scope, type: SchemaEnum, member: Mutable<Mem
     scope.errors.add(member.location, problem);
   }
   member.values = columns.map((column, index) =>
-    index < syntax.values.length ? resolveColumnValue(scope, type, member, column, syntax.values[index]) : zeroValueOf(column.kind),
+    index < syntax.values.length
+      ? resolveColumnValue(scope, type, member, column, syntax.values[index])
+      : zeroValueOf(column.kind),
   );
 }
 
@@ -470,14 +510,20 @@ export function resolveIdKinds(scope: Scope): void {
   for (const isEngine of [false, true]) {
     for (const [name, isEngineKind] of isEngineByName) {
       if (isEngineKind !== isEngine) continue;
-      scope.idKinds.set(name, { name, isEngine, list: findListOf(scope, name), record: scope.records.get(name) ?? null });
+      scope.idKinds.set(name, {
+        name,
+        isEngine,
+        list: findListOf(scope, name),
+        record: scope.records.get(name) ?? null,
+      });
     }
   }
 }
 
 export function findKind(scope: Scope, word: string, position: KindPosition): Kind | null {
   const id = scope.idKinds.get(word);
-  const isListedType = position === "list" || (position === "span" && id === undefined && findListOf(scope, word) !== null);
+  const isListedType =
+    position === "list" || (position === "span" && id === undefined && findListOf(scope, word) !== null);
   const listedType = isListedType ? findRecordOrVariant(scope, word) : null;
   if (listedType !== null) return listedType;
   if (id !== undefined) return { tag: "Id", id, role: null };
@@ -523,7 +569,12 @@ export function resolveKind(scope: Scope, syntax: KindSyntax, position: KindPosi
   return role === null ? kind : resolveRole(scope, kind, word, role);
 }
 
-function resolveFields(scope: Scope, fields: readonly FieldSyntax[], owner: string, sortedFields: SortedField[]): Field[] {
+function resolveFields(
+  scope: Scope,
+  fields: readonly FieldSyntax[],
+  owner: string,
+  sortedFields: SortedField[],
+): Field[] {
   return fields.map(syntax => {
     const { arrayLength } = syntax.kind;
     const field: Mutable<Field> = {
@@ -554,7 +605,10 @@ function resolveFieldSortKey(scope: Scope, { field, syntax, key, owner }: Sorted
   field.sortedBy = findSortKey(kind.tag === "Span" || kind.tag === "List" ? kind.element : kind, key);
   if (field.sortedBy !== null) return;
   const elementName = (syntax.kind.element ?? syntax.kind).name.text;
-  scope.errors.add(key.location, `field ${field.name} of ${owner} is sorted by ${key.text}, which ${elementName} does not have`);
+  scope.errors.add(
+    key.location,
+    `field ${field.name} of ${owner} is sorted by ${key.text}, which ${elementName} does not have`,
+  );
 }
 
 function resolveListElement(scope: Scope, syntax: ListSyntax): void {
@@ -565,7 +619,10 @@ function resolveListElement(scope: Scope, syntax: ListSyntax): void {
   if (key === null) return;
   list.sortedBy = findSortKey(list.element, key);
   if (list.sortedBy !== null) return;
-  scope.errors.add(key.location, `list ${list.name} is sorted by ${key.text}, which ${syntax.element.name.text} does not have`);
+  scope.errors.add(
+    key.location,
+    `list ${list.name} is sorted by ${key.text}, which ${syntax.element.name.text} does not have`,
+  );
 }
 
 export function resolveRecords(scope: Scope, declarations: readonly DeclarationInFile[]): void {
@@ -600,7 +657,8 @@ function computeAbiLayout(record: SchemaRecord): AbiLayout {
   for (const { kind, arrayLength } of record.fields) {
     let element = { size: 4, alignment: 4 };
     if (kind.tag === "Scalar" && kind.scalar === "UInt8") element = { size: 1, alignment: 1 };
-    else if (kind.tag === "Scalar" && (kind.scalar === "UInt64" || kind.scalar === "Double")) element = { size: 8, alignment: 8 };
+    else if (kind.tag === "Scalar" && (kind.scalar === "UInt64" || kind.scalar === "Double"))
+      element = { size: 8, alignment: 8 };
     else if (kind.tag === "Record" && kind.record.abiLayout !== null) element = kind.record.abiLayout;
     size = roundUp(size, element.alignment);
     offsets.push(size);
@@ -610,7 +668,11 @@ function computeAbiLayout(record: SchemaRecord): AbiLayout {
   return { size: roundUp(size, alignment), alignment, offsets };
 }
 
-function startSizing(computation: SizeComputation, type: SchemaRecord | Variant, description: "record" | "variant"): boolean {
+function startSizing(
+  computation: SizeComputation,
+  type: SchemaRecord | Variant,
+  description: "record" | "variant",
+): boolean {
   if (computation.finished.has(type)) return false;
   if (computation.active.has(type)) {
     computation.scope.errors.add(type.location, `${description} ${type.name} contains itself`);
@@ -678,7 +740,8 @@ function computeVariantSizes(computation: SizeComputation, variant: Mutable<Vari
   finishSizing(computation, variant);
   const wireFieldsByCase = variant.cases.map(({ fields }) => fields.filter(field => !field.isEngine));
   variant.wireWords = 1 + Math.max(0, ...wireFieldsByCase.map(fields => sumOf(fields, field => field.wireWords)));
-  variant.payloadWords = 1 + Math.max(0, ...variant.cases.map(({ fields }) => sumOf(fields, field => field.payloadWords)));
+  variant.payloadWords =
+    1 + Math.max(0, ...variant.cases.map(({ fields }) => sumOf(fields, field => field.payloadWords)));
   variant.hasSpans = wireFieldsByCase.some(fields => fields.some(holdsSpans));
 }
 
@@ -688,7 +751,8 @@ function reachesEngineFields(type: SchemaType, visited: Set<string>): boolean {
   return fieldsOf(type).some(field => {
     if (field.isEngine) return true;
     const inner = innermostKindOf(field.kind);
-    if (inner.tag === "Record") return inner.record.form === "wire" && !inner.record.isCustomEngine && reachesEngineFields(inner, visited);
+    if (inner.tag === "Record")
+      return inner.record.form === "wire" && !inner.record.isCustomEngine && reachesEngineFields(inner, visited);
     return inner.tag === "Variant" && inner.variant.form === "wire" && reachesEngineFields(inner, visited);
   });
 }
@@ -711,7 +775,8 @@ function isColumnInRust(kind: ColumnKind): boolean {
 function finishList(computation: SizeComputation, list: Mutable<ProgramList>): void {
   const { element } = list;
   const isByte = element.tag === "Scalar" && element.scalar === "Byte";
-  const hasId = (element.tag === "Record" || element.tag === "Variant") && computation.scope.idKinds.has(nameOf(element));
+  const hasId =
+    (element.tag === "Record" || element.tag === "Variant") && computation.scope.idKinds.has(nameOf(element));
   list.elementSizeInBytes = isByte ? 1 : 4 * computeKindSizes(computation, element).wireWords;
   list.isTable = hasId || list.keyword !== null;
 }

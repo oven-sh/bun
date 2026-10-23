@@ -218,8 +218,7 @@ impl Checker<'_, '_> {
             Some(TypeId::NEVER) => 2534,
             Some(_) if !has_explicit_return => 2355,
             Some(t)
-                if self.reports_null_checks(file)
-                    && !self.is_assignable(TypeId::UNDEFINED, t) =>
+                if self.reports_null_checks(file) && !self.is_assignable(TypeId::UNDEFINED, t) =>
             {
                 2366
             }

@@ -2,7 +2,16 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { test } from "./supported";
 
-const tsconfig = JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: ["bun"], strict: true } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    noEmit: true,
+    types: ["bun"],
+    strict: true,
+  },
+});
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -13,8 +22,14 @@ async function run(cwd: string, ...args: string[]) {
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const errors = (said: string) =>
   [
-    ...Array.from(said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm), match => `${match[1]}:${match[2]} ${match[3]}`),
-    ...Array.from(said.matchAll(/^error: (TS\d+):.*\n\s+at \S*?(src|test)[\\/]([^\\/\s:]+):(\d+):\d+$/gm), match => `${match[2]}/${match[3]}:${match[4]} ${match[1]}`),
+    ...Array.from(
+      said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm),
+      match => `${match[1]}:${match[2]} ${match[3]}`,
+    ),
+    ...Array.from(
+      said.matchAll(/^error: (TS\d+):.*\n\s+at \S*?(src|test)[\\/]([^\\/\s:]+):(\d+):\d+$/gm),
+      match => `${match[2]}/${match[3]}:${match[4]} ${match[1]}`,
+    ),
   ].sort();
 
 const project = {
@@ -39,7 +54,10 @@ test("a tsconfig.json without `include` takes every file below it: what one of t
 
 test("a file that `exclude` takes out, and that no file of the project imports, declares nothing", async () => {
   const { "test/imports.test.ts": importsTheExcludedFile, ...others } = project;
-  using dir = tempDirWithBunTypes("globals-without-include", { ...others, "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), exclude: ["src/global.ts"] }) });
+  using dir = tempDirWithBunTypes("globals-without-include", {
+    ...others,
+    "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), exclude: ["src/global.ts"] }),
+  });
   const { said, exitCode } = await run(String(dir), "test", "--aot", "./test/uses.test.ts");
   expect(errors(said)).toEqual(["src/uses.ts:2 TS7017"]);
   expect(exitCode).toBe(1);

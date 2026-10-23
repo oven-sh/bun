@@ -23,7 +23,8 @@ impl<S: Storage> FileIn<S> {
             return None;
         };
         let mut all = props.iter().map(|prop| &self[prop]);
-        let prop = all.find(|prop| prop.kind == PropKind::Init && prop.key == PropKey::Name(key))?;
+        let prop =
+            all.find(|prop| prop.kind == PropKind::Init && prop.key == PropKey::Name(key))?;
         match self.exprs.get(prop.value.idx())?.kind {
             ExprKind::String(text) => Some(text),
             _ => None,

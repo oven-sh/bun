@@ -365,7 +365,14 @@ fn flag_argument_count_must_be_one() {
     let calls = [without_arguments, with_two_arguments];
     for call in calls {
         let atoms = &workspace.atoms;
-        assert!(!evaluate_feature_call(&hir, &bound, &inputs, atoms, call, &mut errors));
+        assert!(!evaluate_feature_call(
+            &hir,
+            &bound,
+            &inputs,
+            atoms,
+            call,
+            &mut errors
+        ));
     }
     let expected = calls.map(|call| FoldError {
         kind: FoldErrorKind::FeatureArgumentCount,
@@ -388,7 +395,14 @@ fn flag_must_be_ascii() {
     let (hir, bound) = workspace.bind_module(file, &[import, test]);
     let mut errors = Vec::new();
     let atoms = &workspace.atoms;
-    assert!(!evaluate_feature_call(&hir, &bound, &inputs, atoms, found.call, &mut errors));
+    assert!(!evaluate_feature_call(
+        &hir,
+        &bound,
+        &inputs,
+        atoms,
+        found.call,
+        &mut errors
+    ));
     let expected = FoldError {
         kind: FoldErrorKind::FeatureFlagNotAscii,
         node: NodeData::Expr(found.argument),
@@ -409,7 +423,14 @@ fn disabled_flag_is_false_without_error() {
     let (hir, bound) = workspace.bind_module(file, &[import, test]);
     let mut errors = Vec::new();
     let atoms = &workspace.atoms;
-    assert!(!evaluate_feature_call(&hir, &bound, &inputs, atoms, disabled, &mut errors));
+    assert!(!evaluate_feature_call(
+        &hir,
+        &bound,
+        &inputs,
+        atoms,
+        disabled,
+        &mut errors
+    ));
     assert!(errors.is_empty(), "{errors:?}");
 }
 

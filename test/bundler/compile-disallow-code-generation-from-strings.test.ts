@@ -59,10 +59,20 @@ describe.concurrent("bun build --compile --disallow-code-generation-from-strings
       [flag + "=strict", { ...everyConstructor, "node:vm": refused }],
     ])("%s", async (given, seen) => {
       using dir = tempDir("compile-disallow-code-generation", { "app.ts": program });
-      const built = await run([bunExe(), "build", "--compile", ...more, given, "app.ts", "--outfile", "app"], String(dir));
-      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+      const built = await run(
+        [bunExe(), "build", "--compile", ...more, given, "app.ts", "--outfile", "app"],
+        String(dir),
+      );
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+        stderr: expect.not.stringMatching(/^error\b/m),
+        exitCode: 0,
+      });
       const ran = await run([join(String(dir), "app")], String(dir));
-      expect({ said: JSON.parse(ran.stdout), stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ said: { seen, execArgv: [given] }, stderr: "", exitCode: 0 });
+      expect({ said: JSON.parse(ran.stdout), stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+        said: { seen, execArgv: [given] },
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     test("without the flag nothing is refused", async () => {
@@ -75,8 +85,13 @@ describe.concurrent("bun build --compile --disallow-code-generation-from-strings
   });
 
   test("it stands in front of what --compile-exec-argv gives", async () => {
-    using dir = tempDir("compile-disallow-code-generation", { "app.ts": `console.log(JSON.stringify(process.execArgv));` });
-    const built = await run([bunExe(), "build", "--compile", flag, "--compile-exec-argv=--smol", "app.ts", "--outfile", "app"], String(dir));
+    using dir = tempDir("compile-disallow-code-generation", {
+      "app.ts": `console.log(JSON.stringify(process.execArgv));`,
+    });
+    const built = await run(
+      [bunExe(), "build", "--compile", flag, "--compile-exec-argv=--smol", "app.ts", "--outfile", "app"],
+      String(dir),
+    );
     expect(built.exitCode).toBe(0);
     expect((await run([join(String(dir), "app")], String(dir))).stdout).toBe(JSON.stringify([flag, "--smol"]) + "\n");
   });
@@ -112,20 +127,33 @@ describe.concurrent("bun build --compile --disallow-code-generation-from-strings
 
   test("Bun.build refuses another value", async () => {
     using dir = tempDir("compile-disallow-code-generation", { "app.ts": program });
-    expect(async () => await Bun.build({ entrypoints: [join(String(dir), "app.ts")], compile: { outfile: join(String(dir), "app"), disallowCodeGenerationFromStrings: "strcit" as never } })).toThrow(
-      'disallowCodeGenerationFromStrings must be a boolean or "strict"',
-    );
+    expect(
+      async () =>
+        await Bun.build({
+          entrypoints: [join(String(dir), "app.ts")],
+          compile: { outfile: join(String(dir), "app"), disallowCodeGenerationFromStrings: "strcit" as never },
+        }),
+    ).toThrow('disallowCodeGenerationFromStrings must be a boolean or "strict"');
   });
 
   test("it requires --compile", async () => {
     using dir = tempDir("compile-disallow-code-generation", { "app.ts": program });
     const built = await run([bunExe(), "build", flag, "app.ts", "--outdir", "out"], String(dir));
-    expect({ stderr: built.stderr.trim(), isRefused: built.exitCode !== 0 }).toEqual({ stderr: `error: ${flag} requires --compile`, isRefused: true });
+    expect({ stderr: built.stderr.trim(), isRefused: built.exitCode !== 0 }).toEqual({
+      stderr: `error: ${flag} requires --compile`,
+      isRefused: true,
+    });
   });
 
   test("another value is refused", async () => {
     using dir = tempDir("compile-disallow-code-generation", { "app.ts": program });
-    const built = await run([bunExe(), "build", "--compile", flag + "=strcit", "app.ts", "--outfile", "app"], String(dir));
-    expect({ stderr: built.stderr.trim(), exitCode: built.exitCode }).toEqual({ stderr: `error: Invalid value for ${flag}: "strcit". Must be "strict", or no value`, exitCode: 1 });
+    const built = await run(
+      [bunExe(), "build", "--compile", flag + "=strcit", "app.ts", "--outfile", "app"],
+      String(dir),
+    );
+    expect({ stderr: built.stderr.trim(), exitCode: built.exitCode }).toEqual({
+      stderr: `error: Invalid value for ${flag}: "strcit". Must be "strict", or no value`,
+      exitCode: 1,
+    });
   });
 });

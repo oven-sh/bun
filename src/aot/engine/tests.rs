@@ -8,10 +8,11 @@ use super::sections::{MalformedReason as Reason, MalformedSection, SectionLength
 use super::testing::{Sections, bytes_of, to_words, with_result};
 use super::*;
 use crate::ir::generated::{
-    AccessCost, AccessKind, AllocationEscapeReason, AllocationKind, AllocationOutcome, Architecture,
-    ArrivalFieldFlags, ArrivalLayoutFlags, ArrivalStamp, BuiltinUse, CheckCause, CheckSet,
-    DeclineKind, IllTypedCause, InternalErrorKind, KnowledgeLevel, LocaleUseKind, PassId, Stage,
-    StatisticId, TypeSiteKind, TypeTestFailure, UnprovenCause, UnseenCodeCause, UserDiagnosticKind,
+    AccessCost, AccessKind, AllocationEscapeReason, AllocationKind, AllocationOutcome,
+    Architecture, ArrivalFieldFlags, ArrivalLayoutFlags, ArrivalStamp, BuiltinUse, CheckCause,
+    CheckSet, DeclineKind, IllTypedCause, InternalErrorKind, KnowledgeLevel, LocaleUseKind, PassId,
+    Stage, StatisticId, TypeSiteKind, TypeTestFailure, UnprovenCause, UnseenCodeCause,
+    UserDiagnosticKind,
 };
 
 const IDENTITY: ExecutableIdentity = ExecutableIdentity(*b"0123456789abcdef");
@@ -107,7 +108,9 @@ fn check_patched_record<T: ResultRecord>(patches: &[(usize, u32)]) -> Option<Rea
 }
 
 fn check_member_of_each_record<T: ResultRecord>(member: usize, values: &[u32]) -> Option<Reason> {
-    let records = values.iter().flat_map(|&value| patched_record::<T>(&[(member, value)]));
+    let records = values
+        .iter()
+        .flat_map(|&value| patched_record::<T>(&[(member, value)]));
     check(T::SECTION, &records.collect::<Vec<u8>>())
 }
 
@@ -246,13 +249,21 @@ fn reports_follow_explain_and_detail() {
         // The places in the lines of --explain=trim.
         (ExplainSet::RUNTIME_USE, None, ReportSet::FLOW),
         (ExplainSet::STATISTICS, None, no_report),
-        (ExplainSet::empty(), Some(ReportDetail::Summary), ReportSet::DECLINES),
+        (
+            ExplainSet::empty(),
+            Some(ReportDetail::Summary),
+            ReportSet::DECLINES,
+        ),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Functions),
             ReportSet::DECLINES | ReportSet::FUNCTIONS,
         ),
-        (ExplainSet::empty(), Some(ReportDetail::Sites), every_site_report),
+        (
+            ExplainSet::empty(),
+            Some(ReportDetail::Sites),
+            every_site_report,
+        ),
         (
             ExplainSet::TEXT | ExplainSet::ALLOCATIONS,
             Some(ReportDetail::Summary),
@@ -289,8 +300,14 @@ fn default_thread_count_fits_the_program() {
         fits_threads_to_program: true,
     };
     assert_eq!(fitted.record_for(0).thread_count, 1);
-    assert_eq!(fitted.record_for(PROGRAM_BYTES_PER_THREAD - 1).thread_count, 1);
-    assert_eq!(fitted.record_for(7 * PROGRAM_BYTES_PER_THREAD).thread_count, 8);
+    assert_eq!(
+        fitted.record_for(PROGRAM_BYTES_PER_THREAD - 1).thread_count,
+        1
+    );
+    assert_eq!(
+        fitted.record_for(7 * PROGRAM_BYTES_PER_THREAD).thread_count,
+        8
+    );
     assert_eq!(fitted.record_for(1 << 30).thread_count, 192);
 }
 
@@ -324,7 +341,11 @@ fn limit_values_follow_target_architecture() {
         record.target.architecture = architecture;
         record.lowered_limit_value = 3;
         let limits = with_record(record).limit_values();
-        assert_eq!(limits, LimitValues::for_target(architecture), "{architecture:?}");
+        assert_eq!(
+            limits,
+            LimitValues::for_target(architecture),
+            "{architecture:?}"
+        );
     }
 }
 
@@ -333,11 +354,17 @@ fn lengths_must_fit_elements() {
     let statistics_size = 8 * StatisticId::COUNT;
     let limit_values_size = 8 * LimitId::COUNT;
     for (section, length) in [
-        (Section::UserDiagnostics, size_of::<UserDiagnosticRecord>() - 1),
+        (
+            Section::UserDiagnostics,
+            size_of::<UserDiagnosticRecord>() - 1,
+        ),
         (Section::EntryModuleIds, 7),
         (Section::ArrivalSiteLayouts, 7),
         (Section::Accesses, size_of::<AccessRecord>() + 4),
-        (Section::RemainingChecks, size_of::<RemainingCheckRecord>() - 8),
+        (
+            Section::RemainingChecks,
+            size_of::<RemainingCheckRecord>() - 8,
+        ),
         (Section::Statistics, 0),
         (Section::Statistics, statistics_size - 8),
         (Section::Statistics, statistics_size + 8),
@@ -345,11 +372,18 @@ fn lengths_must_fit_elements() {
         (Section::LimitValues, limit_values_size - 8),
         (Section::LimitValues, limit_values_size + 8),
     ] {
-        assert_eq!(check_zeros(section, length), Some(Reason::Length), "{section:?} {length}");
+        assert_eq!(
+            check_zeros(section, length),
+            Some(Reason::Length),
+            "{section:?} {length}"
+        );
     }
     for (section, length) in [
         (Section::UserDiagnostics, 0),
-        (Section::UserDiagnostics, 2 * size_of::<UserDiagnosticRecord>()),
+        (
+            Section::UserDiagnostics,
+            2 * size_of::<UserDiagnosticRecord>(),
+        ),
         (Section::EntryModuleIds, 8),
         (Section::ArrivalSiteLayouts, 8),
         (Section::Statistics, statistics_size),
@@ -365,10 +399,18 @@ fn sections_must_be_aligned() {
     let check_at =
         |section, length, shift| check_shifted(section, &vec![0; length], shift, &ONLY_TEXT);
     for (section, length, shift) in [
-        (Section::UserDiagnostics, size_of::<UserDiagnosticRecord>(), 4),
+        (
+            Section::UserDiagnostics,
+            size_of::<UserDiagnosticRecord>(),
+            4,
+        ),
         (Section::EntryModuleIds, 4, 2),
         (Section::ArrivalSiteLayouts, 4, 2),
-        (Section::RemainingChecks, size_of::<RemainingCheckRecord>(), 4),
+        (
+            Section::RemainingChecks,
+            size_of::<RemainingCheckRecord>(),
+            4,
+        ),
         (Section::PassTimes, size_of::<PassTimeRecord>(), 4),
         (Section::Statistics, 8 * StatisticId::COUNT, 4),
         (Section::LimitValues, 8 * LimitId::COUNT, 1),
@@ -377,7 +419,11 @@ fn sections_must_be_aligned() {
         assert_eq!(reason, Some(Reason::Alignment), "{section:?}");
     }
     for (section, length, shift) in [
-        (Section::UserDiagnostics, size_of::<UserDiagnosticRecord>(), 8),
+        (
+            Section::UserDiagnostics,
+            size_of::<UserDiagnosticRecord>(),
+            8,
+        ),
         (Section::UserDiagnostics, 0, 1),
         (Section::EntryModuleIds, 4, 4),
         (Section::Image, 3, 1),
@@ -632,7 +678,10 @@ fn first_malformed_section_is_reported() {
     let sections = Sections::new()
         .with(Section::Statistics, &[0; 8])
         .with(Section::EntryModuleIds, &[0; 7]);
-    assert_eq!(sections.check(), malformed(Section::EntryModuleIds, Reason::Length));
+    assert_eq!(
+        sections.check(),
+        malformed(Section::EntryModuleIds, Reason::Length)
+    );
 }
 
 #[test]
@@ -645,7 +694,10 @@ fn text_length_comes_from_text_section() {
     let length = offset_of!(UserDiagnosticRecord, message) + offset_of!(TextRange, length);
     let diagnostic = patched_record::<UserDiagnosticRecord>(&[(length, TEXT.len() as u32)]);
     let sections = Sections::new().with(Section::UserDiagnostics, &diagnostic);
-    assert_eq!(sections.check(), malformed(Section::UserDiagnostics, Reason::TextRange));
+    assert_eq!(
+        sections.check(),
+        malformed(Section::UserDiagnostics, Reason::TextRange)
+    );
     assert_eq!(sections.with(Section::Text, TEXT).check(), Ok(()));
 }
 
@@ -655,8 +707,14 @@ fn operation_count_comes_from_operation_section() {
     let function = patched_record::<FunctionReportRecord>(&[(count, 2)]);
     let operations = vec![0; 2 * size_of::<OperationCountRecord>()];
     let sections = Sections::new().with(Section::Functions, &function);
-    assert_eq!(sections.check(), malformed(Section::Functions, Reason::Range));
-    assert_eq!(sections.with(Section::OperationCounts, &operations).check(), Ok(()));
+    assert_eq!(
+        sections.check(),
+        malformed(Section::Functions, Reason::Range)
+    );
+    assert_eq!(
+        sections.with(Section::OperationCounts, &operations).check(),
+        Ok(())
+    );
 }
 
 #[test]
@@ -664,8 +722,14 @@ fn expected_layout_count_comes_from_site_layout_section() {
     let count = offset_of!(ArrivalSiteRecord, expected_layout_count);
     let site = patched_record::<ArrivalSiteRecord>(&[(count, 2)]);
     let sections = Sections::new().with(Section::ArrivalSites, &site);
-    assert_eq!(sections.check(), malformed(Section::ArrivalSites, Reason::Range));
-    assert_eq!(sections.with(Section::ArrivalSiteLayouts, &[0; 8]).check(), Ok(()));
+    assert_eq!(
+        sections.check(),
+        malformed(Section::ArrivalSites, Reason::Range)
+    );
+    assert_eq!(
+        sections.with(Section::ArrivalSiteLayouts, &[0; 8]).check(),
+        Ok(())
+    );
 }
 
 #[test]
@@ -674,8 +738,14 @@ fn layout_field_count_comes_from_field_section() {
     let layout = patched_record::<ArrivalLayoutRecord>(&[(count, 2)]);
     let fields = vec![0; 2 * size_of::<ArrivalLayoutFieldRecord>()];
     let sections = Sections::new().with(Section::ArrivalLayouts, &layout);
-    assert_eq!(sections.check(), malformed(Section::ArrivalLayouts, Reason::Range));
-    assert_eq!(sections.with(Section::ArrivalLayoutFields, &fields).check(), Ok(()));
+    assert_eq!(
+        sections.check(),
+        malformed(Section::ArrivalLayouts, Reason::Range)
+    );
+    assert_eq!(
+        sections.with(Section::ArrivalLayoutFields, &fields).check(),
+        Ok(())
+    );
 }
 
 #[test]

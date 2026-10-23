@@ -1,4 +1,14 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { fixedName, readAt } from "./binary-reader.ts";
@@ -21,7 +31,9 @@ const roomSource = (room: number) =>
   `.subsections_via_symbols\n`;
 
 const isMovable = (output: string) =>
-  ["__TEXT,__text", "__TEXT,__const", "__TEXT,__bun_builtins", "__TEXT,__cstring", "__DATA_CONST,__const"].includes(output) || isOneUnitOfAssembly(output);
+  ["__TEXT,__text", "__TEXT,__const", "__TEXT,__bun_builtins", "__TEXT,__cstring", "__DATA_CONST,__const"].includes(
+    output,
+  ) || isOneUnitOfAssembly(output);
 
 function findMachOSection(fd: number, name: string): FileRange | undefined {
   if (fstatSync(fd).size < 32) return undefined;
@@ -32,7 +44,8 @@ function findMachOSection(fd: number, name: string): FileRange | undefined {
     if (commands.readUInt32LE(at) !== LC_SEGMENT_64) continue;
     for (let index = 0; index < commands.readUInt32LE(at + 64); index++) {
       const section = at + 72 + index * 80;
-      if (fixedName(commands, section) === name) return { offset: commands.readUInt32LE(section + 48), size: Number(commands.readBigUInt64LE(section + 40)) };
+      if (fixedName(commands, section) === name)
+        return { offset: commands.readUInt32LE(section + 48), size: Number(commands.readBigUInt64LE(section + 40)) };
     }
   }
   return undefined;
@@ -54,7 +67,10 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
   const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
   const spell = (object: string, name: string) => (graph.externalNames.has(name) ? name : `${base(object)}:${name}`);
-  const namesOf = (node: number): [string, string][] => [[graph.object[node]!, graph.section[node]!], ...(graph.aliases.get(node) ?? [])];
+  const namesOf = (node: number): [string, string][] => [
+    [graph.object[node]!, graph.section[node]!],
+    ...(graph.aliases.get(node) ?? []),
+  ];
   const namesOfUnmovedNodes = new Set<string>();
   const stemsOfUnmovedNodes = new Set<string>();
   for (let node = 0; node < graph.count; node++) {
@@ -69,20 +85,25 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
   const namesOnlyMovedNodes = (node: number, object: string, name: string) =>
     graph.externalNames.has(name)
       ? !stemsOfUnmovedNodes.has(stem(name))
-      : !namesOfUnmovedNodes.has(base(graph.object[node]!) + "\0" + stem(name)) && !namesOfUnmovedNodes.has(base(object) + "\0" + stem(name)) && !namesOfUnmovedNodes.has("\0" + stem(name));
+      : !namesOfUnmovedNodes.has(base(graph.object[node]!) + "\0" + stem(name)) &&
+        !namesOfUnmovedNodes.has(base(object) + "\0" + stem(name)) &&
+        !namesOfUnmovedNodes.has("\0" + stem(name));
   const retainedStringHashes = new Set<number>();
   for (const [node, hash] of graph.stringHash) if (!isMoved(node)) retainedStringHashes.add(hash);
   const order = createSectionOrder(partition);
   for (const hash of retainedStringHashes) order.retainedFirst.push("CSTR;" + hash);
   const laysRetainedFirst = (output: string) => output === "__DATA_CONST,__const";
   for (let node = 0; node < graph.count; node++) {
-    if (laysRetainedFirst(graph.output[node]!) && !isMoved(node)) order.retainedFirst.push(spell(graph.object[node]!, graph.section[node]!));
+    if (laysRetainedFirst(graph.output[node]!) && !isMoved(node))
+      order.retainedFirst.push(spell(graph.object[node]!, graph.section[node]!));
   }
-  const lineOf = (node: number, name: string) => (graph.externalNames.has(name) ? stem(name) : `${base(graph.object[node]!)}:${stem(name)}`);
+  const lineOf = (node: number, name: string) =>
+    graph.externalNames.has(name) ? stem(name) : `${base(graph.object[node]!)}:${stem(name)}`;
   const lastGroupOfLine = new Map<string, number>();
   const linesAfterRetained = new Set<string>();
   const written = new Set<string>();
-  const isNamed = (node: number) => graph.stringHash.get(node) === undefined && !isOneUnitOfAssembly(graph.output[node]!);
+  const isNamed = (node: number) =>
+    graph.stringHash.get(node) === undefined && !isOneUnitOfAssembly(graph.output[node]!);
   for (let node = 0; node < graph.count; node++) {
     const group = groupOf(node);
     if (group < 0 || !isNamed(node)) continue;
@@ -106,7 +127,9 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
         const line = lineOf(node, name);
         if (written.has(line)) continue;
         written.add(line);
-        order.groups[lastGroupOfLine.get(line)!]![linesAfterRetained.has(line) ? "afterRetained" : "names"].push(spell(graph.object[node]!, name));
+        order.groups[lastGroupOfLine.get(line)!]![linesAfterRetained.has(line) ? "afterRetained" : "names"].push(
+          spell(graph.object[node]!, name),
+        );
       }
     }
     order.nodes.push(node);
@@ -141,7 +164,8 @@ export function machO(linker: Linker): LinkerFormat {
     firstInputs: linker.inputs.filter(path => hasMachOSection(path, "__bun_builtins")),
     builtinModulesOutput: "__TEXT,__bun_builtins",
     isMovable,
-    canBeFilled: output => /^__TEXT,__(text|const|bun_builtins|cstring|literals)$/.test(output) || isOneUnitOfAssembly(output),
+    canBeFilled: output =>
+      /^__TEXT,__(text|const|bun_builtins|cstring|literals)$/.test(output) || isOneUnitOfAssembly(output),
     isCode: output => output === "__TEXT,__text" || isOneUnitOfAssembly(output),
     supportObjects: room => [linker.assemble("room.s", roomSource(room))],
     prepareInput: path => path,
@@ -149,8 +173,15 @@ export function machO(linker: Linker): LinkerFormat {
     compiledObjects: listCompiledObjects,
     firstLinkArguments: () => createLinkArguments(compiled),
     secondLinkArguments(order) {
-      const linesAfterGroupNames = [...order.retainedFirst, ...[...order.groups].reverse().flatMap(group => group.afterRetained)];
-      writeFileSync(orderFile, [...order.groups.flatMap(group => group.names), ...linesAfterGroupNames].join("\n") + "\n" + commandOrder, "latin1");
+      const linesAfterGroupNames = [
+        ...order.retainedFirst,
+        ...[...order.groups].reverse().flatMap(group => group.afterRetained),
+      ];
+      writeFileSync(
+        orderFile,
+        [...order.groups.flatMap(group => group.names), ...linesAfterGroupNames].join("\n") + "\n" + commandOrder,
+        "latin1",
+      );
       const result = createLinkArguments(unused);
       if (orderAt >= 0) result.replaced.set(orderAt, orderFlag + orderFile);
       else result.last.push(orderFlag + orderFile);

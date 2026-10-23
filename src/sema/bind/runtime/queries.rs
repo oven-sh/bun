@@ -2,8 +2,8 @@ use super::bits::has_bit;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings,
-    RuntimeBindingsIn, RuntimeDeclarationsIn, StoreKind, SymbolStore, stability,
+    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
+    RuntimeDeclarationsIn, StoreKind, SymbolStore, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -122,8 +122,9 @@ impl<S: Storage> BoundIn<S> {
             Decl::ImportEquals(import) => {
                 symbol_at(&declarations.import_equals_symbols, import.idx())
             }
-            Decl::ExportExpr(stmt) => find_symbol(&declarations.export_expression_symbols, stmt)
-                .unwrap_or(SymbolId::NONE),
+            Decl::ExportExpr(stmt) => {
+                find_symbol(&declarations.export_expression_symbols, stmt).unwrap_or(SymbolId::NONE)
+            }
             Decl::Interface(_)
             | Decl::Alias(_)
             | Decl::EnumMember(_)
@@ -359,9 +360,9 @@ impl Bound<'_> {
         match unit {
             CodeUnit::File => self.scope_of_declaration(hir, Decl::File),
             CodeUnit::Function(function) => self.fns[function.idx()].scope,
-            CodeUnit::FieldInitializer(member) => {
-                self.field_initializer_scope(member).unwrap_or(ScopeId::NONE)
-            }
+            CodeUnit::FieldInitializer(member) => self
+                .field_initializer_scope(member)
+                .unwrap_or(ScopeId::NONE),
         }
     }
 
@@ -498,7 +499,8 @@ impl Bound<'_> {
 
     /// Whether the function expression is the callee of a call and nothing else ever holds it, so that it runs where it is written and at no other time.
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {
-        self.get_immediately_invoked_function_expression(hir, function).is_some()
+        self.get_immediately_invoked_function_expression(hir, function)
+            .is_some()
             && !self.finds_itself(hir, function)
     }
 

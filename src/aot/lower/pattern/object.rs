@@ -1,10 +1,10 @@
 use bun_sema::hir::PropKey;
 use smallvec::SmallVec;
 
-use super::view::{self, PatternProperty};
 use super::PatternNode;
-use crate::ir::{LayoutId, ValueId};
+use super::view::{self, PatternProperty};
 use crate::ir::generated::RuntimeErrorKind;
+use crate::ir::{LayoutId, ValueId};
 use crate::lower::member::{self, PropertyName};
 use crate::lower::{FunctionLowering, commonjs, condition, exception, layouts};
 use crate::modules::ModuleRef;
@@ -92,7 +92,10 @@ fn lower_pattern_key(
         PropKey::Computed(_) => Some(member::lower_property_name(lowering, property.key)),
         PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {
             let name = view::property_name(lowering.file, property)?;
-            Some(PropertyName::Constant(member::name_key(lowering.file, name)))
+            Some(PropertyName::Constant(member::name_key(
+                lowering.file,
+                name,
+            )))
         }
     }
 }

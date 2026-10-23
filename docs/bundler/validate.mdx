@@ -144,7 +144,8 @@ Bun.serve({
           return Response.json({ sku: order.sku });
         } catch (error) {
           if (error instanceof SyntaxError) return Response.json({ error: "The body isn't JSON" }, { status: 400 });
-          if (error instanceof TypeError && "issues" in error) return Response.json({ issues: error.issues }, { status: 400 });
+          if (error instanceof TypeError && "issues" in error)
+            return Response.json({ issues: error.issues }, { status: 400 });
           throw error;
         }
       },

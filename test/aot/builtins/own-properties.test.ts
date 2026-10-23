@@ -52,7 +52,10 @@ function updateLine(line: OwnPropertyLine, seen: Map<string, string>): OwnProper
   return { ...line, isOpen: line.isOpen || listable.length < seen.size, properties };
 }
 
-function updateLines(written: readonly OwnPropertyLine[], seenByHolder: ReadonlyMap<string, Map<string, string> | null>): OwnPropertyLine[] {
+function updateLines(
+  written: readonly OwnPropertyLine[],
+  seenByHolder: ReadonlyMap<string, Map<string, string> | null>,
+): OwnPropertyLine[] {
   return written.flatMap(line => {
     const seen = seenByHolder.get(line.holder);
     if (seen) return [updateLine(line, seen)];
@@ -85,10 +88,14 @@ if (process.env.AOT_BUILTINS_UPDATE) {
 
   test("every listed property exists", () => {
     // The engine defines these on the global object only under an option or in a build for its own developers.
-    const isForDevelopers = (holder: string, name: string) => holder === "globalThis" && (name === "$vm" || name === "Loader" || name === "gc" || name.startsWith("__"));
+    const isForDevelopers = (holder: string, name: string) =>
+      holder === "globalThis" && (name === "$vm" || name === "Loader" || name === "gc" || name.startsWith("__"));
     const failures = collectFailures((line, seen) =>
       line.properties
-        .filter(({ name, isCreatedInSomeRuns }) => !seen.has(name) && !isCreatedInSomeRuns && !isForDevelopers(line.holder, name))
+        .filter(
+          ({ name, isCreatedInSomeRuns }) =>
+            !seen.has(name) && !isCreatedInSomeRuns && !isForDevelopers(line.holder, name),
+        )
         .map(({ name }) => `${line.holder}.${name}: is missing`),
     );
     expect(failures).toEqual([]);
@@ -154,7 +161,9 @@ test("update mode keeps the line of a holder that JavaScript does not reach, and
     ["A", null],
     ["B", new Map([["c", "wc"]])],
   ]);
-  expect(formatOwnProperties(updateLines(written, seenByHolder))).toBe("%AsyncFromSyncIterator%.prototype : next/wc\nB : c/wc\n");
+  expect(formatOwnProperties(updateLines(written, seenByHolder))).toBe(
+    "%AsyncFromSyncIterator%.prototype : next/wc\nB : c/wc\n",
+  );
 });
 
 test("formatOwnProperties sorts and parses back", () => {
@@ -174,20 +183,27 @@ test("formatOwnProperties sorts and parses back", () => {
 const table = aotBuiltinEntries();
 const entriesByPath = new Map(table.entries.map(entry => [entry.path, entry]));
 const listedProperties = lines.flatMap(line =>
-  line.properties.map(({ name, attributes }) => ({ attributes, path: textOfPath(parsePath(memberPathOf(line.holder, name))) })),
+  line.properties.map(({ name, attributes }) => ({
+    attributes,
+    path: textOfPath(parsePath(memberPathOf(line.holder, name))),
+  })),
 );
 const pathsOf = (items: readonly { path: string }[]) => items.map(item => item.path);
 
 test("the file covers the locked objects", () => {
   expect(lines.length).toBeGreaterThan(150);
   const closedHolders = new Set(lines.filter(line => !line.isOpen).map(line => line.holder));
-  const locked = table.entries.filter(({ flags }) => flags.includes("IsLockedObject") || flags.includes("HasLockedMembers"));
+  const locked = table.entries.filter(
+    ({ flags }) => flags.includes("IsLockedObject") || flags.includes("HasLockedMembers"),
+  );
   expect(locked.length).toBeGreaterThan(50);
   expect(pathsOf(locked).filter(path => !closedHolders.has(path))).toEqual([]);
 });
 
 test("the entry of a holder lists all members unless its line is open", () => {
-  const failures = lines.filter(line => entriesByPath.get(line.holder)?.flags.includes("ListsAllMembers") !== !line.isOpen);
+  const failures = lines.filter(
+    line => entriesByPath.get(line.holder)?.flags.includes("ListsAllMembers") !== !line.isOpen,
+  );
   expect(failures.map(line => line.holder)).toEqual([]);
   expect(lines.filter(line => line.isOpen).map(line => line.holder)).toContain("globalThis");
 });
@@ -215,7 +231,13 @@ test("a closed line lists every member that the table declares", () => {
 test("an entry is an accessor where the file says so, and nowhere else", () => {
   const stated = listedProperties.filter(({ attributes }) => attributes !== null);
   expect(stated.filter(({ attributes }) => attributes!.isAccessor).length).toBeGreaterThan(100);
-  expect(pathsOf(stated.filter(({ path, attributes }) => (entriesByPath.get(path)?.kind === "Accessor") !== attributes!.isAccessor))).toEqual([]);
+  expect(
+    pathsOf(
+      stated.filter(
+        ({ path, attributes }) => (entriesByPath.get(path)?.kind === "Accessor") !== attributes!.isAccessor,
+      ),
+    ),
+  ).toEqual([]);
 });
 
 test("a property that is neither writable, configurable nor an accessor is always locked", () => {
@@ -232,8 +254,12 @@ test("every listed property has a valid Rust token", () => {
 });
 
 test("globalThis.globalThis is the global object", () => {
-  expect(lines.find(line => line.holder === "globalThis")?.properties.map(property => property.name)).toContain("globalThis");
+  expect(lines.find(line => line.holder === "globalThis")?.properties.map(property => property.name)).toContain(
+    "globalThis",
+  );
   expect(textOfPath(parsePath(memberPathOf("globalThis", "globalThis")))).toBe("globalThis");
   const named = table.entries.filter(entry => entry.name === "globalThis");
-  expect(named.map(({ path, flags }) => ({ path, isGlobalObject: flags.includes("IsGlobalObject") }))).toEqual([{ path: "globalThis", isGlobalObject: true }]);
+  expect(named.map(({ path, flags }) => ({ path, isGlobalObject: flags.includes("IsGlobalObject") }))).toEqual([
+    { path: "globalThis", isGlobalObject: true },
+  ]);
 });

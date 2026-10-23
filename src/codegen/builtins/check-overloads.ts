@@ -119,7 +119,8 @@ function coversParameter(
     later.accepted === earlier.accepted &&
     later.conversion === earlier.conversion &&
     later.refused === earlier.refused;
-  const takesAllOf = (atom: Atom) => takesEveryValue(later, atom) || (atom === "Number" && takesEveryIntegerOf(later, earlier));
+  const takesAllOf = (atom: Atom) =>
+    takesEveryValue(later, atom) || (atom === "Number" && takesEveryIntegerOf(later, earlier));
   return isSameParameter || atoms.every(atom => !takes(earlier, atom) || takesAllOf(atom));
 }
 
@@ -213,7 +214,10 @@ export function checkResultLayouts(overloads: readonly ModelOverload[], problems
     for (const { layout, isOrdinaryObject } of overload.result.layouts) {
       if (layout.isTuple) {
         if (!isOrdinaryObject) continue;
-        problems.add(overload.source, `${describeOverload(overload)} returns the tuple ${layout.token}, which is an array`);
+        problems.add(
+          overload.source,
+          `${describeOverload(overload)} returns the tuple ${layout.token}, which is an array`,
+        );
       } else if (isCompiled && isOrdinaryObject) {
         problems.add(
           overload.source,
@@ -238,7 +242,10 @@ function checkSpecialCases(overloads: readonly ModelOverload[], problems: Proble
     if (!overload.flags.includes("IsSpecialCase")) continue;
     const general = overloads[index + 1];
     if (general === undefined) {
-      problems.add(overload.source, `${describeOverload(overload)} is a special case, and no ${overload.mode} overload follows it`);
+      problems.add(
+        overload.source,
+        `${describeOverload(overload)} is a special case, and no ${overload.mode} overload follows it`,
+      );
       continue;
     }
     for (const { position, atoms } of positions) {
@@ -256,7 +263,8 @@ function checkHostCallees(overloads: readonly ModelOverload[], problems: Problem
   for (const overload of overloads) {
     const { implementation } = overload.code;
     const called = implementation.how === "Inline" ? implementation.otherwise : implementation;
-    if (called === null || called.how !== "HostCall" || called.function === null || called.callee === "Function") continue;
+    if (called === null || called.how !== "HostCall" || called.function === null || called.callee === "Function")
+      continue;
     problems.add(
       overload.source,
       `${describeOverload(overload)} calls a ${called.callee}, and ${called.function.name} of ${called.function.file} implements the entry: constructorCallee: "Function"`,

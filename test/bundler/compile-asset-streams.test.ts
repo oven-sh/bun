@@ -35,10 +35,22 @@ for (const [name, run] of Object.entries(tries)) {
 describe.skipIf(isWindows || unsupported).each([["--aot"]])("files embedded with --asset %s", (...flags) => {
   test("are opened, streamed and found by realpath", async () => {
     using dir = tempDir("compile-asset-streams", files);
-    await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--asset", "./client", "--outfile", "built"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--asset", "./client", "--outfile", "built"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, buildErrors, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect({ stderr: buildExitCode ? buildErrors : "", exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
-    await using ran = Bun.spawn({ cmd: [join(String(dir), "built")], cwd: "/", env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using ran = Bun.spawn({
+      cmd: [join(String(dir), "built")],
+      cwd: "/",
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: `isStandalone: true
@@ -70,13 +82,35 @@ for (const [path, method, range] of [["/", "GET", "bytes=2-5"], ["/", "GET", "by
 }
 `;
     using dir = tempDir("compile-asset-ranges", { ...files, "main.mjs": program });
-    await using plain = Bun.spawn({ cmd: [bunExe(), "run", "./main.mjs"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const expected = { stdout: await plain.stdout.text(), stderr: await plain.stderr.text(), exitCode: await plain.exited };
+    await using plain = Bun.spawn({
+      cmd: [bunExe(), "run", "./main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const expected = {
+      stdout: await plain.stdout.text(),
+      stderr: await plain.stderr.text(),
+      exitCode: await plain.exited,
+    };
     expect(expected.stdout).toStartWith(`/ GET bytes=2-5 -> 206 bytes 2-5/17 bytes 4 "llo "\n`);
-    await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--asset", "./client", "--outfile", "built"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--asset", "./client", "--outfile", "built"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, buildErrors, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect({ stderr: buildExitCode ? buildErrors : "", exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
-    await using ran = Bun.spawn({ cmd: [join(String(dir), "built")], cwd: "/", env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using ran = Bun.spawn({
+      cmd: [join(String(dir), "built")],
+      cwd: "/",
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
     expect({ stdout, stderr, exitCode }).toEqual(expected);
   }, 120_000);

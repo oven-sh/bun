@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 async function run(files: Record<string, string>) {
   using dir = tempDir("aot-reports", files);
@@ -26,8 +26,15 @@ test("an unused @ts-expect-error is a warning", async () => {
 // TODO: the build goes on and the program prints what it should; the warning is not said.
 test.todo("an error inside an installed package's declaration file is a warning", async () => {
   const { stdout, stderr, exitCode } = await run({
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler" } }),
-    "node_modules/broken/package.json": JSON.stringify({ name: "broken", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler" },
+    }),
+    "node_modules/broken/package.json": JSON.stringify({
+      name: "broken",
+      version: "1.0.0",
+      main: "index.js",
+      types: "index.d.ts",
+    }),
     "node_modules/broken/index.js": `exports.one = () => 1;\n`,
     "node_modules/broken/index.d.ts": `import type { Missing } from "not-installed";\nexport function one(): number;\nexport function other(): Missing;\n`,
     "main.ts": `import { one } from "broken";\nconsole.log(one());\n`,
@@ -50,7 +57,11 @@ test.todo(`@types/bun installed but excluded by "types" is a warning`, async () 
   const { stdout, stderr, exitCode } = await run({
     "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun-types"] } }),
     "main.ts": `console.log(typeof Bun.version);\n`,
-    "node_modules/@types/bun/package.json": JSON.stringify({ name: "@types/bun", version: "1.0.0", types: "index.d.ts" }),
+    "node_modules/@types/bun/package.json": JSON.stringify({
+      name: "@types/bun",
+      version: "1.0.0",
+      types: "index.d.ts",
+    }),
     "node_modules/@types/bun/index.d.ts": `export {};\n`,
   });
   expect(stderr).toContain("TS2688");

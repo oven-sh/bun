@@ -27,7 +27,13 @@ test("a test file that imports nothing and has no types installed", async () => 
         expect(o.m()).toBe(2);
       });`,
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--aot"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--aot"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("TS2");
   expect(stderr).toContain(" 4 pass");

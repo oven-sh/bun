@@ -107,7 +107,9 @@ describe("checker queries", () => {
     expect(findFailures(["ordered: a", "ordered: c"], printed)).toEqual([]);
     expect(findFailures(["ordered: b", "ordered: a"], printed)).toEqual([]);
     expect(findFailures(["ordered: c", "ordered: b"], printed)).toEqual(["ordered: b: printed out of order"]);
-    expect(findFailures(["ordered: c", "ordered: b", "ordered: a"], printed)).toEqual(["ordered: b: printed out of order"]);
+    expect(findFailures(["ordered: c", "ordered: b", "ordered: a"], printed)).toEqual([
+      "ordered: b: printed out of order",
+    ]);
     expect(findFailures(["ordered: a", "ordered: d"], printed)).toEqual(["ordered: d"]);
     expect(findFailures(["ordered: c", "a", "ordered: b"], printed)).toEqual([]);
   });

@@ -36,7 +36,6 @@ var SymbolDispose = Symbol.dispose;
 // Default chunk size for FileHandle.pull/pullSync/writer (matches Node.js).
 const kIterDefaultChunkSize = 131072;
 
-
 let Interface: $BunModules["node:readline"]["Interface"] | undefined; // lazy value for require("node:readline").Interface.
 
 function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { ignore?: unknown } = {}) {
@@ -199,7 +198,11 @@ async function opendir(dir: string, options?) {
   // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
   // open time, like node) runs on an async stat instead of blocking.
   const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
-  require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve as (value: unknown) => void, reject));
+  require("node:fs").opendir(
+    dir,
+    options,
+    settleFromNodeCallback.bind(null, resolve as (value: unknown) => void, reject),
+  );
   return promise;
 }
 

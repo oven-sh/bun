@@ -63,7 +63,9 @@ pub(in crate::lower) fn emit_free_name_get(
     let key = lowering.file.atom_key(name);
     let is_free_name = sees_script_bindings(lowering);
     let global = lowering.builder.builtin(BuiltinId::GlobalThis);
-    lowering.builder.prop_get(global, key, is_free_name, is_for_type_of)
+    lowering
+        .builder
+        .prop_get(global, key, is_free_name, is_for_type_of)
 }
 
 pub(in crate::lower) fn emit_free_name_set(
@@ -76,7 +78,9 @@ pub(in crate::lower) fn emit_free_name_set(
     let is_free_name = sees_script_bindings(lowering);
     let global = lowering.builder.builtin(BuiltinId::GlobalThis);
     lowering.file.fragment.note_write(key);
-    lowering.builder.prop_set(global, key, mode, value, is_free_name);
+    lowering
+        .builder
+        .prop_set(global, key, mode, value, is_free_name);
 }
 
 pub(in crate::lower) fn emit_free_name_delete(
@@ -87,7 +91,9 @@ pub(in crate::lower) fn emit_free_name_delete(
     let mode = lowering.mode();
     let is_free_name = sees_script_bindings(lowering);
     let global = lowering.builder.builtin(BuiltinId::GlobalThis);
-    lowering.builder.prop_delete(global, key, mode, is_free_name)
+    lowering
+        .builder
+        .prop_delete(global, key, mode, is_free_name)
 }
 
 fn emit_global_path_member(

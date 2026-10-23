@@ -55,7 +55,11 @@ fn lower_statement_in_place(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     statement: StmtId,
 ) {
-    let left_out = lowering.file.inputs.library_functions.left_out_declarations();
+    let left_out = lowering
+        .file
+        .inputs
+        .library_functions
+        .left_out_declarations();
     if left_out.is_statement_left_out(lowering.file.file, statement) {
         return;
     }

@@ -9,7 +9,9 @@ import { beforeAll, describe, test } from "./supported";
 const rounds = 50;
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "main.ts": `
     interface Comment { id: number; body: string; at: Date }
     interface CommentNode extends Comment { replies: CommentNode[] }
@@ -40,7 +42,9 @@ async function measure() {
     const ran = await spawned([executable, extra], cwd, env);
     const areSame = ran.stdout.split(" ")[0];
     expect({ ...ran, stdout: areSame }).toEqual({ stdout: "true", stderr: "", exitCode: 0, signal: null });
-    const entries = readFileSync(path, "utf8").split("\n").map(line => line.split("\t"));
+    const entries = readFileSync(path, "utf8")
+      .split("\n")
+      .map(line => line.split("\t"));
     return entries.filter(([, name]) => name === "counter:JSONStringifySlowPaths").map(([count]) => Number(count));
   };
   return { wideStrings: await run("wide-strings"), toJSON: await run("toJSON") };

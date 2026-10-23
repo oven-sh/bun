@@ -1,6 +1,4 @@
-use super::interop::{
-    Interop, ModuleKind, RequireResult, SyntheticExportRule, file_interop,
-};
+use super::interop::{Interop, ModuleKind, RequireResult, SyntheticExportRule, file_interop};
 use super::requests::{FileScan, ScannedSite, Scans};
 use super::wrapped::WrappedModules;
 use super::{BindInput, ModuleRef, compare_modules};
@@ -158,8 +156,14 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     let record_files = all_files
         .filter(|file| interops[file.idx()].is_some())
         .collect();
-    let callbacks_of = |&file: &FileId| wrapped.of_file(file).iter().map(move |it| (file, it.callback));
-    let mut inner_modules: Vec<(FileId, FnId)> = compiled_files.iter().flat_map(callbacks_of).collect();
+    let callbacks_of = |&file: &FileId| {
+        wrapped
+            .of_file(file)
+            .iter()
+            .map(move |it| (file, it.callback))
+    };
+    let mut inner_modules: Vec<(FileId, FnId)> =
+        compiled_files.iter().flat_map(callbacks_of).collect();
     inner_modules.shared_sort_unstable();
     ModuleSet {
         compiled_files,

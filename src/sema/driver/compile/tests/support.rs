@@ -9,9 +9,9 @@ use bun_sema::hir::{self, ExprId};
 use bun_sema::hir_from_data::{DataValue, HostValue};
 use bun_sema::program::{FileRole, HostLoader, HostModuleId};
 use bun_sema::resolve::{
-    CodeHost, CodeOptions, CodeParseRequest, CodeRequest, EnclosingPackage, ExternalKind,
-    FinishedFile, HostPayload, HostResolution, CachedConfig, LoaderRequest, MacroRequest, ParseOptions,
-    ParsedCode, Paths,
+    CachedConfig, CodeHost, CodeOptions, CodeParseRequest, CodeRequest, EnclosingPackage,
+    ExternalKind, FinishedFile, HostPayload, HostResolution, LoaderRequest, MacroRequest,
+    ParseOptions, ParsedCode, Paths,
 };
 use bun_sema_standalone as _;
 use std::num::NonZeroUsize;
@@ -87,7 +87,10 @@ pub(super) struct CheckedBuild<T> {
 
 impl<T> CheckedBuild<T> {
     pub(super) fn diagnostics(&self) -> impl Iterator<Item = &BuildDiagnostic> {
-        self.roles.diagnostics.iter().chain(&self.program.diagnostics)
+        self.roles
+            .diagnostics
+            .iter()
+            .chain(&self.program.diagnostics)
     }
 
     pub(super) fn demoted_files(&self) -> Vec<FileId> {
@@ -102,7 +105,8 @@ impl<T> CheckedBuild<T> {
     }
 
     pub(super) fn has_diagnostics(&self, file: FileId) -> bool {
-        self.diagnostics().any(|it| it.diagnostic.file == Some(file))
+        self.diagnostics()
+            .any(|it| it.diagnostic.file == Some(file))
     }
 
     pub(super) fn codes(&self) -> Vec<u32> {
@@ -246,9 +250,13 @@ pub(super) fn with_defines<R>(
     then: impl FnOnce(&TestProgram<'_, '_>) -> R,
 ) -> R {
     let (disk, code) = (project_disk(files, 1), CodeOptions::bun_run(PROJECT));
-    try_load(&disk, &code, Roots::Written(entry_points), defines, |loaded| {
-        then(loaded.expect("load_program failed"))
-    })
+    try_load(
+        &disk,
+        &code,
+        Roots::Written(entry_points),
+        defines,
+        |loaded| then(loaded.expect("load_program failed")),
+    )
 }
 
 pub(super) fn with_host<R>(
@@ -310,7 +318,10 @@ fn try_load<R>(
     let fold = FoldInputs::new(fold_options(defines, &atoms, arena), arena);
     let paths: Vec<Vec<u8>> = match roots {
         Roots::Written(specifiers) => specifiers.iter().map(|it| it.as_bytes().to_vec()).collect(),
-        Roots::Runtime(paths) => paths.iter().map(|it| inside(PROJECT, it.as_bytes())).collect(),
+        Roots::Runtime(paths) => paths
+            .iter()
+            .map(|it| inside(PROJECT, it.as_bytes()))
+            .collect(),
     };
     let request = CompileRequest {
         entry_points: match roots {
@@ -388,11 +399,7 @@ fn check_request() -> Request<'static> {
     }
 }
 
-fn run_bun_check(
-    disk: &host::Disk,
-    project: config::Project,
-    loaded: &(dyn Fn(&Program) + Sync),
-) {
+fn run_bun_check(disk: &host::Disk, project: config::Project, loaded: &(dyn Fn(&Program) + Sync)) {
     let request = Request {
         loaded: Some(loaded),
         ..check_request()
@@ -660,7 +667,11 @@ impl CodeHost for ScriptedHost<'_> {
         _payload: &mut Option<HostPayload>,
     ) -> Vec<HostResolution> {
         let is_importer = |file: &str| inside(PROJECT, file.as_bytes()) == request.path;
-        let implied = self.1.implied_files.iter().filter(|file| is_importer(file.0));
+        let implied = self
+            .1
+            .implied_files
+            .iter()
+            .filter(|file| is_importer(file.0));
         implied
             .map(|file| HostResolution::Path(inside(PROJECT, file.1.as_bytes())))
             .collect()

@@ -219,7 +219,10 @@ fn proto_key_is_own_property() {
         assert_eq!(property.key, PropKey::Name(known::__proto__));
         assert_eq!(property.name_kind, NameKind::ComputedString);
         assert!(!is_proto_setter(&property));
-        assert_eq!(number_at(&s.hir, property.value).to_bits(), 1.0f64.to_bits());
+        assert_eq!(
+            number_at(&s.hir, property.value).to_bits(),
+            1.0f64.to_bits()
+        );
         assert_eq!(exports(&s), ["__proto__", "default"]);
     });
 }
@@ -248,7 +251,10 @@ fn leaves() {
         assert!(number_at(&s.hir, export_default_value(&s.hir)).is_nan());
 
         let s = leaf(w, Data::Number(f64::INFINITY));
-        assert_eq!(number_at(&s.hir, export_default_value(&s.hir)), f64::INFINITY);
+        assert_eq!(
+            number_at(&s.hir, export_default_value(&s.hir)),
+            f64::INFINITY
+        );
 
         let s = leaf(w, Data::BigInt("10"));
         let value = export_default_value(&s.hir);
@@ -364,7 +370,10 @@ fn assert_runtime_require(s: &Analyzed<'_>, loader_type: Option<&str>, member: O
 #[test]
 fn database_names_the_modules_that_open_it() {
     with_workspace(|w| {
-        for (is_embedded, modules) in [(false, &["bun:sqlite"][..]), (true, &["node:fs", "bun:sqlite"])] {
+        for (is_embedded, modules) in [
+            (false, &["bun:sqlite"][..]),
+            (true, &["node:fs", "bun:sqlite"]),
+        ] {
             let data = DataModule::Database {
                 path: w.atom("/x.db"),
                 is_embedded,
@@ -372,9 +381,16 @@ fn database_names_the_modules_that_open_it() {
             let s = analyzed_module(w, &data);
             let sites = s.analysis.import_sites.iter();
             let named: Vec<ImportSpecifier> = sites.map(|site| site.specifier).collect();
-            let expected = modules.iter().map(|name| ImportSpecifier::Constant(w.atom(name)));
+            let expected = modules
+                .iter()
+                .map(|name| ImportSpecifier::Constant(w.atom(name)));
             assert_eq!(named, expected.collect::<Vec<ImportSpecifier>>());
-            assert!(s.analysis.import_sites.iter().all(|site| !site.is_host_value));
+            assert!(
+                s.analysis
+                    .import_sites
+                    .iter()
+                    .all(|site| !site.is_host_value)
+            );
             let value = export_default_value(&s.hir);
             assert!(matches!(s.hir[value].kind, ExprKind::New(_)));
             assert_eq!(exports(&s), ["default"]);
@@ -400,7 +416,11 @@ fn runtime_require_is_host_value() {
             panic!("site: {:?}", site.kind);
         };
         assert!(site.is_host_value);
-        assert!(s.hir.expr_flags(call).contains(ExprFlags::RESOLVED_AT_RUNTIME));
+        assert!(
+            s.hir
+                .expr_flags(call)
+                .contains(ExprFlags::RESOLVED_AT_RUNTIME)
+        );
         assert_eq!(s.analysis.decisions.decision(call), Decision::Unknown);
         assert!(!s.analysis.decisions.is_dead_expr(call));
     });
@@ -516,7 +536,9 @@ fn roles() {
                 loader_type: None,
                 member: None,
             },
-            DataModule::NativeAddon { path: w.atom("/x.node") },
+            DataModule::NativeAddon {
+                path: w.atom("/x.node"),
+            },
             DataModule::Page,
         ];
         for data in &modules {
@@ -548,7 +570,10 @@ fn deep_values_do_not_overflow() {
             let root = tree.host_values[0].0;
             let s = analyze(w, tree);
             if !s.bound.ran_out_of_stack {
-                assert!(matches!(s.analysis.decisions.decision(root), Decision::Data(_)));
+                assert!(matches!(
+                    s.analysis.decisions.decision(root),
+                    Decision::Data(_)
+                ));
             }
         }
     });

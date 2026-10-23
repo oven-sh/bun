@@ -44,9 +44,13 @@ impl CompileFailure {
                 out.extend_from_slice(path);
                 out.extend_from_slice(b" can't run code compiled by this Bun. It isn't a Bun executable, or it's a different version. Use the same version of Bun, built for this platform");
             }
-            CompileFailure::TemplateIsAnotherBuild { path } => {
+            CompileFailure::TemplateDiffers { path, difference } => {
                 out.extend_from_slice(path);
-                out.extend_from_slice(b" is a different build of Bun. It must be the exact build that runs this command");
+                out.extend_from_slice(b" can't run code compiled by this Bun: ");
+                out.extend_from_slice(difference);
+                out.extend_from_slice(
+                    b"\nnote: use a build of the same revision of Bun with the same configuration",
+                );
             }
             CompileFailure::Build { .. } => {}
             CompileFailure::Assets(text) => out.extend_from_slice(text.as_bytes()),

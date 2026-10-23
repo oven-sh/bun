@@ -136,11 +136,17 @@ fn member_key_of_computed_index() {
     let number = file.number(0.0);
     let zero = file.expr(ExprKind::Number(number), 0, 0);
     let (obj, index) = add_index(&mut file, zero);
-    assert_eq!(file.member_key(index), Some((obj, MemberKey::Computed(zero))));
+    assert_eq!(
+        file.member_key(index),
+        Some((obj, MemberKey::Computed(zero)))
+    );
 
     let name = add_ident(&mut file);
     let (obj, index) = add_index(&mut file, name);
-    assert_eq!(file.member_key(index), Some((obj, MemberKey::Computed(name))));
+    assert_eq!(
+        file.member_key(index),
+        Some((obj, MemberKey::Computed(name)))
+    );
 }
 
 #[test]
@@ -272,7 +278,11 @@ fn diagnostic_class() {
         (DiagnosticKind::Checker, DiagnosticClass::Semantic),
     ];
     for (kind, class) in classes {
-        assert_eq!(Diagnostic::new(kind, (1, 2), 3, &[]).class, class, "{kind:?}");
+        assert_eq!(
+            Diagnostic::new(kind, (1, 2), 3, &[]).class,
+            class,
+            "{kind:?}"
+        );
     }
     let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, (1, 2), 3, &[]);
     let classed = diagnostic.clone().with_class(DiagnosticClass::Style);
@@ -402,10 +412,22 @@ fn runtime_members() {
     let cases: [MemberCase; 20] = [
         (MemberKind::Property, none, FnId::NONE, plain, true),
         (MemberKind::Property, none, FnId::NONE, decorated, true),
-        (MemberKind::Property, declare, FnId::NONE, declare_keyword, false),
+        (
+            MemberKind::Property,
+            declare,
+            FnId::NONE,
+            declare_keyword,
+            false,
+        ),
         (MemberKind::Property, is_abstract, FnId::NONE, plain, false),
         (MemberKind::Property, declare, FnId::NONE, decorated, true),
-        (MemberKind::Property, is_abstract, FnId::NONE, decorated, true),
+        (
+            MemberKind::Property,
+            is_abstract,
+            FnId::NONE,
+            decorated,
+            true,
+        ),
         (MemberKind::Method, none, with_body, plain, true),
         (MemberKind::Getter, none, with_body, plain, true),
         (MemberKind::Setter, none, with_body, plain, true),
@@ -413,15 +435,29 @@ fn runtime_members() {
         (MemberKind::Method, none, without_body, plain, false),
         (MemberKind::Constructor, none, without_body, plain, false),
         (MemberKind::Method, none, FnId::NONE, plain, false),
-        (MemberKind::Method, is_abstract, without_body, decorated, false),
+        (
+            MemberKind::Method,
+            is_abstract,
+            without_body,
+            decorated,
+            false,
+        ),
         (MemberKind::Method, declare, with_body, decorated, false),
         (MemberKind::StaticBlock, none, with_body, plain, true),
         (MemberKind::StaticBlock, declare, with_body, plain, false),
         (MemberKind::CallSignature, none, without_body, plain, false),
-        (MemberKind::ConstructSignature, none, without_body, plain, false),
+        (
+            MemberKind::ConstructSignature,
+            none,
+            without_body,
+            plain,
+            false,
+        ),
         (MemberKind::IndexSignature, none, without_body, plain, false),
     ];
-    let members = cases.each_ref().map(|case| add_class_member(&mut file, case));
+    let members = cases
+        .each_ref()
+        .map(|case| add_class_member(&mut file, case));
     with_file(file, |hir| {
         for (member, case) in members.into_iter().zip(&cases) {
             assert_eq!(has_runtime_member(hir, member), case.4, "{case:?}");

@@ -12,7 +12,11 @@ for (const log of result.logs) console.log(String(log));
 process.exit(result.success ? 0 : 1);
 `;
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] }, include: ["*.ts"], exclude: ["build.ts", "plugin.ts"] });
+const tsconfig = JSON.stringify({
+  compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] },
+  include: ["*.ts"],
+  exclude: ["build.ts", "plugin.ts"],
+});
 
 const cases: Record<string, { files: Record<string, string>; prints: string }> = {
   "onLoad changes the text of a file": {
@@ -88,9 +92,23 @@ describe.concurrent("compile/aot/plugins of Bun.build", () => {
           for (const how of ["bundle", "aot"]) {
             const executable = join(folder, how + (isWindows ? ".exe" : ""));
             const built = await spawned([bunExe(), "build.ts", "./" + main, executable, how], folder, bunEnv);
-            expect({ how, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ how, stdout: expect.any(String), stderr: expect.any(String), exitCode: 0 });
-            const ran = await spawned([executable], folder, how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
-            expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ how, stdout: prints, exitCode: 0, signal: null });
+            expect({ how, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+              how,
+              stdout: expect.any(String),
+              stderr: expect.any(String),
+              exitCode: 0,
+            });
+            const ran = await spawned(
+              [executable],
+              folder,
+              how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv,
+            );
+            expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+              how,
+              stdout: prints,
+              exitCode: 0,
+              signal: null,
+            });
           }
         }),
       600_000,

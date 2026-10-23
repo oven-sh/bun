@@ -135,8 +135,7 @@ interface Internals {
   emitReadableNow: ((stream: $Node.Readable) => void) | undefined;
   finishEnd: ((state: ReadableState, stream: $Node.Readable) => void) | undefined;
   onRequestBodyData:
-    | ((this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) => void)
-    | undefined;
+    ((this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) => void) | undefined;
   takeRequestCloseTick: ((request: $Node.IncomingMessage) => boolean) | undefined;
   destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
 }
@@ -286,7 +285,12 @@ const kUnreadBytes = Symbol("kUnreadBytes");
 function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
   if (options === kUnreadBytes) {
     this[kState] =
-      Flag.EmitClose | Flag.AutoDestroy | Flag.Constructed | ReadableFlag.Sync | ReadableFlag.DefaultUTF8Encoding | ReadableFlag.ReadingMore;
+      Flag.EmitClose |
+      Flag.AutoDestroy |
+      Flag.Constructed |
+      ReadableFlag.Sync |
+      ReadableFlag.DefaultUTF8Encoding |
+      ReadableFlag.ReadingMore;
     this.highWaterMark = stream;
     this.buffer = [];
     this.bufferIndex = 0;
@@ -873,7 +877,7 @@ declare global {
   }
 }
 
-export type { ReadableState, WritableState, BufferedWrite, AfterWriteTickInfo, WriteCallback };
+export type { AfterWriteTickInfo, BufferedWrite, ReadableState, WritableState, WriteCallback };
 
 export default {
   getHighWaterMark,

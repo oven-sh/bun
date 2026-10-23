@@ -12,7 +12,15 @@ import {
   scalarDeleting,
   type CoffSection,
 } from "./coff-objects.ts";
-import { createSectionGraph, nodeAt, type GraphFailure, type GraphReading, type PlacedNodes, type RecordSection, type UnreadReason } from "./graph.ts";
+import {
+  createSectionGraph,
+  nodeAt,
+  type GraphFailure,
+  type GraphReading,
+  type PlacedNodes,
+  type RecordSection,
+  type UnreadReason,
+} from "./graph.ts";
 import type { NamedBytes } from "./icu-data.ts";
 import { peImage, type LinkedImage } from "./linked-image.ts";
 
@@ -44,7 +52,7 @@ function readChunks(path: string): Chunk[] {
   const chunks: Chunk[] = [];
   const objects = new Map<string, string>();
   let output = "";
-  for (let at = text.indexOf("\n") + 1; at < text.length; ) {
+  for (let at = text.indexOf("\n") + 1; at < text.length;) {
     let end = text.indexOf("\n", at);
     if (end < 0) end = text.length;
     if (text.charCodeAt(at + 24) !== 32) output = text.slice(at + 24, end).trim();
@@ -103,7 +111,10 @@ function readSymbols(path: string): { symbols: MapSymbol[]; entry: number; known
 }
 
 export function namedBytesOfPe(executable: string, symbolMap: string): NamedBytes {
-  return { symbols: readSymbols(symbolMap).symbols.map(symbol => [symbol.name, symbol.address]), image: peImage(executable) };
+  return {
+    symbols: readSymbols(symbolMap).symbols.map(symbol => [symbol.name, symbol.address]),
+    image: peImage(executable),
+  };
 }
 
 function exportedAddresses(executable: string): number[] {
@@ -114,7 +125,8 @@ function exportedAddresses(executable: string): number[] {
   const offsetOf = (address: number) => {
     for (let at = 0; at < sections.length; at += 40) {
       const start = sections.readUInt32LE(at + 12);
-      if (address >= start && address - start < sections.readUInt32LE(at + 16)) return sections.readUInt32LE(at + 20) + address - start;
+      if (address >= start && address - start < sections.readUInt32LE(at + 16))
+        return sections.readUInt32LE(at + 20) + address - start;
     }
     return -1;
   };
@@ -136,12 +148,18 @@ export function sectionInFile(executable: string, name: string): { offset: numbe
   const sections = readAt(fd, pe + 24 + header.readUInt16LE(20), header.readUInt16LE(6) * 40);
   closeSync(fd);
   for (let at = 0; at < sections.length; at += 40) {
-    if (sections.toString("latin1", at, at + 8).replace(/\0.*$/, "") === name) return { offset: sections.readUInt32LE(at + 20), size: sections.readUInt32LE(at + 16) };
+    if (sections.toString("latin1", at, at + 8).replace(/\0.*$/, "") === name)
+      return { offset: sections.readUInt32LE(at + 20), size: sections.readUInt32LE(at + 16) };
   }
   return undefined;
 }
 
-function readRecordSection(object: CoffObject, name: string, section: CoffSection, pointerRelocation: number): RecordSection | undefined {
+function readRecordSection(
+  object: CoffObject,
+  name: string,
+  section: CoffSection,
+  pointerRelocation: number,
+): RecordSection | undefined {
   const table = object.relocationsOf(section);
   const references = new Map<number, string>();
   for (let at = 0; at < table.length; at += 10) {
@@ -183,11 +201,18 @@ interface Connections {
 function findArchiveMembers(link: CoffLink, symbols: MapSymbol[]): Map<string, ArchiveMember[]> {
   const members = new Map<string, ArchiveMember[]>();
   const archives = new Set(link.inputs.filter(path => /\.(lib|rlib|a)$/i.test(path) && existsSync(path)));
-  const stems = new Set([...archives].map(path => basename(path).replace(/\.[^.]*$/, "").toLowerCase()));
+  const stems = new Set(
+    [...archives].map(path =>
+      basename(path)
+        .replace(/\.[^.]*$/, "")
+        .toLowerCase(),
+    ),
+  );
   const neededLibraries = new Set<string>();
   for (const symbol of symbols) {
     const colon = symbol.object.indexOf(":");
-    if (colon > 1 && !stems.has(symbol.object.slice(0, colon).toLowerCase())) neededLibraries.add(symbol.object.slice(0, colon).toLowerCase() + ".lib");
+    if (colon > 1 && !stems.has(symbol.object.slice(0, colon).toLowerCase()))
+      neededLibraries.add(symbol.object.slice(0, colon).toLowerCase() + ".lib");
   }
   for (const folder of link.libraryFolders) {
     if (!existsSync(folder)) continue;
@@ -195,7 +220,8 @@ function findArchiveMembers(link: CoffLink, symbols: MapSymbol[]): Map<string, A
       if (neededLibraries.delete(file.toLowerCase())) archives.add(join(folder, file));
     }
   }
-  for (const archive of archives) for (const [name, list] of readArchive(archive)) members.set(name, [...(members.get(name) ?? []), ...list]);
+  for (const archive of archives)
+    for (const [name, list] of readArchive(archive)) members.set(name, [...(members.get(name) ?? []), ...list]);
   return members;
 }
 
@@ -267,10 +293,15 @@ function tieSymbolsToChunks(
       ? object?.byName.get(symbol.name)?.find(index => {
           const section = object.sections[object.symbolSection[index]! - 1]!;
           const isExternal = object.symbolClass[index] === IMAGE_SYM_CLASS_EXTERNAL;
-          return symbol.address - object.symbolValue[index]! === chunk.address && section.size === chunk.size && isExternal !== symbol.isStatic;
+          return (
+            symbol.address - object.symbolValue[index]! === chunk.address &&
+            section.size === chunk.size &&
+            isExternal !== symbol.isStatic
+          );
         })
       : undefined;
-    if (object !== undefined && ownSymbol !== undefined) placedSectionsOf(object).set(object.symbolSection[ownSymbol]!, node);
+    if (object !== undefined && ownSymbol !== undefined)
+      placedSectionsOf(object).set(object.symbolSection[ownSymbol]!, node);
     if (symbol.address !== chunk.address) continue;
     names[node]!.push(symbol.name);
     const isLabel = object !== undefined && ownSymbol !== undefined && symbol.isStatic && !object.isFunction(ownSymbol);
@@ -287,14 +318,18 @@ function tieSymbolsToChunks(
   const findLeaderNodes = (object: CoffObject, name: string, section: number): number[] | undefined => {
     const { leader } = object.sections[section - 1]!;
     if (leader < 0) return undefined;
-    if (object.symbolClass[leader] !== IMAGE_SYM_CLASS_EXTERNAL) return staticNodes.get(nameInSymbolMap.get(name) + "\0" + object.nameOf(leader));
+    if (object.symbolClass[leader] !== IMAGE_SYM_CLASS_EXTERNAL)
+      return staticNodes.get(nameInSymbolMap.get(name) + "\0" + object.nameOf(leader));
     const node = externalNode.get(object.nameOf(leader));
     return node === undefined ? undefined : [node];
   };
   return { placed, externalNode, names, aliases, findLeaderNodes };
 }
 
-function readRecordSections(objects: InputObjects["objects"], pointerRelocation: number): { recordSections: RecordSection[]; failures: GraphFailure[] } {
+function readRecordSections(
+  objects: InputObjects["objects"],
+  pointerRelocation: number,
+): { recordSections: RecordSection[]; failures: GraphFailure[] } {
   const recordSections: RecordSection[] = [];
   const failures: GraphFailure[] = [];
   for (const [name, object] of objects) {
@@ -323,7 +358,11 @@ function findSymbolTarget(object: CoffObject, symbol: number, externalNode: Map<
   }
 }
 
-function findUntiedSectionKeys(chunks: Chunk[], objects: InputObjects["objects"], placed: SymbolTies["placed"]): Map<string, Set<string>> {
+function findUntiedSectionKeys(
+  chunks: Chunk[],
+  objects: InputObjects["objects"],
+  placed: SymbolTies["placed"],
+): Map<string, Set<string>> {
   const tiedNodes = new Set<number>();
   for (const sections of placed.values()) for (const node of sections.values()) tiedNodes.add(node);
   const keysByObject = new Map<string, Set<string>>();
@@ -336,7 +375,12 @@ function findUntiedSectionKeys(chunks: Chunk[], objects: InputObjects["objects"]
   return keysByObject;
 }
 
-function connectSections(chunks: Chunk[], objects: InputObjects["objects"], ties: SymbolTies, knownToLinker: Set<string>): Connections {
+function connectSections(
+  chunks: Chunk[],
+  objects: InputObjects["objects"],
+  ties: SymbolTies,
+  knownToLinker: Set<string>,
+): Connections {
   const { placed, externalNode, findLeaderNodes } = ties;
   const successors: Set<number>[] = chunks.map(() => new Set());
   const unplaced = new Map<CoffObject, Map<number, number>>();
@@ -362,7 +406,13 @@ function connectSections(chunks: Chunk[], objects: InputObjects["objects"], ties
     if (node !== undefined) return [node];
     return findLeaderNodes(object, name, section) ?? [ensureUnplacedNode(object, name, section)];
   };
-  const addReferences = (object: CoffObject, name: string, section: number, from: number, reportsUnresolved: boolean) => {
+  const addReferences = (
+    object: CoffObject,
+    name: string,
+    section: number,
+    from: number,
+    reportsUnresolved: boolean,
+  ) => {
     for (const symbol of object.targetsOf(object.sections[section - 1]!)) {
       const target = findSymbolTarget(object, symbol, externalNode);
       switch (target.kind) {
@@ -374,7 +424,13 @@ function connectSections(chunks: Chunk[], objects: InputObjects["objects"], ties
           break;
         case "Undefined":
           if (!reportsUnresolved || knownToLinker.has(target.name)) symbolsOutsideGraph++;
-          else failures.push({ kind: "UnresolvedReference", object: name, section: object.sections[section - 1]!.name, target: target.name });
+          else
+            failures.push({
+              kind: "UnresolvedReference",
+              object: name,
+              section: object.sections[section - 1]!.name,
+              target: target.name,
+            });
           break;
         case "NoSection":
           break;
@@ -382,14 +438,16 @@ function connectSections(chunks: Chunk[], objects: InputObjects["objects"], ties
     }
   };
   const drainWorklist = (reportsUnresolved: boolean) => {
-    for (let next = worklist.pop(); next !== undefined; next = worklist.pop()) addReferences(next[0], next[1], next[2], next[3], reportsUnresolved);
+    for (let next = worklist.pop(); next !== undefined; next = worklist.pop())
+      addReferences(next[0], next[1], next[2], next[3], reportsUnresolved);
   };
   for (const [name, object] of objects) {
     if (object === undefined) continue;
     object.sections.forEach((section, index) => {
       if (section.flags & notLoadedFlags || section.size === 0) return;
       const node = placed.get(object)?.get(index + 1);
-      const parent = section.selection === IMAGE_COMDAT_SELECT_ASSOCIATIVE ? placed.get(object)?.get(section.parent) : undefined;
+      const parent =
+        section.selection === IMAGE_COMDAT_SELECT_ASSOCIATIVE ? placed.get(object)?.get(section.parent) : undefined;
       const isInImage = node !== undefined || parent !== undefined;
       const isRoot = !(section.flags & IMAGE_SCN_LNK_COMDAT) || (isInImage && !ordinarySectionName.test(section.name));
       if (isRoot) roots.add(node ?? ensureUnplacedNode(object, name, index + 1));
@@ -402,14 +460,20 @@ function connectSections(chunks: Chunk[], objects: InputObjects["objects"], ties
     const object = objects.get(name)!;
     object.sections.forEach((section, index) => {
       const isUntied = untiedSectionKeys.has(section.name + "\0" + section.size) && !placed.get(object)?.has(index + 1);
-      if (isUntied && section.selection !== IMAGE_COMDAT_SELECT_ASSOCIATIVE) roots.add(ensureUnplacedNode(object, name, index + 1));
+      if (isUntied && section.selection !== IMAGE_COMDAT_SELECT_ASSOCIATIVE)
+        roots.add(ensureUnplacedNode(object, name, index + 1));
     });
   }
   drainWorklist(false);
   return { successors, unplaced, unplacedNodes, roots, failures, symbolsOutsideGraph };
 }
 
-function connectDuplicateSections(count: number, placed: SymbolTies["placed"], unplaced: Connections["unplaced"], successors: Set<number>[]): void {
+function connectDuplicateSections(
+  count: number,
+  placed: SymbolTies["placed"],
+  unplaced: Connections["unplaced"],
+  successors: Set<number>[],
+): void {
   const isFoldable = (section: CoffSection) => section.name.startsWith(".rdata") && section.contents !== 0;
   const placedSuccessors = (node: number) => [...successors[node]!].filter(next => next < count);
   const unplacedByContents = new Map<string, [number, number[]][]>();
@@ -430,13 +494,20 @@ function connectDuplicateSections(count: number, placed: SymbolTies["placed"], u
       const section = object.sections[index - 1]!;
       if (!sizes.has(section.size) || !isFoldable(section)) continue;
       for (const [duplicate, references] of unplacedByContents.get(object.contentsOf(section)) ?? []) {
-        if (references.length === placedSuccessors(node).length && references.every(next => successors[node]!.has(next))) successors[duplicate]!.add(node);
+        if (
+          references.length === placedSuccessors(node).length &&
+          references.every(next => successors[node]!.has(next))
+        )
+          successors[duplicate]!.add(node);
       }
     }
   }
 }
 
-function findUnreadChunks(chunks: Chunk[], unreadReasons: Map<string, UnreadReason>): { nodes: number[]; failures: GraphFailure[] } {
+function findUnreadChunks(
+  chunks: Chunk[],
+  unreadReasons: Map<string, UnreadReason>,
+): { nodes: number[]; failures: GraphFailure[] } {
   const nodes: number[] = [];
   const failures: GraphFailure[] = [];
   const reportedObjects = new Set<string>();
@@ -461,7 +532,9 @@ function findExportedNodes(executable: string, placedNodes: PlacedNodes): Set<nu
 }
 
 function findOutputs(chunks: Chunk[], image: LinkedImage): string[] {
-  return chunks.map(chunk => (chunk.output === ".data" && image.bytes(chunk.address, chunk.size) === undefined ? ".bss" : chunk.output));
+  return chunks.map(chunk =>
+    chunk.output === ".data" && image.bytes(chunk.address, chunk.size) === undefined ? ".bss" : chunk.output,
+  );
 }
 
 function computePaddedSizes(chunks: Chunk[], output: string[]): number[] {
@@ -469,11 +542,17 @@ function computePaddedSizes(chunks: Chunk[], output: string[]): number[] {
     const next = chunks[node + 1];
     if (next === undefined) return chunk.size;
     const padding = next.address - chunk.address - chunk.size;
-    return output[node] === output[node + 1] && padding > 0 && padding < next.alignment ? chunk.size + padding : chunk.size;
+    return output[node] === output[node + 1] && padding > 0 && padding < next.alignment
+      ? chunk.size + padding
+      : chunk.size;
   });
 }
 
-function createResolver(objects: InputObjects["objects"], { placed, externalNode, findLeaderNodes }: SymbolTies, unplaced: Connections["unplaced"]): GraphReading["resolve"] {
+function createResolver(
+  objects: InputObjects["objects"],
+  { placed, externalNode, findLeaderNodes }: SymbolTies,
+  unplaced: Connections["unplaced"],
+): GraphReading["resolve"] {
   return (object, reference) => {
     const coff = objects.get(object);
     if (coff === undefined) return undefined;
@@ -481,7 +560,10 @@ function createResolver(objects: InputObjects["objects"], { placed, externalNode
     switch (target.kind) {
       case "Section": {
         const { section } = target;
-        const node = placed.get(coff)?.get(section) ?? findLeaderNodes(coff, object, section)?.[0] ?? unplaced.get(coff)?.get(section);
+        const node =
+          placed.get(coff)?.get(section) ??
+          findLeaderNodes(coff, object, section)?.[0] ??
+          unplaced.get(coff)?.get(section);
         if (node === undefined) return undefined;
         const { leader } = coff.sections[section - 1]!;
         const hasExternalLeader = leader >= 0 && coff.symbolClass[leader] === IMAGE_SYM_CLASS_EXTERNAL;
@@ -501,7 +583,11 @@ function createReading(link: CoffLink, files: Map<string, number>): GraphReading
   const { symbols, entry, knownToLinker } = readSymbols(link.symbolMap);
   const image = peImage(link.executable);
   const count = chunks.length;
-  const placedNodes = { address: chunks.map(chunk => chunk.address), size: chunks.map(chunk => chunk.size), placedCount: count };
+  const placedNodes = {
+    address: chunks.map(chunk => chunk.address),
+    size: chunks.map(chunk => chunk.size),
+    placedCount: count,
+  };
   const inputs = openObjects(chunks, findArchiveMembers(link, symbols), files);
   const ties = tieSymbolsToChunks(chunks, placedNodes, symbols, inputs, new Set(link.alternateNames));
   const records = readRecordSections(inputs.objects, image.isArm64 ? pointerRelocationArm64 : pointerRelocationX64);
@@ -537,7 +623,12 @@ function createReading(link: CoffLink, files: Map<string, number>): GraphReading
     recordSections: records.recordSections,
     resolve: createResolver(inputs.objects, ties, unplaced),
     failures: [...records.failures, ...connections.failures, ...unreadChunks.failures],
-    statistics: { chunks: count, sectionsWithoutAddress: unplacedNodes.length, references: graph.successors.length, symbolsOutsideGraph },
+    statistics: {
+      chunks: count,
+      sectionsWithoutAddress: unplacedNodes.length,
+      references: graph.successors.length,
+      symbolsOutsideGraph,
+    },
   };
 }
 

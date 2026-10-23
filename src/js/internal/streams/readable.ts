@@ -201,7 +201,7 @@ function preallocatedEvents(): $Node.Events {
 
 function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
   if (new.target !== Readable && !(this instanceof Readable)) {
-    "unlikely";
+    ("unlikely");
     return new Readable(options) as any;
   }
 
@@ -377,7 +377,7 @@ function readableAddChunkPushByteMode(stream: $Node.Readable, state: ReadableSta
 
   let length = chunk ? (chunk.length as number) : 0;
   if (!chunk || length <= 0) {
-    "unlikely";
+    ("unlikely");
     state[kState] &= ~Flag.Reading;
     maybeReadMore(stream, state);
 
@@ -385,7 +385,7 @@ function readableAddChunkPushByteMode(stream: $Node.Readable, state: ReadableSta
   }
 
   if ((state[kState] & Flag.Ended) !== 0) {
-    "unlikely";
+    ("unlikely");
     errorOrDestroy(stream, $ERR_STREAM_PUSH_AFTER_EOF());
     return false;
   }
@@ -416,7 +416,7 @@ function readableAddChunkPushObjectMode(stream: $Node.Readable, state: ReadableS
   }
 
   if ((state[kState] & Flag.Ended) !== 0) {
-    "unlikely";
+    ("unlikely");
     errorOrDestroy(stream, $ERR_STREAM_PUSH_AFTER_EOF());
     return false;
   }
@@ -450,7 +450,7 @@ function addChunk(stream: $Node.Readable, state: ReadableState, chunk, length: n
     // Use the guard to avoid creating `Set()` repeatedly
     // when we have multiple pipes.
     if ((state[kState] & Flag.MultiAwaitDrain) !== 0) {
-      "unlikely";
+      ("unlikely");
       (state.awaitDrainWriters as Set<$Node.AnyStream>).clear();
     } else {
       state.awaitDrainWriters = null;
@@ -583,7 +583,7 @@ function read(stream: $Node.Readable, state: ReadableState, n: number) {
 
   // If we're asking for more than the current hwm, then raise the hwm.
   if (n > state.highWaterMark) {
-    "unlikely";
+    ("unlikely");
     state.highWaterMark = computeNewHighWaterMark(n);
   }
 
@@ -684,7 +684,7 @@ function read(stream: $Node.Readable, state: ReadableState, n: number) {
   } else {
     state.length -= n;
     if ((state[kState] & Flag.MultiAwaitDrain) !== 0) {
-      "unlikely";
+      ("unlikely");
       (state.awaitDrainWriters as Set<$Node.AnyStream>).clear();
     } else {
       state.awaitDrainWriters = null;
@@ -1109,7 +1109,10 @@ Readable.prototype.removeListener = function (this: $Node.Readable, ev: $Node.Ev
 };
 Readable.prototype.off = Readable.prototype.removeListener;
 
-const removingAllMethod = (Readable.prototype.removeAllListeners = function (this: $Node.Readable, ev?: $Node.EventName) {
+const removingAllMethod = (Readable.prototype.removeAllListeners = function (
+  this: $Node.Readable,
+  ev?: $Node.EventName,
+) {
   const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
 
   if (ev === "readable" || ev === undefined) {
@@ -1325,8 +1328,7 @@ Readable.prototype.iterator = function (this: $Node.Readable, options?: $Node.Re
     [mark: symbol]: unknown;
   }
   let createBatchedAsyncIterator:
-    | typeof import("internal/streams/iter/classic").default.createBatchedAsyncIterator
-    | undefined;
+    typeof import("internal/streams/iter/classic").default.createBatchedAsyncIterator | undefined;
   let normalizeBatch: typeof import("internal/streams/iter/classic").default.normalizeBatch | undefined;
   let kValidatedSource: typeof import("internal/streams/iter/types").default.kValidatedSource | undefined;
 

@@ -1,5 +1,5 @@
-import { testPlanes, tsconfig } from "./generated/typed-object-mutations";
 import { generated } from "./generated/run-generated";
+import { testPlanes, tsconfig } from "./generated/typed-object-mutations";
 
 generated(
   "an object is changed behind a typed reference",

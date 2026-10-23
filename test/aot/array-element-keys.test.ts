@@ -10,7 +10,16 @@ import { built, slot, spawned, told, wanted, withoutCoreDump } from "./run-progr
 import { describe, test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] },
+  compilerOptions: {
+    target: "esnext",
+    module: "preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    typeRoots: [join(import.meta.dir, "..", "..", "packages")],
+    types: ["bun-types"],
+  },
 });
 
 // --aot has its own wording for some TypeErrors, so only an error's name is printed.
@@ -100,7 +109,8 @@ for (const [name, make] of receivers) {
 `);
 
 const programs: Record<string, string> = {
-  "every kind of key on an array": typeScript(`${keys}function at(list: number[], key: any): unknown { return list[key]; }
+  "every kind of key on an array":
+    typeScript(`${keys}function at(list: number[], key: any): unknown { return list[key]; }
 function has(list: number[], key: any): boolean { return key in list; }
 function put(list: number[], key: any, value: number): void { list[key] = value; }
 function remove(list: number[], key: any): boolean { return delete list[key]; }
@@ -132,7 +142,8 @@ attempt("sum past the end", () => sum([1, 2, 3], [0, 1, 2, 3]));
 attempt("sum with for-in keys", () => sumByKeys([1, 2, 3]));
 `),
 
-  "every kind of key on typed arrays": typeScript(`${keys}function at(view: Uint8Array, key: any): unknown { return view[key]; }
+  "every kind of key on typed arrays":
+    typeScript(`${keys}function at(view: Uint8Array, key: any): unknown { return view[key]; }
 function has(view: Uint8Array, key: any): boolean { return key in view; }
 function put(view: Uint8Array, key: any, value: number): void { view[key] = value; }
 function fractionAt(view: Float64Array, key: any): unknown { return view[key]; }
@@ -180,7 +191,8 @@ attempt("a store after the buffer is detached", () => (put(left, 0, 9), stateOf(
 `),
 
   // Plain Bun's and --aot's TypeError messages for an access on undefined or null both name the value.
-  "undefined and null where an array is expected": typeScript(`function access(label: string, action: () => unknown): void {
+  "undefined and null where an array is expected":
+    typeScript(`function access(label: string, action: () => unknown): void {
   attempt(label, () => {
     try {
       return action();
@@ -372,18 +384,30 @@ const chosen = (names: string[]) => (wanted === "quick" ? names.slice(0, 1) : na
 // `undefined[key] = value` throws before the key is made a property key: so the language has it since 2020, and so does the executable.
 // Bun: `bun run` converts the key first, which runs its toString(), and throws then.
 const whereTheLanguageIsTheOracle: [string, string][] = [
-  ["a store to undefined, order: key evaluated,value evaluated,key converted\n", "a store to undefined, order: key evaluated,value evaluated\n"],
+  [
+    "a store to undefined, order: key evaluated,value evaluated,key converted\n",
+    "a store to undefined, order: key evaluated,value evaluated\n",
+  ],
 ];
 
 async function expectOutputOfPlainBun(text: string, flags: string[]) {
   using dir = tempDir("aot-array-element-keys", { "tsconfig.json": tsconfig, "main.ts": text });
   const folder = String(dir);
   const plain = await spawned([bunExe(), "run", "main.ts"], folder, bunEnv);
-  expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr, printsNothing: plain.stdout === "" }).toEqual({ signal: null, exitCode: 0, stderr: "", printsNothing: false });
+  expect({
+    signal: plain.signal,
+    exitCode: plain.exitCode,
+    stderr: plain.stderr,
+    printsNothing: plain.stdout === "",
+  }).toEqual({ signal: null, exitCode: 0, stderr: "", printsNothing: false });
   const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
   built(await spawned([bunExe(), ...compileCommand, ...flags, "main.ts", "--outfile", executable], folder, bunEnv));
-  const compiled = await spawned(withoutCoreDump([executable]), folder, { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" });
-  for (const [printedByBunRun, right] of whereTheLanguageIsTheOracle) plain.stdout = plain.stdout.replace(printedByBunRun, right);
+  const compiled = await spawned(withoutCoreDump([executable]), folder, {
+    ...bunEnv,
+    [runtimeEnvironment.forbidsInterpreter]: "1",
+  });
+  for (const [printedByBunRun, right] of whereTheLanguageIsTheOracle)
+    plain.stdout = plain.stdout.replace(printedByBunRun, right);
   expect({ signal: compiled.signal, ...told(compiled) }).toEqual({ signal: null, ...told(plain) });
 }
 
@@ -399,7 +423,11 @@ describe.concurrent("compile/aot/array element keys", () => {
 describe.concurrent("compile/aot/array element keys/one receiver per program", () => {
   for (const name of Object.keys(receivers)) {
     for (const way of chosen(["by default", "in a validating build"])) {
-      test(`${name}, ${way}`, () => slot(() => expectOutputOfPlainBun(programAboutReceivers([name]), ways[way])), 600_000);
+      test(
+        `${name}, ${way}`,
+        () => slot(() => expectOutputOfPlainBun(programAboutReceivers([name]), ways[way])),
+        600_000,
+      );
     }
   }
 });

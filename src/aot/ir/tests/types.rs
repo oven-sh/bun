@@ -22,12 +22,24 @@ fn array_of(contents: TypeId) -> Type {
 fn well_known_types() -> [(TypeId, Type); TypeTable::WELL_KNOWN_COUNT] {
     [
         (TypeTable::NEVER, Type::never()),
-        (TypeTable::UNDEFINED, Type::primitives(Primitives::UNDEFINED)),
+        (
+            TypeTable::UNDEFINED,
+            Type::primitives(Primitives::UNDEFINED),
+        ),
         (TypeTable::NULL, Type::primitives(Primitives::NULL)),
-        (TypeTable::NULLISH, Type::primitives(Primitives::UNDEFINED | Primitives::NULL)),
-        (TypeTable::BOOLEAN, Type::primitives(Primitives::FALSE | Primitives::TRUE)),
+        (
+            TypeTable::NULLISH,
+            Type::primitives(Primitives::UNDEFINED | Primitives::NULL),
+        ),
+        (
+            TypeTable::BOOLEAN,
+            Type::primitives(Primitives::FALSE | Primitives::TRUE),
+        ),
         (TypeTable::NUMBER, Type::primitives(Primitives::NUMBER)),
-        (TypeTable::INT32, Type::integers(-2_147_483_648, 2_147_483_647)),
+        (
+            TypeTable::INT32,
+            Type::integers(-2_147_483_648, 2_147_483_647),
+        ),
         (TypeTable::UINT32, Type::integers(0, 4_294_967_295)),
         (TypeTable::STRING, Type::primitives(Primitives::STRING)),
         (TypeTable::SYMBOL, Type::primitives(Primitives::SYMBOL)),
@@ -118,7 +130,10 @@ fn different_types_have_different_ids() {
         array_of(TypeTable::NUMBER),
     ];
     for (index, ty) in types.into_iter().enumerate() {
-        assert_eq!(table.intern(ty).index(), TypeTable::WELL_KNOWN_COUNT + index);
+        assert_eq!(
+            table.intern(ty).index(),
+            TypeTable::WELL_KNOWN_COUNT + index
+        );
     }
 }
 
@@ -187,7 +202,10 @@ fn class_type_has_one_class_part() {
 #[test]
 fn object_includes_functions() {
     let any_function = TypeFlags::ANY_FUNCTION;
-    assert_eq!(Type::any_object().flags, TypeFlags::ANY_OBJECT | any_function);
+    assert_eq!(
+        Type::any_object().flags,
+        TypeFlags::ANY_OBJECT | any_function
+    );
     assert_eq!(Type::any_function().flags, any_function);
     let object_bit_alone = Type {
         flags: TypeFlags::ANY_OBJECT,
@@ -207,7 +225,12 @@ fn anything_excludes_absent() {
     let with_absent = table.union(TypeTable::ANYTHING, TypeTable::ABSENT);
     assert_ne!(with_absent, TypeTable::ANYTHING);
     assert!(table.get(with_absent).is_anything());
-    assert!(table.get(with_absent).primitives.contains(Primitives::ABSENT));
+    assert!(
+        table
+            .get(with_absent)
+            .primitives
+            .contains(Primitives::ABSENT)
+    );
 }
 
 #[test]
@@ -276,7 +299,10 @@ fn ids_survive_index_growth() {
 fn union_all_of_nothing_is_never() {
     let mut table = TypeTable::new();
     assert_eq!(table.union_all([]), TypeTable::NEVER);
-    assert_eq!(table.union_all([TypeTable::NEVER, TypeTable::NEVER]), TypeTable::NEVER);
+    assert_eq!(
+        table.union_all([TypeTable::NEVER, TypeTable::NEVER]),
+        TypeTable::NEVER
+    );
     assert_eq!(table.union_all([TypeTable::NUMBER]), TypeTable::NUMBER);
     assert_eq!(table.len(), TypeTable::WELL_KNOWN_COUNT);
 }
@@ -285,7 +311,12 @@ fn union_all_of_nothing_is_never() {
 fn union_with_itself_and_never() {
     let mut table = TypeTable::new();
     let environment = table.intern(Type::environment(layout(0)));
-    for ty in [TypeTable::NUMBER, TypeTable::ANYTHING, TypeTable::ARRAY, environment] {
+    for ty in [
+        TypeTable::NUMBER,
+        TypeTable::ANYTHING,
+        TypeTable::ARRAY,
+        environment,
+    ] {
         assert_eq!(table.union(ty, ty), ty);
         assert_eq!(table.union(ty, TypeTable::NEVER), ty);
         assert_eq!(table.union(TypeTable::NEVER, ty), ty);
@@ -493,7 +524,10 @@ fn removing_primitives_removes_matching_parts() {
     let without_null = table.without_primitives(TypeTable::NULLISH, Primitives::NULL);
     assert_eq!(without_null, TypeTable::UNDEFINED);
     let without_true = table.without_primitives(TypeTable::BOOLEAN, Primitives::TRUE);
-    assert_eq!(*table.get(without_true), Type::primitives(Primitives::FALSE));
+    assert_eq!(
+        *table.get(without_true),
+        Type::primitives(Primitives::FALSE)
+    );
     let without_boolean = table.without_primitives(TypeTable::BOOLEAN, Primitives::BOOLEAN);
     assert_eq!(without_boolean, TypeTable::NEVER);
 }
@@ -502,10 +536,18 @@ fn removing_primitives_removes_matching_parts() {
 fn removing_primitives_keeps_other_parts() {
     let mut table = TypeTable::new();
     let environment = table.intern(Type::environment(layout(0)));
-    for ty in [TypeTable::OBJECT, TypeTable::FUNCTION, TypeTable::ARRAY, environment] {
+    for ty in [
+        TypeTable::OBJECT,
+        TypeTable::FUNCTION,
+        TypeTable::ARRAY,
+        environment,
+    ] {
         assert_eq!(table.without_primitives(ty, Primitives::ALL), ty);
     }
-    assert_eq!(table.without_primitives(TypeTable::INT32, Primitives::STRING), TypeTable::INT32);
+    assert_eq!(
+        table.without_primitives(TypeTable::INT32, Primitives::STRING),
+        TypeTable::INT32
+    );
     let objects = table.without_primitives(TypeTable::ANYTHING, Primitives::ALL);
     assert_eq!(objects, TypeTable::OBJECT);
 }
@@ -548,8 +590,14 @@ fn tables_that_share_types_number_them_like_a_table_of_its_own() {
     assert_eq!(first.types(), own.types());
     assert_eq!(*second.get(numbered(0)), Type::layout(layout(3)));
     assert_eq!(*second.get(numbered(1)), Type::integers(1, 5));
-    assert!(core::ptr::eq(first.get(numbered(0)), second.get(numbered(0))));
-    assert!(core::ptr::eq(first.get(TypeTable::ARRAY), second.get(TypeTable::ARRAY)));
+    assert!(core::ptr::eq(
+        first.get(numbered(0)),
+        second.get(numbered(0))
+    ));
+    assert!(core::ptr::eq(
+        first.get(TypeTable::ARRAY),
+        second.get(TypeTable::ARRAY)
+    ));
 }
 
 #[test]
@@ -574,7 +622,13 @@ fn table_that_shares_its_types_when_it_is_complete_stays_the_same() {
     shared.share_types();
     shared.share_types();
     assert!(shared.iter().eq(own.iter()));
-    assert_eq!(shared.intern(Type::layout(layout(3))), own.intern(Type::layout(layout(3))));
-    assert_eq!(shared.intern(Type::layout(layout(9))), own.intern(Type::layout(layout(9))));
+    assert_eq!(
+        shared.intern(Type::layout(layout(3))),
+        own.intern(Type::layout(layout(3)))
+    );
+    assert_eq!(
+        shared.intern(Type::layout(layout(9))),
+        own.intern(Type::layout(layout(9)))
+    );
     assert_eq!(shared.len(), own.len());
 }

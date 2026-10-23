@@ -53,7 +53,9 @@ fn callee_of(text: &str, mode: Mode) -> JsxCallee {
 
 fn imports_of(text: &str, mode: Mode) -> Vec<JsxImport> {
     let mut imports = Vec::new();
-    with_file(text, mode, |s, _| imports.extend(s.analysis.jsx_imports.iter()));
+    with_file(text, mode, |s, _| {
+        imports.extend(s.analysis.jsx_imports.iter())
+    });
     imports
 }
 
@@ -176,14 +178,20 @@ fn key_before_spread_stays_automatic() {
 
 #[test]
 fn last_key_counts() {
-    assert_eq!(key_position("<a key=\"1\" b key=\"2\" />;"), (Some(2), false));
+    assert_eq!(
+        key_position("<a key=\"1\" b key=\"2\" />;"),
+        (Some(2), false)
+    );
     let around_spread = "<a key=\"1\" {...p} key=\"2\" />;";
     assert_eq!(key_position(around_spread), (Some(2), true));
 }
 
 #[test]
 fn other_attributes_are_not_keys() {
-    assert_eq!(key_position("<a b=\"1\" keys=\"2\" {...p} />;"), (None, false));
+    assert_eq!(
+        key_position("<a b=\"1\" keys=\"2\" {...p} />;"),
+        (None, false)
+    );
 }
 
 #[test]
@@ -296,8 +304,14 @@ fn package_site_only_for_create_element() {
     let runtime = jsx_site(ImportSiteKind::JsxRuntime, "react/jsx-runtime");
     let package = jsx_site(ImportSiteKind::JsxPackage, "react");
     assert_eq!(site_specifiers("<a />;", Production), [runtime.clone()]);
-    assert_eq!(site_specifiers("<><a /></>;", Production), [runtime.clone()]);
-    assert_eq!(site_specifiers(KEY_AFTER_SPREAD, Production), [package.clone()]);
+    assert_eq!(
+        site_specifiers("<><a /></>;", Production),
+        [runtime.clone()]
+    );
+    assert_eq!(
+        site_specifiers(KEY_AFTER_SPREAD, Production),
+        [package.clone()]
+    );
     let both = "<><a {...p} key=\"k\" /></>;";
     assert_eq!(site_specifiers(both, Production), [runtime, package]);
 }
@@ -321,6 +335,9 @@ fn sites_are_found_by_kind() {
         assert_eq!(s.analysis.import_site_of_call(call), Some(1));
     });
     with_file("<a />;", Classic, |s, _| {
-        assert_eq!(s.analysis.import_site_index(ImportSiteKind::JsxRuntime), None);
+        assert_eq!(
+            s.analysis.import_site_index(ImportSiteKind::JsxRuntime),
+            None
+        );
     });
 }

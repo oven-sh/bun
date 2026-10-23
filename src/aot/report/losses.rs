@@ -155,17 +155,18 @@ fn add_engine_losses(losses: &[EngineLoss], positions: &mut Positions<'_>, list:
         .flat_map(|loss| [loss.subject, loss.witness])
         .collect();
     let shown = resolve_ascending(&wanted, |position| positions.resolve(position));
-    let shown_losses = losses.iter().zip(shown.chunks_exact(2));
-    list.losses.extend(shown_losses.map(|(loss, shown)| ReportedLoss {
-        stage: loss.stage,
-        reason: loss.reason,
-        ill_typed_cause: loss.ill_typed_cause,
-        limit: loss.limit,
-        subject_kind: loss.subject_kind,
-        subject: shown[0].clone(),
-        witness: shown[1].clone(),
-        count: loss.count,
-    }));
+    let shown_losses = losses.iter().zip(shown.as_chunks::<2>().0);
+    list.losses
+        .extend(shown_losses.map(|(loss, shown)| ReportedLoss {
+            stage: loss.stage,
+            reason: loss.reason,
+            ill_typed_cause: loss.ill_typed_cause,
+            limit: loss.limit,
+            subject_kind: loss.subject_kind,
+            subject: shown[0].clone(),
+            witness: shown[1].clone(),
+            count: loss.count,
+        }));
 }
 
 fn collect_site_losses<R, K: Ord + Copy>(
@@ -266,20 +267,27 @@ fn collect_allocation_losses(
 
 fn collect_decline_losses(records: &[DeclineRecord], names: &ProgramNames) -> Vec<EngineLoss> {
     let mut counts: BTreeMap<(DeclineKind, LimitId, Option<Position>), u64> = BTreeMap::new();
-    for record in records.iter().filter(|record| declines::is_listed(record, names)) {
+    for record in records
+        .iter()
+        .filter(|record| declines::is_listed(record, names))
+    {
         let witness = position_of(record.witness.location);
-        *counts.entry((record.kind, record.limit, witness)).or_default() += 1;
+        *counts
+            .entry((record.kind, record.limit, witness))
+            .or_default() += 1;
     }
-    let losses = counts.into_iter().map(|((kind, limit, witness), count)| EngineLoss {
-        stage: Stage::Optimize,
-        reason: kind.name(),
-        ill_typed_cause: IllTypedCause::None,
-        limit,
-        subject_kind: SubjectKind::Value,
-        subject: witness,
-        witness,
-        count,
-    });
+    let losses = counts
+        .into_iter()
+        .map(|((kind, limit, witness), count)| EngineLoss {
+            stage: Stage::Optimize,
+            reason: kind.name(),
+            ill_typed_cause: IllTypedCause::None,
+            limit,
+            subject_kind: SubjectKind::Value,
+            subject: witness,
+            witness,
+            count,
+        });
     losses.collect()
 }
 
@@ -298,25 +306,29 @@ fn collect_limit_losses(records: &[LossRecord], names: &ProgramNames) -> Vec<Eng
             .or_default();
         *count = count.saturating_add(u64::from(record.count));
     }
-    let losses = counts.into_iter().map(|((limit, stage, subject, witness), count)| {
-        let (subject_kind, subject) = match subject {
-            LimitSubject::Object(layout) => (SubjectKind::Object, names.layout_position(layout)),
-            LimitSubject::Function(function) => {
-                (SubjectKind::Function, function_position(names, function))
+    let losses = counts
+        .into_iter()
+        .map(|((limit, stage, subject, witness), count)| {
+            let (subject_kind, subject) = match subject {
+                LimitSubject::Object(layout) => {
+                    (SubjectKind::Object, names.layout_position(layout))
+                }
+                LimitSubject::Function(function) => {
+                    (SubjectKind::Function, function_position(names, function))
+                }
+                LimitSubject::Build => (SubjectKind::Build, None),
+            };
+            EngineLoss {
+                stage,
+                reason: LIMIT_REACHED,
+                ill_typed_cause: IllTypedCause::None,
+                limit,
+                subject_kind,
+                subject,
+                witness,
+                count,
             }
-            LimitSubject::Build => (SubjectKind::Build, None),
-        };
-        EngineLoss {
-            stage,
-            reason: LIMIT_REACHED,
-            ill_typed_cause: IllTypedCause::None,
-            limit,
-            subject_kind,
-            subject,
-            witness,
-            count,
-        }
-    });
+        });
     losses.collect()
 }
 

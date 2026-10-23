@@ -38,7 +38,9 @@ fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCode
 }
 
 fn downcast_payload(payload: &Option<HostPayload>) -> &ParsePayload {
-    let payload = payload.as_deref().expect("the host gives every tree a payload");
+    let payload = payload
+        .as_deref()
+        .expect("the host gives every tree a payload");
     payload.downcast_ref().expect("a payload of the test host")
 }
 

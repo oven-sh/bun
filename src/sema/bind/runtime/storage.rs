@@ -42,10 +42,16 @@ impl RuntimeDeclarationsIn<Growable> {
             && self.enum_symbols.is_sorted_by_key(|entry| entry.0)
             && self.module_symbols.is_sorted_by_key(|entry| entry.0)
             && self.inner_class_symbols.is_sorted_by_key(|entry| entry.0)
-            && self.export_expression_symbols.is_sorted_by_key(|entry| entry.0)
+            && self
+                .export_expression_symbols
+                .is_sorted_by_key(|entry| entry.0)
             && self.own_scopes.is_sorted_by_key(|entry| entry.0)
-            && self.annex_b_functions.is_sorted_by_key(|entry| entry.function)
-            && self.parameter_var_copies.is_sorted_by_key(|entry| entry.function)
+            && self
+                .annex_b_functions
+                .is_sorted_by_key(|entry| entry.function)
+            && self
+                .parameter_var_copies
+                .is_sorted_by_key(|entry| entry.function)
     }
 
     fn into_arena<'s>(mut self, arena: &'s Arena) -> RuntimeDeclarationsIn<InArena<'s>> {
@@ -80,14 +86,22 @@ impl RuntimeReferencesIn<Growable> {
             && self.initialized_bindings.is_sorted_by_key(|entry| entry.0)
             && self.exported_bindings.is_sorted_by_key(|entry| entry.0)
             && self.entity_root_bindings.is_sorted_by_key(|entry| entry.0)
-            && self.redeclared_commonjs_variables.is_sorted_by_key(|entry| entry.0)
-            && self.stores.is_sorted_by_key(|store| (store.symbol, store.target))
+            && self
+                .redeclared_commonjs_variables
+                .is_sorted_by_key(|entry| entry.0)
+            && self
+                .stores
+                .is_sorted_by_key(|store| (store.symbol, store.target))
             && self.unbound_name_stores.is_sorted_by_key(|entry| entry.0)
             && self.dynamic_ident_lookups.is_sorted_by_key(|entry| entry.0)
-            && self.dynamic_declarator_lookups.is_sorted_by_key(|entry| entry.0)
+            && self
+                .dynamic_declarator_lookups
+                .is_sorted_by_key(|entry| entry.0)
             && self.eval_scopes.is_sorted_by_key(|entry| entry.0)
             && self.jump_targets.is_sorted_by_key(|entry| entry.0)
-            && self.implicit_references.is_sorted_by_key(implicit_reference_order)
+            && self
+                .implicit_references
+                .is_sorted_by_key(implicit_reference_order)
     }
 
     fn into_arena<'s>(mut self, arena: &'s Arena) -> RuntimeReferencesIn<InArena<'s>> {
@@ -113,7 +127,8 @@ impl RuntimeReferencesIn<Growable> {
 
 impl PrivateNamesIn<Growable> {
     fn is_sorted(&self) -> bool {
-        self.names.is_sorted_by_key(|name| (name.class, name.first_member))
+        self.names
+            .is_sorted_by_key(|name| (name.class, name.first_member))
             && self.references.is_sorted_by_key(|entry| entry.0)
             && self.members.is_sorted_by_key(|entry| entry.0)
     }
@@ -138,7 +153,8 @@ impl BindingStabilitiesIn<Growable> {
 
 impl RuntimeTablesIn<Growable> {
     pub(super) fn is_sorted(&self) -> bool {
-        self.field_initializer_scopes.is_sorted_by_key(|entry| entry.0)
+        self.field_initializer_scopes
+            .is_sorted_by_key(|entry| entry.0)
             && self.early_error_redeclarations.is_sorted()
             && self.declarations.is_sorted()
             && self.references.is_sorted()

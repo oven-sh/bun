@@ -113,7 +113,10 @@ fn longest_word_is_within_limit() {
     let (class, longest) = longest.expect("the column has words");
     assert_eq!(longest.len(), MAX_WORD_LENGTH);
     assert_eq!(classify_word(longest.as_bytes()), class);
-    assert_eq!(classify_word(&[b'a'; MAX_WORD_LENGTH + 1]), NameClass::Ordinary);
+    assert_eq!(
+        classify_word(&[b'a'; MAX_WORD_LENGTH + 1]),
+        NameClass::Ordinary
+    );
 }
 
 #[test]
@@ -121,15 +124,24 @@ fn words_are_split_at_runs_of_spaces() {
     assert_eq!(split_first_word(b""), None);
     assert_eq!(split_first_word(b"  "), None);
     assert_eq!(split_first_word(b"then"), Some((&b"then"[..], &b""[..])));
-    assert_eq!(split_first_word(b"call apply"), Some((&b"call"[..], &b" apply"[..])));
-    assert_eq!(split_first_word(b"  bind  "), Some((&b"bind"[..], &b"  "[..])));
+    assert_eq!(
+        split_first_word(b"call apply"),
+        Some((&b"call"[..], &b" apply"[..]))
+    );
+    assert_eq!(
+        split_first_word(b"  bind  "),
+        Some((&b"bind"[..], &b"  "[..]))
+    );
 }
 
 #[test]
 fn exact_integers_have_at_most_15_digits() {
     assert_eq!(parse_exact_integer(b"1"), Some(1));
     assert_eq!(parse_exact_integer(b"4294967295"), Some(4_294_967_295));
-    assert_eq!(parse_exact_integer(b"999999999999999"), Some(999_999_999_999_999));
+    assert_eq!(
+        parse_exact_integer(b"999999999999999"),
+        Some(999_999_999_999_999)
+    );
     assert_eq!(parse_exact_integer(b"1000000000000000"), None);
     assert_eq!(parse_exact_integer(b"01"), None);
     assert_eq!(parse_exact_integer(b"-1"), None);
@@ -147,7 +159,9 @@ fn shared_vectors() {
     assert!(!vectors.is_empty());
     for vector in vectors {
         let [text, class] = text_and_class(vector).map(|atom| atoms.bytes(atom));
-        let class = core::str::from_utf8(class).ok().and_then(NameClass::from_name);
+        let class = core::str::from_utf8(class)
+            .ok()
+            .and_then(NameClass::from_name);
         assert_eq!(Some(classify_name(text)), class, "{}", BStr::new(text));
     }
 }

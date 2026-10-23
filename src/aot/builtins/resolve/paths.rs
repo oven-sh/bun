@@ -1,12 +1,16 @@
 use super::module_objects::{find_child_module, find_module_object_in};
 use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver, weaker};
 use super::{BuiltinPath, SourceDialect};
-use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability};
+use crate::builtins::table::{
+    self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability,
+};
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ExprId, MemberKey, NodeData};
 
 fn is_default_export(member: BuiltinId) -> bool {
-    table::entry(member).flags.contains(BuiltinFlags::IS_DEFAULT_EXPORT)
+    table::entry(member)
+        .flags
+        .contains(BuiltinFlags::IS_DEFAULT_EXPORT)
 }
 
 // No object holds the exports of `bun:bundle` at run time, so no store can replace one.
@@ -15,7 +19,10 @@ fn is_erased_namespace(object: BuiltinId) -> bool {
 }
 
 fn member_holder(id: BuiltinId) -> BuiltinId {
-    if table::entry(id).flags.contains(BuiltinFlags::IS_GLOBAL_OBJECT) {
+    if table::entry(id)
+        .flags
+        .contains(BuiltinFlags::IS_GLOBAL_OBJECT)
+    {
         BuiltinId::GlobalThis
     } else {
         id
@@ -100,7 +107,11 @@ impl Resolver<'_, '_> {
 
     pub(super) fn compute_free_name_state(&self, expr: ExprId, name: Atom) -> ExprState {
         let input = self.input;
-        if input.bound.dynamic_lookup_scope(NodeData::Expr(expr)).is_some() {
+        if input
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(expr))
+            .is_some()
+        {
             return match self.find_global(name) {
                 Some(path) => {
                     ExprState::DynamicGlobal(ResolvedValue::object(path).predicted().path)

@@ -1047,10 +1047,14 @@ impl SourceHandle {
                 })
             }
             SourceHandle::FetchResponseBody(p) => {
-                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_stream_cancelled() })
+                bun_removable_features::removable_body!(HttpClient, Abort, {
+                    p.on_stream_cancelled()
+                })
             }
             SourceHandle::S3DownloadBody(p) => {
-                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_cancelled() })
+                bun_removable_features::removable_body!(S3Client, Abort, {
+                    p.on_stream_cancelled()
+                })
             }
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => {

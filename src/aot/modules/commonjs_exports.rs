@@ -2,9 +2,9 @@
 
 mod faces;
 mod own_text;
-mod text;
 #[cfg(test)]
 mod tests;
+mod text;
 
 use self::faces::collect_members_of_namespaces;
 pub(super) use self::faces::collect_seen_namespaces;
@@ -81,7 +81,10 @@ pub(super) struct Access {
 pub(super) enum OwnName {
     /// The module has a variable for it.
     Stored,
-    Member { module: ModuleRef, name: Atom },
+    Member {
+        module: ModuleRef,
+        name: Atom,
+    },
     Binding(Sym),
 }
 
@@ -122,7 +125,10 @@ pub(super) struct CommonJsTexts {
 fn file_of(module: ModuleRef) -> Option<FileId> {
     match module {
         ModuleRef::File(file) | ModuleRef::Inner { file, .. } => Some(file),
-        ModuleRef::Face(_) | ModuleRef::Check(_) | ModuleRef::Runtime(_) | ModuleRef::External { .. } => None,
+        ModuleRef::Face(_)
+        | ModuleRef::Check(_)
+        | ModuleRef::Runtime(_)
+        | ModuleRef::External { .. } => None,
     }
 }
 
@@ -142,7 +148,8 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         is_entry_point[entry_point.file.idx()] = true;
     }
     let compiled_files = modules.compiled_files.iter();
-    let mut scanned: Vec<(FileId, Vec<OwnText>)> = compiled_files.map(|&file| (file, Vec::new())).collect();
+    let mut scanned: Vec<(FileId, Vec<OwnText>)> =
+        compiled_files.map(|&file| (file, Vec::new())).collect();
     for_each_mut(&mut scanned, bind.in_parallel, &|(file, texts)| {
         let file = *file;
         let inner_modules = inner_modules(file);
@@ -180,7 +187,11 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         });
     });
     let modules: Vec<OwnText> = scanned.into_iter().flat_map(|(_, texts)| texts).collect();
-    let index = modules.iter().zip(0..).map(|(text, index)| (text.module, index)).collect();
+    let index = modules
+        .iter()
+        .zip(0..)
+        .map(|(text, index)| (text.module, index))
+        .collect();
     CommonJsTexts { modules, index }
 }
 
@@ -206,8 +217,13 @@ impl CommonJsTexts {
     /// The names that the text of a module itself reads, calls or updates.
     pub(super) fn names_read_by_own_text(&self) -> impl Iterator<Item = (ModuleRef, Atom)> + '_ {
         self.modules.iter().flat_map(|text| {
-            let accesses = text.accesses.iter().filter(|access| !matches!(access.kind, AccessKind::Store(_)));
-            let names = accesses.map(|access| access.name).filter(|_| text.has_names());
+            let accesses = text
+                .accesses
+                .iter()
+                .filter(|access| !matches!(access.kind, AccessKind::Store(_)));
+            let names = accesses
+                .map(|access| access.name)
+                .filter(|_| text.has_names());
             names.map(|name| (text.module, name))
         })
     }
@@ -335,7 +351,9 @@ impl CommonJsExports {
             index,
             ..CommonJsExports::default()
         };
-        exports.files.resize_with(input.bind.files.modules.len(), FileTable::default);
+        exports
+            .files
+            .resize_with(input.bind.files.modules.len(), FileTable::default);
         for (id, export) in synthetic.iter() {
             if exports.index.contains_key(&export.module) {
                 exports.ids.insert((export.module, export.name), id);
@@ -400,21 +418,23 @@ impl CommonJsExports {
             };
             table.accesses.push((node, entry));
         }
-        table.erased.extend(text.erased.iter().map(|&statement| (statement, module)));
-        table.exported_bindings.extend(text.aliases.iter().filter_map(|alias| match alias.target {
-            AliasTarget::Binding(symbol) => Some(symbol),
-            AliasTarget::Member { .. } => None,
-        }));
+        table
+            .erased
+            .extend(text.erased.iter().map(|&statement| (statement, module)));
+        table
+            .exported_bindings
+            .extend(text.aliases.iter().filter_map(|alias| match alias.target {
+                AliasTarget::Binding(symbol) => Some(symbol),
+                AliasTarget::Member { .. } => None,
+            }));
     }
 
-    fn bind_names_of_module(
-        &mut self,
-        modules: &ModuleSet,
-        tables: &ExportTables,
-        text: &OwnText,
-    ) {
+    fn bind_names_of_module(&mut self, modules: &ModuleSet, tables: &ExportTables, text: &OwnText) {
         let module = text.module;
-        let target_of = |module: ModuleRef, name: Atom| match tables.resolve_in(modules, module, name).resolution {
+        let target_of = |module: ModuleRef, name: Atom| match tables
+            .resolve_in(modules, module, name)
+            .resolution
+        {
             Resolution::Synthetic { module, name } => Target::Name(module, name),
             Resolution::Variable(symbol) => Target::Binding(symbol),
             _ => Target::Nothing,
@@ -428,7 +448,11 @@ impl CommonJsExports {
     }
 
     // `R.N = v` in another file. The name is no longer stored by its own body alone, and what is stored may look at `this`.
-    fn add_stores_of_other_files(&mut self, input: &CommonJsInput<'_, '_, '_>, imports: &[FileImports]) {
+    fn add_stores_of_other_files(
+        &mut self,
+        input: &CommonJsInput<'_, '_, '_>,
+        imports: &[FileImports],
+    ) {
         let files = input.bind.files;
         let mut looked_at = Vec::new();
         for (&file, file_imports) in input.modules.compiled_files.iter().zip(imports) {
@@ -457,19 +481,28 @@ impl CommonJsExports {
                 }
                 // Nor does a definition that is not writable: the object refuses the store, or throws.
                 let own_text = &self.modules[self.index[&module] as usize];
-                if own_text.creations.iter().any(|creation| creation.name == name && creation.is_read_only) {
+                if own_text
+                    .creations
+                    .iter()
+                    .any(|creation| creation.name == name && creation.is_read_only)
+                {
                     looked_at.push(module);
                 }
                 if text.is_none() {
                     let source = parsed_source(files, file);
-                    text = source.map(|source| Text::new(files, input.bind.builtin_names, file, &source.builtins));
+                    text = source.map(|source| {
+                        Text::new(files, input.bind.builtin_names, file, &source.builtins)
+                    });
                 }
                 let stored = text.as_ref().and_then(|text| {
                     let (_, value) = text.find_assignment(member)?;
                     Some(text.classify_value(value))
                 });
                 let ignores_this = stored.is_some_and(|stored| stored != StoredValue::Unknown);
-                *self.stored_by_other_files.entry((module, name)).or_insert(true) &= ignores_this;
+                *self
+                    .stored_by_other_files
+                    .entry((module, name))
+                    .or_insert(true) &= ignores_this;
             }
         }
         for module in looked_at {
@@ -480,11 +513,18 @@ impl CommonJsExports {
     // `exports.f()` hands the object over as `this`.
     fn look_at_modules_that_call_through_their_object(&mut self) {
         let hands_object_over = |text: &&OwnText| {
-            let mut calls = text.accesses.iter().filter(|access| access.kind == AccessKind::Call);
+            let mut calls = text
+                .accesses
+                .iter()
+                .filter(|access| access.kind == AccessKind::Call);
             text.form == Form::Names && calls.any(|call| !self.ignores_this(text.module, call.name))
         };
-        let modules: Vec<ModuleRef> =
-            self.modules.iter().filter(hands_object_over).map(|text| text.module).collect();
+        let modules: Vec<ModuleRef> = self
+            .modules
+            .iter()
+            .filter(hands_object_over)
+            .map(|text| text.module)
+            .collect();
         for module in modules {
             self.look_at(module);
         }
@@ -492,7 +532,8 @@ impl CommonJsExports {
 
     pub(super) fn has_default_of_its_own(&self, module: ModuleRef) -> bool {
         let text = self.text_of(module);
-        self.marker(module) == Some(true) && text.is_some_and(|text| text.always_creates(known::default))
+        self.marker(module) == Some(true)
+            && text.is_some_and(|text| text.always_creates(known::default))
     }
 
     // An ES module gets the object itself as `default`, unless the module has the marker and a `default` of its own.
@@ -506,7 +547,9 @@ impl CommonJsExports {
         let defaults = written.filter(|imported| imported.name == known::default);
         let mut modules: Vec<ModuleRef> = defaults
             .map(|imported| ModuleRef::File(imported.exporter))
-            .filter(|&module| self.marker(module) != Some(false) && !self.has_default_of_its_own(module))
+            .filter(|&module| {
+                self.marker(module) != Some(false) && !self.has_default_of_its_own(module)
+            })
             .collect();
         // Only an import statement that names the file itself reads `module.exports` in place of the copy.
         let exported = tables.modules_whose_default_is_exported();
@@ -514,13 +557,23 @@ impl CommonJsExports {
         // `ns.default` is the object itself unless the module has a `default` of its own.
         let members = collect_members_of_namespaces(input.modules, imports).into_iter();
         let defaults = members.filter(|member| member.name == known::default);
-        modules.extend(defaults.map(|member| ModuleRef::File(member.exporter)).filter(|&module| !self.has_default_of_its_own(module)));
+        modules.extend(
+            defaults
+                .map(|member| ModuleRef::File(member.exporter))
+                .filter(|&module| !self.has_default_of_its_own(module)),
+        );
         let seen = collect_seen_namespaces(input.modules, tables, imports).into_iter();
-        modules.extend(seen.map(ModuleRef::File).filter(|&module| !self.has_default_of_its_own(module)));
+        modules.extend(
+            seen.map(ModuleRef::File)
+                .filter(|&module| !self.has_default_of_its_own(module)),
+        );
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.
         for &(imported, _) in tables.absent_commonjs_names() {
             let exporter = ModuleRef::File(imported.exporter);
-            modules.push(self.owner_of(exporter, imported.name).map_or(exporter, |owner| owner.0));
+            modules.push(
+                self.owner_of(exporter, imported.name)
+                    .map_or(exporter, |owner| owner.0),
+            );
         }
         for module in modules {
             self.look_at(module);
@@ -540,7 +593,8 @@ impl CommonJsExports {
     }
 
     fn has_object(&self, module: ModuleRef) -> bool {
-        self.number_of(module).is_some_and(|number| self.has_object[number])
+        self.number_of(module)
+            .is_some_and(|number| self.has_object[number])
     }
 
     /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names of it.
@@ -582,7 +636,8 @@ impl CommonJsExports {
 
     /// The names of the module are variables: it has no object.
     pub fn has_names(&self, module: ModuleRef) -> bool {
-        self.number_of(module).is_some_and(|number| self.keeps_names(number))
+        self.number_of(module)
+            .is_some_and(|number| self.keeps_names(number))
     }
 
     fn keeps_names(&self, number: usize) -> bool {
@@ -597,12 +652,15 @@ impl CommonJsExports {
 
     /// The modules with a name that stands for a name of the module.
     pub fn dependents(&self, module: ModuleRef) -> &[ModuleRef] {
-        self.dependents.get(&module).map_or(&[], |dependents| &dependents[..])
+        self.dependents
+            .get(&module)
+            .map_or(&[], |dependents| &dependents[..])
     }
 
     /// The modules that a name of the module stands for a name of.
     pub fn name_sources(&self, module: ModuleRef) -> &[ModuleRef] {
-        self.number_of(module).map_or(&[], |number| &self.name_sources[number][..])
+        self.number_of(module)
+            .map_or(&[], |number| &self.name_sources[number][..])
     }
 
     // The module that has the variable of a name, and the name that it has there.
@@ -630,10 +688,16 @@ impl CommonJsExports {
                 Marker::Absent | Marker::Unknown => {}
             }
         }
-        match self.targets.get(&(module, name)).copied().unwrap_or(Target::Name(module, name)) {
-            Target::Name(owner, owner_name) => {
-                self.ids.get(&(owner, owner_name)).map(|&id| Member::Variable(id))
-            }
+        match self
+            .targets
+            .get(&(module, name))
+            .copied()
+            .unwrap_or(Target::Name(module, name))
+        {
+            Target::Name(owner, owner_name) => self
+                .ids
+                .get(&(owner, owner_name))
+                .map(|&id| Member::Variable(id)),
             Target::Binding(symbol) => Some(Member::Binding(symbol)),
             Target::Nothing => Some(Member::Undefined),
         }
@@ -654,7 +718,10 @@ impl CommonJsExports {
         if entry.is_store_only && text.alias_of(entry.name).is_some() {
             return Some(Member::Undefined);
         }
-        Some(self.member_named(text.module, entry.name).unwrap_or(Member::Undefined))
+        Some(
+            self.member_named(text.module, entry.name)
+                .unwrap_or(Member::Undefined),
+        )
     }
 
     /// `R.N`, where the access is bound to a variable.
@@ -671,7 +738,9 @@ impl CommonJsExports {
     /// `ns.N` and `import { N }`: what the module had when it was linked.
     pub fn imported_member(&self, _accessed: ModuleRef, variable: SyntheticExportId) -> Member {
         match self.names_by_id.get(&variable) {
-            Some(&(owner, name)) if self.is_import_bound_to_variable(owner, name) => Member::Variable(variable),
+            Some(&(owner, name)) if self.is_import_bound_to_variable(owner, name) => {
+                Member::Variable(variable)
+            }
             _ => Member::Copy(variable),
         }
     }
@@ -683,7 +752,9 @@ impl CommonJsExports {
 
     /// The statement has no code.
     pub fn erased(&self, file: FileId, statement: StmtId) -> bool {
-        let module = self.table(file).and_then(|table| find(&table.erased, statement));
+        let module = self
+            .table(file)
+            .and_then(|table| find(&table.erased, statement));
         module.is_some_and(|module| !self.has_object[module as usize])
     }
 
@@ -703,7 +774,9 @@ impl CommonJsExports {
             && !self.has_object(module)
             && !self.stored_by_other_files.contains_key(&(module, name))
             && text.creations_of(name).any(|creation| creation.is_in_order)
-            && text.creations_of(name).all(|creation| creation.is_run_by_body_alone)
+            && text
+                .creations_of(name)
+                .all(|creation| creation.is_run_by_body_alone)
     }
 
     /// Every value that is stored under the name, by binding, ignores `this`.
@@ -723,14 +796,20 @@ impl CommonJsExports {
             Some(&Target::Name(owner, owner_name)) => self.ignores_this(owner, owner_name),
             Some(Target::Binding(_)) => false,
             Some(Target::Nothing) => true,
-            None => text.creations_of(name).all(|creation| creation.value != StoredValue::Unknown),
+            None => text
+                .creations_of(name)
+                .all(|creation| creation.value != StoredValue::Unknown),
         }
     }
 
     /// What `__esModule` reads on the module. `None`: only the run knows.
     pub fn marker(&self, module: ModuleRef) -> Option<bool> {
         let text = self.text_of(module)?;
-        if text.form != Form::Names || self.stored_by_other_files.contains_key(&(module, known::__esModule)) {
+        if text.form != Form::Names
+            || self
+                .stored_by_other_files
+                .contains_key(&(module, known::__esModule))
+        {
             return None;
         }
         match text.marker {
@@ -742,12 +821,14 @@ impl CommonJsExports {
 
     /// The text stores to one of the five names, names `arguments` at the top, or shows its scope to `eval` or `with`: the body only calls the function of five parameters that the text is.
     pub fn needs_wrapped_body(&self, module: ModuleRef) -> bool {
-        self.text_of(module).is_some_and(|text| text.needs_wrapped_body)
+        self.text_of(module)
+            .is_some_and(|text| text.needs_wrapped_body)
     }
 
     /// `module` goes somewhere as a value.
     pub fn uses_module_object(&self, module: ModuleRef) -> bool {
-        self.text_of(module).is_some_and(|text| text.uses_module_object)
+        self.text_of(module)
+            .is_some_and(|text| text.uses_module_object)
     }
 
     /// What ES modules request in place of the file. `None`: they request the file itself.

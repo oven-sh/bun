@@ -78,7 +78,11 @@ pub(crate) fn compress_into(
                 }
             }
         }
-        CompressEncoding::Brotli if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliEncoder) => {
+        CompressEncoding::Brotli
+            if bun_removable_features::is_removed(
+                bun_removable_features::Feature::BrotliEncoder,
+            ) =>
+        {
             Err(crate::Error::CompressionFailed)
         }
         CompressEncoding::Brotli => compress_brotli(state, input, opt.level, spill),

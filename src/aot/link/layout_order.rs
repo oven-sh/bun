@@ -44,7 +44,9 @@ pub(super) fn order_program_layouts(
         local_to_merged: &layouts.local_to_merged,
         definitions,
     };
-    order_layouts(layouts.keys.len(), &roots, &|layout| graph.predecessors(layout))
+    order_layouts(layouts.keys.len(), &roots, &|layout| {
+        graph.predecessors(layout)
+    })
 }
 
 #[derive(Copy, Clone)]

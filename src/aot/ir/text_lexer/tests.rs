@@ -26,7 +26,9 @@ fn first(text: &str) -> Token<'_> {
 
 fn positions(text: &str) -> Vec<(u32, u32)> {
     let positions = tokens(text).into_iter().map(|token| token.position);
-    positions.map(|position| (position.line, position.column)).collect()
+    positions
+        .map(|position| (position.line, position.column))
+        .collect()
 }
 
 #[track_caller]
@@ -73,8 +75,14 @@ fn every_token_kind() {
 fn nothing_is_fused() {
     use TokenKind::*;
     assert_eq!(kinds("==L3"), [Equal, Equal, Word, EndOfLine, EndOfFile]);
-    assert_eq!(kinds("@@a|b"), [At, At, Word, Bar, Word, EndOfLine, EndOfFile]);
-    assert_eq!(kinds("a=1,b"), [Word, Equal, Integer, Comma, Word, EndOfLine, EndOfFile]);
+    assert_eq!(
+        kinds("@@a|b"),
+        [At, At, Word, Bar, Word, EndOfLine, EndOfFile]
+    );
+    assert_eq!(
+        kinds("a=1,b"),
+        [Word, Equal, Integer, Comma, Word, EndOfLine, EndOfFile]
+    );
 }
 
 #[test]
@@ -104,7 +112,10 @@ fn comment_runs_to_end_of_line() {
     assert_eq!(kinds("#"), [EndOfFile]);
     assert_eq!(kinds("# \"x\""), [EndOfFile]);
     assert_eq!(kinds("a # 2"), [Word, EndOfLine, EndOfFile]);
-    assert_eq!(kinds("a # 2\nb"), [Word, EndOfLine, Word, EndOfLine, EndOfFile]);
+    assert_eq!(
+        kinds("a # 2\nb"),
+        [Word, EndOfLine, Word, EndOfLine, EndOfFile]
+    );
 }
 
 #[test]
@@ -117,7 +128,9 @@ fn number_sign_before_quote_is_a_token() {
 
 #[test]
 fn words_hold_letters_digits_and_underscores() {
-    for word in ["v12", "L3", "i32", "int", "_v1", "V1", "a_b9", "NaN", "Infinity"] {
+    for word in [
+        "v12", "L3", "i32", "int", "_v1", "V1", "a_b9", "NaN", "Infinity",
+    ] {
         assert_single_token(word, TokenKind::Word);
     }
 }
@@ -140,7 +153,10 @@ fn integers_fit_64_bits() {
     for text in ["9223372036854775808", "-9223372036854775809"] {
         assert_single_token(text, TokenKind::Number);
     }
-    assert_eq!(first("9223372036854775808").double(), Some(9_223_372_036_854_775_808.0));
+    assert_eq!(
+        first("9223372036854775808").double(),
+        Some(9_223_372_036_854_775_808.0)
+    );
 }
 
 #[test]
@@ -273,7 +289,16 @@ fn high_bytes_are_valid_only_in_strings_and_comments() {
 
 #[test]
 fn positions_count_bytes_from_one() {
-    let expected = [(1, 1), (1, 3), (1, 5), (2, 3), (2, 8), (3, 1), (3, 2), (3, 2)];
+    let expected = [
+        (1, 1),
+        (1, 3),
+        (1, 5),
+        (2, 3),
+        (2, 8),
+        (3, 1),
+        (3, 2),
+        (3, 2),
+    ];
     assert_eq!(positions("a bc\n  d # e\nf"), expected);
     assert_eq!(positions("\"\u{e9}\" x"), [(1, 1), (1, 6), (1, 7), (1, 7)]);
     assert_eq!(positions("\n\n  a"), [(3, 3), (3, 4), (3, 4)]);
@@ -320,14 +345,23 @@ fn decode_string_escapes() {
     assert_eq!(decoded, Some(expected));
     assert_eq!(decode_string(b""), Some(Vec::new()));
     assert_eq!(decode_string(br"\u{0}"), Some(vec![0]));
-    assert_eq!(decode_string(br"\u{1F600}\u{000041}\x4A\x4a"), Some("\u{1f600}AJJ".into()));
+    assert_eq!(
+        decode_string(br"\u{1F600}\u{000041}\x4A\x4a"),
+        Some("\u{1f600}AJJ".into())
+    );
     assert_eq!(decode_string(br"\u{10ffff}"), Some("\u{10ffff}".into()));
 }
 
 #[test]
 fn decode_string_copies_other_bytes() {
-    assert_eq!(decode_string("\u{e9} #{}".as_bytes()), Some("\u{e9} #{}".into()));
-    assert_eq!(decode_string(b"\x80\xED\xA0\x80"), Some(b"\x80\xED\xA0\x80".to_vec()));
+    assert_eq!(
+        decode_string("\u{e9} #{}".as_bytes()),
+        Some("\u{e9} #{}".into())
+    );
+    assert_eq!(
+        decode_string(b"\x80\xED\xA0\x80"),
+        Some(b"\x80\xED\xA0\x80".to_vec())
+    );
 }
 
 #[test]
@@ -366,22 +400,16 @@ fn decode_bytes_reads_hex_escapes_and_printable_bytes() {
     assert_eq!(decode_bytes(b""), Some(Vec::new()));
     assert_eq!(decode_bytes(b" az~{}"), Some(b" az~{}".to_vec()));
     assert_eq!(decode_bytes(br"a\x4a\x4A"), Some(b"aJJ".to_vec()));
-    assert_eq!(decode_bytes(br"\x00\xff\x22\x5c"), Some(b"\x00\xff\"\\".to_vec()));
+    assert_eq!(
+        decode_bytes(br"\x00\xff\x22\x5c"),
+        Some(b"\x00\xff\"\\".to_vec())
+    );
 }
 
 #[test]
 fn decode_bytes_rejects_unicode_escape() {
     let rejected: [&[u8]; 10] = [
-        br"\u{41}",
-        br"\n",
-        br#"\""#,
-        br"\\",
-        br"\",
-        br"\x4",
-        br"\x4g",
-        b"\x7f",
-        b"\x80",
-        b"\n",
+        br"\u{41}", br"\n", br#"\""#, br"\\", br"\", br"\x4", br"\x4g", b"\x7f", b"\x80", b"\n",
     ];
     for text in rejected {
         assert_eq!(decode_bytes(text), None, "{}", text.escape_ascii());

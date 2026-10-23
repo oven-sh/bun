@@ -18,7 +18,14 @@ type Program = {
 };
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true },
+  compilerOptions: {
+    target: "esnext",
+    module: "preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  },
 });
 
 // --aot has its own wording for some TypeErrors, so only an error's name is printed.
@@ -57,7 +64,11 @@ function attempt(label, action) {
   console.log(label + ": " + outcome);
 }
 `;
-const javaScript = (text: string, evaluatesStrings?: true): Program => ({ file: "main.mjs", text: untypedHelpers + text, evaluatesStrings });
+const javaScript = (text: string, evaluatesStrings?: true): Program => ({
+  file: "main.mjs",
+  text: untypedHelpers + text,
+  evaluatesStrings,
+});
 
 const inheritedMembers = `type Callback = (value: number) => unknown;
 function viaCall(callback: Callback, value: number): unknown { return callback.call(undefined, value); }
@@ -115,7 +126,8 @@ showAll("after, again");
 `);
 
 const programs: Record<string, Program> = {
-  "every kind of callable where a function is expected": typeScript(`${inheritedMembers}async function describe(label: string, callback: Callback): Promise<void> {
+  "every kind of callable where a function is expected":
+    typeScript(`${inheritedMembers}async function describe(label: string, callback: Callback): Promise<void> {
   const steps: [string, () => unknown][] = [
     ["call", () => viaCall(callback, 2)],
     ["apply", () => viaApply(callback, 3)],
@@ -403,17 +415,36 @@ attempt("lengths of known functions, again", lengthsOfKnownFunctions);
 // Two functions read `name` and `length` of `target`, a function declaration.
 const changesToNameAndLength: Record<string, { text: string; evaluatesStrings?: true }> = {
   "nothing": { text: `` },
-  "Object.defineProperty": { text: `Object.defineProperty(target, "name", { value: "renamed" }); Object.defineProperty(target, "length", { value: 7 });` },
-  "Object.defineProperty with computed names": { text: `for (const key of [decoded("name"), decoded("length")]) Object.defineProperty(target, key, { value: key + " replaced" });` },
-  "Object.defineProperty through an opaque reference": { text: `Object.defineProperty(opaque(target), "name", { value: "renamed" }); Object.defineProperty(opaque(target), "length", { value: 7 });` },
-  "Object.defineProperties": { text: `Object.defineProperties(target, { name: { value: "renamed" }, length: { value: 7 } });` },
-  "Reflect.defineProperty": { text: `Reflect.defineProperty(target, "name", { value: "renamed" }); Reflect.defineProperty(target, "length", { value: 7 });` },
-  "getters": { text: `Object.defineProperty(target, "name", { get() { return "computed"; } }); Object.defineProperty(target, "length", { get() { return "computed"; } });` },
+  "Object.defineProperty": {
+    text: `Object.defineProperty(target, "name", { value: "renamed" }); Object.defineProperty(target, "length", { value: 7 });`,
+  },
+  "Object.defineProperty with computed names": {
+    text: `for (const key of [decoded("name"), decoded("length")]) Object.defineProperty(target, key, { value: key + " replaced" });`,
+  },
+  "Object.defineProperty through an opaque reference": {
+    text: `Object.defineProperty(opaque(target), "name", { value: "renamed" }); Object.defineProperty(opaque(target), "length", { value: 7 });`,
+  },
+  "Object.defineProperties": {
+    text: `Object.defineProperties(target, { name: { value: "renamed" }, length: { value: 7 } });`,
+  },
+  "Reflect.defineProperty": {
+    text: `Reflect.defineProperty(target, "name", { value: "renamed" }); Reflect.defineProperty(target, "length", { value: 7 });`,
+  },
+  "getters": {
+    text: `Object.defineProperty(target, "name", { get() { return "computed"; } }); Object.defineProperty(target, "length", { get() { return "computed"; } });`,
+  },
   "delete": { text: `delete target.name; delete target.length;` },
-  "delete, then a different prototype": { text: `delete target.name; delete target.length; Object.setPrototypeOf(target, { name: "inherited", length: "inherited" });` },
+  "delete, then a different prototype": {
+    text: `delete target.name; delete target.length; Object.setPrototypeOf(target, { name: "inherited", length: "inherited" });`,
+  },
   "a failed assignment": { text: `Reflect.set(target, "name", "assigned"); Reflect.set(target, "length", 7);` },
-  "made writable, then assigned": { text: `Object.defineProperty(target, "name", { writable: true }); Object.defineProperty(target, "length", { writable: true }); target.name = "assigned"; target.length = 7;` },
-  "new Function": { text: `new Function("f", decoded("Object.defineProperty(f, 'name', { value: 'renamed by new Function' }); delete f.length;"))(target);`, evaluatesStrings: true },
+  "made writable, then assigned": {
+    text: `Object.defineProperty(target, "name", { writable: true }); Object.defineProperty(target, "length", { writable: true }); target.name = "assigned"; target.length = 7;`,
+  },
+  "new Function": {
+    text: `new Function("f", decoded("Object.defineProperty(f, 'name', { value: 'renamed by new Function' }); delete f.length;"))(target);`,
+    evaluatesStrings: true,
+  },
 };
 
 const programAboutNameAndLength = ({ text, evaluatesStrings }: (typeof changesToNameAndLength)[string]) =>
@@ -443,11 +474,17 @@ const ways: Record<string, string[]> = {
   "with types erased": [buildFlags.eraseTypes],
 };
 // A debug or ASAN build of Bun is many times slower. A JavaScript program has no types to erase.
-const waysOf = ({ file }: Program) => Object.keys(ways).filter(way => (wanted === "quick" ? way === "by default" : file.endsWith(".ts") || way !== "with types erased"));
+const waysOf = ({ file }: Program) =>
+  Object.keys(ways).filter(way =>
+    wanted === "quick" ? way === "by default" : file.endsWith(".ts") || way !== "with types erased",
+  );
 
 async function compile(folder: string, { file }: Program, flags: string[], environment: Record<string, string> = {}) {
   const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
-  const build = await spawned([bunExe(), ...compileCommand, ...flags, file, "--outfile", executable], folder, { ...bunEnv, ...environment });
+  const build = await spawned([bunExe(), ...compileCommand, ...flags, file, "--outfile", executable], folder, {
+    ...bunEnv,
+    ...environment,
+  });
   built(build);
   return { executable, stderr: build.stderr };
 }
@@ -456,7 +493,12 @@ async function expectOutputOfPlainBun(program: Program, flags: string[]) {
   using dir = tempDir("aot-function-members", { "tsconfig.json": tsconfig, [program.file]: program.text });
   const folder = String(dir);
   const plain = await spawned([bunExe(), "run", program.file], folder, bunEnv);
-  expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr, printsNothing: plain.stdout === "" }).toEqual({ signal: null, exitCode: 0, stderr: "", printsNothing: false });
+  expect({
+    signal: plain.signal,
+    exitCode: plain.exitCode,
+    stderr: plain.stderr,
+    printsNothing: plain.stdout === "",
+  }).toEqual({ signal: null, exitCode: 0, stderr: "", printsNothing: false });
   const { executable } = await compile(folder, program, flags);
   const tripwire = program.evaluatesStrings ? {} : { [runtimeEnvironment.forbidsInterpreter]: "1" };
   const compiled = await spawned(withoutCoreDump([executable]), folder, { ...bunEnv, ...tripwire });
@@ -466,7 +508,8 @@ async function expectOutputOfPlainBun(program: Program, flags: string[]) {
 function define(title: string, named: [string, Program][]) {
   describe.concurrent(title, () => {
     for (const [name, program] of named) {
-      for (const way of waysOf(program)) test(`${name}, ${way}`, () => slot(() => expectOutputOfPlainBun(program, ways[way])), 600_000);
+      for (const way of waysOf(program))
+        test(`${name}, ${way}`, () => slot(() => expectOutputOfPlainBun(program, ways[way])), 600_000);
     }
   });
 }
@@ -484,23 +527,34 @@ define(
 // One function's IR as the build prints it after instruction selection. A read that is still by name has the name as its key.
 async function selectedCodeOf(functionName: string, program: Program) {
   using dir = tempDir("aot-function-members-code", { [program.file]: program.text });
-  const { stderr } = await compile(String(dir), program, [], { [buildEnvironment.dumpsIR]: "Selected", [buildEnvironment.functionToDump]: functionName });
+  const { stderr } = await compile(String(dir), program, [], {
+    [buildEnvironment.dumpsIR]: "Selected",
+    [buildEnvironment.functionToDump]: functionName,
+  });
   expect(stderr).toContain(`name="${functionName}"`);
   return stderr;
 }
 
 describe.concurrent("compile/aot/function members/name and length of a known function", () => {
-  test("are constants if nothing changes them", () =>
-    slot(async () => {
-      const program = programAboutNameAndLength(changesToNameAndLength["nothing"]);
-      expect(await selectedCodeOf("nameOfTarget", program)).not.toContain(`key="name"`);
-      expect(await selectedCodeOf("lengthOfTarget", program)).not.toContain(`key="length"`);
-    }), 600_000);
+  test(
+    "are constants if nothing changes them",
+    () =>
+      slot(async () => {
+        const program = programAboutNameAndLength(changesToNameAndLength["nothing"]);
+        expect(await selectedCodeOf("nameOfTarget", program)).not.toContain(`key="name"`);
+        expect(await selectedCodeOf("lengthOfTarget", program)).not.toContain(`key="length"`);
+      }),
+    600_000,
+  );
 
-  test("are read by name if the program redefines them", () =>
-    slot(async () => {
-      const program = programAboutNameAndLength(changesToNameAndLength["Object.defineProperty"]);
-      expect(await selectedCodeOf("nameOfTarget", program)).toContain(`key="name"`);
-      expect(await selectedCodeOf("lengthOfTarget", program)).toContain(`key="length"`);
-    }), 600_000);
+  test(
+    "are read by name if the program redefines them",
+    () =>
+      slot(async () => {
+        const program = programAboutNameAndLength(changesToNameAndLength["Object.defineProperty"]);
+        expect(await selectedCodeOf("nameOfTarget", program)).toContain(`key="name"`);
+        expect(await selectedCodeOf("lengthOfTarget", program)).toContain(`key="length"`);
+      }),
+    600_000,
+  );
 });

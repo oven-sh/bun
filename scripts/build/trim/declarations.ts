@@ -7,7 +7,8 @@ import type { BuiltinEntry, BuiltinUses, Feature, FeatureModel, TrimFeature } fr
 
 export const declarationsPath = join(import.meta.dirname, "..", "..", "..", "packages", "bun-types", "trim.d.ts");
 
-const listed = (items: string[]) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+const listed = (items: string[]) =>
+  items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 const megabytes = (size: number) => `${size.toFixed(1)} MB`;
 
 function wrapped(paragraph: string, indent: string): string[] {
@@ -57,7 +58,9 @@ function classifyBuiltins(entries: BuiltinEntry[]) {
 }
 
 function reachableFeatures(model: FeatureModel, trimFeature: TrimFeature): Feature[] {
-  return trimFeature.features.map(name => featureNamed(model, name)).filter(feature => feature.enteredFrom !== "command-line");
+  return trimFeature.features
+    .map(name => featureNamed(model, name))
+    .filter(feature => feature.enteredFrom !== "command-line");
 }
 
 // `bun:ffi` is written with `Bun.FFI`. Bun's types declare the module and not the object.
@@ -67,7 +70,8 @@ function documentedEntries(model: FeatureModel, uses: BuiltinUses, trimFeature: 
   const features = new Set(reachableFeatures(model, trimFeature).map(feature => feature.name));
   return uses.entries.filter(entry => {
     const guardFeature = guardFeatureOf(entry);
-    const isDeclared = !entry.hasHiddenRoot && !objectsWithoutDeclaration.some(object => entry.path.startsWith(`${object}.`));
+    const isDeclared =
+      !entry.hasHiddenRoot && !objectsWithoutDeclaration.some(object => entry.path.startsWith(`${object}.`));
     return isDeclared && guardFeature !== undefined && features.has(guardFeature);
   });
 }
@@ -79,21 +83,33 @@ export function documentedModules(model: FeatureModel, uses: BuiltinUses, trimFe
 function paragraphsOf(model: FeatureModel, uses: BuiltinUses, trimFeature: TrimFeature): string[] {
   const { throws, modules } = classifyBuiltins(documentedEntries(model, uses, trimFeature));
   const paragraphs = trimFeature.about === "" ? [] : [trimFeature.about];
-  if (throws.length > 0) paragraphs.push(`Without it, ${listed(throws.map(expression => `\`${expression}\``))} ${throws.length > 1 ? "throw" : "throws"} an \`Error\`.`);
-  if (modules.length > 0) paragraphs.push(`Without it, importing ${listed(modules.map(module => `\`${module}\``))} throws an \`Error\`.`);
+  if (throws.length > 0)
+    paragraphs.push(
+      `Without it, ${listed(throws.map(expression => `\`${expression}\``))} ${throws.length > 1 ? "throw" : "throws"} an \`Error\`.`,
+    );
+  if (modules.length > 0)
+    paragraphs.push(`Without it, importing ${listed(modules.map(module => `\`${module}\``))} throws an \`Error\`.`);
   if (trimFeature.also.length > 0) paragraphs.push(`Also needs it: ${trimFeature.also.join("; ")}.`);
   if (trimFeature.saves) {
     const { linux, macos } = trimFeature.saves;
-    paragraphs.push(linux < 0.05 && macos < 0.05 ? "Adds under 0.1 MB by itself." : `Adds about ${megabytes(linux)} on Linux x64 and ${megabytes(macos)} on macOS arm64.`);
+    paragraphs.push(
+      linux < 0.05 && macos < 0.05
+        ? "Adds under 0.1 MB by itself."
+        : `Adds about ${megabytes(linux)} on Linux x64 and ${megabytes(macos)} on macOS arm64.`,
+    );
   }
   return paragraphs;
 }
 
 export function declarationsOf(model: FeatureModel, uses: BuiltinUses): string {
-  const comment = (paragraphs: string[], indent: string) => [`${indent}/**`, ...paragraphs.flatMap((paragraph, index) => [...(index > 0 ? [`${indent} *`] : []), ...wrapped(paragraph, indent)]), `${indent} */`];
+  const comment = (paragraphs: string[], indent: string) => [
+    `${indent}/**`,
+    ...paragraphs.flatMap((paragraph, index) => [...(index > 0 ? [`${indent} *`] : []), ...wrapped(paragraph, indent)]),
+    `${indent} */`,
+  ];
   const head = [
     "The name of a feature that `compile.trim.allow` of `Bun.build()` keeps in an executable, even if your code never uses it.",
-    'Each size is roughly what the feature adds to a trimmed executable. Features share code, and the file only gets shorter where whole pages in a row are removed, so a list usually adds less than the sum of its names.',
+    "Each size is roughly what the feature adds to a trimmed executable. Features share code, and the file only gets shorter where whole pages in a row are removed, so a list usually adds less than the sum of its names.",
     'When `trim` removes a feature, only code is removed: every global, class, prototype, property, method name and constant is still there, so `typeof`, `in` and `instanceof` answer as before. A call, a `new`, a getter or a setter of a removed feature throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`, and importing a removed module fails like a module that does not exist (`"ERR_MODULE_NOT_FOUND"`). If code reaches a removed feature any other way, the process prints the feature and exits with code 70. On Windows the data of a removed feature is still in the file for now.',
   ];
   return [

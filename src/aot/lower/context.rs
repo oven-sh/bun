@@ -27,9 +27,7 @@ use crate::compile::removable::Removable;
 use crate::diagnostics::{DiagnosticBuffer, Span};
 use crate::ir::generated::FunctionRole;
 use crate::ir::types::release_spare_capacity;
-use crate::ir::{
-    BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol,
-};
+use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
 use crate::load::Sources;
 use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
@@ -160,9 +158,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             modules: inputs.modules,
             builtins: file_inputs.builtins,
         });
-        let has_types_in_function_text = inputs.options.embeds_function_text
-            && !hir.is_js
-            && compiled.installed_text.is_none();
+        let has_types_in_function_text =
+            inputs.options.embeds_function_text && !hir.is_js && compiled.installed_text.is_none();
         let type_ranges = match has_types_in_function_text {
             true => find_type_ranges(hir),
             false => TypeRanges::default(),
@@ -230,7 +227,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn is_simplified(&self, expression: ExprId) -> bool {
-        self.simplified_expressions.binary_search(&expression).is_ok()
+        self.simplified_expressions
+            .binary_search(&expression)
+            .is_ok()
     }
 
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
@@ -239,7 +238,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn is_in_dependency(&self) -> bool {
-        self.inputs.files_of_dependencies.binary_search(&self.file).is_ok()
+        self.inputs
+            .files_of_dependencies
+            .binary_search(&self.file)
+            .is_ok()
     }
 
     pub(crate) fn is_checked(&self) -> bool {
@@ -270,7 +272,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn text_key(&mut self, text: StringId) -> PropertyKeyId {
-        self.fragment.property_keys.intern(PropertyKey::from_text(text))
+        self.fragment
+            .property_keys
+            .intern(PropertyKey::from_text(text))
     }
 
     pub(crate) fn atom_key(&mut self, atom: Atom) -> PropertyKeyId {

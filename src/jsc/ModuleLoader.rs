@@ -153,8 +153,18 @@ unsafe extern "Rust" {
 }
 
 unsafe extern "C" {
-    fn Bun__throwIfModuleIsRemoved(global: &JSGlobalObject, feature: u16, specifier: *const u8, length: usize, code: jsc::ErrCode) -> bool;
-    safe fn Bun__createModuleNotCompiledInError(global: &JSGlobalObject, code: jsc::ErrCode, specifier: &bun_core::String) -> JSValue;
+    fn Bun__throwIfModuleIsRemoved(
+        global: &JSGlobalObject,
+        feature: u16,
+        specifier: *const u8,
+        length: usize,
+        code: jsc::ErrCode,
+    ) -> bool;
+    safe fn Bun__createModuleNotCompiledInError(
+        global: &JSGlobalObject,
+        code: jsc::ErrCode,
+        specifier: &bun_core::String,
+    ) -> JSValue;
     safe fn Bun__refusesCodeOutsideExecutable(global: &JSGlobalObject) -> bool;
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
 }
@@ -165,10 +175,17 @@ fn module_removal(module: &[u8]) -> bun_removable_features::Removal {
     }
     crate::ResolvedSourceTag::try_from_name(module)
         .and_then(crate::ResolvedSourceTag::feature)
-        .map_or(bun_removable_features::Removal::Present, bun_removable_features::removal_of)
+        .map_or(
+            bun_removable_features::Removal::Present,
+            bun_removable_features::removal_of,
+        )
 }
 
-pub fn module_not_compiled_in_error(global: &JSGlobalObject, code: jsc::ErrCode, specifier: &bun_core::String) -> JSValue {
+pub fn module_not_compiled_in_error(
+    global: &JSGlobalObject,
+    code: jsc::ErrCode,
+    specifier: &bun_core::String,
+) -> JSValue {
     Bun__createModuleNotCompiledInError(global, code, specifier)
 }
 
@@ -178,7 +195,9 @@ fn error_if_removed(global: &JSGlobalObject, module: &[u8], code: jsc::ErrCode) 
     }
     let feature = crate::ResolvedSourceTag::try_from_name(module)?.feature()?;
     // SAFETY: `module` outlives the call, which copies the bytes into the message.
-    let has_thrown = unsafe { Bun__throwIfModuleIsRemoved(global, feature.index(), module.as_ptr(), module.len(), code) };
+    let has_thrown = unsafe {
+        Bun__throwIfModuleIsRemoved(global, feature.index(), module.as_ptr(), module.len(), code)
+    };
     has_thrown.then(|| global.take_error(jsc::JsError::Thrown))
 }
 
@@ -195,13 +214,23 @@ extern "C" fn Bun__fetchBuiltinModule(
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    let code = if is_commonjs_require { jsc::ErrCode::MODULE_NOT_FOUND } else { jsc::ErrCode::ERR_MODULE_NOT_FOUND };
+    let code = if is_commonjs_require {
+        jsc::ErrCode::MODULE_NOT_FOUND
+    } else {
+        jsc::ErrCode::ERR_MODULE_NOT_FOUND
+    };
     // The helpers of the bundler are served as text.
-    if Bun__refusesCodeOutsideExecutable(global_object) && specifier.to_utf8().slice() == b"bun:wrap" {
+    if Bun__refusesCodeOutsideExecutable(global_object)
+        && specifier.to_utf8().slice() == b"bun:wrap"
+    {
         if Bun__isCompiledProgramFile(specifier) {
             return false;
         }
-        *ret = ErrorableResolvedSource::err(module_not_compiled_in_error(global_object, code, specifier));
+        *ret = ErrorableResolvedSource::err(module_not_compiled_in_error(
+            global_object,
+            code,
+            specifier,
+        ));
         return true;
     }
     if bun_removable_features::is_trimmed()
@@ -251,7 +280,9 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     name.extend_from_slice(rest);
     let tag = crate::ResolvedSourceTag::try_from_name(&name)?;
     let internal_for_testing = bun_removable_features::Feature::InternalForTesting;
-    if tag.feature() == Some(internal_for_testing) && bun_removable_features::is_removed(internal_for_testing) {
+    if tag.feature() == Some(internal_for_testing)
+        && bun_removable_features::is_removed(internal_for_testing)
+    {
         return None;
     }
     Some((name, tag))

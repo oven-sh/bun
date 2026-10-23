@@ -89,9 +89,14 @@ fn broken_trees() {
         let export = only_stmt(hir, |kind| kind.tag() == StmtTag::ExportNamed);
         hir[export].kind = StmtKind::ExportNamed(ExportId::NONE);
     });
-    assert_invalid_after(MODULE_PATH, EXPORT_STAR_WITH_ATTRIBUTES, IdOutOfRange, |_, hir| {
-        hir.export_star_attributes[0].1 = ExprId(hir.exprs.len() as u32);
-    });
+    assert_invalid_after(
+        MODULE_PATH,
+        EXPORT_STAR_WITH_ATTRIBUTES,
+        IdOutOfRange,
+        |_, hir| {
+            hir.export_star_attributes[0].1 = ExprId(hir.exprs.len() as u32);
+        },
+    );
     assert_invalid_after(DEFAULT_PATH, "(a);", IdOutOfRange, |_, hir| {
         hir.parens[0].0 = ExprId(hir.exprs.len() as u32);
     });
@@ -106,9 +111,14 @@ fn broken_trees() {
     assert_invalid_after(DEFAULT_PATH, "(a); (b);", UnsortedSideTable, |_, hir| {
         hir.parens.swap(0, 1);
     });
-    assert_invalid_after(DEFAULT_PATH, "({ 1n: a, 2n: b });", UnsortedSideTable, |_, hir| {
-        hir.bigint_names.swap(0, 1);
-    });
+    assert_invalid_after(
+        DEFAULT_PATH,
+        "({ 1n: a, 2n: b });",
+        UnsortedSideTable,
+        |_, hir| {
+            hir.bigint_names.swap(0, 1);
+        },
+    );
     assert_invalid_after(DEFAULT_PATH, "f`a`;", IdOutOfRange, |_, hir| {
         hir.tagged_templates[0].1 = ExprId(hir.exprs.len() as u32);
     });
@@ -127,21 +137,31 @@ fn broken_trees() {
         let name = w.ident(hir, "a", 0);
         hir.expr_flags[name.idx()] = NO_FLAGS;
     });
-    assert_invalid_after(DEFAULT_PATH, r#"f(); "x";"#, DirectiveOutsidePrologue, |w, hir| {
-        let second = hir.id_at(hir.body, 1);
-        let StmtKind::Expr(expr) = hir[second].kind else {
-            panic!("{:?}", hir[second].kind);
-        };
-        let raw = w.atom("x");
-        hir[second].kind = StmtKind::Directive { expr, raw };
-    });
-    assert_invalid_after(DEFAULT_PATH, r#""x"; f();"#, DirectiveOutsidePrologue, |_, hir| {
-        let first = hir.id_at(hir.body, 0);
-        let StmtKind::Directive { expr, .. } = hir[first].kind else {
-            panic!("{:?}", hir[first].kind);
-        };
-        hir[first].kind = StmtKind::Expr(expr);
-    });
+    assert_invalid_after(
+        DEFAULT_PATH,
+        r#"f(); "x";"#,
+        DirectiveOutsidePrologue,
+        |w, hir| {
+            let second = hir.id_at(hir.body, 1);
+            let StmtKind::Expr(expr) = hir[second].kind else {
+                panic!("{:?}", hir[second].kind);
+            };
+            let raw = w.atom("x");
+            hir[second].kind = StmtKind::Directive { expr, raw };
+        },
+    );
+    assert_invalid_after(
+        DEFAULT_PATH,
+        r#""x"; f();"#,
+        DirectiveOutsidePrologue,
+        |_, hir| {
+            let first = hir.id_at(hir.body, 0);
+            let StmtKind::Directive { expr, .. } = hir[first].kind else {
+                panic!("{:?}", hir[first].kind);
+            };
+            hir[first].kind = StmtKind::Expr(expr);
+        },
+    );
 }
 
 #[test]
@@ -161,7 +181,10 @@ fn reparsed_alias_before_directive() {
         let tags: Vec<StmtTag> = statements.map(|stmt| hir[stmt].kind.tag()).collect();
         assert_eq!(tags, [StmtTag::TypeAlias, StmtTag::Expr, StmtTag::Fn]);
         let directive = hir[hir.id_at(hir.body, 1)].kind;
-        assert!(matches!(directive, StmtKind::Directive { .. }), "{directive:?}");
+        assert!(
+            matches!(directive, StmtKind::Directive { .. }),
+            "{directive:?}"
+        );
         assert!(!has_syntax_errors(hir), "{:?}", hir.diagnostics);
         assert_eq!(hir.validate(), Ok(()));
     });

@@ -213,7 +213,7 @@ impl ScopeAnalysis {
 
     pub(in crate::lower) fn entry_flags(&self, key: FunctionKey) -> FunctionFlags {
         let function = self.find_function(key);
-        function.map_or(FunctionFlags::default(), |function| function.entry_flags)
+        function.map_or_else(FunctionFlags::default, |function| function.entry_flags)
     }
 
     pub(in crate::lower) fn undeclared_parameters(&self, key: FunctionKey) -> u32 {
@@ -232,7 +232,9 @@ impl ScopeAnalysis {
         function: FunctionKey,
         symbol: SymbolId,
     ) -> bool {
-        self.initialized_holders.binary_search(&(function, symbol)).is_ok()
+        self.initialized_holders
+            .binary_search(&(function, symbol))
+            .is_ok()
     }
 
     /// The text of the file is a function of `this` and the five names of a CommonJS module, with an `arguments` object.
@@ -268,7 +270,9 @@ impl ScopeAnalysis {
     }
 
     fn find_function(&self, key: FunctionKey) -> Option<&FunctionSummary> {
-        let index = self.functions.binary_search_by_key(&key, |function| function.key);
+        let index = self
+            .functions
+            .binary_search_by_key(&key, |function| function.key);
         index.ok().map(|index| &self.functions[index])
     }
 }

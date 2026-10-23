@@ -12,10 +12,7 @@ use crate::lower::{
 
 type InitialBindings = SmallVec<[(BindingRef, ValueId); 4]>;
 
-pub(super) fn lower_parameters(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    source: FnId,
-) {
+pub(super) fn lower_parameters(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, source: FnId) {
     let hir = lowering.file.hir;
     let top = lowering.file.bound.fns[source.idx()].scope;
     let positions = positions::function_positions(lowering.file, source);
@@ -34,7 +31,12 @@ pub(super) fn lower_parameters(
     } else {
         scope::allocate_scope(lowering, top, &initial);
         for (index, parameter) in parameters.iter().enumerate() {
-            bind_parameter(lowering, parameter, values[index], positions.parameters[index]);
+            bind_parameter(
+                lowering,
+                parameter,
+                values[index],
+                positions.parameters[index],
+            );
         }
     }
     emit_parameter_var_copies(lowering, source);

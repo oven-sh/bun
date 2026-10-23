@@ -283,17 +283,26 @@ function analyze(link: Link, session: LinkSession): Analysis {
     demangle: names => symbolNames.demangle(names),
   });
   const cFunctions = findCFunctionEntryPoints(reading, model);
-  if (cFunctions.missing.length > 0) console.log(`trim: these c-function names are not in the ${link.name} link: ${cFunctions.missing.join(" ")}`);
+  if (cFunctions.missing.length > 0)
+    console.log(`trim: these c-function names are not in the ${link.name} link: ${cFunctions.missing.join(" ")}`);
   const cxxFunctions = findCxxFunctionEntryPoints({
     reading,
     model,
     isCode: output => format.isCode(output),
     demangle: names => symbolNames.demangle(names),
   });
-  if (cxxFunctions.unmatched.length > 0) console.log(`trim: these cxx-function patterns match nothing in the ${link.name} link: ${cxxFunctions.unmatched.join(" ")}`);
+  if (cxxFunctions.unmatched.length > 0)
+    console.log(
+      `trim: these cxx-function patterns match nothing in the ${link.name} link: ${cxxFunctions.unmatched.join(" ")}`,
+    );
   const entries = {
     ...recorded,
-    entryPoints: mergeEntryPoints(recorded.entryPoints, listedInTables, cFunctions.entryPoints, cxxFunctions.entryPoints),
+    entryPoints: mergeEntryPoints(
+      recorded.entryPoints,
+      listedInTables,
+      cFunctions.entryPoints,
+      cxxFunctions.entryPoints,
+    ),
   };
   stopwatch.lap("entry points");
   const result = partition({
@@ -604,12 +613,13 @@ function describeModuleTexts(moduleTexts: readonly ModuleTextRange[], featureNam
 
 export function printSummary(layout: Layout, { model, uses, format, stopwatch }: LinkSession): void {
   const { reading, entries, partition } = layout.analysis;
-  const { records, deadGuards, guardsInsideEntryPoint, definitions } = entries.statistics;
+  const { records, deadGuards, guardsInsideEntryPoint, definitions, guardsOfEmptyEntryPoints } = entries.statistics;
   const cuttableCount = layout.ranges.filter(range => range.canBeCut).length;
   const groupBytes = partition.groups.reduce((sum, group) => sum + group.bytes, 0);
   console.log(
     `${entries.entryPoints.length} entry points in ${records} records: ${deadGuards} dead guards, ` +
-      `${guardsInsideEntryPoint} guards inside their entry point, ${definitions} written by the entry point itself, ` +
+      `${guardsInsideEntryPoint} guards inside their entry point, ${guardsOfEmptyEntryPoints} of entry points that do nothing, ` +
+      `${definitions} written by the entry point itself, ` +
       `${partition.foldedEntryPoints.length} entry points folded with other code`,
   );
   console.log(describeFeatureEdges(partition.edges));
@@ -683,7 +693,13 @@ function main(): void {
     };
     printSummary(layOut(session), session);
   } catch (error) {
-    if (error instanceof BuildError) fail(error.format().replace(/^error: /, "").trimEnd());
+    if (error instanceof BuildError)
+      fail(
+        error
+          .format()
+          .replace(/^error: /, "")
+          .trimEnd(),
+      );
     throw error;
   }
 }

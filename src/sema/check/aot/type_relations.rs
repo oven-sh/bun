@@ -100,23 +100,34 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     /// What the heritage of a class constructs: `$Node.Duplex` for `class Socket extends Duplex` with `Duplex: { new (..): $Node.Duplex }`.
-    pub fn base_types_of_class(&mut self, class: ClassRef) -> Result<SmallVec<[TypeId; 1]>, GaveUp> {
+    pub fn base_types_of_class(
+        &mut self,
+        class: ClassRef,
+    ) -> Result<SmallVec<[TypeId; 1]>, GaveUp> {
         self.ask(|queries| {
             let symbol = queries.c.bound(class.file).class_symbol[class.class.idx()];
             if symbol == SymbolId::NONE {
                 return Err(GaveUp::Unresolved);
             }
             let symbol = queries.files().sym(class.file, symbol);
-            let bases: SmallVec<[TypeId; 1]> = queries.c.base_types(symbol).iter().copied().collect();
-            bases.into_iter().map(|base| queries.resolved(base)).collect()
+            let bases: SmallVec<[TypeId; 1]> =
+                queries.c.base_types(symbol).iter().copied().collect();
+            bases
+                .into_iter()
+                .map(|base| queries.resolved(base))
+                .collect()
         })
     }
 
     /// What an interface extends, as it is declared: the type arguments are those of the declaration.
     pub fn declared_base_types(&mut self, interface: Sym) -> Result<SmallVec<[TypeId; 1]>, GaveUp> {
         self.ask(|queries| {
-            let bases: SmallVec<[TypeId; 1]> = queries.c.base_types(interface).iter().copied().collect();
-            bases.into_iter().map(|base| queries.resolved(base)).collect()
+            let bases: SmallVec<[TypeId; 1]> =
+                queries.c.base_types(interface).iter().copied().collect();
+            bases
+                .into_iter()
+                .map(|base| queries.resolved(base))
+                .collect()
         })
     }
 

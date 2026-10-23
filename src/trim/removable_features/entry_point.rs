@@ -190,9 +190,19 @@ pub fn run_removable_body<
 #[doc(hidden)]
 #[inline(always)]
 pub fn run_body_of_either<const FIRST: u16, const SECOND: u16, R, B: FnOnce() -> R>(body: B) -> R {
-    const { assert!((FIRST as usize) < Feature::INDEX_LIMIT && (SECOND as usize) < Feature::INDEX_LIMIT) };
-    crate::record_removable_entry_point!(FIRST, crate::StubKind::Abort as u8, removable_body_entry_point::<R, B>);
-    crate::record_removable_entry_point!(SECOND, crate::StubKind::Abort as u8, removable_body_entry_point::<R, B>);
+    const {
+        assert!((FIRST as usize) < Feature::INDEX_LIMIT && (SECOND as usize) < Feature::INDEX_LIMIT)
+    };
+    crate::record_removable_entry_point!(
+        FIRST,
+        crate::StubKind::Abort as u8,
+        removable_body_entry_point::<R, B>
+    );
+    crate::record_removable_entry_point!(
+        SECOND,
+        crate::StubKind::Abort as u8,
+        removable_body_entry_point::<R, B>
+    );
     removable_body_entry_point::<R, B>(body)
 }
 
@@ -266,7 +276,14 @@ mod tests {
     }
 
     fn checked_sum(left: u32, right: u32) -> Option<u32> {
-        Some(call_removable_or!(Tools, Throw, { return None }, math::add, left, right))
+        Some(call_removable_or!(
+            Tools,
+            Throw,
+            { return None },
+            math::add,
+            left,
+            right
+        ))
     }
 
     fn doubled(value: u32) -> u32 {
@@ -372,7 +389,10 @@ mod tests {
     fn call_or_accepts_every_stub_kind() {
         assert_eq!(call_removable_or!(Tools, Abort, { 0 }, answer), 42);
         assert_eq!(call_removable_or!(Tools, Throw, { 0 }, answer), 42);
-        assert_eq!(call_removable_or!(Tools, ReturnUndefined, { 0 }, answer), 42);
+        assert_eq!(
+            call_removable_or!(Tools, ReturnUndefined, { 0 }, answer),
+            42
+        );
         assert_eq!(call_removable_or!(Tools, ReturnDefault, { 0 }, answer), 42);
     }
 

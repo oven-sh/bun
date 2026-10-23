@@ -39,7 +39,8 @@ setDefaultTimeout(60_000);
 const machines: Machine[] = ["x64", "arm64"];
 for (const machine of machines) {
   const reason = freestandingSkipReasons[machine];
-  if (reason !== undefined) skipNotice("link-coff-freestanding.test.ts", `${reason}: the cases for ${machine} do not run`);
+  if (reason !== undefined)
+    skipNotice("link-coff-freestanding.test.ts", `${reason}: the cases for ${machine} do not run`);
 }
 
 describe.concurrent.each(machines)("a trimmable link with lld-link and no library, for %s", machine => {
@@ -51,7 +52,10 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   testLink("removes a feature and cuts its pages out of the PE file", async () => {
     using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
     const folder = String(dir);
-    const { executable, trimmedExecutable, addressOf, featuresOf, summary, soundness } = await linked(folder, optionsWith());
+    const { executable, trimmedExecutable, addressOf, featuresOf, summary, soundness } = await linked(
+      folder,
+      optionsWith(),
+    );
     expect(peImage(executable).isArm64).toBe(machine === "arm64");
     const removable = ["feature_code", "feature_code_0", "feature_code_3999", "entered", "feature_numbers"];
     expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
@@ -91,8 +95,12 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     });
     const folder = String(dir);
     const { table, featuresOf } = await linked(folder, optionsWith({ objects: twoFeatureObjects }));
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true }]);
-    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toStartWith(`${Extra} requires ${Other}: 1 references`);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
+    ]);
+    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toStartWith(
+      `${Extra} requires ${Other}: 1 references`,
+    );
     expect(featuresOf("entry_of_other")).toEqual([Other]);
   });
 
@@ -105,8 +113,12 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     });
     const folder = String(dir);
     const { table } = await linked(folder, { ...optionsWith({ objects: twoFeatureObjects }), removed: [Other] });
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true }]);
-    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toBe(`${Extra} enters ${Other}: aborting guard\n`);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true },
+    ]);
+    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toBe(
+      `${Extra} enters ${Other}: aborting guard\n`,
+    );
   });
 
   describe("where JavaScript enters a feature as a built-in, whose code enters a second feature", () => {
@@ -121,7 +133,9 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       using dir = tempDir("trim-coff-freestanding", files);
       const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
       const { table, featuresOf } = await linked(String(dir), optionsWith({ objects: twoFeatureObjects, builtins }));
-      expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false }]);
+      expect(table.edges).toEqual([
+        { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
+      ]);
       expect(["entered", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
     });
 
@@ -158,7 +172,10 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   testLink("fails on a feature below its minimum size", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ minimums: { [Extra]: 10_000_000 } })), ["FeatureBelowMinimum", Extra]);
+    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ minimums: { [Extra]: 10_000_000 } })), [
+      "FeatureBelowMinimum",
+      Extra,
+    ]);
   });
 
   testLink("fails when nothing can ever mark a guarded feature as used", async () => {

@@ -21,10 +21,22 @@ const ways: [string, string[]][] = [
 ];
 
 const everyWay = !!process.env.AOT_TYPESCRIPT_FLAGS;
-if (!everyWay) console.error("SKIPPED: test/aot/the-typescript-compiler-under-checking-flags: the four builds under a checking flag: AOT_TYPESCRIPT_FLAGS=1 switches them on");
+if (!everyWay)
+  console.error(
+    "SKIPPED: test/aot/the-typescript-compiler-under-checking-flags: the four builds under a checking flag: AOT_TYPESCRIPT_FLAGS=1 switches them on",
+  );
 
 async function run(cmd: string[], cwd: string, seconds: number) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: seconds * 1000,
+    killSignal: "SIGKILL",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr: stderr.split("\n").slice(-30).join("\n"), exitCode, signal: proc.signalCode };
 }
@@ -44,10 +56,35 @@ describe.skipIf(wanted === "quick")("compile/aot/the TypeScript compiler under c
     "%s",
     async (way, flags) => {
       const executable = join(folder, "check-" + way.replaceAll(" ", "-"));
-      const build = await run([bunExe(), ...compileCommand, ...withoutDebugInformation(), ...flags, "./typescript-check.ts", "--outfile", executable], folder, 1500);
-      expect({ way, step: "build", stderr: build.stderr, exitCode: build.exitCode, signal: build.signal }).toEqual({ way, step: "build", stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0, signal: null });
+      const build = await run(
+        [
+          bunExe(),
+          ...compileCommand,
+          ...withoutDebugInformation(),
+          ...flags,
+          "./typescript-check.ts",
+          "--outfile",
+          executable,
+        ],
+        folder,
+        1500,
+      );
+      expect({ way, step: "build", stderr: build.stderr, exitCode: build.exitCode, signal: build.signal }).toEqual({
+        way,
+        step: "build",
+        stderr: expect.not.stringMatching(/^error\b/m),
+        exitCode: 0,
+        signal: null,
+      });
       try {
-        expect({ way, step: "run", ...(await run([executable, "2"], folder, 600)) }).toEqual({ way, step: "run", stdout: "2322 2345 2322\n", stderr: "", exitCode: 0, signal: null });
+        expect({ way, step: "run", ...(await run([executable, "2"], folder, 600)) }).toEqual({
+          way,
+          step: "run",
+          stdout: "2322 2345 2322\n",
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+        });
       } finally {
         rmSync(executable, { force: true });
       }

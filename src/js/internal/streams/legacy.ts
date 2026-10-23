@@ -58,7 +58,6 @@ declare global {
   }
 }
 
-
 function Stream(this: $Node.Stream, opts?: $Node.EventEmitterOptions) {
   EE.$call(this, opts);
 }
@@ -146,7 +145,10 @@ Stream.prototype.pipe = function (this: $Node.LegacyReadable, dest: $Node.AnyStr
 Stream.prototype.eventNames = function eventNames(this: $Node.Stream) {
   const names: $Node.EventName[] = [];
   for (const key of ReflectOwnKeys(this._events!)) {
-    if (typeof this._events![key] === "function" || (ArrayIsArray(this._events![key]) && this._events![key].length > 0)) {
+    if (
+      typeof this._events![key] === "function" ||
+      (ArrayIsArray(this._events![key]) && this._events![key].length > 0)
+    ) {
       names.push(key);
     }
   }

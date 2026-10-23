@@ -64,24 +64,64 @@ class SafeMap extends Map {
   }
 }
 const SafeMapPrototype = SafeMap.prototype;
-ReflectDefineProperty(SafeMapPrototype, "clear", { value: MapPrototype.clear, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeMapPrototype, "delete", { value: MapPrototype.delete, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeMapPrototype, "clear", {
+  value: MapPrototype.clear,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeMapPrototype, "delete", {
+  value: MapPrototype.delete,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 const safeMapEntries = { value: undefined, writable: true, enumerable: false, configurable: true };
 safeMapEntries.value = function () {
   return new SafeMapEntries(this);
 };
 ReflectDefineProperty(SafeMapPrototype, "entries", safeMapEntries);
-ReflectDefineProperty(SafeMapPrototype, "forEach", { value: MapPrototype.forEach, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeMapPrototype, "get", { value: MapPrototype.get, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeMapPrototype, "has", { value: MapPrototype.has, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeMapPrototype, "forEach", {
+  value: MapPrototype.forEach,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeMapPrototype, "get", {
+  value: MapPrototype.get,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeMapPrototype, "has", {
+  value: MapPrototype.has,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 const safeMapKeys = { value: undefined, writable: true, enumerable: false, configurable: true };
 safeMapKeys.value = function () {
   return new SafeMapKeys(this);
 };
 ReflectDefineProperty(SafeMapPrototype, "keys", safeMapKeys);
-ReflectDefineProperty(SafeMapPrototype, "set", { value: MapPrototype.set, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeMapPrototype, "getOrInsert", { value: MapPrototype.getOrInsert, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeMapPrototype, "getOrInsertComputed", { value: MapPrototype.getOrInsertComputed, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeMapPrototype, "set", {
+  value: MapPrototype.set,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeMapPrototype, "getOrInsert", {
+  value: MapPrototype.getOrInsert,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeMapPrototype, "getOrInsertComputed", {
+  value: MapPrototype.getOrInsertComputed,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 ReflectDefineProperty(SafeMapPrototype, "size", ReflectGetOwnPropertyDescriptor(MapPrototype, "size"));
 const safeMapValues = { value: undefined, writable: true, enumerable: false, configurable: true };
 safeMapValues.value = function () {
@@ -93,8 +133,18 @@ safeMapSymbolIterator.value = function () {
   return new SafeMapSymbolIterator(this);
 };
 ReflectDefineProperty(SafeMapPrototype, SymbolIterator, safeMapSymbolIterator);
-ReflectDefineProperty(SafeMapPrototype, SymbolToStringTag, { value: MapPrototype[SymbolToStringTag], writable: false, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeMap, "groupBy", { value: Map.groupBy, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeMapPrototype, SymbolToStringTag, {
+  value: MapPrototype[SymbolToStringTag],
+  writable: false,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeMap, "groupBy", {
+  value: Map.groupBy,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 ReflectDefineProperty(SafeMap, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Map, SymbolSpecies));
 sealClass(SafeMap);
 
@@ -114,16 +164,41 @@ class SafeSet extends Set {
   }
 }
 const SafeSetPrototype = SafeSet.prototype;
-ReflectDefineProperty(SafeSetPrototype, "add", { value: SetPrototype.add, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "clear", { value: SetPrototype.clear, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "delete", { value: SetPrototype.delete, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeSetPrototype, "add", {
+  value: SetPrototype.add,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "clear", {
+  value: SetPrototype.clear,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "delete", {
+  value: SetPrototype.delete,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 const safeSetEntries = { value: undefined, writable: true, enumerable: false, configurable: true };
 safeSetEntries.value = function () {
   return new SafeSetEntries(this);
 };
 ReflectDefineProperty(SafeSetPrototype, "entries", safeSetEntries);
-ReflectDefineProperty(SafeSetPrototype, "forEach", { value: SetPrototype.forEach, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "has", { value: SetPrototype.has, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeSetPrototype, "forEach", {
+  value: SetPrototype.forEach,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "has", {
+  value: SetPrototype.has,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 const safeSetKeys = { value: undefined, writable: true, enumerable: false, configurable: true };
 safeSetKeys.value = function () {
   return new SafeSetKeys(this);
@@ -135,19 +210,59 @@ safeSetValues.value = function () {
   return new SafeSetValues(this);
 };
 ReflectDefineProperty(SafeSetPrototype, "values", safeSetValues);
-ReflectDefineProperty(SafeSetPrototype, "union", { value: SetPrototype.union, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "intersection", { value: SetPrototype.intersection, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "difference", { value: SetPrototype.difference, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "symmetricDifference", { value: SetPrototype.symmetricDifference, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "isSubsetOf", { value: SetPrototype.isSubsetOf, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "isSupersetOf", { value: SetPrototype.isSupersetOf, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeSetPrototype, "isDisjointFrom", { value: SetPrototype.isDisjointFrom, writable: true, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeSetPrototype, "union", {
+  value: SetPrototype.union,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "intersection", {
+  value: SetPrototype.intersection,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "difference", {
+  value: SetPrototype.difference,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "symmetricDifference", {
+  value: SetPrototype.symmetricDifference,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "isSubsetOf", {
+  value: SetPrototype.isSubsetOf,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "isSupersetOf", {
+  value: SetPrototype.isSupersetOf,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeSetPrototype, "isDisjointFrom", {
+  value: SetPrototype.isDisjointFrom,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 const safeSetSymbolIterator = { value: undefined, writable: true, enumerable: false, configurable: true };
 safeSetSymbolIterator.value = function () {
   return new SafeSetSymbolIterator(this);
 };
 ReflectDefineProperty(SafeSetPrototype, SymbolIterator, safeSetSymbolIterator);
-ReflectDefineProperty(SafeSetPrototype, SymbolToStringTag, { value: SetPrototype[SymbolToStringTag], writable: false, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeSetPrototype, SymbolToStringTag, {
+  value: SetPrototype[SymbolToStringTag],
+  writable: false,
+  enumerable: false,
+  configurable: true,
+});
 ReflectDefineProperty(SafeSet, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Set, SymbolSpecies));
 sealClass(SafeSet);
 
@@ -159,13 +274,48 @@ class SafeWeakMap extends WeakMap {
   }
 }
 const SafeWeakMapPrototype = SafeWeakMap.prototype;
-ReflectDefineProperty(SafeWeakMapPrototype, "delete", { value: WeakMapPrototype.delete, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeWeakMapPrototype, "get", { value: WeakMapPrototype.get, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeWeakMapPrototype, "has", { value: WeakMapPrototype.has, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeWeakMapPrototype, "set", { value: WeakMapPrototype.set, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsert", { value: WeakMapPrototype.getOrInsert, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsertComputed", { value: WeakMapPrototype.getOrInsertComputed, writable: true, enumerable: false, configurable: true });
-ReflectDefineProperty(SafeWeakMapPrototype, SymbolToStringTag, { value: WeakMapPrototype[SymbolToStringTag], writable: false, enumerable: false, configurable: true });
+ReflectDefineProperty(SafeWeakMapPrototype, "delete", {
+  value: WeakMapPrototype.delete,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeWeakMapPrototype, "get", {
+  value: WeakMapPrototype.get,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeWeakMapPrototype, "has", {
+  value: WeakMapPrototype.has,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeWeakMapPrototype, "set", {
+  value: WeakMapPrototype.set,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsert", {
+  value: WeakMapPrototype.getOrInsert,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeWeakMapPrototype, "getOrInsertComputed", {
+  value: WeakMapPrototype.getOrInsertComputed,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+ReflectDefineProperty(SafeWeakMapPrototype, SymbolToStringTag, {
+  value: WeakMapPrototype[SymbolToStringTag],
+  writable: false,
+  enumerable: false,
+  configurable: true,
+});
 sealClass(SafeWeakMap);
 
 const PromisePrototypeThen = $Promise.prototype.$then;

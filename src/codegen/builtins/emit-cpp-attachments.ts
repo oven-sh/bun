@@ -57,7 +57,11 @@ class HostUseConstants {
 
   addList(uses: readonly string[]): string | null {
     if (uses.length === 0) return null;
-    return this.#define("hostUses", `{\n${uses.map(use => `    ${use},`).join("\n")}\n}`, name => `BuiltinHostUse ${name}[]`);
+    return this.#define(
+      "hostUses",
+      `{\n${uses.map(use => `    ${use},`).join("\n")}\n}`,
+      name => `BuiltinHostUse ${name}[]`,
+    );
   }
 
   emit(): string {
@@ -161,7 +165,10 @@ function formatHostUse(context: AttachmentContext, use: ModelHostUse): string {
     ["builtin", formatId("BuiltinID", named)],
     ["argumentIndex", use.read === "PassedTo" ? formatUnlessZero(use.argument) : null],
     ["nativeCell", use.read === "Kept" ? formatName(use.cell) : null],
-    ["call", use.read === "Called" && use.call !== null ? context.hostUses.addCall(formatHostCall(context, use.call)) : null],
+    [
+      "call",
+      use.read === "Called" && use.call !== null ? context.hostUses.addCall(formatHostCall(context, use.call)) : null,
+    ],
   ]);
 }
 
@@ -253,7 +260,8 @@ function formatNamedMemberCall(context: AttachmentContext, call: ModelNamedMembe
 
 function formatForms(builtin: ModelBuiltin): string[] {
   const { appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm } = builtin.attachments;
-  if ([appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm].every(form => form === null)) return [];
+  if ([appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm].every(form => form === null))
+    return [];
   return [
     formatAggregate([
       ["builtin", formatId("BuiltinID", builtin)],
@@ -263,7 +271,10 @@ function formatForms(builtin: ModelBuiltin): string[] {
       ["jsonTextArgument", formatOperand(jsonTextForm === null ? null : jsonTextForm.argument)],
       ["literalPartsForm", formatId("BuiltinID", literalPartsForm === null ? null : literalPartsForm.builtin)],
       ["literalPartsArgument", formatOperand(literalPartsForm === null ? null : literalPartsForm.argument)],
-      ["literalPartNames", literalPartsForm === null ? null : `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`],
+      [
+        "literalPartNames",
+        literalPartsForm === null ? null : `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`,
+      ],
       ["bodyBytesForm", formatId("BuiltinID", bodyBytesForm)],
     ]),
   ];
@@ -373,7 +384,9 @@ export function emitCppAttachments(model: TableModel, features: FeatureModel): s
     emitTableArray(
       "BuiltinModuleLoad",
       "ModuleLoads",
-      builtins.flatMap(builtin => builtin.attachments.moduleLoads.map(load => formatModuleLoad(context, builtin, load))),
+      builtins.flatMap(builtin =>
+        builtin.attachments.moduleLoads.map(load => formatModuleLoad(context, builtin, load)),
+      ),
     ),
     emitTableArray(
       "BuiltinModuleLoad",

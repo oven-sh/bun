@@ -45,8 +45,14 @@ fn record_counts(program: &Program) -> [(ProgramList, usize); 12] {
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),
         (ProgramList::Entries, program.entries.len()),
-        (ProgramList::RuntimeFunctions, program.runtime_functions.len()),
-        (ProgramList::WebAssemblyModules, program.web_assembly_modules.len()),
+        (
+            ProgramList::RuntimeFunctions,
+            program.runtime_functions.len(),
+        ),
+        (
+            ProgramList::WebAssemblyModules,
+            program.web_assembly_modules.len(),
+        ),
     ]
 }
 
@@ -89,7 +95,9 @@ fn line_fills_one_list() {
 
 #[test]
 fn every_keyword_has_a_program_list() {
-    let with_keyword = ProgramList::ALL.into_iter().filter(|list| list.keyword().is_some());
+    let with_keyword = ProgramList::ALL
+        .into_iter()
+        .filter(|list| list.keyword().is_some());
     let counted = record_counts(&Program::new()).map(|(list, _)| list);
     assert!(with_keyword.eq(counted));
 }
@@ -101,10 +109,19 @@ fn ids_of_a_list_ascend() {
         let first = format!("{keyword} {prefix}0\n");
         assert_error(&format!("{keyword} {prefix}1\n"), 1, id_column, NEXT_ID);
         assert_error(&format!("{first}{first}"), 2, id_column, NEXT_ID);
-        assert_error(&format!("{first}{keyword} {prefix}2\n"), 2, id_column, NEXT_ID);
+        assert_error(
+            &format!("{first}{keyword} {prefix}2\n"),
+            2,
+            id_column,
+            NEXT_ID,
+        );
     }
     let program = parse_valid("layout L0\nlayout L1 position=4\nlayout L2\n");
-    let positions: Vec<u32> = program.layouts.iter().map(|layout| layout.position).collect();
+    let positions: Vec<u32> = program
+        .layouts
+        .iter()
+        .map(|layout| layout.position)
+        .collect();
     assert_eq!(positions, [0, 4, 0]);
 }
 
@@ -135,7 +152,11 @@ entry module=m4
     let program = parse_valid(text);
     let variable_modules: Vec<ModuleId> = program.variables.iter().map(|it| it.module).collect();
     assert_eq!(variable_modules, [1, 3].map(ModuleId::new));
-    let positions: Vec<u32> = program.layouts.iter().map(|layout| layout.position).collect();
+    let positions: Vec<u32> = program
+        .layouts
+        .iter()
+        .map(|layout| layout.position)
+        .collect();
     assert_eq!(positions, [1, 2]);
     let entry_modules: Vec<ModuleId> = program.entries.iter().map(|entry| entry.module).collect();
     assert_eq!(entry_modules, [2, 4].map(ModuleId::new));
@@ -174,7 +195,12 @@ fn unknown_keyword() {
 #[test]
 fn unknown_field() {
     assert_error("entry shape=1\n", 1, 13, "a field of Entry");
-    assert_error("modulefailure q0 module=m0\n", 1, 25, "a field of ModuleFailure");
+    assert_error(
+        "modulefailure q0 module=m0\n",
+        1,
+        25,
+        "a field of ModuleFailure",
+    );
     assert_error("entry Module=m0\n", 1, 14, "a field of Entry");
     assert_error("entry module=L0\n", 1, 14, "an id of kind Module");
 }
@@ -184,14 +210,23 @@ fn line_holds_one_record() {
     assert_error("layout L0 layout L1\n", 1, 11, LINE_END);
     assert_error("layout L0 position=4 5\n", 1, 22, LINE_END);
     assert_error("layout L0,\n", 1, 10, LINE_END);
-    assert_error("function f0 {\n  b0():\n    Return\n} layout L0\n", 4, 3, LINE_END);
+    assert_error(
+        "function f0 {\n  b0():\n    Return\n} layout L0\n",
+        4,
+        3,
+        LINE_END,
+    );
 }
 
 #[test]
 fn function_line_ends_after_body() {
     let text = "function f0 {\n  b0():\n    Return\n}\nfunction f1\nlayout L0\n";
     let program = parse_valid(text);
-    let block_counts: Vec<u32> = program.functions.iter().map(|it| it.body.block_count).collect();
+    let block_counts: Vec<u32> = program
+        .functions
+        .iter()
+        .map(|it| it.body.block_count)
+        .collect();
     assert_eq!(block_counts, [1, 0]);
     assert_eq!(program.layouts.len(), 1);
 }
@@ -209,7 +244,10 @@ fn comment_and_empty_lines_are_skipped() {
 #[test]
 fn last_line_needs_no_line_end() {
     assert_eq!(parse_valid("layout L0").layouts.len(), 1);
-    assert_eq!(parse_valid("layout L0\nentry module=m1").entries[0].module, ModuleId::new(1));
+    assert_eq!(
+        parse_valid("layout L0\nentry module=m1").entries[0].module,
+        ModuleId::new(1)
+    );
 }
 
 #[test]

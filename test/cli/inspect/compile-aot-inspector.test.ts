@@ -1,8 +1,8 @@
 import { spawn, type Subprocess } from "bun";
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
-import { beforeAll, describe, test } from "../../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { beforeAll, describe, test } from "../../aot/supported";
 import { SocketFramer } from "./socket-framer";
 
 setDefaultTimeout(60_000);
@@ -30,7 +30,14 @@ console.log("ready", account, options);
 setInterval(() => {}, 1000);
 `,
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
   }),
 };
 
@@ -141,13 +148,17 @@ async function inspected(flags: string[]) {
 }
 
 const isWarningAboutCompiledCode = (event: { method: string; params: any }) =>
-  event.method === "Console.messageAdded" && event.params.message.level === "warning" && event.params.message.text.includes("compiled ahead of time");
+  event.method === "Console.messageAdded" &&
+  event.params.message.level === "warning" &&
+  event.params.message.text.includes("compiled ahead of time");
 
 test("a debugger attached to an executable built without --aot gets no notice and sees the script", async () => {
   const session = await inspected([]);
   try {
     await session.send("Debugger.enable");
-    await session.until(() => session.events.find(event => event.method === "Debugger.scriptParsed" && event.params.url.endsWith("/app")));
+    await session.until(() =>
+      session.events.find(event => event.method === "Debugger.scriptParsed" && event.params.url.endsWith("/app")),
+    );
     await session.send("Runtime.evaluate", { expression: "1" });
     expect(session.events.filter(isWarningAboutCompiledCode)).toEqual([]);
   } finally {
@@ -167,7 +178,9 @@ describe("the inspector on an executable built with --aot --compile-inspector", 
     await session.send("Debugger.enable");
     const warnings = session.events.filter(isWarningAboutCompiledCode);
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].params.message.text).toContain("Breakpoints, stepping, pausing and `debugger` statements have no effect in compiled code");
+    expect(warnings[0].params.message.text).toContain(
+      "Breakpoints, stepping, pausing and `debugger` statements have no effect in compiled code",
+    );
     expect(warnings[0].params.message.text).toContain("To debug the program, run it from source with bun run.");
   });
 
@@ -193,7 +206,10 @@ describe("the inspector on an executable built with --aot --compile-inspector", 
 
   test("Runtime.getProperties opens an object of a compiled class", async () => {
     const { result } = await session.send("Runtime.evaluate", { expression: "account" });
-    const { properties } = await session.send("Runtime.getProperties", { objectId: result.objectId, ownProperties: true });
+    const { properties } = await session.send("Runtime.getProperties", {
+      objectId: result.objectId,
+      ownProperties: true,
+    });
     expect(properties).toBeArray();
     const byName = Object.fromEntries(properties.map((property: any) => [property.name, property.value]));
     expect(byName.owner).toEqual({ type: "string", value: "ann" });
@@ -216,9 +232,13 @@ describe("the inspector on an executable built with --aot --compile-inspector", 
 
   test("console.log of compiled objects reaches the console with previews", async () => {
     const { message } = await session.until(
-      () => session.events.find(event => event.method === "Console.messageAdded" && event.params.message.text === "ready")?.params,
+      () =>
+        session.events.find(event => event.method === "Console.messageAdded" && event.params.message.text === "ready")
+          ?.params,
     );
-    const names = message.parameters.slice(1).map((parameter: any) => parameter.preview.properties.map((property: any) => property.name));
+    const names = message.parameters
+      .slice(1)
+      .map((parameter: any) => parameter.preview.properties.map((property: any) => property.name));
     expect(names).toEqual([
       ["owner", "balance", "parent", "tags"],
       ["host", "port"],

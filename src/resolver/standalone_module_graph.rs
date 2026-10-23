@@ -148,7 +148,13 @@ pub trait StandaloneModuleGraph: Send + Sync {
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
         let public_root = self.base_public_path_with_default_suffix();
-        self.compiled_program()?.resolve_package(public_root, source_dir, specifier, is_require, search)
+        self.compiled_program()?.resolve_package(
+            public_root,
+            source_dir,
+            specifier,
+            is_require,
+            search,
+        )
     }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
@@ -275,17 +281,28 @@ mod tests {
     #[test]
     fn entry_point_found_by_file_name_is_answered_with_module_key() {
         let graph = graph_with_compiled_program();
-        for specifier in [&b"./worker"[..], b"./worker.js", b"./worker.mjs", b"./worker.ts"] {
+        for specifier in [
+            &b"./worker"[..],
+            b"./worker.js",
+            b"./worker.mjs",
+            b"./worker.ts",
+        ] {
             assert_eq!(resolve_module(&graph, specifier), Some(COMPILED_MODULES[0]));
         }
-        assert_eq!(resolve_module(&graph, ENTRY_POINT), Some(COMPILED_MODULES[0]));
+        assert_eq!(
+            resolve_module(&graph, ENTRY_POINT),
+            Some(COMPILED_MODULES[0])
+        );
     }
 
     #[test]
     fn compiled_module_is_found_after_files_of_graph() {
         let graph = graph_with_compiled_program();
         assert_eq!(resolve_module(&graph, b"./lib"), Some(COMPILED_MODULES[1]));
-        assert_eq!(resolve_module(&graph, b"./lib.ts"), Some(COMPILED_MODULES[1]));
+        assert_eq!(
+            resolve_module(&graph, b"./lib.ts"),
+            Some(COMPILED_MODULES[1])
+        );
         assert_eq!(resolve_module(&graph, b"./absent"), None);
         assert_eq!(resolve_module(&graph, b"lib"), None);
     }
@@ -294,7 +311,10 @@ mod tests {
     fn path_on_disk_names_no_compiled_module() {
         let graph = graph_with_compiled_program();
         assert_eq!(resolve_module_from(&graph, b"/project/", b"./lib"), None);
-        assert_eq!(resolve_module_from(&graph, b"/elsewhere/", b"/project/lib.ts"), None);
+        assert_eq!(
+            resolve_module_from(&graph, b"/elsewhere/", b"/project/lib.ts"),
+            None
+        );
         assert_eq!(resolve_module_from(&graph, b"/elsewhere/", b"./lib"), None);
     }
 

@@ -234,7 +234,9 @@ fn parse_command(arguments: &[String], working_directory: Vec<u8>) -> Result<Com
             Flag::PreserveSymlinks => build.preserves_symlinks = true,
             Flag::TsconfigOverride => build.tsconfig_override = Some(bytes.to_vec()),
             Flag::Loader => build.loaders.push(parse_loader(name, value)?),
-            Flag::External => build.external_packages.push(parse_package_name(name, value)?),
+            Flag::External => build
+                .external_packages
+                .push(parse_package_name(name, value)?),
             Flag::Packages => {
                 let choices = [("external", true), ("bundle", false)];
                 build.are_all_packages_external = parse_choice(name, value, choices)?;
@@ -298,7 +300,11 @@ fn parse_main_fields(name: &str, value: &str) -> Result<Vec<Vec<u8>>, String> {
         .map(<[u8]>::to_vec)
         .collect();
     if fields.iter().any(Vec::is_empty) {
-        return Err(invalid_value(name, value, "a comma-separated list of field names"));
+        return Err(invalid_value(
+            name,
+            value,
+            "a comma-separated list of field names",
+        ));
     }
     Ok(fields)
 }
@@ -308,7 +314,13 @@ fn parse_loader(name: &str, value: &str) -> Result<(Vec<u8>, Loader), String> {
         Some(colon) if colon > 1 && value.starts_with('.') => {
             (&value[..colon], &value[colon + 1..])
         }
-        _ => return Err(invalid_value(name, value, "an extension and a loader, as in .txt:text")),
+        _ => {
+            return Err(invalid_value(
+                name,
+                value,
+                "an extension and a loader, as in .txt:text",
+            ));
+        }
     };
     match Loader::from_string(loader_name.as_bytes()) {
         Some(loader) => Ok((extension.as_bytes().to_vec(), loader)),
@@ -354,11 +366,10 @@ fn write_program(destination: &Destination, bytes: &[u8]) -> bun_sys::Maybe<()> 
 
 fn replace_file(path: &[u8], bytes: &[u8]) -> bun_sys::Maybe<()> {
     let suffix = format!(".{}.tmp", std::process::id());
-    let temporary_path = ZBox::from_bytes(&[path, suffix.as_bytes()].concat());
+    let temporary_path = ZBox::from_bytes([path, suffix.as_bytes()].concat());
     let destination_path = ZBox::from_bytes(path);
-    let result = File::write_file(Fd::cwd(), &temporary_path, bytes).and_then(|()| {
-        bun_sys::renameat(Fd::cwd(), &temporary_path, Fd::cwd(), &destination_path)
-    });
+    let result = File::write_file(Fd::cwd(), &temporary_path, bytes)
+        .and_then(|()| bun_sys::renameat(Fd::cwd(), &temporary_path, Fd::cwd(), &destination_path));
     if result.is_err() {
         let _ = bun_sys::unlinkat(Fd::cwd(), &temporary_path);
     }

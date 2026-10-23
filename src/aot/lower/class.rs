@@ -18,9 +18,7 @@ use super::decorators::Decoration;
 use super::member::PropertyName;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::{Function, HomeObjectKind, MethodKind};
-use crate::ir::{
-    ClassSlot, DeclaredType, FunctionId, LayoutId, PropertyKeyId, StringId, ValueId,
-};
+use crate::ir::{ClassSlot, DeclaredType, FunctionId, LayoutId, PropertyKeyId, StringId, ValueId};
 
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
 pub(in crate::lower) use self::fields::{find_private_state_field, private_state_fields};

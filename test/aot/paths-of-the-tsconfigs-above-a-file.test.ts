@@ -2,7 +2,14 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [] as string[], strict: true };
+const options = {
+  target: "ESNext",
+  module: "Preserve",
+  moduleResolution: "bundler",
+  noEmit: true,
+  types: [] as string[],
+  strict: true,
+};
 const config = (paths?: object) => JSON.stringify({ compilerOptions: { ...options, ...(paths && { paths }) } });
 
 async function run(cwd: string, ...args: string[]) {
@@ -13,7 +20,9 @@ async function run(cwd: string, ...args: string[]) {
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const errors = (said: string) =>
-  [...said.matchAll(/^error: (TS\d+):.*\n +at .*paths-of-the-tsconfigs-above[^\\/]*[\\/](.+):(\d+):\d+$/gm)].map(match => `${match[2]!.replaceAll("\\", "/")}:${match[3]} ${match[1]}`).sort();
+  [...said.matchAll(/^error: (TS\d+):.*\n +at .*paths-of-the-tsconfigs-above[^\\/]*[\\/](.+):(\d+):\d+$/gm)]
+    .map(match => `${match[2]!.replaceAll("\\", "/")}:${match[3]} ${match[1]}`)
+    .sort();
 
 const atTheRoot = {
   "src/value.ts": `export const value: number = 1;\nexport type Value = number;\n`,
@@ -82,9 +91,15 @@ test("the paths of a tsconfig.json that is not above a file have a say about it 
     "lib/lib.test.ts": `import { expect, test } from "bun:test";\nimport { one } from "./index";\ntest("lib", () => {\n  expect(one).toBe(1);\n});\n`,
   });
   const ofTheLibrary = await run(String(dir), "test", "--aot", "./lib/lib.test.ts");
-  expect({ errors: errors(ofTheLibrary.said), passed: passed(ofTheLibrary.said) }).toEqual({ errors: ["lib/index.ts:1 TS2307"], passed: [] });
+  expect({ errors: errors(ofTheLibrary.said), passed: passed(ofTheLibrary.said) }).toEqual({
+    errors: ["lib/index.ts:1 TS2307"],
+    passed: [],
+  });
   const ofTheApplication = await run(String(dir), "test", "--aot", "./app/app.test.ts");
-  expect({ errors: errors(ofTheApplication.said), passed: passed(ofTheApplication.said) }).toEqual({ errors: [], passed: ["app"] });
+  expect({ errors: errors(ofTheApplication.said), passed: passed(ofTheApplication.said) }).toEqual({
+    errors: [],
+    passed: ["app"],
+  });
   const both = await run(String(dir), "test", "--aot");
   expect({ errors: errors(both.said), passed: passed(both.said) }).toEqual({ errors: [], passed: ["app", "lib"] });
 }, 60_000);

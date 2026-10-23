@@ -352,7 +352,11 @@ fn statement_syntax_by_kind() {
     let body = cases.map(|case| case.0);
     with_file(file, &body, |hir| {
         for (statement, syntax) in cases {
-            assert_eq!(statement_esm_syntax(hir, statement), syntax, "{statement:?}");
+            assert_eq!(
+                statement_esm_syntax(hir, statement),
+                syntax,
+                "{statement:?}"
+            );
         }
     });
 }
@@ -368,7 +372,12 @@ fn typed_version_esm_syntax() {
             is_typed_version: true,
             ..Default::default()
         };
-        let body = [add_import(&mut file, known::module, type_only, ExprId::NONE)];
+        let body = [add_import(
+            &mut file,
+            known::module,
+            type_only,
+            ExprId::NONE,
+        )];
         let syntax = with_file(file, &body, file_esm_syntax);
         assert_eq!(syntax, expected, "type_only: {type_only}");
     }
@@ -412,9 +421,21 @@ fn export_assignment_evidence() {
 #[test]
 fn use_strict_directive_is_weak_evidence() {
     let cases = [
-        (known::use_strict, DeclaredModuleType::Unknown, ModuleFormat::CommonJs),
-        (known::use_strict, DeclaredModuleType::Esm, ModuleFormat::Esm),
-        (known::module, DeclaredModuleType::Unknown, ModuleFormat::Esm),
+        (
+            known::use_strict,
+            DeclaredModuleType::Unknown,
+            ModuleFormat::CommonJs,
+        ),
+        (
+            known::use_strict,
+            DeclaredModuleType::Esm,
+            ModuleFormat::Esm,
+        ),
+        (
+            known::module,
+            DeclaredModuleType::Unknown,
+            ModuleFormat::Esm,
+        ),
     ];
     for (raw, declared_module_type, format) in cases {
         let mut file = FileBuilder::default();
@@ -634,8 +655,16 @@ fn other_comparisons_have_no_main_module_operand() {
         let body = [file.stmt(StmtKind::Expr(comparison), 0)];
         with_bound(file, &body, |hir, bound| {
             let case = (require_member, op);
-            assert_eq!(main_module_operand(hir, bound, comparison), None, "{case:?}");
-            assert_eq!(find_main_module_comparison(hir, bound, module), None, "{case:?}");
+            assert_eq!(
+                main_module_operand(hir, bound, comparison),
+                None,
+                "{case:?}"
+            );
+            assert_eq!(
+                find_main_module_comparison(hir, bound, module),
+                None,
+                "{case:?}"
+            );
         });
     }
 }

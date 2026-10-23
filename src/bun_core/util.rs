@@ -2849,7 +2849,9 @@ pub fn get_thread_count() -> u16 {
 
 pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
-    let threads = usize::from(get_thread_count()).min(len / MIN_BYTES_PER_THREAD).min(16);
+    let threads = usize::from(get_thread_count())
+        .min(len / MIN_BYTES_PER_THREAD)
+        .min(16);
     if threads < 2 {
         // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
         return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
@@ -2860,7 +2862,13 @@ pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
         for start in (share..len).step_by(share) {
             // SAFETY: a part of what the caller's contract covers, and no two threads get the same
             // part.
-            scope.spawn(move || unsafe { core::ptr::copy_nonoverlapping((from + start) as *const u8, (to + start) as *mut u8, share.min(len - start)) });
+            scope.spawn(move || unsafe {
+                core::ptr::copy_nonoverlapping(
+                    (from + start) as *const u8,
+                    (to + start) as *mut u8,
+                    share.min(len - start),
+                )
+            });
         }
         // SAFETY: the first part, which no thread above was given.
         unsafe { core::ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, share.min(len)) };
@@ -4435,7 +4443,9 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.
-        let args = RESTART_ARGUMENTS.get().map_or_else(argv_storage, Vec::as_slice);
+        let args = RESTART_ARGUMENTS
+            .get()
+            .map_or_else(argv_storage, Vec::as_slice);
         let dupe_argv: Vec<ZBox> = args
             .iter()
             .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))

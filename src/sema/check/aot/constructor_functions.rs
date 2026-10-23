@@ -28,7 +28,12 @@ fn is_constructible_function(function: &Func) -> bool {
 
 impl Checker<'_, '_> {
     // `if (!(this instanceof F)) return new F(..)`: what `F` returns there is what another call of `F` got as `this`.
-    fn returns_own_constructions_only(&mut self, file: FileId, function: FnId, binding: Sym) -> bool {
+    fn returns_own_constructions_only(
+        &mut self,
+        file: FileId,
+        function: FnId,
+        binding: Sym,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let returns = bound.ids(bound.fns[function.idx()].returns);
         let values: SmallVec<[ExprId; 4]> = returns

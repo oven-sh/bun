@@ -166,9 +166,9 @@ fn is_in_catch_clause(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
     let mut statement = find_statement_around(bound, parent);
     while let Some(inner) = statement {
         statement = find_statement_around(bound, bound.parent_of_stmt(inner));
-        let is_handler = statement.is_some_and(|outer| {
-            matches!(hir[outer].kind, StmtKind::Try { handler, .. } if handler == inner)
-        });
+        let is_handler = statement.is_some_and(
+            |outer| matches!(hir[outer].kind, StmtKind::Try { handler, .. } if handler == inner),
+        );
         if is_handler {
             return true;
         }
@@ -253,9 +253,9 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Step::Expression(file, expr) => self.step_expression(file, expr),
                 Step::Symbol(symbol) => self.step_symbol(symbol),
                 Step::Linked(LinkedBinding::Binding(symbol)) => Step::Symbol(symbol),
-                Step::Linked(LinkedBinding::Namespace(module)) => Step::Found(
-                    StaticReferent::Namespace(NamespaceReferent::Module(module)),
-                ),
+                Step::Linked(LinkedBinding::Namespace(module)) => {
+                    Step::Found(StaticReferent::Namespace(NamespaceReferent::Module(module)))
+                }
                 Step::Linked(LinkedBinding::Builtin(builtin)) => {
                     Step::Found(StaticReferent::Builtin(builtin))
                 }
@@ -428,7 +428,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         if !bound.runtime.is_computed() || bound.lookup(exports, known::default).is_some() {
             return self.step_export(file, known::default);
         }
-        let listed = self.pending_members.last().and_then(|&name| bound.lookup(exports, name));
+        let listed = self
+            .pending_members
+            .last()
+            .and_then(|&name| bound.lookup(exports, name));
         match listed.map(|member| bound.symbol(member).decls) {
             Some(&[Decl::ExportSpec(specifier)]) => {
                 self.pending_members.pop();
@@ -634,9 +637,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                     }
                     _ => None,
                 },
-                ExprKind::Call(call) => {
-                    self.find_copied_property(file, call, name, &names_holder)
-                }
+                ExprKind::Call(call) => self.find_copied_property(file, call, name, &names_holder),
                 _ => None,
             };
             if let Some(value) = value

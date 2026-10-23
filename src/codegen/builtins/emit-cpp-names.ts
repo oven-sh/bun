@@ -152,7 +152,9 @@ export function nameArraysOf(model: TableModel): NameArrays {
       {
         cppType: "BuiltinID",
         name: "builtinTableBuiltinsWithQualifiedTokens",
-        elements: model.builtins.filter(({ token, path }) => token !== tokenOf(path)).map(builtin => formatId("BuiltinID", builtin)),
+        elements: model.builtins
+          .filter(({ token, path }) => token !== tokenOf(path))
+          .map(builtin => formatId("BuiltinID", builtin)),
       },
       createTexts("builtinTableClassTokens", model.classes.map(getToken)),
       createTexts("builtinTableSlotTokens", model.slots.map(slotTokenOf)),
@@ -167,7 +169,8 @@ function emitTexts(declaration: string, texts: readonly string[]): string {
   const starts: number[] = [0];
   for (const text of texts) starts.push(starts[starts.length - 1] + lengthOfCharacters(text) + 1);
   const rowsOfStarts: string[] = [];
-  for (let first = 0; first < starts.length; first += 16) rowsOfStarts.push(`        ${starts.slice(first, first + 16).join(", ")},`);
+  for (let first = 0; first < starts.length; first += 16)
+    rowsOfStarts.push(`        ${starts.slice(first, first + 16).join(", ")},`);
   const literals = texts.map((text, index) => `    "${text}${index + 1 < texts.length ? "\\0" : ""}"`);
   return `${declaration} = {\n    ${texts.length},\n    {\n${rowsOfStarts.join("\n")}\n    },\n${literals.join("\n")}\n};`;
 }

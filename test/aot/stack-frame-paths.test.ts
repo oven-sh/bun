@@ -10,7 +10,9 @@ import { built, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"], allowJs: true } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"], allowJs: true },
+  }),
   "app/main.ts": `
     import { viaModule } from "./src/module.mjs";
     import { viaTyped, sites } from "./src/deep/typed";
@@ -55,7 +57,12 @@ const files = {
   `,
   "app/src/common.cjs": `module.exports = function viaCommonJS() { return new Error().stack; };\n`,
   "app/src/common.d.cts": `declare function viaCommonJS(): string;\nexport = viaCommonJS;\n`,
-  "app/node_modules/frames-of-a-package/package.json": JSON.stringify({ name: "frames-of-a-package", version: "1.0.0", main: "lib/index.js", types: "lib/index.d.ts" }),
+  "app/node_modules/frames-of-a-package/package.json": JSON.stringify({
+    name: "frames-of-a-package",
+    version: "1.0.0",
+    main: "lib/index.js",
+    types: "lib/index.d.ts",
+  }),
   "app/node_modules/frames-of-a-package/lib/index.js": `module.exports = function viaPackage() { return new Error().stack; };\n`,
   "app/node_modules/frames-of-a-package/lib/index.d.ts": `declare function viaPackage(): string;\nexport = viaPackage;\n`,
   "above.ts": `export function above(): string | undefined { return new Error().stack; }\n`,
@@ -70,7 +77,12 @@ const files = {
   `,
   "app/src/helper.cjs": `exports.viaHelper = function viaHelper(ask) { return ask(); };\n`,
   "app/src/helper.d.cts": `export function viaHelper(ask: () => string | undefined): string | undefined;\n`,
-  "app/node_modules/reads-frames/package.json": JSON.stringify({ name: "reads-frames", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+  "app/node_modules/reads-frames/package.json": JSON.stringify({
+    name: "reads-frames",
+    version: "1.0.0",
+    main: "index.js",
+    types: "index.d.ts",
+  }),
   "app/node_modules/reads-frames/index.d.ts": `
     export function folderOfCaller(): string;
     export function fileOfCaller(): string | undefined;
@@ -116,7 +128,8 @@ const inExecutable = (text: string, app: string) =>
 
 function pathsBelow(executable: Buffer, folder: string) {
   const found: string[] = [];
-  for (let at = executable.indexOf(folder); at >= 0; at = executable.indexOf(folder, at + 1)) found.push(executable.subarray(at + folder.length, executable.indexOf(0, at)).toString());
+  for (let at = executable.indexOf(folder); at >= 0; at = executable.indexOf(folder, at + 1))
+    found.push(executable.subarray(at + folder.length, executable.indexOf(0, at)).toString());
   return found;
 }
 
@@ -125,11 +138,18 @@ describe.concurrent("the file of a stack frame", () => {
     using at = project();
     const plain = await spawned([bunExe(), "run", "main.ts"], at.app, bunEnv);
     expect(plain.exitCode).toBe(0);
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "../program"], at.app, bunEnv));
+    built(
+      await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "../program"], at.app, bunEnv),
+    );
     const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: inExecutable(plain.stdout, at.app), exitCode: 0 });
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      stdout: inExecutable(plain.stdout, at.app),
+      exitCode: 0,
+    });
     expect(compiled.stdout).toContain("typed: at viaTyped (/$bunfs/root/src/deep/typed.ts:4:");
-    expect(compiled.stdout).toContain("package: at viaPackage (/$bunfs/root/node_modules/frames-of-a-package/lib/index.js:1:");
+    expect(compiled.stdout).toContain(
+      "package: at viaPackage (/$bunfs/root/node_modules/frames-of-a-package/lib/index.js:1:",
+    );
     // The executable holds no path of the build's folder.
     expect(pathsBelow(readFileSync(join(at.app, isWindows ? "../program.exe" : "../program")), at.app)).toEqual([]);
   }, 120_000);
@@ -138,21 +158,30 @@ describe.concurrent("the file of a stack frame", () => {
     using at = project();
     const plain = await spawned([bunExe(), "run", "idioms.ts"], at.app, bunEnv);
     expect(plain.exitCode).toBe(0);
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "idioms.ts", "--outfile", "../program"], at.app, bunEnv));
+    built(
+      await spawned([bunExe(), "build", "--compile", "--aot", "idioms.ts", "--outfile", "../program"], at.app, bunEnv),
+    );
     const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: inExecutable(plain.stdout, at.app), exitCode: 0 });
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      stdout: inExecutable(plain.stdout, at.app),
+      exitCode: 0,
+    });
     expect(compiled.stdout.split("\n")).toEqual([
       "the folder a lookup starts from (resolve): /$bunfs/root",
       "the file two frames up (get-caller-file): /$bunfs/root/idioms.ts",
       "the first file that is not a loader's (caller): /$bunfs/root/src/helper.cjs",
-      expect.stringMatching(/^the first frame that is not the package's own build \(msw\): \/\$bunfs\/root\/idioms\.ts:\d+:\d+$/),
+      expect.stringMatching(
+        /^the first frame that is not the package's own build \(msw\): \/\$bunfs\/root\/idioms\.ts:\d+:\d+$/,
+      ),
       "",
     ]);
   }, 120_000);
 
   test("in an executable: console.trace and an uncaught exception", async () => {
     using at = project();
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "../program"], at.app, bunEnv));
+    built(
+      await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "../program"], at.app, bunEnv),
+    );
     const traced = await spawned([join(at.app, "../program"), "trace"], "/", bunEnv);
     expect(traced.stdout).toMatch(/traced\n\s+at \/\$bunfs\/root\/main\.ts:\d+:\d+/);
     const thrown = await spawned([join(at.app, "../program"), "throw"], "/", bunEnv);
@@ -167,25 +196,47 @@ describe.concurrent("the file of a stack frame", () => {
   }, 120_000);
 
   // TODO: a minified executable prints the file's name.
-  test.todo("in a minified executable the path's token follows the prefix", async () => {
-    using at = project();
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "--minify", "main.ts", "--outfile", "../program"], at.app, bunEnv));
-    const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
-    expect(compiled.exitCode).toBe(0);
-    for (const line of compiled.stdout.split("\n").filter(line => / at /.test(line) && !line.includes("node:events"))) expect(line).toMatch(/\/\$bunfs\/root\/[A-Za-z0-9]+:\d+:\d+\)?$/);
-    expect(compiled.stdout).not.toContain("typed.ts");
-  }, 120_000);
+  test.todo(
+    "in a minified executable the path's token follows the prefix",
+    async () => {
+      using at = project();
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", "--minify", "main.ts", "--outfile", "../program"],
+          at.app,
+          bunEnv,
+        ),
+      );
+      const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
+      expect(compiled.exitCode).toBe(0);
+      for (const line of compiled.stdout.split("\n").filter(line => / at /.test(line) && !line.includes("node:events")))
+        expect(line).toMatch(/\/\$bunfs\/root\/[A-Za-z0-9]+:\d+:\d+\)?$/);
+      expect(compiled.stdout).not.toContain("typed.ts");
+    },
+    120_000,
+  );
 
   test.each([
-    ["an in-place executable", ["build", "--compile", "--aot", "--compile-in-place", "main.ts", "--outfile", "../program"]],
+    [
+      "an in-place executable",
+      ["build", "--compile", "--aot", "--compile-in-place", "main.ts", "--outfile", "../program"],
+    ],
     ["bun run --aot", null],
     ["bun run --debug-aot", null],
-  ] as const)("%s shows the real path", async (name, build) => {
-    using at = project();
-    const plain = await spawned([bunExe(), "run", "main.ts"], at.app, bunEnv);
-    if (build) built(await spawned([bunExe(), ...build], at.app, bunEnv));
-    const ran = await spawned(build ? [join(at.app, "../program")] : [bunExe(), "run", name.split(" ")[2], "main.ts"], at.app, bunEnv);
-    expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    expect(ran.stdout).toContain(`typed: at viaTyped (${join(at.app, "src", "deep", "typed.ts")}:4:`);
-  }, 120_000);
+  ] as const)(
+    "%s shows the real path",
+    async (name, build) => {
+      using at = project();
+      const plain = await spawned([bunExe(), "run", "main.ts"], at.app, bunEnv);
+      if (build) built(await spawned([bunExe(), ...build], at.app, bunEnv));
+      const ran = await spawned(
+        build ? [join(at.app, "../program")] : [bunExe(), "run", name.split(" ")[2], "main.ts"],
+        at.app,
+        bunEnv,
+      );
+      expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+      expect(ran.stdout).toContain(`typed: at viaTyped (${join(at.app, "src", "deep", "typed.ts")}:4:`);
+    },
+    120_000,
+  );
 });

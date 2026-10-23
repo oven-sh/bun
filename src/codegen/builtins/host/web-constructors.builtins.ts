@@ -3,7 +3,8 @@ import * as b from "bun-builtins-table";
 import { builtinModulesCell, cryptoObjectCell } from "./native-cells.ts";
 import { handedOver } from "./native-code.ts";
 
-const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) => b.class(path, { hasPrototype: false, ...options });
+const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
+  b.class(path, { hasPrototype: false, ...options });
 
 const constructorsBelowFunctionPrototype = [
   "ByteLengthQueuingStrategy",
@@ -82,7 +83,14 @@ const endsOfTransformStream = (holder: string) => ({
   writable: endOfTransformStream(holder, "WritableStream"),
 });
 const readsStream = (getter: b.TableType) =>
-  ({ getter, capability: "heap", throws: true, uses: { this: b.inspected }, reads: ["ExternalState"], implementation: b.generic }) satisfies b.GetterField;
+  ({
+    getter,
+    capability: "heap",
+    throws: true,
+    uses: { this: b.inspected },
+    reads: ["ExternalState"],
+    implementation: b.generic,
+  }) satisfies b.GetterField;
 const partOfByteStream = (name: string, proto: Readonly<Record<string, b.Field>>) =>
   b.class(name, { instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`), proto });
 const takesBytesOf = (operand: string, returns: b.TableType) =>
@@ -96,7 +104,13 @@ const takesBytesOf = (operand: string, returns: b.TableType) =>
   }) satisfies b.FunctionField;
 const signalsOfControllersCell = "AbortController.signal";
 const describesMachine = (getter: b.TableType) =>
-  ({ this: b.any, getter, capability: "heap", uses: { this: b.inspected }, implementation: b.generic }) satisfies b.GetterField;
+  ({
+    this: b.any,
+    getter,
+    capability: "heap",
+    uses: { this: b.inspected },
+    implementation: b.generic,
+  }) satisfies b.GetterField;
 const newAbortSignal = b.union(b.instance("AbortSignal"), b.undefined).fresh;
 const listOfStrings = b.instance("Array").holding({ element: b.string });
 
@@ -131,7 +145,9 @@ const decodes = (args: Readonly<Record<string, b.TableType>>, uses: Readonly<Rec
 
 export default b.declarations(
   constructorsBelowFunctionPrototype.flatMap(path => constructorOnly(path)),
-  Object.entries(constructorsBelow).flatMap(([parent, paths]) => paths.flatMap(path => constructorOnly(path, { extends: parent }))),
+  Object.entries(constructorsBelow).flatMap(([parent, paths]) =>
+    paths.flatMap(path => constructorOnly(path, { extends: parent })),
+  ),
   // Called without `new` on another object, it puts a decoder on that object under a private name, where the methods find it, defines `encoding` and answers the object.
   b.class("node:string_decoder.StringDecoder", {
     instanceCppClass: b.cppClass("WebCore::JSStringDecoder", "JSStringDecoder.h"),
@@ -257,15 +273,29 @@ export default b.declarations(
     respond: undeclaredFunction,
     respondWithNewView: takesBytesOf("view", b.undefined),
   }),
-  streamClass("TransformStream", ["transformer", "writableStrategy", "readableStrategy"], endsOfTransformStream("TransformStream")),
-  streamClass("TextEncoderStream", [], { encoding: readsStream(b.string), ...endsOfTransformStream("TextEncoderStream") }),
+  streamClass(
+    "TransformStream",
+    ["transformer", "writableStrategy", "readableStrategy"],
+    endsOfTransformStream("TransformStream"),
+  ),
+  streamClass("TextEncoderStream", [], {
+    encoding: readsStream(b.string),
+    ...endsOfTransformStream("TextEncoderStream"),
+  }),
 
   // What the module abort-controller exports is this constructor (objectModules in collect-modules.ts), on which it puts three more members when it is loaded: src/jsc/modules/AbortControllerModuleModule.h.
-  ["AbortController", "AbortSignal"].flatMap(name => b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" })),
+  ["AbortController", "AbortSignal"].flatMap(name =>
+    b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" }),
+  ),
   // JSAbortController.cpp. A controller has one signal, which native code makes with it.
   b.class("AbortController", {
     instanceCppClass: b.cppClass("JSAbortController"),
-    construct: { returns: b.instance("AbortController").fresh, capability: "heap", throws: true, implementation: b.hostCall },
+    construct: {
+      returns: b.instance("AbortController").fresh,
+      capability: "heap",
+      throws: true,
+      implementation: b.hostCall,
+    },
     proto: {
       signal: {
         getter: b.instance("AbortSignal"),
@@ -306,7 +336,12 @@ export default b.declarations(
     b.property(b.instance("Crypto"), {
       createdOnFirstRead: {
         capability: "heap",
-        uses: { this: [b.createdIn(b.instance("Crypto").fresh, b.nativeCell(cryptoObjectCell)), b.returnedFrom(cryptoObjectCell)] },
+        uses: {
+          this: [
+            b.createdIn(b.instance("Crypto").fresh, b.nativeCell(cryptoObjectCell)),
+            b.returnedFrom(cryptoObjectCell),
+          ],
+        },
       },
     }),
   ),
@@ -360,7 +395,14 @@ export default b.declarations(
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
-    uses: { signals: [b.retained, b.iteratedValuesStoredIn(b.nativeMemory), b.runs("Iterate"), b.printedByFormatter("constructor")] },
+    uses: {
+      signals: [
+        b.retained,
+        b.iteratedValuesStoredIn(b.nativeMemory),
+        b.runs("Iterate"),
+        b.printedByFormatter("constructor"),
+      ],
+    },
     implementation: b.generic,
   }),
 
@@ -370,17 +412,26 @@ export default b.declarations(
     b.property(listOfStrings, {
       createdOnFirstRead: {
         capability: "heap",
-        uses: { this: [b.createdIn(listOfStrings.fresh, b.nativeCell(builtinModulesCell)), b.returnedFrom(builtinModulesCell)] },
+        uses: {
+          this: [
+            b.createdIn(listOfStrings.fresh, b.nativeCell(builtinModulesCell)),
+            b.returnedFrom(builtinModulesCell),
+          ],
+        },
       },
     }),
   ),
 
   // src/jsc/modules/NodeBufferModule.h.
   b.same("node:buffer.File", "File"),
-  ["INSPECT_MAX_BYTES", "kMaxLength", "kStringMaxLength"].flatMap(name => b.static(`node:buffer.${name}`, b.property(b.f64))),
+  ["INSPECT_MAX_BYTES", "kMaxLength", "kStringMaxLength"].flatMap(name =>
+    b.static(`node:buffer.${name}`, b.property(b.f64)),
+  ),
   b.namespace("node:buffer.constants", { MAX_LENGTH: b.property(b.f64), MAX_STRING_LENGTH: b.property(b.f64) }),
   b.inherits("node:buffer.constants", "Object.prototype"),
-  ["SlowBuffer", "isAscii", "isUtf8", "resolveObjectURL", "transcode"].flatMap(name => b.static(`node:buffer.${name}`, undeclaredFunction)),
+  ["SlowBuffer", "isAscii", "isUtf8", "resolveObjectURL", "transcode"].flatMap(name =>
+    b.static(`node:buffer.${name}`, undeclaredFunction),
+  ),
   // Its `prototype` is Buffer.prototype.
   b.extend("node:buffer.SlowBuffer", { hasUndeclaredMembers: true }),
 );

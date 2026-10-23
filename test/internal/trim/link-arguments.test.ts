@@ -122,7 +122,9 @@ describe("parseArguments", () => {
   ];
   test.each(rejected)("rejects %s with the usage line", (_, words) => {
     expect(() => parse(...words)).toThrow(BuildError);
-    expect(() => parse(...words)).toThrow("usage: link.ts <work directory> <features.json> <builtin-uses.json> <libraries.json> [");
+    expect(() => parse(...words)).toThrow(
+      "usage: link.ts <work directory> <features.json> <builtin-uses.json> <libraries.json> [",
+    );
   });
 });
 
@@ -301,7 +303,9 @@ describe("createLinker", () => {
     const link = () => linker.link(request({ first: [join(String(dir), "fail.js")] }));
     expect(link).toThrow(BuildError);
     expect(link).toThrow(/^the first link failed:\n[^]*undefined symbol: missing/);
-    expect(readFileSync(join(linker.work, "first.log"), "latin1")).toContain("ld.lld: error: undefined symbol: missing");
+    expect(readFileSync(join(linker.work, "first.log"), "latin1")).toContain(
+      "ld.lld: error: undefined symbol: missing",
+    );
   });
 
   test("throws when the compiler driver cannot run", () => {
@@ -329,7 +333,14 @@ describe("a failed link", () => {
   test("prints the file and the cause of the error", async () => {
     using dir = tempDir("trim-link-no-model", {});
     const [work, features] = [join(String(dir), "work"), join(String(dir), "features.json")];
-    const { stdout, stderr, exitCode } = await runLink(work, features, "builtin-uses.json", "libraries.json", "--", "cc");
+    const { stdout, stderr, exitCode } = await runLink(
+      work,
+      features,
+      "builtin-uses.json",
+      "libraries.json",
+      "--",
+      "cc",
+    );
     expect(stderr.split("\n").slice(0, 2)).toEqual(["trim: cannot read the feature model", `  at: ${features}`]);
     expect(stderr).toMatch(/^  cause: .*ENOENT/m);
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
@@ -342,9 +353,19 @@ describe("a failed link", () => {
     });
     const at = (name: string) => join(String(dir), name);
     const missing = await runLink(at("work"), at("features.json"), at("absent.json"), "libraries.json", "--", "cc");
-    expect(missing.stderr.split("\n").slice(0, 2)).toEqual(["trim: cannot read the built-in uses", `  at: ${at("absent.json")}`]);
+    expect(missing.stderr.split("\n").slice(0, 2)).toEqual([
+      "trim: cannot read the built-in uses",
+      `  at: ${at("absent.json")}`,
+    ]);
     expect(missing.exitCode).toBe(1);
-    const undeclared = await runLink(at("work"), at("features.json"), at("undeclared.json"), "libraries.json", "--", "cc");
+    const undeclared = await runLink(
+      at("work"),
+      at("features.json"),
+      at("undeclared.json"),
+      "libraries.json",
+      "--",
+      "cc",
+    );
     expect(undeclared.stderr.split("\n").slice(0, 2)).toEqual([
       "trim: Bun.extra uses Missing, which src/trim/features does not declare",
       `  at: ${at("undeclared.json")}`,
@@ -561,7 +582,7 @@ describe("layOut", () => {
     const layout = layOut(session);
     const printed = summaryOf(layout, session);
     expect(printed.slice(0, -1)).toEqual([
-      "1 entry points in 1 records: 0 dead guards, 0 guards inside their entry point, 0 written by the entry point itself, 0 entry points folded with other code",
+      "1 entry points in 1 records: 0 dead guards, 0 guards inside their entry point, 0 of entry points that do nothing, 0 written by the entry point itself, 0 entry points folded with other code",
       "0 edges between features: 0 references, 0 aborting guards, 0 recoverable guards; 0 are answered by the built-ins table or a start-up option",
       "1 groups, 1 ranges that can be cut, 1 that can only be filled: 0.01 MB in all groups",
       "0.00 MB of the groups are outside every cuttable range",
@@ -577,7 +598,10 @@ describe("layOut", () => {
 
   test("the summary lists the features that built-ins use and no guard enters", () => {
     using dir = tempDir("trim-layout-unguarded", {});
-    const session: LinkSession = { ...fakeSession(String(dir), {}).session, uses: { entries: [builtinUsing("Extra", "Unguarded")] } };
+    const session: LinkSession = {
+      ...fakeSession(String(dir), {}).session,
+      uses: { entries: [builtinUsing("Extra", "Unguarded")] },
+    };
     expect(summaryOf(layOut(session), session)).toContain(
       "1 features that built-ins use have no guard, so nothing is removed with them: Unguarded",
     );
@@ -596,11 +620,7 @@ describe("layOut", () => {
       namedBytes(link) {
         readLinks.push(link.name);
         return {
-          symbols: [
-            ["icudt99_dat", start],
-            ["symbol_after_package", end],
-            ...moreSymbols,
-          ],
+          symbols: [["icudt99_dat", start], ["symbol_after_package", end], ...moreSymbols],
           image: {
             isArm64: false,
             bytes: (address, length) => dataPackage.subarray(address - start, address - start + length),
@@ -614,7 +634,10 @@ describe("layOut", () => {
       const readLinks: LinkName[] = [];
       const session: LinkSession = {
         ...fakeSession(String(dir), formatWithPackage(readLinks)).session,
-        model: { ...model, icuData: [{ itemClass: "collation", exceptWindows: false, byLocale: false, features: ["Extra"] }] },
+        model: {
+          ...model,
+          icuData: [{ itemClass: "collation", exceptWindows: false, byLocale: false, features: ["Extra"] }],
+        },
       };
       const layout = layOut(session);
       expect(readLinks).toEqual(["first", "second"]);
@@ -677,7 +700,9 @@ describe("layOut", () => {
           },
         ],
       });
-      expect(summaryOf(layout, session)).toContain("ICU data: 3 items, 0.00 MB, removable in 2 runs, 3 languages in 2 groups: Extra 0.00 MB");
+      expect(summaryOf(layout, session)).toContain(
+        "ICU data: 3 items, 0.00 MB, removable in 2 runs, 3 languages in 2 groups: Extra 0.00 MB",
+      );
     });
 
     test("has no line when no feature owns a class of ICU data", () => {
@@ -733,7 +758,9 @@ describe("layOut", () => {
     const { session, requests } = fakeSession(String(dir), {});
     const withoutUses: LinkSession = { ...session, uses: { entries: [] } };
     expect(() => layOut(withoutUses)).toThrow(BuildError);
-    expect(() => layOut(withoutUses)).toThrow(/^GuardWithoutUser: symbol0 \(toy\.o, 256 bytes\) enters symbol1 \(toy\.o, 8192 bytes\), an entry point of Extra, /);
+    expect(() => layOut(withoutUses)).toThrow(
+      /^GuardWithoutUser: symbol0 \(toy\.o, 256 bytes\) enters symbol1 \(toy\.o, 8192 bytes\), an entry point of Extra, /,
+    );
     expect(namesOf(requests)).toEqual(["first", "first"]);
     expect(readdirSync(session.reviewDirectory)).toEqual([]);
   });

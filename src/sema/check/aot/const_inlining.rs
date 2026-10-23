@@ -45,9 +45,7 @@ impl Checker<'_, '_> {
             | ExprKind::Ident(_)
             | ExprKind::Dot { .. }
             | ExprKind::Index { .. } => true,
-            ExprKind::Template { exprs } => {
-                exprs.is_empty() || self.atoms().bytes(text).is_ascii()
-            }
+            ExprKind::Template { exprs } => exprs.is_empty() || self.atoms().bytes(text).is_ascii(),
             ExprKind::Binary { .. }
             | ExprKind::Missing
             | ExprKind::PrivateIdentifier(_)

@@ -97,7 +97,10 @@ mod tests {
             runtime: 2,
         };
         let doubled = pair.map(|_, value| value * 2);
-        let visited: Vec<_> = doubled.iter().map(|(project, &value)| (project, value)).collect();
+        let visited: Vec<_> = doubled
+            .iter()
+            .map(|(project, &value)| (project, value))
+            .collect();
         assert_eq!(
             visited,
             [(ProjectId::Application, 2), (ProjectId::Runtime, 4)]

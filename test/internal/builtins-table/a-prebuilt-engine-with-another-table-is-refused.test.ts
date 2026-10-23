@@ -33,30 +33,46 @@ function copyOfEngine(): { root: ReturnType<typeof tempDir>; generatedCopy: stri
   const root = tempDir("prebuilt-engine", {});
   const javaScriptCore = resolve(generated!, "..", "..", "..");
   const javaScriptCoreCopy = join(String(root), "Source", "JavaScriptCore");
-  for (const path of ["aot/ir/AOTSchema.def", "aot/ir/schema", "aot/builtins/generated", "aot/builtins/verified-overloads.txt"]) {
+  for (const path of [
+    "aot/ir/AOTSchema.def",
+    "aot/ir/schema",
+    "aot/builtins/generated",
+    "aot/builtins/verified-overloads.txt",
+  ]) {
     cpSync(join(javaScriptCore, path), join(javaScriptCoreCopy, path), { recursive: true });
   }
   return { root, generatedCopy: join(javaScriptCoreCopy, "aot", "builtins", "generated") };
 }
 
-test.skipIf(generated === undefined)("an engine compiled with this tree's table is accepted", async () => {
-  const { root, generatedCopy } = copyOfEngine();
-  using _ = root;
-  const { exitCode, errors } = await generateAgainst(generatedCopy);
-  expect(errors).not.toContain("another table of built-ins");
-  expect(exitCode).toBe(0);
-}, 120_000);
+test.skipIf(generated === undefined)(
+  "an engine compiled with this tree's table is accepted",
+  async () => {
+    const { root, generatedCopy } = copyOfEngine();
+    using _ = root;
+    const { exitCode, errors } = await generateAgainst(generatedCopy);
+    expect(errors).not.toContain("another table of built-ins");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);
 
-test.skipIf(generated === undefined)("an engine compiled with another number for one built-in is refused by name", async () => {
-  const { root, generatedCopy } = copyOfEngine();
-  using _ = root;
-  const ids = join(generatedCopy, "AOTBuiltinIDs.h");
-  const text = readFileSync(ids, "utf8");
-  const line = /inline constexpr BuiltinID ArrayPrototypePush \{ (\d+) \};/.exec(text)!;
-  writeFileSync(ids, text.replace(line[0], `inline constexpr BuiltinID ArrayPrototypePush { ${Number(line[1]) + 1} };`));
-  const { exitCode, errors } = await generateAgainst(generatedCopy);
-  expect(errors).toContain("AOTBuiltinIDs.h");
-  expect(errors).toContain(line[0]);
-  expect(errors).toContain("another table of built-ins");
-  expect(exitCode).toBe(1);
-}, 120_000);
+test.skipIf(generated === undefined)(
+  "an engine compiled with another number for one built-in is refused by name",
+  async () => {
+    const { root, generatedCopy } = copyOfEngine();
+    using _ = root;
+    const ids = join(generatedCopy, "AOTBuiltinIDs.h");
+    const text = readFileSync(ids, "utf8");
+    const line = /inline constexpr BuiltinID ArrayPrototypePush \{ (\d+) \};/.exec(text)!;
+    writeFileSync(
+      ids,
+      text.replace(line[0], `inline constexpr BuiltinID ArrayPrototypePush { ${Number(line[1]) + 1} };`),
+    );
+    const { exitCode, errors } = await generateAgainst(generatedCopy);
+    expect(errors).toContain("AOTBuiltinIDs.h");
+    expect(errors).toContain(line[0]);
+    expect(errors).toContain("another table of built-ins");
+    expect(exitCode).toBe(1);
+  },
+  120_000,
+);

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
-import { symlinkSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 async function run(files: Record<string, string>, links: Record<string, string> = {}) {
   using dir = tempDir("aot-outside-the-bundle", files);
@@ -39,7 +39,10 @@ function typedPackage(root: string, name: string, global: string, version = "1.0
 
 function expectSeen(result: { stdout: string; stderr: string; exitCode: number }, count: number) {
   expect(result.stderr).not.toContain("Cannot find name");
-  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: Array(count).fill("undefined").join(" ") + "\n", exitCode: 0 });
+  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({
+    stdout: Array(count).fill("undefined").join(" ") + "\n",
+    exitCode: 0,
+  });
 }
 
 function expectNotSeen(result: { stdout: string; stderr: string; exitCode: number }, name: string) {
@@ -50,8 +53,16 @@ function expectNotSeen(result: { stdout: string; stderr: string; exitCode: numbe
 
 test("globals that packages declare are found through files that only tsconfig.json includes", async () => {
   const count = 60;
-  const packages = Object.assign({}, ...Array.from({ length: count }, (_, index) => typedPackage(`node_modules/package-${index}`, `package-${index}`, `fromPackage${index}`)));
-  const imports = Array.from({ length: count }, (_, index) => `import { value as value${index} } from "package-${index}";`).join("\n");
+  const packages = Object.assign(
+    {},
+    ...Array.from({ length: count }, (_, index) =>
+      typedPackage(`node_modules/package-${index}`, `package-${index}`, `fromPackage${index}`),
+    ),
+  );
+  const imports = Array.from(
+    { length: count },
+    (_, index) => `import { value as value${index} } from "package-${index}";`,
+  ).join("\n");
   const sum = Array.from({ length: count }, (_, index) => `value${index}`).join(" + ");
   expectSeen(
     await run({
@@ -127,10 +138,20 @@ test("the words of a declaration in a string or a comment bring nothing into the
 test("a declaration of the program's that differs from an earlier one in a package's declaration file is an error", async () => {
   const result = await run({
     "tsconfig.json": tsconfig({ skipLibCheck: true }),
-    "node_modules/schema/package.json": JSON.stringify({ name: "schema", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+    "node_modules/schema/package.json": JSON.stringify({
+      name: "schema",
+      version: "1.0.0",
+      main: "index.js",
+      types: "index.d.ts",
+    }),
     "node_modules/schema/index.js": ``,
     "node_modules/schema/index.d.ts": `export interface Options {\n  known?: number;\n}\n`,
-    "node_modules/published/package.json": JSON.stringify({ name: "published", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+    "node_modules/published/package.json": JSON.stringify({
+      name: "published",
+      version: "1.0.0",
+      main: "index.js",
+      types: "index.d.ts",
+    }),
     "node_modules/published/index.js": ``,
     "node_modules/published/index.d.ts": `export {};\ndeclare module "schema" {\n  interface Options {\n    extra?: string;\n  }\n}\n`,
     "src/aaa.d.ts": `import "published";\nexport {};\n`,
@@ -177,7 +198,11 @@ test("the declarations of an untyped package are looked for under @types", async
       "node_modules/untyped/package.json": JSON.stringify({ name: "untyped", version: "1.0.0", main: "index.js" }),
       "node_modules/untyped/index.js": `exports.value = 1;\n`,
       ...typedPackage("node_modules/@types/untyped", "@types/untyped", "fromTypesOfUntyped"),
-      "node_modules/@scope/untyped/package.json": JSON.stringify({ name: "@scope/untyped", version: "1.0.0", main: "index.js" }),
+      "node_modules/@scope/untyped/package.json": JSON.stringify({
+        name: "@scope/untyped",
+        version: "1.0.0",
+        main: "index.js",
+      }),
       "node_modules/@scope/untyped/index.js": `exports.value = 1;\n`,
       ...typedPackage("node_modules/@types/scope__untyped", "@types/scope__untyped", "fromTypesOfScopedUntyped"),
       "tests/setup.ts": `import { value } from "untyped";\nimport { value as scoped } from "@scope/untyped/index.js";\nexport const both = [value, scoped];\n`,
@@ -194,7 +219,10 @@ test("declarations that only an exports map names are found", async () => {
       "node_modules/mapped/package.json": JSON.stringify({
         name: "mapped",
         version: "1.0.0",
-        exports: { ".": { types: "./types/main.d.ts", custom: "./custom.js", default: "./index.js" }, "./sub": { types: "./types/sub.d.ts", default: "./sub.js" } },
+        exports: {
+          ".": { types: "./types/main.d.ts", custom: "./custom.js", default: "./index.js" },
+          "./sub": { types: "./types/sub.d.ts", default: "./sub.js" },
+        },
       }),
       "node_modules/mapped/index.js": `exports.value = 1;\n`,
       "node_modules/mapped/custom.js": `exports.value = 2;\n`,
@@ -212,7 +240,12 @@ test("a project that imports itself by its own name is no installed package", as
   expectNotSeen(
     await run({
       "tsconfig.json": tsconfig(),
-      "package.json": JSON.stringify({ name: "itself", version: "1.0.0", types: "index.d.ts", exports: { "./*": "./*" } }),
+      "package.json": JSON.stringify({
+        name: "itself",
+        version: "1.0.0",
+        types: "index.d.ts",
+        exports: { "./*": "./*" },
+      }),
       "index.d.ts": declaresGlobal("fromItself"),
       "src/library.ts": `export const value = 1;\n`,
       "tests/setup.ts": `import { value } from "itself/src/library.ts";\nexport const one = value;\n`,
@@ -239,7 +272,8 @@ test("bare paths into the project itself name no package", async () => {
   const files: Record<string, string> = {};
   for (let index = 0; index < 40; index++) {
     files[`src/parts/part${index}.ts`] = `export const part${index} = ${index};\n`;
-    files[`tests/deep/er/test${index}.ts`] = `import { part${index} } from "src/parts/part${index}.ts";\nimport { value } from "real";\nexport const seen = [part${index}, value];\n`;
+    files[`tests/deep/er/test${index}.ts`] =
+      `import { part${index} } from "src/parts/part${index}.ts";\nimport { value } from "real";\nexport const seen = [part${index}, value];\n`;
   }
   expectSeen(
     await run({
@@ -341,11 +375,23 @@ test("a file outside the bundle that the build script writes while it bundles co
       }
     `,
   });
-  await using build = Bun.spawn({ cmd: [bunExe(), "build.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
   expect(buildErrors).not.toContain("Cannot find name");
   expect(buildExitCode).toBe(0);
-  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [join(String(dir), "out")],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "string undefined\n", exitCode: 0 });
 });
@@ -386,10 +432,22 @@ async function buildWithLateWrites(files: Record<string, string>, written: Recor
       }
     `,
   });
-  await using build = Bun.spawn({ cmd: [bunExe(), "build.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
   if (buildExitCode !== 0) return { buildErrors, buildExitCode, stdout: "", exitCode: -1 };
-  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [join(String(dir), "out")],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   return { buildErrors, buildExitCode, stdout, exitCode };
 }

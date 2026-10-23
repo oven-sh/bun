@@ -3,21 +3,21 @@ mod named_value_tests;
 #[cfg(test)]
 mod tests;
 
+use super::ModuleRef;
 use super::bindings::{ExportBinding, ExportLookup, ImportBinding, SiteAnswer};
 use super::graph::ModuleGraph;
 use super::interop::{ImportPhase, RequireResult};
-use super::ModuleRef;
+use crate::builtins::table::MemberLookup;
 use crate::builtins::{
     BuiltinId, BuiltinNames, Intrinsic, ModuleExport, Platforms, Resolved, RuntimeModule,
     find_module_export, named_value_of, prototype_operation_of, table,
 };
-use crate::builtins::table::MemberLookup;
 use crate::load::Sources;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Bound, LinkedBinding, LoadedValue, NamespaceReferent, ReferentContext, StaticReferent, SymbolId,
-    export_referent, static_referent,
+    Bound, LinkedBinding, LoadedValue, NamespaceReferent, ReferentContext, StaticReferent,
+    SymbolId, export_referent, static_referent,
 };
 use bun_sema::check::aot::{ClassDeclaration, NamedValue, NamedValues, PrototypeOperation};
 use bun_sema::hir::{ExprId, ExprKind, File};
@@ -82,7 +82,11 @@ impl LinkedProject<'_, '_> {
 
 impl Library<'_, '_> {
     // What the text of the module stores as its value, or as the member `member` of that value.
-    fn find_declaration(&self, module: RuntimeModule, member: Option<Atom>) -> Option<ClassDeclaration> {
+    fn find_declaration(
+        &self,
+        module: RuntimeModule,
+        member: Option<Atom>,
+    ) -> Option<ClassDeclaration> {
         // Its export table has the names. No program extends one of them so far.
         if table::is_es_module(module) {
             return None;
@@ -91,7 +95,9 @@ impl Library<'_, '_> {
         match export_referent(&self.project, file, known::default, member).referent {
             StaticReferent::Class(class) => Some(ClassDeclaration::Class(class)),
             StaticReferent::Function(function) => Some(ClassDeclaration::Function(function)),
-            StaticReferent::Builtin(_) | StaticReferent::Namespace(_) | StaticReferent::Unknown(_) => None,
+            StaticReferent::Builtin(_)
+            | StaticReferent::Namespace(_)
+            | StaticReferent::Unknown(_) => None,
         }
     }
 
@@ -115,7 +121,11 @@ impl NamedValues for LinkedProject<'_, '_> {
         named_value_of(static_referent(self, file, expression).referent)
     }
 
-    fn find_library_declaration(&self, file: FileId, expression: ExprId) -> Option<ClassDeclaration> {
+    fn find_library_declaration(
+        &self,
+        file: FileId,
+        expression: ExprId,
+    ) -> Option<ClassDeclaration> {
         let library = self.library?;
         match static_referent(self, file, expression).referent {
             StaticReferent::Builtin(builtin) => {
@@ -170,9 +180,9 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
         if let Some(module) = find_module_of_object(holder) {
             return match self.runtime_module_export(module, name) {
                 LinkedBinding::Builtin(member) => Some(member),
-                LinkedBinding::Binding(_) | LinkedBinding::Namespace(_) | LinkedBinding::Unknown => {
-                    None
-                }
+                LinkedBinding::Binding(_)
+                | LinkedBinding::Namespace(_)
+                | LinkedBinding::Unknown => None,
             };
         }
         let name = self.builtin_names.get(name)?;
@@ -189,9 +199,9 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             ImportBinding::Variable(symbol) => LinkedBinding::Binding(symbol),
             ImportBinding::Namespace { module, phase } => namespace_binding(module, phase),
             ImportBinding::Builtin(builtin)
-            | ImportBinding::CapturedBuiltin { member: builtin, .. } => {
-                LinkedBinding::Builtin(table::canonical_id(builtin))
-            }
+            | ImportBinding::CapturedBuiltin {
+                member: builtin, ..
+            } => LinkedBinding::Builtin(table::canonical_id(builtin)),
             ImportBinding::Local
             | ImportBinding::Unused
             | ImportBinding::Unbound

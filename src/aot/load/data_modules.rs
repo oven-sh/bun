@@ -460,8 +460,13 @@ mod tests {
             contents: b"a = 1",
             loader: Loader::Toml,
         };
-        let parsed =
-            parse_data_module(&WithoutServices, &messages, &source, session.arena(), &atoms);
+        let parsed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
         assert_eq!(parsed.hir.validate(), Ok(()));
         let default = default_export(&parsed.hir);
         let ExprKind::Unary {
@@ -491,8 +496,13 @@ mod tests {
             contents: b"\0asm",
             loader: Loader::Wasm,
         };
-        let parsed =
-            parse_data_module(&WithoutServices, &messages, &source, session.arena(), &atoms);
+        let parsed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
         assert!(parsed.web_assembly.is_none());
         assert_eq!(written_log(&messages).errors, 1);
     }
@@ -508,7 +518,13 @@ mod tests {
                 contents: b"\0asm",
                 loader,
             };
-            parse_data_module(&EmbeddingProvider, &messages, &source, session.arena(), &atoms)
+            parse_data_module(
+                &EmbeddingProvider,
+                &messages,
+                &source,
+                session.arena(),
+                &atoms,
+            )
         };
 
         let wasm = parse(Loader::Wasm);
@@ -539,8 +555,13 @@ mod tests {
             contents: b"<html></html>",
             loader: Loader::Html,
         };
-        let page =
-            parse_data_module(&EmbeddingProvider, &messages, &source, session.arena(), &atoms);
+        let page = parse_data_module(
+            &EmbeddingProvider,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
         assert!(page.is_page);
         assert_eq!(page.hir.validate(), Ok(()));
         let default = default_export(&page.hir);
@@ -548,8 +569,13 @@ mod tests {
         assert!(page.web_assembly.is_none());
         assert!(written_log(&messages).msgs.is_empty());
 
-        let failed =
-            parse_data_module(&WithoutServices, &messages, &source, session.arena(), &atoms);
+        let failed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
         assert!(!failed.is_page);
         let default = default_export(&failed.hir);
         assert_eq!(
@@ -569,8 +595,13 @@ mod tests {
             contents: br#"{"a":1}"#,
             loader: Loader::Json,
         };
-        let parsed =
-            parse_data_module(&WithoutServices, &messages, &source, session.arena(), &atoms);
+        let parsed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
         assert_eq!(parsed.hir.validate(), Ok(()));
         let [(root, HostValue::Data(value))] = *parsed.host_values else {
             panic!("expected one value, found {:?}", parsed.host_values);

@@ -133,7 +133,13 @@ pub(super) fn convert_arguments(
     let shape = lowering.file.queries.signature(target.signature);
     // The signature of a call holds the receiver's type arguments, which may be inferred.
     let declared_parameters = match target.declaration {
-        Some(declaration) => lowering.file.queries.function_signature(declaration).parameters,
+        Some(declaration) => {
+            lowering
+                .file
+                .queries
+                .function_signature(declaration)
+                .parameters
+        }
         None => shape.parameters,
     };
     for (index, (expression, value)) in (first_parameter..).zip(expressions.zip(arguments)) {
@@ -142,7 +148,8 @@ pub(super) fn convert_arguments(
         };
         let declared = find_parameter_types(lowering.file, declared_parameters, index)
             .map_or(WrittenType::Unwritten, |declared| declared.written);
-        let is_optional = (shape.parameters.get(index)).is_some_and(|parameter| parameter.is_optional);
+        let is_optional =
+            (shape.parameters.get(index)).is_some_and(|parameter| parameter.is_optional);
         let parameter = Parameter {
             callee: target.declaration,
             index,
@@ -287,7 +294,10 @@ fn record_listed_arguments(
         }
         is_behind_spread |= spread.is_some();
         let (last_reached, kind) = match is_behind_spread {
-            true => (parameters.len().max(first_reached + 1), ConversionKind::Asserted),
+            true => (
+                parameters.len().max(first_reached + 1),
+                ConversionKind::Asserted,
+            ),
             false => (first_reached + 1, ConversionKind::Performed),
         };
         for reached in first_reached..last_reached {
@@ -334,8 +344,9 @@ pub(super) fn find_parameter_types(
     }
     let place = index - leading.len();
     let written = match last.types.written {
-        WrittenType::Written(ty) => find_element_type(file, ty, place)
-            .map_or(WrittenType::Unwritten, WrittenType::Written),
+        WrittenType::Written(ty) => {
+            find_element_type(file, ty, place).map_or(WrittenType::Unwritten, WrittenType::Written)
+        }
         WrittenType::Unwritten | WrittenType::GaveUp(_) => last.types.written,
     };
     let checked = last

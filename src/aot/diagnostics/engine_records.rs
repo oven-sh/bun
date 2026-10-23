@@ -19,10 +19,14 @@ fn find_dependencies_with_unproven_int32(
     result: &EngineResult,
     names: &ProgramNames,
 ) -> Vec<Vec<u8>> {
-    let records = result.user_diagnostics().iter().filter(|record| is_about_dependency(record));
+    let records = result
+        .user_diagnostics()
+        .iter()
+        .filter(|record| is_about_dependency(record));
     let declared_in = records.filter_map(|record| Some(position_of(record.origin)?.module));
-    let mut paths: Vec<Vec<u8>> =
-        declared_in.map(|module| names.module_path(module).to_vec()).collect();
+    let mut paths: Vec<Vec<u8>> = declared_in
+        .map(|module| names.module_path(module).to_vec())
+        .collect();
     paths.sort_unstable();
     paths.dedup();
     paths
@@ -52,7 +56,11 @@ impl Diagnostics {
             let reported = new_driver_diagnostic(kind.code(), severity.category(), text, &[]);
             self.add_message(kind.code(), to_log_message(&reported, severity));
         }
-        for record in result.user_diagnostics().iter().filter(|record| !is_about_dependency(record)) {
+        for record in result
+            .user_diagnostics()
+            .iter()
+            .filter(|record| !is_about_dependency(record))
+        {
             self.add_user_diagnostic(record, result.text(record.message), names, &mut locator);
         }
         for record in result.internal_errors() {
@@ -74,7 +82,10 @@ impl Diagnostics {
         let written = self.write_int32_message(record, names);
         let (text, position) = match &written {
             Some((written, shown)) => (written.as_slice(), *shown),
-            None => (text_or_template(text, kind.message()), position_of(record.location)),
+            None => (
+                text_or_template(text, kind.message()),
+                position_of(record.location),
+            ),
         };
         let origin = origin_of(position, names);
         match effect_of(origin, COMPILER_DIAGNOSTIC_CLASS, severity.category()) {
@@ -125,7 +136,10 @@ fn append_subject(
         text.extend_from_slice(b" in function ");
         append_name_or_id(text, names.function_name(function), function);
     }
-    match (position, function.and_then(|function| names.function_module(function))) {
+    match (
+        position,
+        function.and_then(|function| names.function_module(function)),
+    ) {
         (Some(position), _) => {
             text.extend_from_slice(b" at ");
             text.extend_from_slice(&position.path);

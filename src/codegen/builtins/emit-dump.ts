@@ -1,8 +1,8 @@
 import type {
   DumpedCallback,
-  DumpedHandlerCall,
   DumpedClass,
   DumpedEntry,
+  DumpedHandlerCall,
   DumpedImplementation,
   DumpedKey,
   DumpedLayout,
@@ -23,8 +23,8 @@ import {
   builtinFlags,
   type ModelBuiltin,
   type ModelCallback,
-  type ModelHandlerCall,
   type ModelClass,
+  type ModelHandlerCall,
   type ModelImplementation,
   type ModelKey,
   type ModelLayout,
@@ -364,7 +364,8 @@ function dumpClass(builtinClass: ModelClass): DumpedClass {
     hasClosureInstances: builtinClass.hasClosureInstances,
     definesCharactersOnNewInstances: builtinClass.definesCharactersOnNewInstances,
     namesDefinedOnNewInstances:
-      builtinClass.namesDefinedOnNewInstances?.toSorted((left, right) => left.number - right.number).map(spellingOf) ?? null,
+      builtinClass.namesDefinedOnNewInstances?.toSorted((left, right) => left.number - right.number).map(spellingOf) ??
+      null,
     slots: builtinClass.slots.map(dumpSlot),
     stateHeap: builtinClass.stateHeap,
   };

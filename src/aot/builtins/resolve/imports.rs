@@ -12,7 +12,9 @@ use bun_sema::hir::{ExportSpecId, ExprId, ExprKind, Flags, ImportId};
 use bun_sema::import_sites::ImportSiteKind;
 
 fn has_source(module: RuntimeModule) -> bool {
-    table::module_data(module).flags.contains(ModuleFlags::HAS_SOURCE)
+    table::module_data(module)
+        .flags
+        .contains(ModuleFlags::HAS_SOURCE)
 }
 
 fn namespace_value(namespace: BuiltinId) -> ResolvedValue {
@@ -173,7 +175,9 @@ impl Resolver<'_, '_> {
             ImportSiteKind::ImportMetaRequire(expr),
             ImportSiteKind::GetBuiltinModule(expr),
         ];
-        let module = sites.into_iter().find_map(|site| input.targets.module_at(site));
+        let module = sites
+            .into_iter()
+            .find_map(|site| input.targets.module_at(site));
         if let Some(module) = module.filter(|&module| !has_source(module)) {
             return ExprState::of_path(Some(BuiltinPath {
                 id: table::canonical_id(table::namespace_of(module)),
@@ -203,8 +207,13 @@ impl Resolver<'_, '_> {
             table::canonical_id(callee),
             BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf
         );
-        let operand = hir.ids(hir[call].args).next().filter(|_| asks_for_prototype)?;
-        let object = self.value_of(operand).or(self.held_value_of(operand))?;
+        let operand = hir
+            .ids(hir[call].args)
+            .next()
+            .filter(|_| asks_for_prototype)?;
+        let object = self
+            .value_of(operand)
+            .or_else(|| self.held_value_of(operand))?;
         match table::entry(table::canonical_id(object.path.id)).prototype {
             Prototype::Builtin(prototype) => Some(prototype),
             Prototype::Unknown | Prototype::Null => None,

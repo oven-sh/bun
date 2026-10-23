@@ -4135,7 +4135,11 @@ impl<'p, 's> Checker<'p, 's> {
         if !REPORT && r.stores_failures_locally && r.failed.contains(&key) {
             return Ternary::FALSE;
         }
-        let waiting = if r.is_for_query { r.maybe_keys.len() as i32 } else { 0 };
+        let waiting = if r.is_for_query {
+            r.maybe_keys.len() as i32
+        } else {
+            0
+        };
         if r.relation_count <= waiting {
             if !r.is_for_query {
                 self.note_gave_up();
@@ -4414,7 +4418,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
             match (keys, stored) {
                 (MaybeKeys::Forgotten, _) => continue,
-                (MaybeKeys::Succeeded | MaybeKeys::SucceededReplacing, Some(_)) if r.is_for_query => {
+                (MaybeKeys::Succeeded | MaybeKeys::SucceededReplacing, Some(_))
+                    if r.is_for_query =>
+                {
                     self.relations_of_query.insert(key, SUCCEEDED | propagating);
                 }
                 (MaybeKeys::Succeeded, Some(stored)) => {

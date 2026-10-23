@@ -16,9 +16,9 @@ impl BoundProgram<'_, '_, '_> {
         let (file, name) = (self.file(file), self.atom(name));
         let hir = self.input.files.hir(file);
         let mut exprs = (0..hir.exprs.len() as u32).map(ExprId);
-        let member = exprs.find(|&expr| {
-            matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name)
-        });
+        let member = exprs.find(
+            |&expr| matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name),
+        );
         let member = member.expect("the file reads no property with this name");
         self.graph.member_binding(file, member)
     }
@@ -30,7 +30,12 @@ fn assert_no_member_is_bound(files: &[(&str, &str)]) {
         let bindings = program.member_bindings(importer);
         assert!(bindings.is_empty(), "{bindings:?}");
         assert!(program.graph.errors().is_empty());
-        assert!(program.graph.required_names(program.file(importer)).is_empty());
+        assert!(
+            program
+                .graph
+                .required_names(program.file(importer))
+                .is_empty()
+        );
     });
 }
 
@@ -169,7 +174,10 @@ fn data_module_member_is_variable() {
         let ExportLookup::Found(ExportBinding::Variable(symbol)) = entry else {
             panic!("x is exported as {entry:?}");
         };
-        assert_eq!(program.member_bindings("main.js"), [ImportBinding::Variable(symbol)]);
+        assert_eq!(
+            program.member_bindings("main.js"),
+            [ImportBinding::Variable(symbol)]
+        );
         assert!(program.graph.errors().is_empty());
     });
 }
@@ -219,8 +227,14 @@ fn ambiguous_star_name_is_not_bound() {
     ";
     let files = [
         ("main.js", main),
-        ("compared.js", "export * from './es.js'; export * from './c.cjs';"),
-        ("ambiguous.js", "export * from './es.js'; export * from './other.js';"),
+        (
+            "compared.js",
+            "export * from './es.js'; export * from './c.cjs';",
+        ),
+        (
+            "ambiguous.js",
+            "export * from './es.js'; export * from './other.js';",
+        ),
         ES_MODULE,
         ("other.js", "export const x = 2;"),
         ("c.cjs", "exports.x = 3;"),
@@ -260,7 +274,10 @@ fn member_of_bun_module_is_the_named_import() {
         let member = program.member_binding("main.js", "readFileSync");
         assert_eq!(member, Some(program.binding("main.js", "readFileSync")));
         let default_export = ImportBinding::Builtin(table::namespace_of(RuntimeModule::NodeFs));
-        assert_eq!(program.member_binding("main.js", "default"), Some(default_export));
+        assert_eq!(
+            program.member_binding("main.js", "default"),
+            Some(default_export)
+        );
         assert_eq!(program.binding("main.js", "defaultExport"), default_export);
         assert!(program.graph.errors().is_empty());
     });
@@ -275,7 +292,10 @@ fn default_of_bun_module_is_the_own_default_of_its_object() {
     ";
     with_program(&[("main.js", main)], |program| {
         let own_default = ImportBinding::Builtin(BuiltinId::BunSqliteDefault);
-        assert_eq!(program.member_binding("main.js", "default"), Some(own_default));
+        assert_eq!(
+            program.member_binding("main.js", "default"),
+            Some(own_default)
+        );
         assert_eq!(program.binding("main.js", "Database"), own_default);
         assert!(program.graph.errors().is_empty());
     });

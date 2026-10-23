@@ -62,7 +62,14 @@ function parseMap(mapPath: string): MapEntry[] {
       const input = /^(.*):\(([^()]*)\)\s*$/.exec(match[5]!);
       const size = parseInt(match[2]!, 16);
       if (input !== null && size > 0) {
-        entries.push({ address: parseInt(match[1]!, 16), size, alignment: Number(match[3]), output, object: input[1]!, section: input[2]! });
+        entries.push({
+          address: parseInt(match[1]!, 16),
+          size,
+          alignment: Number(match[3]),
+          output,
+          object: input[1]!,
+          section: input[2]!,
+        });
       }
     }
   }
@@ -70,7 +77,10 @@ function parseMap(mapPath: string): MapEntry[] {
   return entries;
 }
 
-function indexSections(entries: MapEntry[]): { nodesBySection: Map<string, number[]>; liveSections: Map<string, Set<string>> } {
+function indexSections(entries: MapEntry[]): {
+  nodesBySection: Map<string, number[]>;
+  liveSections: Map<string, Set<string>>;
+} {
   const nodesBySection = new Map<string, number[]>();
   const liveSections = new Map<string, Set<string>>();
   for (let node = 0; node < entries.length; node++) {
@@ -86,7 +96,10 @@ function indexSections(entries: MapEntry[]): { nodesBySection: Map<string, numbe
   return { nodesBySection, liveSections };
 }
 
-function findAliases(folded: Map<string, string>, nodesBySection: Map<string, number[]>): Map<number, [string, string][]> {
+function findAliases(
+  folded: Map<string, string>,
+  nodesBySection: Map<string, number[]>,
+): Map<number, [string, string][]> {
   const result = new Map<number, [string, string][]>();
   for (const [removed, selected] of folded) {
     const node = nodesBySection.get(selected)?.[0];
@@ -202,7 +215,8 @@ function connect(
       }
     }
     for (const name of read.namedByUnwindTables) {
-      for (const node of [resolveGlobal(name), ...(symbols.nodesBySymbol.get(name) ?? [])]) if (node !== undefined) unwindTableNodes.push(node);
+      for (const node of [resolveGlobal(name), ...(symbols.nodesBySymbol.get(name) ?? [])])
+        if (node !== undefined) unwindTableNodes.push(node);
     }
   }
   for (const nodes of nodesBySection.values()) {
@@ -232,15 +246,25 @@ function findRoots(
   if (dynamic !== undefined) {
     const symbols = readAt(elf.fd, dynamic.offset, dynamic.size);
     for (let at = 0; at < symbols.length; at += 24) {
-      const node = symbols.readUInt16LE(at + 6) !== 0 ? nodeAt(placedNodes, Number(symbols.readBigUInt64LE(at + 8))) : -1;
+      const node =
+        symbols.readUInt16LE(at + 6) !== 0 ? nodeAt(placedNodes, Number(symbols.readBigUInt64LE(at + 8))) : -1;
       if (node >= 0) exported.add(node);
     }
   }
   return { roots, exported };
 }
 
-function createReading(elf: ElfFile, executable: string, entries: MapEntry[], folded: Map<string, string>): GraphReading {
-  const placedNodes = { address: entries.map(entry => entry.address), size: entries.map(entry => entry.size), placedCount: entries.length };
+function createReading(
+  elf: ElfFile,
+  executable: string,
+  entries: MapEntry[],
+  folded: Map<string, string>,
+): GraphReading {
+  const placedNodes = {
+    address: entries.map(entry => entry.address),
+    size: entries.map(entry => entry.size),
+    placedCount: entries.length,
+  };
   const { nodesBySection, liveSections } = indexSections(entries);
   const findNode = (key: string) => nodesBySection.get(key)?.[0] ?? nodesBySection.get(folded.get(key) ?? "")?.[0];
   const { objects, defined, failures: unreadInputs } = readObjects(liveSections);

@@ -1425,8 +1425,7 @@ class TestPlan {
   actual = 0;
   wait: boolean | number;
   #pending:
-    | { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | undefined }
-    | undefined;
+    { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | undefined } | undefined;
 
   constructor(count: number, options: { wait?: boolean | number } = kEmptyObject) {
     validateUint32(count, "count");

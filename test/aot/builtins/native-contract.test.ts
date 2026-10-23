@@ -16,7 +16,9 @@ import { isDescribedByNobody } from "./native-contract/targets";
 
 const filter = process.env.AOT_BUILTINS_FILTER ?? ".";
 const undeclared = aotBuiltinEntries().entries.flatMap(entry =>
-  new RegExp(filter).test(entry.path) ? entry.overloads.filter(isDescribedByNobody).map(overload => overload.token) : [],
+  new RegExp(filter).test(entry.path)
+    ? entry.overloads.filter(isDescribedByNobody).map(overload => overload.token)
+    : [],
 );
 
 let results: Results;
@@ -64,7 +66,9 @@ if (undeclared.length === 0) {
   test("the list of known changes names only changes that are seen", () => {
     if (filter !== ".") return;
     const seen = new Map(calledReports().map(({ name, changes }) => [name, new Set(changes.map(({ use }) => use))]));
-    const stale = [...knownChanges].flatMap(([name, uses]) => uses.filter(use => !seen.get(name)?.has(use)).map(use => `${name}: ${use}`));
+    const stale = [...knownChanges].flatMap(([name, uses]) =>
+      uses.filter(use => !seen.get(name)?.has(use)).map(use => `${name}: ${use}`),
+    );
     expect(stale).toEqual([]);
   });
 }

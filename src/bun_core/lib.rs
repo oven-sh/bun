@@ -247,9 +247,9 @@ pub mod feature_flags;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
     code_generation_from_strings, code_generation_from_strings_by_flags,
-    disallow_code_generation_for_compiled_program, disallow_code_generation_for_removed_interpreter,
-    disallow_code_generation_from_strings, is_code_generation_disallowed_by_compiled_program,
-    is_code_generation_disallowed_by_trimming,
+    disallow_code_generation_for_compiled_program,
+    disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
+    is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`

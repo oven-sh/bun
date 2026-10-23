@@ -9,7 +9,13 @@ import type { RemovableRange } from "./ranges.ts";
 export type RelocationFailure =
   | { kind: "RelinkedImageDiffers"; section: string }
   | { kind: "UnknownRelocationType"; section: string; type: number }
-  | { kind: "ReferenceIntoRemovableRange"; from: number; address: number; to: number | undefined; range: RemovableRange };
+  | {
+      kind: "ReferenceIntoRemovableRange";
+      from: number;
+      address: number;
+      to: number | undefined;
+      range: RemovableRange;
+    };
 
 export interface RelocationInput {
   shipped: Link;

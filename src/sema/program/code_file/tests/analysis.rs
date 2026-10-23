@@ -126,7 +126,10 @@ fn either_decorator_setting_selects_legacy_decorators_in_typescript() {
 #[test]
 fn parser_needs_no_module_indicator() {
     with_context(&host_of(&[]), |context| {
-        assert_eq!(context.options.for_parsing().module_detection, ModuleDetection::Auto);
+        assert_eq!(
+            context.options.for_parsing().module_detection,
+            ModuleDetection::Auto
+        );
         let options = parse_options_of(context, b"/p/a.ts", &settings_with(false, false));
         assert_eq!(options.module_detection, ModuleDetection::Force);
     });
@@ -142,7 +145,13 @@ fn decorator_metadata_of_config_reaches_parser() {
     ]);
     with_context(&host, |context| {
         let with_metadata = load(context, "/p/a.ts");
-        assert!(with_metadata.code.analyzed.settings.emits_decorator_metadata);
+        assert!(
+            with_metadata
+                .code
+                .analyzed
+                .settings
+                .emits_decorator_metadata
+        );
         assert!(!with_metadata.code.analyzed.settings.experimental_decorators);
         assert!(with_metadata.parse.hir.legacy_decorators);
         assert!(!load(context, "/p/a.js").parse.hir.legacy_decorators);
@@ -154,9 +163,21 @@ fn decorator_metadata_of_config_reaches_parser() {
 fn macro_rounds_end_when_host_has_no_other_value() {
     let cases = [
         (0, vec![ran_macros(2), transformed("/p/a.ts")], 2),
-        (1, vec![ran_macros(2), ran_macros(1), transformed("/p/a.ts")], 1),
-        (2, vec![ran_macros(2), ran_macros(1), transformed("/p/a.ts")], 0),
-        (9, vec![ran_macros(2), ran_macros(1), transformed("/p/a.ts")], 0),
+        (
+            1,
+            vec![ran_macros(2), ran_macros(1), transformed("/p/a.ts")],
+            1,
+        ),
+        (
+            2,
+            vec![ran_macros(2), ran_macros(1), transformed("/p/a.ts")],
+            0,
+        ),
+        (
+            9,
+            vec![ran_macros(2), ran_macros(1), transformed("/p/a.ts")],
+            0,
+        ),
     ];
     for (max_macro_values, events, pending_count) in cases {
         let host = macro_host(max_macro_values);
@@ -165,7 +186,11 @@ fn macro_rounds_end_when_host_has_no_other_value() {
             let pending = analysis.pending_macro_calls;
             assert_eq!(pending.len(), pending_count, "{max_macro_values} values");
         });
-        assert_eq!(macro_and_transform_events(&host), events, "{max_macro_values} values");
+        assert_eq!(
+            macro_and_transform_events(&host),
+            events,
+            "{max_macro_values} values"
+        );
     }
 }
 
@@ -196,7 +221,10 @@ fn file_without_macro_call_runs_no_macro() {
     with_context(&host, |context| {
         load(context, "/p/plain.ts");
     });
-    assert_eq!(macro_and_transform_events(&host), [transformed("/p/plain.ts")]);
+    assert_eq!(
+        macro_and_transform_events(&host),
+        [transformed("/p/plain.ts")]
+    );
 }
 
 #[test]
@@ -216,7 +244,10 @@ fn changed_tree_is_analyzed_once_more() {
         load(context, "/p/a.ts");
     });
     let events = macro_and_transform_events(&changed);
-    assert_eq!(events, [ran_macros(2), transformed("/p/a.ts"), ran_macros(2)]);
+    assert_eq!(
+        events,
+        [ran_macros(2), transformed("/p/a.ts"), ran_macros(2)]
+    );
 }
 
 fn run_on_large_stack(test: impl FnOnce() + Send) {
@@ -249,7 +280,10 @@ fn binder_stack_overflow_replaces_tree_with_empty_tree() {
             assert!(!parsed.parse.bound.ran_out_of_stack);
             assert!(parsed.code.analyzed.analysis.import_sites.is_empty());
             assert!(parsed.code.targets.is_empty());
-            assert_eq!(*downcast_payload(&parsed.payload), parse_payload("/p/deep.ts", false));
+            assert_eq!(
+                *downcast_payload(&parsed.payload),
+                parse_payload("/p/deep.ts", false)
+            );
         });
         assert_eq!(parsed_paths(&host), ["/p/deep.ts", "/p/deep.ts"]);
         assert!(macro_and_transform_events(&host).is_empty());
@@ -271,9 +305,8 @@ fn main_answer(
 #[test]
 fn only_entry_point_is_main_module() {
     let host = host_of(&[]);
-    let main_of = |entry_points: &[&str], path| {
-        main_answer(&host, entry_points, path, HostLoader::default())
-    };
+    let main_of =
+        |entry_points: &[&str], path| main_answer(&host, entry_points, path, HostLoader::default());
     assert_eq!(main_of(&["/a.ts"], "/a.ts"), Some(true));
     assert_eq!(main_of(&["/a.ts"], "/b.ts"), Some(false));
     assert_eq!(main_of(&["/a.ts", "/b.ts"], "/a.ts"), None);
@@ -288,7 +321,10 @@ fn entry_point_loaded_with_other_loader_is_not_main_module() {
         loaders: &[("/a.txt", None, TEXT_LOADER)],
         ..host_of(&[])
     };
-    assert_eq!(main_answer(&host, &["/a.txt"], "/a.txt", TEXT_LOADER), Some(true));
+    assert_eq!(
+        main_answer(&host, &["/a.txt"], "/a.txt", TEXT_LOADER),
+        Some(true)
+    );
     let as_code = main_answer(&host, &["/a.txt"], "/a.txt", HostLoader::default());
     assert_eq!(as_code, Some(false));
 }
@@ -301,8 +337,14 @@ fn entry_point_spelling_follows_case_rule_of_host() {
         ..host_of(&[])
     };
     let loader = HostLoader::default();
-    assert_eq!(main_answer(&sensitive, &["/A.ts"], "/a.ts", loader), Some(false));
-    assert_eq!(main_answer(&insensitive, &["/A.ts"], "/a.ts", loader), Some(true));
+    assert_eq!(
+        main_answer(&sensitive, &["/A.ts"], "/a.ts", loader),
+        Some(false)
+    );
+    assert_eq!(
+        main_answer(&insensitive, &["/A.ts"], "/a.ts", loader),
+        Some(true)
+    );
 }
 
 fn folded_main_read(entry_points: &[&str], path: &str) -> Option<bool> {
@@ -331,7 +373,10 @@ fn host_values_of_data_module_reach_fold() {
     with_context(&host, |context| {
         let parsed = load_with_loader(context, "/p/data.txt", TEXT_LOADER);
         let hir = &parsed.parse.hir;
-        let statement = hir.ids(hir.body).next().expect("the module has a statement");
+        let statement = hir
+            .ids(hir.body)
+            .next()
+            .expect("the module has a statement");
         let StmtKind::ExportDefault(value) = hir[statement].kind else {
             panic!("the module exports a default value");
         };
@@ -350,7 +395,10 @@ fn enclosing_package_is_recorded() {
     ]);
     with_context(&host, |context| {
         assert_eq!(load(context, "/p/a.ts").code.analyzed.package, None);
-        let package = load(context, "/p/node_modules/pkg/lib/index.js").code.analyzed.package;
+        let package = load(context, "/p/node_modules/pkg/lib/index.js")
+            .code
+            .analyzed
+            .package;
         let expected = EnclosingPackage {
             directory: b"/p/node_modules/pkg",
             name: b"pkg",
@@ -536,8 +584,14 @@ fn disjoint_host_values_interleave_in_order() {
     let arena = session.arena();
     let known = host_values(&[1, 4, 9], &DataValue::Null, arena);
     let added = host_values(&[2, 3, 10], &DataValue::Null, arena);
-    assert_eq!(ids_of(merge_host_values(known, added, arena)), [1, 2, 3, 4, 9, 10]);
-    assert_eq!(ids_of(merge_host_values(added, known, arena)), [1, 2, 3, 4, 9, 10]);
+    assert_eq!(
+        ids_of(merge_host_values(known, added, arena)),
+        [1, 2, 3, 4, 9, 10]
+    );
+    assert_eq!(
+        ids_of(merge_host_values(added, known, arena)),
+        [1, 2, 3, 4, 9, 10]
+    );
     assert_eq!(ids_of(merge_host_values(&[], added, arena)), [2, 3, 10]);
 }
 

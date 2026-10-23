@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const names = Array.from({ length: 40 }, (_, index) => "name" + index);
 const head = `
@@ -40,7 +40,11 @@ test("reads and stores by name in code that runs once fill no caches", async () 
   using dir = tempDir("aot-code-that-runs-once-files-nothing", files);
   const counted = async (program: string, output: string, ...args: string[]) => {
     const executable = join(String(dir), program + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", "--aot", program + ".js", "--outfile", executable], String(dir), bunEnv);
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", program + ".js", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
     expect(built.exitCode).toBe(0);
     const path = join(String(dir), "counts-" + program + args.join());
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
@@ -59,6 +63,13 @@ test("reads and stores by name in code that runs once fill no caches", async () 
   const longerLoop = await counted("loop", "390000\n", "500");
   // On x86-64 the object itself answers the reads, without an operation.
   const plainAccesses = process.arch === "x64" ? names.length : 2 * names.length;
-  expect({ filing: straight.filing - without.filing, plain: straight.plain - without.plain }).toEqual({ filing: 0, plain: plainAccesses });
-  expect({ files: loop.filing - without.filing >= names.length, filedAgain: longerLoop.filing - loop.filing, plain: longerLoop.plain - without.plain }).toEqual({ files: true, filedAgain: 0, plain: 0 });
+  expect({ filing: straight.filing - without.filing, plain: straight.plain - without.plain }).toEqual({
+    filing: 0,
+    plain: plainAccesses,
+  });
+  expect({
+    files: loop.filing - without.filing >= names.length,
+    filedAgain: longerLoop.filing - loop.filing,
+    plain: longerLoop.plain - without.plain,
+  }).toEqual({ files: true, filedAgain: 0, plain: 0 });
 }, 240_000);

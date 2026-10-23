@@ -41,7 +41,8 @@ test.skipIf(isDebug || isASAN)(
     const plain = await seen(String(dir), ["test", "./main.test.ts"]);
     expect(plain.seen.length).toBe(1);
     // From the sources, and as compiled code.
-    for (const flag of ["--aot", "--debug-aot"]) expect({ flag, ...(await seen(String(dir), ["test", flag, "./main.test.ts"])) }).toEqual({ flag, ...plain });
+    for (const flag of ["--aot", "--debug-aot"])
+      expect({ flag, ...(await seen(String(dir), ["test", flag, "./main.test.ts"])) }).toEqual({ flag, ...plain });
   },
   40_000,
 );

@@ -49,13 +49,18 @@ impl FilePrivateStates {
     }
 
     pub fn state(&self, symbol: SymbolId) -> Option<PrivateState> {
-        let at = self.by_symbol.binary_search_by_key(&symbol, |entry| entry.0);
+        let at = self
+            .by_symbol
+            .binary_search_by_key(&symbol, |entry| entry.0);
         at.ok().map(|at| self.states[self.by_symbol[at].1 as usize])
     }
 
     pub fn created_by(&self, creation: ExprId) -> Option<PrivateState> {
-        let at = self.by_creation.binary_search_by_key(&creation, |entry| entry.0);
-        at.ok().map(|at| self.states[self.by_creation[at].1 as usize])
+        let at = self
+            .by_creation
+            .binary_search_by_key(&creation, |entry| entry.0);
+        at.ok()
+            .map(|at| self.states[self.by_creation[at].1 as usize])
     }
 
     pub fn states_of_class(&self, class: ClassId) -> &[PrivateState] {
@@ -126,7 +131,8 @@ impl Finder<'_, '_, '_> {
             let candidate = self.find_candidate(ExprId(index));
             self.candidates.extend(candidate);
         }
-        self.candidates.sort_unstable_by_key(|candidate| candidate.symbol);
+        self.candidates
+            .sort_unstable_by_key(|candidate| candidate.symbol);
     }
 
     fn find_candidate(&self, creation: ExprId) -> Option<Candidate> {
@@ -152,7 +158,10 @@ impl Finder<'_, '_, '_> {
 
     fn is_global_name(&self, identifier: ExprId) -> bool {
         self.bound.binding(identifier) == Binding::Free
-            && self.bound.dynamic_lookup_scope(NodeData::Expr(identifier)).is_none()
+            && self
+                .bound
+                .dynamic_lookup_scope(NodeData::Expr(identifier))
+                .is_none()
             && self.decisions.decision(identifier) == Decision::Unknown
     }
 
@@ -209,9 +218,7 @@ impl Finder<'_, '_, '_> {
                 ExprKind::Binary {
                     op: BinOp::Comma, ..
                 } => child = parent,
-                ExprKind::Unary {
-                    op: UnOp::Void, ..
-                } => return true,
+                ExprKind::Unary { op: UnOp::Void, .. } => return true,
                 _ => return false,
             }
         }
@@ -274,7 +281,9 @@ impl Finder<'_, '_, '_> {
         let mut live = stores.filter(|store| !self.decisions.is_dead_expr(store.target));
         let initializer = bound.binding_initializer(hir, symbol);
         match stored_name {
-            None => live.next().is_none() && initializer == BindingInitializer::Expression(creation),
+            None => {
+                live.next().is_none() && initializer == BindingInitializer::Expression(creation)
+            }
             Some(name) => {
                 let (Some(store), None) = (live.next(), live.next()) else {
                     return false;
@@ -300,7 +309,9 @@ impl Finder<'_, '_, '_> {
 
     fn find_candidate_index(&self, symbol: SymbolId) -> Option<usize> {
         let candidates = &self.candidates;
-        candidates.binary_search_by_key(&symbol, |candidate| candidate.symbol).ok()
+        candidates
+            .binary_search_by_key(&symbol, |candidate| candidate.symbol)
+            .ok()
     }
 
     fn classify_mentions(&mut self) {
@@ -326,7 +337,10 @@ impl Finder<'_, '_, '_> {
         if self.candidates[candidate].stored_name == Some(mention) {
             return;
         }
-        let is_looked_up = self.bound.dynamic_lookup_scope(NodeData::Expr(mention)).is_some();
+        let is_looked_up = self
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(mention))
+            .is_some();
         let definition = self.find_definition(mention, kind);
         let site = match definition {
             Some(call) => Some((call, PrivateStateRole::Definition)),
@@ -486,10 +500,12 @@ impl Finder<'_, '_, '_> {
             }
         }
         let indexed = || (0..).zip(&states);
-        let mut by_symbol: Vec<(SymbolId, u32)> =
-            indexed().map(|(index, state)| (state.symbol, index)).collect();
-        let mut by_creation: Vec<(ExprId, u32)> =
-            indexed().map(|(index, state)| (state.creation, index)).collect();
+        let mut by_symbol: Vec<(SymbolId, u32)> = indexed()
+            .map(|(index, state)| (state.symbol, index))
+            .collect();
+        let mut by_creation: Vec<(ExprId, u32)> = indexed()
+            .map(|(index, state)| (state.creation, index))
+            .collect();
         by_symbol.sort_unstable();
         by_creation.sort_unstable();
         sites.sort_unstable_by_key(|site| site.0);
@@ -554,7 +570,10 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             let bound = files.bound(file);
             let described = states.states.iter().map(|state| {
                 let text = files.atoms.bytes(bound.symbol(state.symbol).name);
-                let sites = states.sites.iter().filter(|site| site.1.state == state.symbol);
+                let sites = states
+                    .sites
+                    .iter()
+                    .filter(|site| site.1.state == state.symbol);
                 let text = String::from_utf8_lossy(text);
                 format!("{text} {:?} {}", state.kind, sites.count())
             });
@@ -586,7 +605,9 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);
             let file = file_named(bind_input, "main.mjs");
-            let states = helpers.private_states(files, graph, file).expect("analyzed");
+            let states = helpers
+                .private_states(files, graph, file)
+                .expect("analyzed");
             let of_class = states.states_of_class(ClassId(0));
             assert_eq!(of_class.len(), 2);
             assert!(states.states_of_class(ClassId(1)).is_empty());

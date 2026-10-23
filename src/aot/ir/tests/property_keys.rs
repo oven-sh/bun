@@ -65,7 +65,10 @@ fn private_names_of_two_owners_are_distinct() {
     let first = table.intern(PropertyKey::from_private_name(TEXT, OWNER));
     let second = table.intern(PropertyKey::from_private_name(TEXT, LayoutId::new(9)));
     assert_ne!(first, second);
-    assert_eq!(table.intern(PropertyKey::from_private_name(TEXT, OWNER)), first);
+    assert_eq!(
+        table.intern(PropertyKey::from_private_name(TEXT, OWNER)),
+        first
+    );
 }
 
 #[test]
@@ -95,7 +98,10 @@ fn find_returns_interned_keys_only() {
     assert_eq!(table.find(&key), None);
     let id = table.intern(key);
     assert_eq!(table.find(&key), Some(id));
-    assert_eq!(table.find(&PropertyKey::from_engine_private_name(TEXT)), None);
+    assert_eq!(
+        table.find(&PropertyKey::from_engine_private_name(TEXT)),
+        None
+    );
     assert_eq!(table.len(), 1);
 }
 
@@ -125,8 +131,13 @@ fn ids_survive_index_growth() {
 
 #[test]
 fn constructors_leave_other_fields_absent() {
-    let [text, engine_private_name, private_name, well_known_symbol, created_symbol] =
-        keys_of_every_kind();
+    let [
+        text,
+        engine_private_name,
+        private_name,
+        well_known_symbol,
+        created_symbol,
+    ] = keys_of_every_kind();
     let expected_text = PropertyKey {
         kind: PropertyKeyKind::Text,
         text: Some(TEXT),

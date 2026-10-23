@@ -506,14 +506,15 @@ impl<'p, 's> Checker<'p, 's> {
                         && matches!(hir[m].key, PropKey::Private(_))
                 })
             {
-                self.error_at((file, at_sign, decorator_span.end), 18036, &[]).class =
-                    DiagnosticClass::TypeScriptGrammar;
+                self.error_at((file, at_sign, decorator_span.end), 18036, &[])
+                    .class = DiagnosticClass::TypeScriptGrammar;
             }
             if !hir.has_parse_diagnostics
                 && !decorator_span.is_parenthesized
                 && let Some((from, to)) = self.invalid_syntax_in_decorator(file, e)
             {
-                let diagnostic = self.error_at((file, decorator_span.start, decorator_span.end), 1497, &[]);
+                let diagnostic =
+                    self.error_at((file, decorator_span.start, decorator_span.end), 1497, &[]);
                 diagnostic.class = DiagnosticClass::early_error_if(
                     !hir.legacy_decorators,
                     DiagnosticClass::TypeScriptGrammar,

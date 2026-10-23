@@ -28,7 +28,10 @@ fn production_settings() -> TranspileSettings {
 fn classic_settings(factory: &[&str]) -> TranspileSettings {
     settings_with_jsx(JsxSettings {
         runtime: JsxRuntime::Classic,
-        factory: factory.iter().map(|name| name.as_bytes().to_vec()).collect(),
+        factory: factory
+            .iter()
+            .map(|name| name.as_bytes().to_vec())
+            .collect(),
         ..JsxSettings::default()
     })
 }
@@ -82,9 +85,12 @@ fn memo_and_forward_ref_arguments_are_compiled() {
 
 #[test]
 fn default_export_is_compiled() {
-    with_compiled_tree("export default function Page() { return <hr />; }\n", |tree| {
-        assert_eq!(tree.cache_size(tree.function_named("Page")), Some(1.0));
-    });
+    with_compiled_tree(
+        "export default function Page() { return <hr />; }\n",
+        |tree| {
+            assert_eq!(tree.cache_size(tree.function_named("Page")), Some(1.0));
+        },
+    );
 }
 
 #[test]
@@ -95,7 +101,10 @@ fn two_components_share_one_import() {
         assert_eq!(tree.imports_from(COMPILER_RUNTIME).len(), 1);
         assert_eq!(tree.imported_names(COMPILER_RUNTIME), [CACHE_IMPORT]);
         assert_eq!(tree.imports_from(DEVELOPMENT_RUNTIME).len(), 1);
-        assert_eq!(tree.imported_names(DEVELOPMENT_RUNTIME), ["jsxDEV as %react:jsxDEV"]);
+        assert_eq!(
+            tree.imported_names(DEVELOPMENT_RUNTIME),
+            ["jsxDEV as %react:jsxDEV"]
+        );
         assert_eq!(tree.calls_of(CACHE_FUNCTION).len(), 2);
     });
 }
@@ -171,19 +180,25 @@ fn local_never_shares_a_name_with_an_outside_variable() {
                         return <button onClick={save}>{text}</button>;\n\
                         }\n";
     let cache = temporary.replace("t0", "$");
-    for (name, text) in [("t0", temporary), ("count", block_scoped), ("$", cache.as_str())] {
+    for (name, text) in [
+        ("t0", temporary),
+        ("count", block_scoped),
+        ("$", cache.as_str()),
+    ] {
         with_compiled_tree(text, |tree| {
             assert!(tree.has_compiled_components());
             let (hir, bound) = (tree.hir(), tree.files.bound(tree.file));
             let outside = bound.pat_symbol[tree.declaration_named(name).pat.idx()];
-            let targets = tree.reachable_expressions().filter_map(|it| match hir[it].kind {
-                ExprKind::Assign { target, value, .. }
-                    if tree.is_name(target, name) && tree.member_path(value) == ["p", "n"] =>
-                {
-                    Some(bound.symbol_of_expr(target))
-                }
-                _ => None,
-            });
+            let targets = tree
+                .reachable_expressions()
+                .filter_map(|it| match hir[it].kind {
+                    ExprKind::Assign { target, value, .. }
+                        if tree.is_name(target, name) && tree.member_path(value) == ["p", "n"] =>
+                    {
+                        Some(bound.symbol_of_expr(target))
+                    }
+                    _ => None,
+                });
             assert_eq!(targets.collect::<Vec<_>>(), [outside], "{name}");
         });
     }
@@ -238,7 +253,9 @@ fn early_return_uses_the_sentinel() {
             panic!("expected one labeled block");
         };
         let is_exit = |kind: StmtKind| matches!(kind, StmtKind::Break(target) if target == label);
-        let exits = tree.reachable_statements().filter(|&it| is_exit(hir[it].kind));
+        let exits = tree
+            .reachable_statements()
+            .filter(|&it| is_exit(hir[it].kind));
         assert_eq!(exits.count(), 2);
     });
 }
@@ -248,11 +265,12 @@ fn module_items_follow_the_directive_prologue() {
     with_compiled_tree(&["'use client';\n", RULE].concat(), |tree| {
         let hir = tree.hir();
         let statements = tree.top_level_statements();
-        assert!(matches!(hir[statements[0]].kind, StmtKind::Directive { .. }));
+        assert!(matches!(
+            hir[statements[0]].kind,
+            StmtKind::Directive { .. }
+        ));
         let rule = tree.function_named("Rule");
-        let is_rule = |statement: &StmtId| {
-            matches!(hir[*statement].kind, StmtKind::Fn(function) if function == rule)
-        };
+        let is_rule = |statement: &StmtId| matches!(hir[*statement].kind, StmtKind::Fn(function) if function == rule);
         let generated = &statements[1..statements.iter().position(is_rule).unwrap()];
         let is_import = |statement: &StmtId| matches!(hir[*statement].kind, StmtKind::Import(_));
         let import_count = generated.iter().take_while(|it| is_import(it)).count();
@@ -267,7 +285,10 @@ fn module_items_follow_the_directive_prologue() {
 #[test]
 fn development_uses_jsx_dev() {
     with_compiled_tree(HELLO, |tree| {
-        assert_eq!(tree.imported_names(DEVELOPMENT_RUNTIME), ["jsxDEV as %react:jsxDEV"]);
+        assert_eq!(
+            tree.imported_names(DEVELOPMENT_RUNTIME),
+            ["jsxDEV as %react:jsxDEV"]
+        );
         assert!(tree.imported_names(PRODUCTION_RUNTIME).is_empty());
         let [call] = tree.calls_of("%react:jsxDEV")[..] else {
             panic!("expected one element");
@@ -300,7 +321,9 @@ fn fragment_is_imported_only_where_used() {
         assert_eq!(tree.imported_names(DEVELOPMENT_RUNTIME), names);
         assert_eq!(tree.count_names("%react:Fragment"), 1);
     });
-    with_compiled_tree(HELLO, |tree| assert_eq!(tree.count_names("%react:Fragment"), 0));
+    with_compiled_tree(HELLO, |tree| {
+        assert_eq!(tree.count_names("%react:Fragment"), 0)
+    });
 }
 
 #[test]
@@ -310,7 +333,10 @@ fn import_source_follows_settings() {
         ..JsxSettings::default()
     });
     with_tree_and_settings(HELLO, &settings, |tree| {
-        assert_eq!(tree.imported_names("preact/jsx-dev-runtime"), ["jsxDEV as %react:jsxDEV"]);
+        assert_eq!(
+            tree.imported_names("preact/jsx-dev-runtime"),
+            ["jsxDEV as %react:jsxDEV"]
+        );
         assert!(tree.imported_names(DEVELOPMENT_RUNTIME).is_empty());
         assert_eq!(tree.imported_names(COMPILER_RUNTIME), [CACHE_IMPORT]);
     });
@@ -318,10 +344,16 @@ fn import_source_follows_settings() {
 
 #[test]
 fn jsx_pragma_overrides_settings() {
-    with_compiled_tree(&["/** @jsxImportSource preact */\n", HELLO].concat(), |tree| {
-        assert_eq!(tree.imported_names("preact/jsx-dev-runtime"), ["jsxDEV as %react:jsxDEV"]);
-        assert!(tree.imported_names(DEVELOPMENT_RUNTIME).is_empty());
-    });
+    with_compiled_tree(
+        &["/** @jsxImportSource preact */\n", HELLO].concat(),
+        |tree| {
+            assert_eq!(
+                tree.imported_names("preact/jsx-dev-runtime"),
+                ["jsxDEV as %react:jsxDEV"]
+            );
+            assert!(tree.imported_names(DEVELOPMENT_RUNTIME).is_empty());
+        },
+    );
 }
 
 #[test]
@@ -387,12 +419,20 @@ fn positions_are_source_positions() {
         assert!(tree.cache_size(tree.function_named("Guard")).is_some());
         let start_of = |is_wanted: fn(StmtKind) -> bool| {
             let statements = tree.reachable_statements();
-            let starts = statements.filter(|&it| is_wanted(hir[it].kind)).map(|it| hir[it].start);
+            let starts = statements
+                .filter(|&it| is_wanted(hir[it].kind))
+                .map(|it| hir[it].start);
             starts.collect::<Vec<u32>>()
         };
         let offset_of = |token: &str| text.find(token).unwrap() as u32;
-        assert_eq!(start_of(|kind| matches!(kind, StmtKind::Throw(_))), [offset_of("throw")]);
-        assert_eq!(start_of(|kind| matches!(kind, StmtKind::Return(_))), [offset_of("return")]);
+        assert_eq!(
+            start_of(|kind| matches!(kind, StmtKind::Throw(_))),
+            [offset_of("throw")]
+        );
+        assert_eq!(
+            start_of(|kind| matches!(kind, StmtKind::Return(_))),
+            [offset_of("return")]
+        );
 
         let function = hir[tree.function_named("Guard")];
         assert_eq!(function.text_start, offset_of("function"));

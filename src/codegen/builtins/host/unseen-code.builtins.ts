@@ -36,11 +36,7 @@ const textEvaluators = [
 
 const heapEnumerators = ["bun:jsc.getProtectedObjects"];
 
-const unseenCodeEntries = [
-  ...moduleLoaders,
-  ...textEvaluators,
-  ...heapEnumerators,
-];
+const unseenCodeEntries = [...moduleLoaders, ...textEvaluators, ...heapEnumerators];
 
 // A worker has a heap of its own and starts with an entry point of the build: the loader of its realm refuses everything else.
 const seenCodeEntries = [

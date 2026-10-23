@@ -8,7 +8,9 @@ import { built, spawned } from "./run-programs";
 import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "app/src/deep.ts": `export function deep(n: number): number {
   if (n === 0) throw new TypeError("at the bottom");
   return deep(n - 1) + 1;
@@ -33,7 +35,13 @@ test("an executable shows no file of the disk as its source", async () => {
   const root = realpathSync(String(dir));
   const env = { ...bunEnv, NO_COLOR: "1" };
   const executable = join(root, "program");
-  built(await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], join(root, "app"), env));
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+      join(root, "app"),
+      env,
+    ),
+  );
 
   const elsewhere = await spawned([executable], join(root, "elsewhere"), env);
   expect(elsewhere.stdout).toContain("TypeError: at the bottom\n      at deep (/$bunfs/root/src/deep.ts:2:26)");

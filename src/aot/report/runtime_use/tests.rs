@@ -29,7 +29,9 @@ fn use_of(builtin: BuiltinId, uses: BuiltinUse) -> BuiltinUseRecord {
 fn items(records: &[BuiltinUseRecord]) -> Vec<BString> {
     let lines = item_lines(records);
     let items = lines.iter().map(|line| line.strip_prefix(PREFIX));
-    items.map(|item| BString::from(item.expect("a line starts with the prefix"))).collect()
+    items
+        .map(|item| BString::from(item.expect("a line starts with the prefix")))
+        .collect()
 }
 
 fn item(id: BuiltinId) -> Option<String> {
@@ -77,7 +79,10 @@ fn lines_and_positions(entries: &[ReportEntry]) -> Vec<(BString, Option<Position
     let described = entries.iter().map(|entry| {
         assert_eq!(entry.kind, ExplainSet::RUNTIME_USE);
         assert!(entry.notes.is_empty());
-        let line = entry.text.strip_prefix(PREFIX).expect("a line starts with the prefix");
+        let line = entry
+            .text
+            .strip_prefix(PREFIX)
+            .expect("a line starts with the prefix");
         (BString::from(line), entry.position)
     });
     described.collect()
@@ -143,22 +148,34 @@ fn blocker_codes_do_not_follow_enumerator_names() {
 
 #[test]
 fn write_item_forms() {
-    assert_eq!(item(BuiltinId::ConsoleLog).as_deref(), Some("uses console log"));
+    assert_eq!(
+        item(BuiltinId::ConsoleLog).as_deref(),
+        Some("uses console log")
+    );
     assert_eq!(item(BuiltinId::BunServe).as_deref(), Some("uses Bun serve"));
     assert_eq!(item(BuiltinId::Intl).as_deref(), Some("uses global Intl"));
     assert_eq!(
         item(BuiltinId::NumberPrototypeToLocaleString).as_deref(),
         Some("uses property toLocaleString")
     );
-    assert_eq!(item(BuiltinId::AsyncFunction).as_deref(), Some("uses builtin %AsyncFunction%"));
+    assert_eq!(
+        item(BuiltinId::AsyncFunction).as_deref(),
+        Some("uses builtin %AsyncFunction%")
+    );
     assert_eq!(item(BuiltinId::GlobalThis), None);
 }
 
 #[test]
 fn write_item_module_namespace() {
     let module = table::module_by_specifier(b"bun:sqlite").expect("the table has bun:sqlite");
-    assert_eq!(item(table::namespace_of(module)).as_deref(), Some("uses module bun:sqlite"));
-    assert_eq!(item(BuiltinId::BunSqliteDatabase).as_deref(), Some("uses bun:sqlite Database"));
+    assert_eq!(
+        item(table::namespace_of(module)).as_deref(),
+        Some("uses module bun:sqlite")
+    );
+    assert_eq!(
+        item(BuiltinId::BunSqliteDatabase).as_deref(),
+        Some("uses bun:sqlite Database")
+    );
 }
 
 #[test]
@@ -168,7 +185,10 @@ fn write_item_native_binding() {
         .find(|&id| table::entry(id).kind == BuiltinKind::NativeBinding)
         .expect("the table has a native binding");
     assert_eq!(table::entry(binding).holder, None);
-    assert_eq!(item(binding), Some(format!("uses native {}", table::text_of(binding))));
+    assert_eq!(
+        item(binding),
+        Some(format!("uses native {}", table::text_of(binding)))
+    );
 }
 
 #[test]
@@ -182,7 +202,10 @@ fn escaped_builtin_may_use_any_member() {
     let escaped = [use_of(BuiltinId::Console, BuiltinUse::ESCAPED)];
     assert_eq!(
         items(&escaped),
-        ["uses console (escapes, so any member may be used)", "uses global console"]
+        [
+            "uses console (escapes, so any member may be used)",
+            "uses global console"
+        ]
     );
     let read = [use_of(BuiltinId::Console, BuiltinUse::READ)];
     assert_eq!(items(&read), ["uses global console"]);
@@ -243,7 +266,10 @@ fn global_object_has_no_item() {
 
 #[test]
 fn feature_line_has_trim_feature() {
-    assert_eq!(feature_text(Feature::Lint), format!("{} (lint)", Feature::Lint.text()));
+    assert_eq!(
+        feature_text(Feature::Lint),
+        format!("{} (lint)", Feature::Lint.text())
+    );
 }
 
 #[test]
@@ -256,17 +282,25 @@ fn feature_line_without_trim_feature() {
 fn program_with_every_api_visible_has_one_cause_line() {
     let fixture = ReportFixture::new(ResultRecords::default());
     let mut entries = Vec::new();
-    with_positions(&fixture, |input, positions| cause_lines(input, positions, &mut entries));
+    with_positions(&fixture, |input, positions| {
+        cause_lines(input, positions, &mut entries)
+    });
     assert_eq!(
         lines_and_positions(&entries),
-        [line("the compiler can see every API this program uses", None)]
+        [line(
+            "the compiler can see every API this program uses",
+            None
+        )]
     );
 }
 
 #[test]
 fn cause_line_has_builtin_and_position() {
     let records = [
-        unseen_record(BuiltinId::Eval.to_wire(), location(PROGRAM, LINE_2_COLUMN_14)),
+        unseen_record(
+            BuiltinId::Eval.to_wire(),
+            location(PROGRAM, LINE_2_COLUMN_14),
+        ),
         unseen_record(ABSENT_WORD, location(RUNTIME, 3)),
         unseen_record(ABSENT_WORD, NO_LOCATION),
     ];
@@ -282,7 +316,9 @@ fn cause_line_has_builtin_and_position() {
         unseen(UnseenCodeCause::ReportMissing, None),
     ];
     let mut entries = Vec::new();
-    with_positions(&fixture, |input, positions| cause_lines(input, positions, &mut entries));
+    with_positions(&fixture, |input, positions| {
+        cause_lines(input, positions, &mut entries)
+    });
     assert_eq!(
         lines_and_positions(&entries),
         [
@@ -298,8 +334,14 @@ fn cause_line_has_builtin_and_position() {
                 "blocked by dynamic-import: the program calls import() or require() with a dynamic path",
                 None,
             ),
-            line("blocked by limit-reached: the analysis hit a compiler limit", None),
-            line("blocked by no-report: the compiler didn't report which APIs are used", None),
+            line(
+                "blocked by limit-reached: the analysis hit a compiler limit",
+                None
+            ),
+            line(
+                "blocked by no-report: the compiler didn't report which APIs are used",
+                None
+            ),
         ]
     );
 }
@@ -340,7 +382,10 @@ fn unknown_locales_have_position() {
     ];
     for (index, text) in texts.into_iter().enumerate() {
         fixture.used_features.locales = UsedLocales::Unknown(Some(WitnessIndex(index as u32)));
-        assert_eq!(locale_text(&fixture), line(text, at(PROGRAM, LINE_1_COLUMN_5)));
+        assert_eq!(
+            locale_text(&fixture),
+            line(text, at(PROGRAM, LINE_1_COLUMN_5))
+        );
     }
     for witness in [Some(WitnessIndex(3)), None] {
         fixture.used_features.locales = UsedLocales::Unknown(witness);
@@ -378,13 +423,22 @@ fn each_reason_has_text() {
         ),
         (
             used(0),
-            line("used (console.log) at src/a.ts:2:14", at(PROGRAM, LINE_2_COLUMN_14)),
+            line(
+                "used (console.log) at src/a.ts:2:14",
+                at(PROGRAM, LINE_2_COLUMN_14),
+            ),
         ),
         (used(1), line("used", None)),
         (used(2), line("used", None)),
         (RetainReason::Used(None), line("used", None)),
-        (RetainReason::RequiredByOption(0), line("needed by --inspect", None)),
-        (RetainReason::RequiredByOption(1), line("needed by an option", None)),
+        (
+            RetainReason::RequiredByOption(0),
+            line("needed by --inspect", None),
+        ),
+        (
+            RetainReason::RequiredByOption(1),
+            line("needed by an option", None),
+        ),
         (RetainReason::AlwaysEntered, line("runs at startup", None)),
         (
             RetainReason::ReachableByUnseenCode(0),
@@ -394,14 +448,21 @@ fn each_reason_has_text() {
             RetainReason::ReachableByUnseenCode(1),
             line("code loaded at run time could use it", None),
         ),
-        (RetainReason::NotRequested, line("not selected for removal", None)),
+        (
+            RetainReason::NotRequested,
+            line("not selected for removal", None),
+        ),
     ];
     for (reason, expected) in cases {
         let retained = Retained {
             feature: Feature::RegExp,
             reason,
         };
-        assert_eq!(reason_text(&fixture, &decision, retained), expected, "{reason:?}");
+        assert_eq!(
+            reason_text(&fixture, &decision, retained),
+            expected,
+            "{reason:?}"
+        );
     }
 }
 
@@ -437,7 +498,10 @@ fn chain_lists_dependents_in_order() {
         reason_text(&fixture, &decision, retained.expect("a retained feature")).0
     };
     let (inspector, fetch) = (Feature::Inspector.text(), Feature::Fetch.text());
-    assert_eq!(text_of(Feature::Interpreter), format!("needed by {inspector} <- {fetch}"));
+    assert_eq!(
+        text_of(Feature::Interpreter),
+        format!("needed by {inspector} <- {fetch}")
+    );
     assert_eq!(text_of(Feature::Inspector), format!("needed by {fetch}"));
 }
 
@@ -465,11 +529,20 @@ fn feature_lines_list_kept_then_removed() {
     });
     let expected = [
         format!("kept {}: runs at startup", feature_text(Feature::Inspector)),
-        format!("kept {}: listed in compile.trim.allow (lint)", feature_text(Feature::Lint)),
+        format!(
+            "kept {}: listed in compile.trim.allow (lint)",
+            feature_text(Feature::Lint)
+        ),
         format!("removed {}: unused", feature_text(Feature::RegExp)),
-        format!("removed {}: listed in compile.trim.remove", feature_text(Feature::Sqlite)),
+        format!(
+            "removed {}: listed in compile.trim.remove",
+            feature_text(Feature::Sqlite)
+        ),
     ];
-    assert_eq!(lines_and_positions(&entries), expected.map(|text| line(&text, None)));
+    assert_eq!(
+        lines_and_positions(&entries),
+        expected.map(|text| line(&text, None))
+    );
 }
 
 #[test]

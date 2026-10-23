@@ -78,7 +78,9 @@ fn check_project(files: &[(&str, &str)], mode: ReactCompilerMode) -> Vec<Reporte
         let (loaded, host, request) = (project.loaded, project.host, project.request);
         let files_to_check = loaded.files().compiled_files();
         let roles = decide_roles(loaded, host, request, files_to_check);
-        let checked = check_and_lower(loaded, host, request, &roles, files_to_check, &|_, _| Some(()));
+        let checked = check_and_lower(loaded, host, request, &roles, files_to_check, &|_, _| {
+            Some(())
+        });
         let reported = roles.diagnostics.iter().chain(&checked.diagnostics);
         reported
             .map(|reported| {
@@ -92,7 +94,10 @@ fn check_project(files: &[(&str, &str)], mode: ReactCompilerMode) -> Vec<Reporte
 
 fn is_any(tree: &Tree<'_>, annotation: TypeNodeId) -> bool {
     annotation.some().is_some_and(|annotation| {
-        matches!(tree.hir()[annotation].kind, TypeNodeKind::Keyword(Keyword::Any))
+        matches!(
+            tree.hir()[annotation].kind,
+            TypeNodeKind::Keyword(Keyword::Any)
+        )
     })
 }
 
@@ -111,42 +116,55 @@ fn parameters_of(text: &str, function: &str, mode: ReactCompilerMode) -> Vec<Par
 }
 
 fn function_record(text: &str, function: &str, mode: ReactCompilerMode) -> Func {
-    with_tree("main.tsx", text, mode, |tree| tree.hir()[tree.function_named(function)])
+    with_tree("main.tsx", text, mode, |tree| {
+        tree.hir()[tree.function_named(function)]
+    })
 }
 
 #[test]
 fn file_stays_checked() {
     let files = [("main.tsx", HELLO)];
-    with_project(&files, &default_settings(), ReactCompilerMode::Client, |project| {
-        let tree = Tree::new(project, "main.tsx");
-        assert!(tree.has_compiled_components());
-        let files = project.loaded.files();
-        assert_eq!(files.role(tree.file), FileRole::Checked);
-        let file_ids = (0..files.modules.len() as u32).map(FileId);
-        let files_at_path = file_ids.filter(|&file| files.module(file).file_name() == MAIN_PATH);
-        assert_eq!(files_at_path.count(), 1);
+    with_project(
+        &files,
+        &default_settings(),
+        ReactCompilerMode::Client,
+        |project| {
+            let tree = Tree::new(project, "main.tsx");
+            assert!(tree.has_compiled_components());
+            let files = project.loaded.files();
+            assert_eq!(files.role(tree.file), FileRole::Checked);
+            let file_ids = (0..files.modules.len() as u32).map(FileId);
+            let files_at_path =
+                file_ids.filter(|&file| files.module(file).file_name() == MAIN_PATH);
+            assert_eq!(files_at_path.count(), 1);
 
-        let (loaded, host, request) = (project.loaded, project.host, project.request);
-        let roles = decide_roles(loaded, host, request, files.compiled_files());
-        assert_eq!(roles.role(tree.file), FileRole::Checked);
-        assert!(roles.demoted.is_empty());
+            let (loaded, host, request) = (project.loaded, project.host, project.request);
+            let roles = decide_roles(loaded, host, request, files.compiled_files());
+            assert_eq!(roles.role(tree.file), FileRole::Checked);
+            assert!(roles.demoted.is_empty());
 
-        assert_eq!(project.sources.kind(tree.file), SourceKind::Program);
-        let paths = project.sources.module_paths(tree.file);
-        assert_eq!(paths.public_path, b"/$bunfs/root/main.tsx");
-    });
+            assert_eq!(project.sources.kind(tree.file), SourceKind::Program);
+            let paths = project.sources.module_paths(tree.file);
+            assert_eq!(paths.public_path, b"/$bunfs/root/main.tsx");
+        },
+    );
 }
 
 #[test]
 fn runtime_declarations_join_the_program() {
     let role_of_declarations = |text: &str| {
         let files = [("main.tsx", text)];
-        with_project(&files, &default_settings(), ReactCompilerMode::Client, |project| {
-            let files = project.loaded.files();
-            let declarations = files.by_path.get(DECLARATIONS_PATH)?;
-            assert_eq!(project.sources.kind(declarations), SourceKind::TypesOnly);
-            Some(files.role(declarations))
-        })
+        with_project(
+            &files,
+            &default_settings(),
+            ReactCompilerMode::Client,
+            |project| {
+                let files = project.loaded.files();
+                let declarations = files.by_path.get(DECLARATIONS_PATH)?;
+                assert_eq!(project.sources.kind(declarations), SourceKind::TypesOnly);
+                Some(files.role(declarations))
+            },
+        )
     };
     assert_eq!(role_of_declarations(HELLO), Some(FileRole::TypesOnly));
     assert_eq!(role_of_declarations("export const x: number = 1;\n"), None);
@@ -243,10 +261,15 @@ fn generated_locals_are_any_in_typescript() {
         assert!(tree.declaration_named("$").ty.is_none());
         assert!(tree.declaration_named("$").init.is_some());
     });
-    with_tree("main.jsx", UNTYPED_HELLO, ReactCompilerMode::Client, |tree| {
-        assert!(tree.has_compiled_components());
-        assert!(tree.declaration_named("t1").ty.is_none());
-    });
+    with_tree(
+        "main.jsx",
+        UNTYPED_HELLO,
+        ReactCompilerMode::Client,
+        |tree| {
+            assert!(tree.has_compiled_components());
+            assert!(tree.declaration_named("t1").ty.is_none());
+        },
+    );
 }
 
 #[test]
@@ -256,9 +279,18 @@ fn this_argument_of_jsx_dev_has_a_type() {
         assert!(this_parameter.is_some());
         assert!(is_any(tree, tree.hir()[this_parameter].ty));
     });
-    with_tree("main.jsx", UNTYPED_HELLO, ReactCompilerMode::Client, |tree| {
-        assert!(tree.hir()[tree.function_named("Hello")].this_param.is_none());
-    });
+    with_tree(
+        "main.jsx",
+        UNTYPED_HELLO,
+        ReactCompilerMode::Client,
+        |tree| {
+            assert!(
+                tree.hir()[tree.function_named("Hello")]
+                    .this_param
+                    .is_none()
+            );
+        },
+    );
     let production = TranspileSettings {
         jsx: JsxSettings {
             is_development: false,
@@ -268,7 +300,11 @@ fn this_argument_of_jsx_dev_has_a_type() {
     };
     with_tree_and_settings(HELLO, &production, |tree| {
         assert!(tree.has_compiled_components());
-        assert!(tree.hir()[tree.function_named("Hello")].this_param.is_none());
+        assert!(
+            tree.hir()[tree.function_named("Hello")]
+                .this_param
+                .is_none()
+        );
     });
 }
 
@@ -280,14 +316,22 @@ fn exported_component_keeps_its_type() {
              export const element = Hello({{ name: {name} }});\n"
         );
         let files = with_react_package(&[("main.tsx", main.as_str()), ("hello.tsx", HELLO)]);
-        with_project(&files, &default_settings(), ReactCompilerMode::Client, |project| {
-            assert!(Tree::new(project, "hello.tsx").has_compiled_components());
-        });
+        with_project(
+            &files,
+            &default_settings(),
+            ReactCompilerMode::Client,
+            |project| {
+                assert!(Tree::new(project, "hello.tsx").has_compiled_components());
+            },
+        );
         check_project(&files, ReactCompilerMode::Client)
     };
     let reported = check_call_with_name("'a'");
     assert!(reported.is_empty(), "{reported:?}");
-    assert_eq!(check_call_with_name("1"), [(2322, "/project/main.tsx".to_owned(), 2)]);
+    assert_eq!(
+        check_call_with_name("1"),
+        [(2322, "/project/main.tsx".to_owned(), 2)]
+    );
 }
 
 #[test]
@@ -359,7 +403,11 @@ fn replaced_function_reports_nothing() {
     let files = with_react_package(&[("main.tsx", with_helper.as_str())]);
     for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
         let reported = check_project(&files, mode);
-        assert_eq!(reported, [(18048, "/project/main.tsx".to_owned(), 7)], "{mode:?}");
+        assert_eq!(
+            reported,
+            [(18048, "/project/main.tsx".to_owned(), 7)],
+            "{mode:?}"
+        );
     }
 }
 

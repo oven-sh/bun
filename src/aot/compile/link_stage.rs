@@ -9,6 +9,7 @@ use crate::statistics::Stage;
 use bun_sema::program::FileId;
 
 // For whoever has to cut the program down: the paths and the name, not their numbers.
+#[allow(clippy::disallowed_methods)] // a message for a person
 pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkError) -> Vec<u8> {
     let path = |file: ProgramFile| {
         let files = loaded.project(file.project).loaded.files();
@@ -21,7 +22,10 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
         ProgramModule::Face(file) => format!("the face of {}", path(file)),
         ProgramModule::Check(file) => format!("the check of {}", path(file)),
         ProgramModule::Runtime(module) => format!("{module:?}"),
-        ProgramModule::External { importer, specifier } => {
+        ProgramModule::External {
+            importer,
+            specifier,
+        } => {
             format!("`{}`, imported by {}", name_of(specifier), path(importer))
         }
     };
@@ -30,7 +34,11 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
         LinkError::UndefinedVariable { key, referenced_in } => {
             let variable = match key {
                 ProgramVariableKey::Copy { module, name } => {
-                    format!("what ES modules hold of `{}` of {}", name_of(name), module_of(module))
+                    format!(
+                        "what ES modules hold of `{}` of {}",
+                        name_of(name),
+                        module_of(module)
+                    )
                 }
                 ProgramVariableKey::SyntheticExport { module, name } => {
                     format!("the export `{}` of {}", name_of(name), module_of(module))
@@ -38,26 +46,44 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
                 ProgramVariableKey::Declared(declared) => match declared.key.home_file() {
                     Some(file) => {
                         let project = declared.project;
-                        format!("{:?} of {}", declared.key, path(ProgramFile { project, file }))
+                        format!(
+                            "{:?} of {}",
+                            declared.key,
+                            path(ProgramFile { project, file })
+                        )
                     }
                     None => format!("{:?}", declared.key),
                 },
             };
-            format!("UndefinedVariable: {variable}, reached from {}", path(referenced_in))
+            format!(
+                "UndefinedVariable: {variable}, reached from {}",
+                path(referenced_in)
+            )
         }
         LinkError::UndefinedFunction { key, referenced_in } => {
             let (project, file) = (key.project, key.key.home_file());
             let home = path(ProgramFile { project, file });
-            format!("UndefinedFunction: {:?} of {home}, reached from {}", key.key, path(referenced_in))
+            format!(
+                "UndefinedFunction: {:?} of {home}, reached from {}",
+                key.key,
+                path(referenced_in)
+            )
         }
         LinkError::UndefinedLayout { key, referenced_in } => {
-            format!("UndefinedLayout: {:?}, reached from {}", key.key, path(referenced_in))
+            format!(
+                "UndefinedLayout: {:?}, reached from {}",
+                key.key,
+                path(referenced_in)
+            )
         }
         LinkError::ConflictingDefinitions { key, files } => {
             format!("ConflictingDefinitions: {key:?} in {}", both(files))
         }
         LinkError::ConflictingRuntimeFunctions { function, files } => {
-            format!("ConflictingRuntimeFunctions: {function:?} in {}", both(files))
+            format!(
+                "ConflictingRuntimeFunctions: {function:?} in {}",
+                both(files)
+            )
         }
         LinkError::MissingUnit { file } => format!("MissingUnit: {}", path(file)),
         LinkError::TypeHashCollision { files } => format!("TypeHashCollision: {}", both(files)),
@@ -122,7 +148,8 @@ impl Build<'_> {
                     }
                 }
                 let describe = |error: &LinkError| describe_link_error(&loaded, error);
-                self.diagnostics.add_link_errors(errors, &self.limits, &describe);
+                self.diagnostics
+                    .add_link_errors(errors, &self.limits, &describe);
                 return Err(Stage::LinkAndEmit);
             }
         };

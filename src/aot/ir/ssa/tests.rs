@@ -120,7 +120,9 @@ fn scratch_keeps_cleared_lists() {
     let (block, variable, value) = (BlockId::new(0), LocalVariable(0), ValueId::new(0));
     state.definitions.insert(block, variable, value);
     state.observed_values.insert(value);
-    state.pending_reads.push(PendingRead::SinglePredecessor(block));
+    state
+        .pending_reads
+        .push(PendingRead::SinglePredecessor(block));
     let vector_capacities = [
         state.states.capacity(),
         state.pending_reads.capacity(),
@@ -171,7 +173,10 @@ fn variables_are_numbered_in_creation_order() {
     let mut state = SsaState::new(SsaScratch::default());
     assert_eq!(state.variable_count(), 0);
     assert_eq!(state.create_variable(None), LocalVariable(0));
-    assert_eq!(state.create_variable(Some(TypeTable::NUMBER)), LocalVariable(1));
+    assert_eq!(
+        state.create_variable(Some(TypeTable::NUMBER)),
+        LocalVariable(1)
+    );
     assert_eq!(state.variable_count(), 2);
 }
 
@@ -195,7 +200,10 @@ fn single_store_is_read_in_dominated_blocks() {
     builder.write_variable(variable, value);
     let diamond = write_diamond(&mut builder, condition, variable, [None, None]);
     let value_count = builder.values.len();
-    assert_eq!(builder.ssa.find_dominating_store(variable, diamond.join), Some(value));
+    assert_eq!(
+        builder.ssa.find_dominating_store(variable, diamond.join),
+        Some(value)
+    );
     assert_eq!(builder.read_variable(variable), value);
     assert_eq!(builder.values.len(), value_count);
     assert_eq!(builder.ssa.definitions.get(diamond.join, variable), None);
@@ -209,7 +217,10 @@ fn later_store_in_open_block_replaces_single_store() {
     builder.write_variable(variable, first);
     builder.write_variable(variable, second);
     let next = enter_block(&mut builder, None);
-    assert_eq!(builder.ssa.find_dominating_store(variable, next), Some(second));
+    assert_eq!(
+        builder.ssa.find_dominating_store(variable, next),
+        Some(second)
+    );
     assert_eq!(builder.read_variable(variable), second);
 }
 
@@ -233,7 +244,10 @@ fn store_in_one_arm_does_not_dominate_join() {
     let variable = builder.create_variable(None);
     let entry = builder.current_block();
     let diamond = write_diamond(&mut builder, condition, variable, [Some(value), None]);
-    assert_eq!(builder.ssa.find_dominating_store(variable, diamond.join), None);
+    assert_eq!(
+        builder.ssa.find_dominating_store(variable, diamond.join),
+        None
+    );
 
     let joined = builder.read_variable(variable);
     assert_eq!(variable_parameters(&builder, diamond.join), [joined]);
@@ -278,7 +292,10 @@ fn diamond_with_same_value_has_no_parameter() {
         assert!(variable_arguments(&builder, arm, 0).is_empty());
     }
     assert_eq!(builder.values.len(), value_count);
-    assert_eq!(builder.ssa.definitions.get(diamond.join, variable), Some(same));
+    assert_eq!(
+        builder.ssa.definitions.get(diamond.join, variable),
+        Some(same)
+    );
 }
 
 #[test]
@@ -295,11 +312,21 @@ fn parameter_before_last_is_not_removed() {
     let parameters = [first, second].map(|variable| builder.read_variable(variable));
     builder.seal(next);
 
-    assert!(!try_remove_parameter(&mut builder, next, parameters[0], &[entry]));
+    assert!(!try_remove_parameter(
+        &mut builder,
+        next,
+        parameters[0],
+        &[entry]
+    ));
     assert_eq!(variable_parameters(&builder, next), parameters);
     assert_eq!(variable_arguments(&builder, entry, 0), [value, value]);
 
-    assert!(try_remove_parameter(&mut builder, next, parameters[1], &[entry]));
+    assert!(try_remove_parameter(
+        &mut builder,
+        next,
+        parameters[1],
+        &[entry]
+    ));
     assert_eq!(variable_parameters(&builder, next), [parameters[0]]);
     assert_eq!(variable_arguments(&builder, entry, 0), [value]);
 }
@@ -479,7 +506,10 @@ fn loop_parameter_of_declared_variable_has_declared_type() {
     builder.jump(Edge::to(header));
     builder.seal(header);
     assert_eq!(variable_parameters(&builder, header), [counter]);
-    assert_eq!(declared_parameter_type(&builder, counter), Some(TypeTable::NUMBER));
+    assert_eq!(
+        declared_parameter_type(&builder, counter),
+        Some(TypeTable::NUMBER)
+    );
 }
 
 #[test]
@@ -488,9 +518,17 @@ fn join_parameter_of_declared_variable_has_declared_type() {
     let mut builder = create_builder(&parameters);
     let [condition, first, second] = [0, 1, 2].map(|index| builder.parameter(index));
     let variable = builder.create_variable(Some(TypeTable::STRING));
-    write_diamond(&mut builder, condition, variable, [Some(first), Some(second)]);
+    write_diamond(
+        &mut builder,
+        condition,
+        variable,
+        [Some(first), Some(second)],
+    );
     let joined = builder.read_variable(variable);
-    assert_eq!(declared_parameter_type(&builder, joined), Some(TypeTable::STRING));
+    assert_eq!(
+        declared_parameter_type(&builder, joined),
+        Some(TypeTable::STRING)
+    );
 }
 
 #[test]
@@ -499,7 +537,12 @@ fn parameter_of_undeclared_variable_has_no_type() {
     let mut builder = create_builder(&parameters);
     let [condition, first, second] = [0, 1, 2].map(|index| builder.parameter(index));
     let variable = builder.create_variable(None);
-    write_diamond(&mut builder, condition, variable, [Some(first), Some(second)]);
+    write_diamond(
+        &mut builder,
+        condition,
+        variable,
+        [Some(first), Some(second)],
+    );
     let joined = builder.read_variable(variable);
     assert_eq!(declared_parameter_type(&builder, joined), None);
 
@@ -541,7 +584,10 @@ fn join_is_linked_below_branching_block() {
     let diamond = write_diamond(&mut builder, condition, variable, [None, None]);
     for block in [diamond.arms[0], diamond.arms[1], diamond.join] {
         let link = dominator_of(&builder, block);
-        assert_eq!((link.parent, link.depth, link.root), (branching, 2, ENTRY_BLOCK));
+        assert_eq!(
+            (link.parent, link.depth, link.root),
+            (branching, 2, ENTRY_BLOCK)
+        );
     }
 }
 
@@ -560,13 +606,25 @@ fn lowest_common_ancestor_of_two_branches_is_branching_block() {
     let right_end = enter_blocks(&mut builder, 9);
 
     let ssa = &builder.ssa;
-    assert_eq!(ssa.lowest_common_ancestor(left_end, right_end), Some(branching));
-    assert_eq!(ssa.lowest_common_ancestor(right_end, left_end), Some(branching));
+    assert_eq!(
+        ssa.lowest_common_ancestor(left_end, right_end),
+        Some(branching)
+    );
+    assert_eq!(
+        ssa.lowest_common_ancestor(right_end, left_end),
+        Some(branching)
+    );
     assert_eq!(ssa.lowest_common_ancestor(left, right_end), Some(branching));
     assert_eq!(ssa.lowest_common_ancestor(left_end, left), Some(left));
     assert_eq!(ssa.lowest_common_ancestor(left, left_end), Some(left));
-    assert_eq!(ssa.lowest_common_ancestor(right_end, right_end), Some(right_end));
-    assert_eq!(ssa.lowest_common_ancestor(ENTRY_BLOCK, right_end), Some(ENTRY_BLOCK));
+    assert_eq!(
+        ssa.lowest_common_ancestor(right_end, right_end),
+        Some(right_end)
+    );
+    assert_eq!(
+        ssa.lowest_common_ancestor(ENTRY_BLOCK, right_end),
+        Some(ENTRY_BLOCK)
+    );
 }
 
 #[test]
@@ -579,7 +637,10 @@ fn blocks_under_different_roots_have_no_common_ancestor() {
     assert_eq!((link.parent, link.depth, link.root), (dead, 0, dead));
     assert_eq!(builder.ssa.lowest_common_ancestor(dead, reachable), None);
     assert_eq!(builder.ssa.lowest_common_ancestor(reachable, dead), None);
-    assert_eq!(builder.ssa.lowest_common_ancestor(unsealed, reachable), None);
+    assert_eq!(
+        builder.ssa.lowest_common_ancestor(unsealed, reachable),
+        None
+    );
     assert_eq!(builder.ssa.ancestor_at(unsealed, 0), None);
 }
 
@@ -617,10 +678,16 @@ fn walk_without_shortcut_finds_same_definition() {
     let block_count = MAX_SHORTCUT_DEFINITION_BLOCKS + 1;
     let stored = write_in_successive_blocks(&mut builder, variable, block_count);
     let last = enter_blocks(&mut builder, CHAIN_LENGTH);
-    assert!(matches!(builder.ssa.find_shortcut(variable, last), Shortcut::No));
+    assert!(matches!(
+        builder.ssa.find_shortcut(variable, last),
+        Shortcut::No
+    ));
     let definition_count = builder.ssa.definitions.0.len();
     assert_eq!(builder.read_variable(variable), stored);
-    assert_eq!(builder.ssa.definitions.0.len(), definition_count + CHAIN_LENGTH);
+    assert_eq!(
+        builder.ssa.definitions.0.len(),
+        definition_count + CHAIN_LENGTH
+    );
 }
 
 #[test]
@@ -656,7 +723,10 @@ fn predecessors_are_unique_and_entered() {
     assert_eq!(builder.ssa.predecessor_count(live), 2);
     assert_eq!(builder.ssa.unique_predecessors(live)[..], [entry]);
     assert_eq!(builder.ssa.predecessor_count(handler.block()), 3);
-    assert_eq!(builder.ssa.unique_predecessors(handler.block())[..], [live, unsealed]);
+    assert_eq!(
+        builder.ssa.unique_predecessors(handler.block())[..],
+        [live, unsealed]
+    );
     assert!(builder.ssa.is_never_entered(dead));
     for block in [entry, live, unsealed] {
         assert!(!builder.ssa.is_never_entered(block));
@@ -695,14 +765,21 @@ fn split_continues_in_sealed_block_under_same_handler() {
     assert!(builder.is_open());
     assert!(builder.ssa.is_sealed(next));
     assert_eq!(builder.handler_of(next), Some(handler));
-    assert_eq!(builder.blocks[next.index()].frequency, BlockFrequency::Unlikely);
+    assert_eq!(
+        builder.blocks[next.index()].frequency,
+        BlockFrequency::Unlikely
+    );
     assert_eq!(builder.ssa.states[next.index()].predecessors[..], [covered]);
     let landing = &builder.ssa.states[handler.block().index()];
     assert_eq!(landing.predecessors[..], [covered, next]);
     let terminator = builder.blocks[covered.index()].terminator.as_ref();
     let terminator = terminator.expect("the split closes the block");
     assert_eq!(terminator.kind, TerminatorKind::Jump);
-    let targets: Vec<BlockId> = terminator.targets.iter().map(|target| target.block).collect();
+    let targets: Vec<BlockId> = terminator
+        .targets
+        .iter()
+        .map(|target| target.block)
+        .collect();
     assert_eq!(targets, [next]);
 }
 

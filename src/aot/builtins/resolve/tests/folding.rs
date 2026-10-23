@@ -63,7 +63,9 @@ fn exposed_global_path_define() {
         defines: &[(&["RENAMED"], &["Math"])],
         ..PROGRAM
     };
-    with_case(setup, "f(RENAMED);", |case| assert!(case.exposes(BuiltinId::Math)));
+    with_case(setup, "f(RENAMED);", |case| {
+        assert!(case.exposes(BuiltinId::Math))
+    });
 }
 
 #[test]

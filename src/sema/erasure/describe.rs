@@ -321,9 +321,11 @@ impl<'a, 's> Side<'a, 's> {
                 expr,
                 body,
                 is_await,
-            } => draft
-                .with_mark(Marks::FOR_AWAIT, is_await)
-                .with_children([loop_head(file, left), Expr(expr), Stmt(body)]),
+            } => draft.with_mark(Marks::FOR_AWAIT, is_await).with_children([
+                loop_head(file, left),
+                Expr(expr),
+                Stmt(body),
+            ]),
             StmtKind::While { test, body } | StmtKind::With { object: test, body } => {
                 draft.with_children([Expr(test), Stmt(body)])
             }

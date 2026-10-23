@@ -29,10 +29,20 @@ function moduleSource(i: number): string {
   const imports = i > 1 ? [...new Set([(i * 7 + 3) % i, i - 1])].sort((a, b) => a - b) : i === 1 ? [0] : [];
   const lines = imports.map(d => `import { f${d}_0, C${d} } from "./m${d}";`);
   lines.push(`export interface I${i} { id: number; name: string; tags: string[]; next?: I${i}; w${i % 50}: number }`);
-  lines.push(`export class C${i} {`, `  items: I${i}[] = [];`, "  total = 0;", "  constructor(public label: string) {}");
+  lines.push(
+    `export class C${i} {`,
+    `  items: I${i}[] = [];`,
+    "  total = 0;",
+    "  constructor(public label: string) {}",
+  );
   for (let j = 0; j < 5; j++)
-    lines.push(`  m${j}(x: number): number { let s = this.total; for (const it of this.items) { if (it.id > x) s += it.w${i % 50}; else s -= it.name.length; } this.total = s; return s + ${j}; }`);
-  lines.push(`  add(id: number, name: string) { this.items.push({ id, name, tags: [name, this.label], w${i % 50}: id * 2 }); return this; }`, "}");
+    lines.push(
+      `  m${j}(x: number): number { let s = this.total; for (const it of this.items) { if (it.id > x) s += it.w${i % 50}; else s -= it.name.length; } this.total = s; return s + ${j}; }`,
+    );
+  lines.push(
+    `  add(id: number, name: string) { this.items.push({ id, name, tags: [name, this.label], w${i % 50}: id * 2 }); return this; }`,
+    "}",
+  );
   for (let j = 0; j < 10; j++) {
     const call = j ? `f${i}_${j - 1}(n - 1)` : imports.length ? `f${imports[0]}_0(n - 1)` : "n";
     lines.push(
@@ -47,9 +57,15 @@ function moduleSource(i: number): string {
     );
   }
   for (let j = 0; j < 2; j++) {
-    lines.push(`export async function a${i}_${j}(p: Promise<number>): Promise<string> { const v = await p; const c = new C${i}(\`l\${v}\`); c.add(v, "n${i}").add(v + 1, \`x\${v}y\`); return \`\${c.m0(v)}:\${/^a${i}+b/.test(c.label)}\`; }`);
-    lines.push(`export function* g${i}_${j}(n: number) { for (let k = 0; k < n; k++) { const r = { k, i: ${i} }; yield r.k + r.i; } }`);
-    lines.push(`export const t${i}_${j}: Record<string, number> = { ${Array.from({ length: 8 }, (_, q) => `k${q}: ${q * i}`).join(", ")} };`);
+    lines.push(
+      `export async function a${i}_${j}(p: Promise<number>): Promise<string> { const v = await p; const c = new C${i}(\`l\${v}\`); c.add(v, "n${i}").add(v + 1, \`x\${v}y\`); return \`\${c.m0(v)}:\${/^a${i}+b/.test(c.label)}\`; }`,
+    );
+    lines.push(
+      `export function* g${i}_${j}(n: number) { for (let k = 0; k < n; k++) { const r = { k, i: ${i} }; yield r.k + r.i; } }`,
+    );
+    lines.push(
+      `export const t${i}_${j}: Record<string, number> = { ${Array.from({ length: 8 }, (_, q) => `k${q}: ${q * i}`).join(", ")} };`,
+    );
   }
   return lines.join("\n") + "\n";
 }
@@ -81,10 +97,14 @@ function build(folder: string, logs: boolean): Build {
     stderr: "pipe",
   });
   const stderr = built.stderr.toString();
-  expect({ exitCode: built.exitCode, stderr: built.exitCode ? stderr.slice(-2000) : "" }).toEqual({ exitCode: 0, stderr: "" });
+  expect({ exitCode: built.exitCode, stderr: built.exitCode ? stderr.slice(-2000) : "" }).toEqual({
+    exitCode: 0,
+    stderr: "",
+  });
   const phases = new Map<string, number>();
   for (const line of stderr.split("\n")) {
-    const found = /^AOT phase times: (?!pass )(.+?) \| wall [-\d.e]+ ms \| .*\| outside parallel loops ([-\d.e]+) ms \|/.exec(line);
+    const found =
+      /^AOT phase times: (?!pass )(.+?) \| wall [-\d.e]+ ms \| .*\| outside parallel loops ([-\d.e]+) ms \|/.exec(line);
     if (found) phases.set(found[1], (phases.get(found[1]) ?? 0) + Number(found[2]));
   }
   return { cpu: Number(built.resourceUsage!.cpuTime.total) / 1000, phases, hash: Bun.hash(readFileSync(executable)) };
@@ -95,32 +115,32 @@ function quickest(modules: number): Build {
   const builds = Array.from({ length: runs }, () => build(String(dir), true));
   expect(build(String(dir), false).hash).toBe(builds[0].hash);
   const phases = new Map<string, number>();
-  for (const name of builds[0].phases.keys()) phases.set(name, Math.min(...builds.map(one => one.phases.get(name) ?? 0)));
+  for (const name of builds[0].phases.keys())
+    phases.set(name, Math.min(...builds.map(one => one.phases.get(name) ?? 0)));
   return { cpu: Math.min(...builds.map(one => one.cpu)), phases, hash: builds[0].hash };
 }
 
-test(
-  "compile/aot/perf/serial-time",
-  () => {
-    const [small, large] = sizes.map(quickest);
-    expect(large.phases.size).toBeGreaterThan(50);
+test("compile/aot/perf/serial-time", () => {
+  const [small, large] = sizes.map(quickest);
+  expect(large.phases.size).toBeGreaterThan(50);
 
-    const cpu = large.cpu - small.cpu;
-    expect(cpu).toBeGreaterThan(0);
-    const now: Record<string, number> = { "all phases": 0 };
-    for (const [name, time] of large.phases) {
-      now[name] = Math.max(0, Math.round(((time - (small.phases.get(name) ?? 0)) / cpu) * 1e6));
-      now["all phases"] += now[name];
-    }
-    if (process.env.AOT_PERF === "update") writeFileSync(pinsPath, JSON.stringify(now, null, 2) + "\n");
-    const isJudged = existsSync(pinsPath);
-    const pins: Record<string, number> = isJudged ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
-    const names = Object.keys(now).sort((a, b) => now[b] - now[a]);
-    console.log("serial time in parts per million of the build's CPU time: now, pinned");
-    for (const name of names.filter(name => now[name] >= 100 || (pins[name] ?? 0) >= 100)) console.log(`${String(now[name]).padStart(8)}${String(pins[name] ?? 0).padStart(8)}  ${name}`);
-    if (!isJudged) return void console.error(`NOT JUDGED: ${pinsPath} is missing`);
-    const worse = names.filter(name => now[name] > 2 * (pins[name] ?? 0) + slack).map(name => `${name}: ${now[name]}, pinned ${pins[name] ?? 0}`);
-    expect(worse).toEqual([]);
-  },
-  600_000,
-);
+  const cpu = large.cpu - small.cpu;
+  expect(cpu).toBeGreaterThan(0);
+  const now: Record<string, number> = { "all phases": 0 };
+  for (const [name, time] of large.phases) {
+    now[name] = Math.max(0, Math.round(((time - (small.phases.get(name) ?? 0)) / cpu) * 1e6));
+    now["all phases"] += now[name];
+  }
+  if (process.env.AOT_PERF === "update") writeFileSync(pinsPath, JSON.stringify(now, null, 2) + "\n");
+  const isJudged = existsSync(pinsPath);
+  const pins: Record<string, number> = isJudged ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
+  const names = Object.keys(now).sort((a, b) => now[b] - now[a]);
+  console.log("serial time in parts per million of the build's CPU time: now, pinned");
+  for (const name of names.filter(name => now[name] >= 100 || (pins[name] ?? 0) >= 100))
+    console.log(`${String(now[name]).padStart(8)}${String(pins[name] ?? 0).padStart(8)}  ${name}`);
+  if (!isJudged) return void console.error(`NOT JUDGED: ${pinsPath} is missing`);
+  const worse = names
+    .filter(name => now[name] > 2 * (pins[name] ?? 0) + slack)
+    .map(name => `${name}: ${now[name]}, pinned ${pins[name] ?? 0}`);
+  expect(worse).toEqual([]);
+}, 600_000);

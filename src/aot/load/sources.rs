@@ -2,8 +2,11 @@ mod freeze;
 #[cfg(test)]
 mod tests;
 
+use std::sync::OnceLock;
+
 use bun_ast::Loader;
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
+use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::program::{FileId, Files};
@@ -86,6 +89,8 @@ pub(crate) struct ParsedSource {
     pub evaluated_text_sites: Vec<EvaluatedTextSite>,
     pub evaluated_function: Option<FnId>,
     pub modules_named_in_choices: Vec<NamedModule>,
+    pub library_names_passed_to_imports: Vec<(SymbolId, NamedModule)>,
+    pub(super) named_modules: OnceLock<Vec<NamedModule>>,
     pub diagnostics: Vec<FileDiagnostic>,
 }
 
@@ -103,8 +108,20 @@ impl ParsedSource {
             evaluated_text_sites: Vec::new(),
             evaluated_function: None,
             modules_named_in_choices: Vec::new(),
+            library_names_passed_to_imports: Vec::new(),
+            named_modules: OnceLock::new(),
             diagnostics: Vec::new(),
         }
+    }
+
+    pub(crate) fn named_modules(&self) -> &[NamedModule] {
+        self.named_modules
+            .get()
+            .unwrap_or(&self.modules_named_in_choices)
+    }
+
+    pub(crate) fn set_named_modules(&self, named: Vec<NamedModule>) {
+        let _ = self.named_modules.set(named);
     }
 }
 
@@ -113,7 +130,9 @@ pub(crate) fn parsed_source<'s>(files: &Files<'s>, file: FileId) -> Option<&'s P
 }
 
 pub(crate) fn parsed_source_mut(payload: &mut Option<HostPayload>) -> &mut ParsedSource {
-    let payload = payload.as_mut().expect("parse_code gives every tree a payload");
+    let payload = payload
+        .as_mut()
+        .expect("parse_code gives every tree a payload");
     let source = payload.downcast_mut::<ParsedSource>();
     source.expect("the payload of a tree is a ParsedSource")
 }
@@ -122,9 +141,8 @@ fn find_compiler_function(path: &[u8], export_name: &[u8]) -> Option<RuntimeFunc
     let archive_name = path.strip_prefix(VIRTUAL_ROOT)?;
     let file = archive_name.strip_suffix(b".ts")?;
     let mut functions = table::runtime_functions().iter();
-    let found = functions.find(|data| {
-        data.file.as_bytes() == file && data.export_name.as_bytes() == export_name
-    })?;
+    let found = functions
+        .find(|data| data.file.as_bytes() == file && data.export_name.as_bytes() == export_name)?;
     Some(found.function)
 }
 
@@ -232,7 +250,9 @@ impl Sources {
 
     /// Each file that was made of a text, behind the file that evaluates the text.
     pub fn evaluated_texts(&self) -> impl Iterator<Item = (FileId, FileId)> {
-        self.evaluated_functions.iter().map(|entry| (entry.0.0, entry.1.file))
+        self.evaluated_functions
+            .iter()
+            .map(|entry| (entry.0.0, entry.1.file))
     }
 
     /// The file that evaluates the text `text_file` was made of.

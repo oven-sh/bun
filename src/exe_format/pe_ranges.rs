@@ -125,9 +125,11 @@ fn read_headers(pe: &[u8]) -> Result<Headers, pe::Error> {
         file_header: read_struct(&pe[layout.pe_header_offset..]),
         optional: read_struct(&pe[layout.optional_header_offset..]),
         sections: pe[layout.section_headers_offset..]
-            .chunks_exact(size_of::<SectionHeader>())
+            .as_chunks::<{ size_of::<SectionHeader>() }>()
+            .0
+            .iter()
             .take(usize::from(layout.num_sections))
-            .map(read_struct)
+            .map(|bytes| read_struct(bytes))
             .collect(),
     })
 }
@@ -159,7 +161,9 @@ fn directory_addresses(directory: DataDirectory) -> AddressRange {
 }
 
 fn mapped_addresses(section: &SectionHeader) -> AddressRange {
-    let size = section.size_of_raw_data.min(effective_virtual_size(section));
+    let size = section
+        .size_of_raw_data
+        .min(effective_virtual_size(section));
     widen_address_range(section.virtual_address, size)
 }
 
@@ -254,7 +258,7 @@ fn collect_debug_data(pe: &[u8], headers: &Headers) -> Result<Vec<AddressRange>,
     let extent = find_file_range(headers, directory_addresses(directory))
         .ok_or(ImageError::MalformedHeaders)?;
     let mut ranges = Vec::new();
-    for entry in pe[extent].chunks_exact(DEBUG_DIRECTORY_ENTRY_SIZE) {
+    for entry in pe[extent].as_chunks::<DEBUG_DIRECTORY_ENTRY_SIZE>().0 {
         let size = u32_at(entry, DEBUG_ENTRY_SIZE_OF_DATA);
         if size == 0 {
             continue;
@@ -280,7 +284,10 @@ fn is_address_in_cut(address: u32, cuts: &[AddressRange]) -> bool {
 
 fn find_required_ranges(pe: &[u8], headers: &Headers) -> Result<Vec<AddressRange>, Error> {
     let mut required = collect_debug_data(pe, headers)?;
-    required.push(widen_address_range(headers.optional.address_of_entry_point, 1));
+    required.push(widen_address_range(
+        headers.optional.address_of_entry_point,
+        1,
+    ));
     for index in 0..headers.optional.data_directories.len() {
         if index == IMAGE_DIRECTORY_ENTRY_SECURITY {
             continue;
@@ -527,7 +534,10 @@ fn update_debug_directory(
     let start = file_offset_of(sections, directory.virtual_address)
         .ok_or(ImageError::MalformedHeaders)? as usize;
     let extent = start..start + directory.size as usize;
-    for entry in bytes[extent].chunks_exact_mut(DEBUG_DIRECTORY_ENTRY_SIZE) {
+    for entry in bytes[extent]
+        .as_chunks_mut::<DEBUG_DIRECTORY_ENTRY_SIZE>()
+        .0
+    {
         if u32_at(entry, DEBUG_ENTRY_SIZE_OF_DATA) == 0 {
             continue;
         }

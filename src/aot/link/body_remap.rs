@@ -56,12 +56,20 @@ impl BodyRemap {
                     function.function_types = function_types;
                     // They came in the order of the numbers that the file gave its keys, which hang on what else the file has looked at.
                     function.relations.stores.sort_unstable_by_key(|store| {
-                        (store.source, store.target, store.key.map(PropertyKeyId::to_word), store.creation_operand)
+                        (
+                            store.source,
+                            store.target,
+                            store.key.map(PropertyKeyId::to_word),
+                            store.creation_operand,
+                        )
                     });
                     function
                 })
                 .collect();
         });
-        tasks.into_iter().flat_map(|(_, _, remapped)| remapped).collect()
+        tasks
+            .into_iter()
+            .flat_map(|(_, _, remapped)| remapped)
+            .collect()
     }
 }

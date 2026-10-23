@@ -368,7 +368,11 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
     const vars = { cxxflags: flags, pch_file: n.rel(opts.pch), pch_header: n.rel(opts.pchHeader) };
     const bases = opts.pchBases ?? [];
     if (bases.length > 0 && cfg.ccache !== undefined) {
-      n.build({ ...node, rule: "cxx_pch_chained", vars: { ...vars, pch_bases: bases.map(base => n.rel(pchChecksumPath(base))).join(delimiter) } });
+      n.build({
+        ...node,
+        rule: "cxx_pch_chained",
+        vars: { ...vars, pch_bases: bases.map(base => n.rel(pchChecksumPath(base))).join(delimiter) },
+      });
     } else {
       n.build({ ...node, rule: "cxx_pch", vars });
     }

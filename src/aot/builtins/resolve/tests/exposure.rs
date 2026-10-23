@@ -194,7 +194,9 @@ fn object_whose_every_use_is_in_sight_is_not_exposed() {
 #[test]
 fn object_that_goes_out_of_sight_is_exposed() {
     for &source in HANDED_OVER {
-        with_case(PROGRAM, source, |case| assert!(case.exposes(BuiltinId::Process), "{source}"));
+        with_case(PROGRAM, source, |case| {
+            assert!(case.exposes(BuiltinId::Process), "{source}")
+        });
     }
 }
 
@@ -308,7 +310,9 @@ fn uses_with_exposure() {
             assert!(case.exposes(id), "{source}");
         });
     }
-    with_case(TSX, "<Map />;", |case| assert!(case.exposes(BuiltinId::Map)));
+    with_case(TSX, "<Map />;", |case| {
+        assert!(case.exposes(BuiltinId::Map))
+    });
 }
 
 #[test]
@@ -375,8 +379,14 @@ fn computed_key_read_of_required_namespace_exposes() {
     for (setup, source) in [
         (SCRIPT, "require(\"bun:jsc\")[k];"),
         (SCRIPT, "const jsc = require(\"bun:jsc\"); jsc[k];"),
-        (PROGRAM, "const jsc = import.meta.require(\"bun:jsc\"); jsc[k];"),
-        (PROGRAM, "const jsc = process.getBuiltinModule(\"bun:jsc\"); jsc[k];"),
+        (
+            PROGRAM,
+            "const jsc = import.meta.require(\"bun:jsc\"); jsc[k];",
+        ),
+        (
+            PROGRAM,
+            "const jsc = process.getBuiltinModule(\"bun:jsc\"); jsc[k];",
+        ),
         (PROGRAM, "import jsc = require(\"bun:jsc\"); jsc[k];"),
         (PROGRAM, "import * as jsc from \"bun:jsc\"; jsc[k];"),
     ] {

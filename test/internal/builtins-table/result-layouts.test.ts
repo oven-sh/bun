@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { checkResultLayouts } from "../../../src/codegen/builtins/check-overloads.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
-import type { ModelImplementation, ModelLayout, ModelOverload, ModelResultLayout } from "../../../src/codegen/builtins/model.ts";
+import type {
+  ModelImplementation,
+  ModelLayout,
+  ModelOverload,
+  ModelResultLayout,
+} from "../../../src/codegen/builtins/model.ts";
 
 const layoutOf = (token: string, isTuple = false): ModelLayout => ({ id: 0, token, isTuple, fields: [] });
 const step = layoutOf("IteratorResult");

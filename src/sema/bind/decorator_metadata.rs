@@ -202,8 +202,13 @@ pub(super) fn has_parameter_decorator(hir: &File<'_>, member: MemberId) -> bool 
     let node = hir[member];
     match node.kind {
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
-            let parameters = node.func.some().map_or(Span::EMPTY, |function| hir[function].params);
-            parameters.iter().any(|parameter| has_decorators(hir, hir.param_modifiers(parameter)))
+            let parameters = node
+                .func
+                .some()
+                .map_or(Span::EMPTY, |function| hir[function].params);
+            parameters
+                .iter()
+                .any(|parameter| has_decorators(hir, hir.param_modifiers(parameter)))
         }
         MemberKind::Property
         | MemberKind::CallSignature
@@ -365,7 +370,10 @@ impl<'a, 's> MetadataCollector<'a, 's> {
                 let result = self.collect_result(member, is_decorated);
                 smallvec![
                     (DesignKey::Type, DesignValue::Type(result)),
-                    (DesignKey::ParameterTypes, DesignValue::Types(MetadataList::new())),
+                    (
+                        DesignKey::ParameterTypes,
+                        DesignValue::Types(MetadataList::new())
+                    ),
                 ]
             }
             MemberKind::Setter => {
@@ -443,7 +451,11 @@ impl<'a, 's> MetadataCollector<'a, 's> {
                 Step::SetArray => result = Metadata::Array,
                 Step::SetIndexedAccess => {
                     let is_untouched = result == Metadata::None;
-                    result = if is_untouched { Metadata::Array } else { Metadata::Object };
+                    result = if is_untouched {
+                        Metadata::Array
+                    } else {
+                        Metadata::Object
+                    };
                 }
                 Step::SaveResult => {
                     saved_results.push(result);
@@ -452,7 +464,9 @@ impl<'a, 's> MetadataCollector<'a, 's> {
                 Step::ResetResult => result = Metadata::None,
                 Step::FinishConditional { no } => {
                     let mut left = result;
-                    result = saved_results.pop().expect("a conditional type saved its check type");
+                    result = saved_results
+                        .pop()
+                        .expect("a conditional type saved its check type");
                     let kind = MergeKind::Intersection;
                     match finish_merge(hir, kind, &mut left) {
                         Some(finished) => result = finished,
@@ -496,8 +510,14 @@ impl<'a, 's> MetadataCollector<'a, 's> {
             | TypeNodeKind::Mapped(_)
             | TypeNodeKind::Keyof(_)
             | TypeNodeKind::Typeof { .. }
-            | TypeNodeKind::Import { is_typeof: true, .. } => *result = Metadata::Object,
-            TypeNodeKind::Import { is_typeof: false, name, .. } => {
+            | TypeNodeKind::Import {
+                is_typeof: true, ..
+            } => *result = Metadata::Object,
+            TypeNodeKind::Import {
+                is_typeof: false,
+                name,
+                ..
+            } => {
                 let is_name = matches!(*result, Metadata::Name(_) | Metadata::QualifiedName(_));
                 if is_name && !name.is_empty() {
                     *result = Metadata::Object;
@@ -511,7 +531,12 @@ impl<'a, 's> MetadataCollector<'a, 's> {
             TypeNodeKind::Intersection(parts) => {
                 push_merged_parts(hir, MergeKind::Intersection, parts, steps);
             }
-            TypeNodeKind::Cond { check, extends, yes, no } => steps.extend([
+            TypeNodeKind::Cond {
+                check,
+                extends,
+                yes,
+                no,
+            } => steps.extend([
                 Step::FinishConditional { no },
                 Step::Collect(yes),
                 Step::ResetResult,

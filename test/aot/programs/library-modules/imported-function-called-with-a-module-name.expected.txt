@@ -1,0 +1,5 @@
+log: dgram
+node:dgram MODULE_NOT_FOUND
+node:repl MODULE_NOT_FOUND
+MODULE_NOT_FOUND
+log: repl

@@ -99,7 +99,16 @@ fn describe_symbol(symbol: Symbol<'_>, numbering: &Numbering) -> String {
     let members = numbering.table(members);
     format!(
         "{:?}",
-        (name, flags, decls, value_declaration, parent, exports, members, export_symbol)
+        (
+            name,
+            flags,
+            decls,
+            value_declaration,
+            parent,
+            exports,
+            members,
+            export_symbol
+        )
     )
 }
 
@@ -132,7 +141,16 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
     let yields: Vec<ExprId> = bound.ids(yields).collect();
     format!(
         "{:?}",
-        (owner, scope, enclosing, returns, yields, end, exit, contains_this)
+        (
+            owner,
+            scope,
+            enclosing,
+            returns,
+            yields,
+            end,
+            exit,
+            contains_this
+        )
     )
 }
 
@@ -230,13 +248,19 @@ fn describe(
             mapped_text(fns, |info| describe_fn(info, bound, numbering)),
         ),
         ("expr_scope", describe_expr_scope(bound, numbering)),
-        ("this_in_type_literal", sorted_text(this_in_type_literal.iter())),
+        (
+            "this_in_type_literal",
+            sorted_text(this_in_type_literal.iter()),
+        ),
         ("property_symbol", sorted_text(property_symbol.iter())),
         ("private_class", sorted_text(private_class.iter())),
     ];
 
     let scope_list = |list: &[ScopeId]| mapped_text(list, |&scope| numbering.scope(scope));
-    described.push(("stmt_scope", ids_text(stmt_scope, |scope| numbering.scope(scope))));
+    described.push((
+        "stmt_scope",
+        ids_text(stmt_scope, |scope| numbering.scope(scope)),
+    ));
     let id_list = |list: &Narrow<'_, FlowId>| ids_text(list, |flow| flow);
     push_fields!(described, id_list: expr_flow, stmt_flow);
     described.push(("expr_symbol", ids_text(expr_symbol, |symbol| symbol)));
@@ -321,17 +345,28 @@ fn assert_same_tables(workspace: &Workspace<'_>, path: &str, text: &[u8]) {
     }
 
     assert!(
-        plain.scopes.iter().all(|scope| !is_runtime_scope(scope.kind)),
+        plain
+            .scopes
+            .iter()
+            .all(|scope| !is_runtime_scope(scope.kind)),
         "{path}: a bind for `bun check` has a run-time scope"
     );
     let symbol_count = plain.symbols.len();
     let id_count = plain.ids.len();
-    assert!(compiled.symbols.len() >= symbol_count, "{path}: symbols were removed");
+    assert!(
+        compiled.symbols.len() >= symbol_count,
+        "{path}: symbols were removed"
+    );
     assert!(compiled.ids.len() >= id_count, "{path}: ids were removed");
     assert_same_descriptions(
         path,
         &describe(&plain, &Numbering::new(&plain), symbol_count, id_count),
-        &describe(&compiled, &Numbering::new(&compiled), symbol_count, id_count),
+        &describe(
+            &compiled,
+            &Numbering::new(&compiled),
+            symbol_count,
+            id_count,
+        ),
     );
     for symbol in (0..compiled.symbols.len() as u32).map(SymbolId) {
         assert_eq!(
@@ -361,7 +396,8 @@ fn every_program() {
 
 #[test]
 fn scopes_are_renumbered() {
-    const TEXT: &str = "with (o) { let x; } class C { f = () => x; static g = 1; [k] = 2; m() {} } { let y; }";
+    const TEXT: &str =
+        "with (o) { let x; } class C { f = () => x; static g = 1; [k] = 2; m() {} } { let y; }";
     with_workspace(|workspace| {
         assert_same_tables(workspace, "a.cjs", TEXT.as_bytes());
         let (plain, compiled) = bind_both(workspace, &Source::new("a.cjs", TEXT));
@@ -407,9 +443,16 @@ fn implicit_block_scopes_are_renumbered() {
             ScopeKind::ImplicitBlock(function) => Some(function),
             _ => None,
         };
-        let functions: Vec<FnId> = compiled.scopes.iter().filter_map(function_in_block).collect();
+        let functions: Vec<FnId> = compiled
+            .scopes
+            .iter()
+            .filter_map(function_in_block)
+            .collect();
         let hir = workspace.parse(&source);
-        assert_eq!(functions, [workspace.function(&hir, "f"), workspace.function(&hir, "g")]);
+        assert_eq!(
+            functions,
+            [workspace.function(&hir, "f"), workspace.function(&hir, "g")]
+        );
     });
 }
 

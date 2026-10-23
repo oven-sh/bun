@@ -26,7 +26,9 @@ fn node_shapes(text: &str, mode: ReactCompilerMode) -> NodeShapes {
         let hir = tree.hir();
         let expressions = hir.exprs.iter();
         NodeShapes {
-            expressions: expressions.map(|it| (it.kind.tag(), it.pos, it.end)).collect(),
+            expressions: expressions
+                .map(|it| (it.kind.tag(), it.pos, it.end))
+                .collect(),
             statement_starts: hir.stmts.iter().map(|it| it.start).collect(),
             type_ranges: hir.types.iter().map(|it| (it.pos, it.end)).collect(),
             function_count: hir.fns.len(),
@@ -53,12 +55,24 @@ fn applies_to_jsx_loaders_outside_node_modules() {
     let client = ReactCompilerMode::Client;
     assert!(applies_to(client, b"/project/a.tsx", Loader::Tsx));
     assert!(applies_to(client, b"/project/a.js", Loader::Jsx));
-    assert!(applies_to(ReactCompilerMode::Ssr, b"/project/a.tsx", Loader::Tsx));
+    assert!(applies_to(
+        ReactCompilerMode::Ssr,
+        b"/project/a.tsx",
+        Loader::Tsx
+    ));
     assert!(!applies_to(client, b"/project/a.ts", Loader::Ts));
     assert!(!applies_to(client, b"/project/a.mjs", Loader::Js));
     assert!(!applies_to(client, b"/project/a.json", Loader::Json));
-    assert!(!applies_to(client, b"/project/node_modules/p/a.tsx", Loader::Tsx));
-    assert!(!applies_to(ReactCompilerMode::Disabled, b"/project/a.tsx", Loader::Tsx));
+    assert!(!applies_to(
+        client,
+        b"/project/node_modules/p/a.tsx",
+        Loader::Tsx
+    ));
+    assert!(!applies_to(
+        ReactCompilerMode::Disabled,
+        b"/project/a.tsx",
+        Loader::Tsx
+    ));
 }
 
 #[test]
@@ -125,16 +139,21 @@ fn node_modules_file_is_not_compiled() {
         ),
         ("node_modules/widgets/index.jsx", UNTYPED_HELLO),
     ];
-    with_project(&files, &default_settings(), ReactCompilerMode::Client, |project| {
-        let installed = Tree::new(project, "node_modules/widgets/index.jsx");
-        assert!(!installed.has_compiled_components());
-        assert_eq!(installed.count_jsx_elements(), 1);
-        assert!(installed.imported_names(COMPILER_RUNTIME).is_empty());
+    with_project(
+        &files,
+        &default_settings(),
+        ReactCompilerMode::Client,
+        |project| {
+            let installed = Tree::new(project, "node_modules/widgets/index.jsx");
+            assert!(!installed.has_compiled_components());
+            assert_eq!(installed.count_jsx_elements(), 1);
+            assert!(installed.imported_names(COMPILER_RUNTIME).is_empty());
 
-        let own = Tree::new(project, "widget.jsx");
-        assert!(own.has_compiled_components());
-        assert_eq!(own.count_jsx_elements(), 0);
-    });
+            let own = Tree::new(project, "widget.jsx");
+            assert!(own.has_compiled_components());
+            assert_eq!(own.count_jsx_elements(), 0);
+        },
+    );
 }
 
 #[test]
@@ -182,7 +201,11 @@ fn use_no_memo_opts_out() {
 
 #[test]
 fn plain_function_is_left_alone() {
-    let text = ["function double(value: number) {\nreturn value * 2;\n}\n", HELLO].concat();
+    let text = [
+        "function double(value: number) {\nreturn value * 2;\n}\n",
+        HELLO,
+    ]
+    .concat();
     let record_of_double = |mode: ReactCompilerMode| {
         with_tree("main.tsx", &text, mode, |tree| {
             let function = tree.hir()[tree.function_named("double")];
@@ -194,7 +217,10 @@ fn plain_function_is_left_alone() {
     };
     let (is_compiled, parameters, body) = record_of_double(ReactCompilerMode::Client);
     assert!(is_compiled);
-    assert_eq!((false, parameters, body), record_of_double(ReactCompilerMode::Disabled));
+    assert_eq!(
+        (false, parameters, body),
+        record_of_double(ReactCompilerMode::Disabled)
+    );
 }
 
 #[test]
@@ -248,11 +274,20 @@ fn existing_ids_keep_their_nodes() {
     let written = node_shapes(&text, ReactCompilerMode::Disabled);
     let compiled = node_shapes(&text, ReactCompilerMode::Client);
     assert!(compiled.expressions.len() > written.expressions.len());
-    assert_eq!(compiled.expressions[..written.expressions.len()], written.expressions[..]);
+    assert_eq!(
+        compiled.expressions[..written.expressions.len()],
+        written.expressions[..]
+    );
     assert!(compiled.statement_starts.len() > written.statement_starts.len());
     let statement_count = written.statement_starts.len();
-    assert_eq!(compiled.statement_starts[..statement_count], written.statement_starts[..]);
-    assert_eq!(compiled.type_ranges[..written.type_ranges.len()], written.type_ranges[..]);
+    assert_eq!(
+        compiled.statement_starts[..statement_count],
+        written.statement_starts[..]
+    );
+    assert_eq!(
+        compiled.type_ranges[..written.type_ranges.len()],
+        written.type_ranges[..]
+    );
     assert_eq!(compiled.function_count, written.function_count);
 }
 

@@ -11,7 +11,10 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     let global = unsafe { heap.global() };
     // The parser is also the package manager's and the bundler's, so no code is this feature's alone and nothing stands in for this function where --trim removed the feature: it would run into what was removed with the others.
     if bun_removable_features::is_removed(bun_removable_features::Feature::Jsonc) {
-        return Err(crate::removed_feature::throw_for_removed_feature(global, bun_removable_features::Feature::Jsonc));
+        return Err(crate::removed_feature::throw_for_removed_feature(
+            global,
+            bun_removable_features::Feature::Jsonc,
+        ));
     }
     super::with_text_format_source(global, input, b"input.jsonc", |_, log, source| {
         // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.

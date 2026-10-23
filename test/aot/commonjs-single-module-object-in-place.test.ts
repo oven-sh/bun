@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const says = `const base = key => require("node:path").basename(key);
 const say = (what, value) => console.log(what, JSON.stringify(value));
@@ -63,10 +63,23 @@ for (const main of ["computed-first.cjs", "computed-only.cjs", "handed-on.cjs", 
     using dir = tempDir("one-module-object", files);
     const plain = await run([bunExe(), "run", main], String(dir));
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const others = ["child.cjs", "other.cjs", "middle.cjs", "sub/inner.cjs", "node_modules/dep/index.js", "sub/node_modules/dep/index.js"].map(file => "./" + file);
-    const build = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", "./" + main, ...others, "--outfile", "program"], String(dir));
+    const others = [
+      "child.cjs",
+      "other.cjs",
+      "middle.cjs",
+      "sub/inner.cjs",
+      "node_modules/dep/index.js",
+      "sub/node_modules/dep/index.js",
+    ].map(file => "./" + file);
+    const build = await run(
+      [bunExe(), "build", "--compile", "--aot", "--compile-in-place", "./" + main, ...others, "--outfile", "program"],
+      String(dir),
+    );
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-    const ran = await run([join(String(dir), "program")], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const ran = await run([join(String(dir), "program")], String(dir), {
+      ...bunEnv,
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+    });
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   }, 120_000);
 }

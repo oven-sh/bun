@@ -169,7 +169,10 @@ fn find_atom(hir: &hir::File<'_>, text: &str) -> Atom {
         };
         ends_at(expression.end).then_some(atom)
     });
-    let functions = hir.fns.iter().map(|function| (function.name, function.name_pos));
+    let functions = hir
+        .fns
+        .iter()
+        .map(|function| (function.name, function.name_pos));
     let classes = hir.classes.iter().map(|class| (class.name, class.name_pos));
     let declarations = functions.chain(classes).filter_map(|(atom, start)| {
         let is_named = atom.is_some() && starts_at(start);

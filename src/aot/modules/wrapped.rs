@@ -73,7 +73,9 @@ fn classify(shape: Shape) -> Option<WrapperShape> {
         }
         Shape::CommonJsRunsFirstKeyOnce
         | Shape::CommonJsRunsFirstOwnNameOnce
-        | Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt => (InnerModuleKind::CommonJs, false, true),
+        | Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt => {
+            (InnerModuleKind::CommonJs, false, true)
+        }
         Shape::EsmRunsFunctionOnce => (InnerModuleKind::Esm, false, false),
         Shape::EsmRunsFunctionOnceRethrows => (InnerModuleKind::Esm, true, false),
         Shape::EsmRunsFirstKeyOnce | Shape::EsmRunsFirstOwnNameOnce => {
@@ -183,10 +185,9 @@ fn find_functions_around(
             Parent::File => break None,
             Parent::FnBody(function) => break Some(function),
             Parent::ParamDefault(parameter) => break Some(bound.param_fn[parameter.idx()]),
-            Parent::None
-            | Parent::EnumInit(_)
-            | Parent::ParamDecorator(_)
-            | Parent::Module(_) => return None,
+            Parent::None | Parent::EnumInit(_) | Parent::ParamDecorator(_) | Parent::Module(_) => {
+                return None;
+            }
         };
     };
     let mut functions = SmallVec::new();
@@ -267,7 +268,8 @@ impl Finder<'_, '_> {
             && !record.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && record.this_param.is_none()
             && matches!(record.body, FnBody::Block(_));
-        let reads_this = bound.fns[callback.idx()].contains_this || evaluates_own_this(hir, callback);
+        let reads_this =
+            bound.fns[callback.idx()].contains_this || evaluates_own_this(hir, callback);
         if !is_plain || has_own_name || sees_its_call || reads_this {
             return false;
         }
@@ -307,7 +309,8 @@ impl Finder<'_, '_> {
     fn read_declaration(&self, statement: StmtId, declaration: VarDeclId) -> Option<Candidate> {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[declaration];
-        if !matches!(hir[record.pat].kind, PatKind::Ident(_)) || record.flags.contains(Flags::EXPORT)
+        if !matches!(hir[record.pat].kind, PatKind::Ident(_))
+            || record.flags.contains(Flags::EXPORT)
         {
             return None;
         }
@@ -319,7 +322,9 @@ impl Finder<'_, '_> {
         if site.chain != Chain::No || site.args.len() != 1 {
             return None;
         }
-        let known = self.helpers.certain_callee(self.files, self.file, site.callee)?;
+        let known = self
+            .helpers
+            .certain_callee(self.files, self.file, site.callee)?;
         let shape = classify(known.shape)?;
         let callback = self.find_callback(hir.id_at(site.args, 0), shape.takes_literal)?;
         if !self.can_be_body(callback, shape.kind) {
@@ -379,10 +384,12 @@ impl Finder<'_, '_> {
             self.by_callback.push((module.callback, index));
             self.by_symbol.push((module.holder, Role::Holder, index));
             if let Some(parameter) = module.exports_parameter {
-                self.by_symbol.push((parameter, Role::ExportsParameter, index));
+                self.by_symbol
+                    .push((parameter, Role::ExportsParameter, index));
             }
             if let Some(parameter) = module.module_parameter {
-                self.by_symbol.push((parameter, Role::ModuleParameter, index));
+                self.by_symbol
+                    .push((parameter, Role::ModuleParameter, index));
             }
         }
         self.by_callback.sort_unstable_by_key(|entry| entry.0);
@@ -416,7 +423,10 @@ impl Finder<'_, '_> {
     fn runs_nothing(&self, call: CallId) -> bool {
         let hir = self.hir;
         let site = hir[call];
-        let Some(known) = self.helpers.certain_callee(self.files, self.file, site.callee) else {
+        let Some(known) = self
+            .helpers
+            .certain_callee(self.files, self.file, site.callee)
+        else {
             return false;
         };
         match known.shape.helper() {
@@ -561,7 +571,10 @@ impl Finder<'_, '_> {
         loop {
             let mut has_changed = false;
             for (index, candidate) in self.candidates.iter().enumerate() {
-                let times = candidate.sites.iter().map(|&site| self.time_of(site, &starts));
+                let times = candidate
+                    .sites
+                    .iter()
+                    .map(|&site| self.time_of(site, &starts));
                 let start = times.min().unwrap_or(u32::MAX);
                 has_changed |= start < starts[index];
                 starts[index] = starts[index].min(start);
@@ -585,7 +598,11 @@ impl Finder<'_, '_> {
 
     fn count_holders_by_statement(&self) -> FxHashMap<StmtId, usize> {
         let mut counts = FxHashMap::default();
-        for candidate in self.candidates.iter().filter(|candidate| !candidate.is_refused) {
+        for candidate in self
+            .candidates
+            .iter()
+            .filter(|candidate| !candidate.is_refused)
+        {
             *counts.entry(candidate.module.statement).or_insert(0) += 1;
         }
         counts
@@ -622,7 +639,10 @@ impl Finder<'_, '_> {
     }
 
     fn finish(self) -> FileModules {
-        let accepted = self.candidates.iter().filter(|candidate| !candidate.is_refused);
+        let accepted = self
+            .candidates
+            .iter()
+            .filter(|candidate| !candidate.is_refused);
         let modules: Box<[InnerModule]> = accepted.map(|candidate| candidate.module).collect();
         let mut by_callback = Vec::with_capacity(modules.len());
         let mut by_symbol = Vec::with_capacity(modules.len());
@@ -691,7 +711,9 @@ impl WrappedModules {
         for_each_mut(&mut found, in_parallel, &|(file, modules)| {
             *modules = find_in_file(files, helpers, *file);
         });
-        wrapped.files.resize_with(files.modules.len(), FileModules::default);
+        wrapped
+            .files
+            .resize_with(files.modules.len(), FileModules::default);
         for (file, modules) in found {
             wrapped.files[file.idx()] = modules;
         }
@@ -860,7 +882,10 @@ var init_d = __esmRethrows(() => { init_c(); });
 init_d();
 export default require_b();
 "#;
-        assert_eq!(holders_in(body), ["require_a", "require_b", "init_c", "init_d!"]);
+        assert_eq!(
+            holders_in(body),
+            ["require_a", "require_b", "init_c", "init_d!"]
+        );
     }
 
     // The helpers as esbuild and rolldown write them: the function is the one member of a literal.
@@ -911,7 +936,9 @@ var __esm = (fn, res) => function __init() {
             "eval(\"\");",
         ];
         for other_use in uses {
-            let body = format!("var require_a = __commonJS((exports) => {{ exports.a = 1; }});\nrequire_a();\n{other_use}");
+            let body = format!(
+                "var require_a = __commonJS((exports) => {{ exports.a = 1; }});\nrequire_a();\n{other_use}"
+            );
             assert_eq!(holders_in(&body), [""; 0], "{other_use}");
         }
     }
@@ -935,7 +962,8 @@ var __esm = (fn, res) => function __init() {
             let body = format!("var require_a = __commonJS({callback});\nrequire_a();");
             assert_eq!(holders_in(&body), [""; 0], "{callback}");
         }
-        let own = "(exports) => { exports.f = function () { return [this, arguments, new.target]; }; }";
+        let own =
+            "(exports) => { exports.f = function () { return [this, arguments, new.target]; }; }";
         let body = format!("var require_a = __commonJS({own});\nrequire_a();");
         assert_eq!(holders_in(&body), ["require_a"]);
         let returns = "var init_a = __esm(() => { return 1; });\ninit_a();";
@@ -971,9 +999,16 @@ require_b();
 
     #[test]
     fn a_function_declaration_that_others_can_call_early_keeps_the_variables() {
-        let bundle = format!("import {{ one }} from \"./leaf.mjs\";\n{BUN}var require_a = __commonJS((exports) => {{ exports.a = one; }});\nexport function run() {{ return require_a().a; }}\n");
+        let bundle = format!(
+            "import {{ one }} from \"./leaf.mjs\";\n{BUN}var require_a = __commonJS((exports) => {{ exports.a = one; }});\nexport function run() {{ return require_a().a; }}\n"
+        );
         let holders = |main: &str, leaf: &str, other: &str| {
-            let files = [("main.mjs", main), ("bundle.mjs", bundle.as_str()), ("leaf.mjs", leaf), ("other.cjs", other)];
+            let files = [
+                ("main.mjs", main),
+                ("bundle.mjs", bundle.as_str()),
+                ("leaf.mjs", leaf),
+                ("other.cjs", other),
+            ];
             holders_of(&files, "bundle.mjs")
         };
         let main = "import \"./other.cjs\";\nimport { run } from \"./bundle.mjs\";\nrun();";
@@ -985,7 +1020,8 @@ require_b();
         assert_eq!(holders(main, leaf, required), [""; 0]);
         let importer_on_a_cycle = "import \"./other.cjs\";\nimport \"./main.mjs\";\nimport { run } from \"./bundle.mjs\";\nexport function early() { return run(); }";
         assert_eq!(holders(importer_on_a_cycle, leaf, ""), [""; 0]);
-        let imported_later = "import \"./other.cjs\";\nimport(\"./bundle.mjs\").then(bundle => bundle.run());";
+        let imported_later =
+            "import \"./other.cjs\";\nimport(\"./bundle.mjs\").then(bundle => bundle.run());";
         assert_eq!(holders(imported_later, leaf, ""), ["require_a"]);
     }
 
@@ -998,14 +1034,16 @@ require_b();
             "function late({ a = require_a() }) {} late({});",
             "class C { m(k) { switch (k) { case super.k: return new.target; } } }\nrequire_a();",
         ] {
-            let body = format!("var require_a = __commonJS((exports) => {{ exports.a = 1; }});\n{call}");
+            let body =
+                format!("var require_a = __commonJS((exports) => {{ exports.a = 1; }});\n{call}");
             assert_eq!(holders_in(&body), ["require_a"], "{call}");
         }
     }
 
     #[test]
     fn a_statement_that_declares_something_else_too_keeps_its_code() {
-        let two_holders = "var require_a = __commonJS((exports) => {}), require_b = __commonJS((exports) => {});";
+        let two_holders =
+            "var require_a = __commonJS((exports) => {}), require_b = __commonJS((exports) => {});";
         assert_eq!(holders_in(two_holders), ["require_a", "require_b"]);
         let another_variable = "var require_a = __commonJS((exports) => {}), other = 1;";
         assert_eq!(holders_in(another_variable), [""; 0]);
@@ -1013,7 +1051,9 @@ require_b();
 
     #[test]
     fn the_exports_of_an_inner_module_are_found_by_binding() {
-        let main = format!("{BUN}var require_a = __commonJS((e, m) => {{ e.a = 1; m.exports.b = 2; }});\nrequire_a();");
+        let main = format!(
+            "{BUN}var require_a = __commonJS((e, m) => {{ e.a = 1; m.exports.b = 2; }});\nrequire_a();"
+        );
         with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);

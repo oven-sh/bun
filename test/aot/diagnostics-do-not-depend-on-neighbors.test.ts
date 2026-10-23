@@ -2,8 +2,16 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const shared = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [] as string[], strict: true };
-const config = (more: object = {}, rest: object = {}) => JSON.stringify({ compilerOptions: { ...shared, ...more }, ...rest });
+const shared = {
+  target: "ESNext",
+  module: "Preserve",
+  moduleResolution: "bundler",
+  noEmit: true,
+  types: [] as string[],
+  strict: true,
+};
+const config = (more: object = {}, rest: object = {}) =>
+  JSON.stringify({ compilerOptions: { ...shared, ...more }, ...rest });
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -16,9 +24,11 @@ const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$
 const errors = (said: string) =>
   [
     ...[...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`),
-    ...[...said.matchAll(/^error: (TS\d+):.*\n +at .*diagnostics-do-not-depend-on-neighbors[^\\/]*[\\/](.+):(\d+):\d+$/gm)].map(
-      match => `${match[2].replaceAll("\\", "/")}:${match[3]} ${match[1]}`,
-    ),
+    ...[
+      ...said.matchAll(
+        /^error: (TS\d+):.*\n +at .*diagnostics-do-not-depend-on-neighbors[^\\/]*[\\/](.+):(\d+):\d+$/gm,
+      ),
+    ].map(match => `${match[2].replaceAll("\\", "/")}:${match[3]} ${match[1]}`),
   ].sort();
 
 async function aloneAndTogether(cwd: string, files: string[]) {
@@ -26,7 +36,10 @@ async function aloneAndTogether(cwd: string, files: string[]) {
   const together = await run(cwd, "test", "--aot", ...files.map(file => `./${file}`));
   const checked = await Promise.all(files.map(file => run(cwd, "check", "--aot", file)));
   return {
-    alone: { errors: [...new Set(alone.flatMap(one => errors(one.said)))].sort(), passed: alone.flatMap(one => passed(one.said)).sort() },
+    alone: {
+      errors: [...new Set(alone.flatMap(one => errors(one.said)))].sort(),
+      passed: alone.flatMap(one => passed(one.said)).sort(),
+    },
     together: { errors: errors(together.said), passed: passed(together.said) },
     checked: [...new Set(checked.flatMap(one => errors(one.said)))].sort(),
   };
@@ -41,8 +54,14 @@ const variables = {
 };
 
 test("a module that is only named by `declare module` is found without a neighbor that imports it", async () => {
-  using dir = tempDir("diagnostics-do-not-depend-on-neighbors", { "tsconfig.json": config({}, { include: ["src"] }), ...variables });
-  const { alone, together, checked } = await aloneAndTogether(String(dir), ["src/middleware/nonce/index.test.ts", "src/imports-it.test.ts"]);
+  using dir = tempDir("diagnostics-do-not-depend-on-neighbors", {
+    "tsconfig.json": config({}, { include: ["src"] }),
+    ...variables,
+  });
+  const { alone, together, checked } = await aloneAndTogether(String(dir), [
+    "src/middleware/nonce/index.test.ts",
+    "src/imports-it.test.ts",
+  ]);
   expect(alone).toEqual({ errors: [], passed: ["augments", "imports"] });
   expect(together).toEqual(alone);
   expect(checked).toEqual([]);
@@ -121,7 +140,10 @@ test("a relative import of a file that is not there is still an error under Node
 });
 
 test("bun check without --aot reports the missing extension as tsc does", async () => {
-  using dir = tempDir("diagnostics-do-not-depend-on-neighbors", { ...underNode16, "main.ts": `import { value } from "./src/value";\nconsole.log(value);\n` });
+  using dir = tempDir("diagnostics-do-not-depend-on-neighbors", {
+    ...underNode16,
+    "main.ts": `import { value } from "./src/value";\nconsole.log(value);\n`,
+  });
   const { said, exitCode } = await run(String(dir), "check", "main.ts");
   expect(errors(said)).toEqual(["main.ts:1 TS2835"]);
   expect(exitCode).toBe(1);

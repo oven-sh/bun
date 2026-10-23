@@ -278,8 +278,6 @@
     "cli/crash-if-interpreter-is-used.test.ts",
     "cli/inspect/compile-aot-inspector.test.ts",
     "cli/run/run-aot.test.ts",
-    "js/node/path/posix-as-node.test.ts",
-    "js/node/process/process-warning-printer.test.ts",
     "bake/deinitialization.test.ts",
     "bake/dev-and-prod.test.ts",
     "bake/dev/bundle.test.ts",

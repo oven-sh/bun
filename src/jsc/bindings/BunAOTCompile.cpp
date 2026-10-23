@@ -9,6 +9,7 @@
 #include <JavaScriptCore/AOTOpcode.h>
 #include <JavaScriptCore/AOTPassID.h>
 #include <JavaScriptCore/AOTRemovableFeature.h>
+#include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/AOTRuntimeTable.h>
 #include <algorithm>
 #include <array>
@@ -269,10 +270,10 @@ static void encodeFeatureUse(BunAOTResult& result)
         result.featuresUsed.append(Wire::FeatureUseRecord {
             .feature = static_cast<uint32_t>(feature),
             .builtin = Wire::none,
-            .witness = { },
+            .witness = {},
         });
     });
-    std::ranges::stable_sort(result.featuresUsed, { }, &Wire::FeatureUseRecord::feature);
+    std::ranges::stable_sort(result.featuresUsed, {}, &Wire::FeatureUseRecord::feature);
 }
 
 static void encodeLocaleUse(BunAOTResult& result)
@@ -284,7 +285,7 @@ static void encodeLocaleUse(BunAOTResult& result)
 static Typed::AllocationSiteReport findAllocationSite(const Typed::FlowReport& report, Typed::AllocationSiteID site)
 {
     if (site.index() >= report.allocationSites.size())
-        return { };
+        return {};
     return report.allocationSites[site.index()];
 }
 
@@ -435,6 +436,22 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
     result->statistics = result->output->statistics.values();
     result->limitValues = result->output->limitValues;
     return result;
+}
+
+extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t* description, size_t size, uint8_t* message, size_t capacity)
+{
+    std::optional<JSC::AOT::RuntimeDifference> difference = JSC::AOT::findDifferenceFromThisRuntime({ description, size });
+    if (!difference)
+        return 0;
+
+    WTF::initialize();
+    String sentence = difference->name.isNull()
+        ? "its description of the run time can't be read"_str
+        : makeString(difference->name, " is "_s, difference->there, " there and "_s, difference->here, " here"_s);
+    UTF8CString utf8 = sentence.utf8();
+    if (size_t copiedLength = std::min(capacity, utf8.length()))
+        memcpy(message, utf8.data(), copiedLength);
+    return utf8.length();
 }
 
 extern "C" size_t Bun__AOT__imageAlignment()

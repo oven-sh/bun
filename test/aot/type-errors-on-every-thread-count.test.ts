@@ -39,7 +39,9 @@ async function build(directory: string, threads: number) {
 test("each file of a package with a type error is compiled without its types on every thread count", async () => {
   using dir = tempDir("aot-two-files-of-a-package", {
     "package.json": JSON.stringify({ name: "app" }),
-    "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, allowImportingTsExtensions: true, noEmit: true } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { ...options, allowImportingTsExtensions: true, noEmit: true },
+    }),
     "main.ts": main("ships-typescript", ".ts"),
     "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript" }),
     "node_modules/ships-typescript/first.ts": first,

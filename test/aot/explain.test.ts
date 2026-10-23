@@ -8,8 +8,20 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { basename, join } from "path";
-import { parseExplainLines, type ExplainCause, type ExplainNumbers, type ExplainReport } from "./explain/explain-report";
-import { accessColumns, accessCountKeys, countAccesses, levels, type AccessColumn, type AccessCounts } from "./harness/build-report";
+import {
+  parseExplainLines,
+  type ExplainCause,
+  type ExplainNumbers,
+  type ExplainReport,
+} from "./explain/explain-report";
+import {
+  accessColumns,
+  accessCountKeys,
+  countAccesses,
+  levels,
+  type AccessColumn,
+  type AccessCounts,
+} from "./harness/build-report";
 import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -108,7 +120,10 @@ console.log(address);
     family: "unknown-code",
     types: ["Box"],
     at: "for (const box of boxes) publish(box);",
-    before: boxProgram(`const publish = new Function("box", process.argv[2] ?? "");`, "for (const box of boxes) publish(box);"),
+    before: boxProgram(
+      `const publish = new Function("box", process.argv[2] ?? "");`,
+      "for (const box of boxes) publish(box);",
+    ),
     after: boxProgram(
       `const publish = new Function("width", "height", process.argv[2] ?? "");`,
       "for (const box of boxes) publish(box.width, box.height);",
@@ -248,7 +263,9 @@ function textOf({ numbers, causes }: ExplainReport) {
   const heading = `note: Untyped code works, but runs slower. ${counted(causes.length, "cause", "causes")}:`;
   const nothing = "note: Every property access is typed. Nothing to fix.";
   return [
-    ...(causes.length ? [heading, ...causes.slice(0, maxShownCauses).flatMap(cause => entryOf(cause, numbers))] : [nothing]),
+    ...(causes.length
+      ? [heading, ...causes.slice(0, maxShownCauses).flatMap(cause => entryOf(cause, numbers))]
+      : [nothing]),
     ...detailsOf(numbers),
     ...summaryOf(numbers, true),
   ];
@@ -332,7 +349,8 @@ describe.concurrent("--explain", () => {
         const { stdout } = await check({ "main.ts": cases["parsed data reaches a type"]!.before }, "--explain=json");
         const [numbers, ...causes] = stdout.split("\n").filter(line => line.startsWith("{"));
         expect(Object.keys(JSON.parse(numbers!))).toEqual(["accesses", "dependencyAccesses", "calls", "causes"]);
-        for (const key of ["accesses", "dependencyAccesses"]) expect(Object.keys(JSON.parse(numbers!)[key])).toEqual([...accessCountKeys]);
+        for (const key of ["accesses", "dependencyAccesses"])
+          expect(Object.keys(JSON.parse(numbers!)[key])).toEqual([...accessCountKeys]);
         expect(Object.keys(JSON.parse(numbers!).calls)).toEqual([...levels]);
         expect(causes).not.toBeEmpty();
         for (const cause of causes) {
@@ -408,7 +426,9 @@ describe.concurrent("--explain", () => {
         const { lines } = await check(files, "--explain");
         expect(lines).toContain("note: Untyped code works, but runs slower. 25 causes:");
         expect(lines.filter(line => /^note: \d+\. [a-z-]+: /.test(line))).toHaveLength(maxShownCauses);
-        expect(lines).toContain("note: 5 more causes not shown. Use --explain=json to print all of them, one JSON object per line.");
+        expect(lines).toContain(
+          "note: 5 more causes not shown. Use --explain=json to print all of them, one JSON object per line.",
+        );
         const report = await explain(files);
         expectOneAccount(report);
         expect(report.causes.map(cause => cause.file).sort()).toEqual(parts.map(part => `part${part}.ts`).sort());

@@ -107,7 +107,9 @@ fn parse_property_key_value(parser: &mut Parser<'_>) -> Parsed<PropertyKey> {
             let symbol = parser.parse_enum(find_well_known_symbol, "a well-known symbol")?;
             return Ok(PropertyKey::from_well_known_symbol(symbol));
         }
-        return Ok(PropertyKey::from_engine_private_name(parser.parse_string()?));
+        return Ok(PropertyKey::from_engine_private_name(
+            parser.parse_string()?,
+        ));
     }
     if parser.accept(TokenKind::NumberSign) {
         let text = parser.parse_string()?;
@@ -145,7 +147,11 @@ fn parse_created_symbol(parser: &mut Parser<'_>) -> Parsed<PropertyKey> {
     if position == ABSENT_WORD {
         return out_of_range;
     }
-    Ok(PropertyKey::from_created_symbol(module, position, description))
+    Ok(PropertyKey::from_created_symbol(
+        module,
+        position,
+        description,
+    ))
 }
 
 pub(super) fn parse_type(parser: &mut Parser<'_>) -> Parsed<TypeId> {
@@ -273,7 +279,10 @@ fn parse_named_part(
     let Some(class) = BuiltinClass::from_name(word) else {
         return parser.fail("a type");
     };
-    parts.ty.classes.push(parse_class_part(parser, class, nesting)?);
+    parts
+        .ty
+        .classes
+        .push(parse_class_part(parser, class, nesting)?);
     Ok(())
 }
 

@@ -71,7 +71,15 @@ else if (stored === "nothing") delete untyped.read;
 else if (stored === "accessor") Object.defineProperty(untyped, "read", { get: () => negate });
 show();
 `;
-const storedValues = ["its own function", "function", "built-in function", "bound function", "text", "nothing", "accessor"];
+const storedValues = [
+  "its own function",
+  "function",
+  "built-in function",
+  "bound function",
+  "text",
+  "nothing",
+  "accessor",
+];
 
 async function compile(folder: string, name: string) {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
@@ -106,7 +114,10 @@ describe.concurrent("compile/aot/function fields", () => {
         slot(async () => {
           const typed = typedCode(member);
           const lineOfCall = typed.split("\n").findIndex(line => line.includes(call)) + 1;
-          using dir = tempDir("aot-function-fields", { "undisturbed.ts": typed + undisturbed, "disturbed.ts": typed + disturbed });
+          using dir = tempDir("aot-function-fields", {
+            "undisturbed.ts": typed + undisturbed,
+            "disturbed.ts": typed + disturbed,
+          });
           const folder = String(dir);
 
           const before = await compile(folder, "undisturbed");

@@ -310,7 +310,10 @@ fn assert_image_error(original: &[u8], cuts: &[AddressRange], expected: ImageErr
 
 fn assert_no_cuts(bytes: &[u8], reason: NoCutReason) {
     let model = cut_model(bytes);
-    assert_eq!(model, CutModel::without_cuts(ExecutableFormat::Pe, MIN_CUT_ALIGNMENT, reason));
+    assert_eq!(
+        model,
+        CutModel::without_cuts(ExecutableFormat::Pe, MIN_CUT_ALIGNMENT, reason)
+    );
     assert_eq!(model.max_cuts(), 0);
 }
 
@@ -376,7 +379,11 @@ fn cuttable_spans_hold_every_removable_page_of_read_only_sections() {
         let page = page_cut(address);
         let is_cuttable = spans.iter().any(|span| span.contains(page));
         let is_removable = remove_ranges(&mut original.clone(), &[page]).is_ok();
-        assert_eq!(is_cuttable, is_removable && !writable.contains(page), "{page:#x?}");
+        assert_eq!(
+            is_cuttable,
+            is_removable && !writable.contains(page),
+            "{page:#x?}"
+        );
     }
 }
 
@@ -385,7 +392,9 @@ fn cut_alignment_follows_section_alignment() {
     let sections = [toy_section(b".s", 4 * PAGE, 4 * PAGE, READ_ONLY); 2];
     let with_section_alignment = |alignment: u32| {
         let mut bytes = assemble_pe(IMAGE_FILE_MACHINE_AMD64, &sections, PAGE);
-        edit_optional(&mut bytes, |optional| optional.section_alignment = alignment);
+        edit_optional(&mut bytes, |optional| {
+            optional.section_alignment = alignment
+        });
         bytes
     };
     let alignments = [(FILE_ALIGNMENT, PAGE), (PAGE, PAGE), (2 * PAGE, 2 * PAGE)];
@@ -465,7 +474,10 @@ fn certificate_table_is_stripped() {
     edit_optional(&mut original, |optional| {
         optional.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] = certificate_table;
     });
-    assert_eq!(cut_model(&original).capacity, CutCapacity::Cuts(TOY_MAX_CUTS));
+    assert_eq!(
+        cut_model(&original).capacity,
+        CutCapacity::Cuts(TOY_MAX_CUTS)
+    );
     let trimmed = remove_and_verify(&original, &[cut(0x3000, 0x5000)]);
     let directory = headers(&trimmed).optional.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
     assert_eq!(({ directory.virtual_address }, { directory.size }), (0, 0));
@@ -505,7 +517,9 @@ fn unusable_file_allows_no_cuts() {
         set_debug_data_address(bytes, DATA_ADDRESS + PAGE);
     });
     let headers_over_first_section = edited_toy(|bytes| {
-        edit_optional(bytes, |optional| optional.size_of_headers = TEXT_ADDRESS + FILE_ALIGNMENT);
+        edit_optional(bytes, |optional| {
+            optional.size_of_headers = TEXT_ADDRESS + FILE_ALIGNMENT
+        });
     });
     let unaligned_header_room = edited_toy(|bytes| {
         edit_optional(bytes, |optional| optional.file_alignment = 2 * TEXT_ADDRESS);
@@ -531,7 +545,11 @@ fn unreadable_headers_allow_no_cuts() {
     let no_sections = edited_toy(|bytes| {
         edit_pe_header(bytes, |header| header.number_of_sections = 0);
     });
-    for bytes in [&toy()[..PE_HEADER_OFFSET - 1], &no_signature[..], &no_sections[..]] {
+    for bytes in [
+        &toy()[..PE_HEADER_OFFSET - 1],
+        &no_signature[..],
+        &no_sections[..],
+    ] {
         assert_no_cuts(bytes, NoCutReason::HeadersUnreadable);
     }
 }
@@ -566,7 +584,10 @@ fn malformed_relocation_block_fails() {
         write_at_address(&mut bytes, RELOC_ADDRESS + block + 4, &size.to_le_bytes());
         assert_no_cuts(&bytes, NoCutReason::HeadersUnreadable);
         let result = remove_ranges(&mut bytes, &[cut(0x3000, 0x5000)]);
-        assert!(matches!(result, Err(Error::Pe(pe::Error::InvalidPEFile))), "{size}");
+        assert!(
+            matches!(result, Err(Error::Pe(pe::Error::InvalidPEFile))),
+            "{size}"
+        );
         assert!(!bytes.is_empty());
     }
 

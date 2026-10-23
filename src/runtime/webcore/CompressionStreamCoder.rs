@@ -238,10 +238,14 @@ impl CompressionStreamCoder {
                 }
             }
             (Format::Brotli, false) => {
-                // SAFETY: FFI — the default-allocator instance (all nulls).
-                if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliEncoder) {
-                    return Err(CodecError::Message("Brotli compression isn't in this executable"));
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliEncoder,
+                ) {
+                    return Err(CodecError::Message(
+                        "Brotli compression isn't in this executable",
+                    ));
                 }
+                // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
                 })
@@ -262,10 +266,14 @@ impl CompressionStreamCoder {
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
-                // SAFETY: FFI — the default-allocator instance (all nulls).
-                if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliDecoder) {
-                    return Err(CodecError::Message("Brotli decompression isn't in this executable"));
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliDecoder,
+                ) {
+                    return Err(CodecError::Message(
+                        "Brotli decompression isn't in this executable",
+                    ));
                 }
+                // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliDecoderCreateInstance(None, None, ptr::null_mut())
                 })
@@ -798,7 +806,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     has_level: bool,
     level: i32,
 ) -> *mut CompressionStreamCoder {
-    bun_removable_features::removable_definition!(CompressionStreams, CompressionStreamCoder__create);
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__create
+    );
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
@@ -813,7 +824,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
-    bun_removable_features::removable_definition!(CompressionStreams, CompressionStreamCoder__destroy);
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__destroy
+    );
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
@@ -834,7 +848,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     finish: bool,
     more: &mut bool,
 ) -> JSValue {
-    bun_removable_features::removable_definition!(CompressionStreams, CompressionStreamCoder__transform);
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transform
+    );
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -909,7 +926,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     sink_ptr: *mut core::ffi::c_void,
     more: &mut bool,
 ) -> JSValue {
-    bun_removable_features::removable_definition!(CompressionStreams, CompressionStreamCoder__transformInto);
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transformInto
+    );
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -1046,7 +1066,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     input_len: usize,
     finish: bool,
 ) {
-    bun_removable_features::removable_definition!(CompressionStreams, CompressionStreamCoder__transformAsync);
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transformAsync
+    );
     let fallback = if input.is_null() {
         &[][..]
     } else {

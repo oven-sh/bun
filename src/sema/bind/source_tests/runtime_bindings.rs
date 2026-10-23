@@ -32,11 +32,15 @@ fn info<'a>(s: &'a Analyzed<'_>, f: FnId) -> &'a FnInfo {
 }
 
 fn uses_arguments(s: &Analyzed<'_>, f: FnId) -> bool {
-    s.bound.function_flags(f).contains(FunctionFlags::USES_ARGUMENTS)
+    s.bound
+        .function_flags(f)
+        .contains(FunctionFlags::USES_ARGUMENTS)
 }
 
 fn has_direct_eval(s: &Analyzed<'_>, f: FnId) -> bool {
-    s.bound.function_flags(f).contains(FunctionFlags::HAS_DIRECT_EVAL)
+    s.bound
+        .function_flags(f)
+        .contains(FunctionFlags::HAS_DIRECT_EVAL)
 }
 
 fn early<'a>(s: &'a Analyzed<'_>) -> &'a [EarlyRedeclaration] {
@@ -84,7 +88,10 @@ fn jsx(s: &Analyzed<'_>) -> ExprId {
 
 fn labeled(s: &Analyzed<'_>, name: &str) -> StmtId {
     let name = s.workspace.atom(name);
-    first_stmt(s, |kind| matches!(kind, StmtKind::Labeled { label, .. } if *label == name))
+    first_stmt(
+        s,
+        |kind| matches!(kind, StmtKind::Labeled { label, .. } if *label == name),
+    )
 }
 
 fn resolved_jumps(s: &Analyzed<'_>) -> Vec<Option<StmtId>> {
@@ -97,7 +104,8 @@ fn resolved_jumps(s: &Analyzed<'_>) -> Vec<Option<StmtId>> {
 }
 
 fn import_spec(s: &Analyzed<'_>, index: u32) -> SymbolId {
-    s.bound.declared_symbol(Decl::ImportSpec(ImportSpecId(index)))
+    s.bound
+        .declared_symbol(Decl::ImportSpec(ImportSpecId(index)))
 }
 
 fn is_unused(s: &Analyzed<'_>, symbol: SymbolId) -> bool {
@@ -109,7 +117,9 @@ fn position(list: &[SymbolId], symbol: SymbolId) -> usize {
 }
 
 fn eval_symbols(s: &Analyzed<'_>) -> Vec<SymbolId> {
-    s.bound.ids(s.bound.runtime.eval_scopes()[0].1.symbols).collect()
+    s.bound
+        .ids(s.bound.runtime.eval_scopes()[0].1.symbols)
+        .collect()
 }
 
 fn analyzed_classic_jsx(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
@@ -145,10 +155,14 @@ fn merged_redeclarations() {
         assert!(early(s).is_empty());
         assert!(!s.bound.is_early_error_redeclaration(0));
     });
-    analyzed("a.cjs", "function g(a) { function a() {} return a; }", |s| {
-        assert_eq!(parameter(s, "a", 0), function_symbol(s, "a"));
-        assert_eq!(s.binding("a", 0), Symbol(parameter(s, "a", 0)));
-    });
+    analyzed(
+        "a.cjs",
+        "function g(a) { function a() {} return a; }",
+        |s| {
+            assert_eq!(parameter(s, "a", 0), function_symbol(s, "a"));
+            assert_eq!(s.binding("a", 0), Symbol(parameter(s, "a", 0)));
+        },
+    );
     analyzed("a.cjs", "function h(a, a) { return a; }", |s| {
         assert_eq!(parameter(s, "a", 0), parameter(s, "a", 1));
     });
@@ -158,16 +172,25 @@ fn merged_redeclarations() {
 fn import_beside_a_jsdoc_tag_of_the_same_name_is_the_binding() {
     const TAG: &str = r#"/** @import { a } from "m" */"#;
     const IMPORT: &str = r#"import { a } from "m";"#;
-    for text in [format!("{TAG}\n{IMPORT}\na;"), format!("{IMPORT}\n{TAG}\na;")] {
+    for text in [
+        format!("{TAG}\n{IMPORT}\na;"),
+        format!("{IMPORT}\n{TAG}\na;"),
+    ] {
         analyzed("a.mjs", &text, |s| {
             let Symbol(bound_to) = s.binding("a", 0) else {
                 panic!("{text}: {:?}", s.binding("a", 0));
             };
-            assert_eq!(s.bound.binding_kind(bound_to), BindingKind::Import, "{text}");
+            assert_eq!(
+                s.bound.binding_kind(bound_to),
+                BindingKind::Import,
+                "{text}"
+            );
             assert!(early(s).is_empty(), "{text}");
         });
     }
-    analyzed("a.mjs", &format!("{TAG}\na;"), |s| assert_eq!(s.binding("a", 0), Free));
+    analyzed("a.mjs", &format!("{TAG}\na;"), |s| {
+        assert_eq!(s.binding("a", 0), Free)
+    });
 }
 
 #[test]
@@ -241,10 +264,16 @@ fn annex_b_hoists() {
     analyzed_hoist("var f; { function f() {} } f;", |s, hoist| {
         assert_eq!(hoist.var_symbol, s.variable("f", 0));
     });
-    analyzed_hoist("function o() { { function f() {} } return f; }", |s, hoist| {
-        let scope = s.bound.symbol_scope(hoist.var_symbol);
-        assert_eq!(s.bound.scopes[scope.idx()].kind, ScopeKind::Fn(s.function("o")));
-    });
+    analyzed_hoist(
+        "function o() { { function f() {} } return f; }",
+        |s, hoist| {
+            let scope = s.bound.symbol_scope(hoist.var_symbol);
+            assert_eq!(
+                s.bound.scopes[scope.idx()].kind,
+                ScopeKind::Fn(s.function("o"))
+            );
+        },
+    );
     analyzed_hoist("{ function f() {} { function f() {} } }", |s, hoist| {
         assert_eq!(hoist.function, s.function("f"));
     });
@@ -284,10 +313,14 @@ fn annex_b_blocked() {
     analyzed("a.cjs", "{ let f; { function f() {} } }", |s| {
         assert_eq!(s.bound.runtime.annex_b_functions(), []);
     });
-    analyzed("a.cjs", "function g(f) { { function f() {} } return f; }", |s| {
-        assert_eq!(s.bound.runtime.annex_b_functions(), []);
-        assert_eq!(s.binding("f", 0), Symbol(parameter(s, "f", 0)));
-    });
+    analyzed(
+        "a.cjs",
+        "function g(f) { { function f() {} } return f; }",
+        |s| {
+            assert_eq!(s.bound.runtime.annex_b_functions(), []);
+            assert_eq!(s.binding("f", 0), Symbol(parameter(s, "f", 0)));
+        },
+    );
     for text in [
         r#"function s() { "use strict"; { function f() {} } return f; }"#,
         r#"function s() { "use strict"; if (a) { function f() {} } return f; }"#,
@@ -324,23 +357,31 @@ fn parameter_scopes() {
     analyzed("a.cjs", "function f(a = g) { function g() {} }", |s| {
         assert_eq!(s.binding("g", 0), Free);
     });
-    analyzed("a.cjs", "function f(a, h = () => a) { var a; return a; }", |s| {
-        let (parameter, variable) = (parameter(s, "a", 0), s.variable("a", 1));
-        let copy = ParameterVarCopy {
-            function: s.function("f"),
-            parameter,
-            variable,
-        };
-        assert_eq!(s.bound.runtime.parameter_var_copies(), [copy]);
-        assert_ne!(parameter, variable);
-        assert_eq!(s.binding("a", 0), Symbol(parameter));
-        assert_eq!(s.binding("a", 1), Symbol(variable));
-    });
-    analyzed("a.cjs", "function f(a, h = () => a) { function a() {} return a; }", |s| {
-        assert_eq!(s.bound.runtime.parameter_var_copies(), []);
-        assert_ne!(function_symbol(s, "a"), parameter(s, "a", 0));
-        assert_eq!(s.binding("a", 1), Symbol(function_symbol(s, "a")));
-    });
+    analyzed(
+        "a.cjs",
+        "function f(a, h = () => a) { var a; return a; }",
+        |s| {
+            let (parameter, variable) = (parameter(s, "a", 0), s.variable("a", 1));
+            let copy = ParameterVarCopy {
+                function: s.function("f"),
+                parameter,
+                variable,
+            };
+            assert_eq!(s.bound.runtime.parameter_var_copies(), [copy]);
+            assert_ne!(parameter, variable);
+            assert_eq!(s.binding("a", 0), Symbol(parameter));
+            assert_eq!(s.binding("a", 1), Symbol(variable));
+        },
+    );
+    analyzed(
+        "a.cjs",
+        "function f(a, h = () => a) { function a() {} return a; }",
+        |s| {
+            assert_eq!(s.bound.runtime.parameter_var_copies(), []);
+            assert_ne!(function_symbol(s, "a"), parameter(s, "a", 0));
+            assert_eq!(s.binding("a", 1), Symbol(function_symbol(s, "a")));
+        },
+    );
     analyzed("a.cjs", "function f(a) { var a; return a; }", |s| {
         assert_eq!(s.bound.runtime.parameter_var_copies(), []);
         assert_eq!(s.variable("a", 1), parameter(s, "a", 0));
@@ -399,12 +440,20 @@ fn class_decorators() {
     analyzed("a.ts", "const D = @C class C {};", |s| {
         assert_eq!(s.binding("C", 0), Free);
     });
-    analyzed("a.ts", "const C = 1; const D = @d(() => C) class C {};", |s| {
-        assert_eq!(s.binding("C", 0), Symbol(s.variable("C", 0)));
-    });
-    analyzed("a.ts", "const C = 1; const D = @d(() => C) class {};", |s| {
-        assert_eq!(s.binding("C", 0), Symbol(s.variable("C", 0)));
-    });
+    analyzed(
+        "a.ts",
+        "const C = 1; const D = @d(() => C) class C {};",
+        |s| {
+            assert_eq!(s.binding("C", 0), Symbol(s.variable("C", 0)));
+        },
+    );
+    analyzed(
+        "a.ts",
+        "const C = 1; const D = @d(() => C) class {};",
+        |s| {
+            assert_eq!(s.binding("C", 0), Symbol(s.variable("C", 0)));
+        },
+    );
     analyzed("a.ts", "const D = class C { @d(() => C) m() {} };", |s| {
         assert_eq!(s.binding("C", 0), Symbol(inner_and_outer(s).0));
     });
@@ -412,12 +461,16 @@ fn class_decorators() {
 
 #[test]
 fn function_expression_name() {
-    analyzed("a.cjs", "const g = function f() { f = 1; return f; };", |s| {
-        let f = function_symbol(s, "f");
-        assert_eq!(s.binding("f", 0), Symbol(f));
-        assert_eq!(s.binding("f", 1), Symbol(f));
-        assert_eq!(store_kinds(s, f), [Assign]);
-    });
+    analyzed(
+        "a.cjs",
+        "const g = function f() { f = 1; return f; };",
+        |s| {
+            let f = function_symbol(s, "f");
+            assert_eq!(s.binding("f", 0), Symbol(f));
+            assert_eq!(s.binding("f", 1), Symbol(f));
+            assert_eq!(store_kinds(s, f), [Assign]);
+        },
+    );
 }
 
 #[test]
@@ -425,17 +478,26 @@ fn catch_parameters() {
     analyzed("a.cjs", "try {} catch (e) { var e = 1; e; } e;", |s| {
         let (parameter, variable) = (s.variable("e", 0), s.variable("e", 1));
         assert_ne!(parameter, variable);
-        assert_eq!(s.bound.initialized_binding(s.pat("e", 1)), Symbol(parameter));
+        assert_eq!(
+            s.bound.initialized_binding(s.pat("e", 1)),
+            Symbol(parameter)
+        );
         assert_eq!(s.binding("e", 0), Symbol(parameter));
         assert_eq!(s.binding("e", 1), Symbol(variable));
     });
     analyzed("a.cjs", "var e = 1;", |s| {
-        assert_eq!(s.bound.initialized_binding(s.pat("e", 0)), Symbol(s.variable("e", 0)));
+        assert_eq!(
+            s.bound.initialized_binding(s.pat("e", 0)),
+            Symbol(s.variable("e", 0))
+        );
     });
     let text = "function f() { try {} catch (arguments) { var arguments = 1; } }";
     analyzed("a.cjs", text, |s| {
         let parameter = s.variable("arguments", 0);
-        assert_eq!(s.bound.initialized_binding(s.pat("arguments", 1)), Symbol(parameter));
+        assert_eq!(
+            s.bound.initialized_binding(s.pat("arguments", 1)),
+            Symbol(parameter)
+        );
     });
 }
 
@@ -444,7 +506,11 @@ fn arguments_object() {
     for &text in ARGUMENTS_OBJECT_USES {
         analyzed("a.cjs", text, |s| {
             let f = s.function("f");
-            assert_eq!(s.binding("arguments", 0), Arguments(CodeUnit::Function(f)), "{text}");
+            assert_eq!(
+                s.binding("arguments", 0),
+                Arguments(CodeUnit::Function(f)),
+                "{text}"
+            );
             assert!(uses_arguments(s, f), "{text}");
             assert!(!has_direct_eval(s, f), "{text}");
         });
@@ -453,17 +519,28 @@ fn arguments_object() {
         assert!(!uses_arguments(s, arrow(s)));
         assert!(!has_direct_eval(s, arrow(s)));
     });
-    analyzed("a.cjs", "function f(arguments) { return arguments; }", |s| {
-        let f = s.function("f");
-        assert_eq!(s.binding("arguments", 0), Symbol(parameter(s, "arguments", 0)));
-        assert!(!uses_arguments(s, f));
-        assert!(!has_direct_eval(s, f));
-    });
-    analyzed("a.cjs", "function f() { var arguments = 1; return arguments; }", |s| {
-        let name = s.pat("arguments", 0);
-        let owner = CodeUnit::Function(s.function("f"));
-        assert_eq!(s.bound.initialized_binding(name), Arguments(owner));
-    });
+    analyzed(
+        "a.cjs",
+        "function f(arguments) { return arguments; }",
+        |s| {
+            let f = s.function("f");
+            assert_eq!(
+                s.binding("arguments", 0),
+                Symbol(parameter(s, "arguments", 0))
+            );
+            assert!(!uses_arguments(s, f));
+            assert!(!has_direct_eval(s, f));
+        },
+    );
+    analyzed(
+        "a.cjs",
+        "function f() { var arguments = 1; return arguments; }",
+        |s| {
+            let name = s.pat("arguments", 0);
+            let owner = CodeUnit::Function(s.function("f"));
+            assert_eq!(s.bound.initialized_binding(name), Arguments(owner));
+        },
+    );
     for &text in FREE_ARGUMENTS {
         analyzed("a.mjs", text, |s| {
             assert_eq!(s.binding("arguments", 0), Free, "{text}");
@@ -475,7 +552,11 @@ fn arguments_object() {
 fn commonjs_wrapper_arguments_object() {
     for &text in WRAPPER_ARGUMENTS_USES {
         analyzed("a.cjs", text, |s| {
-            assert_eq!(s.binding("arguments", 0), Arguments(CodeUnit::File), "{text}");
+            assert_eq!(
+                s.binding("arguments", 0),
+                Arguments(CodeUnit::File),
+                "{text}"
+            );
         });
         analyzed("a.mjs", text, |s| {
             assert_eq!(s.binding("arguments", 0), Free, "{text}");
@@ -491,16 +572,30 @@ fn commonjs_wrapper_arguments_object() {
         assert_eq!(s.bound.initialized_binding(name), Arguments(CodeUnit::File));
         assert_eq!(s.binding("arguments", 0), Arguments(CodeUnit::File));
     });
-    for text in ["let arguments = 1; arguments;", "function arguments() {} arguments;"] {
+    for text in [
+        "let arguments = 1; arguments;",
+        "function arguments() {} arguments;",
+    ] {
         analyzed("a.cjs", text, |s| {
-            assert_eq!(s.binding("arguments", 0), Symbol(top_level(s, "arguments")), "{text}");
+            assert_eq!(
+                s.binding("arguments", 0),
+                Symbol(top_level(s, "arguments")),
+                "{text}"
+            );
         });
     }
-    analyzed("a.cjs", "function f() { return arguments; } arguments;", |s| {
-        assert_eq!(s.binding("arguments", 0), Arguments(CodeUnit::Function(s.function("f"))));
-        assert_eq!(s.binding("arguments", 1), Arguments(CodeUnit::File));
-        assert_eq!(s.bound.top_scope(&s.hir, CodeUnit::File), ScopeId(0));
-    });
+    analyzed(
+        "a.cjs",
+        "function f() { return arguments; } arguments;",
+        |s| {
+            assert_eq!(
+                s.binding("arguments", 0),
+                Arguments(CodeUnit::Function(s.function("f")))
+            );
+            assert_eq!(s.binding("arguments", 1), Arguments(CodeUnit::File));
+            assert_eq!(s.bound.top_scope(&s.hir, CodeUnit::File), ScopeId(0));
+        },
+    );
 }
 
 #[test]
@@ -521,11 +616,15 @@ fn eval_flags() {
 #[test]
 fn free_and_commonjs_names() {
     for path in ["a.cjs", "a.mjs"] {
-        analyzed(path, "require; module; exports; __filename; __dirname; other;", |s| {
-            for &(name, expected) in COMMONJS_NAMES {
-                assert_eq!(s.binding(name, 0), expected, "{path}: {name}");
-            }
-        });
+        analyzed(
+            path,
+            "require; module; exports; __filename; __dirname; other;",
+            |s| {
+                for &(name, expected) in COMMONJS_NAMES {
+                    assert_eq!(s.binding(name, 0), expected, "{path}: {name}");
+                }
+            },
+        );
     }
     analyzed("a.cjs", "function f(require) { require; }", |s| {
         assert_eq!(s.binding("require", 0), Symbol(parameter(s, "require", 0)));
@@ -548,14 +647,24 @@ fn redeclared_commonjs_variables() {
         let (exports, module) = (s.variable("exports", 0), s.variable("module", 0));
         let redeclared = s.bound.runtime.redeclared_commonjs_variables();
         assert_eq!(redeclared.len(), 2, "{redeclared:?}");
-        assert!(redeclared.contains(&(exports, CommonJsVariable::Exports)), "{redeclared:?}");
-        assert!(redeclared.contains(&(module, CommonJsVariable::Module)), "{redeclared:?}");
+        assert!(
+            redeclared.contains(&(exports, CommonJsVariable::Exports)),
+            "{redeclared:?}"
+        );
+        assert!(
+            redeclared.contains(&(module, CommonJsVariable::Module)),
+            "{redeclared:?}"
+        );
         assert_eq!(s.binding("exports", 0), Symbol(exports));
         assert_eq!(s.binding("module", 0), Symbol(module));
     });
     for &text in SHADOWED_COMMONJS_VARIABLES {
         analyzed("a.cjs", text, |s| {
-            assert_eq!(s.bound.runtime.redeclared_commonjs_variables(), [], "{text}");
+            assert_eq!(
+                s.bound.runtime.redeclared_commonjs_variables(),
+                [],
+                "{text}"
+            );
         });
     }
 }
@@ -571,16 +680,34 @@ fn type_only_member_keys() {
 
 #[test]
 fn entity_roots() {
-    analyzed("a.ts", r#"import * as ns from "m"; import a = ns.b; a;"#, |s| {
-        let namespace = s.bound.declared_symbol(Decl::ImportNamespace(ImportId(0)));
-        assert_eq!(s.bound.entity_root_binding(ImportEqualsId(0)), Symbol(namespace));
-    });
-    analyzed("a.ts", "namespace N { export const b = 1; } import a = N.b; a;", |s| {
-        assert_eq!(s.bound.entity_root_binding(ImportEqualsId(0)), Symbol(top_level(s, "N")));
-    });
+    analyzed(
+        "a.ts",
+        r#"import * as ns from "m"; import a = ns.b; a;"#,
+        |s| {
+            let namespace = s.bound.declared_symbol(Decl::ImportNamespace(ImportId(0)));
+            assert_eq!(
+                s.bound.entity_root_binding(ImportEqualsId(0)),
+                Symbol(namespace)
+            );
+        },
+    );
+    analyzed(
+        "a.ts",
+        "namespace N { export const b = 1; } import a = N.b; a;",
+        |s| {
+            assert_eq!(
+                s.bound.entity_root_binding(ImportEqualsId(0)),
+                Symbol(top_level(s, "N"))
+            );
+        },
+    );
     for &text in UNRESOLVED_ENTITY_ROOTS {
         analyzed("a.ts", text, |s| {
-            assert_eq!(s.bound.entity_root_binding(ImportEqualsId(0)), Free, "{text}");
+            assert_eq!(
+                s.bound.entity_root_binding(ImportEqualsId(0)),
+                Free,
+                "{text}"
+            );
         });
     }
 }
@@ -616,7 +743,10 @@ fn eval_visibility_and_code_units() {
     analyzed("a.cjs", "function f() { { let a; } }", |s| {
         let scope = s.bound.symbol_scope(s.variable("a", 0));
         assert_eq!(s.bound.scopes[scope.idx()].kind, ScopeKind::Block);
-        assert_eq!(s.bound.code_unit(scope), CodeUnit::Function(s.function("f")));
+        assert_eq!(
+            s.bound.code_unit(scope),
+            CodeUnit::Function(s.function("f"))
+        );
     });
 }
 
@@ -627,7 +757,10 @@ fn with_statement() {
         let with = first_stmt(s, |kind| matches!(kind, StmtKind::With { .. }));
         let scope = s.bound.own_scope(with);
         assert_eq!(s.bound.scopes[scope.idx()].kind, ScopeKind::With(with));
-        let lookup = |name, nth| s.bound.dynamic_lookup_scope(NodeData::Expr(s.ident(name, nth)));
+        let lookup = |name, nth| {
+            s.bound
+                .dynamic_lookup_scope(NodeData::Expr(s.ident(name, nth)))
+        };
         assert_eq!(lookup("x", 0), Some(scope));
         assert_eq!(lookup("x", 1), Some(scope));
         assert_eq!(lookup("o", 0), None);
@@ -691,17 +824,31 @@ fn eval_visible_symbols() {
 
 #[test]
 fn eval_symbols_behind_simple_catch_parameters() {
-    analyzed("a.cjs", r#"function f() { var e; try {} catch (e) { eval(""); } }"#, |s| {
-        let (variable, caught) = (s.variable("e", 0), s.variable("e", 1));
-        let symbols = eval_symbols(s);
-        assert!(position(&symbols, caught) < position(&symbols, variable), "{symbols:?}");
-        assert!(s.bound.is_visible_to_eval(variable));
-    });
-    analyzed("a.cjs", r#"function f(e) { try {} catch (e) { eval(""); } }"#, |s| {
-        let (parameter, caught) = (parameter(s, "e", 0), s.variable("e", 1));
-        let symbols = eval_symbols(s);
-        assert!(position(&symbols, caught) < position(&symbols, parameter), "{symbols:?}");
-    });
+    analyzed(
+        "a.cjs",
+        r#"function f() { var e; try {} catch (e) { eval(""); } }"#,
+        |s| {
+            let (variable, caught) = (s.variable("e", 0), s.variable("e", 1));
+            let symbols = eval_symbols(s);
+            assert!(
+                position(&symbols, caught) < position(&symbols, variable),
+                "{symbols:?}"
+            );
+            assert!(s.bound.is_visible_to_eval(variable));
+        },
+    );
+    analyzed(
+        "a.cjs",
+        r#"function f(e) { try {} catch (e) { eval(""); } }"#,
+        |s| {
+            let (parameter, caught) = (parameter(s, "e", 0), s.variable("e", 1));
+            let symbols = eval_symbols(s);
+            assert!(
+                position(&symbols, caught) < position(&symbols, parameter),
+                "{symbols:?}"
+            );
+        },
+    );
     let nested = r#"function f() { var e; try {} catch (e) { try {} catch (e) { eval(""); } } }"#;
     analyzed("a.cjs", nested, |s| {
         let symbols = eval_symbols(s);
@@ -724,30 +871,51 @@ fn eval_symbols_behind_simple_catch_parameters() {
 
 #[test]
 fn eval_dynamic_lookups() {
-    analyzed("a.cjs", r#"var x; function f() { eval(""); return x; }"#, |s| {
-        let x = NodeData::Expr(s.ident("x", 0));
-        let scope = s.bound.dynamic_lookup_scope(x).unwrap();
-        assert_eq!(s.bound.scopes[scope.idx()].kind, ScopeKind::Fn(s.function("f")));
-    });
+    analyzed(
+        "a.cjs",
+        r#"var x; function f() { eval(""); return x; }"#,
+        |s| {
+            let x = NodeData::Expr(s.ident("x", 0));
+            let scope = s.bound.dynamic_lookup_scope(x).unwrap();
+            assert_eq!(
+                s.bound.scopes[scope.idx()].kind,
+                ScopeKind::Fn(s.function("f"))
+            );
+        },
+    );
     let strict = r#""use strict"; var x; function f() { eval(""); return x; }"#;
     analyzed("a.cjs", strict, |s| {
         let x = NodeData::Expr(s.ident("x", 0));
         assert_eq!(s.bound.dynamic_lookup_scope(x), None);
     });
-    analyzed("a.cjs", r#"function f() { var y; eval(""); return y; }"#, |s| {
-        let y = NodeData::Expr(s.ident("y", 0));
-        assert_eq!(s.bound.dynamic_lookup_scope(y), None);
-    });
+    analyzed(
+        "a.cjs",
+        r#"function f() { var y; eval(""); return y; }"#,
+        |s| {
+            let y = NodeData::Expr(s.ident("y", 0));
+            assert_eq!(s.bound.dynamic_lookup_scope(y), None);
+        },
+    );
     analyzed("a.cjs", r#"eval(""); require("a"); other;"#, |s| {
-        let lookup = |name| s.bound.dynamic_lookup_scope(NodeData::Expr(s.ident(name, 0)));
+        let lookup = |name| {
+            s.bound
+                .dynamic_lookup_scope(NodeData::Expr(s.ident(name, 0)))
+        };
         assert_eq!(lookup("require"), None);
         assert_eq!(lookup("other"), Some(ScopeId(0)));
     });
-    analyzed("a.cjs", r#"function f() { eval(""); require("a"); }"#, |s| {
-        let require = NodeData::Expr(s.ident("require", 0));
-        let scope = s.bound.dynamic_lookup_scope(require).unwrap();
-        assert_eq!(s.bound.scopes[scope.idx()].kind, ScopeKind::Fn(s.function("f")));
-    });
+    analyzed(
+        "a.cjs",
+        r#"function f() { eval(""); require("a"); }"#,
+        |s| {
+            let require = NodeData::Expr(s.ident("require", 0));
+            let scope = s.bound.dynamic_lookup_scope(require).unwrap();
+            assert_eq!(
+                s.bound.scopes[scope.idx()].kind,
+                ScopeKind::Fn(s.function("f"))
+            );
+        },
+    );
 }
 
 #[test]
@@ -757,7 +925,11 @@ fn stores() {
         analyzed("a.ts", &text, |s| {
             let x = s.variable("x", 0);
             assert_eq!(store_kinds(s, x), [kind], "{statement}");
-            assert_eq!(s.bound.stores_to(x)[0].target, s.ident("x", 0), "{statement}");
+            assert_eq!(
+                s.bound.stores_to(x)[0].target,
+                s.ident("x", 0),
+                "{statement}"
+            );
         });
     }
     for &(path, text) in NO_STORES {
@@ -783,7 +955,10 @@ fn unbound_name_stores() {
         assert_eq!(s.bound.runtime.unbound_name_stores(), expected);
     });
     analyzed("a.cjs", "function f() { arguments = 1; }", |s| {
-        assert_eq!(s.bound.runtime.unbound_name_stores(), [(s.ident("arguments", 0), Assign)]);
+        assert_eq!(
+            s.bound.runtime.unbound_name_stores(),
+            [(s.ident("arguments", 0), Assign)]
+        );
         for symbol in 0..s.bound.symbols.len() {
             assert_eq!(s.bound.stores_to(SymbolId(symbol as u32)), [], "{symbol}");
         }
@@ -793,13 +968,19 @@ fn unbound_name_stores() {
 #[test]
 fn exports() {
     analyzed("a.mjs", "const a = 1; export { a as b };", |s| {
-        assert_eq!(s.bound.exported_binding(ExportSpecId(0)), Symbol(s.variable("a", 0)));
+        assert_eq!(
+            s.bound.exported_binding(ExportSpecId(0)),
+            Symbol(s.variable("a", 0))
+        );
     });
     analyzed("a.mjs", "export { missing };", |s| {
         assert_eq!(s.bound.exported_binding(ExportSpecId(0)), Free);
     });
     analyzed("a.mjs", r#"import { x } from "m"; export { x };"#, |s| {
-        assert_eq!(s.bound.exported_binding(ExportSpecId(0)), Symbol(import_spec(s, 0)));
+        assert_eq!(
+            s.bound.exported_binding(ExportSpecId(0)),
+            Symbol(import_spec(s, 0))
+        );
     });
     analyzed("a.mjs", r#"import d, * as n from "m"; d; n;"#, |s| {
         let default = s.bound.declared_symbol(Decl::ImportDefault(ImportId(0)));
@@ -896,10 +1077,14 @@ fn classic_jsx() {
 
 #[test]
 fn jump_targets() {
-    analyzed("a.cjs", "a: for (;;) { b: for (;;) { continue a; break b; break; } }", |s| {
-        let expected = [Some(labeled(s, "a")), Some(labeled(s, "b")), None];
-        assert_eq!(resolved_jumps(s), expected);
-    });
+    analyzed(
+        "a.cjs",
+        "a: for (;;) { b: for (;;) { continue a; break b; break; } }",
+        |s| {
+            let expected = [Some(labeled(s, "a")), Some(labeled(s, "b")), None];
+            assert_eq!(resolved_jumps(s), expected);
+        },
+    );
     analyzed("a.cjs", "a: { break a; break a; }", |s| {
         let a = Some(labeled(s, "a"));
         assert_eq!(resolved_jumps(s), [a, a]);

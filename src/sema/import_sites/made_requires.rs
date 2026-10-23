@@ -96,7 +96,10 @@ fn is_request_of_node_module(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bo
     let callee = hir.skip_type_assertions(hir[call].callee);
     let is_import_meta_require = is_import_meta_require(hir, callee);
     let is_require = is_free_common_js(hir, bound, callee, CommonJsVariable::Require);
-    let specifier = hir.ids(hir[call].args).next().and_then(|argument| expr_kind(hir, argument));
+    let specifier = hir
+        .ids(hir[call].args)
+        .next()
+        .and_then(|argument| expr_kind(hir, argument));
     (is_require || is_import_meta_require)
         && matches!(specifier, Some(ExprKind::String(text)) if is_node_module(text))
 }
@@ -171,7 +174,9 @@ fn is_made_for_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
         return false;
     };
     let mut arguments = hir.ids(hir[call].args);
-    arguments.next().is_some_and(|base| names_own_file(hir, bound, base))
+    arguments
+        .next()
+        .is_some_and(|base| names_own_file(hir, bound, base))
         && is_create_require(hir, bound, hir[call].callee)
 }
 

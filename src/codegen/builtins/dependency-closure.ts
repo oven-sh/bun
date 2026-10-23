@@ -63,11 +63,16 @@ function addLoad(dependencies: RuntimeDependencies, module: ModelModule, load: L
   }
   dependencies.loads.set(module, {
     isConditional: known.isConditional && load.isConditional,
-    exportsRead: known.exportsRead === null || load.exportsRead === null ? null : known.exportsRead.union(load.exportsRead),
+    exportsRead:
+      known.exportsRead === null || load.exportsRead === null ? null : known.exportsRead.union(load.exportsRead),
   });
 }
 
-function addCallsForTexts(dependencies: RuntimeDependencies, key: string, { argument, texts, calls }: CallsForTexts): void {
+function addCallsForTexts(
+  dependencies: RuntimeDependencies,
+  key: string,
+  { argument, texts, calls }: CallsForTexts,
+): void {
   const known = dependencies.callsForTexts.get(key);
   if (known === undefined) dependencies.callsForTexts.set(key, { argument, texts, calls: new Set(calls) });
   else for (const called of calls) known.calls.add(called);
@@ -114,7 +119,12 @@ function handedOutPlacesOf({ transfers, callbacks, propertyActions, handlerCalls
   return [
     ...transfers.filter(isHandedOut).map(({ from }) => from),
     ...handlerCalls.flatMap(call => [call.thisValue, ...call.arguments]),
-    ...callbacks.flatMap(callback => [callback.newTarget, callback.thisValue, ...callback.arguments, callback.spreadArguments]),
+    ...callbacks.flatMap(callback => [
+      callback.newTarget,
+      callback.thisValue,
+      ...callback.arguments,
+      callback.spreadArguments,
+    ]),
     ...propertyActions.map(action => action.value),
   ];
 }
@@ -352,7 +362,10 @@ export class DependencyClosure {
       } else if (reachedWith === null) {
         const key = `${decided.argument} ${decided.texts.map(text => text.number).join(",")}`;
         addCallsForTexts(own, key, { ...decided, calls: new Set([called]) });
-      } else if (condition.calledOn === null || reachedWith.has(condition.calledOn.sameObjectAs ?? condition.calledOn)) {
+      } else if (
+        condition.calledOn === null ||
+        reachedWith.has(condition.calledOn.sameObjectAs ?? condition.calledOn)
+      ) {
         // A row about calls on one object takes that object.
         own.calls.add(called);
       }

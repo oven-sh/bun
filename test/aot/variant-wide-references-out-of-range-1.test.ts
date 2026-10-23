@@ -2,4 +2,10 @@
 // from the general allocator, so nearly every object lies outside the reserved range, as in a program that has outgrown it.
 import { variant } from "./run-programs";
 
-variant("wide-references-outside-the-reserved-range", ["--aot-huge-heap"], { BUN_JSC_markedBlockCageSizeInMB: "1" }, 1, 3);
+variant(
+  "wide-references-outside-the-reserved-range",
+  ["--aot-huge-heap"],
+  { BUN_JSC_markedBlockCageSizeInMB: "1" },
+  1,
+  3,
+);

@@ -77,10 +77,9 @@ pub(super) fn allocate_scope(
         "a scope lists its bindings in ascending order"
     );
     let environment = allocate_environment(lowering, &entry, &values);
-    lowering.scopes.push_scope(EnteredScope {
-        scope,
-        environment,
-    });
+    lowering
+        .scopes
+        .push_scope(EnteredScope { scope, environment });
     for (binding, value) in values {
         declare_binding(lowering, &mut entry, binding, value);
     }

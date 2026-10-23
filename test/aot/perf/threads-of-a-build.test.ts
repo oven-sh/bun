@@ -28,7 +28,9 @@ function largeProgram(): Record<string, string> {
   for (let i = 0; i < modules; i++) {
     const lines: string[] = [];
     for (let j = 0; j < 200; j++)
-      lines.push(`export function f${i}_${j}(n: number): number { const o = { a: n, b: "k${i}_${j}" }; return o.a + o.b.length + ${j}; }`);
+      lines.push(
+        `export function f${i}_${j}(n: number): number { const o = { a: n, b: "k${i}_${j}" }; return o.a + o.b.length + ${j}; }`,
+      );
     files[`m${i}.ts`] = lines.join("\n") + "\n";
   }
   const main = Array.from({ length: modules }, (_, i) => `import * as M${i} from "./m${i}";`);
@@ -60,7 +62,10 @@ async function threadsOfBuild(files: Record<string, string>, flags: string[]): P
     await Bun.sleep(1);
   }
   const stderr = await build.stderr.text();
-  expect({ exitCode: await build.exited, stderr: build.exitCode ? stderr.slice(-2000) : "" }).toEqual({ exitCode: 0, stderr: "" });
+  expect({ exitCode: await build.exited, stderr: build.exitCode ? stderr.slice(-2000) : "" }).toEqual({
+    exitCode: 0,
+    stderr: "",
+  });
   const counts: Record<string, number> = {};
   for (const name of names.values()) {
     const pool = name.replace(/ \d+$/, "");

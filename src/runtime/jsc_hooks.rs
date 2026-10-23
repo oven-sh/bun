@@ -1609,7 +1609,10 @@ unsafe fn parse_worker_exec_argv_flags(
     };
     if crate::cli::startup_options::may_refuse_options() {
         // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
-        let words = exec_argv.iter().filter(|arg| !arg.is_null()).map(|&arg| unsafe { &*arg }.to_owned_slice_z());
+        let words = exec_argv
+            .iter()
+            .filter(|arg| !arg.is_null())
+            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
         let words: Vec<_> = words.collect();
         let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
@@ -2840,7 +2843,9 @@ fn transpile_source_code_of_any_provenance(
                     });
                 }
 
-                if matches!(loader, L::Text) && bun_jsc::compiled_program::compiled_program().is_some() {
+                if matches!(loader, L::Text)
+                    && bun_jsc::compiled_program::compiled_program().is_some()
+                {
                     let Ok(jsvalue_for_export) =
                         bun_core::String::clone_utf8(&parse_result.source.contents)
                             .into_js(global_object)
@@ -3818,9 +3823,12 @@ fn __bun_fetch_builtin_module(
     // ── Standalone-module-graph probe ───────────────────────────────────
     // `files.get` (no virtual-root prefix check), not `find_ref`.
     // The loader of its extension reads an asset of a compiled program: `Graph::find_at_source_path`, `Graph::find_asset_under_root`.
-    if let Some(file) = bun_standalone_graph::Graph::get_ref()
-        .and_then(|graph| graph.files.get(spec).filter(|file| !graph.is_asset_of_compiled_program(spec, file)))
-    {
+    if let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
+        graph
+            .files
+            .get(spec)
+            .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
+    }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
         if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
@@ -4131,13 +4139,17 @@ unsafe fn get_loader_and_virtual_source<'a>(
             None => return Err(crate::Error::BlobNotFound),
         }
     } else if virtual_source.is_none()
-        && let Some(file) = bun_standalone_graph::Graph::get_ref()
-            .and_then(|graph| graph.find_at_source_path(path.text).or_else(|| graph.find_asset_under_root(path.text)))
+        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
+            graph
+                .find_at_source_path(path.text)
+                .or_else(|| graph.find_asset_under_root(path.text))
+        })
     {
         // An executable compiled in place serves an embedded file that is no longer on disk, on every load of the module.
         // Any other compiled program serves what is embedded under its own root.
         // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
-        let path_text: &'static [u8] = unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
+        let path_text: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
         *virtual_source_to_use = Some(bun_ast::Source {
             path: bun_paths::fs::Path::init(path_text),
             contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
@@ -4318,11 +4330,22 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                 } else {
                     bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
                 };
-                *ret = ErrorableResolvedSource::err(bun_jsc::module_loader::module_not_compiled_in_error(global, code, specifier));
+                *ret = ErrorableResolvedSource::err(
+                    bun_jsc::module_loader::module_not_compiled_in_error(global, code, specifier),
+                );
                 ptr::null_mut()
             },
             transpile_file,
-            jsc_vm, global, specifier, referrer, type_attribute, ret, allow_promise, is_commonjs_require, force_loader, module_loader
+            jsc_vm,
+            global,
+            specifier,
+            referrer,
+            type_attribute,
+            ret,
+            allow_promise,
+            is_commonjs_require,
+            force_loader,
+            module_loader
         )
     }
 }
@@ -4429,9 +4452,13 @@ unsafe fn transpile_file(
             bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
         };
         let refusal = if loaded == Loaded::Code {
-            bun_jsc::compiled_program::error_if_code_outside_image_is_refused(global, code, specifier)
+            bun_jsc::compiled_program::error_if_code_outside_image_is_refused(
+                global, code, specifier,
+            )
         } else {
-            bun_jsc::compiled_program::error_if_host_object_outside_image_is_refused(global, code, specifier)
+            bun_jsc::compiled_program::error_if_host_object_outside_image_is_refused(
+                global, code, specifier,
+            )
         };
         if let Some(error) = refusal {
             *ret = ErrorableResolvedSource::err(error);
@@ -4907,7 +4934,9 @@ fn make_or_find_private_folder(path: &[u8], uid: u32) -> bool {
     let path = bun_core::ZBox::from_bytes(path);
     let _ = bun_sys::mkdir(&path, 0o700);
     // `lstat`: a planted link is not followed.
-    bun_sys::lstat(&path).is_ok_and(|it| bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0)
+    bun_sys::lstat(&path).is_ok_and(|it| {
+        bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0
+    })
 }
 
 #[cfg(windows)]
@@ -4932,27 +4961,61 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     files.push((addon.name, addon.contents.as_bytes()));
 
     let uid = extract_owner_uid();
-    let mut persistent_folder = [Fs::RealFS::tmpdir_path(), bun_paths::SEP_STR.as_bytes(), format!(".bun-{uid}-{hash:x}").as_bytes()].concat();
+    let mut persistent_folder = [
+        Fs::RealFS::tmpdir_path(),
+        bun_paths::SEP_STR.as_bytes(),
+        format!(".bun-{uid}-{hash:x}").as_bytes(),
+    ]
+    .concat();
     if cfg!(windows) {
         bun_paths::resolve_path::slashes_to_windows_in_place(&mut persistent_folder);
     }
-    let per_process_folder = [&persistent_folder[..], format!("-{:x}", bun_core::fast_random()).as_bytes()].concat();
-    let folder = [persistent_folder, per_process_folder].into_iter().find(|folder| make_or_find_private_folder(folder, uid))?;
+    let per_process_folder = [
+        &persistent_folder[..],
+        format!("-{:x}", bun_core::fast_random()).as_bytes(),
+    ]
+    .concat();
+    let folder = [persistent_folder, per_process_folder]
+        .into_iter()
+        .find(|folder| make_or_find_private_folder(folder, uid))?;
     let written_path = |path: &[u8]| -> Vec<u8> {
         if cfg!(unix) {
             return [&folder[..], path].concat();
         }
-        let under_folder = path.iter().filter(|&&c| c != b':').map(|&c| if c == b'/' { b'\\' } else { c });
-        folder.iter().copied().chain(std::iter::once(b'\\')).chain(under_folder).collect()
+        let under_folder = path
+            .iter()
+            .filter(|&&c| c != b':')
+            .map(|&c| if c == b'/' { b'\\' } else { c });
+        folder
+            .iter()
+            .copied()
+            .chain(std::iter::once(b'\\'))
+            .chain(under_folder)
+            .collect()
     };
     for (path, contents) in files {
         let to = bun_core::ZBox::from_vec(written_path(path));
-        let is_written = || bun_sys::lstat(&to).is_ok_and(|it| bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len());
+        let is_written = || {
+            bun_sys::lstat(&to).is_ok_and(|it| {
+                bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()
+            })
+        };
         if is_written() {
             continue;
         }
-        bun_sys::mkdir_recursive_at_mode(bun_sys::Fd::cwd(), bun_paths::dirname(to.as_bytes())?, 0o700).ok()?;
-        let scratch = bun_core::ZBox::from_vec([to.as_bytes(), format!(".{:x}", bun_core::fast_random()).as_bytes()].concat());
+        bun_sys::mkdir_recursive_at_mode(
+            bun_sys::Fd::cwd(),
+            bun_paths::dirname(to.as_bytes())?,
+            0o700,
+        )
+        .ok()?;
+        let scratch = bun_core::ZBox::from_vec(
+            [
+                to.as_bytes(),
+                format!(".{:x}", bun_core::fast_random()).as_bytes(),
+            ]
+            .concat(),
+        );
         let is_complete = {
             let file = bun_sys::open(&scratch, O::WRONLY | O::CREAT | O::EXCL, 0o600).ok()?;
             let _close = bun_sys::CloseOnDrop::new(file);

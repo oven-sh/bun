@@ -22,9 +22,7 @@ fn runtime_value_kind(object: BuiltinId) -> Option<RuntimeValueKind> {
             Some(RuntimeValueKind::Function)
         }
         BuiltinKind::Namespace | BuiltinKind::Prototype => Some(RuntimeValueKind::Object),
-        BuiltinKind::Constant => {
-            table::well_known_symbol(object).map(|_| RuntimeValueKind::Symbol)
-        }
+        BuiltinKind::Constant => table::well_known_symbol(object).map(|_| RuntimeValueKind::Symbol),
         BuiltinKind::Accessor | BuiltinKind::DataProperty | BuiltinKind::NativeBinding => None,
     }
 }
@@ -99,7 +97,10 @@ mod tests {
     fn kind_at(path: &[&str]) -> Option<RuntimeValueKind> {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
-        let names: Vec<Atom> = path.iter().map(|name| atoms.intern(name.as_bytes())).collect();
+        let names: Vec<Atom> = path
+            .iter()
+            .map(|name| atoms.intern(name.as_bytes()))
+            .collect();
         let defines = locked_builtin_defines(Platforms::LINUX, session.arena(), &atoms);
         let mut found = defines.iter().filter(|define| {
             define.path.root == DefineRoot::Global(names[0]) && define.path.members == &names[1..]
@@ -132,7 +133,10 @@ mod tests {
         for &(path, kind) in rows {
             assert_eq!(kind_at(path), Some(kind), "{path:?}");
         }
-        assert_eq!(runtime_value_kind(BuiltinId::FunctionPrototype), Some(Function));
+        assert_eq!(
+            runtime_value_kind(BuiltinId::FunctionPrototype),
+            Some(Function)
+        );
     }
 
     #[test]

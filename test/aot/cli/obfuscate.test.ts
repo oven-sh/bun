@@ -63,7 +63,16 @@ function textsIn(executable: string) {
 function framesOf(stack: string): Frame[] {
   return stack.split("\n").flatMap(line => {
     const found = /^ +at (?:(.+) \()?(.+?)(?::(\d+))?(?::(\d+))?\)?$/.exec(line);
-    return found ? [{ name: found[1] ?? "", file: basename(found[2]!), line: Number(found[3] ?? 1), column: Number(found[4] ?? 1) }] : [];
+    return found
+      ? [
+          {
+            name: found[1] ?? "",
+            file: basename(found[2]!),
+            line: Number(found[3] ?? 1),
+            column: Number(found[4] ?? 1),
+          },
+        ]
+      : [];
   });
 }
 
@@ -109,13 +118,19 @@ function decodeMappings({ sources, names, mappings }: SourceMap) {
 
 const refusals: [compile: object, message: string][] = [
   [{ obfuscate: true }, "compile.obfuscate requires compile.aot: true"],
-  [{ trim: { locales: [""] } }, 'Invalid value for compile.trim.locales: "". Must be a list of locale tags, like en,de-AT'],
+  [
+    { trim: { locales: [""] } },
+    'Invalid value for compile.trim.locales: "". Must be a list of locale tags, like en,de-AT',
+  ],
   [{ trim: { locales: [1] } }, "compile.trim must be true, false or an object: { allow, remove, locales, log }"],
 ];
 
 async function refusalOf(folder: string, compile: object) {
   try {
-    await Bun.build({ entrypoints: [join(folder, "app.ts")], compile: { outfile: join(folder, "refused"), ...compile } });
+    await Bun.build({
+      entrypoints: [join(folder, "app.ts")],
+      compile: { outfile: join(folder, "refused"), ...compile },
+    });
     return "built";
   } catch (error) {
     return (error as Error).message;
@@ -150,7 +165,10 @@ describe.concurrent("--obfuscate", () => {
 
         const executable = await compile(folder, "obfuscated", buildFlags.obfuscate);
         const obfuscated = await spawned([executable], folder, env);
-        expect({ stderr: obfuscated.stderr, exitCode: obfuscated.exitCode }).toEqual({ stderr: plain.stderr, exitCode: plain.exitCode });
+        expect({ stderr: obfuscated.stderr, exitCode: obfuscated.exitCode }).toEqual({
+          stderr: plain.stderr,
+          exitCode: plain.exitCode,
+        });
         expect(obfuscated.stdout).toStartWith("Error: too deep\n");
         expect(obfuscated.stdout).not.toMatch(/innermostThrower|measure|outermostCaller|concealed-module|app\.ts/);
 
@@ -173,7 +191,10 @@ describe.concurrent("--obfuscate", () => {
         using dir = tempDir("aot-obfuscate-outfile", program);
         const folder = String(dir);
         await compile(folder, "dist/app", buildFlags.obfuscate);
-        expect(readdirSync(join(folder, "dist")).sort()).toEqual([executableName("app"), executableName("app") + ".map"]);
+        expect(readdirSync(join(folder, "dist")).sort()).toEqual([
+          executableName("app"),
+          executableName("app") + ".map",
+        ]);
         expect(existsSync(join(folder, executableName("app") + ".map"))).toBe(false);
       }),
     buildLimit,
@@ -181,8 +202,16 @@ describe.concurrent("--obfuscate", () => {
 
   test("--obfuscate requires --aot", async () => {
     using dir = tempDir("aot-obfuscate-without-aot", program);
-    const { stdout, stderr, exitCode } = await spawned([bunExe(), "build", "--compile", buildFlags.obfuscate, "app.ts", "--outfile", "app"], String(dir), env);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "error: --obfuscate requires --aot\n", exitCode: 1 });
+    const { stdout, stderr, exitCode } = await spawned(
+      [bunExe(), "build", "--compile", buildFlags.obfuscate, "app.ts", "--outfile", "app"],
+      String(dir),
+      env,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: "error: --obfuscate requires --aot\n",
+      exitCode: 1,
+    });
   });
 
   test(
@@ -191,10 +220,15 @@ describe.concurrent("--obfuscate", () => {
       slot(async () => {
         using dir = tempDir("aot-obfuscate-api", program);
         const outfile = join(String(dir), "api", "app");
-        await Bun.build({ entrypoints: [join(String(dir), "app.ts")], compile: { outfile, aot: true, obfuscate: true } });
+        await Bun.build({
+          entrypoints: [join(String(dir), "app.ts")],
+          compile: { outfile, aot: true, obfuscate: true },
+        });
         const map = readMap(executableName(outfile));
         expect({ version: map.version, file: map.file }).toEqual({ version: 3, file: executableName("app") });
-        expect(map.sources.map(source => basename(source)).sort()).toEqual(expect.arrayContaining(["app.ts", "concealed-module.ts"]));
+        expect(map.sources.map(source => basename(source)).sort()).toEqual(
+          expect.arrayContaining(["app.ts", "concealed-module.ts"]),
+        );
         expect(map.names).toEqual(expect.arrayContaining(functionNames));
       }),
     buildLimit,

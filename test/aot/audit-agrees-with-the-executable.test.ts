@@ -15,26 +15,26 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, exitCode };
 }
 
-for (const file of readdirSync(folder).filter(name => name.endsWith(".ts")).sort()) {
+for (const file of readdirSync(folder)
+  .filter(name => name.endsWith(".ts"))
+  .sort()) {
   describe(file, () => {
     let said: { executable: string; audit: string } | undefined;
 
-    test(
-      "builds, and runs to its end both ways",
-      async () => {
-        using dir = tempDir("aot-audit-and-executable", {});
-        const executable = join(String(dir), "program");
-        expect(await run([bunExe(), "build", "--compile", "--aot", join(folder, file), "--outfile", executable], String(dir))).toMatchObject({ exitCode: 0 });
-        const compiled = await run([executable], String(dir));
-        const audited = await run([bunExe(), "run", "--aot", join(folder, file)], String(dir));
-        expect(await run([bunExe(), "run", "--debug-aot", join(folder, file)], String(dir))).toEqual(compiled);
-        expect({ executable: compiled.exitCode, audit: audited.exitCode }).toEqual({ executable: 0, audit: 0 });
-        expect(compiled.stdout.split("\n").length).toBeGreaterThan(3);
-        expect(audited.stdout.split("\n").length).toBe(compiled.stdout.split("\n").length);
-        said = { executable: compiled.stdout, audit: audited.stdout };
-      },
-      120_000,
-    );
+    test("builds, and runs to its end both ways", async () => {
+      using dir = tempDir("aot-audit-and-executable", {});
+      const executable = join(String(dir), "program");
+      expect(
+        await run([bunExe(), "build", "--compile", "--aot", join(folder, file), "--outfile", executable], String(dir)),
+      ).toMatchObject({ exitCode: 0 });
+      const compiled = await run([executable], String(dir));
+      const audited = await run([bunExe(), "run", "--aot", join(folder, file)], String(dir));
+      expect(await run([bunExe(), "run", "--debug-aot", join(folder, file)], String(dir))).toEqual(compiled);
+      expect({ executable: compiled.exitCode, audit: audited.exitCode }).toEqual({ executable: 0, audit: 0 });
+      expect(compiled.stdout.split("\n").length).toBeGreaterThan(3);
+      expect(audited.stdout.split("\n").length).toBe(compiled.stdout.split("\n").length);
+      said = { executable: compiled.stdout, audit: audited.stdout };
+    }, 120_000);
 
     test("bun run --aot prints what the executable prints", () => {
       if (said === undefined) return;

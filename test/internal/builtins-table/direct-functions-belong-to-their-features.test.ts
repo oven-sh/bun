@@ -40,24 +40,40 @@ test.skipIf(generated === undefined)(
     });
     expect(await generator.exited).toBe(0);
 
-    const { entries } = JSON.parse(readFileSync(join(String(directory), "builtin-uses.json"), "utf8")) as { entries: Entry[] };
+    const { entries } = JSON.parse(readFileSync(join(String(directory), "builtin-uses.json"), "utf8")) as {
+      entries: Entry[];
+    };
     const removableClasses = new Set(
       entries
-        .filter(({ kind, uses }) => (kind === "Constructor" || kind === "Prototype") && uses.some(use => !use.isConditional))
+        .filter(
+          ({ kind, uses }) => (kind === "Constructor" || kind === "Prototype") && uses.some(use => !use.isConditional),
+        )
         .map(nameOfClass),
     );
     expect(removableClasses.size).toBeGreaterThan(20);
 
     const bindings = readFileSync(join(String(directory), "BunAOTHostBindings.cpp"), "utf8");
-    const pointers = Array.from(bindings.matchAll(/reinterpret_cast<const void\*>\((\w+?)Prototype__(\w+)\)/g), ([, className, member]) => ({
-      className,
-      symbol: `${className}Prototype__${member}`,
-    }));
+    const pointers = Array.from(
+      bindings.matchAll(/reinterpret_cast<const void\*>\((\w+?)Prototype__(\w+)\)/g),
+      ([, className, member]) => ({
+        className,
+        symbol: `${className}Prototype__${member}`,
+      }),
+    );
     const recorded = new Set(
-      Array.from(bindings.matchAll(/recordRemovableTableEntry<Bun::AOTHostBindings::directFunctions, [\w:]+, [\w:]+, (\w+)[,>]/g), ([, symbol]) => symbol),
+      Array.from(
+        bindings.matchAll(
+          /recordRemovableTableEntry<Bun::AOTHostBindings::directFunctions, [\w:]+, [\w:]+, (\w+)[,>]/g,
+        ),
+        ([, symbol]) => symbol,
+      ),
     );
     expect(pointers.length).toBeGreaterThan(500);
-    expect(pointers.filter(({ className, symbol }) => removableClasses.has(className) && !recorded.has(symbol)).map(({ symbol }) => symbol)).toEqual([]);
+    expect(
+      pointers
+        .filter(({ className, symbol }) => removableClasses.has(className) && !recorded.has(symbol))
+        .map(({ symbol }) => symbol),
+    ).toEqual([]);
   },
   120_000,
 );

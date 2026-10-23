@@ -7,8 +7,9 @@ use crate::decide::decide;
 use crate::error::TrimError;
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
-    Decision, FeatureEdges, IcuPackage, Library, LibraryStatus, ModuleText, OptionRequirement, PlannedIcuPackage, PlannedRange, SetIndex,
-    TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales, WantedLocaleGroups,
+    Decision, FeatureEdges, IcuPackage, Library, LibraryStatus, ModuleText, OptionRequirement,
+    PlannedIcuPackage, PlannedRange, SetIndex, TrimInput, TrimPlan, TrimTable, UsedFeatures,
+    UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
 
@@ -20,10 +21,19 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
     let decision = decide(input, &table.edges);
 
     // Unseen code can ask for any locale, and `--trim-without` alone does not look at the program.
-    let follows_used_locales = input.request.removes_unused && !can_run_unseen_code(input.used, &decision.requirements);
+    let follows_used_locales =
+        input.request.removes_unused && !can_run_unseen_code(input.used, &decision.requirements);
     let unknown_locales = UsedLocales::Unknown(None);
-    let used_locales = if follows_used_locales { &input.used.locales } else { &unknown_locales };
-    let wanted = resolve_wanted_groups(used_locales, input.request.locales.as_deref(), &table.icu_languages)?;
+    let used_locales = if follows_used_locales {
+        &input.used.locales
+    } else {
+        &unknown_locales
+    };
+    let wanted = resolve_wanted_groups(
+        used_locales,
+        input.request.locales.as_deref(),
+        &table.icu_languages,
+    )?;
     let runs_library_text = can_run_library_text(input.used, &decision.requirements);
     Ok(plan_table(&table, decision, &wanted, runs_library_text))
 }
@@ -36,31 +46,50 @@ fn runs_unseen_code(option: &OptionRequirement) -> bool {
 }
 
 fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
-    used.causes.iter().any(|unseen| unseen.cause.lets_unseen_code_run()) || requirements.iter().any(runs_unseen_code)
+    used.causes
+        .iter()
+        .any(|unseen| unseen.cause.lets_unseen_code_run())
+        || requirements.iter().any(runs_unseen_code)
 }
 
 // An image without ImageFlag::AdmitsLibraryText lets no realm run a built-in module from its text.
 fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
-    used.causes.iter().any(|unseen| unseen.cause.admits_library_text()) || requirements.iter().any(runs_unseen_code)
+    used.causes
+        .iter()
+        .any(|unseen| unseen.cause.admits_library_text())
+        || requirements.iter().any(runs_unseen_code)
 }
 
 pub fn read_feature_edges(executable: &mut Image<'_>) -> Result<FeatureEdges, TrimError> {
     read_trim_table(executable).map(|table| table.edges)
 }
 
-pub(crate) fn plan_table(table: &TrimTable, decision: Decision, wanted: &WantedLocaleGroups, runs_library_text: bool) -> TrimPlan {
+pub(crate) fn plan_table(
+    table: &TrimTable,
+    decision: Decision,
+    wanted: &WantedLocaleGroups,
+    runs_library_text: bool,
+) -> TrimPlan {
     let removed = decision.removed();
-    let removed_sets: Vec<bool> = table.sets.iter().map(|set| set.is_subset_of(&removed)).collect();
+    let removed_sets: Vec<bool> = table
+        .sets
+        .iter()
+        .map(|set| set.is_subset_of(&removed))
+        .collect();
 
-    let module_texts = table.module_texts.iter().filter(|text| is_module_text_removed(text, &removed_sets, runs_library_text)).filter_map(|text| {
-        Some(PlannedRange {
-            range: text.range,
-            is_code: false,
-            can_be_cut: text.can_be_cut,
-            can_be_filled: text.can_be_filled,
-            named_feature: find_named_feature(&table.sets[usize::from(text.set.0)])?,
-        })
-    });
+    let module_texts = table
+        .module_texts
+        .iter()
+        .filter(|text| is_module_text_removed(text, &removed_sets, runs_library_text))
+        .filter_map(|text| {
+            Some(PlannedRange {
+                range: text.range,
+                is_code: false,
+                can_be_cut: text.can_be_cut,
+                can_be_filled: text.can_be_filled,
+                named_feature: find_named_feature(&table.sets[usize::from(text.set.0)])?,
+            })
+        });
     let ranges = table
         .ranges
         .iter()
@@ -76,17 +105,37 @@ pub(crate) fn plan_table(table: &TrimTable, decision: Decision, wanted: &WantedL
         })
         .chain(module_texts)
         .collect();
-    let icu_packages = table.icu_packages.iter().filter_map(|package| plan_icu_package(package, &removed_sets, wanted)).collect();
-    let libraries = table.libraries.iter().filter_map(|library| compute_library_status(library, &removed_sets)).collect();
-    TrimPlan { decision, ranges, icu_packages, libraries }
+    let icu_packages = table
+        .icu_packages
+        .iter()
+        .filter_map(|package| plan_icu_package(package, &removed_sets, wanted))
+        .collect();
+    let libraries = table
+        .libraries
+        .iter()
+        .filter_map(|library| compute_library_status(library, &removed_sets))
+        .collect();
+    TrimPlan {
+        decision,
+        ranges,
+        icu_packages,
+        libraries,
+    }
 }
 
 fn is_set_removed(removed_sets: &[bool], set: SetIndex) -> bool {
     removed_sets[usize::from(set.0)]
 }
 
-fn is_module_text_removed(text: &ModuleText, removed_sets: &[bool], runs_library_text: bool) -> bool {
-    let has_reader = runs_library_text || text.readers.is_some_and(|readers| !is_set_removed(removed_sets, readers));
+fn is_module_text_removed(
+    text: &ModuleText,
+    removed_sets: &[bool],
+    runs_library_text: bool,
+) -> bool {
+    let has_reader = runs_library_text
+        || text
+            .readers
+            .is_some_and(|readers| !is_set_removed(removed_sets, readers));
     !has_reader || is_set_removed(removed_sets, text.set)
 }
 
@@ -94,13 +143,20 @@ fn find_named_feature(set: &FeatureSet) -> Option<Feature> {
     set.iter().next()
 }
 
-fn plan_icu_package(package: &IcuPackage, removed_sets: &[bool], wanted: &WantedLocaleGroups) -> Option<PlannedIcuPackage> {
+fn plan_icu_package(
+    package: &IcuPackage,
+    removed_sets: &[bool],
+    wanted: &WantedLocaleGroups,
+) -> Option<PlannedIcuPackage> {
     let mut removed_items: Vec<Range<u32>> = Vec::new();
     let mut tombstoned_items: Vec<Range<u32>> = Vec::new();
     for run in &package.runs {
         let items = if is_set_removed(removed_sets, run.set) {
             &mut removed_items
-        } else if run.locale_group.is_some_and(|group| !wanted.contains(group)) {
+        } else if run
+            .locale_group
+            .is_some_and(|group| !wanted.contains(group))
+        {
             &mut tombstoned_items
         } else {
             continue;
@@ -114,7 +170,11 @@ fn plan_icu_package(package: &IcuPackage, removed_sets: &[bool], wanted: &Wanted
     if removed_items.is_empty() && tombstoned_items.is_empty() {
         return None;
     }
-    Some(PlannedIcuPackage { range: package.range, removed_items, tombstoned_items })
+    Some(PlannedIcuPackage {
+        range: package.range,
+        removed_items,
+        tombstoned_items,
+    })
 }
 
 fn compute_library_status(library: &Library, removed_sets: &[bool]) -> Option<LibraryStatus> {
@@ -124,7 +184,11 @@ fn compute_library_status(library: &Library, removed_sets: &[bool]) -> Option<Li
     Some(LibraryStatus {
         name: library.name.clone(),
         version: library.version.clone(),
-        is_removed: !library.has_retained_bytes && library.sets.iter().all(|set| is_set_removed(removed_sets, *set)),
+        is_removed: !library.has_retained_bytes
+            && library
+                .sets
+                .iter()
+                .all(|set| is_set_removed(removed_sets, *set)),
     })
 }
 
@@ -137,7 +201,10 @@ mod tests {
 
     use super::*;
     use crate::error::TrimRequestError;
-    use crate::model::{ExecutableSettings, IcuItemRun, IcuLanguage, LocaleGroup, LocaleTag, RemovableRange, UnseenCode, UnseenCodeCause};
+    use crate::model::{
+        ExecutableSettings, IcuItemRun, IcuLanguage, LocaleGroup, LocaleTag, RemovableRange,
+        UnseenCode, UnseenCodeCause,
+    };
     use crate::table::tests::encode_table;
 
     const BASE_ADDRESS: u64 = 0x1000;
@@ -147,7 +214,10 @@ mod tests {
             features_hash: FEATURES_HASH,
             base_address: BASE_ADDRESS,
             edges: FeatureEdges::default(),
-            sets: sets.iter().map(|set| FeatureSet::from_features(set)).collect(),
+            sets: sets
+                .iter()
+                .map(|set| FeatureSet::from_features(set))
+                .collect(),
             ranges: Vec::new(),
             icu_packages: Vec::new(),
             icu_languages: Vec::new(),
@@ -157,7 +227,10 @@ mod tests {
     }
 
     fn address_range(offset: u64, size: u64) -> AddressRange {
-        AddressRange { start: BASE_ADDRESS + offset, end: BASE_ADDRESS + offset + size }
+        AddressRange {
+            start: BASE_ADDRESS + offset,
+            end: BASE_ADDRESS + offset + size,
+        }
     }
 
     fn code_range(offset: u64, size: u64, set: u16) -> RemovableRange {
@@ -179,7 +252,13 @@ mod tests {
         }
     }
 
-    fn append_section_header(elf: &mut Vec<u8>, name: u32, section_type: u32, offset: u64, size: u64) {
+    fn append_section_header(
+        elf: &mut Vec<u8>,
+        name: u32,
+        section_type: u32,
+        offset: u64,
+        size: u64,
+    ) {
         elf.extend_from_slice(&name.to_le_bytes());
         elf.extend_from_slice(&section_type.to_le_bytes());
         for word in [0, 0, offset, size, 0, 1, 0] {
@@ -212,7 +291,10 @@ mod tests {
         elf
     }
 
-    fn try_plan_encoded_input(table: &TrimTable, input: &TrimInput<'_>) -> Result<TrimPlan, TrimError> {
+    fn try_plan_encoded_input(
+        table: &TrimTable,
+        input: &TrimInput<'_>,
+    ) -> Result<TrimPlan, TrimError> {
         let elf = create_elf(&encode_table(table));
         let mut read = |offset: usize, out: &mut [u8]| match elf.get(offset..offset + out.len()) {
             Some(bytes) => {
@@ -221,7 +303,10 @@ mod tests {
             }
             None => false,
         };
-        let mut image = Image { len: elf.len(), read: &mut read };
+        let mut image = Image {
+            len: elf.len(),
+            read: &mut read,
+        };
         plan(input, &mut image)
     }
 
@@ -230,19 +315,35 @@ mod tests {
     }
 
     fn plan_encoded_table(table: &TrimTable, request: &TrimRequest) -> TrimPlan {
-        plan_encoded_input(table, &TrimInput { used: &UsedFeatures::default(), settings: &ExecutableSettings::default(), request })
+        plan_encoded_input(
+            table,
+            &TrimInput {
+                used: &UsedFeatures::default(),
+                settings: &ExecutableSettings::default(),
+                request,
+            },
+        )
     }
 
     fn removing_internal(features: &[Feature]) -> TrimRequest {
-        TrimRequest { remove_internal: features.to_vec(), ..TrimRequest::default() }
+        TrimRequest {
+            remove_internal: features.to_vec(),
+            ..TrimRequest::default()
+        }
     }
 
     fn removing_unused() -> TrimRequest {
-        TrimRequest { removes_unused: true, ..TrimRequest::default() }
+        TrimRequest {
+            removes_unused: true,
+            ..TrimRequest::default()
+        }
     }
 
     fn wanting(tags: &[&str], request: TrimRequest) -> TrimRequest {
-        TrimRequest { locales: Some(tags.iter().map(|tag| Box::from(tag.as_bytes())).collect()), ..request }
+        TrimRequest {
+            locales: Some(tags.iter().map(|tag| Box::from(tag.as_bytes())).collect()),
+            ..request
+        }
     }
 
     const GERMAN: LocaleGroup = LocaleGroup(0);
@@ -252,25 +353,53 @@ mod tests {
     const FFI_SET: SetIndex = SetIndex(1);
 
     fn table_with_icu_items(items: &[(SetIndex, Option<LocaleGroup>)]) -> TrimTable {
-        let runs = (0u32..).zip(items).map(|(first_item, &(set, locale_group))| IcuItemRun { first_item, item_count: 1, set, locale_group });
+        let runs = (0u32..)
+            .zip(items)
+            .map(|(first_item, &(set, locale_group))| IcuItemRun {
+                first_item,
+                item_count: 1,
+                set,
+                locale_group,
+            });
         let language = |name: &[u8; 4], group: LocaleGroup| IcuLanguage { name: *name, group };
         TrimTable {
-            icu_packages: vec![IcuPackage { range: address_range(0x8000, 0x100), runs: runs.collect() }],
-            icu_languages: vec![language(b"de\0\0", GERMAN), language(b"en\0\0", ENGLISH), language(b"fr\0\0", FRENCH)],
+            icu_packages: vec![IcuPackage {
+                range: address_range(0x8000, 0x100),
+                runs: runs.collect(),
+            }],
+            icu_languages: vec![
+                language(b"de\0\0", GERMAN),
+                language(b"en\0\0", ENGLISH),
+                language(b"fr\0\0", FRENCH),
+            ],
             ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]])
         }
     }
 
-    fn planned_icu_items(removed_items: Vec<Range<u32>>, tombstoned_items: Vec<Range<u32>>) -> Vec<PlannedIcuPackage> {
-        vec![PlannedIcuPackage { range: address_range(0x8000, 0x100), removed_items, tombstoned_items }]
+    fn planned_icu_items(
+        removed_items: Vec<Range<u32>>,
+        tombstoned_items: Vec<Range<u32>>,
+    ) -> Vec<PlannedIcuPackage> {
+        vec![PlannedIcuPackage {
+            range: address_range(0x8000, 0x100),
+            removed_items,
+            tombstoned_items,
+        }]
     }
 
     fn table_with_three_languages() -> TrimTable {
-        table_with_icu_items(&[(FFI_SET, Some(GERMAN)), (FFI_SET, Some(ENGLISH)), (FFI_SET, Some(FRENCH))])
+        table_with_icu_items(&[
+            (FFI_SET, Some(GERMAN)),
+            (FFI_SET, Some(ENGLISH)),
+            (FFI_SET, Some(FRENCH)),
+        ])
     }
 
     fn using_ffi_in_english() -> UsedFeatures {
-        UsedFeatures { locales: UsedLocales::Listed(vec![LocaleTag(Box::from(&b"en-US"[..]))]), ..UsedFeatures::from_features(&[Feature::Ffi]) }
+        UsedFeatures {
+            locales: UsedLocales::Listed(vec![LocaleTag(Box::from(&b"en-US"[..]))]),
+            ..UsedFeatures::from_features(&[Feature::Ffi])
+        }
     }
 
     #[test]
@@ -279,7 +408,11 @@ mod tests {
             ranges: vec![code_range(0x10, 0x20, 0)],
             ..table_with_sets(&[&[Feature::Jit, Feature::Ffi]])
         };
-        assert!(plan_encoded_table(&table, &removing_internal(&[Feature::Jit])).ranges.is_empty());
+        assert!(
+            plan_encoded_table(&table, &removing_internal(&[Feature::Jit]))
+                .ranges
+                .is_empty()
+        );
 
         let both = plan_encoded_table(&table, &removing_internal(&[Feature::Jit, Feature::Ffi]));
         let expected = PlannedRange {
@@ -294,17 +427,34 @@ mod tests {
 
     #[test]
     fn planned_range_copies_table_flags() {
-        let flags = [(true, false, true), (false, true, true), (false, true, false)];
-        let ranges = flags.iter().zip(0u64..).map(|(&(is_code, can_be_cut, can_be_filled), position)| RemovableRange {
-            is_code,
-            can_be_cut,
-            can_be_filled,
-            ..code_range(position * 0x10, 0x10, 0)
-        });
-        let table = TrimTable { ranges: ranges.collect(), ..table_with_sets(&[&[Feature::Jit]]) };
+        let flags = [
+            (true, false, true),
+            (false, true, true),
+            (false, true, false),
+        ];
+        let ranges =
+            flags
+                .iter()
+                .zip(0u64..)
+                .map(
+                    |(&(is_code, can_be_cut, can_be_filled), position)| RemovableRange {
+                        is_code,
+                        can_be_cut,
+                        can_be_filled,
+                        ..code_range(position * 0x10, 0x10, 0)
+                    },
+                );
+        let table = TrimTable {
+            ranges: ranges.collect(),
+            ..table_with_sets(&[&[Feature::Jit]])
+        };
         let planned = plan_encoded_table(&table, &removing_internal(&[Feature::Jit]));
-        let flags_of = |range: &PlannedRange| (range.is_code, range.can_be_cut, range.can_be_filled);
-        assert_eq!(planned.ranges.iter().map(flags_of).collect::<Vec<_>>(), flags);
+        let flags_of =
+            |range: &PlannedRange| (range.is_code, range.can_be_cut, range.can_be_filled);
+        assert_eq!(
+            planned.ranges.iter().map(flags_of).collect::<Vec<_>>(),
+            flags
+        );
     }
 
     #[test]
@@ -314,7 +464,10 @@ mod tests {
             ..table_with_sets(&[&[Feature::Ffi, Feature::Jit]])
         };
         let planned = plan_encoded_table(&table, &removing_internal(&[Feature::Ffi, Feature::Jit]));
-        assert_eq!(Some(planned.ranges[0].named_feature), table.sets[0].iter().next());
+        assert_eq!(
+            Some(planned.ranges[0].named_feature),
+            table.sets[0].iter().next()
+        );
         assert_eq!(planned.removal_of(Feature::Ffi), Removal::Unused);
         assert_eq!(planned.removal_of(Feature::Jit), Removal::Unused);
         assert_eq!(planned.removal_of(Feature::Sql), Removal::Present);
@@ -328,69 +481,158 @@ mod tests {
             ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]])
         };
         let named_features = |request: &TrimRequest| -> Vec<Feature> {
-            let input = TrimInput { used: &UsedFeatures::from_features(&[]), settings: &ExecutableSettings::default(), request };
-            plan_encoded_input(&table, &input).ranges.iter().map(|range| range.named_feature).collect()
+            let input = TrimInput {
+                used: &UsedFeatures::from_features(&[]),
+                settings: &ExecutableSettings::default(),
+                request,
+            };
+            plan_encoded_input(&table, &input)
+                .ranges
+                .iter()
+                .map(|range| range.named_feature)
+                .collect()
         };
-        assert_eq!(named_features(&removing_unused()), [Feature::Jit, Feature::Ffi]);
-        assert_eq!(named_features(&TrimRequest { allow: vec![TrimFeature::Ffi], ..removing_unused() }), [Feature::Jit]);
+        assert_eq!(
+            named_features(&removing_unused()),
+            [Feature::Jit, Feature::Ffi]
+        );
+        assert_eq!(
+            named_features(&TrimRequest {
+                allow: vec![TrimFeature::Ffi],
+                ..removing_unused()
+            }),
+            [Feature::Jit]
+        );
     }
 
     #[test]
     fn icu_runs_merge() {
-        let run = |first_item, item_count, set| IcuItemRun { first_item, item_count, set: SetIndex(set), locale_group: None };
+        let run = |first_item, item_count, set| IcuItemRun {
+            first_item,
+            item_count,
+            set: SetIndex(set),
+            locale_group: None,
+        };
         let range = address_range(0x8000, 0x100);
         let table = TrimTable {
-            icu_packages: vec![IcuPackage { range, runs: vec![run(0, 2, 0), run(2, 3, 0), run(5, 1, 1), run(6, 1, 0)] }],
+            icu_packages: vec![IcuPackage {
+                range,
+                runs: vec![run(0, 2, 0), run(2, 3, 0), run(5, 1, 1), run(6, 1, 0)],
+            }],
             ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]])
         };
         let planned = plan_encoded_table(&table, &removing_internal(&[Feature::Jit]));
-        let expected = PlannedIcuPackage { range, removed_items: vec![0..5, 6..7], tombstoned_items: Vec::new() };
+        let expected = PlannedIcuPackage {
+            range,
+            removed_items: vec![0..5, 6..7],
+            tombstoned_items: Vec::new(),
+        };
         assert_eq!(planned.icu_packages, vec![expected]);
 
-        assert!(plan_encoded_table(&table, &removing_internal(&[Feature::Sql])).icu_packages.is_empty());
+        assert!(
+            plan_encoded_table(&table, &removing_internal(&[Feature::Sql]))
+                .icu_packages
+                .is_empty()
+        );
     }
 
     #[test]
     fn unwanted_language_is_tombstoned_and_wanted_one_stays() {
-        let table = table_with_icu_items(&[(FFI_SET, Some(GERMAN)), (FFI_SET, Some(FRENCH)), (FFI_SET, Some(ENGLISH)), (FFI_SET, Some(GERMAN))]);
-        let planned = plan_encoded_table(&table, &wanting(&["en"], removing_internal(&[Feature::Jit])));
-        assert_eq!(planned.icu_packages, planned_icu_items(Vec::new(), vec![0..2, 3..4]));
+        let table = table_with_icu_items(&[
+            (FFI_SET, Some(GERMAN)),
+            (FFI_SET, Some(FRENCH)),
+            (FFI_SET, Some(ENGLISH)),
+            (FFI_SET, Some(GERMAN)),
+        ]);
+        let planned = plan_encoded_table(
+            &table,
+            &wanting(&["en"], removing_internal(&[Feature::Jit])),
+        );
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(Vec::new(), vec![0..2, 3..4])
+        );
 
         let every_language = wanting(&["fr", "de", "en"], removing_internal(&[Feature::Jit]));
-        assert!(plan_encoded_table(&table, &every_language).icu_packages.is_empty());
+        assert!(
+            plan_encoded_table(&table, &every_language)
+                .icu_packages
+                .is_empty()
+        );
     }
 
     #[test]
     fn removed_set_wins_over_language() {
-        let table = table_with_icu_items(&[(JIT_SET, Some(GERMAN)), (JIT_SET, Some(ENGLISH)), (FFI_SET, Some(GERMAN))]);
-        let planned = plan_encoded_table(&table, &wanting(&["en"], removing_internal(&[Feature::Jit])));
-        assert_eq!(planned.icu_packages, planned_icu_items(vec![0..2], vec![2..3]));
+        let table = table_with_icu_items(&[
+            (JIT_SET, Some(GERMAN)),
+            (JIT_SET, Some(ENGLISH)),
+            (FFI_SET, Some(GERMAN)),
+        ]);
+        let planned = plan_encoded_table(
+            &table,
+            &wanting(&["en"], removing_internal(&[Feature::Jit])),
+        );
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(vec![0..2], vec![2..3])
+        );
     }
 
     #[test]
     fn run_without_group_follows_its_set_only() {
-        let table = table_with_icu_items(&[(FFI_SET, None), (JIT_SET, None), (FFI_SET, Some(GERMAN))]);
-        let planned = plan_encoded_table(&table, &wanting(&["en"], removing_internal(&[Feature::Jit])));
-        assert_eq!(planned.icu_packages, planned_icu_items(vec![1..2], vec![2..3]));
+        let table =
+            table_with_icu_items(&[(FFI_SET, None), (JIT_SET, None), (FFI_SET, Some(GERMAN))]);
+        let planned = plan_encoded_table(
+            &table,
+            &wanting(&["en"], removing_internal(&[Feature::Jit])),
+        );
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(vec![1..2], vec![2..3])
+        );
 
         let nothing_wanted = wanting(&[], removing_internal(&[Feature::Sql]));
-        assert_eq!(plan_encoded_table(&table, &nothing_wanted).icu_packages, planned_icu_items(Vec::new(), vec![2..3]));
+        assert_eq!(
+            plan_encoded_table(&table, &nothing_wanted).icu_packages,
+            planned_icu_items(Vec::new(), vec![2..3])
+        );
     }
 
     #[test]
     fn closed_program_retains_used_languages() {
-        let input = TrimInput { used: &using_ffi_in_english(), settings: &ExecutableSettings::default(), request: &removing_unused() };
+        let input = TrimInput {
+            used: &using_ffi_in_english(),
+            settings: &ExecutableSettings::default(),
+            request: &removing_unused(),
+        };
         let planned = plan_encoded_input(&table_with_three_languages(), &input);
-        assert_eq!(planned.icu_packages, planned_icu_items(Vec::new(), vec![0..1, 2..3]));
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(Vec::new(), vec![0..1, 2..3])
+        );
     }
 
     #[test]
     fn unseen_code_retains_every_language() {
         for cause in UnseenCodeCause::ALL {
-            let used = UsedFeatures { causes: vec![UnseenCode { cause, witness: None }], ..using_ffi_in_english() };
-            let input = TrimInput { used: &used, settings: &ExecutableSettings::default(), request: &removing_unused() };
+            let used = UsedFeatures {
+                causes: vec![UnseenCode {
+                    cause,
+                    witness: None,
+                }],
+                ..using_ffi_in_english()
+            };
+            let input = TrimInput {
+                used: &used,
+                settings: &ExecutableSettings::default(),
+                request: &removing_unused(),
+            };
             let planned = plan_encoded_input(&table_with_three_languages(), &input);
-            assert_eq!(planned.icu_packages.is_empty(), cause.lets_unseen_code_run(), "{cause:?}");
+            assert_eq!(
+                planned.icu_packages.is_empty(),
+                cause.lets_unseen_code_run(),
+                "{cause:?}"
+            );
         }
     }
 
@@ -402,34 +644,69 @@ mod tests {
             (RuntimeRequirement::Feature(Feature::Profilers), false),
         ];
         for (requirement, retains_every_language) in requirements {
-            let option = OptionRequirement { requirement, label: Box::from(&b"--option"[..]) };
-            let settings = ExecutableSettings { exec_argv: vec![option], ..ExecutableSettings::default() };
-            let input = TrimInput { used: &using_ffi_in_english(), settings: &settings, request: &removing_unused() };
+            let option = OptionRequirement {
+                requirement,
+                label: Box::from(&b"--option"[..]),
+            };
+            let settings = ExecutableSettings {
+                exec_argv: vec![option],
+                ..ExecutableSettings::default()
+            };
+            let input = TrimInput {
+                used: &using_ffi_in_english(),
+                settings: &settings,
+                request: &removing_unused(),
+            };
             let planned = plan_encoded_input(&table_with_three_languages(), &input);
-            assert_eq!(planned.icu_packages.is_empty(), retains_every_language, "{requirement:?}");
+            assert_eq!(
+                planned.icu_packages.is_empty(),
+                retains_every_language,
+                "{requirement:?}"
+            );
         }
     }
 
     #[test]
     fn request_not_removing_unused_retains_every_language() {
-        let input = TrimInput { used: &using_ffi_in_english(), settings: &ExecutableSettings::default(), request: &removing_internal(&[Feature::Sql]) };
-        assert!(plan_encoded_input(&table_with_three_languages(), &input).icu_packages.is_empty());
+        let input = TrimInput {
+            used: &using_ffi_in_english(),
+            settings: &ExecutableSettings::default(),
+            request: &removing_internal(&[Feature::Sql]),
+        };
+        assert!(
+            plan_encoded_input(&table_with_three_languages(), &input)
+                .icu_packages
+                .is_empty()
+        );
     }
 
     #[test]
     fn requested_locales_stand_alone_when_use_is_not_followed() {
         let request = wanting(&["de"], removing_internal(&[Feature::Sql]));
-        let input = TrimInput { used: &using_ffi_in_english(), settings: &ExecutableSettings::default(), request: &request };
+        let input = TrimInput {
+            used: &using_ffi_in_english(),
+            settings: &ExecutableSettings::default(),
+            request: &request,
+        };
         let planned = plan_encoded_input(&table_with_three_languages(), &input);
-        assert_eq!(planned.icu_packages, planned_icu_items(Vec::new(), vec![1..3]));
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(Vec::new(), vec![1..3])
+        );
     }
 
     #[test]
     fn requested_locale_without_data_fails() {
         let request = wanting(&["xx"], removing_unused());
-        let input = TrimInput { used: &UsedFeatures::default(), settings: &ExecutableSettings::default(), request: &request };
+        let input = TrimInput {
+            used: &UsedFeatures::default(),
+            settings: &ExecutableSettings::default(),
+            request: &request,
+        };
         let result = try_plan_encoded_input(&table_with_three_languages(), &input);
-        assert!(matches!(result, Err(TrimError::Request(TrimRequestError::UnknownLocale(tag))) if *tag == *b"xx"));
+        assert!(
+            matches!(result, Err(TrimError::Request(TrimRequestError::UnknownLocale(tag))) if *tag == *b"xx")
+        );
     }
 
     fn table_with_module_texts() -> TrimTable {
@@ -444,36 +721,78 @@ mod tests {
         TrimTable {
             ranges: vec![code_range(0x200, 0x10, 1)],
             module_texts: vec![text(0x100, 4, 0, Some(1)), text(0x110, 2, 2, None)],
-            ..table_with_sets(&[&[Feature::Interpreter, Feature::Sql], &[Feature::Sql], &[Feature::Interpreter]])
+            ..table_with_sets(&[
+                &[Feature::Interpreter, Feature::Sql],
+                &[Feature::Sql],
+                &[Feature::Interpreter],
+            ])
         }
     }
 
-    fn planned_offsets(used: &UsedFeatures, settings: &ExecutableSettings, request: &TrimRequest) -> Vec<u64> {
-        let planned = plan_encoded_input(&table_with_module_texts(), &TrimInput { used, settings, request });
-        planned.ranges.iter().map(|range| range.range.start - BASE_ADDRESS).collect()
+    fn planned_offsets(
+        used: &UsedFeatures,
+        settings: &ExecutableSettings,
+        request: &TrimRequest,
+    ) -> Vec<u64> {
+        let planned = plan_encoded_input(
+            &table_with_module_texts(),
+            &TrimInput {
+                used,
+                settings,
+                request,
+            },
+        );
+        planned
+            .ranges
+            .iter()
+            .map(|range| range.range.start - BASE_ADDRESS)
+            .collect()
     }
 
     fn evaluating_text(features: &[Feature]) -> UsedFeatures {
-        UsedFeatures { causes: vec![UnseenCode { cause: UnseenCodeCause::EvaluatesText, witness: None }], ..UsedFeatures::from_features(features) }
+        UsedFeatures {
+            causes: vec![UnseenCode {
+                cause: UnseenCodeCause::EvaluatesText,
+                witness: None,
+            }],
+            ..UsedFeatures::from_features(features)
+        }
     }
 
     #[test]
     fn module_text_leaves_with_its_set() {
-        let offsets = |features: &[Feature]| planned_offsets(&UsedFeatures::default(), &ExecutableSettings::default(), &removing_internal(features));
+        let offsets = |features: &[Feature]| {
+            planned_offsets(
+                &UsedFeatures::default(),
+                &ExecutableSettings::default(),
+                &removing_internal(features),
+            )
+        };
         assert_eq!(offsets(&[Feature::Sql]), [0x200]);
         assert_eq!(offsets(&[Feature::Interpreter]), [0x110]);
-        assert_eq!(offsets(&[Feature::Interpreter, Feature::Sql]), [0x200, 0x100, 0x110]);
+        assert_eq!(
+            offsets(&[Feature::Interpreter, Feature::Sql]),
+            [0x200, 0x100, 0x110]
+        );
     }
 
     #[test]
     fn module_text_leaves_where_no_library_text_runs() {
-        let offsets = planned_offsets(&evaluating_text(&[]), &ExecutableSettings::default(), &removing_unused());
+        let offsets = planned_offsets(
+            &evaluating_text(&[]),
+            &ExecutableSettings::default(),
+            &removing_unused(),
+        );
         assert_eq!(offsets, [0x200, 0x100, 0x110]);
     }
 
     #[test]
     fn planned_module_text_is_data_named_after_its_set() {
-        let input = TrimInput { used: &evaluating_text(&[]), settings: &ExecutableSettings::default(), request: &removing_unused() };
+        let input = TrimInput {
+            used: &evaluating_text(&[]),
+            settings: &ExecutableSettings::default(),
+            request: &removing_unused(),
+        };
         let planned = plan_encoded_input(&table_with_module_texts(), &input);
         assert_eq!(planned.removal_of(Feature::Interpreter), Removal::Present);
         let expected = PlannedRange {
@@ -488,23 +807,40 @@ mod tests {
 
     #[test]
     fn retained_reader_keeps_module_text() {
-        let offsets = planned_offsets(&evaluating_text(&[Feature::Sql]), &ExecutableSettings::default(), &removing_unused());
+        let offsets = planned_offsets(
+            &evaluating_text(&[Feature::Sql]),
+            &ExecutableSettings::default(),
+            &removing_unused(),
+        );
         assert_eq!(offsets, [0x110]);
     }
 
     #[test]
     fn library_text_that_can_run_keeps_module_texts() {
         for cause in UnseenCodeCause::ALL {
-            let used = UsedFeatures { causes: vec![UnseenCode { cause, witness: None }], ..UsedFeatures::from_features(&[Feature::Interpreter]) };
-            let offsets = planned_offsets(&used, &ExecutableSettings::default(), &removing_unused());
+            let used = UsedFeatures {
+                causes: vec![UnseenCode {
+                    cause,
+                    witness: None,
+                }],
+                ..UsedFeatures::from_features(&[Feature::Interpreter])
+            };
+            let offsets =
+                planned_offsets(&used, &ExecutableSettings::default(), &removing_unused());
             assert_eq!(offsets.is_empty(), cause.admits_library_text(), "{cause:?}");
         }
     }
 
     #[test]
     fn option_running_unseen_code_keeps_module_texts() {
-        let option = OptionRequirement { requirement: RuntimeRequirement::RuntimeCode, label: Box::from(&b"--option"[..]) };
-        let settings = ExecutableSettings { exec_argv: vec![option], ..ExecutableSettings::default() };
+        let option = OptionRequirement {
+            requirement: RuntimeRequirement::RuntimeCode,
+            label: Box::from(&b"--option"[..]),
+        };
+        let settings = ExecutableSettings {
+            exec_argv: vec![option],
+            ..ExecutableSettings::default()
+        };
         assert!(planned_offsets(&evaluating_text(&[]), &settings, &removing_unused()).is_empty());
     }
 
@@ -521,16 +857,35 @@ mod tests {
             ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]])
         };
         let planned = plan_encoded_table(&table, &removing_internal(&[Feature::Jit]));
-        let statuses: Vec<(&str, bool)> = planned.libraries.iter().map(|library| (&*library.name, library.is_removed)).collect();
-        assert_eq!(statuses, [("gone", true), ("partial", false), ("retained", false), ("whole", false)]);
+        let statuses: Vec<(&str, bool)> = planned
+            .libraries
+            .iter()
+            .map(|library| (&*library.name, library.is_removed))
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                ("gone", true),
+                ("partial", false),
+                ("retained", false),
+                ("whole", false)
+            ]
+        );
         assert_eq!(&*planned.libraries[0].version, "1.0");
     }
 
     #[test]
     fn compiled_program_reads_table_without_request() {
-        let table = TrimTable { ranges: vec![code_range(0, 0x10, 0), code_range(0x10, 0x10, 1)], ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]]) };
+        let table = TrimTable {
+            ranges: vec![code_range(0, 0x10, 0), code_range(0x10, 0x10, 1)],
+            ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]])
+        };
         let used = UsedFeatures::from_features(&[]);
-        let input = TrimInput { used: &used, settings: &ExecutableSettings::default(), request: &TrimRequest::default() };
+        let input = TrimInput {
+            used: &used,
+            settings: &ExecutableSettings::default(),
+            request: &TrimRequest::default(),
+        };
         let planned = plan_encoded_input(&table, &input);
         assert_eq!(planned.removed(), Feature::all_outside_compiled_programs());
         assert_eq!(planned.ranges.len(), 1);
@@ -542,14 +897,29 @@ mod tests {
         let not_compiled = UsedFeatures::with_cause(UnseenCodeCause::ProgramNotCompiled);
         let requests = [
             TrimRequest::default(),
-            TrimRequest { allow: vec![TrimFeature::Ffi], ..TrimRequest::default() },
-            TrimRequest { logs: true, ..TrimRequest::default() },
+            TrimRequest {
+                allow: vec![TrimFeature::Ffi],
+                ..TrimRequest::default()
+            },
+            TrimRequest {
+                logs: true,
+                ..TrimRequest::default()
+            },
             wanting(&["de"], TrimRequest::default()),
         ];
         for request in &requests {
-            let mut read = |_: usize, _: &mut [u8]| -> bool { panic!("a disabled request read the executable") };
-            let mut image = Image { len: 0, read: &mut read };
-            let input = TrimInput { used: &not_compiled, settings: &ExecutableSettings::default(), request };
+            let mut read = |_: usize, _: &mut [u8]| -> bool {
+                panic!("a disabled request read the executable")
+            };
+            let mut image = Image {
+                len: 0,
+                read: &mut read,
+            };
+            let input = TrimInput {
+                used: &not_compiled,
+                settings: &ExecutableSettings::default(),
+                request,
+            };
             let planned = plan(&input, &mut image).unwrap();
             assert!(planned.is_empty());
             assert!(planned.removed().is_empty());

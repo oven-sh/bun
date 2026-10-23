@@ -23,7 +23,21 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
   const properties = [featureNamed("RegExpUnicodeProperties")];
 
   async function build(folder: string, entry: string, outfile: string, without: string[] = []) {
-    const built = await run([bunExe(), "build", "--compile", "--aot", "--trim", ...withoutFeatures(without), "--disallow-code-generation-from-strings", entry, "--outfile", join(outfile, "program")], folder);
+    const built = await run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--trim",
+        ...withoutFeatures(without),
+        "--disallow-code-generation-from-strings",
+        entry,
+        "--outfile",
+        join(outfile, "program"),
+      ],
+      folder,
+    );
     expect(built.stderr).not.toMatch(/^error\b/m);
     expect(built.exitCode).toBe(0);
     const bytes = readFileSync(join(folder, outfile, "program") + (isWindows ? ".exe" : ""));
@@ -33,8 +47,14 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
   test("literals that name no property leave the tables out", async () => {
     using dir = tempDir("compile-trim-regexp-unicode-properties", files);
     const folder = String(dir);
-    expect(await build(folder, "no-property.ts", "by-use")).toEqual(await build(folder, "no-property.ts", "by-name", properties));
-    expect(await run([join(folder, "by-use", "program")], folder)).toEqual({ stdout: "true 2026 bun\n", stderr: "", exitCode: 0 });
+    expect(await build(folder, "no-property.ts", "by-use")).toEqual(
+      await build(folder, "no-property.ts", "by-name", properties),
+    );
+    expect(await run([join(folder, "by-use", "program")], folder)).toEqual({
+      stdout: "true 2026 bun\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("one literal that names a property retains the tables", async () => {
@@ -42,6 +62,10 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
     const folder = String(dir);
     const retained = await build(folder, "property.ts", "by-use");
     expect((await build(folder, "property.ts", "by-name", properties)).size).toBeLessThan(retained.size);
-    expect(await run([join(folder, "by-use", "program")], folder)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    expect(await run([join(folder, "by-use", "program")], folder)).toEqual({
+      stdout: "true\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

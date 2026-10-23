@@ -116,24 +116,28 @@ impl Lookup<'_, '_> {
         }
         let variables = &self.scopes.body_variables;
         let variable = variables.binary_search_by_key(&symbol, |entry| entry.0);
-        Some(Binding::Symbol(variable.map_or(symbol, |index| variables[index].1)))
+        Some(Binding::Symbol(
+            variable.map_or(symbol, |index| variables[index].1),
+        ))
     }
 
     pub(super) fn is_var(&self, local: SymbolId) -> bool {
         let decls = &self.bound.symbols[local.idx()].decls[..];
-        decls.iter().all(|&decl| match declaration_kind(self.hir, self.bound, decl) {
-            DeclarationKind::NoBinding
-            | DeclarationKind::ImplicitBlockFunction
-            | DeclarationKind::BlockScopedRequire
-            | DeclarationKind::Var => true,
-            DeclarationKind::Parameter
-            | DeclarationKind::TopLevelFunction
-            | DeclarationKind::BlockFunction
-            | DeclarationKind::Lexical
-            | DeclarationKind::Import
-            | DeclarationKind::SimpleCatchParameter
-            | DeclarationKind::TypeScriptValue => false,
-        })
+        decls
+            .iter()
+            .all(|&decl| match declaration_kind(self.hir, self.bound, decl) {
+                DeclarationKind::NoBinding
+                | DeclarationKind::ImplicitBlockFunction
+                | DeclarationKind::BlockScopedRequire
+                | DeclarationKind::Var => true,
+                DeclarationKind::Parameter
+                | DeclarationKind::TopLevelFunction
+                | DeclarationKind::BlockFunction
+                | DeclarationKind::Lexical
+                | DeclarationKind::Import
+                | DeclarationKind::SimpleCatchParameter
+                | DeclarationKind::TypeScriptValue => false,
+            })
     }
 
     fn find_exported_member(&self, at: ScopeId, scope: &Scope, name: Atom) -> Option<SymbolId> {

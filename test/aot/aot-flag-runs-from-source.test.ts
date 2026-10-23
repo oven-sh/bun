@@ -6,7 +6,16 @@ import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [] } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    strict: true,
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    noEmit: true,
+    types: [],
+  },
+});
 const declarations = `declare const console: { log(...values: unknown[]): void };\ndeclare const process: { execArgv: string[]; argv: string[] };\n`;
 
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
@@ -18,28 +27,43 @@ const bun = (cwd: string, ...args: string[]) => spawned([bunExe(), ...args], cwd
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 
 describe("which code runs", () => {
-  const files = { "tsconfig.json": tsconfig, "main.ts": declarations + `console.log("ran", process.execArgv.join(" "));` };
+  const files = {
+    "tsconfig.json": tsconfig,
+    "main.ts": declarations + `console.log("ran", process.execArgv.join(" "));`,
+  };
   test("--aot loads no compiled code, --debug-aot does", async () => {
     using dir = tempDir("aot-flag-runs-from-source", files);
     const checked = await bun(String(dir), "run", "--aot", "main.ts");
     expect({ stdout: checked.stdout, exitCode: checked.exitCode }).toEqual({ stdout: "ran --aot\n", exitCode: 0 });
     expect(checked.stderr).not.toContain("[aot] image: ");
     const compiled = await bun(String(dir), "run", "--debug-aot", "main.ts");
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "ran --debug-aot\n", exitCode: 0 });
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      stdout: "ran --debug-aot\n",
+      exitCode: 0,
+    });
     expect(compiled.stderr).toContain("[aot] image: ");
   });
   test("--aot ends the build behind what it reports about the program, and generates no code", async () => {
     using dir = tempDir("aot-flag-runs-from-source", files);
-    const stages = (said: string) => [...new Set([...said.matchAll(/^AOT phase times: (\w+) \|/gm)].map(match => match[1]))];
-    const checked = await spawned([bunExe(), "run", "--aot", "main.ts"], String(dir), { BUN_JSC_logAOTPhaseTimes: "1" });
+    const stages = (said: string) => [
+      ...new Set([...said.matchAll(/^AOT phase times: (\w+) \|/gm)].map(match => match[1])),
+    ];
+    const checked = await spawned([bunExe(), "run", "--aot", "main.ts"], String(dir), {
+      BUN_JSC_logAOTPhaseTimes: "1",
+    });
     expect(stages(checked.stderr)).toContain("AnalyzeFlow");
     for (const later of ["Optimize", "Select", "GenerateCode"]) expect(stages(checked.stderr)).not.toContain(later);
     expect(checked.stdout).toBe("ran --aot\n");
-    const compiled = await spawned([bunExe(), "run", "--debug-aot", "main.ts"], String(dir), { BUN_JSC_logAOTPhaseTimes: "1" });
+    const compiled = await spawned([bunExe(), "run", "--debug-aot", "main.ts"], String(dir), {
+      BUN_JSC_logAOTPhaseTimes: "1",
+    });
     expect(stages(compiled.stderr)).toContain("GenerateCode");
   });
   test("bun test --aot loads no compiled code", async () => {
-    using dir = tempDir("aot-flag-runs-from-source", { "tsconfig.json": tsconfig, "one.test.ts": `import { expect, test } from "bun:test";\ntest("one", () => { expect(1).toBe(1); });` });
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "one.test.ts": `import { expect, test } from "bun:test";\ntest("one", () => { expect(1).toBe(1); });`,
+    });
     const checked = await bun(String(dir), "test", "--aot");
     expect(passed(checked.stderr)).toEqual(["one"]);
     expect(checked.stderr).not.toContain("[aot] image: ");
@@ -49,7 +73,9 @@ describe("which code runs", () => {
   test("a program that validates by type is compiled under --aot too", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
-      "main.ts": declarations + `try { console.log(JSON.parse<{ n: number }>('{"n":"1"}')); } catch (error) { console.log((error as Error).name); }`,
+      "main.ts":
+        declarations +
+        `try { console.log(JSON.parse<{ n: number }>('{"n":"1"}')); } catch (error) { console.log((error as Error).name); }`,
     });
     const { stdout, stderr, exitCode } = await bun(String(dir), "run", "--aot", "main.ts");
     expect({ stdout, exitCode }).toEqual({ stdout: "TypeError\n", exitCode: 0 });
@@ -61,13 +87,27 @@ describe("what stops a build stops the run, and is printed as the build prints i
   const stopped: Record<string, { text: string; code: string }> = {
     "a type error": { text: `console.log("ran"); const port: number = "8080"; console.log(port);`, code: "TS2322" },
     "an import that does not resolve": { text: `console.log("ran"); import("./nowhere.ts");`, code: "TS2307" },
-    "a store to a built-in that always runs": { text: `console.log("ran"); (Array.prototype as any).push = () => 0;`, code: "TS100014" },
+    "a store to a built-in that always runs": {
+      text: `console.log("ran"); (Array.prototype as any).push = () => 0;`,
+      code: "TS100014",
+    },
     "an invalid regular expression": { text: `console.log("ran"); console.log(/(/.source);`, code: "TS1005" },
   };
   test.concurrent.each(Object.keys(stopped))("%s", async name => {
-    using dir = tempDir("aot-flag-runs-from-source", { "tsconfig.json": tsconfig, "main.ts": declarations + stopped[name].text });
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "main.ts": declarations + stopped[name].text,
+    });
     const errors = (said: string) => said.split("\n").filter(line => line.startsWith("error: "));
-    const built = await bun(String(dir), "build", "--compile", "--aot", "main.ts", "--outfile", join(String(dir), "program"));
+    const built = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--aot",
+      "main.ts",
+      "--outfile",
+      join(String(dir), "program"),
+    );
     expect(errors(built.stderr).join("\n")).toContain(stopped[name].code);
     expect(built.exitCode).toBe(1);
     const ran = await bun(String(dir), "run", "--aot", "main.ts");
@@ -111,25 +151,37 @@ describe("the built-ins that a compiled program cannot change", () => {
       console.log("node:vm", vm.runInNewContext("Array.prototype.push = () => 7; [].push(1)"));
       console.log("ShadowRealm", new ShadowRealm().evaluate("Array.prototype.push = () => 7; [].push(1)"));`,
   };
-  const withoutWarnings = (said: { stdout: string; exitCode: number }) => ({ stdout: said.stdout, exitCode: said.exitCode });
-
-  test.concurrent.each(["main.mjs", "with-worker.mjs", "other-realms.mjs"])("%s prints under --aot what the executable prints", async entry => {
-    using dir = tempDir("aot-flag-runs-from-source", files);
-    const executable = join(String(dir), isWindows ? "program.exe" : "program");
-    const entries = entry === "with-worker.mjs" ? [entry, "in-worker.mjs"] : [entry];
-    const built = await bun(String(dir), "build", "--compile", "--aot", ...entries, "--outfile", executable);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const compiled = withoutWarnings(await spawned([executable], String(dir)));
-    expect(compiled.exitCode).toBe(0);
-    expect(withoutWarnings(await bun(String(dir), "run", "--aot", entry))).toEqual(compiled);
-    const plain = withoutWarnings(await bun(String(dir), "run", entry));
-    if (entry === "other-realms.mjs") expect(plain).toEqual(compiled);
-    else expect(plain.stdout).not.toBe(compiled.stdout);
+  const withoutWarnings = (said: { stdout: string; exitCode: number }) => ({
+    stdout: said.stdout,
+    exitCode: said.exitCode,
   });
+
+  test.concurrent.each(["main.mjs", "with-worker.mjs", "other-realms.mjs"])(
+    "%s prints under --aot what the executable prints",
+    async entry => {
+      using dir = tempDir("aot-flag-runs-from-source", files);
+      const executable = join(String(dir), isWindows ? "program.exe" : "program");
+      const entries = entry === "with-worker.mjs" ? [entry, "in-worker.mjs"] : [entry];
+      const built = await bun(String(dir), "build", "--compile", "--aot", ...entries, "--outfile", executable);
+      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+      const compiled = withoutWarnings(await spawned([executable], String(dir)));
+      expect(compiled.exitCode).toBe(0);
+      expect(withoutWarnings(await bun(String(dir), "run", "--aot", entry))).toEqual(compiled);
+      const plain = withoutWarnings(await bun(String(dir), "run", entry));
+      if (entry === "other-realms.mjs") expect(plain).toEqual(compiled);
+      else expect(plain.stdout).not.toBe(compiled.stdout);
+    },
+  );
 });
 
 describe("bun test --aot", () => {
-  const price = { "tsconfig.json": tsconfig, "price.ts": `export function price(id: string): number { return id.length; }` };
+  const price = {
+    "tsconfig.json": tsconfig,
+    "price.ts": `export function price(id: string): number { return id.length; }`,
+  };
   const mocked = {
     ...price,
     "one.test.ts": `import { expect, mock, spyOn, test } from "bun:test";\nimport * as all from "./price";\nimport { price } from "./price";
@@ -177,13 +229,16 @@ describe("bun test --aot", () => {
     "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).push = () => 0; }).toThrow(TypeError); });`,
     "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any).pop = () => 0; }).toThrow(TypeError); });`,
   };
-  test.concurrent.each([["--isolate"], ["--parallel=2"], ["--rerun-each=2"], ["--coverage"]])("%s works, and the built-ins are read-only in every file", async flag => {
-    using dir = tempDir("aot-flag-runs-from-source", locked);
-    const { stdout, stderr, exitCode } = await bun(String(dir), "test", "--aot", flag);
-    expect([...new Set(passed(stdout + stderr))]).toEqual(["a", "b"]);
-    expect(stdout + stderr).not.toContain("(fail)");
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent.each([["--isolate"], ["--parallel=2"], ["--rerun-each=2"], ["--coverage"]])(
+    "%s works, and the built-ins are read-only in every file",
+    async flag => {
+      using dir = tempDir("aot-flag-runs-from-source", locked);
+      const { stdout, stderr, exitCode } = await bun(String(dir), "test", "--aot", flag);
+      expect([...new Set(passed(stdout + stderr))]).toEqual(["a", "b"]);
+      expect(stdout + stderr).not.toContain("(fail)");
+      expect(exitCode).toBe(0);
+    },
+  );
   test("the version is printed once", async () => {
     using dir = tempDir("aot-flag-runs-from-source", locked);
     const { stdout, stderr } = await bun(String(dir), "test", "--aot");
@@ -194,19 +249,33 @@ describe("bun test --aot", () => {
 describe("the debugger", () => {
   const files = {
     "tsconfig.json": tsconfig,
-    "main.ts": declarations + `try { (Math as any).floor = 1; console.log("stored"); } catch (error) { console.log("ran", (error as Error).name); }`,
+    "main.ts":
+      declarations +
+      `try { (Math as any).floor = 1; console.log("stored"); } catch (error) { console.log("ran", (error as Error).name); }`,
   };
   const listeners = (said: string) => said.split("Listening:").length - 1;
   test("--inspect-wait starts it once, holds the program until a client attaches, and a debugger statement pauses it", async () => {
-    using dir = tempDir("aot-flag-runs-from-source", { ...files, "main.ts": files["main.ts"] + `\ndebugger;\nconsole.log("resumed");` });
-    await using proc = Bun.spawn({ cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", "--aot", "main.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    using dir = tempDir("aot-flag-runs-from-source", {
+      ...files,
+      "main.ts": files["main.ts"] + `\ndebugger;\nconsole.log("resumed");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", "--aot", "main.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     let stderr = "";
     const { promise: address, resolve: foundAddress, reject: noAddress } = Promise.withResolvers<string>();
     const drained = (async () => {
       const decoder = new TextDecoder();
       for await (const chunk of proc.stderr) {
         stderr += decoder.decode(chunk, { stream: true });
-        const line = stderr.split("\n").slice(0, -1).find(line => line.trim().startsWith("ws://"));
+        const line = stderr
+          .split("\n")
+          .slice(0, -1)
+          .find(line => line.trim().startsWith("ws://"));
         if (line) foundAddress(line.trim());
       }
       noAddress(new Error("no address of the debugger in stderr:\n" + stderr));
@@ -263,13 +332,30 @@ describe("the debugger", () => {
     const waits = `declare const process: { stdin: { once(event: "data", run: () => void): void }; exit(code: number): never };\ndeclare const console: { log(...values: unknown[]): void };\n`;
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
-      "main.ts": waits + `try { (Math as any).floor = 1; console.log("stored"); } catch (error) { console.log("ran", (error as Error).name); }\nprocess.stdin.once("data", () => process.exit(0));`,
+      "main.ts":
+        waits +
+        `try { (Math as any).floor = 1; console.log("stored"); } catch (error) { console.log("ran", (error as Error).name); }\nprocess.stdin.once("data", () => process.exit(0));`,
     });
     let ready = 0;
     const { promise: first, resolve: isReady } = Promise.withResolvers<void>();
-    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: () => (ready++, isReady()), data() {} } });
-    const env = { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/aot-flag", BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${listener.port}` };
-    await using proc = Bun.spawn({ cmd: [bunExe(), "--aot", "main.ts"], cwd: String(dir), env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: () => (ready++, isReady()), data() {} },
+    });
+    const env = {
+      ...bunEnv,
+      BUN_INSPECT: "ws://127.0.0.1:0/aot-flag",
+      BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${listener.port}`,
+    };
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--aot", "main.ts"],
+      cwd: String(dir),
+      env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     await Promise.race([first, proc.exited]);
     proc.stdin.write("go\n");
     proc.stdin.end();
@@ -277,15 +363,25 @@ describe("the debugger", () => {
     expect({ stdout, ready, exitCode }).toEqual({ stdout: "ran TypeError\n", ready: 1, exitCode: 0 });
   });
   test("a type error is reported and no debugger starts", async () => {
-    using dir = tempDir("aot-flag-runs-from-source", { ...files, "main.ts": declarations + `const port: number = "8080"; console.log("ran", port);` });
+    using dir = tempDir("aot-flag-runs-from-source", {
+      ...files,
+      "main.ts": declarations + `const port: number = "8080"; console.log("ran", port);`,
+    });
     const { stdout, stderr, exitCode } = await bun(String(dir), "--inspect=127.0.0.1:0", "--aot", "main.ts");
     expect(stderr).toContain("TS2322");
     expect({ stdout, listeners: listeners(stderr), exitCode }).toEqual({ stdout: "", listeners: 0, exitCode: 1 });
   });
   test("a program that is compiled after all has none", async () => {
     const programs = join(import.meta.dir, "programs", "data-from-outside");
-    const { stdout, stderr, exitCode } = await bun(programs, "--inspect=127.0.0.1:0", "--aot", join(programs, "validate-returns-a-copy.ts"));
-    expect(stderr).toContain("--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled");
+    const { stdout, stderr, exitCode } = await bun(
+      programs,
+      "--inspect=127.0.0.1:0",
+      "--aot",
+      join(programs, "validate-returns-a-copy.ts"),
+    );
+    expect(stderr).toContain(
+      "--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled",
+    );
     expect({ stdout, listeners: listeners(stderr), exitCode }).toEqual({ stdout: "", listeners: 0, exitCode: 1 });
   });
 });
@@ -354,7 +450,8 @@ describe("--watch", () => {
     expect(watched.out.heard.text).toBe("run 1 1 locked\nrun 1 1 locked\n");
   });
   test("tsconfig.json is watched too", async () => {
-    const options = (strict: boolean) => JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, strict } });
+    const options = (strict: boolean) =>
+      JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, strict } });
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": options(false),
       "main.ts": declarations + `function twice(x) { return x * 2; }\nconsole.log("run", twice(2));`,
@@ -376,8 +473,13 @@ describe("--watch", () => {
     expect(watched.out.heard.text).toBe("run 1 1 locked\n");
   });
   test("bun test: a test file that is refused is checked again when it changes", async () => {
-    const written = (name: string, port: string) => `import { expect, test } from "bun:test";\nconst port: number = ${port};\ntest("${name}", () => { expect(port).toBe(1); });`;
-    using dir = tempDir("aot-flag-runs-from-source", { "tsconfig.json": tsconfig, "a.test.ts": written("a", "1"), "b.test.ts": written("b", `"1"`) });
+    const written = (name: string, port: string) =>
+      `import { expect, test } from "bun:test";\nconst port: number = ${port};\ntest("${name}", () => { expect(port).toBe(1); });`;
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "a.test.ts": written("a", "1"),
+      "b.test.ts": written("b", `"1"`),
+    });
     using watched = watch(String(dir), "test", "--watch", "--aot");
     const said = () => watched.out.heard.text + watched.err.heard.text;
     await watched.err.until(() => said().includes("TS2322") && passed(said()).includes("a"));
@@ -401,7 +503,12 @@ describe("--watch", () => {
   });
   test.each(["--watch", "--hot"])("a program that is compiled after all refuses %s", async flag => {
     const programs = join(import.meta.dir, "programs", "data-from-outside");
-    const { stdout, stderr, exitCode } = await bun(programs, flag, "--aot", join(programs, "validate-returns-a-copy.ts"));
+    const { stdout, stderr, exitCode } = await bun(
+      programs,
+      flag,
+      "--aot",
+      join(programs, "validate-returns-a-copy.ts"),
+    );
     expect(stderr).toContain(`--aot does not support ${flag}: the program is compiled once, before it starts`);
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });

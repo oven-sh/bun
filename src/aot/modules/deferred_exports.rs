@@ -15,8 +15,11 @@ pub struct DeferredExports {
 }
 
 /// The native modules that mirror an object of the host, which makes most of its members at their first read: `process.stdout` loads `node:stream`.
-const MODULES_THAT_MIRROR_AN_OBJECT: [RuntimeModule; 3] =
-    [RuntimeModule::NodeModule, RuntimeModule::NodeProcess, RuntimeModule::Bun];
+const MODULES_THAT_MIRROR_AN_OBJECT: [RuntimeModule; 3] = [
+    RuntimeModule::NodeModule,
+    RuntimeModule::NodeProcess,
+    RuntimeModule::Bun,
+];
 
 struct LibraryModule<'a, 's> {
     hir: &'a hir::File<'s>,
@@ -49,17 +52,21 @@ impl DeferredExports {
             return true;
         }
         let key = (module.registry_id(), name);
-        self.names.binary_search_by(|(module, name)| (*module, &**name).cmp(&key)).is_ok()
+        self.names
+            .binary_search_by(|(module, name)| (*module, &**name).cmp(&key))
+            .is_ok()
     }
 }
 
 impl LibraryModule<'_, '_> {
     fn find_getters(&self) -> Vec<Atom> {
         let hir = self.hir;
-        let exported = hir.ids(hir.body).find_map(|statement| match hir[statement].kind {
-            StmtKind::ExportDefault(value) => Some(hir.skip_type_assertions(value)),
-            _ => None,
-        });
+        let exported = hir
+            .ids(hir.body)
+            .find_map(|statement| match hir[statement].kind {
+                StmtKind::ExportDefault(value) => Some(hir.skip_type_assertions(value)),
+                _ => None,
+            });
         let Some(exported) = exported else {
             return Vec::new();
         };
@@ -79,10 +86,13 @@ impl LibraryModule<'_, '_> {
             _ => None,
         };
         let mut getters = self.find_getters_of_literal(literal);
-        getters.extend(hir.ids(hir.body).filter_map(|statement| match hir[statement].kind {
-            StmtKind::Expr(expression) => self.find_defined_getter(symbol, expression),
-            _ => None,
-        }));
+        getters.extend(
+            hir.ids(hir.body)
+                .filter_map(|statement| match hir[statement].kind {
+                    StmtKind::Expr(expression) => self.find_defined_getter(symbol, expression),
+                    _ => None,
+                }),
+        );
         getters
     }
 
@@ -110,11 +120,14 @@ impl LibraryModule<'_, '_> {
             return None;
         };
         let call = hir[call];
-        let callee = self.builtins?.builtin_of_expression(hir.skip_type_assertions(call.callee));
+        let callee = self
+            .builtins?
+            .builtin_of_expression(hir.skip_type_assertions(call.callee));
         if callee != Some(BuiltinId::ObjectDefineProperty) || call.args.len() != 3 {
             return None;
         }
-        let argument = |index: usize| hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, index));
+        let argument =
+            |index: usize| hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, index));
         let object = argument(0);
         let is_exported = matches!(hir[object].kind, ExprKind::Ident(_))
             && matches!(self.bound.binding(object), Binding::Symbol(symbol) if symbol == exported);

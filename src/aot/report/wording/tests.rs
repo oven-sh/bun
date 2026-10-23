@@ -86,7 +86,10 @@ fn assert_plain(text: &str) {
 
 fn assert_has_heading(code: &str) {
     let heading = format!("### {code}");
-    assert!(EXPLAIN_PAGE.lines().any(|line| line == heading), "{heading}");
+    assert!(
+        EXPLAIN_PAGE.lines().any(|line| line == heading),
+        "{heading}"
+    );
 }
 
 fn ill_typed_wordings() -> Vec<IllTypedWording> {
@@ -117,11 +120,20 @@ fn report_wordings() -> Vec<&'static str> {
         texts.extend([missed_optimization_code(kind), decline_sentence(kind)]);
     }
     let reason_sentences: [(usize, ReasonSentence); 7] = [
-        (TypedResultDeclineReason::COUNT, typed_result_decline_sentence),
+        (
+            TypedResultDeclineReason::COUNT,
+            typed_result_decline_sentence,
+        ),
         (CallDeclineReason::COUNT, call_decline_sentence),
-        (GeneratorFusionDeclineReason::COUNT, generator_fusion_decline_sentence),
+        (
+            GeneratorFusionDeclineReason::COUNT,
+            generator_fusion_decline_sentence,
+        ),
         (ArrayChainDeclineReason::COUNT, array_chain_decline_sentence),
-        (StringBuilderDeclineReason::COUNT, string_builder_decline_sentence),
+        (
+            StringBuilderDeclineReason::COUNT,
+            string_builder_decline_sentence,
+        ),
         (LoopDeclineReason::COUNT, loop_decline_sentence),
         (InterpretedCause::COUNT, interpreted_cause_sentence),
     ];
@@ -285,7 +297,11 @@ fn each_heap_cause_but_none_has_sentence() {
     let mut sentences = Vec::new();
     for cause in AllocationHeapCause::ALL {
         let sentence = heap_cause_sentence(cause);
-        assert_eq!(sentence.is_none(), cause == AllocationHeapCause::None, "{cause:?}");
+        assert_eq!(
+            sentence.is_none(),
+            cause == AllocationHeapCause::None,
+            "{cause:?}"
+        );
         sentences.extend(sentence);
     }
     assert!(sentences.iter().all(|sentence| is_clause(sentence)));
@@ -297,7 +313,11 @@ fn each_interpreted_cause_has_sentence() {
     let mut sentences = Vec::new();
     for cause in InterpretedCause::ALL {
         let sentence = interpreted_cause_sentence(cause.to_wire());
-        assert_eq!(sentence.is_none(), cause == InterpretedCause::None, "{cause:?}");
+        assert_eq!(
+            sentence.is_none(),
+            cause == InterpretedCause::None,
+            "{cause:?}"
+        );
         sentences.extend(sentence);
     }
     assert!(sentences.iter().all(|sentence| is_clause(sentence)));
@@ -306,7 +326,10 @@ fn each_interpreted_cause_has_sentence() {
 
 #[test]
 fn undeclared_interpreted_cause_has_no_sentence() {
-    assert_eq!(interpreted_cause_sentence(InterpretedCause::COUNT as u32), None);
+    assert_eq!(
+        interpreted_cause_sentence(InterpretedCause::COUNT as u32),
+        None
+    );
     assert_eq!(interpreted_cause_sentence(u32::MAX), None);
 }
 
@@ -329,8 +352,14 @@ fn level_labels_are_proven_guarded_unknown() {
 
 #[test]
 fn column_labels_are_free_tested_by_name() {
-    assert_eq!(AccessColumn::ALL.map(column_label), ["free", "tested", "by name"]);
-    assert_eq!(AccessColumn::ALL.map(column_key), ["free", "tested", "byName"]);
+    assert_eq!(
+        AccessColumn::ALL.map(column_label),
+        ["free", "tested", "by name"]
+    );
+    assert_eq!(
+        AccessColumn::ALL.map(column_key),
+        ["free", "tested", "byName"]
+    );
 }
 
 #[test]
@@ -375,12 +404,24 @@ fn codes_are_kebab_case_and_distinct() {
 
 #[test]
 fn codes_do_not_follow_enumerator_names() {
-    assert_eq!(cause_code(UnprovenCause::ReachesUnknownJavaScript), "passed-to-untyped-code");
+    assert_eq!(
+        cause_code(UnprovenCause::ReachesUnknownJavaScript),
+        "passed-to-untyped-code"
+    );
     assert_eq!(cause_code(UnprovenCause::UnknownBase), "untyped-base");
-    assert_eq!(cause_code(UnprovenCause::OwnPropertyHidesMember), "method-shadowed");
-    assert_eq!(cause_code(UnprovenCause::LeftByPasses), "missed-optimization");
+    assert_eq!(
+        cause_code(UnprovenCause::OwnPropertyHidesMember),
+        "method-shadowed"
+    );
+    assert_eq!(
+        cause_code(UnprovenCause::LeftByPasses),
+        "missed-optimization"
+    );
     assert_eq!(guard_cause_code(CheckCause::MayFail), "wrong-type");
-    assert_eq!(missed_optimization_code(DeclineKind::HotCallNotInlined), "not-inlined");
+    assert_eq!(
+        missed_optimization_code(DeclineKind::HotCallNotInlined),
+        "not-inlined"
+    );
     assert_eq!(trim_blocker_code(UnseenCodeCause::EvaluatesText), "eval");
 }
 
@@ -419,9 +460,18 @@ fn no_diagnostic_uses_a_banned_phrase() {
 
 #[test]
 fn banned_phrase_is_found_in_any_case() {
-    assert_eq!(banned_phrase_in("the callee isn't known at build time"), None);
-    assert_eq!(banned_phrase_in("Compile with --Admit=runtime-code"), Some("admit"));
-    assert_eq!(banned_phrase_in("The callee is PREDICTED"), Some("predicted"));
+    assert_eq!(
+        banned_phrase_in("the callee isn't known at build time"),
+        None
+    );
+    assert_eq!(
+        banned_phrase_in("Compile with --Admit=runtime-code"),
+        Some("admit")
+    );
+    assert_eq!(
+        banned_phrase_in("The callee is PREDICTED"),
+        Some("predicted")
+    );
 }
 
 #[test]

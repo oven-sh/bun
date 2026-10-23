@@ -28,7 +28,8 @@ use crate::load::is_in_node_modules;
 use crate::load::sources::{ParsedSource, SourceKind};
 
 pub(crate) const DECLARATIONS_PATH: &[u8] = b"/$bun/react-compiler/runtime.d.ts";
-pub(crate) const DECLARATIONS: &[u8] = b"declare module \"react/compiler-runtime\" {\n  export function c(size: number): any[];\n}\n";
+pub(crate) const DECLARATIONS: &[u8] =
+    b"declare module \"react/compiler-runtime\" {\n  export function c(size: number): any[];\n}\n";
 
 pub(crate) struct ReactCompiler<'a> {
     mode: ReactCompilerMode,

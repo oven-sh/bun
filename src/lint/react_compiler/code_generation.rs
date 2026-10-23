@@ -1,5 +1,5 @@
 use crate::compile::Flavor;
-use crate::convert::{Converted, ConvertError, Root, convert};
+use crate::convert::{ConvertError, Converted, Root, convert};
 use crate::suppression::find_program_suppressions;
 use bun_alloc::Arena;
 use bun_ast::{
@@ -146,7 +146,9 @@ pub fn generate_function<'a, R>(
     with_ast_arena(|arena| {
         let mut converted = match convert(file, arena, candidate.function, Flavor::Eslint) {
             Ok(converted) => converted,
-            Err(ConvertError::TooDeep | ConvertError::ThisParameter | ConvertError::Using) => return Ok(None),
+            Err(ConvertError::TooDeep | ConvertError::ThisParameter | ConvertError::Using) => {
+                return Ok(None);
+            }
         };
         let import_bindings = std::mem::take(&mut converted.import_bindings);
         let symbols = std::mem::take(&mut converted.symbols);
@@ -424,7 +426,12 @@ impl<'c> GenerationHost<'c> {
 
     fn generated_symbols(&self) -> Vec<GeneratedSymbol> {
         let generated = |(index, (symbol, &origin)): (usize, (&Symbol, &SymbolOrigin))| {
-            let is_outside = self.converted.is_outside.get(index).copied().unwrap_or(true);
+            let is_outside = self
+                .converted
+                .is_outside
+                .get(index)
+                .copied()
+                .unwrap_or(true);
             GeneratedSymbol {
                 name: symbol.original_name.slice().into(),
                 origin,
@@ -577,7 +584,9 @@ mod tests {
     fn describe_candidates(text: &str) -> String {
         with_file(text, |file| {
             let describe = |it: &Candidate<'_>| {
-                let name = it.name.map_or_else(|| "?".to_owned(), |name| name.to_string());
+                let name = it
+                    .name
+                    .map_or_else(|| "?".to_owned(), |name| name.to_string());
                 match it.is_in_react_wrapper {
                     true => format!("wrapped {name}"),
                     false => name,
@@ -636,7 +645,9 @@ mod tests {
     fn describe_statements(statements: &[JsStmt]) -> String {
         let of_value = |value: Option<JsExpr>| value.map_or("-", |it| it.data.tag_name());
         let described = statements.iter().map(|statement| match &statement.data {
-            StmtData::SBlock(block) => format!("{{ {} }}", describe_statements(block.stmts.slice())),
+            StmtData::SBlock(block) => {
+                format!("{{ {} }}", describe_statements(block.stmts.slice()))
+            }
             StmtData::SIf(branch) => {
                 let no = branch.no.map(|no| describe_statements(&[no]));
                 let yes = describe_statements(&[branch.yes]);
@@ -649,7 +660,11 @@ mod tests {
             StmtData::SReturn(returned) => format!("return {}", of_value(returned.value)),
             StmtData::SExpr(expression) => match &expression.value.data {
                 ExprData::EBinary(binary) => {
-                    format!("{} op {}", binary.left.data.tag_name(), binary.right.data.tag_name())
+                    format!(
+                        "{} op {}",
+                        binary.left.data.tag_name(),
+                        binary.right.data.tag_name()
+                    )
                 }
                 other => other.tag_name().to_owned(),
             },
@@ -806,7 +821,10 @@ mod tests {
     fn new_date_is_kept() {
         let text = "function useNow() { useState(0); return new Date(); }";
         let found = generate(text, &AUTOMATIC, |_, generated| {
-            (has_new_expression(generated.body), describe_statements(generated.body))
+            (
+                has_new_expression(generated.body),
+                describe_statements(generated.body),
+            )
         });
         let (has_new, shape) = found.expect("the function is compiled");
         assert!(has_new, "{shape}");

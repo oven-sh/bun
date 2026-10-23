@@ -40,7 +40,11 @@ test("every class except Private and EnginePrivate has a vector and no text repe
 
 test("the vectors agree with the engine", () => {
   expect(vectors.filter(v => isIndex(v.text) !== (v.class === "Index"))).toEqual([]);
-  expect(vectors.filter(v => isCanonicalNumericKey(v.text) !== (v.class === "Index" || v.class === "CanonicalNumericString"))).toEqual([]);
+  expect(
+    vectors.filter(
+      v => isCanonicalNumericKey(v.text) !== (v.class === "Index" || v.class === "CanonicalNumericString"),
+    ),
+  ).toEqual([]);
 });
 
 test("the names on Object.prototype", () => {

@@ -134,7 +134,12 @@ pub(super) fn read_terminator(
 pub(super) fn read_target(words: &[u32]) -> Result<(TargetView<'_>, &[u32]), InternalErrorKind> {
     let out_of_bounds = InternalErrorKind::ListOutOfBounds;
     let invalid_head = InternalErrorKind::IdOutOfRange;
-    let (head, rest) = split_head(words, TargetHead::WORDS, TargetHead::from_words, invalid_head)?;
+    let (head, rest) = split_head(
+        words,
+        TargetHead::WORDS,
+        TargetHead::from_words,
+        invalid_head,
+    )?;
     let (arguments, rest) = rest
         .split_at_checked(head.argument_count as usize)
         .ok_or(out_of_bounds)?;
@@ -354,7 +359,8 @@ mod tests {
 
     impl TestStream {
         fn expect_visit(&mut self, field: FieldWord, offset: usize) {
-            self.expected_visits.push((field, self.words.len() + offset));
+            self.expected_visits
+                .push((field, self.words.len() + offset));
         }
 
         fn push_visited(&mut self, field: FieldWord, word: u32) {

@@ -61,7 +61,5 @@ pub use references::{IdMap, Reference, ReferenceKind};
 pub use sections::{ListCounts, SectionWriter, WireSpan};
 pub use strings::StringTable;
 pub use text::{ParseError, Parser, parse_program};
-pub use types::{
-    ClassPart, OpaqueKind, PreparedType, Primitives, Type, TypeFlags, TypeTable,
-};
+pub use types::{ClassPart, OpaqueKind, PreparedType, Primitives, Type, TypeFlags, TypeTable};
 pub use wtf8::is_canonical_wtf8;

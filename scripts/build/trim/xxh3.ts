@@ -39,15 +39,17 @@ const avalanche64 = (hash: bigint) => {
   hash = (hash * prime64c) & mask;
   return hash ^ (hash >> 32n);
 };
-const mix16 = (bytes: Buffer, at: number, secretAt: number) => foldedProduct(read64(bytes, at) ^ read64(secret, secretAt), read64(bytes, at + 8) ^ read64(secret, secretAt + 8));
+const mix16 = (bytes: Buffer, at: number, secretAt: number) =>
+  foldedProduct(read64(bytes, at) ^ read64(secret, secretAt), read64(bytes, at + 8) ^ read64(secret, secretAt + 8));
 
 export function xxh3(bytes: Buffer): bigint {
   const length = bytes.length;
   const size = BigInt(length);
   if (length === 0) return avalanche64(read64(secret, 56) ^ read64(secret, 64));
   if (length <= 3) {
-    const combined = (BigInt(bytes[0]!) << 16n) | (BigInt(bytes[length >> 1]!) << 24n) | BigInt(bytes[length - 1]!) | (size << 8n);
-    return avalanche64((read32(secret, 0) ^ read32(secret, 4)) ^ combined);
+    const combined =
+      (BigInt(bytes[0]!) << 16n) | (BigInt(bytes[length >> 1]!) << 24n) | BigInt(bytes[length - 1]!) | (size << 8n);
+    return avalanche64(read32(secret, 0) ^ read32(secret, 4) ^ combined);
   }
   if (length <= 8) {
     const keyed = (read32(bytes, length - 4) + (read32(bytes, 0) << 32n)) ^ (read64(secret, 8) ^ read64(secret, 16));
@@ -101,6 +103,10 @@ export function xxh3(bytes: Buffer): bigint {
   for (let stripe = 0; stripe < stripes; stripe++) accumulate(blocks * block + stripe * 64, stripe * 8);
   accumulate(length - 64, secret.length - 64 - 7);
   let sum = (size * prime64a) & mask;
-  for (let pair = 0; pair < 4; pair++) sum += foldedProduct(lanes[2 * pair]! ^ read64(secret, 11 + 16 * pair), lanes[2 * pair + 1]! ^ read64(secret, 11 + 16 * pair + 8));
+  for (let pair = 0; pair < 4; pair++)
+    sum += foldedProduct(
+      lanes[2 * pair]! ^ read64(secret, 11 + 16 * pair),
+      lanes[2 * pair + 1]! ^ read64(secret, 11 + 16 * pair + 8),
+    );
   return avalanche(sum & mask);
 }

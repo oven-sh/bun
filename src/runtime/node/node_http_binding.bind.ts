@@ -43,7 +43,9 @@ export const upgradeNodeHTTPResponseToWebSocket = b.fn({
   capability: "js",
   throws: true,
   // `data` of the new ServerWebSocket.
-  uses: { websocket: [{ use: "Everything" }, { use: "Retains", in: { place: "NativeCell", cell: webSocketDataCell } }] },
+  uses: {
+    websocket: [{ use: "Everything" }, { use: "Retains", in: { place: "NativeCell", cell: webSocketDataCell } }],
+  },
 });
 
 export const sendWebSocketFrame = b.fn({

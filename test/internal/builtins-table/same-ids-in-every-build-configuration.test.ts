@@ -31,7 +31,11 @@ async function idsFor(typesOnly: readonly string[]): Promise<string> {
   return readFileSync(join(String(directory), "aot_builtin_ids.rs"), "utf8");
 }
 
-test.skipIf(generated === undefined)("one prebuilt engine serves a build with and a build without assertions", async () => {
-  const [withoutAssertions, withAssertions] = await Promise.all([idsFor(testSchemas), idsFor([])]);
-  expect(withAssertions === withoutAssertions).toBe(true);
-}, 120_000);
+test.skipIf(generated === undefined)(
+  "one prebuilt engine serves a build with and a build without assertions",
+  async () => {
+    const [withoutAssertions, withAssertions] = await Promise.all([idsFor(testSchemas), idsFor([])]);
+    expect(withAssertions === withoutAssertions).toBe(true);
+  },
+  120_000,
+);

@@ -17,9 +17,8 @@ use crate::link::key_context;
 use crate::link::testing::{
     Prepared, Projects, TestUnit, application_file, find_file, find_synthetic_export,
     in_application, mark_prepared, mark_prepared_in_order, prepare, reverse, test_class_key,
-    test_function_key,
-    test_object_type_key, test_variable_key, unit_in, with_projects_without_bun_modules,
-    with_test_files,
+    test_function_key, test_object_type_key, test_variable_key, unit_in,
+    with_projects_without_bun_modules, with_test_files,
 };
 use crate::load::ProjectId;
 use crate::lower::{Fragment, FragmentBuilder};
@@ -126,7 +125,9 @@ fn create_function_variable(module: ModuleId, ty: TypeId, function: FunctionId) 
 }
 
 fn define_plain_variable(unit: &mut TestUnit, symbol: u32) -> VariableId {
-    let id = unit.fragment.declare_variable(test_variable_key(unit.file.0, symbol));
+    let id = unit
+        .fragment
+        .declare_variable(test_variable_key(unit.file.0, symbol));
     let variable = Variable {
         module: unit.module,
         declared: DeclaredType::untyped(),
@@ -138,7 +139,10 @@ fn define_plain_variable(unit: &mut TestUnit, symbol: u32) -> VariableId {
 
 fn intern_text_key(fragment: &mut FragmentBuilder, text: &[u8]) -> (PropertyKeyId, StringId) {
     let text = fragment.strings.intern(text);
-    (fragment.property_keys.intern(PropertyKey::from_text(text)), text)
+    (
+        fragment.property_keys.intern(PropertyKey::from_text(text)),
+        text,
+    )
 }
 
 fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeFunctionEntry {
@@ -167,8 +171,12 @@ fn drops_uncalled_function() {
         let module = unit.module;
         let [g_string, g_text, h_string, h_text] = ["g string", "g text", "h string", "h text"]
             .map(|text| unit.fragment.strings.intern(text.as_bytes()));
-        let g_site = unit.fragment.add_type_site(create_type_site(module, g_text));
-        let h_site = unit.fragment.add_type_site(create_type_site(module, h_text));
+        let g_site = unit
+            .fragment
+            .add_type_site(create_type_site(module, g_text));
+        let h_site = unit
+            .fragment
+            .add_type_site(create_type_site(module, h_text));
         let g = unit.define_function(2, |builder| {
             let value = builder.string(g_string);
             builder.check(value, TypeTable::NUMBER, Some(g_site));
@@ -205,7 +213,9 @@ fn drops_uncalled_function() {
 fn retains_cross_unit_callee() {
     with_test_files(|projects, [main, first, _]| {
         let mut caller = TestUnit::new(main);
-        let callee = caller.fragment.declare_function(test_function_key(first.0, 0));
+        let callee = caller
+            .fragment
+            .declare_function(test_function_key(first.0, 0));
         caller.define_body(|builder| {
             builder.call_direct(callee, &[]);
         });
@@ -265,7 +275,10 @@ fn order_of_units_does_not_change_marks() {
             panic!("{errors:?}");
         };
         let first_referrer = files.into_iter().min().unwrap();
-        assert_eq!((key.key, referenced_in.file), (undefined_key, first_referrer));
+        assert_eq!(
+            (key.key, referenced_in.file),
+            (undefined_key, first_referrer)
+        );
     });
 }
 
@@ -291,7 +304,9 @@ fn retains_runtime_function() {
         let mut library = TestUnit::new(first);
         let root = library.define_function(0, |_| {});
         library.define_function(1, |_| {});
-        library.fragment.add_runtime_function(create_runtime_function(0, root));
+        library
+            .fragment
+            .add_runtime_function(create_runtime_function(0, root));
 
         let marked = mark_fragments(projects, [library.finish()]);
 

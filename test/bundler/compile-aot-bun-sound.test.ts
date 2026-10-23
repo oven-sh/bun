@@ -127,7 +127,10 @@ test("react-dom's server bundles are typed at the installed files' own paths", (
 test("an int32 of a typed text is Bun's", () => {
   const texts = folders.flatMap(folder => {
     const { name, version } = json(join(folder, "sound.json"));
-    return Object.entries(layOf(folder, name, version)).map(([path, bytes]) => [`${name}/${version}/${path}`, bytes.toString()]);
+    return Object.entries(layOf(folder, name, version)).map(([path, bytes]) => [
+      `${name}/${version}/${path}`,
+      bytes.toString(),
+    ]);
   });
   const declaring = texts.filter(([, text]) => /\btype int32 = /.test(text));
   expect(declaring.length).toBeGreaterThan(20);
@@ -135,16 +138,19 @@ test("an int32 of a typed text is Bun's", () => {
     expect([path, /\btype int32 = (.*);/.exec(text)![1]]).toEqual([path, 'import("bun").int32']);
 });
 
-test.each(["19.0.0", "19.1.0", "19.2.8", "19.3.0", "19.3.1"])("react-dom %s constructs a request without a cast through unknown", version => {
-  const lay = join(home, "react-dom", version, "lay");
-  const texts = filesUnder(lay);
-  expect(texts.length).toBe(2);
-  for (const path of texts) {
-    const text = readFileSync(join(lay, path), "utf8");
-    expect(text).toContain("new (RequestInstance as FZ.RequestConstructor)(");
-    expect(text).not.toContain(" as unknown as ");
-  }
-});
+test.each(["19.0.0", "19.1.0", "19.2.8", "19.3.0", "19.3.1"])(
+  "react-dom %s constructs a request without a cast through unknown",
+  version => {
+    const lay = join(home, "react-dom", version, "lay");
+    const texts = filesUnder(lay);
+    expect(texts.length).toBe(2);
+    for (const path of texts) {
+      const text = readFileSync(join(lay, path), "utf8");
+      expect(text).toContain("new (RequestInstance as FZ.RequestConstructor)(");
+      expect(text).not.toContain(" as unknown as ");
+    }
+  },
+);
 
 test.skipIf(!existsSync(join(home, "..", "..", ".gitattributes")))(
   "neither git nor the formatter changes a byte of them",
@@ -161,7 +167,11 @@ test("what seroval exports does not name the type of its nodes in a result", () 
   expect(exported).toContain("toCrossJSONAsync");
   for (const name of exported) {
     const head = new RegExp(`^(?:async )?function ${name.replace("$", "\\$")}\\(.*\\): (.*) \\{$`, "m").exec(text);
-    if (head) expect({ name, result: head[1] }).toEqual({ name, result: expect.not.stringMatching(/SerovalNode|SerovalJSON|ObjectRecord|MapRecord/) });
+    if (head)
+      expect({ name, result: head[1] }).toEqual({
+        name,
+        result: expect.not.stringMatching(/SerovalNode|SerovalJSON|ObjectRecord|MapRecord/),
+      });
   }
 });
 
@@ -218,7 +228,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
     expect(Object.fromEntries(Object.entries(lay).map(([path, bytes]) => [path, sha256(bytes)]))).toEqual(sums);
   });
 
-  test("of the module \"bun\" a laid text names only the type that the compiler declares itself", () => {
+  test('of the module "bun" a laid text names only the type that the compiler declares itself', () => {
     for (const [path, bytes] of Object.entries(layOf(folder, name, version)))
       expect([path, /import\("bun"\)(?!\.int32;)|from "bun"/.test(bytes.toString())]).toEqual([path, false]);
   });

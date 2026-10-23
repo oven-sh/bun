@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 type When = "top" | "late" | "spied" | "preload" | "ahead";
 
@@ -36,7 +36,28 @@ const kinds: Record<string, Kind> = {
       `const first = V; const second = first;`,
       `function chain(n: number): number { return second(n); }`,
     ].join("\n"),
-    uses: [`V(...[1])`, `V(...one)`, `V?.(1)`, `Reflect.apply(V, null, [1])`, `({ V }).V(1)`, `[V][0](1)`, `(V as (n: number) => number)(1)`, `V!(1)`, `V.name.length > 0`, `V instanceof Function`, `later()(1)`, `new Keeper().f(1)`, `Keeper.g(1)`, `byDefault()`, `viaConditional(true)`, `viaOr(1)`, `Promise.resolve(1).then(V)`, `viaObject.f(1)`, `viaLet(1)`, `chain(1)`],
+    uses: [
+      `V(...[1])`,
+      `V(...one)`,
+      `V?.(1)`,
+      `Reflect.apply(V, null, [1])`,
+      `({ V }).V(1)`,
+      `[V][0](1)`,
+      `(V as (n: number) => number)(1)`,
+      `V!(1)`,
+      `V.name.length > 0`,
+      `V instanceof Function`,
+      `later()(1)`,
+      `new Keeper().f(1)`,
+      `Keeper.g(1)`,
+      `byDefault()`,
+      `viaConditional(true)`,
+      `viaOr(1)`,
+      `Promise.resolve(1).then(V)`,
+      `viaObject.f(1)`,
+      `viaLet(1)`,
+      `chain(1)`,
+    ],
     own: [`V(1)`, `V(...[1])`, `[1].map(V).join()`, `ownKept(1)`, `(() => V)()(1)`],
     ownHelpers: `const ownKept = V;`,
   },
@@ -44,24 +65,24 @@ const kinds: Record<string, Kind> = {
     when: ["top", "late", "spied"],
     module: `export function V(first: number, ...rest: number[]): number { return first + rest.length; }`,
     mock: `{ V: (first: number, ...rest: number[]) => first + rest.length + 100 }`,
-    imports: [
-      `import { V } from "./a";`,
-      `import * as ns from "./a";`,
-    ].join("\n"),
+    imports: [`import { V } from "./a";`, `import * as ns from "./a";`].join("\n"),
     helpers: `const list: [number, number] = [1, 2];`,
     uses: [`V(1)`, `V(1, 2, 3)`, `V(1, ...[2, 3])`, `V(...list)`, `ns.V(1, ...[2, 3])`, `ns.V(...list)`],
     own: [`V(1, ...[2, 3])`],
   },
   "function-whose-result-is-dropped": {
     when: ["top", "late", "spied", "preload", "ahead"],
-    module: [
-      `export function V(n: number): void {}`,
-      `export function pure(n: number): number { return n; }`,
-    ].join("\n"),
+    module: [`export function V(n: number): void {}`, `export function pure(n: number): number { return n; }`].join(
+      "\n",
+    ),
     mock: `{ V: mock((n: number) => {}), pure: mock((n: number) => n) }`,
     imports: `import { V, pure } from "./a";`,
     helpers: `function dropped(): void { pure(1); V(2); }`,
-    uses: [`(V(1), (V as any).mock?.calls.length)`, `(pure(1), (pure as any).mock?.calls.length)`, `(dropped(), (pure as any).mock?.calls.length)`],
+    uses: [
+      `(V(1), (V as any).mock?.calls.length)`,
+      `(pure(1), (pure as any).mock?.calls.length)`,
+      `(dropped(), (pure as any).mock?.calls.length)`,
+    ],
   },
   "function-that-returns-a-constant": {
     when: ["top", "late", "spied"],
@@ -73,7 +94,16 @@ const kinds: Record<string, Kind> = {
     mock: `{ V: () => 6, flag: () => false, arrow: () => "mocked" }`,
     imports: `import { V, flag, arrow } from "./a";`,
     helpers: `function branch(): string { if (flag()) return "taken"; return "not taken"; }`,
-    uses: [`V()`, `V() === 5 ? "five" : "other"`, `flag() ? "yes" : "no"`, `arrow()`, `arrow() === "real"`, `\`\${V()}\``, `V() + 1`, `branch()`],
+    uses: [
+      `V()`,
+      `V() === 5 ? "five" : "other"`,
+      `flag() ? "yes" : "no"`,
+      `arrow()`,
+      `arrow() === "real"`,
+      `\`\${V()}\``,
+      `V() + 1`,
+      `branch()`,
+    ],
     own: [`V() === 5 ? "five" : "other"`, `flag() ? "yes" : "no"`],
   },
   "function-that-hands-back-its-argument": {
@@ -95,10 +125,7 @@ const kinds: Record<string, Kind> = {
   },
   "function-with-properties": {
     when: ["top", "late", "spied"],
-    module: [
-      `export function V(n: number): number { return n + 1; }`,
-      `V.extra = "real extra";`,
-    ].join("\n"),
+    module: [`export function V(n: number): number { return n + 1; }`, `V.extra = "real extra";`].join("\n"),
     mock: `{ V: Object.assign((n: number) => n + 100, { extra: "mocked extra" }) }`,
     uses: [`V(1)`, `V.extra`],
     own: [`V.extra`],
@@ -117,10 +144,7 @@ const kinds: Record<string, Kind> = {
       `export function V(): P { return { x: 1, y: "real" }; }`,
     ].join("\n"),
     mock: `{ V: () => ({ y: "mocked", x: 2 }) }`,
-    imports: [
-      `import { V } from "./a";`,
-      `import type { P } from "./a";`,
-    ].join("\n"),
+    imports: [`import { V } from "./a";`, `import type { P } from "./a";`].join("\n"),
     helpers: `function takes(p: P): string { return p.y + p.x; }`,
     uses: [`V().x`, `V().y`, `JSON.stringify(V())`, `takes(V())`, `(({ x }) => x)(V())`],
   },
@@ -184,8 +208,49 @@ const kinds: Record<string, Kind> = {
       `function staticsOf(C: { s(): string }): string { return C.s(); }`,
       `const keptClass = V;`,
     ].join("\n"),
-    uses: [`V.s()`, `V.t`, `V.sg`, `V.make().m()`, `V["s"]()`, `V.s.call(V)`, `new V(...[3]).w`, `Reflect.construct(V, []).m()`, `new (V)().m()`, `new Sub().m()`, `new Sub().own()`, `Sub.s()`, `Sub.t`, `new Sub() instanceof V`, `new SubWithSuper(5).w`, `new SubWithSuper(5).m()`, `new (lateSub())().m()`, `Object.getPrototypeOf(Sub) === V`, `Object.getPrototypeOf(lateSub()) === V`, `V.prototype.m.call(null)`, `Object.getOwnPropertyNames(V.prototype).join()`, `isOne(new V())`, `isOne({})`, `new Holder().made.m()`, `Holder.kept === V`, `typeof V.s`, `"s" in V`, `staticsOf(V)`, `V.name`, `keptClass.make().m()`, `keptClass.make() instanceof keptClass`],
-    own: [`V.s()`, `V.t`, `new V().m()`, `V.make().m()`, `new OwnSub().m()`, `new (ownLateSub())().m()`, `ownIsOne(new V())`, `ownKeptClass.make().m()`],
+    uses: [
+      `V.s()`,
+      `V.t`,
+      `V.sg`,
+      `V.make().m()`,
+      `V["s"]()`,
+      `V.s.call(V)`,
+      `new V(...[3]).w`,
+      `Reflect.construct(V, []).m()`,
+      `new (V)().m()`,
+      `new Sub().m()`,
+      `new Sub().own()`,
+      `Sub.s()`,
+      `Sub.t`,
+      `new Sub() instanceof V`,
+      `new SubWithSuper(5).w`,
+      `new SubWithSuper(5).m()`,
+      `new (lateSub())().m()`,
+      `Object.getPrototypeOf(Sub) === V`,
+      `Object.getPrototypeOf(lateSub()) === V`,
+      `V.prototype.m.call(null)`,
+      `Object.getOwnPropertyNames(V.prototype).join()`,
+      `isOne(new V())`,
+      `isOne({})`,
+      `new Holder().made.m()`,
+      `Holder.kept === V`,
+      `typeof V.s`,
+      `"s" in V`,
+      `staticsOf(V)`,
+      `V.name`,
+      `keptClass.make().m()`,
+      `keptClass.make() instanceof keptClass`,
+    ],
+    own: [
+      `V.s()`,
+      `V.t`,
+      `new V().m()`,
+      `V.make().m()`,
+      `new OwnSub().m()`,
+      `new (ownLateSub())().m()`,
+      `ownIsOne(new V())`,
+      `ownKeptClass.make().m()`,
+    ],
     ownHelpers: [
       `const ownKeptClass = V;`,
       `class OwnSub extends V {}`,
@@ -253,10 +318,7 @@ const kinds: Record<string, Kind> = {
   },
   "instance-exported": {
     when: ["top", "late"],
-    module: [
-      `export class C { m(): string { return "real m"; } n = 1; }`,
-      `export const V = new C();`,
-    ].join("\n"),
+    module: [`export class C { m(): string { return "real m"; } n = 1; }`, `export const V = new C();`].join("\n"),
     mock: `{ V: { m: () => "mocked m", n: 2 } }`,
     helpers: [
       `function uses(): string { return V.m() + V.n; }`,
@@ -268,15 +330,9 @@ const kinds: Record<string, Kind> = {
   },
   "enum-more": {
     when: ["top", "late"],
-    module: [
-      `export enum V { A = 1, B = 2, C = A | B }`,
-      `export enum W { X = "x", Y = "y" }`,
-    ].join("\n"),
+    module: [`export enum V { A = 1, B = 2, C = A | B }`, `export enum W { X = "x", Y = "y" }`].join("\n"),
     mock: `{ V: { A: 10, B: 20, C: 30, 10: "A", 20: "B", 30: "C" }, W: { X: "xx", Y: "yy" } }`,
-    imports: [
-      `import { V, W } from "./a";`,
-      `import * as ns from "./a";`,
-    ].join("\n"),
+    imports: [`import { V, W } from "./a";`, `import * as ns from "./a";`].join("\n"),
     helpers: [
       `function byDefault(v: V = V.B): V { return v; }`,
       `const table: Record<number, string> = { 1: "one", 10: "ten" };`,
@@ -285,7 +341,27 @@ const kinds: Record<string, Kind> = {
       `const kept = V.A;`,
       `function isA(v: V): boolean { return v === V.A; }`,
     ].join("\n"),
-    uses: [`V.A`, `V.C`, `V["A"]`, `V[V.B]`, `V.A | V.B`, `V.A < V.B`, `\`\${V.A}\``, `W.X + W.Y`, `W.X === "x"`, `byDefault()`, `table[V.A]`, `inSwitch(1 as V)`, `inSwitch(10 as V)`, `Object.entries(W).join()`, `new Holder().level`, `kept`, `ns.V.A`, `typeof V`, `isA(V.A)`],
+    uses: [
+      `V.A`,
+      `V.C`,
+      `V["A"]`,
+      `V[V.B]`,
+      `V.A | V.B`,
+      `V.A < V.B`,
+      `\`\${V.A}\``,
+      `W.X + W.Y`,
+      `W.X === "x"`,
+      `byDefault()`,
+      `table[V.A]`,
+      `inSwitch(1 as V)`,
+      `inSwitch(10 as V)`,
+      `Object.entries(W).join()`,
+      `new Holder().level`,
+      `kept`,
+      `ns.V.A`,
+      `typeof V`,
+      `isA(V.A)`,
+    ],
     own: [`V.A`, `V[V.B]`, `W.X`, `Object.keys(W).join()`, `ownSwitch(1 as V)`],
     ownHelpers: `function ownSwitch(e: V): string { switch (e) { case V.A: return "case A"; default: return "no case"; } }`,
   },
@@ -308,15 +384,21 @@ const kinds: Record<string, Kind> = {
     when: ["top", "late"],
     module: `export namespace V { export const x: number = 1; export function f(): string { return "real f"; } export let y = "real y"; export namespace Inner { export const z = 3; } export enum E { A = 1 } export class C { m(): string { return "real m"; } } }`,
     mock: `{ V: { x: 10, f: () => "mocked f", y: "mocked y", Inner: { z: 30 }, E: { A: 10 }, C: class { m(): string { return "mocked m"; } } } }`,
-    imports: [
-      `import { V } from "./a";`,
-      `import * as ns from "./a";`,
-    ].join("\n"),
-    helpers: [
-      `const { f } = V;`,
-      `function const_f(): string { return f(); }`,
-    ].join("\n"),
-    uses: [`V.x`, `V.f()`, `V.y`, `V.Inner.z`, `V.E.A`, `new V.C().m()`, `V.x === 1 ? "one" : "other"`, `Object.keys(V).join()`, `const_f()`, `ns.V.x`, `ns.V.f()`],
+    imports: [`import { V } from "./a";`, `import * as ns from "./a";`].join("\n"),
+    helpers: [`const { f } = V;`, `function const_f(): string { return f(); }`].join("\n"),
+    uses: [
+      `V.x`,
+      `V.f()`,
+      `V.y`,
+      `V.Inner.z`,
+      `V.E.A`,
+      `new V.C().m()`,
+      `V.x === 1 ? "one" : "other"`,
+      `Object.keys(V).join()`,
+      `const_f()`,
+      `ns.V.x`,
+      `ns.V.f()`,
+    ],
     own: [`V.x`, `V.f()`, `V.Inner.z`],
   },
   "namespace-merged-with-a-function": {
@@ -342,11 +424,7 @@ const kinds: Record<string, Kind> = {
     when: ["top", "late", "preload", "ahead"],
     module: `export namespace N { export const x: number = 1; export function f(): string { return "real f"; } }`,
     mock: `{ N: { x: 10, f: () => "mocked f" } }`,
-    imports: [
-      `import { N } from "./a";`,
-      `import x = N.x;`,
-      `import f = N.f;`,
-    ].join("\n"),
+    imports: [`import { N } from "./a";`, `import x = N.x;`, `import f = N.f;`].join("\n"),
     uses: [`x`, `f()`, `N.x`],
   },
   "inferred-primitives": {
@@ -370,7 +448,34 @@ const kinds: Record<string, Kind> = {
       `const kept = TIMEOUT;`,
       `const settings = { timeout: TIMEOUT, name: NAME };`,
     ].join("\n"),
-    uses: [`TIMEOUT`, `TIMEOUT + 1`, `TIMEOUT === 5000`, `TIMEOUT > 100 ? "long" : "short"`, `VERBOSE`, `VERBOSE ? "loud" : "quiet"`, `!VERBOSE`, `NAME`, `NAME.length`, `NAME === "real"`, `NAME + "!"`, `\`\${NAME}\``, `BIG + 1n`, `NEGATIVE`, `Math.abs(NEGATIVE)`, `NOTHING`, `TEMPLATE`, `SUM`, `takesNumber(TIMEOUT)`, `takesString(NAME)`, `inSwitch()`, `({ real: 1, mocked: 2 } as Record<string, number>)[NAME]`, `new Array(SUM).length`, `kept`, `settings.timeout`, `[TIMEOUT, VERBOSE, NAME].join()`],
+    uses: [
+      `TIMEOUT`,
+      `TIMEOUT + 1`,
+      `TIMEOUT === 5000`,
+      `TIMEOUT > 100 ? "long" : "short"`,
+      `VERBOSE`,
+      `VERBOSE ? "loud" : "quiet"`,
+      `!VERBOSE`,
+      `NAME`,
+      `NAME.length`,
+      `NAME === "real"`,
+      `NAME + "!"`,
+      `\`\${NAME}\``,
+      `BIG + 1n`,
+      `NEGATIVE`,
+      `Math.abs(NEGATIVE)`,
+      `NOTHING`,
+      `TEMPLATE`,
+      `SUM`,
+      `takesNumber(TIMEOUT)`,
+      `takesString(NAME)`,
+      `inSwitch()`,
+      `({ real: 1, mocked: 2 } as Record<string, number>)[NAME]`,
+      `new Array(SUM).length`,
+      `kept`,
+      `settings.timeout`,
+      `[TIMEOUT, VERBOSE, NAME].join()`,
+    ],
   },
   "inferred-primitives-behind-an-import": {
     when: ["top", "late"],
@@ -384,7 +489,16 @@ const kinds: Record<string, Kind> = {
     mock: `{ TIMEOUT: 10, VERBOSE: false, NAME: "mocked" }`,
     imports: `import { TIMEOUT, VERBOSE, NAME } from "./a";`,
     uses: [`TIMEOUT`, `VERBOSE ? "loud" : "quiet"`, `NAME`],
-    own: [`TIMEOUT`, `TIMEOUT + 1`, `TIMEOUT === 5000`, `VERBOSE ? "loud" : "quiet"`, `NAME`, `NAME === "real"`, `\`\${NAME}\``, `ownBranch()`],
+    own: [
+      `TIMEOUT`,
+      `TIMEOUT + 1`,
+      `TIMEOUT === 5000`,
+      `VERBOSE ? "loud" : "quiet"`,
+      `NAME`,
+      `NAME === "real"`,
+      `\`\${NAME}\``,
+      `ownBranch()`,
+    ],
     ownHelpers: `function ownBranch(): string { if (VERBOSE) return "taken"; return "not taken"; }`,
   },
   "inferred-literal-passed-where-a-literal-is-asked": {
@@ -415,20 +529,14 @@ const kinds: Record<string, Kind> = {
   },
   "inferred-list": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V = [1, 2, 3];`,
-      `export const W = ["a", "b"] as const;`,
-    ].join("\n"),
+    module: [`export const V = [1, 2, 3];`, `export const W = ["a", "b"] as const;`].join("\n"),
     mock: `{ V: [9], W: ["z"] }`,
     imports: `import { V, W } from "./a";`,
     uses: [`V.length`, `V[0]`, `V.join()`, `W.length`, `W[0]`, `W.join()`],
   },
   "inferred-let": {
     when: ["top", "late"],
-    module: [
-      `export let V = 5;`,
-      `export let W = "real";`,
-    ].join("\n"),
+    module: [`export let V = 5;`, `export let W = "real";`].join("\n"),
     mock: `{ V: 6, W: "mocked" }`,
     imports: `import { V, W } from "./a";`,
     uses: [`V`, `V + 1`, `W`, `W.length`],
@@ -515,10 +623,7 @@ const kinds: Record<string, Kind> = {
   },
   "undefined-and-null": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V: number | undefined = 5;`,
-      `export const W: string | null = "real";`,
-    ].join("\n"),
+    module: [`export const V: number | undefined = 5;`, `export const W: string | null = "real";`].join("\n"),
     mock: `{ V: undefined, W: null }`,
     imports: `import { V, W } from "./a";`,
     uses: [`V`, `W`, `V ?? "none"`, `W ?? "none"`],
@@ -551,26 +656,16 @@ const kinds: Record<string, Kind> = {
   },
   "exported-twice": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V: number = 5;`,
-      `export { V as W };`,
-    ].join("\n"),
+    module: [`export const V: number = 5;`, `export { V as W };`].join("\n"),
     mock: `{ V: 6, W: 7 }`,
     imports: `import { V, W } from "./a";`,
     uses: [`V`, `W`],
   },
   "default-forms": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `const value = { url: "real" };`,
-      `export default value;`,
-      `export const other: number = 1;`,
-    ].join("\n"),
+    module: [`const value = { url: "real" };`, `export default value;`, `export const other: number = 1;`].join("\n"),
     mock: `{ default: { url: "mocked" }, other: 2 }`,
-    imports: [
-      `import V, { other } from "./a";`,
-      `import * as ns from "./a";`,
-    ].join("\n"),
+    imports: [`import V, { other } from "./a";`, `import * as ns from "./a";`].join("\n"),
     uses: [`V.url`, `other`, `ns.default.url`],
   },
   "default-arrow": {
@@ -602,7 +697,15 @@ const kinds: Record<string, Kind> = {
     ].join("\n"),
     mock: `{ V: 6, f: () => "mocked f", C: class { static s(): string { return "mocked s"; } }, E: { A: 10 } }`,
     imports: `import { whole } from "./starAs";`,
-    uses: [`whole.V`, `whole.f()`, `whole.C.s()`, `whole.E.A`, `whole.V === 5`, `new whole.C() instanceof whole.C`, `Object.keys(whole).sort().join()`],
+    uses: [
+      `whole.V`,
+      `whole.f()`,
+      `whole.C.s()`,
+      `whole.E.A`,
+      `whole.V === 5`,
+      `new whole.C() instanceof whole.C`,
+      `Object.keys(whole).sort().join()`,
+    ],
   },
   "namespace-more": {
     when: ["top", "late", "spied", "preload", "ahead"],
@@ -622,42 +725,51 @@ const kinds: Record<string, Kind> = {
       `function passed(m: typeof ns): number { return m.f(1); }`,
       `const x = new ns.C();`,
     ].join("\n"),
-    uses: [`ns.C.s()`, `new ns.C().m()`, `ns.E.A`, `ns.f(...[1])`, `[1].map(ns.f).join()`, `new Sub().m()`, `kept(1)`, `destructured(1)`, `ns.f?.(1)`, `(ns as any).f(1)`, `ns["f"](1)`, `passed(ns)`, `x instanceof ns.C`],
+    uses: [
+      `ns.C.s()`,
+      `new ns.C().m()`,
+      `ns.E.A`,
+      `ns.f(...[1])`,
+      `[1].map(ns.f).join()`,
+      `new Sub().m()`,
+      `kept(1)`,
+      `destructured(1)`,
+      `ns.f?.(1)`,
+      `(ns as any).f(1)`,
+      `ns["f"](1)`,
+      `passed(ns)`,
+      `x instanceof ns.C`,
+    ],
   },
   "barrel-is-mocked": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V: number = 5;`,
-      `export function f(): string { return "real f"; }`,
-    ].join("\n"),
+    module: [`export const V: number = 5;`, `export function f(): string { return "real f"; }`].join("\n"),
     mock: `{ V: 6, f: () => "mocked f" }`,
-    imports: [
-      `import { V, f } from "./middle2";`,
-      `import { V as direct, f as directF } from "./a";`,
-    ].join("\n"),
+    imports: [`import { V, f } from "./middle2";`, `import { V as direct, f as directF } from "./a";`].join("\n"),
     uses: [`V`, `f()`, `direct`, `directF()`],
     target: "./middle2",
   },
   "barrel-through-its-namespace": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V: number = 5;`,
-      `export function f(): string { return "real f"; }`,
-    ].join("\n"),
+    module: [`export const V: number = 5;`, `export function f(): string { return "real f"; }`].join("\n"),
     mock: `{ V: 6, f: () => "mocked f" }`,
-    imports: [
-      `import * as m from "./middle2";`,
-      `import * as source from "./a";`,
-    ].join("\n"),
-    uses: [`m.V`, `m.f()`, `({ ...m }).V`, `(await import("./middle2")).V`, `require("./middle2").V`, `Object.keys(m).sort().join()`, `source.V`, `source.f()`, `(await import("./a")).V`],
+    imports: [`import * as m from "./middle2";`, `import * as source from "./a";`].join("\n"),
+    uses: [
+      `m.V`,
+      `m.f()`,
+      `({ ...m }).V`,
+      `(await import("./middle2")).V`,
+      `require("./middle2").V`,
+      `Object.keys(m).sort().join()`,
+      `source.V`,
+      `source.f()`,
+      `(await import("./a")).V`,
+    ],
     target: "./middle2",
   },
   "barrel-of-a-barrel": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V: number = 5;`,
-      `export function f(): string { return "real f"; }`,
-    ].join("\n"),
+    module: [`export const V: number = 5;`, `export function f(): string { return "real f"; }`].join("\n"),
     mock: `{ V: 6, f: () => "mocked f" }`,
     imports: [
       `import { V, f } from "./outer";`,
@@ -667,23 +779,14 @@ const kinds: Record<string, Kind> = {
     uses: [`V`, `f()`, `inner`, `innerF()`, `direct`, `directF()`],
     target: "./middle2",
     files: {
-      "outer.ts": [
-        `export * from "./middle2";`,
-        ``,
-      ].join("\n"),
+      "outer.ts": [`export * from "./middle2";`, ``].join("\n"),
     },
   },
   "star-barrel-is-mocked": {
     when: ["top", "late", "preload", "ahead"],
-    module: [
-      `export const V: number = 5;`,
-      `export function f(): string { return "real f"; }`,
-    ].join("\n"),
+    module: [`export const V: number = 5;`, `export function f(): string { return "real f"; }`].join("\n"),
     mock: `{ V: 6, f: () => "mocked f" }`,
-    imports: [
-      `import { V, f } from "./star";`,
-      `import { V as direct, f as directF } from "./a";`,
-    ].join("\n"),
+    imports: [`import { V, f } from "./star";`, `import { V as direct, f as directF } from "./a";`].join("\n"),
     uses: [`V`, `f()`, `direct`, `directF()`],
     target: "./star",
   },
@@ -702,10 +805,7 @@ const kinds: Record<string, Kind> = {
     when: ["top", "late"],
     module: `export const V: number = 5;`,
     mock: `{ V: 6, added: "added" }`,
-    imports: [
-      `import { V } from "./a";`,
-      `import * as ns from "./a";`,
-    ].join("\n"),
+    imports: [`import { V } from "./a";`, `import * as ns from "./a";`].join("\n"),
     uses: [`V`, `(ns as any).added`, `Object.keys(ns).sort().join()`],
   },
   "through-two-files": {
@@ -718,31 +818,28 @@ const kinds: Record<string, Kind> = {
     ].join("\n"),
     mock: `{ V: 6, f: () => "mocked f", C: class { static s(): string { return "mocked s"; } }, E: { A: 10 } }`,
     imports: `import { V, f, C, E } from "./outer";`,
-    helpers: [
-      `class Sub extends C {}`,
-      `const kept = f;`,
-    ].join("\n"),
+    helpers: [`class Sub extends C {}`, `const kept = f;`].join("\n"),
     uses: [`V`, `V === 5`, `f()`, `C.s()`, `E.A`, `new Sub() instanceof C`, `kept()`],
     files: {
-      "inner.ts": [
-        `export { V, f, C, E } from "./a";`,
-        ``,
-      ].join("\n"),
-      "outer.ts": [
-        `export * from "./inner";`,
-        ``,
-      ].join("\n"),
+      "inner.ts": [`export { V, f, C, E } from "./a";`, ``].join("\n"),
+      "outer.ts": [`export * from "./inner";`, ``].join("\n"),
     },
   },
   "used-by-a-third-module": {
     when: ["top", "late", "spied", "preload", "ahead"],
-    module: [
-      `export function V(n: number): number { return n + 1; }`,
-      `export const N: number = 5;`,
-    ].join("\n"),
+    module: [`export function V(n: number): number { return n + 1; }`, `export const N: number = 5;`].join("\n"),
     mock: `{ V: (n: number) => n + 100, N: 6 }`,
     imports: `import { loop, Holder, byDefault, table, late } from "./third";`,
-    uses: [`loop()`, `new Holder().v`, `new Holder().w`, `byDefault()`, `Holder.s`, `table.n`, `table.f(1)`, `late().n`],
+    uses: [
+      `loop()`,
+      `new Holder().v`,
+      `new Holder().w`,
+      `byDefault()`,
+      `Holder.s`,
+      `table.n`,
+      `table.f(1)`,
+      `late().n`,
+    ],
     files: {
       "third.ts": [
         `import { V, N } from "./a";`,
@@ -762,10 +859,7 @@ const kinds: Record<string, Kind> = {
       `export const V: Config = { url: "real", retries: 3 };`,
     ].join("\n"),
     mock: `{ V: { get url() { return "mocked by a getter"; }, get retries() { return 9; } } }`,
-    imports: [
-      `import { V } from "./a";`,
-      `import type { Config } from "./a";`,
-    ].join("\n"),
+    imports: [`import { V } from "./a";`, `import type { Config } from "./a";`].join("\n"),
     helpers: `function takes(c: Config): string { return c.url + c.retries; }`,
     uses: [`V.url`, `V.retries + 1`, `JSON.stringify(V)`, `takes(V)`, `({ ...V }).url`],
   },
@@ -802,11 +896,7 @@ const kinds: Record<string, Kind> = {
     imports: `import { made } from "./made";`,
     uses: [`made.x.a`],
     files: {
-      "made.ts": [
-        `import { KEY, X, helper, Real, Level } from "./a";`,
-        `export const made = { x: X };`,
-        ``,
-      ].join("\n"),
+      "made.ts": [`import { KEY, X, helper, Real, Level } from "./a";`, `export const made = { x: X };`, ``].join("\n"),
     },
   },
   "lazy-a-string-in-a-literal": {
@@ -822,11 +912,9 @@ const kinds: Record<string, Kind> = {
     imports: `import { made } from "./made";`,
     uses: [`made.key`],
     files: {
-      "made.ts": [
-        `import { KEY, X, helper, Real, Level } from "./a";`,
-        `export const made = { key: KEY };`,
-        ``,
-      ].join("\n"),
+      "made.ts": [`import { KEY, X, helper, Real, Level } from "./a";`, `export const made = { key: KEY };`, ``].join(
+        "\n",
+      ),
     },
   },
   "lazy-a-class-in-a-list": {
@@ -842,11 +930,7 @@ const kinds: Record<string, Kind> = {
     imports: `import { made } from "./made";`,
     uses: [`new made[0]().name()`],
     files: {
-      "made.ts": [
-        `import { KEY, X, helper, Real, Level } from "./a";`,
-        `export const made = [Real];`,
-        ``,
-      ].join("\n"),
+      "made.ts": [`import { KEY, X, helper, Real, Level } from "./a";`, `export const made = [Real];`, ``].join("\n"),
     },
   },
   "lazy-a-map": {
@@ -1019,10 +1103,7 @@ const kinds: Record<string, Kind> = {
     uses: [`data.url`, `data.n + 1`, `JSON.stringify(data)`, `data.url === "real"`, `kept`],
     target: "./data.json",
     files: {
-      "data.json": [
-        `{ "url": "real", "n": 1 }`,
-        ``,
-      ].join("\n"),
+      "data.json": [`{ "url": "real", "n": 1 }`, ``].join("\n"),
       "tsconfig.json": [
         `{ "compilerOptions": { "resolveJsonModule": true, "strict": true, "module": "esnext", "moduleResolution": "bundler" } }`,
         ``,
@@ -1032,18 +1113,11 @@ const kinds: Record<string, Kind> = {
   "commonjs-module": {
     when: ["top", "late", "preload", "ahead"],
     mock: `{ V: 6, f: () => "mocked f" }`,
-    imports: [
-      `import { V, f } from "./lib.cjs";`,
-      `const required = require("./lib.cjs");`,
-    ].join("\n"),
+    imports: [`import { V, f } from "./lib.cjs";`, `const required = require("./lib.cjs");`].join("\n"),
     uses: [`V`, `f()`, `required.V`, `required.f()`, `V === 5`],
     target: "./lib.cjs",
     files: {
-      "lib.cjs": [
-        `exports.V = 5;`,
-        `exports.f = function () { return "real f"; };`,
-        ``,
-      ].join("\n"),
+      "lib.cjs": [`exports.V = 5;`, `exports.f = function () { return "real f"; };`, ``].join("\n"),
     },
   },
   "commonjs-module-made-at-run-time": {
@@ -1067,10 +1141,7 @@ const kinds: Record<string, Kind> = {
   "package-by-its-name": {
     when: ["top", "late", "preload", "ahead"],
     mock: `{ V: 6, f: () => "mocked f", C: class { static s() { return "mocked s"; } } }`,
-    imports: [
-      `import { V, f, C } from "fake-package";`,
-      `import { viaOther } from "./other";`,
-    ].join("\n"),
+    imports: [`import { V, f, C } from "fake-package";`, `import { viaOther } from "./other";`].join("\n"),
     helpers: `const kept = f;`,
     uses: [`V`, `V === 5`, `f()`, `C.s()`, `kept()`, `viaOther()`],
     target: "fake-package",
@@ -1091,11 +1162,9 @@ const kinds: Record<string, Kind> = {
         `export class C { static s(): string; }`,
         ``,
       ].join("\n"),
-      "other.ts": [
-        `import { f } from "fake-package";`,
-        `export function viaOther(): string { return f(); }`,
-        ``,
-      ].join("\n"),
+      "other.ts": [`import { f } from "fake-package";`, `export function viaOther(): string { return f(); }`, ``].join(
+        "\n",
+      ),
     },
   },
   "this-of-a-call-through-a-namespace": {
@@ -1105,10 +1174,7 @@ const kinds: Record<string, Kind> = {
       `export const g = function (): string { return "real g"; };`,
     ].join("\n"),
     mock: `{ f: function (this: unknown) { return "mocked f, this: " + (this === undefined ? "undefined" : typeof this); }, g: function (this: unknown) { return "mocked g, this: " + (this === undefined ? "undefined" : typeof this); } }`,
-    imports: [
-      `import * as ns from "./a";`,
-      `import { f } from "./a";`,
-    ].join("\n"),
+    imports: [`import * as ns from "./a";`, `import { f } from "./a";`].join("\n"),
     uses: [`ns.f()`, `ns.g()`, `f()`, `(0, ns.f)()`, `ns["f"]()`],
   },
   jsx: {
@@ -1159,10 +1225,7 @@ const kinds: Record<string, Kind> = {
     when: ["top", "late", "spied", "preload", "ahead"],
     mock: `{ V: 6, f: () => "mocked f", C: class { static s() { return "mocked s"; } } }`,
     imports: `import { V, f, C } from "./lib.js";`,
-    helpers: [
-      `class Sub extends C {}`,
-      `const kept = f;`,
-    ].join("\n"),
+    helpers: [`class Sub extends C {}`, `const kept = f;`].join("\n"),
     uses: [`V`, `V === 5`, `f()`, `C.s()`, `new Sub() instanceof C`, `kept()`],
     target: "./lib.js",
     files: {
@@ -1485,15 +1548,10 @@ const ways: Record<string, Record<string, string>> = {
     ].join("\n"),
   },
   "an-index-file": {
-    "lib/index.ts": [
-      `export function g(): string { return "real g"; }`,
-      ``,
-    ].join("\n"),
-    "uses-lib.ts": [
-      `import { g } from "./lib/index";`,
-      `export function viaLib(): string { return g(); }`,
-      ``,
-    ].join("\n"),
+    "lib/index.ts": [`export function g(): string { return "real g"; }`, ``].join("\n"),
+    "uses-lib.ts": [`import { g } from "./lib/index";`, `export function viaLib(): string { return g(); }`, ``].join(
+      "\n",
+    ),
     "main.test.ts": [
       `import { test, mock, spyOn, jest } from "bun:test";`,
       `import { viaLib } from "./uses-lib";`,
@@ -1897,10 +1955,7 @@ const ways: Record<string, Record<string, string>> = {
       `export function iso(d: Date): string { return d.toISOString(); }`,
       ``,
     ].join("\n"),
-    "untyped.js": [
-      `export function plainFromJs(s) { return s.normalize(); }`,
-      ``,
-    ].join("\n"),
+    "untyped.js": [`export function plainFromJs(s) { return s.normalize(); }`, ``].join("\n"),
     "main.test.ts": [
       `import { test, mock, spyOn, jest } from "bun:test";`,
       `import * as texts from "./texts";`,
@@ -1922,10 +1977,7 @@ const ways: Record<string, Record<string, string>> = {
       `export function iso(d: Date): string { return d.toISOString(); }`,
       ``,
     ].join("\n"),
-    "untyped.js": [
-      `export function plainFromJs(s) { return s.normalize(); }`,
-      ``,
-    ].join("\n"),
+    "untyped.js": [`export function plainFromJs(s) { return s.normalize(); }`, ``].join("\n"),
     "main.test.ts": [
       `import { test, mock, spyOn, jest } from "bun:test";`,
       `import * as texts from "./texts";`,
@@ -1947,10 +1999,7 @@ const ways: Record<string, Record<string, string>> = {
       `export function iso(d: Date): string { return d.toISOString(); }`,
       ``,
     ].join("\n"),
-    "untyped.js": [
-      `export function plainFromJs(s) { return s.normalize(); }`,
-      ``,
-    ].join("\n"),
+    "untyped.js": [`export function plainFromJs(s) { return s.normalize(); }`, ``].join("\n"),
     "main.test.ts": [
       `import { test, mock, spyOn, jest } from "bun:test";`,
       `import * as texts from "./texts";`,
@@ -1972,10 +2021,7 @@ const ways: Record<string, Record<string, string>> = {
       `export function iso(d: Date): string { return d.toISOString(); }`,
       ``,
     ].join("\n"),
-    "untyped.js": [
-      `export function plainFromJs(s) { return s.normalize(); }`,
-      ``,
-    ].join("\n"),
+    "untyped.js": [`export function plainFromJs(s) { return s.normalize(); }`, ``].join("\n"),
     "main.test.ts": [
       `import { test, mock, spyOn, jest } from "bun:test";`,
       `import * as texts from "./texts";`,
@@ -2111,10 +2157,32 @@ function rows(who: string, uses: string[]): string {
 }
 
 function filesOf(kind: Kind, when: When): Record<string, string> {
-  const { module = "", imports = `import { V } from "./a";`, helpers = "", own = [], ownHelpers = "", extension = "ts", target = "./a" } = kind;
+  const {
+    module = "",
+    imports = `import { V } from "./a";`,
+    helpers = "",
+    own = [],
+    ownHelpers = "",
+    extension = "ts",
+    target = "./a",
+  } = kind;
   const files: Record<string, string> = { ...kind.files };
-  files["user." + extension] = imports + "\n" + helpers + "\n" + show + "export async function all(): Promise<void> {\n" + rows("user", kind.uses) + "}\n";
-  if (module) files["a.ts"] = module + "\n" + (own.length ? ownHelpers + "\n" + show + "export async function own(): Promise<void> {\n" + rows("own", own) + "}\n" : "");
+  files["user." + extension] =
+    imports +
+    "\n" +
+    helpers +
+    "\n" +
+    show +
+    "export async function all(): Promise<void> {\n" +
+    rows("user", kind.uses) +
+    "}\n";
+  if (module)
+    files["a.ts"] =
+      module +
+      "\n" +
+      (own.length
+        ? ownHelpers + "\n" + show + "export async function own(): Promise<void> {\n" + rows("own", own) + "}\n"
+        : "");
   const named = imports + module + `"${target}"`;
   if (named.includes(`./middle"`)) files["middle.ts"] = `export { V } from "./a";\n`;
   if (named.includes(`./middle2"`)) files["middle2.ts"] = `export { V, f } from "./a";\n`;
@@ -2130,13 +2198,25 @@ function filesOf(kind: Kind, when: When): Record<string, string> {
   const user = `import { all } from "./user";\n`;
   switch (when) {
     case "top":
-      files["main.test.ts"] = header + user + reals + symbol + lay + `\ntest("case", async () => { await all();${callOwn} });\n`;
+      files["main.test.ts"] =
+        header + user + reals + symbol + lay + `\ntest("case", async () => { await all();${callOwn} });\n`;
       break;
     case "late":
-      files["main.test.ts"] = header + user + reals + symbol + `test("case", async () => { await all();${callOwn} console.log("--- the mock is laid"); ${lay} await all();${callOwn} });\n`;
+      files["main.test.ts"] =
+        header +
+        user +
+        reals +
+        symbol +
+        `test("case", async () => { await all();${callOwn} console.log("--- the mock is laid"); ${lay} await all();${callOwn} });\n`;
       break;
     case "spied":
-      files["main.test.ts"] = header + user + reals + `import * as SPIED from "${target}";\n` + symbol + `test("case", async () => { const own = (SPIED as any).own; const by: Record<string, unknown> = ${kind.mock}; for (const key of Object.keys(by)) if (typeof by[key] === "function") spyOn(SPIED as any, key).mockImplementation(by[key] as any); await all(); if (own) await own(); console.log("--- the spies are lifted"); mock.restore(); await all(); if (own) await own(); });\n`;
+      files["main.test.ts"] =
+        header +
+        user +
+        reals +
+        `import * as SPIED from "${target}";\n` +
+        symbol +
+        `test("case", async () => { const own = (SPIED as any).own; const by: Record<string, unknown> = ${kind.mock}; for (const key of Object.keys(by)) if (typeof by[key] === "function") spyOn(SPIED as any, key).mockImplementation(by[key] as any); await all(); if (own) await own(); console.log("--- the spies are lifted"); mock.restore(); await all(); if (own) await own(); });\n`;
       break;
     case "preload":
       files["pre.ts"] = `import { mock } from "bun:test";\n` + symbol + lay + "\n";
@@ -2144,21 +2224,30 @@ function filesOf(kind: Kind, when: When): Record<string, string> {
       files["main.test.ts"] = header + user + `test("case", async () => { await all(); });\n`;
       break;
     case "ahead":
-      files["main.test.ts"] = header + symbol + lay + `\ntest("case", async () => { const { all } = await import("./user"); await all(); });\n`;
+      files["main.test.ts"] =
+        header +
+        symbol +
+        lay +
+        `\ntest("case", async () => { const { all } = await import("./user"); await all(); });\n`;
       break;
   }
   return files;
 }
 
 const cases: Record<string, Record<string, string>> = {};
-for (const [name, kind] of Object.entries(kinds)) for (const when of kind.when) cases[name + ", " + when] = filesOf(kind, when);
+for (const [name, kind] of Object.entries(kinds))
+  for (const when of kind.when) cases[name + ", " + when] = filesOf(kind, when);
 for (const [name, files] of Object.entries(ways)) cases[name] = files;
 
 async function printed(cwd: string, args: string[]) {
   await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  const noise = /^bun test v|^Ran \d+ tests? across|^\s+at |^\s*\d+ \| |^\s+\^|^note: |^warn: |^\S+\(\d+,\d+\): warning TS\d+: /;
-  const lines = (stdout + "\n" + stderr).split("\n").map(line => line.replace(/ \[\d+(\.\d+)?m?s\]$/, "")).filter(line => line !== "" && !noise.test(line));
+  const noise =
+    /^bun test v|^Ran \d+ tests? across|^\s+at |^\s*\d+ \| |^\s+\^|^note: |^warn: |^\S+\(\d+,\d+\): warning TS\d+: /;
+  const lines = (stdout + "\n" + stderr)
+    .split("\n")
+    .map(line => line.replace(/ \[\d+(\.\d+)?m?s\]$/, ""))
+    .filter(line => line !== "" && !noise.test(line));
   return { lines, exitCode };
 }
 

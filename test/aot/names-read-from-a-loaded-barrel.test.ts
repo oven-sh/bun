@@ -31,7 +31,9 @@ for (const [name, expected] of kept) {
       "node_modules/lib/package.json": `{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }`,
       "node_modules/lib/index.js": `export { a } from "./a.js"; export { b } from "./b.js"; export { c } from "./c.js";`,
     };
-    for (const letter of "abc") files[`node_modules/lib/${letter}.js`] = `console.log("MARK-${letter}"); export const ${letter} = 1; export default "${letter}";`;
+    for (const letter of "abc")
+      files[`node_modules/lib/${letter}.js`] =
+        `console.log("MARK-${letter}"); export const ${letter} = 1; export default "${letter}";`;
     entryPoints.forEach((entryPoint, index) => (files[`main${index}.ts`] = entryPoint));
     using directory = tempDir("names-read-from-a-loaded-barrel", files);
     const found: Record<string, string> = {};

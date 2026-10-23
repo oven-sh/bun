@@ -8,11 +8,7 @@ use crate::ir::tests::print_alone;
 use crate::ir::types::TypeTable;
 
 #[track_caller]
-fn assert_printed(
-    parameters: &[TypeId],
-    expected: &str,
-    fill: impl FnOnce(&mut FunctionBuilder),
-) {
+fn assert_printed(parameters: &[TypeId], expected: &str, fill: impl FnOnce(&mut FunctionBuilder)) {
     let printed = print_alone(&build_function(parameters, fill));
     assert_eq!(printed, expected, "\n{printed}");
 }
@@ -184,15 +180,24 @@ fn proofs_after_bar() {
             arguments,
             proofs,
         };
-        assert_eq!(print_with(|printer| print_target(printer, target)), expected);
+        assert_eq!(
+            print_with(|printer| print_target(printer, target)),
+            expected
+        );
     }
 }
 
 #[test]
 fn position_is_printed_only_when_present() {
     assert_eq!(print_with(|printer| print_position(printer, None)), "");
-    assert_eq!(print_with(|printer| print_position(printer, Some(0))), " @0");
-    assert_eq!(print_with(|printer| print_position(printer, Some(120))), " @120");
+    assert_eq!(
+        print_with(|printer| print_position(printer, Some(0))),
+        " @0"
+    );
+    assert_eq!(
+        print_with(|printer| print_position(printer, Some(120))),
+        " @120"
+    );
 }
 
 const SWITCHES: &str = "\

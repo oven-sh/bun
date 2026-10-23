@@ -169,14 +169,14 @@ The report has one line for each reason, so you can fix all of them before you r
 
 These built-ins block `--trim` too. Only a call that your program can reach counts. Importing the module doesn't: `import { isMainThread } from "node:worker_threads"` blocks nothing.
 
-| Built-in                                                                                                  | The line starts with         | Why                                                                                 |
-| --------------------------------------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `ShadowRealm.prototype.evaluate`, `module._compile`                                                       | `blocked by eval`            | They run a string                                                                   |
-| `node:vm`, `ShadowRealm.prototype.importValue`                                                            | `blocked by runtime-code`    | They run strings and load modules                                                   |
-| `bun:ffi`, `Bun.FFI`, `process.dlopen`, a `.node` file                                                    | `blocked by runtime-code`    | Native code can call anything                                                       |
-| `Bun.build`, `Bun.plugin`, `Bun.Transpiler`                                                               | `blocked by runtime-code`    | They load or create code at run time                                                |
-| `new Worker()`                                                                                            | `blocked by dynamic-import`  | It finds its file by name. Only an entry point of the build can run                 |
-| `require` used as a value, `process.mainModule.require`, `process.getBuiltinModule(name)`, `Module._load` | `blocked by dynamic-import`  | Whoever gets them can ask for any module by name                                    |
+| Built-in                                                                                                  | The line starts with        | Why                                                                 |
+| --------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------- |
+| `ShadowRealm.prototype.evaluate`, `module._compile`                                                       | `blocked by eval`           | They run a string                                                   |
+| `node:vm`, `ShadowRealm.prototype.importValue`                                                            | `blocked by runtime-code`   | They run strings and load modules                                   |
+| `bun:ffi`, `Bun.FFI`, `process.dlopen`, a `.node` file                                                    | `blocked by runtime-code`   | Native code can call anything                                       |
+| `Bun.build`, `Bun.plugin`, `Bun.Transpiler`                                                               | `blocked by runtime-code`   | They load or create code at run time                                |
+| `new Worker()`                                                                                            | `blocked by dynamic-import` | It finds its file by name. Only an entry point of the build can run |
+| `require` used as a value, `process.mainModule.require`, `process.getBuiltinModule(name)`, `Module._load` | `blocked by dynamic-import` | Whoever gets them can ask for any module by name                    |
 
 An executable only runs a file that's in it. `import()`, `require()` and `new Worker()` of any other file throw `ERR_MODULE_NOT_FOUND` at run time. A debugger only starts in an executable that's built with `--compile-inspector`: without it, `inspector.open()` from `node:inspector` starts nothing, so it blocks nothing.
 
@@ -472,12 +472,12 @@ Bun doesn't offer what it can't do. Without `brotli`, `fetch` sends `Accept-Enco
 
 ## What a trimmed executable does not do
 
-|                                                                     | Without `--trim`        | With `--trim`                                                               |
-| ------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------- |
-| `BUN_BE_BUN=1 ./server install`, with `--no-aot`                    | Acts as the `bun` CLI   | Tells you to run `bun` instead, and exits with code `70`                    |
-| `BUN_BE_BUN=1 ./server --version`                                   | Prints the version      | Prints the version                                                          |
-| A `bunfig.toml` in the directory the executable runs in             | Bun reads it at startup | Bun doesn't read it, unless you also pass `--compile-autoload-bunfig`       |
-| `Bun.build` with `check` or `compile.aot`, called by the executable | Works                   | Throws a `TypeError`                                                        |
+|                                                                     | Without `--trim`        | With `--trim`                                                         |
+| ------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------- |
+| `BUN_BE_BUN=1 ./server install`, with `--no-aot`                    | Acts as the `bun` CLI   | Tells you to run `bun` instead, and exits with code `70`              |
+| `BUN_BE_BUN=1 ./server --version`                                   | Prints the version      | Prints the version                                                    |
+| A `bunfig.toml` in the directory the executable runs in             | Bun reads it at startup | Bun doesn't read it, unless you also pass `--compile-autoload-bunfig` |
+| `Bun.build` with `check` or `compile.aot`, called by the executable | Works                   | Throws a `TypeError`                                                  |
 
 A trimmed executable still reads `.env`, prints stack traces with the lines and columns of your sources, and writes profiles with `--cpu-prof` and `--heap-prof` in `BUN_OPTIONS`. Addresses in crash reports and profiles mean the same as in the untrimmed executable. On macOS, Bun signs the executable again. To debug a program with the inspector, build it with [`--compile-inspector`](/bundler/aot-compatibility#options-that-load-code), which keeps the debugger.
 
@@ -485,11 +485,11 @@ A trimmed executable still reads `.env`, prints stack traces with the lines and 
 
 Most options in [`BUN_OPTIONS`](/bundler/executables#runtime-arguments-via-bun_options) and `--compile-exec-argv` work as before. A few need a feature that `--trim` removed.
 
-| Options                                                                                                                                                                                                                                                                                       | Can't be used with                                              |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `--help`, `-h`, `--aot`, `--aot-log-type-mismatches`, `--expose-internals`, `--watch`, `--hot`, `-i`, `--install`                                                                                                                                                                             | Any trimmed executable                                          |
-| `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p`                                                                                                                                                                                                                | An executable that `--trim` removed an API from                 |
-| `--fetch-preconnect`, `--redis-preconnect`, `--sql-preconnect`                                                                                                                                                                                                                                | An executable whose program doesn't use that client             |
+| Options                                                                                                           | Can't be used with                                  |
+| ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `--help`, `-h`, `--aot`, `--aot-log-type-mismatches`, `--expose-internals`, `--watch`, `--hot`, `-i`, `--install` | Any trimmed executable                              |
+| `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p`                                       | An executable that `--trim` removed an API from     |
+| `--fetch-preconnect`, `--redis-preconnect`, `--sql-preconnect`                                                    | An executable whose program doesn't use that client |
 
 ```bash terminal icon="terminal"
 BUN_OPTIONS=--sql-preconnect ./server

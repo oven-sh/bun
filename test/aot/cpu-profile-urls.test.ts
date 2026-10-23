@@ -23,7 +23,10 @@ const lines = source.split("\n");
 const definitionLine = lines.indexOf("function hot(n: number): number {");
 const lastLine = lines.indexOf("}", definitionLine);
 
-type ProfileNode = { callFrame: { functionName: string; url: string; lineNumber: number }; positionTicks?: { line: number; ticks: number }[] };
+type ProfileNode = {
+  callFrame: { functionName: string; url: string; lineNumber: number };
+  positionTicks?: { line: number; ticks: number }[];
+};
 
 function readNodes(file: string): ProfileNode[] {
   return JSON.parse(readFileSync(file, "utf8")).nodes;
@@ -36,7 +39,22 @@ test("a compiled function in a CPU profile", async () => {
   const cwd = String(dir);
   // With both formats the name gets each format's extension.
   const profilerFlags = "--cpu-prof --cpu-prof-md --cpu-prof-dir=profiles --cpu-prof-name=own";
-  built(await spawned([bunExe(), "build", "--compile", "--aot", `--compile-exec-argv=${profilerFlags}`, "main.ts", "--outfile", "program"], cwd, bunEnv));
+  built(
+    await spawned(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        `--compile-exec-argv=${profilerFlags}`,
+        "main.ts",
+        "--outfile",
+        "program",
+      ],
+      cwd,
+      bunEnv,
+    ),
+  );
   const compiled = await spawned([join(cwd, "program")], cwd, bunEnv);
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 
@@ -63,7 +81,11 @@ test("a compiled function in a CPU profile", async () => {
   };
   expect(hotLocations.filter(location => !isInsideHot(location))).toEqual([]);
 
-  const plain = await spawned([bunExe(), "--cpu-prof", "--cpu-prof-dir=profiles", "--cpu-prof-name=plain.cpuprofile", "main.ts"], cwd, bunEnv);
+  const plain = await spawned(
+    [bunExe(), "--cpu-prof", "--cpu-prof-dir=profiles", "--cpu-prof-name=plain.cpuprofile", "main.ts"],
+    cwd,
+    bunEnv,
+  );
   expect(plain.exitCode).toBe(0);
   expect(definitionLines(readNodes(join(cwd, "profiles", "plain.cpuprofile")).filter(isHot))).toEqual([definitionLine]);
 }, 120_000);

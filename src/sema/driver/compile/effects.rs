@@ -58,10 +58,9 @@ fn has_effect(origin: FileOrigin, class: DiagnosticClass) -> bool {
         .into_iter()
         .any(|category| match effect_of(origin, class, category) {
             Effect::Dropped => false,
-            Effect::StopsBuild
-            | Effect::Warns
-            | Effect::WithdrawsTrust
-            | Effect::InternalError => true,
+            Effect::StopsBuild | Effect::Warns | Effect::WithdrawsTrust | Effect::InternalError => {
+                true
+            }
         })
 }
 
@@ -209,11 +208,17 @@ impl ProgramOrigins<'_, '_> {
         let (Some(compiled), Some(specifier)) = (files.compiled(file), specifier) else {
             return false;
         };
-        let sites = compiled.analysis.import_sites.iter().zip(compiled.code_answers);
+        let sites = compiled
+            .analysis
+            .import_sites
+            .iter()
+            .zip(compiled.code_answers);
         sites.into_iter().any(|(site, answer)| {
             site.specifier == ImportSpecifier::Constant(specifier)
                 && match answer {
-                    CodeAnswer::File(_) | CodeAnswer::HostModule(_) | CodeAnswer::External { .. } => true,
+                    CodeAnswer::File(_)
+                    | CodeAnswer::HostModule(_)
+                    | CodeAnswer::External { .. } => true,
                     CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_) => false,
                 }
         })
@@ -277,12 +282,24 @@ mod tests {
         use FileOrigin::*;
         let expected = [
             (ProgramSource, FileRole::Checked, Requested::All),
-            (ProgramJavaScript, FileRole::Inferred, Requested::EarlyErrors),
+            (
+                ProgramJavaScript,
+                FileRole::Inferred,
+                Requested::EarlyErrors,
+            ),
             (ProjectTypedVersion, FileRole::Checked, Requested::All),
-            (ProjectTypedVersion, FileRole::Inferred, Requested::EarlyErrors),
+            (
+                ProjectTypedVersion,
+                FileRole::Inferred,
+                Requested::EarlyErrors,
+            ),
             (DependencySource, FileRole::Checked, Requested::All),
             (DependencySource, FileRole::Inferred, Requested::EarlyErrors),
-            (DependencyJavaScript, FileRole::Inferred, Requested::EarlyErrors),
+            (
+                DependencyJavaScript,
+                FileRole::Inferred,
+                Requested::EarlyErrors,
+            ),
             (Declarations, FileRole::TypesOnly, Requested::EarlyErrors),
             (Runtime, FileRole::Checked, Requested::All),
             (Runtime, FileRole::Inferred, Requested::Types),
@@ -307,7 +324,11 @@ mod tests {
             (Runtime, FileRole::Inferred, false),
         ];
         for (origin, role, can_lose) in expected {
-            assert_eq!(can_lose_trust(origin, role), can_lose, "{origin:?} {role:?}");
+            assert_eq!(
+                can_lose_trust(origin, role),
+                can_lose,
+                "{origin:?} {role:?}"
+            );
         }
     }
 
@@ -338,22 +359,26 @@ mod tests {
         let with_configuration_file = WithoutBunTypes {
             has_configuration_file: true,
         };
-        let stops_build = |without_bun_types: Option<&WithoutBunTypes>, code: u32, args: &[&str]| {
-            let origins = ProgramOrigins {
-                files: None,
-                origins: &[FileOrigin::ProgramSource],
-                project_origin: FileOrigin::NoFile,
-                without_bun_types,
+        let stops_build =
+            |without_bun_types: Option<&WithoutBunTypes>, code: u32, args: &[&str]| {
+                let origins = ProgramOrigins {
+                    files: None,
+                    origins: &[FileOrigin::ProgramSource],
+                    project_origin: FileOrigin::NoFile,
+                    without_bun_types,
+                };
+                let diagnostic = Diagnostic {
+                    file: Some(FileId(0)),
+                    class: DiagnosticClass::of_code(code),
+                    ..crate::global(code, args)
+                };
+                let reported = origins.apply_effects(vec![diagnostic]);
+                assert!(
+                    reported.iter().all(|it| it.effect == Effect::StopsBuild),
+                    "{code} {args:?}"
+                );
+                !reported.is_empty()
             };
-            let diagnostic = Diagnostic {
-                file: Some(FileId(0)),
-                class: DiagnosticClass::of_code(code),
-                ..crate::global(code, args)
-            };
-            let reported = origins.apply_effects(vec![diagnostic]);
-            assert!(reported.iter().all(|it| it.effect == Effect::StopsBuild), "{code} {args:?}");
-            !reported.is_empty()
-        };
         let cases: [(u32, &[&str], bool); 9] = [
             (2584, &["document"], true),
             (2304, &["nothing"], true),
@@ -367,13 +392,25 @@ mod tests {
         ];
         for (code, args, still_stops) in cases {
             for missing in [&without_configuration_file, &with_configuration_file] {
-                assert_eq!(stops_build(Some(missing), code, args), still_stops, "{code} {args:?}");
+                assert_eq!(
+                    stops_build(Some(missing), code, args),
+                    still_stops,
+                    "{code} {args:?}"
+                );
             }
             assert!(stops_build(None, code, args), "{code} {args:?}");
         }
         let implicit_any: (u32, &[&str]) = (7006, &["request", "any"]);
-        assert!(!stops_build(Some(&without_configuration_file), implicit_any.0, implicit_any.1));
-        assert!(stops_build(Some(&with_configuration_file), implicit_any.0, implicit_any.1));
+        assert!(!stops_build(
+            Some(&without_configuration_file),
+            implicit_any.0,
+            implicit_any.1
+        ));
+        assert!(stops_build(
+            Some(&with_configuration_file),
+            implicit_any.0,
+            implicit_any.1
+        ));
     }
 
     #[test]

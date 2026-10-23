@@ -60,7 +60,10 @@ test("a word without a name means every member, and only for that word", () => {
 });
 
 test("a function is converted only under a name that the entry lists", () => {
-  const uses = [b.runsTransitively("OwnValues", "ToPrimitive", b.named("port")), b.readByKey(b.keysNamed("fetch"), b.nativeMemory)];
+  const uses = [
+    b.runsTransitively("OwnValues", "ToPrimitive", b.named("port")),
+    b.readByKey(b.keysNamed("fetch"), b.nativeMemory),
+  ];
   const marked = receiverWith([...uses, b.functionsConvertedUnderNamesOnly]);
   expect(marked.roles).toEqual(["FunctionsAreConvertedUnderNamesOnly"]);
   expect(textsOf(marked.namedMembers)).toEqual(["port", "fetch"]);

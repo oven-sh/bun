@@ -21,7 +21,10 @@ impl ReferencePass<'_, '_> {
                     self.collect_store_targets(target, kind);
                 }
             } else if let ExprKind::Unary { op, operand } = expr.kind
-                && matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
+                && matches!(
+                    op,
+                    UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+                )
             {
                 self.collect_store_targets(operand, StoreKind::Update(op));
             } else if matches!(expr.kind, ExprKind::ImportMeta)
@@ -39,7 +42,11 @@ impl ReferencePass<'_, '_> {
             };
             if let StmtKind::Expr(target) = hir[left].kind {
                 let is_for_in = matches!(stmt.kind, StmtKind::ForIn { .. });
-                let kind = if is_for_in { StoreKind::ForIn } else { StoreKind::ForOf };
+                let kind = if is_for_in {
+                    StoreKind::ForIn
+                } else {
+                    StoreKind::ForOf
+                };
                 self.collect_store_targets(target, kind);
             }
         }

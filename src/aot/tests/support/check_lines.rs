@@ -471,7 +471,10 @@ impl<'a> Matcher<'a> {
             parts.push(format!("nearest: {}", nearest.trim_matches(BLANKS)));
         }
         for &(name, value) in &self.bindings {
-            if check.elements.contains(&PatternElement::Variable(name.to_vec())) {
+            if check
+                .elements
+                .contains(&PatternElement::Variable(name.to_vec()))
+            {
                 parts.push(format!(
                     "[[{}]] is {}",
                     String::from_utf8_lossy(name),

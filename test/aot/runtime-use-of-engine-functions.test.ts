@@ -25,15 +25,40 @@ async function retained(text: string, features: string[]) {
 describe.concurrent("the engine's own JavaScript reads its arrays by index", () => {
   eachRow([
     ["using", `{ using held = { [Symbol.dispose]() { console.log("disposed"); } }; console.log("inside"); }`],
-    gap(notYet.everyBuiltin, ["await using", `{ await using held = { async [Symbol.asyncDispose]() { console.log("disposed"); } }; console.log("inside"); }`]),
-    gap(notYet.everyBuiltin, ["await using of what has only a synchronous method", `{ await using held = { [Symbol.dispose]() { console.log("disposed"); } }; console.log("inside"); }`]),
-    gap(notYet.everyBuiltin, ["DisposableStack", `const stack = new DisposableStack(); stack.use({ [Symbol.dispose]() { console.log("used"); } }); stack.adopt(1, n => console.log("adopted", n)); stack.defer(() => console.log("deferred")); stack.move().dispose();`]),
-    gap(notYet.everyBuiltin, ["AsyncDisposableStack", `const stack = new AsyncDisposableStack(); stack.use({ async [Symbol.asyncDispose]() { console.log("used"); } }); stack.adopt(1, async n => console.log("adopted", n)); stack.defer(async () => console.log("deferred")); await stack.move().disposeAsync();`]),
-    ["a dispose method found by its symbol on an unknown value", `const value: any = JSON.parse(process.argv[2]); value[Symbol.dispose]();`],
+    gap(notYet.everyBuiltin, [
+      "await using",
+      `{ await using held = { async [Symbol.asyncDispose]() { console.log("disposed"); } }; console.log("inside"); }`,
+    ]),
+    gap(notYet.everyBuiltin, [
+      "await using of what has only a synchronous method",
+      `{ await using held = { [Symbol.dispose]() { console.log("disposed"); } }; console.log("inside"); }`,
+    ]),
+    gap(notYet.everyBuiltin, [
+      "DisposableStack",
+      `const stack = new DisposableStack(); stack.use({ [Symbol.dispose]() { console.log("used"); } }); stack.adopt(1, n => console.log("adopted", n)); stack.defer(() => console.log("deferred")); stack.move().dispose();`,
+    ]),
+    gap(notYet.everyBuiltin, [
+      "AsyncDisposableStack",
+      `const stack = new AsyncDisposableStack(); stack.use({ async [Symbol.asyncDispose]() { console.log("used"); } }); stack.adopt(1, async n => console.log("adopted", n)); stack.defer(async () => console.log("deferred")); await stack.move().disposeAsync();`,
+    ]),
+    [
+      "a dispose method found by its symbol on an unknown value",
+      `const value: any = JSON.parse(process.argv[2]); value[Symbol.dispose]();`,
+    ],
     ["at on a typed array", `console.log(new Uint8Array([1, 2, 3]).at(-1));`],
-    gap(notYet.everyBuiltin, ["at on an unknown value", `const value: any = JSON.parse(process.argv[2]); console.log(value.at(-1));`]),
+    gap(notYet.everyBuiltin, [
+      "at on an unknown value",
+      `const value: any = JSON.parse(process.argv[2]); console.log(value.at(-1));`,
+    ]),
   ])("%s uses no member of a built-in prototype that the program does not name", async (_, text) => {
-    expect(await retained(text, [...numberFormatting, ...namedByNoProgramHere, "IntlDateTimeFormat", "ElementsToLocaleString"])).toEqual([]);
+    expect(
+      await retained(text, [
+        ...numberFormatting,
+        ...namedByNoProgramHere,
+        "IntlDateTimeFormat",
+        "ElementsToLocaleString",
+      ]),
+    ).toEqual([]);
   });
 
   eachRow([

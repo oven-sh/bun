@@ -145,6 +145,6 @@ for (const name of names.slice(3)) console.log(require("node:zlib")[name](Buffer
 //@ args zlib sqlite
 for (const name of names.slice(3)) { try { show(require(name)); } catch (error) { console.log(error.name, error.code); } }
 //// a-native-module
-//@ todo a native built-in module loaded by a computed name is found without --trim and left out with it
+//@ trimmed-says Cannot load 'node:sqlite': it isn't in this executable. Import it by name somewhere in your program to keep it.
 //@ ext cjs
 show(require(names[1]));

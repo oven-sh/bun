@@ -85,7 +85,8 @@ std::optional<E> parseEnum(StringView name)
     return std::nullopt;
 }`.split("\n");
 
-const nameAtFunction = `// The names one behind the other, each with a zero behind it, and where each starts: no address, so nothing that a loader has to put right.
+const nameAtFunction =
+  `// The names one behind the other, each with a zero behind it, and where each starts: no address, so nothing that a loader has to put right.
 template<size_t count, size_t numberOfCharacters>
 struct EnumeratorNames {
     uint16_t starts[count];
@@ -241,26 +242,29 @@ function wireColumnsHeader(schema: Schema, files: readonly string[], includes: L
 function declaredEnumsHeader(schema: Schema): string[] {
   const abi = declaredEnums(schema, "Wire");
   const own = declaredEnums(schema, "Typed");
-  return cppHeader(['"AOTWireEnums.h"', "<wtf/OptionSet.h>"], [
-    "namespace JSC { namespace AOT { namespace Typed {",
-    "",
-    ...pack(
-      abi.map(type => `using Wire::${type.name};`),
+  return cppHeader(
+    ['"AOTWireEnums.h"', "<wtf/OptionSet.h>"],
+    [
+      "namespace JSC { namespace AOT { namespace Typed {",
       "",
-    ),
-    "",
-    ...own.flatMap(enumLines),
-    "",
-    ...nameDecls(own),
-    "",
-    ...blocks(...own.map(columnLines)),
-    "",
-    "} // namespace Typed",
-    "",
-    ...traitsLines("Typed", own),
-    "",
-    "} } // namespace JSC::AOT",
-  ]);
+      ...pack(
+        abi.map(type => `using Wire::${type.name};`),
+        "",
+      ),
+      "",
+      ...own.flatMap(enumLines),
+      "",
+      ...nameDecls(own),
+      "",
+      ...blocks(...own.map(columnLines)),
+      "",
+      "} // namespace Typed",
+      "",
+      ...traitsLines("Typed", own),
+      "",
+      "} } // namespace JSC::AOT",
+    ],
+  );
 }
 
 function compactSwitch(options: Omit<SwitchOptions, "qualifier">): string[] {
@@ -370,29 +374,32 @@ function opaqueKindConversions(schema: Schema): string[] {
 
 function entryEnumsHeader(schema: Schema): string[] {
   const generated = generatedEnums(schema);
-  return cppHeader(['"AOTSchemaDeclaredEnums.h"'], [
-    "namespace JSC { namespace AOT { namespace Typed {",
-    "",
-    ...generated.flatMap(enumLines),
-    "",
-    ...countLines(schema),
-    "",
-    ...nameDecls(generated),
-    "",
-    ...blocks(
-      heapPredicates(schema),
-      opaqueKindPredicates(schema),
-      heapIndexCounts(schema),
-      programListLookups(schema),
-      opaqueKindConversions(schema),
-    ),
-    "",
-    "} // namespace Typed",
-    "",
-    ...traitsLines("Typed", generated),
-    "",
-    "} } // namespace JSC::AOT",
-  ]);
+  return cppHeader(
+    ['"AOTSchemaDeclaredEnums.h"'],
+    [
+      "namespace JSC { namespace AOT { namespace Typed {",
+      "",
+      ...generated.flatMap(enumLines),
+      "",
+      ...countLines(schema),
+      "",
+      ...nameDecls(generated),
+      "",
+      ...blocks(
+        heapPredicates(schema),
+        opaqueKindPredicates(schema),
+        heapIndexCounts(schema),
+        programListLookups(schema),
+        opaqueKindConversions(schema),
+      ),
+      "",
+      "} // namespace Typed",
+      "",
+      ...traitsLines("Typed", generated),
+      "",
+      "} } // namespace JSC::AOT",
+    ],
+  );
 }
 
 function umbrellaHeader(): string[] {
@@ -418,11 +425,13 @@ function nameFunction(type: SchemaEnum): string[] {
   const starts: number[] = [];
   let numberOfCharacters = 0;
   for (const name of names) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`${type.name}::${name} is no name that can stand in a literal as it is`);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+      throw new Error(`${type.name}::${name} is no name that can stand in a literal as it is`);
     starts.push(numberOfCharacters);
     numberOfCharacters += name.length + 1;
   }
-  if (numberOfCharacters > 0xffff) throw new Error(`the names of ${type.name} take more characters than 16 bits number`);
+  if (numberOfCharacters > 0xffff)
+    throw new Error(`the names of ${type.name} take more characters than 16 bits number`);
   // The zero behind the last name is the one that ends the literal.
   const literals = names.map((name, index) => `"${name}${index + 1 < names.length ? "\\0" : ""}"`);
   return [
@@ -442,25 +451,28 @@ function nameFunction(type: SchemaEnum): string[] {
 function enumNamesSource(schema: Schema): string[] {
   const abi = declaredEnums(schema, "Wire");
   const own = declaredEnums(schema, "Typed");
-  return cppSource(['"AOTSchemaEnums.h"', "<wtf/MathExtras.h>"], [
-    "namespace JSC { namespace AOT {",
-    "",
-    ...nameAtFunction,
-    "",
-    "namespace Wire {",
-    "",
-    ...blocks(...abi.map(nameFunction)),
-    "",
-    "} // namespace Wire",
-    "",
-    "namespace Typed {",
-    "",
-    ...blocks(...[...own, ...generatedEnums(schema)].map(nameFunction)),
-    "",
-    "} // namespace Typed",
-    "",
-    "} } // namespace JSC::AOT",
-  ]);
+  return cppSource(
+    ['"AOTSchemaEnums.h"', "<wtf/MathExtras.h>"],
+    [
+      "namespace JSC { namespace AOT {",
+      "",
+      ...nameAtFunction,
+      "",
+      "namespace Wire {",
+      "",
+      ...blocks(...abi.map(nameFunction)),
+      "",
+      "} // namespace Wire",
+      "",
+      "namespace Typed {",
+      "",
+      ...blocks(...[...own, ...generatedEnums(schema)].map(nameFunction)),
+      "",
+      "} // namespace Typed",
+      "",
+      "} } // namespace JSC::AOT",
+    ],
+  );
 }
 
 export function emitCppEnums(context: EmitContext): OutputFile[] {

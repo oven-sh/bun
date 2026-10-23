@@ -1,7 +1,5 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{
-    Binding, CodeUnit, CommonJsVariable, Decl, InitialState, ScopeId, SymbolId,
-};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, InitialState, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PatKind, PropKey, PropKind, StmtId};
 use bun_sema::program::Sym;
@@ -36,9 +34,9 @@ fn top_scope_of(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option
         | FunctionKey::StaticInitializer(class) => Some(bound.class_scope[class.class.idx()]),
         FunctionKey::AccessorGetter { member, .. }
         | FunctionKey::AccessorSetter { member, .. }
-        | FunctionKey::PrivateNameTest { member, .. } => {
-            bound.member_class(member).map(|class| bound.class_scope[class.idx()])
-        }
+        | FunctionKey::PrivateNameTest { member, .. } => bound
+            .member_class(member)
+            .map(|class| bound.class_scope[class.idx()]),
     }
 }
 
@@ -79,9 +77,11 @@ pub(super) fn is_module_body(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) ->
     let file = &*lowering.file;
     match lowering.key {
         FunctionKey::ModuleBody(_) => true,
-        FunctionKey::Source(source) => {
-            file.inputs.modules.inner_module(file.file, source.function).is_some()
-        }
+        FunctionKey::Source(source) => file
+            .inputs
+            .modules
+            .inner_module(file.file, source.function)
+            .is_some(),
         FunctionKey::WrappedModuleBody(_)
         | FunctionKey::FaceBody(_)
         | FunctionKey::CheckBody(_)
@@ -134,13 +134,23 @@ pub(super) fn emit_module_value(
         }
         Shape::EsModule => {
             let module = lowering.file.fragment.declare_module(module);
-            Some(lowering.builder.module_namespace(module, ImportPhase::Evaluation))
+            Some(
+                lowering
+                    .builder
+                    .module_namespace(module, ImportPhase::Evaluation),
+            )
         }
         Shape::Value | Shape::AsToday if is_asked_of_module_object(lowering.file, module) => {
             let module = lowering.file.fragment.declare_module(module);
-            let object = lowering.builder.module_builtin(BuiltinId::ModuleObject, module);
+            let object = lowering
+                .builder
+                .module_builtin(BuiltinId::ModuleObject, module);
             let key = member::name_key(lowering.file, known::exports);
-            Some(member::emit_get(lowering, object, PropertyName::Constant(key)))
+            Some(member::emit_get(
+                lowering,
+                object,
+                PropertyName::Constant(key),
+            ))
         }
         Shape::Value | Shape::AsToday => {
             let variable = ensure_exports_variable(lowering.file, module)?;
@@ -156,7 +166,11 @@ fn is_asked_of_module_object(file: &FileLowering<'_, '_, '_, '_>, module: Module
 }
 
 fn symbol_name(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> Atom {
-    file.queries.files().bound(symbol.file).symbol(symbol.id).name
+    file.queries
+        .files()
+        .bound(symbol.file)
+        .symbol(symbol.id)
+        .name
 }
 
 fn emit_checked_read(
@@ -232,7 +246,11 @@ pub(super) fn read_named_export(
     }
     let object = emit_module_value(lowering, module)?;
     let key = member::name_key(lowering.file, name);
-    Some(member::emit_get(lowering, object, PropertyName::Constant(key)))
+    Some(member::emit_get(
+        lowering,
+        object,
+        PropertyName::Constant(key),
+    ))
 }
 
 fn find_root(file: &FileLowering<'_, '_, '_, '_>, access: ExprId) -> ExprId {
@@ -264,7 +282,12 @@ fn is_stored_for(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, holder: Symbol
     if captures.binary_search(&Capture::Value(binding)).is_ok() {
         return true;
     }
-    match lowering.file.scopes.placement(binding).map(|placement| placement.storage) {
+    match lowering
+        .file
+        .scopes
+        .placement(binding)
+        .map(|placement| placement.storage)
+    {
         Some(Storage::Field { .. } | Storage::Variable(_)) => true,
         Some(Storage::Local) | None => false,
     }
@@ -312,7 +335,9 @@ pub(in crate::lower) fn test_holder(
     access: NullishAccess,
 ) {
     if let Some(holder) = holder {
-        lowering.builder.require_object_coercible(holder, access, None);
+        lowering
+            .builder
+            .require_object_coercible(holder, access, None);
     }
 }
 
@@ -359,9 +384,7 @@ fn find_receiver_view(
         return match file.inputs.modules.site(file.file, object)? {
             Site::Evaluate { target, .. } => Some(match file.inputs.modules.shape(target) {
                 Shape::EsModule => View::Namespace(target),
-                Shape::Names | Shape::Value | Shape::AsToday => {
-                    View::Exports(target)
-                }
+                Shape::Names | Shape::Value | Shape::AsToday => View::Exports(target),
             }),
             Site::AsToday => None,
         };
@@ -378,7 +401,11 @@ pub(super) fn lower_export_receiver(
         Some(View::Namespace(module)) if lowering.file.inputs.modules.is_left_out(module) => None,
         Some(View::Namespace(module)) => {
             let module = lowering.file.fragment.declare_module(module);
-            Some(lowering.builder.module_namespace(module, ImportPhase::Evaluation))
+            Some(
+                lowering
+                    .builder
+                    .module_namespace(module, ImportPhase::Evaluation),
+            )
         }
         Some(View::Exports(module)) => emit_module_value(lowering, module),
         None => None,
@@ -400,7 +427,10 @@ pub(super) fn lower_export_reference(
         // `exports.__esModule = true`, and `exports.n = void 0` in front of what makes `n` stand for another variable.
         Member::Undefined | Member::Marker(_) => Reference::Discarded { holder },
         Member::Copy(_) | Member::Binding(_) => {
-            debug_assert!(false, "no store is bound to a copy or to a binding of the module");
+            debug_assert!(
+                false,
+                "no store is bound to a copy or to a binding of the module"
+            );
             Reference::Discarded { holder }
         }
         Member::OnObject => unreachable!("find_bound_member leaves it to the object"),
@@ -425,7 +455,10 @@ pub(super) fn inner_parameters(
     file: &FileLowering<'_, '_, '_, '_>,
     callback: FnId,
 ) -> [Option<SymbolId>; 2] {
-    [inner_parameter(file, callback, 0), inner_parameter(file, callback, 1)]
+    [
+        inner_parameter(file, callback, 0),
+        inner_parameter(file, callback, 1),
+    ]
 }
 
 fn is_inner_parameter(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: SymbolId) -> bool {
@@ -441,7 +474,11 @@ fn is_inner_parameter(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: S
     }
 }
 
-fn names_symbol(file: &FileLowering<'_, '_, '_, '_>, name: ExprId, symbol: Option<SymbolId>) -> bool {
+fn names_symbol(
+    file: &FileLowering<'_, '_, '_, '_>,
+    name: ExprId,
+    symbol: Option<SymbolId>,
+) -> bool {
     matches!(file.hir[name].kind, ExprKind::Ident(_))
         && symbol.is_some_and(|symbol| file.bound.binding(name) == Binding::Symbol(symbol))
 }
@@ -525,9 +562,11 @@ pub(super) fn try_lower_mention(
         return None;
     };
     match file.bound.binding(expression) {
-        Binding::CommonJs(variable) => {
-            Some(variables::get_variable(lowering, variable, super::ReadPurpose::Value))
-        }
+        Binding::CommonJs(variable) => Some(variables::get_variable(
+            lowering,
+            variable,
+            super::ReadPurpose::Value,
+        )),
         Binding::Symbol(_) | Binding::Arguments(_) | Binding::Free => None,
     }
 }
@@ -631,7 +670,10 @@ pub(super) fn find_destructured_module(
     }
 }
 
-fn find_plain_store(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> Option<(ExprId, ExprId)> {
+fn find_plain_store(
+    file: &FileLowering<'_, '_, '_, '_>,
+    expression: ExprId,
+) -> Option<(ExprId, ExprId)> {
     let expression = expression::skip_type_syntax(file, expression);
     match file.hir[expression].kind {
         ExprKind::Assign {
@@ -672,7 +714,10 @@ fn lower_exported_literal(
     };
     let has_plain_keys = properties.iter().all(|property| {
         matches!(hir.runtime_property_key(property), PropKey::Name(_))
-            && matches!(hir[property].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method)
+            && matches!(
+                hir[property].kind,
+                PropKind::Init | PropKind::Shorthand | PropKind::Method
+            )
     });
     if !has_plain_keys {
         return false;

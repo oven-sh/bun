@@ -17,8 +17,15 @@ async function bytesOfFunctions(program: string, buildFlags: string[] = []) {
   const cwd = String(dir);
   const executable = join(cwd, isWindows ? "main.exe" : "main");
   const map = join(cwd, "main.map");
-  const built = await run([bunExe(), "build", "--compile", "--aot", ...buildFlags, "./main.js", "--outfile", executable], cwd, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
-  expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...buildFlags, "./main.js", "--outfile", executable],
+    cwd,
+    { ...bunEnv, BUN_JSC_aotMapFilePath: map },
+  );
+  expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
+    output: "",
+    exitCode: 0,
+  });
   const plain = await run([bunExe(), "run", "./main.js"], cwd);
   expect(plain.exitCode).toBe(0);
   expect(await run([executable], cwd)).toEqual(plain);
@@ -45,7 +52,10 @@ function onlyComputes(o) { const text = "" + o; return text + 1.5 + (text < "m" 
     const asBuilt = await bytesOfFunctions(program);
     const outsideTheHottest = await bytesOfFunctions(program, ["--aot-heat=nothing-is-hottest"]);
     const grows = (name: string) => asBuilt.get(name)! > outsideTheHottest.get(name)!;
-    expect({ reads: grows("reads"), callsOneThatReads: grows("callsOneThatReads") }).toEqual({ reads: true, callsOneThatReads: true });
+    expect({ reads: grows("reads"), callsOneThatReads: grows("callsOneThatReads") }).toEqual({
+      reads: true,
+      callsOneThatReads: true,
+    });
     expect(asBuilt.get("onlyComputes")).toBe(outsideTheHottest.get("onlyComputes")!);
   },
   240_000,

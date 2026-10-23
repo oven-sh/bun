@@ -124,10 +124,20 @@ function program(idiom: string) {
 
 async function growthOfOperations(folder: string, name: string, flags: string[]) {
   const executable = join(folder, isWindows ? `${name}.exe` : name);
-  built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "./main.mjs", "--outfile", executable], folder, bunEnv));
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", ...flags, "./main.mjs", "--outfile", executable],
+      folder,
+      bunEnv,
+    ),
+  );
   const counted = async (rounds: number) => {
     const path = join(folder, `${name}-${rounds}`);
-    const ran = await spawned([executable, String(rounds)], folder, { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path });
+    const ran = await spawned([executable, String(rounds)], folder, {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      BUN_JSC_aotCountsPath: path,
+    });
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
     const counts = new Map<string, number>();
     for (const line of readFileSync(path, "utf8").split("\n")) {
@@ -137,7 +147,9 @@ async function growthOfOperations(folder: string, name: string, flags: string[])
     return counts;
   };
   const [few, many] = [await counted(500), await counted(4500)];
-  return [...many].filter(([operation, count]) => count - (few.get(operation) ?? 0) > 400).map(([operation]) => operation);
+  return [...many]
+    .filter(([operation, count]) => count - (few.get(operation) ?? 0) > 400)
+    .map(([operation]) => operation);
 }
 
 const only = process.env.AOT_COMPACT;

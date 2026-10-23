@@ -54,7 +54,8 @@ export function readElfObject(
   return result;
 }
 
-const isLaidOutUnchanged = (section: SectionHeader) => (section.flags & 2) !== 0 && (section.flags & 0x10) === 0 && section.size > 0 && !ignoredOutputs.test(section.name);
+const isLaidOutUnchanged = (section: SectionHeader) =>
+  (section.flags & 2) !== 0 && (section.flags & 0x10) === 0 && section.size > 0 && !ignoredOutputs.test(section.name);
 
 function readObjectAt(
   path: string,
@@ -108,7 +109,11 @@ function readObjectTables(
       const info = symbols[index * 24 + 4]!;
       const section = sectionOf(index);
       if ((info & 15) === 6) target = "";
-      else if (info >> 4 === 0) target = section > 0 && section < sections.length && isLaidOutUnchanged(sections[section]!) ? "L" + sections[section]!.name : "";
+      else if (info >> 4 === 0)
+        target =
+          section > 0 && section < sections.length && isLaidOutUnchanged(sections[section]!)
+            ? "L" + sections[section]!.name
+            : "";
       else target = "G" + stringAt(strings, symbols.readUInt32LE(index * 24));
       targets[index] = target;
     }
@@ -116,7 +121,8 @@ function readObjectTables(
   };
   const pointerRelocationType = pointerRelocationTypes.get(readAt(fd, base + 18, 2).readUInt16LE(0));
   for (const section of sections) {
-    const source = section.type === 4 || section.type === 9 || section.type === 0x40000014 ? sections[section.info]!.name : "";
+    const source =
+      section.type === 4 || section.type === 9 || section.type === 0x40000014 ? sections[section.info]!.name : "";
     if (source === ".eh_frame" && section.type === 4) {
       const relocations = readAt(fd, section.offset, section.size);
       for (let at = 0; at < relocations.length; at += 24) {

@@ -1,12 +1,30 @@
 // The calls of built-ins that do nothing a program can see when nobody uses their result, and what their operands have to be for that.
 import type { Atom } from "./build-types.ts";
-import { parameterAt, takes } from "./dispatch.ts";
 import { GeneratorError } from "./declarations.ts";
-import type { ModelBuiltin, ModelClass, ModelOperand, ModelOverload, ModelParameter, ModelType, ModelTypePart, TableModel } from "./model.ts";
+import { parameterAt, takes } from "./dispatch.ts";
+import type {
+  ModelBuiltin,
+  ModelClass,
+  ModelOperand,
+  ModelOverload,
+  ModelParameter,
+  ModelType,
+  ModelTypePart,
+  TableModel,
+} from "./model.ts";
 import type { Conversion, OperandUse, Protocol } from "./vocabulary.ts";
 
 // NotPassed: the call has no argument at the position.
-export const operandKinds = ["Undefined", "Null", "Boolean", "Number", "String", "Symbol", "BigInt", "NotPassed"] as const;
+export const operandKinds = [
+  "Undefined",
+  "Null",
+  "Boolean",
+  "Number",
+  "String",
+  "Symbol",
+  "BigInt",
+  "NotPassed",
+] as const;
 export type OperandKind = (typeof operandKinds)[number];
 
 // What kind of object an entry may be given for its call to be removable: none, a literal of the statement itself, an array literal, or any.
@@ -53,7 +71,14 @@ const convertedWithoutError: Readonly<Record<Conversion, readonly OperandKind[]>
 // A value inside the accepted type fails these by what it is: a negative index, a text that is no BigInt.
 const conversionsFailingByValue: readonly Conversion[] = ["ToIndex", "ToBigInt", "Dictionary"];
 
-const protocolsOnObjectsOnly: readonly Protocol[] = ["OwnKeys", "OwnValues", "PrototypeChain", "Named", "ToJSON", "Thenable"];
+const protocolsOnObjectsOnly: readonly Protocol[] = [
+  "OwnKeys",
+  "OwnValues",
+  "PrototypeChain",
+  "Named",
+  "ToJSON",
+  "Thenable",
+];
 const usesOfCallers: readonly OperandUse[] = ["Calls", "CallsPerElement", "CallsRepeatedly", "PassesToUserCode"];
 const usesBeyondTheOperand: readonly OperandUse[] = ["AppliesTransitively", "AppliesToContents"];
 const changingUses: readonly OperandUse[] = [
@@ -80,7 +105,8 @@ function kindsOf(type: ModelType): readonly OperandKind[] {
 type InstancePart = Extract<ModelTypePart, { part: "Instance" }>;
 
 const holdsOnlyObjects = ({ contents }: InstancePart): boolean =>
-  contents.length > 0 && contents.every(({ type }) => !type.isAnything && type.primitives.length === 0 && type.stringLiterals.length === 0);
+  contents.length > 0 &&
+  contents.every(({ type }) => !type.isAnything && type.primitives.length === 0 && type.stringLiterals.length === 0);
 
 const takesNothing = ({ primitives, objects }: OperandDemand) => primitives.length === 0 && objects === "None";
 
@@ -132,7 +158,11 @@ class Derivation {
       // The iterator of an array literal is the engine's, and no other iterable is known by its syntax.
       const iteratesAdmittedArray = others.every(protocol => protocol === "Iterate") && parameter.admitted !== null;
       if (!iteratesAdmittedArray || arrayPart === undefined) return "None";
-      return holdsOnlyObjects(arrayPart) ? "ArrayLiteralOfLiterals" : has(...usesBeyondTheOperand) ? "None" : "ArrayLiteral";
+      return holdsOnlyObjects(arrayPart)
+        ? "ArrayLiteralOfLiterals"
+        : has(...usesBeyondTheOperand)
+          ? "None"
+          : "ArrayLiteral";
     }
     if (has(...usesBeyondTheOperand)) return "None";
     if (!type.isAnything && !type.hasAnyObject) return arrayPart === undefined ? "None" : "ArrayLiteral";
@@ -157,7 +187,8 @@ class Derivation {
     } else if (mode !== "Required" || kinds.has("Undefined")) {
       kinds.add("NotPassed");
     }
-    const integers = type.integers === null ? null : { minimum: type.integers.minimum.value, maximum: type.integers.maximum.value };
+    const integers =
+      type.integers === null ? null : { minimum: type.integers.minimum.value, maximum: type.integers.maximum.value };
     return { primitives: inListOrder(kinds), integers, objects: this.#objectDemandOf(parameter, type) };
   }
 
@@ -178,7 +209,9 @@ class Derivation {
   // What is left of the demand where the earlier overload does not take the operand.
   #without(demand: OperandDemand, earlier: ModelParameter | null): OperandDemand {
     const namesClass = earlier !== null && earlier.accepted.parts.some(part => part.part === "Instance");
-    const takesObject = (demand.objects === "Any" && namesClass) || this.#objectAtomsOf(demand.objects).some(atom => takes(earlier, atom));
+    const takesObject =
+      (demand.objects === "Any" && namesClass) ||
+      this.#objectAtomsOf(demand.objects).some(atom => takes(earlier, atom));
     return {
       primitives: demand.primitives.filter(kind => !takes(earlier, kind)),
       integers: demand.integers,
@@ -189,7 +222,8 @@ class Derivation {
   // The first overload that takes the operands of a call is the one that describes it.
   #excludeOperandsOf(earlier: ModelOverload, positions: readonly Position[], hasRest: boolean): boolean {
     const argumentCount = positions.filter(({ operand }) => operand.operand !== "Receiver").length;
-    if (!hasRest && earlier.parameters.slice(argumentCount).some(parameter => !takes(parameter, "NotPassed"))) return true;
+    if (!hasRest && earlier.parameters.slice(argumentCount).some(parameter => !takes(parameter, "NotPassed")))
+      return true;
 
     const remaining = positions.map(({ operand, demand }) => this.#without(demand, parameterAt(earlier, operand)));
     const isWhole = (left: OperandDemand, { demand }: Position) =>

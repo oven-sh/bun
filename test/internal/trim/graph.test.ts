@@ -29,7 +29,13 @@ import {
   type SectionGraphParts,
 } from "../../../scripts/build/trim/graph.ts";
 import { partition } from "../../../scripts/build/trim/partition.ts";
-import { EdgeKind, guardOrigins, type BuiltinEntry, type BuiltinKind, type EntryPoint } from "../../../scripts/build/trim/types.ts";
+import {
+  EdgeKind,
+  guardOrigins,
+  type BuiltinEntry,
+  type BuiltinKind,
+  type EntryPoint,
+} from "../../../scripts/build/trim/types.ts";
 
 type Edge = [from: number, to: number];
 
@@ -377,7 +383,9 @@ describe("propagateFeatureSets", () => {
 
 describe("reverseEdges", () => {
   const listsOf = ({ count, successorStart, successors }: Edges) =>
-    Array.from({ length: count }, (_, node) => [...successors.subarray(successorStart[node]!, successorStart[node + 1]!)]);
+    Array.from({ length: count }, (_, node) => [
+      ...successors.subarray(successorStart[node]!, successorStart[node + 1]!),
+    ]);
   const nothingSkipped = (graph: Edges) => new Uint8Array(graph.successors.length);
 
   test("turns every edge around", () => {
@@ -394,7 +402,14 @@ describe("reverseEdges", () => {
     const graph = graphOf([[1, 2], [2], []]);
     const skippedEdges = skipping(graph, [0, 2]);
     expect(listsOf(reverseEdges(graph, skippedEdges))).toEqual([[], [0], [1]]);
-    expect(listsOf(reverseEdges(graph, skippedEdges.map(byte => byte * 3)))).toEqual([[], [0], [1]]);
+    expect(
+      listsOf(
+        reverseEdges(
+          graph,
+          skippedEdges.map(byte => byte * 3),
+        ),
+      ),
+    ).toEqual([[], [0], [1]]);
   });
 
   test("reversed twice is the graph again", () => {
@@ -596,9 +611,10 @@ describe("readEntryPoints", () => {
     ["a.o Gfolded_entry", 2],
     ["b.o Lguard", 4],
     ["b.o Gentry", 2],
+    ["a.o Lguard_that_only_returns", 5],
   ]);
 
-  const toyGraph = graphOf([[2], [2, 3], [], [], [2]]);
+  const toyGraph = graphOf([[2], [2, 3], [], [], [2], []]);
   const read = (...recordSections: RecordSection[]) => {
     const reading: GraphReading = {
       graph: toyGraph,
@@ -628,7 +644,7 @@ describe("readEntryPoints", () => {
     expect(read(recordSection("a.o", [{ ...guarded, feature: Sqlite, stub: 3 }]))).toStrictEqual({
       entryPoints: [{ ...guardedInA, feature: Sqlite, stub: "ReturnDefault" }],
       failures: [],
-      statistics: { records: 1, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0 },
+      statistics: { records: 1, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0, guardsOfEmptyEntryPoints: 0 },
     });
   });
 
@@ -647,7 +663,13 @@ describe("readEntryPoints", () => {
   });
 
   test("no record sections, and a section without records", () => {
-    const statistics = { records: 0, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0 };
+    const statistics = {
+      records: 0,
+      deadGuards: 0,
+      guardsInsideEntryPoint: 0,
+      definitions: 0,
+      guardsOfEmptyEntryPoints: 0,
+    };
     const nothing = { entryPoints: [], failures: [], statistics };
     expect(read()).toEqual(nothing);
     expect(read(recordSection("a.o", []))).toEqual(nothing);
@@ -656,13 +678,23 @@ describe("readEntryPoints", () => {
   test("the stub byte is an index into stubKinds", () => {
     expect(recordBytes).toBe(24);
     expect(stubKinds).toEqual(["Abort", "Throw", "ReturnUndefined", "ReturnDefault"]);
-    const { entryPoints } = read(recordSection("a.o", [3, 2, 1, 0].map(stub => ({ ...guarded, stub }))));
+    const { entryPoints } = read(
+      recordSection(
+        "a.o",
+        [3, 2, 1, 0].map(stub => ({ ...guarded, stub })),
+      ),
+    );
     expect(entryPoints.map(entryPoint => entryPoint.stub)).toEqual([...stubKinds]);
   });
 
   test("the origin byte is an index into guardOrigins", () => {
     expect(guardOrigins).toEqual(["NativeCode", "Builtin", "Definition"]);
-    const { entryPoints } = read(recordSection("a.o", [1, 0].map(origin => ({ ...guarded, origin }))));
+    const { entryPoints } = read(
+      recordSection(
+        "a.o",
+        [1, 0].map(origin => ({ ...guarded, origin })),
+      ),
+    );
     expect(entryPoints.map(entryPoint => entryPoint.origin)).toEqual(guardOrigins.slice(0, 2));
   });
 
@@ -682,7 +714,13 @@ describe("readEntryPoints", () => {
     );
     expect(entryPoints).toEqual([]);
     expect(failures).toEqual([]);
-    expect(statistics).toEqual({ records: 4, deadGuards: 4, guardsInsideEntryPoint: 0, definitions: 0 });
+    expect(statistics).toEqual({
+      records: 4,
+      deadGuards: 4,
+      guardsInsideEntryPoint: 0,
+      definitions: 0,
+      guardsOfEmptyEntryPoints: 0,
+    });
   });
 
   test("the same guard twice is one entry point", () => {
@@ -721,7 +759,13 @@ describe("readEntryPoints", () => {
     const { entryPoints, failures, statistics } = read(recordSection("a.o", [recursive]));
     expect(entryPoints).toEqual([]);
     expect(failures).toEqual([]);
-    expect(statistics).toEqual({ records: 1, deadGuards: 0, guardsInsideEntryPoint: 1, definitions: 0 });
+    expect(statistics).toEqual({
+      records: 1,
+      deadGuards: 0,
+      guardsInsideEntryPoint: 1,
+      definitions: 0,
+      guardsOfEmptyEntryPoints: 0,
+    });
   });
 
   test("a section of 23 bytes is malformed, and the other sections are still read", () => {
@@ -754,16 +798,30 @@ describe("readEntryPoints", () => {
     test("guards every reference to the entry point", () => {
       const { entryPoints, failures, statistics } = read(recordSection("a.o", [{ ...definition, feature: Sqlite }]));
       expect(failures).toEqual([]);
-      expect(entryPoints).toStrictEqual([0, 1, 4].map(guard => ({ ...guardedInA, guard, feature: Sqlite, origin: "Definition" })));
-      expect(statistics).toEqual({ records: 1, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 1 });
+      expect(entryPoints).toStrictEqual(
+        [0, 1, 4].map(guard => ({ ...guardedInA, guard, feature: Sqlite, origin: "Definition" })),
+      );
+      expect(statistics).toEqual({
+        records: 1,
+        deadGuards: 0,
+        guardsInsideEntryPoint: 0,
+        definitions: 1,
+        guardsOfEmptyEntryPoints: 0,
+      });
     });
 
     test("of a function the linker folded with other code gives one entry point, however many places refer to the shared code", () => {
-      const graph = createSectionGraph({ ...partsOf([[2], [2, 3], [], [], [2]]), aliases: new Map([[2, [["other.o", "unrelated"]]]]) });
+      const graph = createSectionGraph({
+        ...partsOf([[2], [2, 3], [], [], [2]]),
+        aliases: new Map([[2, [["other.o", "unrelated"]]]]),
+      });
       const reading: GraphReading = {
         graph,
         recordSections: [recordSection("a.o", [definition])],
-        resolve: (object, reference) => ({ node: nodes.get(`${object} ${reference}`)!, section: `${object}\0${reference}` }),
+        resolve: (object, reference) => ({
+          node: nodes.get(`${object} ${reference}`)!,
+          section: `${object}\0${reference}`,
+        }),
         failures: [],
         statistics: {},
       };
@@ -775,16 +833,22 @@ describe("readEntryPoints", () => {
     });
 
     test("with the stub Throw and an id says that JavaScript enters it as that built-in", () => {
-      const { entryPoints, failures, statistics } = read(recordSection("a.o", [{ ...definition, stub: 1, builtin: 7 }]));
+      const { entryPoints, failures, statistics } = read(
+        recordSection("a.o", [{ ...definition, stub: 1, builtin: 7 }]),
+      );
       expect(failures).toEqual([]);
-      expect(entryPoints).toStrictEqual([0, 1, 4].map(guard => ({ ...guardedInA, guard, stub: "Throw", origin: "Builtin", builtin: 7 })));
+      expect(entryPoints).toStrictEqual(
+        [0, 1, 4].map(guard => ({ ...guardedInA, guard, stub: "Throw", origin: "Builtin", builtin: 7 })),
+      );
       expect(statistics.definitions).toBe(1);
     });
 
     test("with the stub Throw and no id is entered from native code", () => {
       const { entryPoints, failures } = read(recordSection("a.o", [{ ...definition, stub: 1 }]));
       expect(failures).toEqual([]);
-      expect(entryPoints).toStrictEqual([0, 1, 4].map(guard => ({ ...guardedInA, guard, stub: "Throw", origin: "Definition" })));
+      expect(entryPoints).toStrictEqual(
+        [0, 1, 4].map(guard => ({ ...guardedInA, guard, stub: "Throw", origin: "Definition" })),
+      );
     });
 
     test("makes a reference from code a guarded edge and one from data a soft edge", () => {
@@ -794,32 +858,67 @@ describe("readEntryPoints", () => {
         output: [".text", ".text", ".text", ".text", ".data.rel.ro"],
         roots: new Set([0, 1, 4]),
       });
-      const result = partition({ graph, entryPoints, model, isMovable: () => true, isCode: output => output === ".text" });
+      const result = partition({
+        graph,
+        entryPoints,
+        model,
+        isMovable: () => true,
+        isCode: output => output === ".text",
+      });
       expect(result.failures).toEqual([]);
-      expect([0, 1, 4].map(guard => result.edgeKind[findEdge(graph, guard, 2)])).toEqual([EdgeKind.Guarded, EdgeKind.Guarded, EdgeKind.Soft]);
+      expect([0, 1, 4].map(guard => result.edgeKind[findEdge(graph, guard, 2)])).toEqual([
+        EdgeKind.Guarded,
+        EdgeKind.Guarded,
+        EdgeKind.Soft,
+      ]);
       expect(result.edgeKind[findEdge(graph, 1, 3)]).toBe(EdgeKind.Ordinary);
       expect(Array.from(result.isRetained)).toEqual([1, 1, 0, 1, 1]);
       expect(result.sets[result.setOf[2]!]).toEqual([Jit]);
     });
 
     test("of an entry point that nothing refers to gives no entry point and no failure", () => {
-      const { entryPoints, failures, statistics } = read(recordSection("a.o", [{ guard: "Lguard", entry: "Lguard", origin: 2 }]));
+      const { entryPoints, failures, statistics } = read(
+        recordSection("a.o", [{ guard: "Lguard", entry: "Lguard", origin: 2 }]),
+      );
       expect(entryPoints).toEqual([]);
       expect(failures).toEqual([]);
-      expect(statistics).toEqual({ records: 1, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 1 });
+      expect(statistics).toEqual({
+        records: 1,
+        deadGuards: 0,
+        guardsInsideEntryPoint: 0,
+        definitions: 1,
+        guardsOfEmptyEntryPoints: 0,
+      });
     });
 
     test("beside a guard's own record leaves that record as it is", () => {
       const { entryPoints, statistics } = read(recordSection("a.o", [guarded, definition]));
-      expect(entryPoints).toStrictEqual([guardedInA, ...[0, 1, 4].map(guard => ({ ...guardedInA, guard, origin: "Definition" }))]);
-      expect(statistics).toEqual({ records: 2, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 1 });
+      expect(entryPoints).toStrictEqual([
+        guardedInA,
+        ...[0, 1, 4].map(guard => ({ ...guardedInA, guard, origin: "Definition" })),
+      ]);
+      expect(statistics).toEqual({
+        records: 2,
+        deadGuards: 0,
+        guardsInsideEntryPoint: 0,
+        definitions: 1,
+        guardsOfEmptyEntryPoints: 0,
+      });
     });
 
     test("of a definition that is not in the image is a dead guard", () => {
-      const { entryPoints, failures, statistics } = read(recordSection("a.o", [{ guard: "Gdiscarded", entry: "Gdiscarded", origin: 2 }]));
+      const { entryPoints, failures, statistics } = read(
+        recordSection("a.o", [{ guard: "Gdiscarded", entry: "Gdiscarded", origin: 2 }]),
+      );
       expect(entryPoints).toEqual([]);
       expect(failures).toEqual([]);
-      expect(statistics).toEqual({ records: 1, deadGuards: 1, guardsInsideEntryPoint: 0, definitions: 0 });
+      expect(statistics).toEqual({
+        records: 1,
+        deadGuards: 1,
+        guardsInsideEntryPoint: 0,
+        definitions: 0,
+        guardsOfEmptyEntryPoints: 0,
+      });
     });
 
     test.each<[string, ToyRecord]>([
@@ -839,7 +938,13 @@ describe("readEntryPoints", () => {
       const { entryPoints, failures, statistics } = read(recordSection("a.o", [{ ...definition, origin: 0 }]));
       expect(entryPoints).toEqual([]);
       expect(failures).toEqual([]);
-      expect(statistics).toEqual({ records: 1, deadGuards: 0, guardsInsideEntryPoint: 1, definitions: 0 });
+      expect(statistics).toEqual({
+        records: 1,
+        deadGuards: 0,
+        guardsInsideEntryPoint: 1,
+        definitions: 0,
+        guardsOfEmptyEntryPoints: 0,
+      });
     });
   });
 
@@ -868,7 +973,28 @@ describe("readEntryPoints", () => {
       { kind: "GuardWithoutReference", guard: 0, entry: undefined, feature: Jit, target: "Ginlined" },
       { kind: "GuardWithoutReference", guard: 1, entry: undefined, feature: Sqlite, target: "" },
     ]);
-    expect(statistics).toEqual({ records: 2, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0 });
+    expect(statistics).toEqual({
+      records: 2,
+      deadGuards: 0,
+      guardsInsideEntryPoint: 0,
+      definitions: 0,
+      guardsOfEmptyEntryPoints: 0,
+    });
+  });
+
+  test("a guard in a function that only returns, whose entry point is not in the image, is only counted", () => {
+    const { entryPoints, failures, statistics } = read(
+      recordSection("a.o", [{ guard: "Lguard_that_only_returns", entry: "Gempty" }]),
+    );
+    expect(entryPoints).toEqual([]);
+    expect(failures).toEqual([]);
+    expect(statistics).toEqual({
+      records: 1,
+      deadGuards: 0,
+      guardsInsideEntryPoint: 0,
+      definitions: 0,
+      guardsOfEmptyEntryPoints: 1,
+    });
   });
 
   test("a guard inlined twice into one function fails once", () => {
@@ -880,7 +1006,11 @@ describe("readEntryPoints", () => {
 describe("findCFunctionEntryPoints", () => {
   const [loop, table, attach, read, shared] = [0, 1, 2, 3, 4];
 
-  function find(cFunctions: Record<string, string[]>, format: "elf" | "macho" = "elf", names = [["loop"], ["table"], ["tls_attach"], ["tls_read"], ["tls_a", "tls_b"]]) {
+  function find(
+    cFunctions: Record<string, string[]>,
+    format: "elf" | "macho" = "elf",
+    names = [["loop"], ["table"], ["tls_attach"], ["tls_read"], ["tls_a", "tls_b"]],
+  ) {
     const reading: GraphReading = {
       graph: createSectionGraph({ ...partsOf([[attach, read, shared], [attach], [read], [], []]), format, names }),
       recordSections: [],
@@ -888,7 +1018,9 @@ describe("findCFunctionEntryPoints", () => {
       failures: [],
       statistics: {},
     };
-    const features = model.features.map(each => (cFunctions[each.name] === undefined ? each : { ...each, cFunctions: cFunctions[each.name] }));
+    const features = model.features.map(each =>
+      cFunctions[each.name] === undefined ? each : { ...each, cFunctions: cFunctions[each.name] },
+    );
     return findCFunctionEntryPoints(reading, { ...model, features });
   }
 
@@ -903,7 +1035,10 @@ describe("findCFunctionEntryPoints", () => {
   });
 
   test("every reference to a named function is cut, from code and from data", () => {
-    expect(find({ Sqlite: ["tls_attach"] })).toStrictEqual({ entryPoints: [record(loop, attach), record(table, attach)], missing: [] });
+    expect(find({ Sqlite: ["tls_attach"] })).toStrictEqual({
+      entryPoints: [record(loop, attach), record(table, attach)],
+      missing: [],
+    });
   });
 
   test("a function that two features name stays while either feature does", () => {
@@ -926,7 +1061,10 @@ describe("findCFunctionEntryPoints", () => {
 
   test("a Mach-O symbol has an underscore ahead of the C name", () => {
     const names = [["_loop"], ["_table"], ["_tls_attach"], ["_tls_read"], ["_tls_a", "_tls_b"]];
-    expect(find({ Sqlite: ["tls_attach"] }, "macho", names).entryPoints).toStrictEqual([record(loop, attach), record(table, attach)]);
+    expect(find({ Sqlite: ["tls_attach"] }, "macho", names).entryPoints).toStrictEqual([
+      record(loop, attach),
+      record(table, attach),
+    ]);
   });
 
   test("no feature names a function", () => {
@@ -943,7 +1081,14 @@ describe("findCxxFunctionEntryPoints", () => {
     ["_ZN3uWS3AppILb1EE4stopEv", "uWS::App<true>::stop()"],
     ["_ZN3uWS3AppILb0EE4stopEv", "uWS::App<false>::stop()"],
   ]);
-  const names = [["uws_run"], ["table"], ["_ZN3uWS3AppILb1EE3runEv"], ["_ZN3uWS3AppILb0EE3runEv"], ["_ZN3uWS3AppILb1EE5stateE"], ["_ZN3uWS3AppILb1EE4stopEv", "_ZN3uWS3AppILb0EE4stopEv"]];
+  const names = [
+    ["uws_run"],
+    ["table"],
+    ["_ZN3uWS3AppILb1EE3runEv"],
+    ["_ZN3uWS3AppILb0EE3runEv"],
+    ["_ZN3uWS3AppILb1EE5stateE"],
+    ["_ZN3uWS3AppILb1EE4stopEv", "_ZN3uWS3AppILb0EE4stopEv"],
+  ];
   const asked: string[][] = [];
 
   function find(cxxFunctions: Record<string, { hint: string; pattern: string }[]>) {
@@ -958,7 +1103,9 @@ describe("findCxxFunctionEntryPoints", () => {
       failures: [],
       statistics: {},
     };
-    const features = model.features.map(each => (cxxFunctions[each.name] === undefined ? each : { ...each, cxxFunctions: cxxFunctions[each.name] }));
+    const features = model.features.map(each =>
+      cxxFunctions[each.name] === undefined ? each : { ...each, cxxFunctions: cxxFunctions[each.name] },
+    );
     return findCxxFunctionEntryPoints({
       reading,
       model: { ...model, features },
@@ -979,7 +1126,10 @@ describe("findCxxFunctionEntryPoints", () => {
   const secureApp = { hint: "uWS", pattern: "uWS::\\w+<true[,>]" };
 
   test("every reference to a function whose demangled name matches is cut; data and the other instantiation stay", () => {
-    expect(find({ Sqlite: [secureApp] })).toStrictEqual({ entryPoints: [record(wrapper, secure), record(table, secure)], unmatched: [] });
+    expect(find({ Sqlite: [secureApp] })).toStrictEqual({
+      entryPoints: [record(wrapper, secure), record(table, secure)],
+      unmatched: [],
+    });
   });
 
   test("a section that the linker folded with a function that doesn't match is not cut", () => {
@@ -994,7 +1144,10 @@ describe("findCxxFunctionEntryPoints", () => {
   });
 
   test("a pattern that matches nothing is reported", () => {
-    expect(find({ Sqlite: [{ hint: "uWS", pattern: "uWS::Gone<" }] })).toStrictEqual({ entryPoints: [], unmatched: ["uWS::Gone<"] });
+    expect(find({ Sqlite: [{ hint: "uWS", pattern: "uWS::Gone<" }] })).toStrictEqual({
+      entryPoints: [],
+      unmatched: ["uWS::Gone<"],
+    });
   });
 
   test("no feature has a pattern", () => {
@@ -1011,7 +1164,12 @@ describe("findStaticTableEntryPoints", () => {
     ["_close", "Bun::jsSqliteClose(JSC::JSGlobalObject*, JSC::CallFrame*)"],
   ]);
 
-  const builtin = (id: number, kind: BuiltinKind, nativeSymbols: string[], uses: BuiltinEntry["uses"]): BuiltinEntry => ({
+  const builtin = (
+    id: number,
+    kind: BuiltinKind,
+    nativeSymbols: string[],
+    uses: BuiltinEntry["uses"],
+  ): BuiltinEntry => ({
     id,
     path: `Bun.builtin${id}`,
     kind,
@@ -1022,7 +1180,10 @@ describe("findStaticTableEntryPoints", () => {
   const always = (name: string) => ({ feature: name, isConditional: false });
   const sometimes = (name: string) => ({ feature: name, isConditional: true });
 
-  function find(entries: BuiltinEntry[], names: string[][] = [["main"], ["table"], ["other"], ["_open"], ["_close"], ["text"]]) {
+  function find(
+    entries: BuiltinEntry[],
+    names: string[][] = [["main"], ["table"], ["other"], ["_open"], ["_close"], ["text"]],
+  ) {
     const successors = [[open], [open, close, text], [open], [], [], []];
     const reading: GraphReading = {
       graph: createSectionGraph({ ...partsOf(successors), output: outputs, names }),
@@ -1051,12 +1212,18 @@ describe("findStaticTableEntryPoints", () => {
   });
 
   test("each table that holds the address of a built-in's function guards it, and code that takes the address does not", () => {
-    expect(find([builtin(7, "Function", ["jsSqliteOpen"], [always("Sqlite")])])).toStrictEqual([record(table, open, 7), record(otherTable, open, 7)]);
+    expect(find([builtin(7, "Function", ["jsSqliteOpen"], [always("Sqlite")])])).toStrictEqual([
+      record(table, open, 7),
+      record(otherTable, open, 7),
+    ]);
     expect(main).toBe(0);
   });
 
   test("an entry may name its function with some or all of its namespaces, and another namespace's function of that name is not it", () => {
-    expect(find([builtin(7, "Function", ["Bun::jsSqliteOpen"], [always("Sqlite")])])).toStrictEqual([record(table, open, 7), record(otherTable, open, 7)]);
+    expect(find([builtin(7, "Function", ["Bun::jsSqliteOpen"], [always("Sqlite")])])).toStrictEqual([
+      record(table, open, 7),
+      record(otherTable, open, 7),
+    ]);
     expect(find([builtin(7, "Function", ["Node::jsSqliteOpen"], [always("Sqlite")])])).toEqual([]);
     expect(find([builtin(7, "Function", ["un::jsSqliteOpen"], [always("Sqlite")])])).toEqual([]);
   });
@@ -1066,25 +1233,33 @@ describe("findStaticTableEntryPoints", () => {
   });
 
   test("the feature is the entry's first unconditional use", () => {
-    expect(find([builtin(7, "Method", ["jsSqliteClose"], [sometimes("Sqlite"), always("JIT"), always("Sqlite")])])).toStrictEqual([
-      record(table, close, 7, Jit),
-    ]);
+    expect(
+      find([builtin(7, "Method", ["jsSqliteClose"], [sometimes("Sqlite"), always("JIT"), always("Sqlite")])]),
+    ).toStrictEqual([record(table, close, 7, Jit)]);
   });
 
   test("an entry with conditional uses only has no guard", () => {
     expect(find([builtin(7, "Function", ["jsSqliteOpen"], [sometimes("Sqlite")])])).toEqual([]);
   });
 
-  test.each<BuiltinKind>(["Function", "Method", "Constructor", "Accessor"])("a %s is asked about where it becomes callable", kind => {
-    expect(find([builtin(7, kind, ["jsSqliteClose"], [always("Sqlite")])])).toStrictEqual([record(table, close, 7)]);
-  });
-
-  test.each<BuiltinKind>(["Namespace", "DataProperty", "Constant", "Prototype", "NativeBinding", "Module", "InternalModule"])(
-    "the creation of a %s stays",
+  test.each<BuiltinKind>(["Function", "Method", "Constructor", "Accessor"])(
+    "a %s is asked about where it becomes callable",
     kind => {
-      expect(find([builtin(7, kind, ["jsSqliteClose"], [always("Sqlite")])])).toEqual([]);
+      expect(find([builtin(7, kind, ["jsSqliteClose"], [always("Sqlite")])])).toStrictEqual([record(table, close, 7)]);
     },
   );
+
+  test.each<BuiltinKind>([
+    "Namespace",
+    "DataProperty",
+    "Constant",
+    "Prototype",
+    "NativeBinding",
+    "Module",
+    "InternalModule",
+  ])("the creation of a %s stays", kind => {
+    expect(find([builtin(7, kind, ["jsSqliteClose"], [always("Sqlite")])])).toEqual([]);
+  });
 
   test("two built-ins that share a function give a record each, sorted by feature and id", () => {
     const entries = [
@@ -1092,7 +1267,11 @@ describe("findStaticTableEntryPoints", () => {
       builtin(8, "Function", ["jsSqliteClose"], [always("Sqlite")]),
       builtin(10, "Function", ["jsSqliteClose"], [always("JIT")]),
     ];
-    expect(find(entries)).toStrictEqual([record(table, close, 10, Jit), record(table, close, 8), record(table, close, 9)]);
+    expect(find(entries)).toStrictEqual([
+      record(table, close, 10, Jit),
+      record(table, close, 8),
+      record(table, close, 9),
+    ]);
   });
 
   test("a function with two names that mean the same gives one record for each table", () => {

@@ -2,7 +2,16 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const tsconfig = JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [], strict: true } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    noEmit: true,
+    types: [],
+    strict: true,
+  },
+});
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });

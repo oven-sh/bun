@@ -7,8 +7,8 @@ use bun_sema::program::FileRole;
 
 use super::members;
 use crate::ir::generated::{FunctionFlags, FunctionKind, TypeSiteKind};
-use crate::lower::positions::SiteOrigin;
 use crate::ir::{DeclaredType, LayoutId, PositionFlags, TypeId, TypeTable, ValueId};
+use crate::lower::positions::SiteOrigin;
 use crate::lower::private_names::{self, PrivateHolder};
 use crate::lower::types::{has_layout_in_every_value, map_type_at};
 use crate::lower::{
@@ -173,10 +173,12 @@ fn classify_receiver_type(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
         },
         ShapeKind::Union(members) => {
             let has_slots_in_every_member =
-                members.iter().all(|&member| match classify_receiver_type(file, member) {
-                    Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => true,
-                    Receiver::WithoutSlots => false,
-                });
+                members
+                    .iter()
+                    .all(|&member| match classify_receiver_type(file, member) {
+                        Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => true,
+                        Receiver::WithoutSlots => false,
+                    });
             match has_slots_in_every_member {
                 true => Receiver::Declared,
                 false => Receiver::WithoutSlots,
@@ -292,7 +294,11 @@ fn find_declared_position(
         Ok(MemberLookup::Member(member)) => match member.kind {
             ObjectMemberKind::Method => method_position(),
             ObjectMemberKind::Field if fields_have_slots => {
-                let declared = member.types.written.written().or(member.types.checked.ok());
+                let declared = member
+                    .types
+                    .written
+                    .written()
+                    .or_else(|| member.types.checked.ok());
                 let position = map_position(file, access, declared);
                 match member.is_optional {
                     true => positions::add_undefined(file, position),
@@ -465,7 +471,9 @@ mod tests {
             })
             .filter_map(|value| DeclaredType::from_words(&value.fields[1..]))
             .filter(|declared| {
-                let kind = declared.site.map(|site| fragment.type_sites[site.index()].kind);
+                let kind = declared
+                    .site
+                    .map(|site| fragment.type_sites[site.index()].kind);
                 matches!(kind, None | Some(TypeSiteKind::PropertyRead))
             })
             .map(|declared| {
@@ -560,7 +568,10 @@ export function probe(numbers: Numbers) { return numbers.held + 1; }
         let main = "import { C } from \"./c\";
 export function probe(c: C) { return c.x + 1; }
 ";
-        let files = [("main.ts", main), ("c.ts", "export class C { x: number = 1; }\n")];
+        let files = [
+            ("main.ts", main),
+            ("c.ts", "export class C { x: number = 1; }\n"),
+        ];
         let narrowed = narrowed_types_in(&files, "probe");
         assert!(narrowed.is_empty(), "{narrowed:?}");
     }

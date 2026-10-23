@@ -6,8 +6,8 @@ use super::{
     BindingForm, BindingRef, DeadZone, IdentifierTarget, IdentifierTargetKind, bindings, dead_zone,
     dynamic,
 };
-use crate::builtins::id::BuiltinId;
 use crate::builtins::Resolved;
+use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression, member};
@@ -163,9 +163,7 @@ pub(super) fn find_tested_local(
     let file = &*lowering.file;
     let mut tested = expression::skip_type_syntax(file, expression);
     if let ExprKind::Assign {
-        op: None,
-        target,
-        ..
+        op: None, target, ..
     } = file.hir[tested].kind
     {
         tested = expression::skip_type_syntax(file, target);
@@ -295,7 +293,9 @@ fn resolve_binding(
         };
     }
     let is_dead_zone_tested = match binding {
-        Binding::Symbol(symbol) if is_plain_assignment_target(lowering.file, symbol, identifier) => {
+        Binding::Symbol(symbol)
+            if is_plain_assignment_target(lowering.file, symbol, identifier) =>
+        {
             test_dead_zone_before_value(lowering, symbol, name)
         }
         Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,

@@ -73,7 +73,8 @@ function parseOpaqueMarks(cursor: Cursor): Name[] {
   while (cursor.hasMore) {
     if (!atOpaqueMark(cursor)) throw cursor.expected("engine, directCallsOnly, functionLocal or interior");
     const mark = takeWord(cursor);
-    if (marks.some(earlier => earlier.text === mark.text)) throw new SchemaError(mark.location, `${mark.text} is listed twice`);
+    if (marks.some(earlier => earlier.text === mark.text))
+      throw new SchemaError(mark.location, `${mark.text} is listed twice`);
     marks.push(mark);
   }
   return marks;

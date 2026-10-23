@@ -323,8 +323,8 @@ cursor.ts(9,19): error TS100031: Property 'column' of 'Cursor' is declared 'int3
 ```
 
 ```ts
-  cursor.column = cursor.column + by; // [!code --]
-  cursor.column = (cursor.column + by) | 0; // [!code ++]
+cursor.column = cursor.column + by; // [!code --]
+cursor.column = (cursor.column + by) | 0; // [!code ++]
 ```
 
 Because the build proves every store that it sees, typed code has nothing to check when it stores an `int32`. `| 0` is ordinary JavaScript: it gives the same 32-bit value compiled, under `bun run` and in every other engine.

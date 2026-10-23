@@ -5,6 +5,7 @@ use super::program_keys::{
     KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
 };
 use super::type_hashes::{TypeHashes, hash_types};
+use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, ModuleReferenceKind, RuntimeFunctionEntry,
     TypeSite, Variable,
@@ -13,7 +14,6 @@ use crate::ir::{
     FunctionId, Id, LayoutId, PropertyKeyId, PropertyKeyTable, Reference, StringTable, TypeTable,
     VariableId,
 };
-use crate::builtins::id::BuiltinId;
 use crate::load::ProgramFile;
 use crate::lower::{DefinedObjectType, FamilyFacts, Fragment, ModuleFragment, ObjectTypeKey};
 use crate::modules::ModuleFailureId;
@@ -293,8 +293,7 @@ impl LinkUnit {
         let layout_keys = fragment.layout_keys.into_iter();
         let layouts = KeyList::new(layout_keys.map(|key| context.layout_key(key)).collect());
         let function_keys = fragment.function_keys.into_iter();
-        let functions =
-            KeyList::new(function_keys.map(|key| context.function_key(key)).collect());
+        let functions = KeyList::new(function_keys.map(|key| context.function_key(key)).collect());
         let type_hashes = hash_types(&fragment.types, &strings, &layouts.keys, &functions.keys);
         let type_shards = ShardIndex::new(type_hashes.types.iter().map(|hash| hash.0[0]));
         let variable_keys = fragment.variable_keys.into_iter();

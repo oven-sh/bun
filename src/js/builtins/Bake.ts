@@ -15,15 +15,13 @@ interface PrerenderResult {
 }
 type GetParamIterator = AsyncIterable<RouteParams> | Iterable<RouteParams> | { pages: RouteParams[] };
 type FrameworkPrerender =
-  | ((routeMetadata: RouteMetadata) => PrerenderResult | null | Promise<PrerenderResult | null>)
-  | undefined;
+  ((routeMetadata: RouteMetadata) => PrerenderResult | null | Promise<PrerenderResult | null>) | undefined;
 interface ParamsMetadata {
   pageModule: unknown;
   layouts: unknown[];
 }
 type FrameworkGetParams =
-  | ((paramsMetadata: ParamsMetadata) => GetParamIterator | Promise<GetParamIterator>)
-  | undefined;
+  ((paramsMetadata: ParamsMetadata) => GetParamIterator | Promise<GetParamIterator>) | undefined;
 type TypeAndFlags = number;
 type FileIndex = number;
 

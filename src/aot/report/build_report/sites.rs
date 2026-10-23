@@ -53,7 +53,7 @@ pub(super) fn write_functions(
         .collect();
     let resolved = resolve_ascending(&wanted, |position| positions.resolve(position));
     json.begin_array("functions");
-    for (record, bounds) in records.iter().zip(resolved.chunks_exact(2)) {
+    for (record, bounds) in records.iter().zip(resolved.as_chunks::<2>().0) {
         let end_line = bounds[1].as_ref().map_or(0, |end| end.line);
         write_function(json, input, record, bounds[0].as_ref(), end_line);
     }
@@ -167,7 +167,10 @@ fn write_function(
     json.begin_element();
     write_position_members(json, start.unwrap_or(&unlocated));
     json.number("endLine", u64::from(end_line));
-    json.string("name", source.map_or(&[][..], |source| names.function_name(source)));
+    json.string(
+        "name",
+        source.map_or(&[][..], |source| names.function_name(source)),
+    );
     json.string("role", engine.text(record.role));
     json.boolean("isInDependency", !is_program_function(names, source));
     json.number("codeBytes", u64::from(record.code_bytes));
@@ -193,8 +196,12 @@ fn write_function(
 }
 
 fn function_bounds(names: &ProgramNames, source: Option<FunctionId>) -> [Option<Position>; 2] {
-    let range = source
-        .and_then(|source| Some((names.function_module(source)?, names.function_range(source)?)));
+    let range = source.and_then(|source| {
+        Some((
+            names.function_module(source)?,
+            names.function_range(source)?,
+        ))
+    });
     let Some((module, (start, end))) = range else {
         return [None, None];
     };
@@ -282,6 +289,9 @@ mod tests {
         names.dedup();
         assert_eq!(names, ["deferred", "frame", "heap", "removed", "slim"]);
         assert_eq!(outcome_name(AllocationOutcome::Unknown), "heap");
-        assert_eq!(outcome_name(AllocationOutcome::FrameUntilMaterialized), "frame");
+        assert_eq!(
+            outcome_name(AllocationOutcome::FrameUntilMaterialized),
+            "frame"
+        );
     }
 }

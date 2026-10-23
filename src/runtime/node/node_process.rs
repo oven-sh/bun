@@ -550,8 +550,9 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let prev_cwd: Box<[u8]> =
-            Box::from(bun_core::working_directory_in_executable().unwrap_or(fs.top_level_dir()));
+        let prev_cwd: Box<[u8]> = Box::from(
+            bun_core::working_directory_in_executable().unwrap_or_else(|| fs.top_level_dir()),
+        );
         match find_directory_in_executable(slice.as_bytes()) {
             None => {}
             Some(Ok(directory)) => {

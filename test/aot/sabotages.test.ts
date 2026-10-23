@@ -32,24 +32,58 @@ const underCollections: Environment[] = [
 type Row = { folder: string; flags: string[]; programs: string[] };
 const innerObjects = (...programs: string[]): Row => ({ folder: "inner-objects", flags: [], programs });
 // No room is made in a small program unless the form is taken wherever it is legal.
-const rooms = (...programs: string[]): Row => ({ folder: "flattened-objects", flags: ["--aot-testing=FlattenUntilHeldWhereverLegal"], programs });
+const rooms = (...programs: string[]): Row => ({
+  folder: "flattened-objects",
+  flags: ["--aot-testing=FlattenUntilHeldWhereverLegal"],
+  programs,
+});
 
 /** The programs under ./programs that must notice each sabotage. */
 const noticedBy: Record<string, Row> = {
   StackNamesNoInnerCell: innerObjects("the-inner-object-is-held-by-a-local-variable-alone.ts"),
-  InnerObjectIsVisitedWithoutItsFields: innerObjects("the-field-is-pointed-at-another-object.ts", "an-old-outer-object-gets-young-things.ts"),
+  InnerObjectIsVisitedWithoutItsFields: innerObjects(
+    "the-field-is-pointed-at-another-object.ts",
+    "an-old-outer-object-gets-young-things.ts",
+  ),
   InnerArrayIsVisitedWithoutItsElements: innerObjects("an-array-is-born-in-the-cell-of-its-object.ts"),
-  InnerCellVisitedInPlaceStaysWhite: innerObjects("young-objects-are-stored-through-an-alias-into-an-old-cell.ts", "an-array-is-born-in-the-cell-of-its-object.ts"),
-  InnerCellIsMarkedWithoutItsOuterCell: innerObjects("only-the-inner-object-is-still-held.ts", "an-object-with-a-room-lies-in-the-cell-of-a-third.ts"),
+  InnerCellVisitedInPlaceStaysWhite: innerObjects(
+    "young-objects-are-stored-through-an-alias-into-an-old-cell.ts",
+    "an-array-is-born-in-the-cell-of-its-object.ts",
+  ),
+  InnerCellIsMarkedWithoutItsOuterCell: innerObjects(
+    "only-the-inner-object-is-still-held.ts",
+    "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
+  ),
   // Not at a collection at every allocation that leaves the fast path: at every fifth.
-  InnerCellLetGoKeepsItsHeader: innerObjects("three-levels-are-held-let-go-and-filled-again.ts", "an-object-with-a-room-lies-in-the-cell-of-a-third.ts"),
-  RoomIsNotInReferenceList: rooms("outer-objects-that-nothing-is-laid-into.ts", "an-old-outer-object-gets-young-objects.ts"),
+  InnerCellLetGoKeepsItsHeader: innerObjects(
+    "three-levels-are-held-let-go-and-filled-again.ts",
+    "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
+  ),
+  RoomIsNotInReferenceList: rooms(
+    "outer-objects-that-nothing-is-laid-into.ts",
+    "an-old-outer-object-gets-young-objects.ts",
+  ),
   RoomsLeftEmptyAreNotZeroed: rooms("outer-objects-that-nothing-is-laid-into.ts"),
-  NoBarrierBehindFreshStoreIntoRoom: rooms("an-old-outer-object-gets-young-objects.ts", "an-outer-object-is-born-around-an-object-that-exists.ts"),
-  NoBarrierForStoreThroughBorrowedObject: rooms("an-old-outer-object-gets-young-objects.ts", "an-old-outer-object-gets-young-things.ts"),
-  StoreLeavesRoomAsItIs: rooms("what-an-inner-object-in-its-room-held-is-let-go.ts", "what-the-inner-object-held-is-let-go.ts"),
-  FlattenedObjectIsMadeWithoutBarrier: rooms("an-old-outer-object-gets-young-objects.ts", "snapshots-and-censuses-over-pairs.ts"),
-  MakingLeavesRoomAsItIs: rooms("what-the-inner-object-held-is-let-go.ts", "what-an-inner-object-in-its-room-held-is-let-go.ts"),
+  NoBarrierBehindFreshStoreIntoRoom: rooms(
+    "an-old-outer-object-gets-young-objects.ts",
+    "an-outer-object-is-born-around-an-object-that-exists.ts",
+  ),
+  NoBarrierForStoreThroughBorrowedObject: rooms(
+    "an-old-outer-object-gets-young-objects.ts",
+    "an-old-outer-object-gets-young-things.ts",
+  ),
+  StoreLeavesRoomAsItIs: rooms(
+    "what-an-inner-object-in-its-room-held-is-let-go.ts",
+    "what-the-inner-object-held-is-let-go.ts",
+  ),
+  FlattenedObjectIsMadeWithoutBarrier: rooms(
+    "an-old-outer-object-gets-young-objects.ts",
+    "snapshots-and-censuses-over-pairs.ts",
+  ),
+  MakingLeavesRoomAsItIs: rooms(
+    "what-the-inner-object-held-is-let-go.ts",
+    "what-an-inner-object-in-its-room-held-is-let-go.ts",
+  ),
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {
@@ -58,7 +92,10 @@ const noticedByTheEngineTestsAlone: Record<string, string> = {
 };
 
 const listed = unsupported ? undefined : registry().sabotages;
-if (!unsupported && !listed) console.error("SKIPPED: test/aot/sabotages.test.ts: this Bun lists no sabotages in `bun compile --aot-list=registry`");
+if (!unsupported && !listed)
+  console.error(
+    "SKIPPED: test/aot/sabotages.test.ts: this Bun lists no sabotages in `bun compile --aot-list=registry`",
+  );
 const wanted = process.env.AOT_SABOTAGE ?? "";
 
 describe.skipIf(!listed)("compile/aot/sabotages", () => {
@@ -74,7 +111,13 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
     const executable = join(folder, `program-${executables++}${isWindows ? ".exe" : ""}`);
     const plain = await spawned([bunExe(), "run", path], dirname(path), bunEnv);
     expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-    built(await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, path, "--outfile", executable], dirname(path), bunEnv));
+    built(
+      await spawned(
+        [bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, path, "--outfile", executable],
+        dirname(path),
+        bunEnv,
+      ),
+    );
     const departing: string[] = [];
     try {
       for (const environment of underCollections) {
@@ -93,27 +136,63 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
 
   test("every sabotage has programs that must notice it", () => {
     expect(listed!.filter(name => !noticedBy[name] && !noticedByTheEngineTestsAlone[name])).toEqual([]);
-    expect([...Object.keys(noticedBy), ...Object.keys(noticedByTheEngineTestsAlone)].filter(name => !listed!.includes(name))).toEqual([]);
+    expect(
+      [...Object.keys(noticedBy), ...Object.keys(noticedByTheEngineTestsAlone)].filter(name => !listed!.includes(name)),
+    ).toEqual([]);
   });
 
   test("a name that is not listed stops the build", async () => {
     const path = join(root, "inner-objects", "only-the-inner-object-is-still-held.ts");
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", "--aot-sabotage=NoSuchSabotage", path, "--outfile", join(folder, "never")], dirname(path), bunEnv);
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.stringContaining("NoSuchSabotage"), exitCode: 1 });
+    const build = await spawned(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-sabotage=NoSuchSabotage",
+        path,
+        "--outfile",
+        join(folder, "never"),
+      ],
+      dirname(path),
+      bunEnv,
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+      stderr: expect.stringContaining("NoSuchSabotage"),
+      exitCode: 1,
+    });
   });
 
-  const controls = [...new Set(Object.values(noticedBy).flatMap(row => row.programs.map(program => JSON.stringify([`${row.folder}/${program}`, row.flags]))))].map(text => JSON.parse(text) as [string, string[]]);
-  test.concurrent.each(controls.filter(() => "none".includes(wanted)))("none: %s %j", (program, flags) => slot(async () => expect(await departures(program, flags, false)).toEqual([])), 900_000);
+  const controls = [
+    ...new Set(
+      Object.values(noticedBy).flatMap(row =>
+        row.programs.map(program => JSON.stringify([`${row.folder}/${program}`, row.flags])),
+      ),
+    ),
+  ].map(text => JSON.parse(text) as [string, string[]]);
+  test.concurrent.each(controls.filter(() => "none".includes(wanted)))(
+    "none: %s %j",
+    (program, flags) => slot(async () => expect(await departures(program, flags, false)).toEqual([])),
+    900_000,
+  );
 
   // TODO: the build of its one program lays no inner object into a room any more, so there is no room to leave as it is.
   const noticedByNobodyToday = ["RoomsLeftEmptyAreNotZeroed"];
   for (const name of noticedByNobodyToday) test.todo(name);
 
-  test.concurrent.each((listed ?? []).filter(name => noticedBy[name] && name.includes(wanted) && !noticedByNobodyToday.includes(name)))(
+  test.concurrent.each(
+    (listed ?? []).filter(name => noticedBy[name] && name.includes(wanted) && !noticedByNobodyToday.includes(name)),
+  )(
     "%s",
     async name => {
       const { folder: topic, flags, programs } = noticedBy[name];
-      const seen = (await Promise.all(programs.map(program => slot(() => departures(`${topic}/${program}`, [...flags, `--aot-sabotage=${name}`], true))))).flat();
+      const seen = (
+        await Promise.all(
+          programs.map(program =>
+            slot(() => departures(`${topic}/${program}`, [...flags, `--aot-sabotage=${name}`], true)),
+          ),
+        )
+      ).flat();
       console.error(`SABOTAGE ${name}: ${seen.join(" | ") || "nobody noticed"}`);
       expect({ name, isNoticed: seen.length > 0 }).toEqual({ name, isNoticed: true });
     },

@@ -237,7 +237,10 @@ fn print_any_object_part(
 fn print_string_literals(printer: &mut Printer<'_>, ty: &Type, separator: &mut &'static str) {
     let strings = printer.names.strings;
     let mut literals = ty.strings.clone();
-    if literals.iter().all(|literal| literal.index() < strings.len()) {
+    if literals
+        .iter()
+        .all(|literal| literal.index() < strings.len())
+    {
         literals.sort_unstable_by_key(|&literal| strings.get(literal));
     }
     for literal in literals {

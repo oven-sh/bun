@@ -154,7 +154,9 @@ impl Table {
                 rejected.push(index);
                 continue;
             }
-            table.entries.insert(canonical.bytes.into_boxed_slice(), entry);
+            table
+                .entries
+                .insert(canonical.bytes.into_boxed_slice(), entry);
         }
         (table, rejected)
     }

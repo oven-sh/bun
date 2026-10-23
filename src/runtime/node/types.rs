@@ -1191,7 +1191,10 @@ fn from_working_directory_in_executable(str: bun_core::String) -> bun_core::Stri
         drop(utf8);
         return str;
     }
-    bun_core::String::clone_utf8(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]))
+    bun_core::String::clone_utf8(resolve_path::join_abs_string::<platform::Auto>(
+        directory,
+        &[path],
+    ))
 }
 
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).

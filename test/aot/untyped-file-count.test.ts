@@ -1,12 +1,18 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 async function build(files: Record<string, string>) {
   using dir = tempDir("aot-compiled-untyped-count", files);
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using ran = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using ran = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   return { line: stdout.split("\n").find(line => line.includes(" compile ")) ?? "", stderr, exitCode };
 }
@@ -18,7 +24,10 @@ test("a package's file with type errors is counted on the compile line", async (
     "node_modules/wrong/index.ts": `export function twice(n: number): number { const text: string = n; return n * 2; }`,
   });
   expect(built.stderr).toContain("TS100009");
-  expect({ counted: built.line.includes("1 file compiled without types"), exitCode: built.exitCode }).toEqual({ counted: true, exitCode: 0 });
+  expect({ counted: built.line.includes("1 file compiled without types"), exitCode: built.exitCode }).toEqual({
+    counted: true,
+    exitCode: 0,
+  });
 }, 120_000);
 
 test("a warning of another kind that quotes the words is not", async () => {
@@ -28,5 +37,8 @@ test("a warning of another kind that quotes the words is not", async () => {
   expect(built.stderr).toContain("warn: TS100014");
   expect(built.stderr).toContain("1 file compiled without types");
   expect(built.stderr).not.toContain("TS100009");
-  expect({ line: built.line.replace(/^.* compile /, "").includes("compiled without types"), exitCode: built.exitCode }).toEqual({ line: false, exitCode: 0 });
+  expect({
+    line: built.line.replace(/^.* compile /, "").includes("compiled without types"),
+    exitCode: built.exitCode,
+  }).toEqual({ line: false, exitCode: 0 });
 }, 120_000);

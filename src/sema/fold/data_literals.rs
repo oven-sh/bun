@@ -238,10 +238,12 @@ impl<'s> DataReader<'_, '_, 's> {
     }
 
     fn visit_object(&self, props: Span<PropId>) -> Visited<'s> {
-        let has_data_keys = props.iter().all(|prop| match find_data_key(self.hir, prop) {
-            DataKey::Unknown => false,
-            DataKey::Name(_) | DataKey::Computed(_) => true,
-        });
+        let has_data_keys = props
+            .iter()
+            .all(|prop| match find_data_key(self.hir, prop) {
+                DataKey::Unknown => false,
+                DataKey::Name(_) | DataKey::Computed(_) => true,
+            });
         if has_data_keys {
             Visited::Composite(Composite::Object(props))
         } else {

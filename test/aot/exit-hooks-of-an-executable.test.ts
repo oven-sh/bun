@@ -9,7 +9,9 @@ import { test } from "./supported";
 
 test("an executable with an image writes no bytecode order and an empty compile cache", async () => {
   using dir = tempDir("exit-hooks-of-an-executable", {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+    }),
     "main.ts": `import { join } from "node:path";\nconsole.log(join("a", "b"));\n`,
   });
   const root = realpathSync(String(dir));
@@ -21,9 +23,15 @@ test("an executable with an image writes no bytecode order and an empty compile 
     BUN_BYTECODE_DIGEST_OUT: join(root, "program.digest"),
     NODE_COMPILE_CACHE: join(root, "cache"),
   });
-  expect({ stdout: run.stdout.replaceAll("\\", "/"), stderr: run.stderr, exitCode: run.exitCode }).toEqual({ stdout: "a/b\n", stderr: "", exitCode: 0 });
+  expect({ stdout: run.stdout.replaceAll("\\", "/"), stderr: run.stderr, exitCode: run.exitCode }).toEqual({
+    stdout: "a/b\n",
+    stderr: "",
+    exitCode: 0,
+  });
   expect(existsSync(join(root, "program.order"))).toBe(false);
   expect(existsSync(join(root, "program.digest"))).toBe(false);
-  const cached = existsSync(join(root, "cache")) ? readdirSync(join(root, "cache"), { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()) : [];
+  const cached = existsSync(join(root, "cache"))
+    ? readdirSync(join(root, "cache"), { recursive: true, withFileTypes: true }).filter(entry => entry.isFile())
+    : [];
   expect(cached).toEqual([]);
 });

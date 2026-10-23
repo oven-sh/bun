@@ -5,10 +5,23 @@ import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type { ModelBuiltin } from "../../../src/codegen/builtins/model.ts";
 import type { BuiltinKind, Mutability } from "../../../src/codegen/builtins/vocabulary.ts";
 
-const holder = { text: "process", kind: "Namespace", scope: "Realm", flags: [], holder: null } as unknown as ModelBuiltin;
+const holder = {
+  text: "process",
+  kind: "Namespace",
+  scope: "Realm",
+  flags: [],
+  holder: null,
+} as unknown as ModelBuiltin;
 
 function problemsOf(kind: BuiltinKind, mutability: Mutability): readonly string[] {
-  const member = { text: "process.member", kind, mutability, scope: "Realm", flags: [], holder } as unknown as ModelBuiltin;
+  const member = {
+    text: "process.member",
+    kind,
+    mutability,
+    scope: "Realm",
+    flags: [],
+    holder,
+  } as unknown as ModelBuiltin;
   const problems = new Problems();
   checkMutability({ builtins: [member] }, problems);
   return problems.lines;
@@ -16,7 +29,9 @@ function problemsOf(kind: BuiltinKind, mutability: Mutability): readonly string[
 
 test("an entry that is an object does not change on its own", () => {
   for (const kind of ["Namespace", "Constructor", "Function", "Prototype", "Method"] as const) {
-    expect(problemsOf(kind, "ChangesOnItsOwn")).toEqual([expect.stringContaining("process.member is an object and changes on its own")]);
+    expect(problemsOf(kind, "ChangesOnItsOwn")).toEqual([
+      expect.stringContaining("process.member is an object and changes on its own"),
+    ]);
     expect(problemsOf(kind, "ConstantUnlessWritten")).toEqual([]);
   }
 });

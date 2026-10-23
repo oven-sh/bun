@@ -150,7 +150,9 @@ enum Task {
         precedes_hoisted_functions: bool,
     },
     InitializeSlot(ScopeId, ScopeSlot),
-    EndStores { first_pending: u32 },
+    EndStores {
+        first_pending: u32,
+    },
     EndLoop(u32),
 }
 

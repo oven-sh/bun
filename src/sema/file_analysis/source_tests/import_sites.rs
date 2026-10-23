@@ -11,7 +11,10 @@ const PENDING_MACRO_CALLS: &[(&str, &[&str])] = &[
     ("x ? f() : g(); x && h();", &["f", "g", "h"]),
     ("outer(inner()); g();", &["inner", "outer", "g"]),
     ("const c = zero(); f(c);", &["zero", "f"]),
-    ("function k() { if (c) f(); } const c = zero();", &["f", "zero"]),
+    (
+        "function k() { if (c) f(); } const c = zero();",
+        &["f", "zero"],
+    ),
     ("if (zero()) f();", &["zero"]),
     ("if (zero()) {} else f();", &["zero"]),
     ("zero() ? f() : g();", &["zero"]),
@@ -26,7 +29,10 @@ const PENDING_MACRO_CALLS: &[(&str, &[&str])] = &[
     ("outer(zero() ? inner() : 1);", &["zero"]),
     ("f(); if (zero()) g(); h();", &["f", "zero"]),
     ("const c = zero(); g(); if (c) f(); h();", &["zero", "g"]),
-    ("const c = zero(); function k() { return c && f(); }", &["zero"]),
+    (
+        "const c = zero(); function k() { return c && f(); }",
+        &["zero"],
+    ),
 ];
 
 const CALL_SITES: &[&str] = &[
@@ -85,7 +91,10 @@ const BUILTIN_MODULE_CALLS: &[(&str, usize)] = &[
     ("process.getBuiltinModule(x);", 0),
     ("process.getBuiltinModule(`node:${x}`);", 0),
     ("process.getBuiltinModule();", 0),
-    (r#"function f(process) { process.getBuiltinModule("node:fs"); }"#, 0),
+    (
+        r#"function f(process) { process.getBuiltinModule("node:fs"); }"#,
+        0,
+    ),
     (r#"other.getBuiltinModule("node:fs");"#, 0),
 ];
 
@@ -189,26 +198,66 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
 
 const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
     ("a.cjs", r#"const load = require; load("a");"#, &["a"]),
-    ("a.cjs", r#"const load = require; const again = load; again("a");"#, &["a"]),
-    ("a.cts", r#"const load = require as any; (load as any)("a");"#, &["a"]),
-    ("a.cjs", r#"function f() { return load("a"); } const load = require;"#, &["a"]),
+    (
+        "a.cjs",
+        r#"const load = require; const again = load; again("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cts",
+        r#"const load = require as any; (load as any)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"function f() { return load("a"); } const load = require;"#,
+        &["a"],
+    ),
     ("a.cjs", r#"require.call(this, "a");"#, &["a"]),
     ("a.cjs", r#"require.call(this, "a", x);"#, &["a"]),
     ("a.cjs", r#"require.apply(this, ["a"]);"#, &["a"]),
-    ("a.cjs", r#"const load = require; load.call(null, "a"); load.apply(null, ["b"]);"#, &["a", "b"]),
+    (
+        "a.cjs",
+        r#"const load = require; load.call(null, "a"); load.apply(null, ["b"]);"#,
+        &["a", "b"],
+    ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const made = createRequire(import.meta.url); const load = made; load("a");"#,
         &["a"],
     ),
-    ("a.cjs", r#"let load = require; load = other; load("a");"#, &[]),
-    ("a.cjs", r#"function f(load) { load("a"); } f(require);"#, &[]),
+    (
+        "a.cjs",
+        r#"let load = require; load = other; load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"function f(load) { load("a"); } f(require);"#,
+        &[],
+    ),
     ("a.cjs", r#"(r => r("a"))(require);"#, &[]),
-    ("a.cjs", r#"const holder = { load: require }; holder.load("a");"#, &[]),
-    ("a.cjs", r#"const { load } = { load: require }; load("a");"#, &[]),
-    ("a.cjs", r#"function f(require) { const load = require; load("a"); }"#, &[]),
+    (
+        "a.cjs",
+        r#"const holder = { load: require }; holder.load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const { load } = { load: require }; load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"function f(require) { const load = require; load("a"); }"#,
+        &[],
+    ),
     ("a.cjs", r#"require.bind(null)("a");"#, &[]),
-    ("a.cjs", r#"const load = require.bind(null); load("a");"#, &[]),
+    (
+        "a.cjs",
+        r#"const load = require.bind(null); load("a");"#,
+        &[],
+    ),
     ("a.cjs", "require.call(this);", &[]),
     ("a.cjs", r#"require.apply(this, list);"#, &[]),
     ("a.cjs", r#"require.apply(this, []);"#, &[]),
@@ -221,17 +270,38 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
 ];
 
 const BINDINGS_OF_IMPORT_META_REQUIRE: &[(&str, &[&str])] = &[
-    (r#"var __require = import.meta.require; __require("a");"#, &["a"]),
-    (r#"const load = import.meta.require; const again = load; again("a"); load("b");"#, &["a", "b"]),
-    (r#"function f() { return load("a"); } const load = import.meta.require;"#, &["a"]),
-    (r#"const load = import.meta.require as any; (load as any)("a");"#, &["a"]),
+    (
+        r#"var __require = import.meta.require; __require("a");"#,
+        &["a"],
+    ),
+    (
+        r#"const load = import.meta.require; const again = load; again("a"); load("b");"#,
+        &["a", "b"],
+    ),
+    (
+        r#"function f() { return load("a"); } const load = import.meta.require;"#,
+        &["a"],
+    ),
+    (
+        r#"const load = import.meta.require as any; (load as any)("a");"#,
+        &["a"],
+    ),
     (r#"const load = import.meta["require"]; load("a");"#, &["a"]),
-    (r#"let load = import.meta.require; load = other; load("a");"#, &[]),
-    (r#"function f(load) { load("a"); } f(import.meta.require);"#, &[]),
+    (
+        r#"let load = import.meta.require; load = other; load("a");"#,
+        &[],
+    ),
+    (
+        r#"function f(load) { load("a"); } f(import.meta.require);"#,
+        &[],
+    ),
     (r#"const { require: load } = import.meta; load("a");"#, &[]),
     (r#"const load = import.meta.resolve; load("a");"#, &[]),
     (r#"const load = other.require; load("a");"#, &[]),
-    (r#"const load = import.meta.require.bind(null); load("a");"#, &[]),
+    (
+        r#"const load = import.meta.require.bind(null); load("a");"#,
+        &[],
+    ),
 ];
 
 fn callee_names<'w>(w: &'w Workspace<'_>, hir: &File<'_>, calls: &[ExprId]) -> Vec<&'w str> {
@@ -360,7 +430,9 @@ fn call_of_require_made_for_own_file_is_site() {
         analyzed(path, text, |s| {
             let sites = s.analysis.import_sites.iter();
             let required = sites.filter_map(|site| match (site.kind, site.specifier) {
-                (ImportSiteKind::Require(_), ImportSpecifier::Constant(name)) => Some(s.workspace.text(name)),
+                (ImportSiteKind::Require(_), ImportSpecifier::Constant(name)) => {
+                    Some(s.workspace.text(name))
+                }
                 _ => None,
             });
             assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
@@ -374,7 +446,9 @@ fn call_of_binding_that_holds_import_meta_require_is_site() {
         analyzed("a.mts", text, |s| {
             let sites = s.analysis.import_sites.iter();
             let required = sites.filter_map(|site| match (site.kind, site.specifier) {
-                (ImportSiteKind::ImportMetaRequire(_), ImportSpecifier::Constant(name)) => Some(s.workspace.text(name)),
+                (ImportSiteKind::ImportMetaRequire(_), ImportSpecifier::Constant(name)) => {
+                    Some(s.workspace.text(name))
+                }
                 _ => None,
             });
             assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
@@ -385,6 +459,8 @@ fn call_of_binding_that_holds_import_meta_require_is_site() {
 #[test]
 fn parsed_call_is_no_host_value() {
     for &text in CALL_SITES {
-        analyzed("a.mts", text, |s| assert!(!only_site(s, text).is_host_value, "{text}"));
+        analyzed("a.mts", text, |s| {
+            assert!(!only_site(s, text).is_host_value, "{text}")
+        });
     }
 }

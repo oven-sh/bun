@@ -47,7 +47,8 @@ impl BoundProgram<'_, '_, '_> {
 
     fn find_export(&self, file: &str, name: &str) -> ExportLookup {
         let atoms = &self.input.files.atoms;
-        self.graph.find_export(self.module(file), self.atom(name), atoms)
+        self.graph
+            .find_export(self.module(file), self.atom(name), atoms)
     }
 
     fn binding(&self, file: &str, local_name: &str) -> ImportBinding {
@@ -79,7 +80,8 @@ impl BoundProgram<'_, '_, '_> {
     }
 
     fn synthetic_export(&self, file: &str, local_name: &str) -> &SyntheticExport {
-        self.graph.synthetic_export(self.synthetic_id(file, local_name))
+        self.graph
+            .synthetic_export(self.synthetic_id(file, local_name))
     }
 
     fn errors_of(&self, importer: &str) -> Vec<&ModuleFailure> {
@@ -144,7 +146,12 @@ fn named_import_binds_exporting_declaration() {
         }
         let namespace = program.namespace("es.js", ImportPhase::Evaluation);
         assert_eq!(program.binding("main.js", "ns"), namespace);
-        assert!(program.graph.required_names(program.file("main.js")).is_empty());
+        assert!(
+            program
+                .graph
+                .required_names(program.file("main.js"))
+                .is_empty()
+        );
     });
 }
 
@@ -170,7 +177,10 @@ fn commonjs_names_are_synthetic_exports() {
 
         // The module has no `__esModule`, so its default export is what it exports as a whole, which needs no name.
         let module = program.module("c.cjs");
-        assert_eq!(program.binding("main.js", "d"), ImportBinding::Exports { module });
+        assert_eq!(
+            program.binding("main.js", "d"),
+            ImportBinding::Exports { module }
+        );
         assert_eq!(program.count_synthetic_exports(module), 2);
         let export = program.graph.synthetic_export(x);
         assert_eq!(export.module, module);
@@ -241,7 +251,9 @@ fn native_module_names_are_captured_and_its_object_is_a_builtin() {
         assert_eq!(program.binding("main.js", "open"), default);
         assert_eq!(program.binding("main.js", "held"), default);
         let exports = program.graph.exports(program.file("namespace.js"));
-        let held = exports.iter().find(|export| export.name == program.atom("held"));
+        let held = exports
+            .iter()
+            .find(|export| export.name == program.atom("held"));
         let Some(ExportBinding::Synthetic(id)) = held.map(|export| export.binding) else {
             panic!("`held` is exported as {held:?}");
         };
@@ -252,7 +264,10 @@ fn native_module_names_are_captured_and_its_object_is_a_builtin() {
             module: ModuleRef::Runtime(open_module),
             phase: ImportPhase::Evaluation,
         };
-        assert_eq!(program.binding("main.js", "bunNamespace"), exported_namespace);
+        assert_eq!(
+            program.binding("main.js", "bunNamespace"),
+            exported_namespace
+        );
         assert!(program.graph.errors().is_empty());
     });
 }
@@ -276,7 +291,10 @@ fn names_of_module_with_source_are_builtins_captured_at_load() {
             assert_eq!(program.binding("main.js", name), member, "{name}");
         }
         let namespace = table::namespace_of(RuntimeModule::NodePath);
-        assert_eq!(program.binding("main.js", "path"), ImportBinding::Builtin(namespace));
+        assert_eq!(
+            program.binding("main.js", "path"),
+            ImportBinding::Builtin(namespace)
+        );
         assert_eq!(program.graph.synthetic_exports().len(), expected.len());
     });
 }
@@ -338,7 +356,11 @@ fn name_of_external_package_is_read_through_the_namespace() {
         let names = [("d", known::default), ("z", program.atom("z"))];
         for (local_name, name) in names {
             let live_read = ImportBinding::NamespaceRead { module, name };
-            assert_eq!(program.binding("main.js", local_name), live_read, "{local_name}");
+            assert_eq!(
+                program.binding("main.js", local_name),
+                live_read,
+                "{local_name}"
+            );
         }
         let namespace = ImportBinding::Namespace {
             module,
@@ -346,7 +368,10 @@ fn name_of_external_package_is_read_through_the_namespace() {
         };
         assert_eq!(program.binding("main.js", "ns"), namespace);
         let expected = names.map(|(_, name)| RequiredName::new(module, name));
-        assert_eq!(program.graph.required_names(program.file("main.js")), expected);
+        assert_eq!(
+            program.graph.required_names(program.file("main.js")),
+            expected
+        );
         assert!(program.graph.synthetic_exports().is_empty());
         assert!(program.graph.errors().is_empty());
     });
@@ -363,7 +388,12 @@ fn host_value_name_is_synthetic() {
             assert_eq!(export.name, name, "{local_name}");
             assert!(!export.is_known_member, "{local_name}");
         }
-        assert!(program.graph.required_names(program.file("main.js")).is_empty());
+        assert!(
+            program
+                .graph
+                .required_names(program.file("main.js"))
+                .is_empty()
+        );
         assert!(program.graph.errors().is_empty());
     });
 }
@@ -473,7 +503,11 @@ fn missing_names_fail_in_statement_order() {
                 kind => panic!("the error is {kind:?}"),
             })
             .collect();
-        let expected = [known::default, program.atom("other"), program.atom("missing")];
+        let expected = [
+            known::default,
+            program.atom("other"),
+            program.atom("missing"),
+        ];
         assert_eq!(missing_names, expected);
         assert!(program.graph.failures().is_empty());
 
@@ -502,7 +536,9 @@ fn names_of_unresolved_module_are_unbound() {
             assert_eq!(binding, ImportBinding::Unbound, "{local_name}");
         }
         let statement = ImportSiteKind::Import(ImportId(0));
-        let answer = program.graph.site_answer(program.file("main.js"), statement);
+        let answer = program
+            .graph
+            .site_answer(program.file("main.js"), statement);
         assert_eq!(answer, SiteAnswer::Erased);
         let unresolved_specifiers = [("main.js", "./nope.js"), ("middle.js", "./gone.js")];
         for (importer, expected_specifier) in unresolved_specifiers {
@@ -523,7 +559,10 @@ fn names_of_unresolved_module_are_unbound() {
 fn name_of_two_star_exports_is_ambiguous() {
     let files = [
         ("main.js", "import { x } from './barrel.js';"),
-        ("barrel.js", "export * from './one.js'; export * from './two.js';"),
+        (
+            "barrel.js",
+            "export * from './one.js'; export * from './two.js';",
+        ),
         ("one.js", "export const x = 1;"),
         ("two.js", "export const x = 2;"),
     ];
@@ -550,7 +589,10 @@ fn name_of_two_commonjs_stars_is_required_once() {
     ";
     let files = [
         ("main.js", main),
-        ("barrel.js", "export * from './one.cjs'; export * from './two.cjs';"),
+        (
+            "barrel.js",
+            "export * from './one.cjs'; export * from './two.cjs';",
+        ),
         ("indirect.js", "export { x as y } from './barrel.js';"),
         ("one.cjs", "exports.x = 1;"),
         ("two.cjs", "exports.y = 2;"),
@@ -579,7 +621,10 @@ fn name_of_static_and_commonjs_stars_is_required() {
     ";
     let files = [
         ("main.js", main),
-        ("barrel.js", "export * from './es.js'; export * from './c.cjs';"),
+        (
+            "barrel.js",
+            "export * from './es.js'; export * from './c.cjs';",
+        ),
         ("indirect.js", "export { x as y } from './barrel.js';"),
         ("outer.js", "export * from './barrel.js';"),
         ("es.js", "export const x = 1;"),
@@ -607,7 +652,12 @@ fn name_of_static_and_commonjs_stars_is_required() {
             assert_eq!(required_names, expected, "{importer}");
         }
         for exporter in ["barrel.js", "outer.js"] {
-            assert!(program.graph.required_names(program.file(exporter)).is_empty());
+            assert!(
+                program
+                    .graph
+                    .required_names(program.file(exporter))
+                    .is_empty()
+            );
             assert_eq!(program.find_export(exporter, "x"), ExportLookup::Unknown);
         }
         let own_entry = ExportLookup::Found(ExportBinding::Variable(symbol));
@@ -623,33 +673,51 @@ fn name_re_exported_by_typescript_may_be_absent() {
         ("main.js", "import './untyped.js'; import './typed.ts';"),
         ("untyped.js", re_export),
         ("typed.ts", re_export),
-        ("barrel.js", "export * from './one.cjs'; export * from './two.cjs';"),
+        (
+            "barrel.js",
+            "export * from './one.cjs'; export * from './two.cjs';",
+        ),
         ("one.cjs", "exports.x = 1;"),
         ("two.cjs", "exports.y = 2;"),
     ];
     with_program(&files, |program| {
         let required = RequiredName::new(program.module("barrel.js"), program.atom("x"));
-        assert_eq!(program.graph.required_names(program.file("untyped.js")), [required]);
+        assert_eq!(
+            program.graph.required_names(program.file("untyped.js")),
+            [required]
+        );
         let may_be_absent = RequiredName {
             may_be_absent: true,
             ..required
         };
-        assert_eq!(program.graph.required_names(program.file("typed.ts")), [may_be_absent]);
+        assert_eq!(
+            program.graph.required_names(program.file("typed.ts")),
+            [may_be_absent]
+        );
     });
 }
 
 #[test]
 fn name_imported_by_typescript_is_required() {
     let files = [
-        ("main.ts", "import { x } from './barrel.js'; console.log(x);"),
-        ("barrel.js", "export * from './one.cjs'; export * from './two.cjs';"),
+        (
+            "main.ts",
+            "import { x } from './barrel.js'; console.log(x);",
+        ),
+        (
+            "barrel.js",
+            "export * from './one.cjs'; export * from './two.cjs';",
+        ),
         ("one.cjs", "exports.x = 1;"),
         ("two.cjs", "exports.y = 2;"),
     ];
     with_program(&files, |program| {
         let required = RequiredName::new(program.module("barrel.js"), program.atom("x"));
         assert!(!required.may_be_absent);
-        assert_eq!(program.graph.required_names(program.file("main.ts")), [required]);
+        assert_eq!(
+            program.graph.required_names(program.file("main.ts")),
+            [required]
+        );
     });
 }
 
@@ -663,8 +731,16 @@ fn own_name_hides_inner_commonjs_star() {
     ];
     with_program(&files, |program| {
         let symbol = program.exported_symbol("inner.js", "x");
-        assert_eq!(program.binding("main.js", "x"), ImportBinding::Variable(symbol));
-        assert!(program.graph.required_names(program.file("main.js")).is_empty());
+        assert_eq!(
+            program.binding("main.js", "x"),
+            ImportBinding::Variable(symbol)
+        );
+        assert!(
+            program
+                .graph
+                .required_names(program.file("main.js"))
+                .is_empty()
+        );
         let star_entry = ExportLookup::Found(ExportBinding::Variable(symbol));
         assert_eq!(program.find_export("outer.js", "x"), star_entry);
     });
@@ -674,8 +750,14 @@ fn own_name_hides_inner_commonjs_star() {
 fn name_of_one_external_module_in_two_files_is_required() {
     let re_export = format!("export {{ z }} from '{UNCOMPILED_MODULE}';");
     let files = [
-        ("main.js", "import { z } from './index.js'; import { z as direct } from './a.js';"),
-        ("index.js", "export * from './a.js'; export * from './b.js';"),
+        (
+            "main.js",
+            "import { z } from './index.js'; import { z as direct } from './a.js';",
+        ),
+        (
+            "index.js",
+            "export * from './a.js'; export * from './b.js';",
+        ),
         ("a.js", re_export.as_str()),
         ("b.js", re_export.as_str()),
     ];
@@ -691,7 +773,10 @@ fn name_of_one_external_module_in_two_files_is_required() {
             program.graph.required_names(program.file("main.js")),
             [compared_name, existing_name]
         );
-        assert_eq!(program.graph.required_names(program.file("a.js")), [existing_name]);
+        assert_eq!(
+            program.graph.required_names(program.file("a.js")),
+            [existing_name]
+        );
         assert_eq!(program.find_export("index.js", "z"), ExportLookup::Unknown);
         let own_entry = ExportLookup::Found(ExportBinding::Indirect { module, name });
         assert_eq!(program.find_export("a.js", "z"), own_entry);
@@ -760,7 +845,9 @@ fn jsx_import_of_es_module_runtime_is_variable() {
         (runtime, "export const jsxDEV = () => null;"),
     ];
     with_program(&files, |program| {
-        let binding = program.graph.jsx_binding(program.file("main.jsx"), JsxImport::JsxDev);
+        let binding = program
+            .graph
+            .jsx_binding(program.file("main.jsx"), JsxImport::JsxDev);
         assert_eq!(binding, program.exported_variable(runtime, "jsxDEV"));
     });
 }
@@ -786,7 +873,10 @@ fn jsx_names_absent_from_runtime_fail_separately() {
                 kind => panic!("the error is {kind:?}"),
             })
             .collect();
-        assert_eq!(missing_names, [program.atom("jsxDEV"), program.atom("Fragment")]);
+        assert_eq!(
+            missing_names,
+            [program.atom("jsxDEV"), program.atom("Fragment")]
+        );
         for error in errors {
             assert_eq!(error.site, ImportSiteKind::JsxRuntime);
             assert_eq!((error.start, error.end), (0, 0));

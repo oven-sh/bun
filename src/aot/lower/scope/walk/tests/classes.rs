@@ -14,11 +14,17 @@ const CLASS_OBJECT: ScopeSlot = ScopeSlot::Class(ClassSlot::ClassObject);
 const CLASS_TOKEN: ScopeSlot = ScopeSlot::Class(ClassSlot::ClassToken);
 
 fn implicit_constructor(walk: &ScopeWalk) -> WalkedFunctionId {
-    walked_function(walk, FunctionKey::ImplicitConstructor(class_ref(walk, CLASS)))
+    walked_function(
+        walk,
+        FunctionKey::ImplicitConstructor(class_ref(walk, CLASS)),
+    )
 }
 
 fn instance_initializer(walk: &ScopeWalk) -> WalkedFunctionId {
-    walked_function(walk, FunctionKey::InstanceInitializer(class_ref(walk, CLASS)))
+    walked_function(
+        walk,
+        FunctionKey::InstanceInitializer(class_ref(walk, CLASS)),
+    )
 }
 
 fn static_initializer(walk: &ScopeWalk) -> WalkedFunctionId {
@@ -55,19 +61,25 @@ fn source_constructor_is_first_function() {
 
 #[test]
 fn source_constructor_uses_this() {
-    with_walk(&[("main.mjs", "export class C { constructor() {} }")], |hir, bound, walk| {
-        let constructor = only_function(hir, FnKind::Constructor);
-        let this = (top_scope(bound, constructor), ScopeSlot::This);
-        assert_eq!(slots_used_by(walk, walked(walk, constructor)), [this]);
-    });
+    with_walk(
+        &[("main.mjs", "export class C { constructor() {} }")],
+        |hir, bound, walk| {
+            let constructor = only_function(hir, FnKind::Constructor);
+            let this = (top_scope(bound, constructor), ScopeSlot::This);
+            assert_eq!(slots_used_by(walk, walked(walk, constructor)), [this]);
+        },
+    );
 }
 
 #[test]
 fn ambient_class_is_not_walked() {
-    with_walk(&[("main.ts", "declare class A { m(): void; } export {};")], |_, _, walk| {
-        assert_eq!(walk.functions.len(), 1);
-        assert!(walk.slot_initializations.is_empty());
-    });
+    with_walk(
+        &[("main.ts", "declare class A { m(): void; } export {};")],
+        |_, _, walk| {
+            assert_eq!(walk.functions.len(), 1);
+            assert!(walk.slot_initializations.is_empty());
+        },
+    );
 }
 
 #[test]
@@ -87,24 +99,39 @@ fn class_functions_follow_evaluation_order() {
             created_at(walk, walked(walk, only_function(hir, FnKind::Arrow))),
             initialized_at(walk, symbol_named(hir, bound, "C")),
         ];
-        assert!(times.is_sorted_by(|earlier, later| earlier < later), "{times:?}");
+        assert!(
+            times.is_sorted_by(|earlier, later| earlier < later),
+            "{times:?}"
+        );
     });
 }
 
 #[test]
 fn instance_initializer_is_created_by_constructor() {
-    with_walk(&[("main.mjs", "export class C { x = 1; }")], |_, _, walk| {
-        let constructor = implicit_constructor(walk);
-        assert_eq!(creator_of(walk, instance_initializer(walk)), Some(constructor));
-        assert_eq!(creator_of(walk, constructor), Some(WalkedFunctionId::MODULE_BODY));
-        let creator = creator_of(walk, static_initializer(walk));
-        assert_eq!(creator, Some(WalkedFunctionId::MODULE_BODY));
-    });
+    with_walk(
+        &[("main.mjs", "export class C { x = 1; }")],
+        |_, _, walk| {
+            let constructor = implicit_constructor(walk);
+            assert_eq!(
+                creator_of(walk, instance_initializer(walk)),
+                Some(constructor)
+            );
+            assert_eq!(
+                creator_of(walk, constructor),
+                Some(WalkedFunctionId::MODULE_BODY)
+            );
+            let creator = creator_of(walk, static_initializer(walk));
+            assert_eq!(creator, Some(WalkedFunctionId::MODULE_BODY));
+        },
+    );
     let source = "export function g() { return class { x = 1; constructor() {} }; }";
     with_walk(&[("main.mjs", source)], |hir, _, walk| {
         let evaluating = walked(walk, only_function(hir, FnKind::Decl));
         let constructor = walked(walk, only_function(hir, FnKind::Constructor));
-        assert_eq!(creator_of(walk, instance_initializer(walk)), Some(constructor));
+        assert_eq!(
+            creator_of(walk, instance_initializer(walk)),
+            Some(constructor)
+        );
         assert_eq!(creator_of(walk, constructor), Some(evaluating));
         assert_eq!(creator_of(walk, static_initializer(walk)), Some(evaluating));
     });
@@ -135,7 +162,10 @@ fn initializers_use_class_slots() {
         let key = ClassSlot::ComputedKey(computed.expect("a member has a computed key"));
         let key_slot = (scope, ScopeSlot::Class(key));
         let instance_slots = [(scope, CLASS_TOKEN), key_slot];
-        assert_eq!(slots_used_by(walk, instance_initializer(walk)), instance_slots);
+        assert_eq!(
+            slots_used_by(walk, instance_initializer(walk)),
+            instance_slots
+        );
         let static_slots = [(scope, CLASS_OBJECT), key_slot];
         assert_eq!(slots_used_by(walk, static_initializer(walk)), static_slots);
         let object_time = slot_initialized_at(walk, scope, ClassSlot::ClassObject);
@@ -166,7 +196,10 @@ fn static_block_is_function_that_initializer_creates() {
         let blocks = functions_of_kind(hir, FnKind::StaticBlock);
         assert_eq!(blocks.len(), 2);
         let initializer = static_initializer(walk);
-        let functions: Vec<_> = blocks.into_iter().map(|block| walked(walk, block)).collect();
+        let functions: Vec<_> = blocks
+            .into_iter()
+            .map(|block| walked(walk, block))
+            .collect();
         assert_ne!(functions[0], functions[1]);
         for function in functions {
             assert_ne!(function, initializer);
@@ -178,21 +211,27 @@ fn static_block_is_function_that_initializer_creates() {
 
 #[test]
 fn accessor_functions_use_token() {
-    with_walk(&[("main.ts", "export class C { accessor v = 1; }")], |hir, bound, walk| {
-        let (file, member) = (class_ref(walk, CLASS).file, members(hir)[0]);
-        let keys = [
-            FunctionKey::AccessorGetter { file, member },
-            FunctionKey::AccessorSetter { file, member },
-        ];
-        for key in keys {
-            let function = walked_function(walk, key);
-            let token = (bound.class_scope[CLASS.idx()], CLASS_TOKEN);
-            assert_eq!(slots_used_by(walk, function), [token], "{key:?}");
-            assert_eq!(creator_of(walk, function), Some(WalkedFunctionId::MODULE_BODY));
-            assert!(created_at(walk, function) > 0, "{key:?}");
-        }
-        assert!(!has_private_name_test(walk));
-    });
+    with_walk(
+        &[("main.ts", "export class C { accessor v = 1; }")],
+        |hir, bound, walk| {
+            let (file, member) = (class_ref(walk, CLASS).file, members(hir)[0]);
+            let keys = [
+                FunctionKey::AccessorGetter { file, member },
+                FunctionKey::AccessorSetter { file, member },
+            ];
+            for key in keys {
+                let function = walked_function(walk, key);
+                let token = (bound.class_scope[CLASS.idx()], CLASS_TOKEN);
+                assert_eq!(slots_used_by(walk, function), [token], "{key:?}");
+                assert_eq!(
+                    creator_of(walk, function),
+                    Some(WalkedFunctionId::MODULE_BODY)
+                );
+                assert!(created_at(walk, function) > 0, "{key:?}");
+            }
+            assert!(!has_private_name_test(walk));
+        },
+    );
 }
 
 #[test]
@@ -203,18 +242,24 @@ fn static_accessor_functions_use_class_object() {
         let scope = bound.class_scope[CLASS.idx()];
         let storage = ScopeSlot::Class(ClassSlot::StaticField(member));
         let getter = walked_function(walk, FunctionKey::AccessorGetter { file, member });
-        assert_eq!(slots_used_by(walk, getter), [(scope, CLASS_OBJECT), (scope, storage)]);
+        assert_eq!(
+            slots_used_by(walk, getter),
+            [(scope, CLASS_OBJECT), (scope, storage)]
+        );
     });
 }
 
 #[test]
 fn private_accessor_has_a_name_test() {
-    with_walk(&[("main.ts", "export class C { accessor #v = 1; }")], |hir, bound, walk| {
-        let (file, member) = (class_ref(walk, CLASS).file, members(hir)[0]);
-        let test = walked_function(walk, FunctionKey::PrivateNameTest { file, member });
-        let token = (bound.class_scope[CLASS.idx()], CLASS_TOKEN);
-        assert_eq!(slots_used_by(walk, test), [token]);
-    });
+    with_walk(
+        &[("main.ts", "export class C { accessor #v = 1; }")],
+        |hir, bound, walk| {
+            let (file, member) = (class_ref(walk, CLASS).file, members(hir)[0]);
+            let test = walked_function(walk, FunctionKey::PrivateNameTest { file, member });
+            let token = (bound.class_scope[CLASS.idx()], CLASS_TOKEN);
+            assert_eq!(slots_used_by(walk, test), [token]);
+        },
+    );
 }
 
 #[test]
@@ -271,7 +316,10 @@ fn static_private_name_uses_class_object() {
         let scope = bound.class_scope[CLASS.idx()];
         let storage = ScopeSlot::Class(ClassSlot::StaticField(members(hir)[0]));
         let reader = walked(walk, only_function(hir, FnKind::Method));
-        assert_eq!(slots_used_by(walk, reader), [(scope, CLASS_OBJECT), (scope, storage)]);
+        assert_eq!(
+            slots_used_by(walk, reader),
+            [(scope, CLASS_OBJECT), (scope, storage)]
+        );
     });
 }
 

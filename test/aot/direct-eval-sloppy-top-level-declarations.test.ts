@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const files = {
   "eval-alone.cjs": `function f() { return eval("1 + 1"); }\nconsole.log(f());\n`,
@@ -35,8 +35,19 @@ test.concurrent.each(Object.keys(files))(
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(plain.stdout).not.toBe("");
     expect(await run(String(dir), [bunExe(), "run", "--debug-aot", `./${entry}`])).toEqual(plain);
-    const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", `./${entry}.exe`]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const built = await run(String(dir), [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `./${entry}`,
+      "--outfile",
+      `./${entry}.exe`,
+    ]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     expect(await run(String(dir), [`./${entry}.exe`])).toEqual(plain);
   },
   120_000,

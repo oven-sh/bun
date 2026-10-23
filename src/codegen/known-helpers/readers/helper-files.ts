@@ -25,8 +25,12 @@ export function readHelperFiles(root: string, packageName: string, folders: read
     unit.resolveImport = imported => {
       const isOwn = imported.source.startsWith(`${packageName}/`);
       if (!isOwn && !imported.source.startsWith(".")) return undefined;
-      const base = isOwn ? path.join(root, imported.source.slice(packageName.length + 1)) : path.resolve(path.dirname(file), imported.source);
-      const target = [base, ...extensions.map(extension => base + extension)].find(candidate => existsSync(candidate) && statSync(candidate).isFile());
+      const base = isOwn
+        ? path.join(root, imported.source.slice(packageName.length + 1))
+        : path.resolve(path.dirname(file), imported.source);
+      const target = [base, ...extensions.map(extension => base + extension)].find(
+        candidate => existsSync(candidate) && statSync(candidate).isFile(),
+      );
       const targetUnit = target === undefined ? undefined : load(target);
       return targetUnit && exportOf(targetUnit, imported.name);
     };

@@ -49,7 +49,8 @@ export class Guards {
   #add(entry: BuiltinEntry): void {
     const use = entry.uses.find(({ isConditional }) => !isConditional);
     const guard = use === undefined ? null : { feature: use.feature, builtin: entry.id };
-    const symbols = entry.creationSymbol === undefined ? entry.nativeSymbols : [...entry.nativeSymbols, entry.creationSymbol];
+    const symbols =
+      entry.creationSymbol === undefined ? entry.nativeSymbols : [...entry.nativeSymbols, entry.creationSymbol];
     for (const symbol of symbols) {
       if (!this.#textsByNativeSymbol.has(symbol)) this.#textsByNativeSymbol.set(symbol, entry.path);
     }

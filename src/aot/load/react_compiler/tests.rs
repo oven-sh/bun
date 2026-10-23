@@ -68,7 +68,9 @@ impl<'s> Tree<'s> {
 
     fn has_compiled_components(&self) -> bool {
         let source = parsed_source(self.files, self.file);
-        source.expect("a compiled file has a payload").has_compiled_components
+        source
+            .expect("a compiled file has a payload")
+            .has_compiled_components
     }
 
     fn top_level_statements(&self) -> Vec<StmtId> {
@@ -90,7 +92,9 @@ impl<'s> Tree<'s> {
     fn count_expressions(&self, is_counted: impl Fn(ExprKind) -> bool) -> usize {
         let hir = self.hir();
         let expressions = self.reachable_expressions();
-        expressions.filter(|&expression| is_counted(hir[expression].kind)).count()
+        expressions
+            .filter(|&expression| is_counted(hir[expression].kind))
+            .count()
     }
 
     fn count_jsx_elements(&self) -> usize {
@@ -106,7 +110,9 @@ impl<'s> Tree<'s> {
 
     fn count_names(&self, name: &str) -> usize {
         let expressions = self.reachable_expressions();
-        expressions.filter(|&expression| self.is_name(expression, name)).count()
+        expressions
+            .filter(|&expression| self.is_name(expression, name))
+            .count()
     }
 
     fn is_cache_slot(&self, expression: ExprId) -> bool {
@@ -140,7 +146,9 @@ impl<'s> Tree<'s> {
                 None
             }
         });
-        calls.filter(|&call| self.is_name(hir[call].callee, callee_name)).collect()
+        calls
+            .filter(|&call| self.is_name(hir[call].callee, callee_name))
+            .collect()
     }
 
     fn member_path(&self, mut expression: ExprId) -> Vec<String> {
@@ -158,14 +166,19 @@ impl<'s> Tree<'s> {
 
     fn imports_from(&self, specifier: &str) -> Vec<hir::Import> {
         let hir = self.hir();
-        let imports = self.top_level_statements().into_iter().filter_map(|statement| {
-            if let StmtKind::Import(import) = hir[statement].kind {
-                Some(hir[import])
-            } else {
-                None
-            }
-        });
-        imports.filter(|import| self.text(import.spec) == specifier.as_bytes()).collect()
+        let imports = self
+            .top_level_statements()
+            .into_iter()
+            .filter_map(|statement| {
+                if let StmtKind::Import(import) = hir[statement].kind {
+                    Some(hir[import])
+                } else {
+                    None
+                }
+            });
+        imports
+            .filter(|import| self.text(import.spec) == specifier.as_bytes())
+            .collect()
     }
 
     fn imported_names(&self, specifier: &str) -> Vec<String> {
@@ -249,13 +262,16 @@ impl<'s> Tree<'s> {
 
     fn sentinel_key(&self, name: &str) -> Option<String> {
         let hir = self.hir();
-        let mut declarations = self.top_level_statements().into_iter().filter_map(|statement| {
-            if let StmtKind::Var(declarations) = hir[statement].kind {
-                Some(hir[declarations.at(0)])
-            } else {
-                None
-            }
-        });
+        let mut declarations = self
+            .top_level_statements()
+            .into_iter()
+            .filter_map(|statement| {
+                if let StmtKind::Var(declarations) = hir[statement].kind {
+                    Some(hir[declarations.at(0)])
+                } else {
+                    None
+                }
+            });
         let declaration = declarations
             .find(|declaration| self.pattern_name(declaration.pat).as_deref() == Some(name))?;
         let ExprKind::Call(call) = hir[declaration.init].kind else {
@@ -298,9 +314,12 @@ fn with_tree_and_settings<R>(
     settings: &TranspileSettings,
     then: impl for<'s> FnOnce(&Tree<'s>) -> R,
 ) -> R {
-    with_project(&[("main.tsx", text)], settings, ReactCompilerMode::Client, |project| {
-        then(&Tree::new(project, "main.tsx"))
-    })
+    with_project(
+        &[("main.tsx", text)],
+        settings,
+        ReactCompilerMode::Client,
+        |project| then(&Tree::new(project, "main.tsx")),
+    )
 }
 
 fn with_compiled_tree<R>(text: &str, then: impl for<'s> FnOnce(&Tree<'s>) -> R) -> R {
@@ -336,7 +355,14 @@ impl<'s> Workbench<'s> {
             runtime: Some(RuntimeBindOptions::default()),
             ..BindOptions::default()
         };
-        analyze_file(&mut self.tree, bind_options, &self.fold, file, &self.atoms, self.arena)
+        analyze_file(
+            &mut self.tree,
+            bind_options,
+            &self.fold,
+            file,
+            &self.atoms,
+            self.arena,
+        )
     }
 
     fn transform(

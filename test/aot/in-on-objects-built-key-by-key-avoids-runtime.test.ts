@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -44,13 +44,24 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("`in` and hasOwn with the answer no leave compiled code once for a new kind of ordinary object, not once for each name", async () => {
   using dir = tempDir("aot-in-on-objects-built-key-by-key", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const rounds = 800;
   const counted = async (kinds: string, sum: number) => {
     const path = join(String(dir), "counts of " + kinds);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
-    expect(await run([executable, String(rounds), kinds], String(dir), env)).toEqual({ stdout: String(sum) + "\n", stderr: "", exitCode: 0 });
+    expect(await run([executable, String(rounds), kinds], String(dir), env)).toEqual({
+      stdout: String(sum) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
     let calls = 0;
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, name] = line.split("\toperation:");

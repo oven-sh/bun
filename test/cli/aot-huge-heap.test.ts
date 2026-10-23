@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { describe, test } from "../aot/supported";
 
 // --aot keeps references between objects in 32 bits, which limits each thread to 32 GB of objects. --aot-huge-heap compiles with
 // 64-bit references instead. These tests shrink the limit to 64 MB so that a small program reaches it.
@@ -27,18 +27,29 @@ describe.concurrent("--aot-huge-heap", () => {
   test("an executable built with it goes past the limit", async () => {
     using folder = tempDir("aot-huge-heap", { "program.ts": program });
     const cwd = String(folder);
-    const built = await run([bunExe(), "build", "--compile", "--aot", "--aot-huge-heap", "program.ts", "--outfile", "program"], cwd);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "--aot-huge-heap", "program.ts", "--outfile", "program"],
+      cwd,
+    );
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+      stderr: expect.not.stringMatching(/^error\b/m),
+      exitCode: 0,
+    });
     const { stdout, exitCode } = await run([join(cwd, "program")], cwd, smallHeap);
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
   // A loop in a function with a try of its own gets no RangeError where it allocates: there the process ends and says what to do.
   test("an executable built without it stops at the limit", async () => {
-    using folder = tempDir("aot-huge-heap", { "program.ts": `try {\n${program}} finally {\n  console.log("finally");\n}\n` });
+    using folder = tempDir("aot-huge-heap", {
+      "program.ts": `try {\n${program}} finally {\n  console.log("finally");\n}\n`,
+    });
     const cwd = String(folder);
     const built = await run([bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"], cwd);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+      stderr: expect.not.stringMatching(/^error\b/m),
+      exitCode: 0,
+    });
     const { stdout, stderr, exitCode } = await run([join(cwd, "program")], cwd, smallHeap);
     expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use");
     expect(stderr).toContain("--aot-huge-heap");
@@ -48,22 +59,37 @@ describe.concurrent("--aot-huge-heap", () => {
 
   test("bun run --debug-aot, which builds, takes it too", async () => {
     using folder = tempDir("aot-huge-heap", { "program.ts": program });
-    const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", "--aot-huge-heap", "program.ts"], String(folder), smallHeap);
+    const { stdout, exitCode } = await run(
+      [bunExe(), "run", "--debug-aot", "--aot-huge-heap", "program.ts"],
+      String(folder),
+      smallHeap,
+    );
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
   test("bun test --debug-aot takes it too", async () => {
-    using folder = tempDir("aot-huge-heap", { "program.test.ts": 'import { expect, test } from "bun:test";\ntest("runs", () => expect(1 + 1).toBe(2));\n' });
-    const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", "--aot-huge-heap", "program.test.ts"], String(folder));
+    using folder = tempDir("aot-huge-heap", {
+      "program.test.ts": 'import { expect, test } from "bun:test";\ntest("runs", () => expect(1 + 1).toBe(2));\n',
+    });
+    const { stderr, exitCode } = await run(
+      [bunExe(), "test", "--debug-aot", "--aot-huge-heap", "program.test.ts"],
+      String(folder),
+    );
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   }, 120_000);
 
-  const small = { "program.ts": 'console.log("ran");\n', "program.test.ts": 'import { test } from "bun:test";\ntest("runs", () => {});\n' };
+  const small = {
+    "program.ts": 'console.log("ran");\n',
+    "program.test.ts": 'import { test } from "bun:test";\ntest("runs", () => {});\n',
+  };
 
   test("it requires --aot", async () => {
     using folder = tempDir("aot-huge-heap", small);
-    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "--compile", "--aot-huge-heap", "program.ts", "--outfile", "program"], String(folder));
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot-huge-heap", "program.ts", "--outfile", "program"],
+      String(folder),
+    );
     expect(stderr).toContain("--aot-huge-heap requires --aot");
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 // A value that satisfies its type is never refused: each of these programs prints under `bun run --aot`, and as compiled code under `--debug-aot`, what plain Bun prints.
 const head = `declare const console: { log(...values: unknown[]): void };
@@ -42,8 +42,17 @@ const fits: Record<string, string> = {
 };
 
 async function ran(text: string, ...flags: string[]) {
-  using dir = tempDir("run-aot-accepts-matching-arguments", { "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true } }`, "main.ts": head + text });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, "main.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  using dir = tempDir("run-aot-accepts-matching-arguments", {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true } }`,
+    "main.ts": head + text,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...flags, "main.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr: stderr.split("\n").filter(line => /error/i.test(line)), exitCode };
 }

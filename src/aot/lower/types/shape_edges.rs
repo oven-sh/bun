@@ -1,6 +1,5 @@
 use bun_sema::check::aot::{
-    BuiltinTypeClass, SchemaConstraint, ShapeKind, TupleElement,
-    TupleElementKind,
+    BuiltinTypeClass, SchemaConstraint, ShapeKind, TupleElement, TupleElementKind,
 };
 
 use super::{EdgeKind, TypeEdge, TypeEdges};
@@ -38,8 +37,7 @@ pub(super) fn collect_edges(
         // A type parameter is a layout of its own, whatever its constraint is.
         ShapeKind::Anything(_)
         | ShapeKind::TypeVariable {
-            parameter: Some(_),
-            ..
+            parameter: Some(_), ..
         }
         | ShapeKind::TypeVariable {
             parameter: None,
@@ -93,11 +91,7 @@ fn push_tuple_edges(edges: &mut TypeEdges, elements: &[TupleElement]) {
     }
 }
 
-fn push_builtin_edges(
-    edges: &mut TypeEdges,
-    class: BuiltinTypeClass,
-    arguments: &[CheckerTypeId],
-) {
+fn push_builtin_edges(edges: &mut TypeEdges, class: BuiltinTypeClass, arguments: &[CheckerTypeId]) {
     let Some(type_name) = type_name_of(class) else {
         return;
     };

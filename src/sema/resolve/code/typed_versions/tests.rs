@@ -44,14 +44,18 @@ fn condition_is_found_at_any_depth() {
     assert!(has(r#"{"bun-aot": "./a.ts"}"#));
     assert!(has(r#"{"./a": [{"node": {"bun-aot": null}}]}"#));
     assert!(!has(r#""bun-aot""#));
-    assert!(!has(r#"{"./bun-aot": ["bun-aot"], "./a": {"default": "./bun-aot"}}"#));
+    assert!(!has(
+        r#"{"./bun-aot": ["bun-aot"], "./a": {"default": "./bun-aot"}}"#
+    ));
     assert!(!has(r#"{"bun-aot": "./a.ts", "./a": "./a.js"}"#));
 }
 
 #[test]
 fn condition_is_compared_with_whole_key() {
     let has = |condition: &[u8]| {
-        with_exports(r#"{"bun-aot": "./a.ts"}"#, |exports| has_condition(exports, condition))
+        with_exports(r#"{"bun-aot": "./a.ts"}"#, |exports| {
+            has_condition(exports, condition)
+        })
     };
     assert!(has(b"bun-aot"));
     assert!(!has(b"bun"));
@@ -125,7 +129,10 @@ fn package_exports_are_searched_up_to_node_modules() {
     let host = MemoryHost::new(&[
         ("/p/package.json", r#"{"exports": "./main.js"}"#),
         (MANIFEST, r#"{"exports": "./index.js"}"#),
-        ("/p/node_modules/pkg/dist/package.json", r#"{"type": "module"}"#),
+        (
+            "/p/node_modules/pkg/dist/package.json",
+            r#"{"type": "module"}"#,
+        ),
         ("/p/node_modules/bare/index.js", ""),
     ]);
     with_resolver(&host, |resolver| {
@@ -133,7 +140,10 @@ fn package_exports_are_searched_up_to_node_modules() {
             let (manifest, _) = resolver.find_package_exports(path)?;
             Some(manifest.directory.as_bstr().to_string())
         };
-        assert_eq!(directory_of(b"/p/node_modules/pkg/dist/a.js").as_deref(), Some(PACKAGE));
+        assert_eq!(
+            directory_of(b"/p/node_modules/pkg/dist/a.js").as_deref(),
+            Some(PACKAGE)
+        );
         assert_eq!(directory_of(b"/p/src/main.js").as_deref(), Some("/p"));
         assert_eq!(directory_of(b"/p/node_modules/bare/index.js"), None);
         assert_eq!(directory_of(b"virtual:main.js"), None);

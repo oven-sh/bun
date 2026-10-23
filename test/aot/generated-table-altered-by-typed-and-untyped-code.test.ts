@@ -4,7 +4,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { classesOf, programs, toTable, type Answers, type Program } from "./generated/altered-by-typed-and-untyped-code";
+import {
+  classesOf,
+  programs,
+  toTable,
+  type Answers,
+  type Program,
+} from "./generated/altered-by-typed-and-untyped-code";
 import { spread } from "./generated/case-files";
 import { moreFlags } from "./generated/run-generated";
 import { wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
@@ -30,21 +36,35 @@ async function answersOf({ made, operation, who, files }: Program): Promise<Answ
   const root = String(dir);
   const executable = join(root, isWindows ? "program.exe" : "program");
   const plain = await spawned([bunExe(), "run", "main.ts"], root, bunEnv);
-  const build = await spawned([bunExe(), "build", "--compile", "--aot", ...moreFlags, "main.ts", "--outfile", executable], root, bunEnv);
+  const build = await spawned(
+    [bunExe(), "build", "--compile", "--aot", ...moreFlags, "main.ts", "--outfile", executable],
+    root,
+    bunEnv,
+  );
   const run = build.exitCode === 0 ? await spawned(withoutCoreDump([executable]), root, bunEnv) : undefined;
   return {
     made,
     operation,
     who,
-    plain: plain.exitCode === 0 ? printed(plain.stdout) : `exit ${plain.exitCode}: ${errors(plain.stderr).join(" ").slice(0, 120)}`,
-    compiled: !run ? `BUILD: ${(errors(build.stderr)[0] ?? build.stderr).slice(0, 150)}` : run.exitCode === 0 ? printed(run.stdout) : `exit ${run.exitCode ?? run.signal}: ${errors(run.stderr).join(" ").slice(0, 120)}`,
+    plain:
+      plain.exitCode === 0
+        ? printed(plain.stdout)
+        : `exit ${plain.exitCode}: ${errors(plain.stderr).join(" ").slice(0, 120)}`,
+    compiled: !run
+      ? `BUILD: ${(errors(build.stderr)[0] ?? build.stderr).slice(0, 150)}`
+      : run.exitCode === 0
+        ? printed(run.stdout)
+        : `exit ${run.exitCode ?? run.signal}: ${errors(run.stderr).join(" ").slice(0, 120)}`,
   };
 }
 
 function departs({ made, operation, plain, compiled }: Answers) {
   const isRefusalAllowed = mayBeRefused.test(`${made} ${operation}`);
   const [ours, theirs] = [compiled, plain].map(answers => answers.split(/ \/\/ | \| /));
-  return ours.length !== theirs.length || ours.some((part, i) => part !== theirs[i] && !(isRefusalAllowed && part === "read threw TypeError"));
+  return (
+    ours.length !== theirs.length ||
+    ours.some((part, i) => part !== theirs[i] && !(isRefusalAllowed && part === "read threw TypeError"))
+  );
 }
 
 describe.concurrent("compile/aot/generated/a typed object is altered by typed and by untyped code", () => {
@@ -55,7 +75,8 @@ describe.concurrent("compile/aot/generated/a typed object is altered by typed an
       const answers = await Promise.all(members.map(program => slot(() => answersOf(program))));
       rows.push(...answers);
       expect(answers.filter(departs)).toEqual([]);
-      if (new Set(answers.map(row => row.plain)).size === 1) expect(new Set(answers.map(row => row.compiled)).size).toBe(1);
+      if (new Set(answers.map(row => row.plain)).size === 1)
+        expect(new Set(answers.map(row => row.compiled)).size).toBe(1);
     }, 600_000);
   }
   afterAll(() => {

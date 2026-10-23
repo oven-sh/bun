@@ -48,28 +48,50 @@ describe.skipIf(!!unsupported)("compile/aot/regular expression literals that the
   const root = String(tempDir("aot-regexp-literals", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
   rows.forEach((row, index) => {
-    test.each(["main.mjs", "main.ts"])(row + " %s", file =>
-      slot(async () => {
-        const folder = join(root, index + file);
-        mkdirSync(folder, { recursive: true });
-        writeFileSync(join(folder, file), (file.endsWith(".ts") ? "// @ts-nocheck\n" : "") + row + "\n");
-        const executable = join(folder, isWindows ? "program.exe" : "program");
-        const plain = await spawned([bunExe(), "run", file], folder, bunEnv);
-        const build = await spawned([bunExe(), "build", "--compile", "--aot", file, "--outfile", executable], folder, bunEnv);
-        const fromSources = await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
-        expect(plain.signal).toBeNull();
-        if (plain.exitCode !== 0) {
-          expect(plain.stderr).toContain("regular expression");
-          expect({ signal: build.signal, exitCode: build.exitCode, says: (build.stdout + build.stderr).includes("regular expression") }).toEqual({ signal: null, exitCode: 1, says: true });
-          expect({ signal: fromSources.signal, exitCode: fromSources.exitCode, stdout: fromSources.stdout }).toEqual({ signal: null, exitCode: plain.exitCode, stdout: "" });
-          return;
-        }
-        expect({ signal: build.signal, exitCode: build.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        const compiled = await spawned([executable], folder, bunEnv);
-        rmSync(executable, { force: true });
-        expect({ signal: compiled.signal, exitCode: compiled.exitCode, stdout: compiled.stdout }).toEqual({ signal: null, exitCode: 0, stdout: plain.stdout });
-        expect({ signal: fromSources.signal, exitCode: fromSources.exitCode, stdout: fromSources.stdout }).toEqual({ signal: null, exitCode: 0, stdout: plain.stdout });
-      }),
+    test.each(["main.mjs", "main.ts"])(
+      row + " %s",
+      file =>
+        slot(async () => {
+          const folder = join(root, index + file);
+          mkdirSync(folder, { recursive: true });
+          writeFileSync(join(folder, file), (file.endsWith(".ts") ? "// @ts-nocheck\n" : "") + row + "\n");
+          const executable = join(folder, isWindows ? "program.exe" : "program");
+          const plain = await spawned([bunExe(), "run", file], folder, bunEnv);
+          const build = await spawned(
+            [bunExe(), "build", "--compile", "--aot", file, "--outfile", executable],
+            folder,
+            bunEnv,
+          );
+          const fromSources = await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
+          expect(plain.signal).toBeNull();
+          if (plain.exitCode !== 0) {
+            expect(plain.stderr).toContain("regular expression");
+            expect({
+              signal: build.signal,
+              exitCode: build.exitCode,
+              says: (build.stdout + build.stderr).includes("regular expression"),
+            }).toEqual({ signal: null, exitCode: 1, says: true });
+            expect({ signal: fromSources.signal, exitCode: fromSources.exitCode, stdout: fromSources.stdout }).toEqual({
+              signal: null,
+              exitCode: plain.exitCode,
+              stdout: "",
+            });
+            return;
+          }
+          expect({ signal: build.signal, exitCode: build.exitCode }).toEqual({ signal: null, exitCode: 0 });
+          const compiled = await spawned([executable], folder, bunEnv);
+          rmSync(executable, { force: true });
+          expect({ signal: compiled.signal, exitCode: compiled.exitCode, stdout: compiled.stdout }).toEqual({
+            signal: null,
+            exitCode: 0,
+            stdout: plain.stdout,
+          });
+          expect({ signal: fromSources.signal, exitCode: fromSources.exitCode, stdout: fromSources.stdout }).toEqual({
+            signal: null,
+            exitCode: 0,
+            stdout: plain.stdout,
+          });
+        }),
       600_000,
     );
   });

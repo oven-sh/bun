@@ -108,7 +108,10 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
     (input.in_parallel)(tasks.len(), &|task| {
         for layout in tasks[task].iter().filter(|layout| !is_plain_record(layout)) {
             let keys = layout.fields.iter().map(|field| field.key);
-            for key in keys.chain(layout.static_fields.iter().map(|field| field.key)).flatten() {
+            for key in keys
+                .chain(layout.static_fields.iter().map(|field| field.key))
+                .flatten()
+            {
                 set_mark(&is_written[key.index()]);
             }
         }
@@ -128,7 +131,10 @@ pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) 
             layout.flags |= LayoutFlags::IS_NEVER_ALLOCATED;
         }
         for field in &mut layout.fields {
-            if field.key.is_some_and(|key| !is_written[key.index()].load(Ordering::Relaxed)) {
+            if field
+                .key
+                .is_some_and(|key| !is_written[key.index()].load(Ordering::Relaxed))
+            {
                 field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
                 field.flags |= FieldFlags::IS_NEVER_WRITTEN;
             }
@@ -158,7 +164,9 @@ export function make(id: number): Made { return { id, label: "made" }; }
 
     fn find_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
         let has_name = |layout: &&Layout| {
-            layout.name.is_some_and(|id| program.strings.get(id) == name.as_bytes())
+            layout
+                .name
+                .is_some_and(|id| program.strings.get(id) == name.as_bytes())
         };
         program.layouts.iter().find(has_name).expect(name)
     }
@@ -168,7 +176,10 @@ export function make(id: number): Made { return { id, label: "made" }; }
             let text = program.property_keys.get(key).text;
             text.is_some_and(|id| program.strings.get(id) == name.as_bytes())
         };
-        let field = layout.fields.iter().find(|field| field.key.is_some_and(has_name));
+        let field = layout
+            .fields
+            .iter()
+            .find(|field| field.key.is_some_and(has_name));
         field.expect(name).flags
     }
 
@@ -179,7 +190,11 @@ export function make(id: number): Made { return { id, label: "made" }; }
         let never_allocated = LayoutFlags::IS_NEVER_ALLOCATED;
         assert!(!find_layout(program, "Made").flags.contains(never_allocated));
         assert!(find_layout(program, "View").flags.contains(never_allocated));
-        assert!(find_layout(program, "Stored").flags.contains(never_allocated));
+        assert!(
+            find_layout(program, "Stored")
+                .flags
+                .contains(never_allocated)
+        );
     }
 
     #[test]
@@ -187,11 +202,20 @@ export function make(id: number): Made { return { id, label: "made" }; }
         let linked = link_sources_without_bun_modules(&[("main.ts", MAIN), ("maker.ts", MAKER)]);
         let program = &linked.expect("the program links").program;
         let view = find_layout(program, "View");
-        assert_eq!(flags_of_field(program, view, "_viewBrand"), FieldFlags::IS_NEVER_WRITTEN);
+        assert_eq!(
+            flags_of_field(program, view, "_viewBrand"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
         assert_eq!(flags_of_field(program, view, "id"), FieldFlags::IS_REQUIRED);
         let stored = find_layout(program, "Stored");
-        assert_eq!(flags_of_field(program, stored, "late"), FieldFlags::IS_REQUIRED);
+        assert_eq!(
+            flags_of_field(program, stored, "late"),
+            FieldFlags::IS_REQUIRED
+        );
         let made = find_layout(program, "Made");
-        assert_eq!(flags_of_field(program, made, "label"), FieldFlags::IS_REQUIRED);
+        assert_eq!(
+            flags_of_field(program, made, "label"),
+            FieldFlags::IS_REQUIRED
+        );
     }
 }

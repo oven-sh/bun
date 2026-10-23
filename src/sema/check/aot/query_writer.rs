@@ -1,6 +1,7 @@
 use super::{
-    CallTarget, CheckedType, ClassDeclaration, ClassParent, ClassRef, ClassShape, FunctionRef, GaveUp,
-    ObjectMemberKind, ObjectOrigin, Queries, ShapeKind, TypeArgument, TypeIdentity, WrittenType,
+    CallTarget, CheckedType, ClassDeclaration, ClassParent, ClassRef, ClassShape, FunctionRef,
+    GaveUp, ObjectMemberKind, ObjectOrigin, Queries, ShapeKind, TypeArgument, TypeIdentity,
+    WrittenType,
 };
 use crate::atom::{Atom, written_name};
 use crate::bind::{Bound, ClassOwner, FnOwner, PatParent, ScopeId, SymbolId};
@@ -121,8 +122,16 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
         let path = self.relative_path(file);
         let answer = answer.unwrap_or_else(gave_up_text);
         let position = format!(":{} ", site.line);
-        let parts: [&[u8]; 8] =
-            [path, position.as_bytes(), query, b" ", &site.subject, b" = ", &answer, b"\n"];
+        let parts: [&[u8]; 8] = [
+            path,
+            position.as_bytes(),
+            query,
+            b" ",
+            &site.subject,
+            b" = ",
+            &answer,
+            b"\n",
+        ];
         self.out.extend_from_slice(&parts.concat());
     }
 
@@ -134,7 +143,10 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
     fn line_of(&mut self, file: FileId, position: u32) -> u32 {
         let text = &self.queries.files().hir(file).text[..];
         let line_starts = self.line_starts.entry(file);
-        line_number(line_starts.or_insert_with(|| compute_ecma_line_starts(text)), position)
+        line_number(
+            line_starts.or_insert_with(|| compute_ecma_line_starts(text)),
+            position,
+        )
     }
 
     fn is_under_root(&self, file: FileId) -> bool {
@@ -211,7 +223,11 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
         } else {
             None
         };
-        self.site(start_of(hir, expression), end_of_expr(hir, expression), name)
+        self.site(
+            start_of(hir, expression),
+            end_of_expr(hir, expression),
+            name,
+        )
     }
 
     fn type_node_site(&mut self, node: TypeNodeId) -> Site {
@@ -324,7 +340,11 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
             Some(function) => self.function_location(function),
             None => b"none".to_vec(),
         };
-        self.emit(site, b"call", Ok([b"declaration ", &declaration[..]].concat()));
+        self.emit(
+            site,
+            b"call",
+            Ok([b"declaration ", &declaration[..]].concat()),
+        );
         let result = self.position_text(target.result);
         self.emit(site, b"call result", Ok(result));
         let signature = self.queries.signature(target.signature);
@@ -376,7 +396,9 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
     }
 
     fn untyped_identity(&self, properties: Span<PropId>) -> Option<TypeIdentity> {
-        let members = properties.iter().map(|property| self.untyped_member(property));
+        let members = properties
+            .iter()
+            .map(|property| self.untyped_member(property));
         let members: Vec<(&'p [u8], ObjectMemberKind)> = members.collect::<Option<_>>()?;
         Some(TypeIdentity::of_untyped_members(members.into_iter()))
     }

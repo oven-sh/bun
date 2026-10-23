@@ -177,7 +177,8 @@ export class Pool {
   }
 
   #checkedIndex(index: number): number {
-    if (!this.#isDeclaredInHeader) throw new GeneratorError(`${this.#arrayName} is not declared in the header, so no stretch can name it`);
+    if (!this.#isDeclaredInHeader)
+      throw new GeneratorError(`${this.#arrayName} is not declared in the header, so no stretch can name it`);
     if (index > 0xfffe) throw new GeneratorError(`${this.#arrayName} has more records than 16 bits number`);
     return index;
   }

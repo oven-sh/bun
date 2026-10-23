@@ -77,9 +77,17 @@ runner.test("a file that imports the runner by a call gets nothing more", () => 
 };
 
 async function report(mode: string[], directory: string, file: string) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "test", ...mode, "./" + file], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...mode, "./" + file],
+    cwd: directory,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const lines = (stdout + "\n" + stderr).split("\n").filter(line => /^\((pass|fail|skip|todo)\)|^row: |^ *\d+ (pass|fail|skip)$|Error: |error: /.test(line));
+  const lines = (stdout + "\n" + stderr)
+    .split("\n")
+    .filter(line => /^\((pass|fail|skip|todo)\)|^row: |^ *\d+ (pass|fail|skip)$|Error: |error: /.test(line));
   return { lines: lines.map(line => line.replace(/ \[[\d.]+m?s\]$/, "")).sort(), exitCode };
 }
 

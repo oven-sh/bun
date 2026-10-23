@@ -60,11 +60,15 @@ fn lower_runtime_module(source: &str) -> LoweredFiles {
 fn find_library_path(export_name: &str) -> String {
     let mut functions = table::runtime_functions().iter();
     let function = functions.find(|function| function.export_name == export_name);
-    let function = function.expect("the built-ins table lists the function").function;
+    let function = function
+        .expect("the built-ins table lists the function")
+        .function;
     let archive_name = Archive::embedded().manifest().function_file(function.0);
     let archive_name = archive_name.expect("the manifest lists the file of the function");
     let path = [VIRTUAL_ROOT, archive_name].concat();
-    str::from_utf8(&path).expect("archive names are ASCII").to_owned()
+    str::from_utf8(&path)
+        .expect("archive names are ASCII")
+        .to_owned()
 }
 
 fn name_tables(fragment: &Fragment) -> NameTables<'_> {
@@ -109,7 +113,10 @@ impl LoweredFiles {
             })
         });
         let probe = probes.find(|probe| {
-            let text = probe.function.name.map(|name| probe.fragment.strings.get(name));
+            let text = probe
+                .function
+                .name
+                .map(|name| probe.fragment.strings.get(name));
             text == Some(name.as_bytes())
         });
         probe.unwrap_or_else(|| panic!("no fragment defines a function named {name}"))
@@ -119,7 +126,12 @@ impl LoweredFiles {
 impl fmt::Display for Probe<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
-        print_function(name_tables(self.fragment), self.id, self.function, &mut text);
+        print_function(
+            name_tables(self.fragment),
+            self.id,
+            self.function,
+            &mut text,
+        );
         formatter.write_str(&text)
     }
 }
@@ -212,9 +224,9 @@ impl<'a> Probe<'a> {
     }
 
     fn skip_requests(self, value: ValueId) -> ValueId {
-        let request = self.operations().find(|operation| {
-            operation.value.opcode == Opcode::Convert && operation.id() == value
-        });
+        let request = self
+            .operations()
+            .find(|operation| operation.value.opcode == Opcode::Convert && operation.id() == value);
         match request {
             Some(request) => self.skip_requests(request.operands()[0]),
             None => value,

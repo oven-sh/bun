@@ -121,10 +121,14 @@ impl ReferencePass<'_, '_> {
                 self.uses_arguments.push(unit);
             }
             if found.dynamic_scope.is_some() {
-                self.references.dynamic_ident_lookups.push((ident, found.dynamic_scope));
+                self.references
+                    .dynamic_ident_lookups
+                    .push((ident, found.dynamic_scope));
             }
         }
-        self.references.ident_bindings.shared_sort_unstable_by_key(|entry| entry.0);
+        self.references
+            .ident_bindings
+            .shared_sort_unstable_by_key(|entry| entry.0);
     }
 
     fn is_unevaluated_ident(&self, ident: ExprId, scope: ScopeId, name: Atom) -> bool {
@@ -156,7 +160,9 @@ impl ReferencePass<'_, '_> {
             };
             let found = self.lookup.find(scope, name);
             if found.binding != Binding::Symbol(self.declared_var_symbol(pat)) {
-                self.references.initialized_bindings.push((pat, found.binding));
+                self.references
+                    .initialized_bindings
+                    .push((pat, found.binding));
             }
         }
     }
@@ -164,7 +170,9 @@ impl ReferencePass<'_, '_> {
     fn declared_var_symbol(&self, pat: PatId) -> SymbolId {
         let bound = self.lookup.bound;
         let symbol = bound.declared_pattern_symbol(pat).some();
-        symbol.map_or(SymbolId::NONE, |s| bound.export_symbol_of_value_symbol_if_exported(s))
+        symbol.map_or(SymbolId::NONE, |s| {
+            bound.export_symbol_of_value_symbol_if_exported(s)
+        })
     }
 
     fn resolve_arguments_variables(&mut self) {
@@ -174,7 +182,9 @@ impl ReferencePass<'_, '_> {
             let Some(local) = bound.find_in_table(scope.locals, name) else {
                 continue;
             };
-            let binding = self.lookup.local_binding(scope.kind, ScopeKind::Block, name, local);
+            let binding = self
+                .lookup
+                .local_binding(scope.kind, ScopeKind::Block, name, local);
             let Some(arguments @ Binding::Arguments(_)) = binding else {
                 continue;
             };
@@ -199,7 +209,9 @@ impl ReferencePass<'_, '_> {
                 && self.lookup.is_var(local)
             {
                 let symbol = bound.export_symbol_of_value_symbol_if_exported(local);
-                self.references.redeclared_commonjs_variables.push((symbol, variable));
+                self.references
+                    .redeclared_commonjs_variables
+                    .push((symbol, variable));
             }
         }
     }
@@ -299,15 +311,33 @@ impl ReferencePass<'_, '_> {
         references.evaluated_idents = std::mem::take(&mut self.evaluated_idents);
         references.eval_visible_symbols = std::mem::take(&mut self.eval_visible_symbols);
         references.store_targets = std::mem::take(&mut self.store_targets);
-        references.initialized_bindings.shared_sort_by_key(|entry| entry.0);
-        references.initialized_bindings.dedup_by_key(|entry| entry.0);
-        references.redeclared_commonjs_variables.shared_sort_unstable_by_key(|entry| entry.0);
-        references.dynamic_ident_lookups.shared_sort_unstable_by_key(|entry| entry.0);
-        references.dynamic_declarator_lookups.shared_sort_unstable_by_key(|entry| entry.0);
-        references.eval_scopes.shared_sort_unstable_by_key(|entry| entry.0);
-        references.unbound_name_stores.shared_sort_unstable_by_key(|entry| entry.0);
-        references.exported_bindings.shared_sort_unstable_by_key(|entry| entry.0);
-        references.stores.shared_sort_unstable_by_key(|store| (store.symbol, store.target));
+        references
+            .initialized_bindings
+            .shared_sort_by_key(|entry| entry.0);
+        references
+            .initialized_bindings
+            .dedup_by_key(|entry| entry.0);
+        references
+            .redeclared_commonjs_variables
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        references
+            .dynamic_ident_lookups
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        references
+            .dynamic_declarator_lookups
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        references
+            .eval_scopes
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        references
+            .unbound_name_stores
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        references
+            .exported_bindings
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        references
+            .stores
+            .shared_sort_unstable_by_key(|store| (store.symbol, store.target));
     }
 }
 

@@ -45,34 +45,48 @@ async function build(source: string) {
   const dir = tempDir("aot-calls-at-build-time", { "main.js": source });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
-  const process = Bun.spawn({ cmd: [bunExe(), ...compileCommand, "main.js", "--outfile", executable], cwd: folder, env, stdout: "pipe", stderr: "pipe" });
+  const process = Bun.spawn({
+    cmd: [bunExe(), ...compileCommand, "main.js", "--outfile", executable],
+    cwd: folder,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([process.stdout.text(), process.stderr.text(), process.exited]);
   built({ stdout, stderr, exitCode, signal: null });
   return { dir, folder, executable, peakMemory: process.resourceUsage()!.maxRSS };
 }
 
 describe.concurrent("calls made at build time", () => {
-  test("answer what plain Bun answers", () =>
-    slot(async () => {
-      const { dir, folder, executable } = await build(answers);
-      using _ = dir;
-      const plain = await spawned([bunExe(), "main.js"], folder, env);
-      expect(plain.exitCode).toBe(0);
-      expect(await spawned([executable], folder, env)).toEqual(plain);
-    }), 300_000);
+  test(
+    "answer what plain Bun answers",
+    () =>
+      slot(async () => {
+        const { dir, folder, executable } = await build(answers);
+        using _ = dir;
+        const plain = await spawned([bunExe(), "main.js"], folder, env);
+        expect(plain.exitCode).toBe(0);
+        expect(await spawned([executable], folder, env)).toEqual(plain);
+      }),
+    300_000,
+  );
 
   for (const [title, expression] of [
     ["a count", `"ab".repeat(2 ** 29)`],
     ["a length", `"ab".padEnd(2 ** 30, "xy")`],
   ]) {
-    test(`${title} that makes a gigabyte costs the build no gigabyte`, () =>
-      slot(async () => {
-        const small = await build(`console.log("ab".length);\n`);
-        using _ = small.dir;
-        const large = await build(`console.log(${expression}.length);\n`);
-        using __ = large.dir;
-        expect(large.peakMemory / small.peakMemory).toBeLessThan(2);
-        expect((await spawned([large.executable], large.folder, env)).stdout).toBe("1073741824\n");
-      }), 300_000);
+    test(
+      `${title} that makes a gigabyte costs the build no gigabyte`,
+      () =>
+        slot(async () => {
+          const small = await build(`console.log("ab".length);\n`);
+          using _ = small.dir;
+          const large = await build(`console.log(${expression}.length);\n`);
+          using __ = large.dir;
+          expect(large.peakMemory / small.peakMemory).toBeLessThan(2);
+          expect((await spawned([large.executable], large.folder, env)).stdout).toBe("1073741824\n");
+        }),
+      300_000,
+    );
   }
 });

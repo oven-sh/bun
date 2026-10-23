@@ -113,7 +113,10 @@ impl<'s> Folder<'_, 's> {
 
     fn push_statements_after_exit(&self, list: IdList<StmtId>, roots: &mut Vec<TreeNode>) {
         let mut statements = self.hir.ids(list);
-        if statements.by_ref().any(|statement| self.always_leaves_list(statement)) {
+        if statements
+            .by_ref()
+            .any(|statement| self.always_leaves_list(statement))
+        {
             let never_reached = statements.filter(|&statement| !self.counts_unreached(statement));
             roots.extend(never_reached.map(TreeNode::Stmt));
         }
@@ -141,7 +144,10 @@ impl<'s> Folder<'_, 's> {
             | StmtKind::Throw(_)
             | StmtKind::Break(_)
             | StmtKind::Continue(_) => true,
-            StmtKind::Block(list) => self.hir.ids(list).any(|inner| self.always_leaves_list(inner)),
+            StmtKind::Block(list) => self
+                .hir
+                .ids(list)
+                .any(|inner| self.always_leaves_list(inner)),
             _ => false,
         }
     }

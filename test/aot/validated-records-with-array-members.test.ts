@@ -8,7 +8,16 @@ import { test } from "./supported";
 
 async function declinesOf(entryPoint: string, folder: string): Promise<string[]> {
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "--explain=missed-optimizations", entryPoint, "--outfile", join(folder, "main" + (isWindows ? ".exe" : ""))],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--explain=missed-optimizations",
+      entryPoint,
+      "--outfile",
+      join(folder, "main" + (isWindows ? ".exe" : "")),
+    ],
     cwd: folder,
     env: bunEnv,
     stdout: "pipe",
@@ -22,7 +31,12 @@ async function declinesOf(entryPoint: string, folder: string): Promise<string[]>
 
 test("no part of a record with array members goes to the generic code", async () => {
   using dir = tempDir("aot-validated-array-members", {});
-  expect(await declinesOf(join(import.meta.dir, "programs", "data-from-outside", "validated-records-with-array-members.ts"), String(dir))).toEqual([]);
+  expect(
+    await declinesOf(
+      join(import.meta.dir, "programs", "data-from-outside", "validated-records-with-array-members.ts"),
+      String(dir),
+    ),
+  ).toEqual([]);
 }, 120_000);
 
 test("a union that could try two recursive arms is reported with its cause", async () => {

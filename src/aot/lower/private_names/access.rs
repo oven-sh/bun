@@ -115,7 +115,9 @@ fn get_defined_static_value(
     let slot = ClassSlot::StaticField(stored.member);
     let value = class::get_class_slot(lowering, stored.class, slot);
     let split = condition::split_on_type(lowering, value, TypeTable::ABSENT);
-    lowering.builder.set_frequency(split.taken, BlockFrequency::Unlikely);
+    lowering
+        .builder
+        .set_frequency(split.taken, BlockFrequency::Unlikely);
     lowering.builder.switch_to(split.taken);
     exception::emit_throw_runtime_error(lowering, error, None);
     lowering.builder.switch_to(split.not_taken);
@@ -193,7 +195,13 @@ fn emit_function_call(
     arguments: &[ValueId],
 ) -> ValueId {
     let arguments = Arguments::Values(SmallVec::from_slice(arguments));
-    call::emit_call(lowering, function, Some(object), arguments, CallSite::default())
+    call::emit_call(
+        lowering,
+        function,
+        Some(object),
+        arguments,
+        CallSite::default(),
+    )
 }
 
 pub(in crate::lower) fn emit_name_get(

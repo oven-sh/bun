@@ -446,7 +446,10 @@ pub fn summarize_top_level<'s>(
     every_file_is_a_module: bool,
 ) -> Option<File<'s>> {
     let kind = script_kind.or_else(|| ScriptKind::from_file_name(path))?;
-    if kind.is_javascript() || is_json(path, script_kind) || bun_sema::resolve::is_declaration_file_name(path) {
+    if kind.is_javascript()
+        || is_json(path, script_kind)
+        || bun_sema::resolve::is_declaration_file_name(path)
+    {
         return None;
     }
     let how = ParseSettings {
@@ -465,7 +468,8 @@ pub fn summarize_top_level<'s>(
         let scratch = all[0].get_or_insert_default();
         parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
     });
-    (!file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics()).then_some(file)
+    (!file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics())
+        .then_some(file)
 }
 
 /// [`summarize`] for a tool that follows a parser other than `tsc`'s and doesn't read types from JSDoc comments.

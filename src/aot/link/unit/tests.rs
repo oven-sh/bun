@@ -262,7 +262,10 @@ fn definitions_that_share_a_record_share_their_lists() {
     assert_eq!(references.rows, [0, 1, 1, 2, 3]);
     assert_eq!(references.ends.len(), 4);
     for (definition, failure) in [(0, 8), (1, 3), (2, 3), (3, 8), (4, 3)] {
-        assert_eq!(references.of(definition, LocalKind::ModuleFailure), [failure]);
+        assert_eq!(
+            references.of(definition, LocalKind::ModuleFailure),
+            [failure]
+        );
     }
 }
 
@@ -278,7 +281,11 @@ fn keys_carry_the_project() {
             fragment.declare_layout(layout);
             fragment.declare_variable(variable);
             fragment.declare_module(ModuleRef::File(first));
-            let unit = unit_in(projects, project, fragment.finish(ModuleFragment::default()));
+            let unit = unit_in(
+                projects,
+                project,
+                fragment.finish(ModuleFragment::default()),
+            );
 
             let in_project = |file| ProgramFile { project, file };
             let declared = InProject {

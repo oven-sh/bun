@@ -190,7 +190,10 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         with_bodies.len()
     );
     for &(value, text) in jsx_attribute_texts {
-        let pos = file.exprs.get(value.idx()).map_or(u32::MAX, |expr| expr.pos);
+        let pos = file
+            .exprs
+            .get(value.idx())
+            .map_or(u32::MAX, |expr| expr.pos);
         put!(d, 0, "", "jsx_attribute_text pos={pos} {}", d.q(text));
     }
     for &(pos, name) in bigint_names {

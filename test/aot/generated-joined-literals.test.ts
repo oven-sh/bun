@@ -19,9 +19,15 @@ const waysThatFailed = [
   "stored_by_index",
   "typeof_narrowed",
 ];
-const alwaysRun = new Set(["five", "arrays_k", "exactly6_kind"].flatMap(objects => waysThatFailed.map(way => `${objects}__${way}`)));
+const alwaysRun = new Set(
+  ["five", "arrays_k", "exactly6_kind"].flatMap(objects => waysThatFailed.map(way => `${objects}__${way}`)),
+);
 
 generated(
   "joined literals",
-  programs().map(program => ({ name: program.name.replaceAll("__", ": ").replaceAll("_", " "), isAlwaysRun: alwaysRun.has(program.name), make: () => program })),
+  programs().map(program => ({
+    name: program.name.replaceAll("__", ": ").replaceAll("_", " "),
+    isAlwaysRun: alwaysRun.has(program.name),
+    make: () => program,
+  })),
 );

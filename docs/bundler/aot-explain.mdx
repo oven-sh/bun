@@ -205,14 +205,19 @@ bun check --aot ./main.ts --explain=json
 
 ```json
 {
-  "rank": 1, "reason": "unknown-object", "limit": null,
-  "file": "main.ts", "line": 7, "column": 25,
+  "rank": 1,
+  "reason": "unknown-object",
+  "limit": null,
+  "file": "main.ts",
+  "line": 7,
+  "column": 25,
   "inDependency": false,
   "source": "const saved: any = JSON.parse('{ \"sku\": \"B-2\", \"price\": 10 }');",
   "message": "An object from untyped code is used as this type here, so it can have any shape.",
   "fix": "validate it where it enters typed code (JSON.parse<T>, validate<T>), or build a new object of this type from it.",
   "url": "https://bun.com/docs/bundler/aot-explain#unknown-object",
-  "accesses": 1, "dependencyAccesses": 0,
+  "accesses": 1,
+  "dependencyAccesses": 0,
   "function": "",
   "types": ["Item"],
   "family": "unknown-code",
@@ -243,15 +248,26 @@ bun check --aot ./main.ts --explain=json
 The first line has the numbers, for a script or for CI. This one is from the larger program.
 
 ```json
-{ "accesses": { "byName": 38, "tested": 61, "free": 1204, "testedSlotOnly": 12, "provenWithoutAnyTest": 1150 }, "dependencyAccesses": { "byName": 5244, "tested": 1320, "free": 210, "testedSlotOnly": 240, "provenWithoutAnyTest": 180 }, "calls": { "unknown": 143, "guarded": 0, "proven": 2210 }, "causes": 12 }
+{
+  "accesses": { "byName": 38, "tested": 61, "free": 1204, "testedSlotOnly": 12, "provenWithoutAnyTest": 1150 },
+  "dependencyAccesses": {
+    "byName": 5244,
+    "tested": 1320,
+    "free": 210,
+    "testedSlotOnly": 240,
+    "provenWithoutAnyTest": 180
+  },
+  "calls": { "unknown": 143, "guarded": 0, "proven": 2210 },
+  "causes": 12
+}
 ```
 
-| Field                | Contains                                                                    |
-| -------------------- | --------------------------------------------------------------------------- |
+| Field                | Contains                                                                                                                                                                                                                                              |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accesses`           | The three numbers of the last line of the build, for your own code. `testedSlotOnly` is the part of `tested` where the shape is known and only the field's value is tested. `provenWithoutAnyTest` is the part of `free` that needs no check anywhere |
-| `dependencyAccesses` | The same for the `Dependencies:` line                                       |
-| `calls`              | The calls in your own code, counted [the same three ways](#what-is-counted) |
-| `causes`             | The number of entries that follow                                           |
+| `dependencyAccesses` | The same for the `Dependencies:` line                                                                                                                                                                                                                 |
+| `calls`              | The calls in your own code, counted [the same three ways](#what-is-counted)                                                                                                                                                                           |
+| `causes`             | The number of entries that follow                                                                                                                                                                                                                     |
 
 ## With a coding agent
 
@@ -385,12 +401,14 @@ Extend one of your own classes, or store the other object in a field.
 Each evaluation creates a new class with its own prototype.
 
 ```ts
-class Token { // [!code ++]
+class Token {
+  // [!code ++]
   start = 0; // [!code ++]
 } // [!code ++]
 
 function tokenize(text: string) {
-  class Token { // [!code --]
+  class Token {
+    // [!code --]
     start = 0; // [!code --]
   } // [!code --]
   return [new Token()];
@@ -510,7 +528,8 @@ Use a `Map`, or delete a constant key.
 class Box {
   width = 0;
   height = 0;
-  get area() { // [!code ++]
+  get area() {
+    // [!code ++]
     return this.width * this.height; // [!code ++]
   } // [!code ++]
 }
@@ -594,10 +613,12 @@ Create the object with the prototype it needs.
 ```ts
 class Counter {
   count = 0;
-  reset() { // [!code --]
+  reset() {
+    // [!code --]
     this.count = 0; // [!code --]
   } // [!code --]
-  reset = () => { // [!code ++]
+  reset = () => {
+    // [!code ++]
     this.count = 0; // [!code ++]
   }; // [!code ++]
 }
@@ -949,7 +970,8 @@ class Counter {
   }
 }
 
-Counter.prototype.reset = function () { // [!code --]
+Counter.prototype.reset = function () {
+  // [!code --]
   this.count = 1; // [!code --]
 }; // [!code --]
 ```

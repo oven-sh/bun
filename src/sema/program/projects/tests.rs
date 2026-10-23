@@ -1,9 +1,7 @@
 #![cfg(not(miri))]
 
 use super::*;
-use crate::program::code_test_host::{
-    StatementsHost, TestBuild, load_files, with_compile_context,
-};
+use crate::program::code_test_host::{StatementsHost, TestBuild, load_files, with_compile_context};
 use crate::resolve::{CodeHost, CodeOptions};
 
 const ES2015_CONFIG: &str = "{ compilerOptions: { target: \"es2015\" } }";
@@ -163,36 +161,78 @@ fn checks_of(options: &Options) -> Vec<(&'static str, bool)> {
     vec![
         ("strictNullChecks", options.strict_null_checks),
         ("noImplicitAny", options.no_implicit_any),
-        ("noImplicitAny is specified", options.specifies_no_implicit_any),
+        (
+            "noImplicitAny is specified",
+            options.specifies_no_implicit_any,
+        ),
         ("noImplicitThis", options.no_implicit_this),
         ("strictFunctionTypes", options.strict_function_types),
         ("strictBindCallApply", options.strict_bind_call_apply),
-        ("strictBuiltinIteratorReturn", options.strict_builtin_iterator_return),
-        ("strictPropertyInitialization", options.strict_property_initialization),
-        ("useUnknownInCatchVariables", options.use_unknown_in_catch_variables),
-        ("exactOptionalPropertyTypes", options.exact_optional_property_types),
-        ("noUncheckedIndexedAccess", options.no_unchecked_indexed_access),
+        (
+            "strictBuiltinIteratorReturn",
+            options.strict_builtin_iterator_return,
+        ),
+        (
+            "strictPropertyInitialization",
+            options.strict_property_initialization,
+        ),
+        (
+            "useUnknownInCatchVariables",
+            options.use_unknown_in_catch_variables,
+        ),
+        (
+            "exactOptionalPropertyTypes",
+            options.exact_optional_property_types,
+        ),
+        (
+            "noUncheckedIndexedAccess",
+            options.no_unchecked_indexed_access,
+        ),
         (
             "noPropertyAccessFromIndexSignature",
             options.no_property_access_from_index_signature,
         ),
         ("noImplicitReturns", options.no_implicit_returns),
         ("noImplicitOverride", options.no_implicit_override),
-        ("noFallthroughCasesInSwitch", options.no_fallthrough_cases_in_switch),
+        (
+            "noFallthroughCasesInSwitch",
+            options.no_fallthrough_cases_in_switch,
+        ),
         ("noUnusedLocals", options.no_unused_locals),
         ("noUnusedParameters", options.no_unused_parameters),
-        ("noUncheckedSideEffectImports", options.no_unchecked_side_effect_imports),
+        (
+            "noUncheckedSideEffectImports",
+            options.no_unchecked_side_effect_imports,
+        ),
         ("isolatedModules", options.isolated_modules),
-        ("isolatedModules is reported", options.isolated_modules_reported),
+        (
+            "isolatedModules is reported",
+            options.isolated_modules_reported,
+        ),
         ("verbatimModuleSyntax", options.verbatim_module_syntax),
         ("erasableSyntaxOnly", options.erasable_syntax_only),
         ("isolatedDeclarations", options.isolated_declarations),
-        ("rewriteRelativeImportExtensions", options.rewrite_relative_import_extensions),
-        ("no synthetic default imports", options.forbids_synthetic_default_imports),
-        ("no unreachable code", options.allow_unreachable_code != Some(true)),
-        ("no unused labels", options.allow_unused_labels != Some(true)),
+        (
+            "rewriteRelativeImportExtensions",
+            options.rewrite_relative_import_extensions,
+        ),
+        (
+            "no synthetic default imports",
+            options.forbids_synthetic_default_imports,
+        ),
+        (
+            "no unreachable code",
+            options.allow_unreachable_code != Some(true),
+        ),
+        (
+            "no unused labels",
+            options.allow_unused_labels != Some(true),
+        ),
         ("no UMD global access", !options.allow_umd_global_access),
-        ("no TypeScript extensions in imports", !options.allow_importing_ts_extensions),
+        (
+            "no TypeScript extensions in imports",
+            !options.allow_importing_ts_extensions,
+        ),
     ]
 }
 
@@ -320,8 +360,14 @@ fn only_readable_configuration_file_of_other_project_has_options() {
     with_context(&host, PROGRAM, |context| {
         let load = |config_path: &[u8]| context.projects.load(context, config_path);
         assert!(matches!(load(b"/p/tsconfig.json"), ConfigAnswer::Program));
-        assert!(matches!(load(b"/p/bad/tsconfig.json"), ConfigAnswer::Unreadable));
-        assert!(matches!(load(b"/p/missing/tsconfig.json"), ConfigAnswer::Unreadable));
+        assert!(matches!(
+            load(b"/p/bad/tsconfig.json"),
+            ConfigAnswer::Unreadable
+        ));
+        assert!(matches!(
+            load(b"/p/missing/tsconfig.json"),
+            ConfigAnswer::Unreadable
+        ));
         let ConfigAnswer::Project(project) = load(b"/p/lib/tsconfig.json") else {
             panic!("the configuration file is readable");
         };
@@ -375,7 +421,10 @@ fn installed_package_directory_is_of_innermost_package() {
     let cases: [(&[u8], &[u8]); 5] = [
         (b"/p/node_modules/dep", b"/p/node_modules/dep"),
         (b"/p/node_modules/dep/lib/deep", b"/p/node_modules/dep"),
-        (b"/p/node_modules/@scope/dep/lib", b"/p/node_modules/@scope/dep"),
+        (
+            b"/p/node_modules/@scope/dep/lib",
+            b"/p/node_modules/@scope/dep",
+        ),
         (
             b"/p/node_modules/a/node_modules/b/lib",
             b"/p/node_modules/a/node_modules/b",
@@ -383,7 +432,10 @@ fn installed_package_directory_is_of_innermost_package() {
         (b"/p/node_modules", b"/p/node_modules"),
     ];
     for (directory, package_directory) in cases {
-        assert_eq!(installed_package_directory(directory), Some(package_directory));
+        assert_eq!(
+            installed_package_directory(directory),
+            Some(package_directory)
+        );
     }
 }
 
@@ -453,6 +505,12 @@ fn usage_has_options_of_importer() {
     let of_dep = files.module_options(dep);
     assert!(!std::ptr::eq(of_dep, files.options));
     assert!(std::ptr::eq(files.usage_options(dep), of_dep));
-    assert!(std::ptr::eq(files.usage_options((dep, ResolutionMode::Require)), of_dep));
-    assert!(std::ptr::eq(files.usage_options(ResolutionMode::Require), files.options));
+    assert!(std::ptr::eq(
+        files.usage_options((dep, ResolutionMode::Require)),
+        of_dep
+    ));
+    assert!(std::ptr::eq(
+        files.usage_options(ResolutionMode::Require),
+        files.options
+    ));
 }

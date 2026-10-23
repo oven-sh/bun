@@ -45,8 +45,12 @@ pub(crate) fn offset_in_code(address: usize) -> Option<i32> {
         .filter(|offset| *offset >= 0)
 }
 
-pub(crate) fn frame_at_return_address(return_address: usize) -> Option<bun_core::debug::CompiledFrame> {
-    bun_core::debug::CompiledFrame::decode(Bun__AOT__frameAtReturnAddress(return_address as *const c_void))
+pub(crate) fn frame_at_return_address(
+    return_address: usize,
+) -> Option<bun_core::debug::CompiledFrame> {
+    bun_core::debug::CompiledFrame::decode(Bun__AOT__frameAtReturnAddress(
+        return_address as *const c_void,
+    ))
 }
 
 fn describe(addresses: &[usize], buffer: &mut [u8]) -> usize {
@@ -81,7 +85,9 @@ fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
         safe fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
     }
     let _ = std::thread::Builder::new().spawn(|| {
-        std::thread::sleep(core::time::Duration::from_secs(u64::from(SECONDS_TO_DESCRIBE_FRAMES)));
+        std::thread::sleep(core::time::Duration::from_secs(u64::from(
+            SECONDS_TO_DESCRIBE_FRAMES,
+        )));
         if !IS_DONE.load(Ordering::Acquire) {
             TerminateProcess(GetCurrentProcess(), 3);
         }
@@ -93,7 +99,10 @@ fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
 
 /// For a process that is crashing: the tables that are read may be what is broken.
 pub(crate) fn write_frames_on_stack(addresses: &[usize], write: &mut dyn FnMut(&[u8])) {
-    if !addresses.iter().any(|&address| offset_in_code(address).is_some()) {
+    if !addresses
+        .iter()
+        .any(|&address| offset_in_code(address).is_some())
+    {
         return;
     }
     let mut frames = [0u8; 4096];
@@ -117,7 +126,11 @@ pub enum DecodedReport {
 }
 
 fn prefix_of_object(name_length: usize) -> Vec<u8> {
-    [VLQ::encode(1).slice(), VLQ::encode(name_length as i32).slice()].concat()
+    [
+        VLQ::encode(1).slice(),
+        VLQ::encode(name_length as i32).slice(),
+    ]
+    .concat()
 }
 
 pub fn report_compiled_frames(report: &[u8]) -> DecodedReport {
@@ -133,7 +146,7 @@ pub fn report_compiled_frames(report: &[u8]) -> DecodedReport {
             let Some(digits) = report.get(at..at + ID_DIGITS_IN_REPORT) else {
                 break;
             };
-            of_report = of_report.or(digits.try_into().ok());
+            of_report = of_report.or_else(|| digits.try_into().ok());
             at += ID_DIGITS_IN_REPORT;
         } else if !report[..name].ends_with(&prefix) {
             continue;

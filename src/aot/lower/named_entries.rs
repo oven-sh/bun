@@ -64,7 +64,10 @@ impl NamedEntries {
     }
 
     fn add_function(&mut self, function: FunctionId) {
-        self.add(Reference::Function(function, FunctionReferenceKind::Dispatch));
+        self.add(Reference::Function(
+            function,
+            FunctionReferenceKind::Dispatch,
+        ));
     }
 
     fn add_records(&mut self, fragment: &Fragment) {
@@ -98,14 +101,25 @@ impl NamedEntries {
             add(Reference::Type(target));
         }
         let facts = &fragment.family_facts;
-        let edges = fragment.supertype_edges.iter().flat_map(|&(layout, supertype)| [layout, supertype]);
+        let edges = fragment
+            .supertype_edges
+            .iter()
+            .flat_map(|&(layout, supertype)| [layout, supertype]);
         let layouts = edges.chain(fragment.allocated_layouts.iter().copied());
         for layout in layouts.chain(facts.layouts_with_members_without_layout.iter().copied()) {
             self.add_layout(layout);
         }
-        let edges = fragment.function_type_edges.iter().flat_map(|&(source, target)| [source, target]);
+        let edges = fragment
+            .function_type_edges
+            .iter()
+            .flat_map(|&(source, target)| [source, target]);
         let functions = edges.chain(fragment.builtin_members.iter().map(|member| member.0));
-        let functions = functions.chain(fragment.runtime_functions.iter().map(|entry| entry.function));
+        let functions = functions.chain(
+            fragment
+                .runtime_functions
+                .iter()
+                .map(|entry| entry.function),
+        );
         for function in functions.chain(fragment.module.body) {
             self.add_function(function);
         }
@@ -115,9 +129,13 @@ impl NamedEntries {
         while let Some(reference) = self.unread.pop() {
             let mut add = |part: Reference| self.add(part);
             match reference {
-                Reference::PropertyKey(id) => fragment.property_keys.get(id).for_each_reference(&mut add),
+                Reference::PropertyKey(id) => {
+                    fragment.property_keys.get(id).for_each_reference(&mut add)
+                }
                 Reference::Type(id) => fragment.types.get(id).for_each_reference(&mut add),
-                Reference::TypeSite(id) => fragment.type_sites[id.index()].for_each_reference(&mut add),
+                Reference::TypeSite(id) => {
+                    fragment.type_sites[id.index()].for_each_reference(&mut add)
+                }
                 _ => unreachable!("the others name nothing"),
             }
         }
@@ -133,14 +151,19 @@ impl NamedEntries {
             &self.variables,
             &self.functions,
         ];
-        lists.into_iter().all(|list| list.iter().all(|&is_named| is_named))
+        lists
+            .into_iter()
+            .all(|list| list.iter().all(|&is_named| is_named))
     }
 }
 
 // The entries that stay keep their order.
 fn number<I: Id>(is_named: &[bool]) -> Vec<Option<I>> {
     let mut next_ids = (0..).map(I::new);
-    is_named.iter().map(|&is_named| is_named.then(|| next_ids.next()).flatten()).collect()
+    is_named
+        .iter()
+        .map(|&is_named| is_named.then(|| next_ids.next()).flatten())
+        .collect()
 }
 
 fn keep_all<I: Id>(count: usize) -> Vec<Option<I>> {
@@ -202,8 +225,11 @@ pub(super) fn drop_unnamed_entries(fragment: &mut Fragment) {
         key.remap_ids(&map);
         fragment.property_keys.intern(key);
     }
-    let all_types = replace(&mut fragment.types, TypeTable::new());
-    let own_types = all_types.iter().enumerate().skip(TypeTable::WELL_KNOWN_COUNT);
+    let all_types = std::mem::take(&mut fragment.types);
+    let own_types = all_types
+        .iter()
+        .enumerate()
+        .skip(TypeTable::WELL_KNOWN_COUNT);
     for (index, ty) in own_types.filter(|&(index, _)| named.types[index]) {
         let mut ty = ty.clone();
         ty.remap_ids(&map);

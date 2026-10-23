@@ -14,7 +14,10 @@ fn contexts<'a>(projects: &Projects<'a, '_>) -> [KeyContext<'a>; ProjectId::COUN
 }
 
 fn path_source(projects: &Projects<'_, '_>) -> ProgramModule {
-    let file = projects.runtime.sources.runtime_module_file(RuntimeModule::NodePath);
+    let file = projects
+        .runtime
+        .sources
+        .runtime_module_file(RuntimeModule::NodePath);
     ProgramModule::File(ProgramFile {
         project: ProjectId::Runtime,
         file: file.expect("the runtime project has no source of node:path"),
@@ -35,9 +38,15 @@ fn equal_keys_of_two_projects_differ() {
         let declared = ProgramVariableKey::Declared(in_application(variable));
         assert_eq!(application.variable_key(variable), declared);
 
-        assert_ne!(application.function_key(function), runtime.function_key(function));
+        assert_ne!(
+            application.function_key(function),
+            runtime.function_key(function)
+        );
         assert_ne!(application.layout_key(layout), runtime.layout_key(layout));
-        assert_ne!(application.variable_key(variable), runtime.variable_key(variable));
+        assert_ne!(
+            application.variable_key(variable),
+            runtime.variable_key(variable)
+        );
         assert_ne!(application.module(module), runtime.module(module));
     });
 }

@@ -69,7 +69,10 @@ pub(super) fn is_initialized_before(
         let Some(creator) = walked.creator else {
             return false;
         };
-        debug_assert!(creator < current, "a creator precedes the functions it creates");
+        debug_assert!(
+            creator < current,
+            "a creator precedes the functions it creates"
+        );
         current = creator;
     }
     true
@@ -89,7 +92,9 @@ fn insert_sorted<T: Ord + Copy, A: smallvec::Array<Item = T>>(
 }
 
 fn find_binding<'x>(input: &CaptureInput<'x>, binding: BindingRef) -> &'x CapturedBinding {
-    let index = input.bindings.binary_search_by_key(&binding, |captured| captured.binding);
+    let index = input
+        .bindings
+        .binary_search_by_key(&binding, |captured| captured.binding);
     &input.bindings[index.expect("every used binding is listed")]
 }
 
@@ -97,8 +102,12 @@ fn find_entry_captures<'x>(
     input: &CaptureInput<'x>,
     function: WalkedFunctionId,
 ) -> &'x [(WalkedFunctionId, BindingRef)] {
-    let start = input.entry_captures.partition_point(|entry| entry.0 < function);
-    let end = input.entry_captures.partition_point(|entry| entry.0 <= function);
+    let start = input
+        .entry_captures
+        .partition_point(|entry| entry.0 < function);
+    let end = input
+        .entry_captures
+        .partition_point(|entry| entry.0 <= function);
     &input.entry_captures[start..end]
 }
 
@@ -119,7 +128,10 @@ fn list_captures(
     function: WalkedFunctionId,
     needs: &Needs,
 ) -> CaptureList {
-    let environments = needs.environments.iter().map(|&(scope, _)| Capture::Environment(scope));
+    let environments = needs
+        .environments
+        .iter()
+        .map(|&(scope, _)| Capture::Environment(scope));
     let mut captures: CaptureList = environments.collect();
     for &binding in &needs.bindings {
         let captured = find_binding(input, binding);
@@ -151,8 +163,9 @@ fn derive_captures(
 
 fn collect_suppliers(input: &CaptureInput<'_>) -> Vec<SmallVec<[WalkedFunctionId; 1]>> {
     let creators = input.functions.iter().map(|function| function.creator);
-    let mut suppliers: Vec<SmallVec<[WalkedFunctionId; 1]>> =
-        creators.map(|creator| creator.into_iter().collect()).collect();
+    let mut suppliers: Vec<SmallVec<[WalkedFunctionId; 1]>> = creators
+        .map(|creator| creator.into_iter().collect())
+        .collect();
     for &(user, function) in input.references {
         insert_sorted(&mut suppliers[function.index()], user);
     }

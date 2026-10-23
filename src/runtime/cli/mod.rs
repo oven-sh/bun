@@ -116,14 +116,11 @@ pub(crate) mod run_command;
 // ─── per-subcommand bodies ───────────────────────────────────────────────────
 #[path = "build_command.rs"]
 pub(crate) mod build_command;
+#[path = "bunx_command.rs"]
+pub(crate) mod bunx_command;
 pub(crate) mod compile_command;
 #[path = "compile_options.rs"]
 pub(crate) mod compile_options;
-#[path = "run_compiled.rs"]
-pub(crate) mod run_compiled;
-pub(crate) mod startup_options;
-#[path = "bunx_command.rs"]
-pub(crate) mod bunx_command;
 #[path = "create_command.rs"]
 pub(crate) mod create_command;
 #[path = "exec_command.rs"]
@@ -134,6 +131,9 @@ pub(crate) mod fuzzilli_command;
 pub(crate) mod install_command;
 #[path = "repl_command.rs"]
 pub(crate) mod repl_command;
+#[path = "run_compiled.rs"]
+pub(crate) mod run_compiled;
+pub(crate) mod startup_options;
 #[path = "upgrade_command.rs"]
 pub(crate) mod upgrade_command;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of

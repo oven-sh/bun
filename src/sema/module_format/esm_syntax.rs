@@ -20,7 +20,9 @@ pub(crate) fn file_esm_syntax(hir: &File<'_>) -> EsmSyntax {
     if has_live_top_level_await(hir, &Decisions::default()) {
         return EsmSyntax::ExportOrTopLevelAwait;
     }
-    let statements = hir.ids(hir.body).map(|stmt| statement_esm_syntax(hir, stmt));
+    let statements = hir
+        .ids(hir.body)
+        .map(|stmt| statement_esm_syntax(hir, stmt));
     let strongest = statements.max().unwrap_or(EsmSyntax::None);
     let is_import_meta = |expr: &Expr| matches!(expr.kind, ExprKind::ImportMeta);
     if strongest == EsmSyntax::None && hir.exprs.iter().any(is_import_meta) {

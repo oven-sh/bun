@@ -134,10 +134,7 @@ fn is_static_field(node: Member) -> bool {
         && !is_declaration_only(node)
 }
 
-fn check_static_field_key(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    name: PropertyName,
-) {
+fn check_static_field_key(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, name: PropertyName) {
     match name {
         PropertyName::Constant(key) => {
             if key == member::name_key(lowering.file, known::prototype) {
@@ -193,6 +190,7 @@ struct MethodDefinition {
     closure: ValueId,
 }
 
+#[allow(clippy::needless_pass_by_value)] // made for this call
 fn emit_method_definition(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     head: ClassHead,
@@ -297,5 +295,10 @@ fn create_private_function(
     }
     lowering.set_position(node.name_pos);
     let closure = function::lower_method(lowering, node.func, name, head.value);
-    set_class_slot(lowering, head.class, ClassSlot::PrivateMethod(member), closure);
+    set_class_slot(
+        lowering,
+        head.class,
+        ClassSlot::PrivateMethod(member),
+        closure,
+    );
 }

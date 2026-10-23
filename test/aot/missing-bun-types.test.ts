@@ -19,9 +19,16 @@ async function build(folder: string) {
 }
 
 async function check(folder: string, ...flags: string[]) {
-  const { stdout, exitCode, signal } = await spawned([bunExe(), "check", ...flags, "--no-pretty", "main.ts"], folder, env);
+  const { stdout, exitCode, signal } = await spawned(
+    [bunExe(), "check", ...flags, "--no-pretty", "main.ts"],
+    folder,
+    env,
+  );
   const codes = (label: string) =>
-    stdout.split("\n").flatMap(line => new RegExp(`^main\\.ts\\(\\d+,\\d+\\): ${label} (TS\\d+): `).exec(line)?.[1] ?? []).sort();
+    stdout
+      .split("\n")
+      .flatMap(line => new RegExp(`^main\\.ts\\(\\d+,\\d+\\): ${label} (TS\\d+): `).exec(line)?.[1] ?? [])
+      .sort();
   return { errors: codes("error"), warnings: codes("warning"), exitCode, signal };
 }
 
@@ -34,7 +41,10 @@ async function run(folder: string, how: "compiled" | "plain") {
 const built = { errors: [], warnings: [], exitCode: 0, signal: null };
 
 // What a program may use without a declaration, and the errors of `bun check` that a build does not repeat.
-const provided: Record<string, { files: Record<string, string>; checkSays: string[]; warnings?: string[]; prints: string }> = {
+const provided: Record<
+  string,
+  { files: Record<string, string>; checkSays: string[]; warnings?: string[]; prints: string }
+> = {
   "console": { files: { "main.ts": `console.log("ran");\n` }, checkSays: ["TS2584"], prints: "ran\n" },
   "the module bun": {
     files: { "main.ts": `import { version } from "bun";\nconsole.log(typeof version);\n` },
@@ -150,7 +160,15 @@ server.stop(true);
   "a tsconfig.json that names the types of Bun, as bun init writes it": {
     files: {
       "main.ts": `console.log(typeof Bun.version);\n`,
-      "tsconfig.json": JSON.stringify({ compilerOptions: { lib: ["ESNext"], module: "Preserve", moduleResolution: "bundler", strict: true, types: ["bun"] } }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          lib: ["ESNext"],
+          module: "Preserve",
+          moduleResolution: "bundler",
+          strict: true,
+          types: ["bun"],
+        },
+      }),
     },
     checkSays: [],
     warnings: ["TS2688"],
@@ -163,9 +181,21 @@ const stillErrors: [string, string, string[]][] = [
   ["a name that only a browser provides", `console.log(document.title);\n`, ["TS2584"]],
   ["a name that is nearly one of Bun's", `consle.log("typo");\n`, ["TS2552"]],
   ["a type error", `const port: number = "3000";\nconsole.log(port);\n`, ["TS2322"]],
-  ["a wrong use of what TypeScript's own libraries declare", `const size: string = new Map<string, number>().size;\nconsole.log(size, [1].lenght);\n`, ["TS2322", "TS2551"]],
-  ["a value that may be undefined", `const found = new Map<string, number>().get("a");\nconsole.log(found.toFixed(1));\n`, ["TS18048"]],
-  ["a type error in what a program declares itself", `function twice(n: number): number { return n * 2; }\nconsole.log(twice("2"));\n`, ["TS2345"]],
+  [
+    "a wrong use of what TypeScript's own libraries declare",
+    `const size: string = new Map<string, number>().size;\nconsole.log(size, [1].lenght);\n`,
+    ["TS2322", "TS2551"],
+  ],
+  [
+    "a value that may be undefined",
+    `const found = new Map<string, number>().get("a");\nconsole.log(found.toFixed(1));\n`,
+    ["TS18048"],
+  ],
+  [
+    "a type error in what a program declares itself",
+    `function twice(n: number): number { return n * 2; }\nconsole.log(twice("2"));\n`,
+    ["TS2345"],
+  ],
 ];
 
 describe.concurrent("without Bun's type declarations", () => {
@@ -208,7 +238,11 @@ describe.concurrent("without Bun's type declarations", () => {
         using dir = tempDir("aot-missing-bun-types", {
           "main.ts": `import { WebSocketServer } from "ws";\nconst server = new WebSocketServer({ port: 0 });\nserver.on("connection", socket => socket.send("a", "b"));\nserver.close();\n`,
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
-          "node_modules/@types/ws/package.json": JSON.stringify({ name: "@types/ws", version: "8.0.0", types: "index.d.ts" }),
+          "node_modules/@types/ws/package.json": JSON.stringify({
+            name: "@types/ws",
+            version: "8.0.0",
+            types: "index.d.ts",
+          }),
           "node_modules/@types/ws/index.d.ts": `export declare class WebSocket { send(data: string): void; }\nexport declare class WebSocketServer {\n  constructor(options: { port: number });\n  on(event: "connection", listener: (socket: WebSocket) => void): this;\n  close(): void;\n}\n`,
         });
         expect(await build(String(dir))).toEqual({ errors: ["TS2554"], warnings: [], exitCode: 1, signal: null });

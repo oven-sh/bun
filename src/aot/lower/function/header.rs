@@ -61,7 +61,9 @@ pub(super) fn declare_source_function(
     function: FnId,
     name: Option<StringId>,
 ) -> FunctionId {
-    declare(file, function, |file| create_source_header(file, function, name))
+    declare(file, function, |file| {
+        create_source_header(file, function, name)
+    })
 }
 
 pub(super) fn declare_source_function_with(
@@ -118,7 +120,9 @@ fn create_source_header(
         function,
     };
     if file.inputs.library_functions.is_left_out(source) {
-        header.flags = header.flags.without(generator::coroutine_flags(hir, function));
+        header.flags = header
+            .flags
+            .without(generator::coroutine_flags(hir, function));
     }
     header.name = match name {
         Some(name) => Some(name),
@@ -133,14 +137,16 @@ fn create_source_header(
     if has_strict_this {
         header.this_type = declared.this;
     }
-    header.parameters = declared.parameters.clone();
+    header.parameters.clone_from(&declared.parameters);
     if header.flags.contains(FunctionFlags::HAS_REST_PARAMETER)
         && let Some(rest) = header.parameters.last_mut()
     {
         *rest = compute_rest_position(file, *rest);
     }
     let undeclared = file.scopes.undeclared_parameters(key) as usize;
-    header.parameters.extend(std::iter::repeat_n(DeclaredType::untyped(), undeclared));
+    header
+        .parameters
+        .extend(std::iter::repeat_n(DeclaredType::untyped(), undeclared));
     header.results = vec![declared.result];
     if hir.runtime_function_kind(function) == FnKind::Constructor {
         let class = file.bound.function_class(function);
@@ -280,7 +286,11 @@ fn compute_rest_position(
         false => (TypeTable::ARRAY, None),
     };
     let flags = position.flags.without(PositionFlags::IS_EXPECTED);
-    DeclaredType::new(Mapped::checked(ty), site, flags | PositionFlags::IS_FROM_COMPILER)
+    DeclaredType::new(
+        Mapped::checked(ty),
+        site,
+        flags | PositionFlags::IS_FROM_COMPILER,
+    )
 }
 
 fn compute_length(hir: &hir::File<'_>, function: FnId) -> u32 {

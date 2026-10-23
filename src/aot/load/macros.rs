@@ -114,7 +114,9 @@ fn run_round<'s>(
             Arguments::Unknown(argument) => waiting.push((expr, argument)),
             Arguments::Known(arguments) => {
                 let value = run_call(input, arena, atoms, request, &callee, &arguments);
-                round.results.push((expr, value.map_or(undefined, HostValue::Data)));
+                round
+                    .results
+                    .push((expr, value.map_or(undefined, HostValue::Data)));
             }
         }
     }

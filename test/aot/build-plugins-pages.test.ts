@@ -17,7 +17,10 @@ server.stop(true);`;
 buildBothWays("compile/aot/pages and files of an executable, and the plugins of Bun.build", {
   "a page without plugins": {
     files: {
-      "main.ts": serve("./page.html", `html.includes("<h1>disk</h1>"), script.includes("client on the disk"), style.includes("red")`),
+      "main.ts": serve(
+        "./page.html",
+        `html.includes("<h1>disk</h1>"), script.includes("client on the disk"), style.includes("red")`,
+      ),
       "types.d.ts": types,
       "page.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"><script type="module" src="./client.ts"></script></head><body><h1>disk</h1></body></html>`,
       "client.ts": `console.log("client on the disk");`,
@@ -27,7 +30,10 @@ buildBothWays("compile/aot/pages and files of an executable, and the plugins of 
   },
   "onLoad changes the script and the style sheet of a page": {
     files: {
-      "main.ts": serve("./page.html", `script.includes("client from the plugin"), script.includes("client on the disk"), style.includes("from-the-plugin"), style.includes("on-the-disk")`),
+      "main.ts": serve(
+        "./page.html",
+        `script.includes("client from the plugin"), script.includes("client on the disk"), style.includes("from-the-plugin"), style.includes("on-the-disk")`,
+      ),
       "types.d.ts": types,
       "page.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"><script type="module" src="./client.ts"></script></head><body><h1>disk</h1></body></html>`,
       "client.ts": `console.log("client on the disk");`,
@@ -48,18 +54,24 @@ build.onLoad({ filter: /style\\.css$/ }, (args: any) => { tell("onLoad", args); 
       "shared.ts": `export const shared = "shared";`,
       "style.css": `body { color: red }`,
     },
-    plugins: [`build.onResolve({ filter: /^\\.\\/(client|shared|style)/ }, (args: any) => void tell("onResolve", args));\nbuild.onLoad({ filter: /\\.(ts|css)$/ }, (args: any) => void tell("onLoad", args));`],
+    plugins: [
+      `build.onResolve({ filter: /^\\.\\/(client|shared|style)/ }, (args: any) => void tell("onResolve", args));\nbuild.onLoad({ filter: /\\.(ts|css)$/ }, (args: any) => void tell("onLoad", args));`,
+    ],
     prints: "true\n",
   },
   "a file that the server and the page import": {
     files: {
-      "main.ts": `import { shared } from "./shared";\n` + serve("./page.html", `shared, script.includes("shared from the plugin")`),
+      "main.ts":
+        `import { shared } from "./shared";\n` +
+        serve("./page.html", `shared, script.includes("shared from the plugin")`),
       "types.d.ts": types,
       "page.html": `<!doctype html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
       "client.ts": `import { shared } from "./shared"; console.log("client", shared);`,
       "shared.ts": `export const shared: string = "shared on the disk";`,
     },
-    plugins: [`build.onLoad({ filter: /shared\\.ts$/ }, (args: any) => { tell("onLoad", args); return { contents: 'export const shared: string = "shared from the plugin for the ' + args.side + '";', loader: "ts" }; });`],
+    plugins: [
+      `build.onLoad({ filter: /shared\\.ts$/ }, (args: any) => { tell("onLoad", args); return { contents: 'export const shared: string = "shared from the plugin for the ' + args.side + '";', loader: "ts" }; });`,
+    ],
   },
   "onLoad changes the page itself": {
     files: {
@@ -67,7 +79,9 @@ build.onLoad({ filter: /style\\.css$/ }, (args: any) => { tell("onLoad", args); 
       "types.d.ts": types,
       "page.html": `<!doctype html><html><body><h1>disk</h1></body></html>`,
     },
-    plugins: [`build.onLoad({ filter: /page\\.html$/ }, (args: any) => { tell("onLoad", args); return { contents: "<!doctype html><html><body><h1>plugin</h1></body></html>", loader: "html" }; });`],
+    plugins: [
+      `build.onLoad({ filter: /page\\.html$/ }, (args: any) => { tell("onLoad", args); return { contents: "<!doctype html><html><body><h1>plugin</h1></body></html>", loader: "html" }; });`,
+    ],
     prints: "true false\n",
   },
   "a page in a namespace": {
@@ -79,7 +93,11 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => { tell("onLo
     fails: "page.html",
   },
   "a page that becomes text": {
-    files: { "main.ts": `import page from "./page.html"; console.log(typeof page, Object.keys(page).join());`, "types.d.ts": types, "page.html": `<h1>disk</h1>` },
+    files: {
+      "main.ts": `import page from "./page.html"; console.log(typeof page, Object.keys(page).join());`,
+      "types.d.ts": types,
+      "page.html": `<h1>disk</h1>`,
+    },
     plugins: [`build.onLoad({ filter: /page\\.html$/ }, () => ({ contents: "only text", loader: "text" }));`],
   },
   "the loaders file, wasm and sqlite": {
@@ -110,11 +128,18 @@ build.onLoad({ filter: /\\.db$/ }, (args: any) => { tell("onLoad", args); const 
     ],
   },
   "a style sheet that the server imports": {
-    files: { "main.ts": `// @ts-nocheck\nimport style from "./style.css"; console.log(typeof style);`, "style.css": `body { color: red }` },
-    plugins: [`build.onLoad({ filter: /\\.css$/ }, (args: any) => { tell("onLoad", args); return { contents: "body { color: blue }", loader: "css" }; });`],
+    files: {
+      "main.ts": `// @ts-nocheck\nimport style from "./style.css"; console.log(typeof style);`,
+      "style.css": `body { color: red }`,
+    },
+    plugins: [
+      `build.onLoad({ filter: /\\.css$/ }, (args: any) => { tell("onLoad", args); return { contents: "body { color: blue }", loader: "css" }; });`,
+    ],
   },
   "the loaders base64 and dataurl": {
-    files: { "main.ts": `// @ts-nocheck\nimport a from "virtual:a"; import b from "virtual:b.txt"; console.log(a, b);` },
+    files: {
+      "main.ts": `// @ts-nocheck\nimport a from "virtual:a"; import b from "virtual:b.txt"; console.log(a, b);`,
+    },
     plugins: [
       `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "virtual" }));
 build.onLoad({ filter: /^a$/, namespace: "virtual" }, () => ({ contents: "base", loader: "base64" }));
@@ -122,7 +147,9 @@ build.onLoad({ filter: /^b/, namespace: "virtual" }, () => ({ contents: "data", 
     ],
   },
   "the loaders md and xml": {
-    files: { "main.ts": `// @ts-nocheck\nimport md from "virtual:a"; import xml from "virtual:b"; console.log(JSON.stringify(md), JSON.stringify(xml));` },
+    files: {
+      "main.ts": `// @ts-nocheck\nimport md from "virtual:a"; import xml from "virtual:b"; console.log(JSON.stringify(md), JSON.stringify(xml));`,
+    },
     plugins: [
       `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "virtual" }));
 build.onLoad({ filter: /^a$/, namespace: "virtual" }, () => ({ contents: "# title", loader: "md" }));

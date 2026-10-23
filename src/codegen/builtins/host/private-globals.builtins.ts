@@ -55,19 +55,17 @@ function rangesOfErrorCodesKeepingNothing(): [number, number][] {
 }
 
 const makesErrorWithCode = [
-  ...rangesOfErrorCodesKeepingNothing().map(
-    ([first, last]): b.FunctionField => ({
-      args: { code: b.int(first, last), operands: b.any.rest },
-      returns: newErrorWithCode,
-      // ERR_SSL_NO_CIPHER_MATCH.
-      resultProperties: { ...membersInheritedByErrorWithCode, reason: b.string, library: b.string },
-      capability: "js",
-      throws: true,
-      runsOnlyOperandCode: true,
-      uses: { operands: formattedInMessage },
-      implementation: b.hostCall,
-    }),
-  ),
+  ...rangesOfErrorCodesKeepingNothing().map(([first, last]): b.FunctionField => ({
+    args: { code: b.int(first, last), operands: b.any.rest },
+    returns: newErrorWithCode,
+    // ERR_SSL_NO_CIPHER_MATCH.
+    resultProperties: { ...membersInheritedByErrorWithCode, reason: b.string, library: b.string },
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { operands: formattedInMessage },
+    implementation: b.hostCall,
+  })),
   changesNothing(b.any),
 ];
 

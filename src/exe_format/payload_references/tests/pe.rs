@@ -85,7 +85,11 @@ impl Toy {
         put_struct(&mut file, optional_offset, &self.optional_header());
         let sections_offset = optional_offset + size_of::<OptionalHeader64>();
         for (index, section) in sections.iter().enumerate() {
-            put_struct(&mut file, sections_offset + index * size_of::<SectionHeader>(), section);
+            put_struct(
+                &mut file,
+                sections_offset + index * size_of::<SectionHeader>(),
+                section,
+            );
         }
 
         assert!(self.relocation_blocks.len() <= RELOCATIONS.2 as usize);
@@ -93,10 +97,21 @@ impl Toy {
         let mut exports: ExportDirectory = zeroed();
         exports.number_of_functions = self.exported_functions.len() as u32;
         exports.address_of_functions = FUNCTIONS_ADDRESS;
-        put_struct(&mut file, file_offset_in(READ_ONLY_DATA, EXPORTS_ADDRESS), &exports);
-        let functions = self.exported_functions.iter().flat_map(|it| it.to_le_bytes());
+        put_struct(
+            &mut file,
+            file_offset_in(READ_ONLY_DATA, EXPORTS_ADDRESS),
+            &exports,
+        );
+        let functions = self
+            .exported_functions
+            .iter()
+            .flat_map(|it| it.to_le_bytes());
         let functions: Vec<u8> = functions.collect();
-        put(&mut file, file_offset_in(READ_ONLY_DATA, FUNCTIONS_ADDRESS), &functions);
+        put(
+            &mut file,
+            file_offset_in(READ_ONLY_DATA, FUNCTIONS_ADDRESS),
+            &functions,
+        );
         file
     }
 
@@ -135,9 +150,15 @@ fn check_blocks(blocks: &[Vec<u8>]) -> Checked {
 }
 
 fn check_relocation(kind: u16, address: u32) -> Checked {
-    let elsewhere = block(PAGE, &[(IMAGE_REL_BASED_DIR64, 0x10), (IMAGE_REL_BASED_ABSOLUTE, 0)]);
+    let elsewhere = block(
+        PAGE,
+        &[(IMAGE_REL_BASED_DIR64, 0x10), (IMAGE_REL_BASED_ABSOLUTE, 0)],
+    );
     let offset_in_page = (address % PAGE) as u16;
-    check_blocks(&[elsewhere, block(address - address % PAGE, &[(kind, offset_in_page)])])
+    check_blocks(&[
+        elsewhere,
+        block(address - address % PAGE, &[(kind, offset_in_page)]),
+    ])
 }
 
 #[test]
@@ -152,7 +173,10 @@ fn base_relocation_in_payload_is_refused() {
         assert_eq!(check_relocation(IMAGE_REL_BASED_DIR64, address), refused);
     }
     let refused = relocation_at(u64::from(START - 3));
-    assert_eq!(check_relocation(IMAGE_REL_BASED_HIGHLOW, START - 3), refused);
+    assert_eq!(
+        check_relocation(IMAGE_REL_BASED_HIGHLOW, START - 3),
+        refused
+    );
 }
 
 #[test]
@@ -175,10 +199,16 @@ fn unreadable_base_relocations_are_told_apart() {
 
     let mut ends_past_directory = block(PAGE, &[(IMAGE_REL_BASED_DIR64, 0)]);
     ends_past_directory[4] += 4;
-    assert_eq!(check_blocks(&[ends_past_directory]), Err(MalformedExecutable));
+    assert_eq!(
+        check_blocks(&[ends_past_directory]),
+        Err(MalformedExecutable)
+    );
     let mut smaller_than_header = block(PAGE, &[(IMAGE_REL_BASED_DIR64, 0)]);
     smaller_than_header[4] = 4;
-    assert_eq!(check_blocks(&[smaller_than_header]), Err(MalformedExecutable));
+    assert_eq!(
+        check_blocks(&[smaller_than_header]),
+        Err(MalformedExecutable)
+    );
 }
 
 fn check_exports(functions: &[u32]) -> Checked {
@@ -221,7 +251,10 @@ fn import_addresses_in_payload_are_refused() {
         check(&toy.build())
     };
     assert_eq!(check_table(START, 8), relocation_at(u64::from(START)));
-    assert_eq!(check_table(START - 8, 16), relocation_at(u64::from(START - 8)));
+    assert_eq!(
+        check_table(START - 8, 16),
+        relocation_at(u64::from(START - 8))
+    );
     assert_eq!(check_table(START - 8, 8), Ok(()));
     assert_eq!(check_table(END, 8), Ok(()));
 }

@@ -215,7 +215,9 @@ mod tests {
 
     #[test]
     fn unknown_name_lists_valid_names() {
-        let text = message(TrimRequestError::UnknownName(Box::from(&b"no-such-feature"[..])));
+        let text = message(TrimRequestError::UnknownName(Box::from(
+            &b"no-such-feature"[..],
+        )));
         assert_eq!(
             text,
             format!(
@@ -225,15 +227,16 @@ mod tests {
         );
         assert!(text.contains("Valid names are \"cli\", \"lint\", "));
         assert!(!text.contains(" and "));
-        assert_eq!(
-            text.matches('"').count(),
-            2 * (TrimFeature::ALL.len() + 1)
-        );
+        assert_eq!(text.matches('"').count(), 2 * (TrimFeature::ALL.len() + 1));
     }
 
     #[test]
     fn unknown_name_close_to_a_valid_name_suggests_it() {
-        for (name, closest) in [("sqlite3", "sqlite"), ("htmlrewriter", "html-rewriter"), ("Shell", "shell")] {
+        for (name, closest) in [
+            ("sqlite3", "sqlite"),
+            ("htmlrewriter", "html-rewriter"),
+            ("Shell", "shell"),
+        ] {
             assert_eq!(
                 message(TrimRequestError::UnknownName(Box::from(name.as_bytes()))),
                 format!("compile.trim: unknown name \"{name}\". Did you mean \"{closest}\"?")
@@ -243,16 +246,36 @@ mod tests {
 
     #[test]
     fn closest_name_is_the_first_of_equally_close_names() {
-        let first_of = |names: &[&str]| TrimFeature::ALL.iter().copied().find(|feature| names.contains(&feature.name()));
+        let first_of = |names: &[&str]| {
+            TrimFeature::ALL
+                .iter()
+                .copied()
+                .find(|feature| names.contains(&feature.name()))
+        };
         assert_eq!(find_closest_name(b"http"), first_of(&["http2", "http3"]));
-        assert_eq!(find_closest_name(b"json"), first_of(&["json5", "jsonc", "jsonl"]));
+        assert_eq!(
+            find_closest_name(b"json"),
+            first_of(&["json5", "jsonc", "jsonl"])
+        );
     }
 
     #[test]
     fn name_far_from_every_valid_name_has_no_closest_name() {
-        let names: [&[u8]; 6] = [b"", b"a", b"xx", b"crypto", b"bun:sqlite", b"no-such-feature"];
+        let names: [&[u8]; 6] = [
+            b"",
+            b"a",
+            b"xx",
+            b"crypto",
+            b"bun:sqlite",
+            b"no-such-feature",
+        ];
         for name in names {
-            assert_eq!(find_closest_name(name), None, "{}", String::from_utf8_lossy(name));
+            assert_eq!(
+                find_closest_name(name),
+                None,
+                "{}",
+                String::from_utf8_lossy(name)
+            );
         }
     }
 
@@ -292,9 +315,15 @@ mod tests {
     fn unsupported_prints_reason_name() {
         let reasons = [
             (UnsupportedReason::NoTrimTable, "NoTrimTable"),
-            (UnsupportedReason::FeatureListMismatch, "FeatureListMismatch"),
+            (
+                UnsupportedReason::FeatureListMismatch,
+                "FeatureListMismatch",
+            ),
             (UnsupportedReason::AlreadyTrimmed, "AlreadyTrimmed"),
-            (UnsupportedReason::UnrecognizedExecutable, "UnrecognizedExecutable"),
+            (
+                UnsupportedReason::UnrecognizedExecutable,
+                "UnrecognizedExecutable",
+            ),
         ];
         for (reason, name) in reasons {
             assert_eq!(
@@ -361,7 +390,10 @@ mod tests {
         assert_eq!(quoted_list(&[]), "");
         assert_eq!(quoted_list(&[b"ffi"]), "\"ffi\"");
         assert_eq!(quoted_list(&[b"ffi", b"sqlite"]), "\"ffi\" and \"sqlite\"");
-        assert_eq!(quoted_list(&[b"ffi", b"sqlite", b"sql"]), "\"ffi\", \"sqlite\" and \"sql\"");
+        assert_eq!(
+            quoted_list(&[b"ffi", b"sqlite", b"sql"]),
+            "\"ffi\", \"sqlite\" and \"sql\""
+        );
     }
 
     #[test]

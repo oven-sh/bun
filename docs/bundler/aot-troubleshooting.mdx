@@ -101,6 +101,15 @@ note: run this on the target platform, or pass --no-aot to bundle your code with
 
 Drop `--target` and run the build where the executable runs: in CI on a runner of that platform, or in a container. Or pass `--no-aot`, and the executable contains JavaScript for the JIT.
 
+### The file passed to `--compile-executable-path` can't run the compiled code
+
+```txt
+error: ./other-bun can't run code compiled by this Bun: it is revision 1f2e3d4c of Bun and this is 9a8b7c6d
+note: use a build of the same revision of Bun with the same configuration
+```
+
+Compiled code relies on the layout of the runtime it is attached to. The file can be another build of the same revision of Bun: stripped, linked differently, or built with other optimization flags. It can't be another version, another platform, or a build with different features. The message names the first difference.
+
 ### --aot does not apply to a package.json script
 
 ```txt

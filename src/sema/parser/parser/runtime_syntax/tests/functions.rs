@@ -64,7 +64,11 @@ fn dropped_directive_leaves_strictness_of_file_and_classes() {
             &[true],
             &[true],
         ),
-        (r#"function f() { "use strict" } export {}"#, &[true], &[true]),
+        (
+            r#"function f() { "use strict" } export {}"#,
+            &[true],
+            &[true],
+        ),
     ];
     for &(text, kept, dropped) in cases {
         assert_eq!(function_strictness(text, true), kept, "{text}");
@@ -113,17 +117,37 @@ fn text_starts_after_modifiers() {
         ("function f() {}", &["function f"], &[]),
         ("export function f() {}", &["function f"], &[]),
         ("export default function () {}", &["function ("], &[]),
-        ("export default async function f() {}", &["async function f"], &[]),
+        (
+            "export default async function f() {}",
+            &["async function f"],
+            &[],
+        ),
         ("declare function f(): void", &["function f"], &[]),
         ("x = async function* () {}", &["async function*"], &[]),
         ("x = async () => 1", &["async ()"], &[]),
         ("x = a => 1", &["a =>"], &[]),
-        ("({ async m() {}, get x() { return 1 }, *g() {} })", &["async m", "get x", "*g"], &[]),
+        (
+            "({ async m() {}, get x() { return 1 }, *g() {} })",
+            &["async m", "get x", "*g"],
+            &[],
+        ),
         ("class A { m() {} }", &["m()"], &["class A"]),
         ("class A { static m() {} }", &["m()"], &["class A"]),
-        ("class A { static async *m() {} }", &["async *m"], &["class A"]),
-        ("class A { static get x() { return 1 } }", &["get x"], &["class A"]),
-        ("class A { public override set x(a) {} }", &["set x"], &["class A"]),
+        (
+            "class A { static async *m() {} }",
+            &["async *m"],
+            &["class A"],
+        ),
+        (
+            "class A { static get x() { return 1 } }",
+            &["get x"],
+            &["class A"],
+        ),
+        (
+            "class A { public override set x(a) {} }",
+            &["set x"],
+            &["class A"],
+        ),
         ("class A { @dec m() {} }", &["m()"], &["class A"]),
         ("class A { static {} }", &["static {"], &["class A"]),
         ("export class A {}", &[], &["class A"]),
@@ -138,10 +162,18 @@ fn text_starts_after_modifiers() {
             |(start, expected): (u32, &&str)| text[start as usize..].starts_with(*expected);
         let function_starts = file.fns.iter().map(|it| it.text_start);
         assert_eq!(file.fns.len(), functions.len(), "{text}");
-        assert!(function_starts.zip(functions).all(starts_with), "{text}: {:?}", file.fns);
+        assert!(
+            function_starts.zip(functions).all(starts_with),
+            "{text}: {:?}",
+            file.fns
+        );
         let class_starts = file.classes.iter().map(|it| it.text_start);
         assert_eq!(file.classes.len(), classes.len(), "{text}");
-        assert!(class_starts.zip(classes).all(starts_with), "{text}: {:?}", file.classes);
+        assert!(
+            class_starts.zip(classes).all(starts_with),
+            "{text}: {:?}",
+            file.classes
+        );
     }
 }
 
@@ -241,7 +273,10 @@ fn flow_has_return_types_after_any_parameters() {
 #[test]
 fn javascript_formatted_as_typescript_keeps_return_types() {
     let text = "const f = (a): number => a;";
-    assert_eq!(return_types(text, javascript(Dialect::babel(false))), [true]);
+    assert_eq!(
+        return_types(text, javascript(Dialect::babel(false))),
+        [true]
+    );
 }
 
 #[test]

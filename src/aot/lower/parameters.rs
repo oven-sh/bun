@@ -7,10 +7,7 @@ use bun_sema::hir::{self, Call, ExprKind, FnId};
 use super::FunctionLowering;
 use crate::ir::ValueId;
 
-pub(crate) fn lower_parameters(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    source: FnId,
-) {
+pub(crate) fn lower_parameters(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, source: FnId) {
     binding::lower_parameters(lowering, source);
 }
 

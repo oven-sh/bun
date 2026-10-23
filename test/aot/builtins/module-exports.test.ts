@@ -2,7 +2,11 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatModuleExports, parseModuleExports, type ListedModule } from "../../../src/codegen/builtins/collect-modules";
+import {
+  formatModuleExports,
+  parseModuleExports,
+  type ListedModule,
+} from "../../../src/codegen/builtins/collect-modules";
 import { GeneratorError } from "../../../src/codegen/builtins/declarations";
 import { test } from "../supported";
 import { observe as observeHere } from "./module-exports.fixture";

@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const options = `"strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "types": []`;
 const declared = `declare const console: { log(...values: unknown[]): void };\n`;
@@ -46,9 +46,17 @@ const accepted: Record<string, Record<string, string>> = {
     "lib/src/deep/one.ts": `export function one(): string { return "one"; }\n`,
     "lib/src/two.mts": `export function two(): string { return "two"; }\n`,
   },
-  "a type import through paths that the nearest tsconfig.json inherits": typeImport("the-app", withPaths, extendsProgram),
+  "a type import through paths that the nearest tsconfig.json inherits": typeImport(
+    "the-app",
+    withPaths,
+    extendsProgram,
+  ),
   "a type import through the program's baseUrl": typeImport("api", withBaseUrl),
-  "a type import through a baseUrl that the nearest tsconfig.json inherits": typeImport("api", withBaseUrl, extendsProgram),
+  "a type import through a baseUrl that the nearest tsconfig.json inherits": typeImport(
+    "api",
+    withBaseUrl,
+    extendsProgram,
+  ),
 };
 
 // `bun run` erases a type import without resolving it. The build asks the nearest tsconfig.json first. What that cannot resolve, the program's own is asked:
@@ -75,19 +83,29 @@ async function run(cmd: string[], cwd: string) {
 }
 
 for (const [what, files] of Object.entries(accepted)) {
-  test(what, async () => {
-    using dir = tempDir("another-tsconfig", files);
-    const app = join(String(dir), "app");
-    const plain = await run([bunExe(), "run", "main.ts"], app);
-    expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    // Without Bun's declarations installed, TS2307 for an import that resolves at run time is only a warning.
-    const built = await run(buildCommand, app);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/error|\bTS\d+:/), exitCode: 0 });
-    const compiled = await run([join(app, isWindows ? "program.exe" : "program")], app);
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    const fromSource = await run(runFromSourceCommand, app);
-    expect({ stdout: fromSource.stdout, exitCode: fromSource.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-  }, 120_000);
+  test(
+    what,
+    async () => {
+      using dir = tempDir("another-tsconfig", files);
+      const app = join(String(dir), "app");
+      const plain = await run([bunExe(), "run", "main.ts"], app);
+      expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      // Without Bun's declarations installed, TS2307 for an import that resolves at run time is only a warning.
+      const built = await run(buildCommand, app);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+        stderr: expect.not.stringMatching(/error|\bTS\d+:/),
+        exitCode: 0,
+      });
+      const compiled = await run([join(app, isWindows ? "program.exe" : "program")], app);
+      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+      const fromSource = await run(runFromSourceCommand, app);
+      expect({ stdout: fromSource.stdout, exitCode: fromSource.exitCode }).toEqual({
+        stdout: plain.stdout,
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 }
 
 for (const [what, [specifier, program, nearest]] of Object.entries(leftToTheProgram)) {
@@ -96,7 +114,10 @@ for (const [what, [specifier, program, nearest]] of Object.entries(leftToTheProg
     const app = join(String(dir), "app");
     expect(await run([bunExe(), "run", "main.ts"], app)).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
     const built = await run(buildCommand, app);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/error|\bTS\d+:/), exitCode: 0 });
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+      stderr: expect.not.stringMatching(/error|\bTS\d+:/),
+      exitCode: 0,
+    });
     const compiled = await run([join(app, isWindows ? "program.exe" : "program")], app);
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "2\n", exitCode: 0 });
     const fromSource = await run(runFromSourceCommand, app);

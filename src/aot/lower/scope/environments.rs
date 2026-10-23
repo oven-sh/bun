@@ -207,7 +207,11 @@ fn slot_position(
 fn own_exports_position(file: &mut FileLowering<'_, '_, '_, '_>) -> Option<DeclaredType> {
     let layout = layouts::module_exports_layout(file, file.file)?;
     let exports = file.fragment.types.intern(Type::layout(layout));
-    Some(DeclaredType::new(Mapped::expected(exports), None, PositionFlags::default()))
+    Some(DeclaredType::new(
+        Mapped::expected(exports),
+        None,
+        PositionFlags::default(),
+    ))
 }
 
 fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> DeclaredType {
@@ -258,7 +262,10 @@ fn converted_this_position(
     file: &mut FileLowering<'_, '_, '_, '_>,
     entry: DeclaredType,
 ) -> DeclaredType {
-    let objects = file.fragment.types.without_primitives(entry.ty, Primitives::ALL);
+    let objects = file
+        .fragment
+        .types
+        .without_primitives(entry.ty, Primitives::ALL);
     if objects == TypeTable::OBJECT || objects == TypeTable::NEVER {
         return DeclaredType::from_compiler(TypeTable::OBJECT);
     }

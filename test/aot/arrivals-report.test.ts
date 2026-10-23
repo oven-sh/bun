@@ -267,52 +267,60 @@ async function buildAndRun(folder: string, flags: string[]) {
 }
 
 describe.concurrent("the arrivals report", () => {
-  test("of {a, b}, {b, a}, an object without `a` and a parsed object at one read, only the parsed one arrives by name", () =>
-    slot(async () => {
-      using dir = tempDir("aot-arrivals-report", { "main.js": source });
-      const paths = await buildAndRun(String(dir), ["--aot-count-arrivals"]);
-      const report: ArrivalReport = JSON.parse(readFileSync(paths.report, "utf8"));
-      const joined = joinArrivals(report, parseCounts(readFileSync(paths.counts, "utf8")));
-      const isListed = (id: number) => joined.layouts.get(id) !== undefined;
+  test(
+    "of {a, b}, {b, a}, an object without `a` and a parsed object at one read, only the parsed one arrives by name",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-arrivals-report", { "main.js": source });
+        const paths = await buildAndRun(String(dir), ["--aot-count-arrivals"]);
+        const report: ArrivalReport = JSON.parse(readFileSync(paths.report, "utf8"));
+        const joined = joinArrivals(report, parseCounts(readFileSync(paths.counts, "utf8")));
+        const isListed = (id: number) => joined.layouts.get(id) !== undefined;
 
-      const numbers = report.arrivalSites!.map(({ number }) => number);
-      expect(numbers.filter((number, index) => index > 0 && number <= numbers[index - 1])).toEqual([]);
-      expect(report.arrivalSites!.flatMap(({ expected }) => expected).filter(id => !isListed(id))).toEqual([]);
-      expect(joined.unlistedNumbers).toEqual([]);
-      const everyArrival = joined.sites.flatMap(({ arrivals }) => arrivals.map(({ arrival }) => arrival));
-      expect(everyArrival.filter(arrival => arrival.kind === "layout" && !isListed(arrival.layout))).toEqual([]);
+        const numbers = report.arrivalSites!.map(({ number }) => number);
+        expect(numbers.filter((number, index) => index > 0 && number <= numbers[index - 1])).toEqual([]);
+        expect(report.arrivalSites!.flatMap(({ expected }) => expected).filter(id => !isListed(id))).toEqual([]);
+        expect(joined.unlistedNumbers).toEqual([]);
+        const everyArrival = joined.sites.flatMap(({ arrivals }) => arrivals.map(({ arrival }) => arrival));
+        expect(everyArrival.filter(arrival => arrival.kind === "layout" && !isListed(arrival.layout))).toEqual([]);
 
-      const arrivals = joined.sites
-        .filter(({ site }) => site.file === "main.js" && site.line === lineOfRead && site.kind === "read")
-        .flatMap(({ arrivals }) => arrivals);
-      const fieldsOf = (id: number) => `{${joined.layouts.get(id)!.fields.join()}}`;
-      const verdictsOn = (receiver: string) => {
-        const countByVerdict: Record<string, number> = {};
-        for (const { what, arrival, count, verdict } of arrivals) {
-          if ((arrival.kind === "layout" ? fieldsOf(arrival.layout) : what) !== receiver) continue;
-          const text = verdict.layout === null ? verdict.kind : `${verdict.kind}: ${fieldsOf(verdict.layout)}`;
-          countByVerdict[text] = (countByVerdict[text] ?? 0) + count;
-        }
-        return countByVerdict;
-      };
-      expect(verdictsOn("object{a,b}")).toEqual({ "foreign object: {a,b}": rounds });
-      expect(arrivals.map(({ what }) => what)).toEqual(["object{a,b}"]);
+        const arrivals = joined.sites
+          .filter(({ site }) => site.file === "main.js" && site.line === lineOfRead && site.kind === "read")
+          .flatMap(({ arrivals }) => arrivals);
+        const fieldsOf = (id: number) => `{${joined.layouts.get(id)!.fields.join()}}`;
+        const verdictsOn = (receiver: string) => {
+          const countByVerdict: Record<string, number> = {};
+          for (const { what, arrival, count, verdict } of arrivals) {
+            if ((arrival.kind === "layout" ? fieldsOf(arrival.layout) : what) !== receiver) continue;
+            const text = verdict.layout === null ? verdict.kind : `${verdict.kind}: ${fieldsOf(verdict.layout)}`;
+            countByVerdict[text] = (countByVerdict[text] ?? 0) + count;
+          }
+          return countByVerdict;
+        };
+        expect(verdictsOn("object{a,b}")).toEqual({ "foreign object: {a,b}": rounds });
+        expect(arrivals.map(({ what }) => what)).toEqual(["object{a,b}"]);
 
-      const printed = await spawned([bunExe(), tool, paths.report, paths.counts], String(dir), env);
-      expect(printed).toMatchObject({ stdout: formatArrivals(joined, 100), stderr: "", exitCode: 0 });
-      expect(printed.stdout).toMatch(/  foreign object with the fields of L\d+/);
-    }), 300_000);
+        const printed = await spawned([bunExe(), tool, paths.report, paths.counts], String(dir), env);
+        expect(printed).toMatchObject({ stdout: formatArrivals(joined, 100), stderr: "", exitCode: 0 });
+        expect(printed.stdout).toMatch(/  foreign object with the fields of L\d+/);
+      }),
+    300_000,
+  );
 
-  test("a build that doesn't count lists no site, and its run counts no arrival", () =>
-    slot(async () => {
-      using dir = tempDir("aot-arrivals-report-off", { "main.js": source });
-      const paths = await buildAndRun(String(dir), []);
-      const { arrivalSites, layouts }: ArrivalReport = JSON.parse(readFileSync(paths.report, "utf8"));
-      expect({ arrivalSites, layouts }).toEqual({ arrivalSites: [], layouts: [] });
-      expect(parseCounts(readFileSync(paths.counts, "utf8"))).toEqual([]);
+  test(
+    "a build that doesn't count lists no site, and its run counts no arrival",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-arrivals-report-off", { "main.js": source });
+        const paths = await buildAndRun(String(dir), []);
+        const { arrivalSites, layouts }: ArrivalReport = JSON.parse(readFileSync(paths.report, "utf8"));
+        expect({ arrivalSites, layouts }).toEqual({ arrivalSites: [], layouts: [] });
+        expect(parseCounts(readFileSync(paths.counts, "utf8"))).toEqual([]);
 
-      const printed = await spawned([bunExe(), tool, paths.report, paths.counts], String(dir), env);
-      expect(printed).toMatchObject({ stdout: "", exitCode: 1 });
-      expect(printed.stderr).toStartWith(`error: ${paths.report} lists no arrival sites\n`);
-    }), 300_000);
+        const printed = await spawned([bunExe(), tool, paths.report, paths.counts], String(dir), env);
+        expect(printed).toMatchObject({ stdout: "", exitCode: 1 });
+        expect(printed.stderr).toStartWith(`error: ${paths.report} lists no arrival sites\n`);
+      }),
+    300_000,
+  );
 });

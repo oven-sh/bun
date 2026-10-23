@@ -42,7 +42,10 @@ impl Solution {
     fn governing(&self, path: &[u8], is_case_sensitive: bool) -> Option<&Options> {
         let path = to_path(path, is_case_sensitive);
         let mut projects = self.projects.iter();
-        projects.find(|project| project.files.contains(&*path))?.options.as_ref()
+        projects
+            .find(|project| project.files.contains(&*path))?
+            .options
+            .as_ref()
     }
 }
 
@@ -130,13 +133,18 @@ impl<'s> Projects<'s> {
         let answer = *self.by_config_path.insert_ref(config_path.to_vec(), answer);
         let governing: Vec<&'s Options> = match answer {
             ConfigAnswer::Project(options) => vec![options],
-            ConfigAnswer::Solution(solution) => {
-                solution.projects.iter().filter_map(|project| project.options.as_ref()).collect()
-            }
+            ConfigAnswer::Solution(solution) => solution
+                .projects
+                .iter()
+                .filter_map(|project| project.options.as_ref())
+                .collect(),
             ConfigAnswer::Program | ConfigAnswer::Unreadable => Vec::new(),
         };
-        let names_types = |options: &&Options| options.types.as_ref().is_some_and(|it| !it.is_empty());
-        self.naming_types.lock().extend(governing.into_iter().filter(names_types));
+        let names_types =
+            |options: &&Options| options.types.as_ref().is_some_and(|it| !it.is_empty());
+        self.naming_types
+            .lock()
+            .extend(governing.into_iter().filter(names_types));
         answer
     }
 
@@ -162,7 +170,10 @@ impl<'s> Projects<'s> {
         {
             return ConfigAnswer::Solution(self.session.keep(solution));
         }
-        ConfigAnswer::Project(self.session.keep(governing_options(context, project.options)))
+        ConfigAnswer::Project(
+            self.session
+                .keep(governing_options(context, project.options)),
+        )
     }
 
     fn lenient(&self, program: &Options, package_directory: &[u8]) -> &'s Options {
@@ -205,8 +216,15 @@ fn read_solution(context: &CodeLoadContext<'_, '_, '_>, config_path: &[u8]) -> O
     }
     let referenced = config::load_referenced_projects_for_build(host, &nearest);
     let projects = referenced.into_iter().filter_map(|project| {
-        let files = project.files.iter().map(|it| to_path(it, is_case_sensitive).into_owned());
-        let is_program = is_same_path(&project.config_path, &program.config_path, is_case_sensitive);
+        let files = project
+            .files
+            .iter()
+            .map(|it| to_path(it, is_case_sensitive).into_owned());
+        let is_program = is_same_path(
+            &project.config_path,
+            &program.config_path,
+            is_case_sensitive,
+        );
         let options = match is_program {
             true => None,
             false => {
@@ -230,10 +248,7 @@ fn installed_package_directory(directory: &[u8]) -> Option<&[u8]> {
     Some(&directory[..end.min(directory.len())])
 }
 
-fn typed_version_options(
-    context: &CodeLoadContext<'_, '_, '_>,
-    manifest_path: &[u8],
-) -> Options {
+fn typed_version_options(context: &CodeLoadContext<'_, '_, '_>, manifest_path: &[u8]) -> Options {
     let scratch = Session::new();
     let stated = match config::load_options_for_build(context.host, &scratch, manifest_path) {
         Ok(project) => project.options,

@@ -47,7 +47,9 @@ pub(in crate::lower) fn declare_module_data(
 
 fn find_default_export_initializer(file: &FileLowering<'_, '_, '_, '_>) -> Option<ExprId> {
     let exports = file.inputs.modules.exports(file.file);
-    let default_export = exports.iter().find(|export| export.name == known::default)?;
+    let default_export = exports
+        .iter()
+        .find(|export| export.name == known::default)?;
     let ExportBinding::Variable(symbol) = default_export.binding else {
         return None;
     };

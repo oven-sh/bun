@@ -53,7 +53,10 @@ fn body_of_a_further_record_is_a_root() {
 
         assert!(marked.has_source_function(first, 3));
         assert!(!marked.has_source_function(first, 4));
-        assert_eq!(marked.undefined_functions(), [(FunctionKey::CheckBody(first), first)]);
+        assert_eq!(
+            marked.undefined_functions(),
+            [(FunctionKey::CheckBody(first), first)]
+        );
     });
 }
 
@@ -135,7 +138,10 @@ fn link_program(files: &[(&str, &str)]) -> Program {
 }
 
 fn has_function_named(program: &Program, name: &[u8]) -> bool {
-    let mut names = program.functions.iter().filter_map(|function| function.name);
+    let mut names = program
+        .functions
+        .iter()
+        .filter_map(|function| function.name);
     names.any(|id| program.strings.get(id) == name)
 }
 
@@ -165,7 +171,10 @@ fn export_nobody_reads_is_no_export() {
 #[test]
 fn function_only_dropped_code_names_is_dropped() {
     let library = "export function exported() {}\nfunction internal() {\n  return internal;\n}\n";
-    let files = [("main.js", "import './library.js';\n"), ("library.js", library)];
+    let files = [
+        ("main.js", "import './library.js';\n"),
+        ("library.js", library),
+    ];
     let program = link_program(&files);
     assert!(has_function_named(&program, b"exported"));
     assert!(!has_function_named(&program, b"internal"));

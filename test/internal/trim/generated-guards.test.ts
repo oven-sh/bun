@@ -64,7 +64,10 @@ describe("Guards", () => {
 
   test("finds an entry by the symbol of its function, the first entry where two name one symbol", () => {
     const bySymbol = new Guards({
-      entries: [named(1, "Bun.first", ["Generated::jsShared", "Generated::jsFirst"]), named(2, "Bun.second", ["Generated::jsShared"])],
+      entries: [
+        named(1, "Bun.first", ["Generated::jsShared", "Generated::jsFirst"]),
+        named(2, "Bun.second", ["Generated::jsShared"]),
+      ],
     });
     expect(bySymbol.textOfNativeSymbol("Generated::jsFirst")).toBe("Bun.first");
     expect(bySymbol.textOfNativeSymbol("Generated::jsShared")).toBe("Bun.first");
@@ -86,7 +89,10 @@ describe("Guards", () => {
 
   test("a module is found by its specifier only", () => {
     const modules = new Guards({
-      entries: [entry(1, "bun:removable", "Module", [always(feature)]), entry(2, "internal/removable", "InternalModule", [always(otherFeature)])],
+      entries: [
+        entry(1, "bun:removable", "Module", [always(feature)]),
+        entry(2, "internal/removable", "InternalModule", [always(otherFeature)]),
+      ],
     });
     expect(modules.ofModule("bun:removable")).toEqual({ feature, builtin: 1 });
     expect(modules.ofModule("internal/removable")).toEqual({ feature: otherFeature, builtin: 2 });
@@ -97,20 +103,25 @@ describe("Guards", () => {
 
 if (builtinUsesSkipReason !== undefined) skipNotice("generated-guards.test.ts", builtinUsesSkipReason);
 
-test.skipIf(builtinUsesPath === undefined)("the guard inside a bindgen function is the guard on its bunObjectTable entry", () => {
-  const realGuards = new Guards(readBuiltinUses(builtinUsesPath!));
-  const source = readFileSync(join(import.meta.dir, "../../../src/jsc/bindings/BunObject.cpp"), "utf8");
-  const table = /@begin bunObjectTable\s(.*?)@end/s.exec(source)![1]!;
-  const entries = [...table.matchAll(/^\s*(\S+)\s+(Bun::Bindgen::Generated::\w+::\w+)\s+\S*\bFunction\b/gm)];
-  expect(entries.length).toBeGreaterThan(0);
-  const guardedEntries = entries.flatMap(([, entryKey, symbol]) => {
-    const text = realGuards.textOfNativeSymbol(symbol!);
-    const inside = text === null ? null : realGuards.ofPath(text);
-    return inside === null ? [] : [{ entryKey, symbol, inside, onEntry: realGuards.ofPath(textOfStaticTableEntry("Bun", entryKey!)) }];
-  });
-  expect(guardedEntries.length).toBeGreaterThan(0);
-  expect(guardedEntries.filter(({ inside, onEntry }) => !Bun.deepEquals(inside, onEntry))).toEqual([]);
-});
+test.skipIf(builtinUsesPath === undefined)(
+  "the guard inside a bindgen function is the guard on its bunObjectTable entry",
+  () => {
+    const realGuards = new Guards(readBuiltinUses(builtinUsesPath!));
+    const source = readFileSync(join(import.meta.dir, "../../../src/jsc/bindings/BunObject.cpp"), "utf8");
+    const table = /@begin bunObjectTable\s(.*?)@end/s.exec(source)![1]!;
+    const entries = [...table.matchAll(/^\s*(\S+)\s+(Bun::Bindgen::Generated::\w+::\w+)\s+\S*\bFunction\b/gm)];
+    expect(entries.length).toBeGreaterThan(0);
+    const guardedEntries = entries.flatMap(([, entryKey, symbol]) => {
+      const text = realGuards.textOfNativeSymbol(symbol!);
+      const inside = text === null ? null : realGuards.ofPath(text);
+      return inside === null
+        ? []
+        : [{ entryKey, symbol, inside, onEntry: realGuards.ofPath(textOfStaticTableEntry("Bun", entryKey!)) }];
+    });
+    expect(guardedEntries.length).toBeGreaterThan(0);
+    expect(guardedEntries.filter(({ inside, onEntry }) => !Bun.deepEquals(inside, onEntry))).toEqual([]);
+  },
+);
 
 test("importing generate-jssink.ts writes no file", async () => {
   const generator = pathToFileURL(join(import.meta.dir, "../../../src/codegen/generate-jssink.ts")).href;

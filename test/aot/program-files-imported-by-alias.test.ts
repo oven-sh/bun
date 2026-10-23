@@ -5,7 +5,13 @@ import { test } from "./supported";
 
 async function build(directory: string, entryPoint: string) {
   const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile],
+    cwd: directory,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
   return { said, exitCode };
 }
@@ -16,20 +22,47 @@ const wrongReturnType = `export function f(): number {\n  return "x";\n}\n`;
 const ambient = `declare const console: { log(...values: unknown[]): void };\ndeclare function require(name: string): any;\n`;
 const paths = JSON.stringify({
   files: [],
-  compilerOptions: { module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true, noEmit: true, types: [], paths: { "@lib/*": ["./lib/*"] } },
+  compilerOptions: {
+    module: "preserve",
+    moduleResolution: "bundler",
+    allowImportingTsExtensions: true,
+    noEmit: true,
+    types: [],
+    paths: { "@lib/*": ["./lib/*"] },
+  },
 });
 
 test.each([
-  ["a subpath import in a JavaScript file", "./main.js", { "package.json": subpathImports, "main.js": `import { f } from "#lib/f.ts";\nconsole.log(f());\n` }],
-  ["require() of a subpath import in a TypeScript file", "./main.ts", { "package.json": subpathImports, "main.ts": `${ambient}const { f } = require("#lib/f.ts");\nconsole.log(f());\n` }],
-  ["a tsconfig paths alias in a JavaScript file", "./main.js", { "package.json": manifest(), "tsconfig.json": paths, "main.js": `import { f } from "@lib/f.ts";\nconsole.log(f());\n` }],
-])("a type error in the program's own TypeScript file fails the build when the file is reached through %s", async (_, entryPoint, files) => {
-  using dir = tempDir("aot-own-file-by-alias", { ...files, "lib/f.ts": wrongReturnType });
-  const { said, exitCode } = await build(String(dir), entryPoint);
-  expect(said).toContain("error: TS2322");
-  expect(said).not.toContain("TS100009");
-  expect(exitCode).not.toBe(0);
-}, 120_000);
+  [
+    "a subpath import in a JavaScript file",
+    "./main.js",
+    { "package.json": subpathImports, "main.js": `import { f } from "#lib/f.ts";\nconsole.log(f());\n` },
+  ],
+  [
+    "require() of a subpath import in a TypeScript file",
+    "./main.ts",
+    { "package.json": subpathImports, "main.ts": `${ambient}const { f } = require("#lib/f.ts");\nconsole.log(f());\n` },
+  ],
+  [
+    "a tsconfig paths alias in a JavaScript file",
+    "./main.js",
+    {
+      "package.json": manifest(),
+      "tsconfig.json": paths,
+      "main.js": `import { f } from "@lib/f.ts";\nconsole.log(f());\n`,
+    },
+  ],
+])(
+  "a type error in the program's own TypeScript file fails the build when the file is reached through %s",
+  async (_, entryPoint, files) => {
+    using dir = tempDir("aot-own-file-by-alias", { ...files, "lib/f.ts": wrongReturnType });
+    const { said, exitCode } = await build(String(dir), entryPoint);
+    expect(said).toContain("error: TS2322");
+    expect(said).not.toContain("TS100009");
+    expect(exitCode).not.toBe(0);
+  },
+  120_000,
+);
 
 test("an undeclared name in the program's own TypeScript file fails the build when the file is reached through a subpath import", async () => {
   using dir = tempDir("aot-own-file-by-alias-undeclared-name", {
@@ -46,7 +79,12 @@ test("a subpath import that maps to an installed package is still a dependency",
   using dir = tempDir("aot-subpath-import-of-a-package", {
     "package.json": manifest({ imports: { "#dep": "dep" } }),
     "main.js": `import { f } from "#dep";\nconsole.log(f());\n`,
-    "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", type: "module", exports: "./index.ts" }),
+    "node_modules/dep/package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.ts",
+    }),
     "node_modules/dep/index.ts": wrongReturnType,
   });
   const { said, exitCode } = await build(String(dir), "./main.js");

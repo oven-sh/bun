@@ -42,7 +42,10 @@ pub(in crate::lower) fn find_class_function_type(
             function_type
         }
     };
-    file.types.function_types.classes.insert(class, function_type);
+    file.types
+        .function_types
+        .classes
+        .insert(class, function_type);
     function_type
 }
 
@@ -80,7 +83,8 @@ fn declare_signature(
         && let Some(implementation) = file.queries.overload_implementation(declaration)
     {
         let implementation = file.reference_function(FunctionKey::Source(implementation));
-        file.fragment.add_function_type_edge(implementation, function_type);
+        file.fragment
+            .add_function_type_edge(implementation, function_type);
     }
     function_type
 }
@@ -108,6 +112,7 @@ pub(in crate::lower) fn define_signatures(file: &mut FileLowering<'_, '_, '_, '_
         relations: FunctionRelations::default(),
     });
     for function_type in declared {
-        file.fragment.define_function(function_type, Arc::clone(&signature));
+        file.fragment
+            .define_function(function_type, Arc::clone(&signature));
     }
 }

@@ -37,7 +37,9 @@ pub(in crate::lower) const WRAPPER_PARAMETERS: [CommonJsVariable; CommonJsParame
 };
 
 pub(in crate::lower) fn wrapper_parameter_index(variable: CommonJsVariable) -> u32 {
-    let index = WRAPPER_PARAMETERS.iter().position(|&parameter| parameter == variable);
+    let index = WRAPPER_PARAMETERS
+        .iter()
+        .position(|&parameter| parameter == variable);
     index.expect("every CommonJS variable is a wrapper parameter") as u32
 }
 
@@ -104,7 +106,11 @@ pub(in crate::lower) fn keeps_wrapper(
     if direct_evals.any(|&(call, _)| !decisions.is_dead_expr(call)) {
         return true;
     }
-    if bound.scopes.iter().any(|scope| matches!(scope.kind, ScopeKind::With(_))) {
+    if bound
+        .scopes
+        .iter()
+        .any(|scope| matches!(scope.kind, ScopeKind::With(_)))
+    {
         return true;
     }
     let mut stores = bound.runtime.unbound_name_stores().iter();
@@ -129,7 +135,10 @@ fn may_replace_exports(file: &FileLowering<'_, '_, '_, '_>, module_name: ExprId)
     let Parent::Expr(access) = bound.parent_of_expr(module_name) else {
         return true;
     };
-    if !hir.member_key(access).is_some_and(|(object, _)| object == module_name) {
+    if !hir
+        .member_key(access)
+        .is_some_and(|(object, _)| object == module_name)
+    {
         return true;
     }
     match file.builtins.of_expr(access) {
@@ -328,13 +337,18 @@ fn emit_value_of_module(
         let text = lowering.file.intern_bytes(&text);
         return lowering.builder.string(text);
     }
-    let module = lowering.file.fragment.declare_module(ModuleRef::File(owner));
+    let module = lowering
+        .file
+        .fragment
+        .declare_module(ModuleRef::File(owner));
     let member: &[u8] = match builtin {
         BuiltinId::ImportMetaPath => b"path",
         BuiltinId::ImportMetaDir => b"dir",
         _ => return lowering.builder.module_builtin(builtin, module),
     };
-    let meta = lowering.builder.module_builtin(BuiltinId::ImportMeta, module);
+    let meta = lowering
+        .builder
+        .module_builtin(BuiltinId::ImportMeta, module);
     let key = text_key(lowering.file, member);
     member::emit_get(lowering, meta, PropertyName::Constant(key))
 }
@@ -497,7 +511,10 @@ pub(super) fn set_variable(
             scope::set_mapped_argument(lowering, CodeUnit::File, index, value);
         }
         VariableSource::ModuleValue(_) | VariableSource::ImportMetaMember(_) => {
-            debug_assert!(!is_commonjs_module(lowering.file), "a file that stores to the name keeps its wrapper");
+            debug_assert!(
+                !is_commonjs_module(lowering.file),
+                "a file that stores to the name keeps its wrapper"
+            );
             let meta = emit_import_meta(lowering);
             let key = text_key(lowering.file, import_meta_member_name(variable));
             member::emit_set(lowering, meta, PropertyName::Constant(key), value);
@@ -521,7 +538,9 @@ pub(super) fn store_first_exports(
 ) {
     if keeps_first_exports(lowering.file) {
         let variable = ensure_path_variable(lowering.file, CommonJsVariable::Exports);
-        lowering.builder.put_module_variable(variable, first_exports);
+        lowering
+            .builder
+            .put_module_variable(variable, first_exports);
     }
 }
 
@@ -557,13 +576,19 @@ pub(super) fn emit_entry_value(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     variable: CommonJsVariable,
 ) -> ValueId {
-    debug_assert_eq!(body_form(lowering.file), BodyForm::Wrapped, "no other body has a wrapper");
+    debug_assert_eq!(
+        body_form(lowering.file),
+        BodyForm::Wrapped,
+        "no other body has a wrapper"
+    );
     debug_assert_eq!(
         lowering.key,
         FunctionKey::WrappedModuleBody(lowering.file.file),
         "the wrapper's parameters are entry values of the function that holds the text"
     );
-    let value = lowering.builder.parameter(wrapper_parameter_index(variable));
+    let value = lowering
+        .builder
+        .parameter(wrapper_parameter_index(variable));
     expect_variable(lowering, variable, value)
 }
 
@@ -610,7 +635,10 @@ pub(super) fn emit_module_builtin(
     let mut value = get_variable(lowering, variable, ReadPurpose::Value);
     for &property in properties.iter().rev() {
         let name = table::entry(property).name;
-        debug_assert!(!table::is_symbol_name(name), "a member of a module value has a text name");
+        debug_assert!(
+            !table::is_symbol_name(name),
+            "a member of a module value has a text name"
+        );
         let key = text_key(lowering.file, table::text_of_name(name));
         value = member::emit_get(lowering, value, PropertyName::Constant(key));
         value = expect_module_value(lowering, property, value);

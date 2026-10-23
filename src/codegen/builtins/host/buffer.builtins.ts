@@ -78,7 +78,10 @@ const constructed: b.FunctionField[] = [
     throws: true,
     runsOnlyOperandCode: true,
     uses: {
-      value: [...handedOver, b.runsTransitively("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))],
+      value: [
+        ...handedOver,
+        b.runsTransitively("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
+      ],
       encoding: [...handedOver, b.runs("ToPrimitive")],
     },
     implementation: b.hostCall,

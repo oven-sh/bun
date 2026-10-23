@@ -42,7 +42,10 @@ const SHAPES: &[(&str, &str)] = &[
             r#""./more":{"bun-aot":"./more.aot.ts","default":"./more.js"}}}"#,
         ),
     ),
-    ("node_modules/shapes/index.js", "export const area = 2 * 3;\n"),
+    (
+        "node_modules/shapes/index.js",
+        "export const area = 2 * 3;\n",
+    ),
     (
         "node_modules/shapes/index.aot.ts",
         "export const area: number = 2 * 3;\n",
@@ -259,7 +262,10 @@ fn with_two_shapes_copies<R>(then: impl FnOnce(PackageView<'_, '_>) -> R) -> R {
 }
 
 fn with_project_version<R>(typed: &str, then: impl FnOnce(PackageView<'_, '_>) -> R) -> R {
-    with_packages(&project_version_files(TYPED_PACKAGE_SOUND_JSON, typed), then)
+    with_packages(
+        &project_version_files(TYPED_PACKAGE_SOUND_JSON, typed),
+        then,
+    )
 }
 
 fn project_version_files<'a>(sound_json: &'a str, typed: &'a str) -> [(&'a str, &'a str); 5] {
@@ -446,11 +452,17 @@ fn demoted_package_gets_one_warning() {
     let outcome = with_packages(DEPENDENCIES, |packages| {
         let index = file_at(packages, "dep/index.ts");
         let other = file_at(packages, "dep/other.ts");
-        let checked = vec![withdraws_trust(packages, index), withdraws_trust(packages, other)];
+        let checked = vec![
+            withdraws_trust(packages, index),
+            withdraws_trust(packages, other),
+        ];
         report(packages, checked, &with_type_errors(&[index, other]))
     });
     let first = "/project/node_modules/dep/index.ts:1:7";
-    assert_eq!(outcome.printed, [package_warning("dep", "2 type errors", first, (2, 3))]);
+    assert_eq!(
+        outcome.printed,
+        [package_warning("dep", "2 type errors", first, (2, 3))]
+    );
     assert!(!outcome.stops_build);
     assert!(outcome.remaining.is_empty());
     assert_eq!(outcome.demoted_directories, ["/project/node_modules/dep"]);
@@ -464,18 +476,27 @@ fn single_error_is_singular() {
         report(packages, checked, &with_type_errors(&[other]))
     });
     let first = "/project/node_modules/dep/other.ts:1:7";
-    assert_eq!(outcome.printed, [package_warning("dep", "1 type error", first, (1, 3))]);
+    assert_eq!(
+        outcome.printed,
+        [package_warning("dep", "1 type error", first, (1, 3))]
+    );
 }
 
 #[test]
 fn several_errors_of_one_file_demote_one_file() {
     let outcome = with_packages(DEPENDENCIES, |packages| {
         let other = file_at(packages, "dep/other.ts");
-        let checked = vec![withdraws_trust(packages, other), withdraws_trust(packages, other)];
+        let checked = vec![
+            withdraws_trust(packages, other),
+            withdraws_trust(packages, other),
+        ];
         report(packages, checked, &with_type_errors(&[other]))
     });
     let first = "/project/node_modules/dep/other.ts:1:7";
-    assert_eq!(outcome.printed, [package_warning("dep", "2 type errors", first, (1, 3))]);
+    assert_eq!(
+        outcome.printed,
+        [package_warning("dep", "2 type errors", first, (1, 3))]
+    );
 }
 
 #[test]
@@ -490,7 +511,10 @@ fn neighbor_of_rejected_version_counts_as_demoted() {
         report(packages, vec![withdraws_trust(packages, index)], &demoted)
     });
     let first = "/project/node_modules/dep/index.ts:1:7";
-    assert_eq!(outcome.printed, [package_warning("dep", "1 type error", first, (2, 3))]);
+    assert_eq!(
+        outcome.printed,
+        [package_warning("dep", "1 type error", first, (2, 3))]
+    );
 }
 
 #[test]
@@ -503,7 +527,10 @@ fn neighbor_without_errors_demotes_package_silently() {
         report(packages, Vec::new(), &[neighbor])
     });
     assert!(outcome.printed.is_empty(), "{:?}", outcome.printed);
-    assert_eq!(outcome.demoted_directories, ["/project/node_modules/shapes"]);
+    assert_eq!(
+        outcome.demoted_directories,
+        ["/project/node_modules/shapes"]
+    );
 }
 
 #[test]
@@ -583,7 +610,10 @@ fn typed_version_error_stops_build() {
     let text = "TS100021: The typed version of 'p' in .sound/p has type errors (2), \
                 the first at /project/.sound/p/lay/x.js:1:7";
     let error = message_with_type_error(Kind::Err, text);
-    assert_eq!(outcome.printed, [error, message(Kind::Note, PROJECT_VERSION_USED)]);
+    assert_eq!(
+        outcome.printed,
+        [error, message(Kind::Note, PROJECT_VERSION_USED)]
+    );
     assert!(outcome.stops_build);
     assert!(outcome.remaining.is_empty());
     assert!(outcome.demoted_directories.is_empty());
@@ -599,7 +629,11 @@ fn typed_version_errors_need_project_origin() {
     let (origin, outcome, index) = with_packages(SHAPES, |packages| {
         let index = file_at(packages, "shapes/index.js");
         let checked = vec![type_error(packages, index, Effect::StopsBuild)];
-        (packages.view.origin(index), report(packages, checked, &[]), index)
+        (
+            packages.view.origin(index),
+            report(packages, checked, &[]),
+            index,
+        )
     });
     assert_eq!(origin, FileOrigin::DependencySource);
     assert_eq!(remaining_files(&outcome), [Some(index)]);
@@ -615,9 +649,15 @@ fn demoted_typed_version_only_warns() {
         report(packages, checked, &with_type_errors(&[index]))
     });
     let first = "/project/node_modules/shapes/index.aot.ts:1:7";
-    assert_eq!(outcome.printed, [package_warning("shapes", "1 type error", first, (1, 2))]);
+    assert_eq!(
+        outcome.printed,
+        [package_warning("shapes", "1 type error", first, (1, 2))]
+    );
     assert!(!outcome.stops_build);
-    assert_eq!(outcome.demoted_directories, ["/project/node_modules/shapes"]);
+    assert_eq!(
+        outcome.demoted_directories,
+        ["/project/node_modules/shapes"]
+    );
 }
 
 #[test]
@@ -757,7 +797,12 @@ fn manifest_mismatch_hides_no_rejected_file_of_other_packages() {
 fn each_installed_copy_is_compared_with_manifest() {
     let app = ("app.ts", "import \"p\";\nimport \"dep\";\n");
     let project_version = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE);
-    let files = [&[app][..], &project_version[1..], NESTED_COPY_OF_OTHER_VERSION].concat();
+    let files = [
+        &[app][..],
+        &project_version[1..],
+        NESTED_COPY_OF_OTHER_VERSION,
+    ]
+    .concat();
     let sentence = "it is for version 1.0.0, but 2.0.0 is installed. \
                     Replace it with the typed version for 2.0.0, or remove it";
     let expected = load_with_messages(&[project_version_text(sentence)]);
@@ -791,7 +836,11 @@ fn typed_version_of_package_that_is_not_loaded_is_not_compared() {
     let mut files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE).to_vec();
     files.push((".sound/unused/sound.json", "{"));
     let outcome = with_packages(&files, report_without_errors);
-    assert!(outcome.rejected_versions.is_empty(), "{:?}", outcome.rejected_versions);
+    assert!(
+        outcome.rejected_versions.is_empty(),
+        "{:?}",
+        outcome.rejected_versions
+    );
     assert_eq!(outcome.printed, [message(Kind::Note, PROJECT_VERSION_USED)]);
 }
 

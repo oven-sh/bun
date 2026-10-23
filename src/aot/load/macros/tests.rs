@@ -193,7 +193,11 @@ fn find_calls_without_results(hir: &File<'_>, results: &[MacroResult<'_>]) -> Ve
     let exprs = (0..hir.exprs.len() as u32).map(ExprId);
     exprs
         .filter(|&expr| matches!(hir[expr].kind, ExprKind::Call(_)))
-        .filter(|expr| results.binary_search_by_key(expr, |result| result.0).is_err())
+        .filter(|expr| {
+            results
+                .binary_search_by_key(expr, |result| result.0)
+                .is_err()
+        })
         .collect()
 }
 
@@ -300,10 +304,8 @@ fn string(text: &[u8]) -> OwnedValue {
 
 #[test]
 fn named_import_receives_written_arguments() {
-    let outcome = run(
-        "import { f } from './m' with { type: 'macro' };\
-         f(1, 'a', [true, null], { k: 2 });",
-    );
+    let outcome = run("import { f } from './m' with { type: 'macro' };\
+         f(1, 'a', [true, null], { k: 2 });");
     let expected = RecordedCall {
         importer: IMPORTER.to_vec(),
         macro_path: b"/project/m.ts".to_vec(),
@@ -323,11 +325,9 @@ fn named_import_receives_written_arguments() {
 
 #[test]
 fn folded_arguments_are_data() {
-    let outcome = run(
-        "import { f } from './m' with { type: 'macro' };\
+    let outcome = run("import { f } from './m' with { type: 'macro' };\
          const k = 'a';\
-         f(k, 2 * 3, [k], { n: k }, k as string, void 0);",
-    );
+         f(k, 2 * 3, [k], { n: k }, k as string, void 0);");
     let arguments = [
         string(b"a"),
         OwnedValue::Number(6.0),
@@ -435,10 +435,8 @@ fn spread_argument_is_unknown() {
 
 #[test]
 fn nested_call_runs_first() {
-    let outcome = run(
-        "import { inner, outer } from './m' with { type: 'macro' };\
-         outer(inner());",
-    );
+    let outcome = run("import { inner, outer } from './m' with { type: 'macro' };\
+         outer(inner());");
     assert_eq!(outcome.export_names(), [&b"inner"[..], &b"outer"[..]]);
     assert_eq!(outcome.calls[1].arguments, [OwnedValue::Number(3.0)]);
     assert!(outcome.diagnostics.is_empty());
@@ -446,10 +444,8 @@ fn nested_call_runs_first() {
 
 #[test]
 fn nested_call_with_unknown_argument_reports_once() {
-    let outcome = run(
-        "import { inner, outer } from './m' with { type: 'macro' };\
-         let x; outer(inner(x));",
-    );
+    let outcome = run("import { inner, outer } from './m' with { type: 'macro' };\
+         let x; outer(inner(x));");
     assert!(outcome.calls.is_empty());
     let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
     assert_eq!(outcome.diagnostics, [expected]);
@@ -458,10 +454,8 @@ fn nested_call_with_unknown_argument_reports_once() {
 
 #[test]
 fn asserted_nested_call_with_unknown_argument_reports_once() {
-    let outcome = run(
-        "import { inner, outer } from './m' with { type: 'macro' };\
-         let x; outer(inner(x)!);",
-    );
+    let outcome = run("import { inner, outer } from './m' with { type: 'macro' };\
+         let x; outer(inner(x)!);");
     let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
     assert_eq!(outcome.diagnostics, [expected]);
 }
@@ -495,10 +489,8 @@ fn statements_run_in_source_order_around_nested_calls() {
 
 #[test]
 fn call_after_undecided_branch_runs_after_branch() {
-    let outcome = run(
-        "import { f, g, inner } from './m' with { type: 'macro' };\
-         f() && g(); inner();",
-    );
+    let outcome = run("import { f, g, inner } from './m' with { type: 'macro' };\
+         f() && g(); inner();");
     let expected: [&[u8]; 3] = [b"f", b"g", b"inner"];
     assert_eq!(outcome.export_names(), expected);
 }
@@ -516,7 +508,10 @@ fn unknown_argument_does_not_delay_later_calls() {
     assert_eq!(outcome.export_names(), [b"g"]);
     let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
     assert_eq!(outcome.diagnostics, [expected]);
-    assert_eq!(outcome.results, [OwnedValue::Undefined, OwnedValue::Number(2.0)]);
+    assert_eq!(
+        outcome.results,
+        [OwnedValue::Undefined, OwnedValue::Number(2.0)]
+    );
 }
 
 #[test]
@@ -525,7 +520,10 @@ fn failed_macro_runs_once() {
         answers: &[],
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(setup, "import { f } from './m' with { type: 'macro' }; f();");
+    let outcome = run_rounds(
+        setup,
+        "import { f } from './m' with { type: 'macro' }; f();",
+    );
     assert_eq!(outcome.calls.len(), 1);
     assert_eq!(outcome.results, [OwnedValue::Undefined]);
     assert!(outcome.diagnostics.is_empty());
@@ -537,9 +535,15 @@ fn disabled_macros_do_not_run() {
         runs_macros: false,
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(setup, "import { f } from './m' with { type: 'macro' }; f();");
+    let outcome = run_rounds(
+        setup,
+        "import { f } from './m' with { type: 'macro' }; f();",
+    );
     assert!(outcome.calls.is_empty());
-    assert_eq!(outcome.diagnostics, [(Code::MacrosDisabled, b"f()".to_vec())]);
+    assert_eq!(
+        outcome.diagnostics,
+        [(Code::MacrosDisabled, b"f()".to_vec())]
+    );
     assert_eq!(outcome.results, [OwnedValue::Undefined]);
 }
 
@@ -549,7 +553,10 @@ fn node_modules_importer_does_not_run_macros() {
         importer: b"/project/node_modules/p/a.ts",
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(setup, "import { f } from './m' with { type: 'macro' }; f();");
+    let outcome = run_rounds(
+        setup,
+        "import { f } from './m' with { type: 'macro' }; f();",
+    );
     assert!(outcome.calls.is_empty());
     let expected = (Code::MacroInNodeModules, b"f()".to_vec());
     assert_eq!(outcome.diagnostics, [expected]);
@@ -563,8 +570,14 @@ fn disabled_macros_win_over_node_modules() {
         runs_macros: false,
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(setup, "import { f } from './m' with { type: 'macro' }; f();");
-    assert_eq!(outcome.diagnostics, [(Code::MacrosDisabled, b"f()".to_vec())]);
+    let outcome = run_rounds(
+        setup,
+        "import { f } from './m' with { type: 'macro' }; f();",
+    );
+    assert_eq!(
+        outcome.diagnostics,
+        [(Code::MacrosDisabled, b"f()".to_vec())]
+    );
 }
 
 #[test]
@@ -595,10 +608,8 @@ fn file_without_pending_calls_has_no_results() {
 
 #[test]
 fn every_call_gets_one_result() {
-    let outcome = run(
-        "import { f, g } from './m' with { type: 'macro' };\
-         let x; f(1); g(); f(x); g(x);",
-    );
+    let outcome = run("import { f, g } from './m' with { type: 'macro' };\
+         let x; f(1); g(); f(x); g(x);");
     assert_eq!(outcome.export_names(), [b"f", b"g"]);
     let expected = [
         OwnedValue::Number(1.0),
@@ -608,7 +619,10 @@ fn every_call_gets_one_result() {
     ];
     assert_eq!(outcome.results, expected);
     let unknown_argument = (Code::MacroArgumentNotConstant, b"x".to_vec());
-    assert_eq!(outcome.diagnostics, [unknown_argument.clone(), unknown_argument]);
+    assert_eq!(
+        outcome.diagnostics,
+        [unknown_argument.clone(), unknown_argument]
+    );
 }
 
 #[test]
@@ -619,7 +633,12 @@ fn diagnostic_has_code_and_range() {
         ..DEFAULT_SETUP
     };
     let cases: [(Setup, &str, Code, &[u8]); 2] = [
-        (DEFAULT_SETUP, "let x; f(1, x);", Code::MacroArgumentNotConstant, b"x"),
+        (
+            DEFAULT_SETUP,
+            "let x; f(1, x);",
+            Code::MacroArgumentNotConstant,
+            b"x",
+        ),
         (disabled, "f(1);", Code::MacrosDisabled, b"f(1)"),
     ];
     for (setup, text, code, written) in cases {
@@ -634,7 +653,10 @@ fn pending_call_without_macro_callee_is_internal_error() {
         lists_every_call_as_pending: true,
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(setup, "import * as m from './m' with { type: 'macro' }; m();");
+    let outcome = run_rounds(
+        setup,
+        "import * as m from './m' with { type: 'macro' }; m();",
+    );
     assert_eq!(outcome.first_pending_count, 0);
     assert!(outcome.calls.is_empty());
     assert!(outcome.has_internal_errors);

@@ -25,8 +25,14 @@ test.failing(
   "Array.prototype.sort writes every sorted item back although the comparator has changed the array in its last comparison",
   async () => {
     const program = "arrays/sort-write-back-after-mutation";
-    const correct = { stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"), exitCode: 0 };
-    const runs = await Promise.all([plain(program, { BUN_JSC_useConcurrentJIT: "0" }), ...Array.from({ length: 10 }, () => plain(program))]);
+    const correct = {
+      stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"),
+      exitCode: 0,
+    };
+    const runs = await Promise.all([
+      plain(program, { BUN_JSC_useConcurrentJIT: "0" }),
+      ...Array.from({ length: 10 }, () => plain(program)),
+    ]);
     for (const run of runs) expect(run).toEqual(correct);
   },
   120_000,
@@ -34,8 +40,14 @@ test.failing(
 
 // Function.prototype.apply is written with the engine's call of a list, which reads the list before it looks at the callee.
 // Once the bug is fixed this test fails: change `test.failing` to `test`.
-test.failing("Function.prototype.apply throws for a receiver that is no function before it reads the list", async () => {
-  const program = "calls/apply-tests-the-callee-before-the-list";
-  const correct = { stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"), exitCode: 0 };
-  expect(await plain(program)).toEqual(correct);
-});
+test.failing(
+  "Function.prototype.apply throws for a receiver that is no function before it reads the list",
+  async () => {
+    const program = "calls/apply-tests-the-callee-before-the-list";
+    const correct = {
+      stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"),
+      exitCode: 0,
+    };
+    expect(await plain(program)).toEqual(correct);
+  },
+);

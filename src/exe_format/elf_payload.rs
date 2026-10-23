@@ -7,7 +7,9 @@ use crate::elf::{
     BunSectionInfo, Elf64_Ehdr, Elf64_Phdr, Elf64_Shdr, ElfError, ElfFile, PF_W, SHF_ALLOC,
     SHF_TLS, SHT_NOBITS, read_ehdr, validate_elf64_le, write_u64_le,
 };
-use crate::elf_program_headers::{PAYLOAD_SEGMENT_COUNT, PT_BUN_PAYLOAD, PT_NULL, find_reserved_segment};
+use crate::elf_program_headers::{
+    PAYLOAD_SEGMENT_COUNT, PT_BUN_PAYLOAD, PT_NULL, find_reserved_segment,
+};
 use crate::{align_up, read_struct, write_struct};
 
 pub enum Piece<'a> {
@@ -35,8 +37,15 @@ struct ProgramHeaderWrite {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum ReservedSegmentUse {
     Absent,
-    HoldsPayload { header_index: usize, header_count: usize, address: u64 },
-    Unused { header_index: usize, header_count: usize },
+    HoldsPayload {
+        header_index: usize,
+        header_count: usize,
+        address: u64,
+    },
+    Unused {
+        header_index: usize,
+        header_count: usize,
+    },
 }
 
 const PF_X: u32 = 1;
@@ -248,10 +257,17 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         let aligned_size = align_up(content_size, page_size);
 
         let place = match self.find_payload_span(ehdr, &bun_section, page_size)? {
-            Some((header_index, span)) => self.place_over_span(ehdr, header_index, span, aligned_size)?,
+            Some((header_index, span)) => {
+                self.place_over_span(ehdr, header_index, span, aligned_size)?
+            }
             None => self.place_on_linked_segments(ehdr, &bun_section, aligned_size, page_size)?,
         };
-        let PayloadPlace { replaces_payload, mapping, spare_headers, tail } = place;
+        let PayloadPlace {
+            replaces_payload,
+            mapping,
+            spare_headers,
+            tail,
+        } = place;
         let header_size = size_of::<u64>() as u64;
         let code_in_section = code
             .map(|code| code.start + header_size..code.end + header_size)
@@ -366,7 +382,12 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             } => (appended, header_index..header_index + header_count),
             ReservedSegmentUse::Absent => (appended, 0..0),
         };
-        Ok(PayloadPlace { replaces_payload, mapping, spare_headers, tail })
+        Ok(PayloadPlace {
+            replaces_payload,
+            mapping,
+            spare_headers,
+            tail,
+        })
     }
 
     /// The header that spans a payload with compiled code from an earlier build (`split_at_code`), and its index.
@@ -379,33 +400,51 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         let phdr_size = size_of::<Elf64_Phdr>();
         let headers: Vec<Elf64_Phdr> = usize::try_from(ehdr.e_phoff)
             .ok()
-            .and_then(|offset| self.data.get(offset..)?.get(..ehdr.e_phnum as usize * phdr_size))
+            .and_then(|offset| {
+                self.data
+                    .get(offset..)?
+                    .get(..ehdr.e_phnum as usize * phdr_size)
+            })
             .ok_or(ElfError::InvalidElfFile)?
             .chunks_exact(phdr_size)
             .map(read_struct::<Elf64_Phdr>)
             .collect();
-        let Some(header_index) = headers.iter().position(|header| header.p_type == PT_BUN_PAYLOAD) else {
+        let Some(header_index) = headers
+            .iter()
+            .position(|header| header.p_type == PT_BUN_PAYLOAD)
+        else {
             return Ok(None);
         };
         let span = headers[header_index];
-        let span_end = span.p_vaddr.checked_add(span.p_memsz).ok_or(ElfError::InvalidElfFile)?;
+        let span_end = span
+            .p_vaddr
+            .checked_add(span.p_memsz)
+            .ok_or(ElfError::InvalidElfFile)?;
         let pieces = header_index + 1..header_index + PAYLOAD_SEGMENT_COUNT;
         let is_piece = |header: &Elf64_Phdr| {
             header.p_type == PT_NULL
                 || (header.p_type == PT_LOAD
                     && header.p_vaddr >= span.p_vaddr
-                    && header.p_vaddr.checked_add(header.p_memsz).is_some_and(|end| end <= span_end))
+                    && header
+                        .p_vaddr
+                        .checked_add(header.p_memsz)
+                        .is_some_and(|end| end <= span_end))
         };
         let spans_section = span.p_vaddr == bun_section.vaddr
             && span.p_offset == bun_section.file_offset
             && span.p_filesz == span.p_memsz
             && bun_section.size.checked_next_multiple_of(page_size) == Some(span.p_filesz);
-        let is_followed_by_pieces = headers.get(pieces.clone()).is_some_and(|pieces| pieces.iter().all(is_piece));
+        let is_followed_by_pieces = headers
+            .get(pieces.clone())
+            .is_some_and(|pieces| pieces.iter().all(is_piece));
         // Nothing is mapped past the payload, so a longer one runs into no other mapping.
         let is_highest = headers.iter().enumerate().all(|(index, header)| {
             header.p_type != PT_LOAD
                 || pieces.contains(&index)
-                || header.p_vaddr.checked_add(header.p_memsz).is_some_and(|end| end <= span.p_vaddr)
+                || header
+                    .p_vaddr
+                    .checked_add(header.p_memsz)
+                    .is_some_and(|end| end <= span.p_vaddr)
         });
         match spans_section && is_followed_by_pieces && is_highest {
             true => Ok(Some((header_index, span))),
@@ -421,7 +460,9 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         span: Elf64_Phdr,
         aligned_size: u64,
     ) -> Result<PayloadPlace, ElfError> {
-        span.p_vaddr.checked_add(aligned_size).ok_or(ElfError::InvalidElfFile)?;
+        span.p_vaddr
+            .checked_add(aligned_size)
+            .ok_or(ElfError::InvalidElfFile)?;
         let tail = self.find_tail(ehdr, &span)?;
         let header = Elf64_Phdr {
             p_type: PT_LOAD,
@@ -789,9 +830,9 @@ mod tests {
     }
 
     fn is_mapped(elf: &[u8], range: AddressRange) -> bool {
-        load_segments(elf).iter().any(|(_, phdr)| {
-            phdr.p_vaddr < range.end && range.start < phdr.p_vaddr + phdr.p_memsz
-        })
+        load_segments(elf)
+            .iter()
+            .any(|(_, phdr)| phdr.p_vaddr < range.end && range.start < phdr.p_vaddr + phdr.p_memsz)
     }
 
     fn create_payload(length: u64) -> Vec<u8> {
@@ -839,7 +880,10 @@ mod tests {
             .filter(|(_, phdr)| phdr.p_vaddr >= section.sh_addr)
             .map(|(_, phdr)| {
                 assert_eq!(phdr.p_filesz, phdr.p_memsz);
-                assert_eq!(phdr.p_offset - section.sh_offset, phdr.p_vaddr - section.sh_addr);
+                assert_eq!(
+                    phdr.p_offset - section.sh_offset,
+                    phdr.p_vaddr - section.sh_addr
+                );
                 (phdr.p_flags, phdr.p_vaddr - section.sh_addr, phdr.p_memsz)
             })
             .collect()
@@ -995,22 +1039,44 @@ mod tests {
             assert_ne!(data_flags & PF_W, 0);
 
             let written = write_with_code(&trimmed, &payload, page - 8..3 * page - 8);
-            let expected = [(PF_R, 0, page), (PF_R | PF_X, page, 2 * page), (PF_R, 3 * page, 2 * page)];
+            let expected = [
+                (PF_R, 0, page),
+                (PF_R | PF_X, page, 2 * page),
+                (PF_R, 3 * page, 2 * page),
+            ];
             assert_eq!(payload_segments(&written), expected);
             assert_eq!(find_reserved_segment(&written), None);
-            let (first_index, _) = load_segment_at(&written, find_section(&written, b".bun").sh_addr);
-            let span: Elf64_Phdr = read_struct(&written[program_header_offset(&written, first_index - 1)..]);
+            let (first_index, _) =
+                load_segment_at(&written, find_section(&written, b".bun").sh_addr);
+            let span: Elf64_Phdr =
+                read_struct(&written[program_header_offset(&written, first_index - 1)..]);
             let section = find_section(&written, b".bun");
-            assert_eq!((span.p_type, span.p_offset, span.p_vaddr), (PT_BUN_PAYLOAD, section.sh_offset, section.sh_addr));
+            assert_eq!(
+                (span.p_type, span.p_offset, span.p_vaddr),
+                (PT_BUN_PAYLOAD, section.sh_offset, section.sh_addr)
+            );
             assert_eq!((span.p_filesz, span.p_memsz), (5 * page, 5 * page));
             assert!(load_segments(&written).is_sorted_by_key(|(_, phdr)| phdr.p_vaddr));
-            let (section, plain) = (find_section(&written, b".bun"), find_section(&without_code, b".bun"));
-            assert_eq!((section.sh_addr, section.sh_offset, section.sh_size), (plain.sh_addr, plain.sh_offset, plain.sh_size));
+            let (section, plain) = (
+                find_section(&written, b".bun"),
+                find_section(&without_code, b".bun"),
+            );
+            assert_eq!(
+                (section.sh_addr, section.sh_offset, section.sh_size),
+                (plain.sh_addr, plain.sh_offset, plain.sh_size)
+            );
             assert!(section_bytes(&written, b".bun") == section_bytes(&without_code, b".bun"));
             assert_eq!(written.len(), without_code.len());
 
-            let to_the_end = write_with_code(&trimmed, &create_payload(3 * page - 8), page - 8..3 * page - 8);
-            assert_eq!(payload_segments(&to_the_end), [(PF_R, 0, page), (PF_R | PF_X, page, 2 * page)]);
+            let to_the_end = write_with_code(
+                &trimmed,
+                &create_payload(3 * page - 8),
+                page - 8..3 * page - 8,
+            );
+            assert_eq!(
+                payload_segments(&to_the_end),
+                [(PF_R, 0, page), (PF_R | PF_X, page, 2 * page)]
+            );
             assert_eq!(find_reserved_segment(&to_the_end), None);
         }
     }
@@ -1021,12 +1087,16 @@ mod tests {
             let mut trimmed = template(architecture);
             remove_text_pages(&mut trimmed);
             let page = page_size(&trimmed);
-            let first = write_with_code(&trimmed, &create_payload(4 * page), page - 8..3 * page - 8);
+            let first =
+                write_with_code(&trimmed, &create_payload(4 * page), page - 8..3 * page - 8);
             let mut reserved_again = first.clone();
             assert_eq!(reserve_payload_segments(&mut reserved_again), Ok(true));
             assert!(reserved_again == first);
 
-            for (length, code) in [(6 * page, 2 * page - 8..5 * page - 8), (2 * page - 8, page - 8..2 * page - 8)] {
+            for (length, code) in [
+                (6 * page, 2 * page - 8..5 * page - 8),
+                (2 * page - 8, page - 8..2 * page - 8),
+            ] {
                 let payload = create_payload(length);
                 let second = write_with_code(&first, &payload, code.clone());
                 assert!(second == write_with_code(&trimmed, &payload, code));
@@ -1037,7 +1107,8 @@ mod tests {
 
             let (first_index, _) = load_segment_at(&first, find_section(&first, b".bun").sh_addr);
             let span_offset = program_header_offset(&first, first_index - 1);
-            let longer_span = edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_filesz += page);
+            let longer_span =
+                edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_filesz += page);
             assert_both_fail(&longer_span, 100, ElfError::BunSectionAlreadyWritten);
             let moved_span = edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_vaddr += page);
             assert_both_fail(&moved_span, 100, ElfError::BunSectionAlreadyWritten);
@@ -1058,16 +1129,32 @@ mod tests {
 
             let grown = write_with_code(&untrimmed, &payload, code.clone());
             let written = write_with_code(&reserved, &payload, code);
-            let expected = [(PF_R, 0, page), (PF_R | PF_X, page, 2 * page), (PF_R, 3 * page, 2 * page)];
+            let expected = [
+                (PF_R, 0, page),
+                (PF_R | PF_X, page, 2 * page),
+                (PF_R, 3 * page, 2 * page),
+            ];
             assert_eq!(payload_segments(&written), expected);
-            let (section, appended) = (find_section(&written, b".bun"), find_section(&grown, b".bun"));
+            let (section, appended) = (
+                find_section(&written, b".bun"),
+                find_section(&grown, b".bun"),
+            );
             assert_eq!(section.sh_addr, appended.sh_addr);
-            assert_eq!(section.sh_offset, align_up(rw_phdr.p_offset + rw_phdr.p_filesz, page));
+            assert_eq!(
+                section.sh_offset,
+                align_up(rw_phdr.p_offset + rw_phdr.p_filesz, page)
+            );
             assert!(section.sh_offset < appended.sh_offset);
-            assert_eq!((grown.len() - written.len()) as u64, appended.sh_offset - section.sh_offset);
+            assert_eq!(
+                (grown.len() - written.len()) as u64,
+                appended.sh_offset - section.sh_offset
+            );
             assert!(section_bytes(&written, b".bun") == section_bytes(&grown, b".bun"));
             let (_, rw_phdr_written) = load_segment_at(&written, pointer_address);
-            assert_eq!((rw_phdr_written.p_filesz, rw_phdr_written.p_memsz), (rw_phdr.p_filesz, rw_phdr.p_memsz));
+            assert_eq!(
+                (rw_phdr_written.p_filesz, rw_phdr_written.p_memsz),
+                (rw_phdr.p_filesz, rw_phdr.p_memsz)
+            );
         }
     }
 
@@ -1080,7 +1167,12 @@ mod tests {
             let page = page_size(&trimmed);
             let payload = create_payload(4 * page);
             let without_code = write_in_pieces(&trimmed, &payload).0.unwrap();
-            for code in [page..3 * page, page - 8..3 * page, page - 8..page - 8, page - 8..6 * page - 8] {
+            for code in [
+                page..3 * page,
+                page - 8..3 * page,
+                page - 8..page - 8,
+                page - 8..6 * page - 8,
+            ] {
                 assert!(write_with_code(&trimmed, &payload, code) == without_code);
             }
             let grown = write_in_pieces(&untrimmed, &payload).0.unwrap();
@@ -1105,7 +1197,9 @@ mod tests {
                 p_memsz: page,
                 ..Elf64_Phdr::ZEROED
             };
-            let elf = edited(&written.elf, offset, |phdr: &mut Elf64_Phdr| *phdr = next_segment);
+            let elf = edited(&written.elf, offset, |phdr: &mut Elf64_Phdr| {
+                *phdr = next_segment
+            });
             write_checked(&elf, pointer_address, &create_payload(3 * page - 8));
             assert_both_fail(&elf, 3 * page, ElfError::NewVaddrCollides);
         }
@@ -1171,7 +1265,10 @@ mod tests {
                 address,
             };
             assert_eq!(reserved_segment(&elf, page), holds_payload(first_free_page));
-            assert_eq!(reserved_segment(&elf, cut.len() + page), holds_payload(first_free_page));
+            assert_eq!(
+                reserved_segment(&elf, cut.len() + page),
+                holds_payload(first_free_page)
+            );
             assert_eq!(replaced_payload_segment(&elf, page), unused);
             assert_eq!(reserved_segment(&elf, u64::MAX - page + 1), unused);
 
@@ -1180,7 +1277,10 @@ mod tests {
                 let elf = edited(&elf, offset, |phdr: &mut Elf64_Phdr| phdr.p_vaddr = address);
                 reserved_segment(&elf, page)
             };
-            assert_eq!(reserved_at(first_free_page + 8), holds_payload(first_free_page + page));
+            assert_eq!(
+                reserved_at(first_free_page + 8),
+                holds_payload(first_free_page + page)
+            );
             assert_eq!(reserved_at(first_free_page - page), unused);
             assert_eq!(reserved_at(cut.start), unused);
         }

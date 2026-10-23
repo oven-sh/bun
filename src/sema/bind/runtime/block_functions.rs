@@ -16,15 +16,18 @@ pub(super) fn has_sloppy_labeled_function(
     if hir.rare_syntax & rare::DECLARATION_AS_BODY == 0 {
         return false;
     }
-    hir.stmts.iter().zip(bound.stmt_scope.iter()).any(|(statement, &scope)| {
-        let StmtKind::Labeled { body, .. } = statement.kind else {
-            return false;
-        };
-        let body = hir.stmts.get(body.idx());
-        body.is_some_and(|body| matches!(body.kind, StmtKind::Fn(_)))
-            && scope.is_some()
-            && !has_bit(strict_scopes, scope.idx())
-    })
+    hir.stmts
+        .iter()
+        .zip(bound.stmt_scope.iter())
+        .any(|(statement, &scope)| {
+            let StmtKind::Labeled { body, .. } = statement.kind else {
+                return false;
+            };
+            let body = hir.stmts.get(body.idx());
+            body.is_some_and(|body| matches!(body.kind, StmtKind::Fn(_)))
+                && scope.is_some()
+                && !has_bit(strict_scopes, scope.idx())
+        })
 }
 
 pub(super) fn is_block_function_declaration(hir: &File<'_>, f: FnId) -> bool {
@@ -50,7 +53,9 @@ impl Declarations<'_, '_> {
                 ),
                 FunctionPosition::ImplicitBlock => (self.create_implicit_block_symbol(f), scope),
             };
-            let is_plain = !self.hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR);
+            let is_plain = !self.hir[f]
+                .flags
+                .intersects(Flags::ASYNC | Flags::GENERATOR);
             if is_plain
                 && self.is_sloppy(scope)
                 && !self.hir.follows_dropped_directive(self.hir.node(f))
@@ -62,7 +67,11 @@ impl Declarations<'_, '_> {
                     block_symbol,
                     var_symbol,
                 };
-                self.bound.runtime.declarations.annex_b_functions.push(hoisted);
+                self.bound
+                    .runtime
+                    .declarations
+                    .annex_b_functions
+                    .push(hoisted);
             }
         }
     }
@@ -81,12 +90,19 @@ impl Declarations<'_, '_> {
     fn create_implicit_block_symbol(&mut self, f: FnId) -> SymbolId {
         let name = self.hir[f].name;
         let scope = self.implicit_block_scope(f);
-        debug_assert!(scope.is_some(), "the binder creates the block with the function");
+        debug_assert!(
+            scope.is_some(),
+            "the binder creates the block with the function"
+        );
         let (decl, kind) = (Decl::Fn(f), DeclarationKind::BlockFunction);
         let (flags, declaration) = (SymFlags::FUNCTION, Declaration { decl, kind });
         let kind = BindingKind::Function;
         let block_symbol = self.append_binding(scope, name, flags, kind, declaration);
-        self.bound.runtime.declarations.function_symbols.push((f, block_symbol));
+        self.bound
+            .runtime
+            .declarations
+            .function_symbols
+            .push((f, block_symbol));
         let declared = self.bound.fn_symbol[f.idx()];
         if self.bound.symbols[declared.idx()].decls.len() == 1 {
             insert_bit(&mut self.scopes.hidden_symbols, declared.idx());
@@ -146,7 +162,11 @@ impl Declarations<'_, '_> {
                     inner
                 }
             };
-            self.bound.runtime.declarations.inner_class_symbols.push((id, inner));
+            self.bound
+                .runtime
+                .declarations
+                .inner_class_symbols
+                .push((id, inner));
         }
     }
 }

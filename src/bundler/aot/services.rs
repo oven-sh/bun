@@ -5,11 +5,11 @@ use super::{assets, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
-use bun_aot::{SourceProvider, WithoutServices};
 use bun_aot::load::source_provider::{
     DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
     SourceFile,
 };
+use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Log};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
@@ -220,7 +220,8 @@ impl SourceProvider for BundlerServices {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> Result<&'s DataValue<'s>, Failed> {
-        self.macros.run_macro(&self.context, call, arena, atoms, log)
+        self.macros
+            .run_macro(&self.context, call, arena, atoms, log)
     }
 
     fn bundle_pages<'s>(

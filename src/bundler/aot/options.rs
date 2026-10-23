@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
@@ -19,8 +19,8 @@ use super::paths::{absolute_path, relative_path, report_long_path};
 use crate::bun_fs::PathName;
 use crate::bundle_v2::FileMap;
 use crate::options::{
-    AllowUnresolved, BundleOptions, DEFAULT_WILDCARD_PATTERNS, Format, PackagesOption, PathTemplate,
-    PlaceholderField, Target, jsx,
+    AllowUnresolved, BundleOptions, DEFAULT_WILDCARD_PATTERNS, Format, PackagesOption,
+    PathTemplate, PlaceholderField, Target, jsx,
 };
 
 pub(crate) struct OptionsInput<'r, 'i, 'a> {
@@ -40,8 +40,12 @@ pub(crate) fn options_from_bundler<'r>(
     log: &mut Log,
 ) -> Option<Options<'r>> {
     let is_supported = report_unsupported_options(input.bundle_options, log);
-    let entry_points =
-        expand_entry_points(input.entry_points, input.working_directory, input.file_map, log);
+    let entry_points = expand_entry_points(
+        input.entry_points,
+        input.working_directory,
+        input.file_map,
+        log,
+    );
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
@@ -184,7 +188,8 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
         code.add_custom_condition(condition);
     }
     if options.transform_options.allow_addons == Some(false) {
-        code.conditions.retain(|condition| condition != b"node-addons");
+        code.conditions
+            .retain(|condition| condition != b"node-addons");
     }
 
     if !options.transform_options.main_fields.is_empty() {
@@ -204,10 +209,13 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.extension_orders.main_field = owned_list(options.main_field_extension_order);
 
     let delimiter = if cfg!(windows) { b';' } else { b':' };
-    code.node_paths = (input.node_path.unwrap_or_default().split(|&byte| byte == delimiter))
-        .filter(|entry| !entry.is_empty())
-        .map(|entry| from_argument(&code.working_directory, entry))
-        .collect();
+    code.node_paths = (input
+        .node_path
+        .unwrap_or_default()
+        .split(|&byte| byte == delimiter))
+    .filter(|entry| !entry.is_empty())
+    .map(|entry| from_argument(&code.working_directory, entry))
+    .collect();
 
     code.jsx = jsx_settings(&options.jsx);
     code.forced_jsx_development = Some(options.forced_jsx_development());
@@ -256,7 +264,9 @@ fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> 
     };
     let by_path = in_memory_files_by_path(file_map, input.working_directory);
     let files = by_path.into_iter();
-    files.map(|(path, (_, contents))| (path, contents.to_vec())).collect()
+    files
+        .map(|(path, (_, contents))| (path, contents.to_vec()))
+        .collect()
 }
 
 /// For the path of each file of `files`, its key as it is written and its contents. Of two keys for one path the later one counts.
@@ -268,7 +278,12 @@ pub(crate) fn in_memory_files_by_path<'f>(
     let mut files: Vec<_> = file_map.map.iter().collect();
     files.sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
     (files.into_iter())
-        .map(|(key, contents)| (in_memory_path(&working_directory, key), (&key[..], &contents[..])))
+        .map(|(key, contents)| {
+            (
+                in_memory_path(&working_directory, key),
+                (&key[..], &contents[..]),
+            )
+        })
         .collect()
 }
 
@@ -280,7 +295,10 @@ fn in_memory_path(working_directory: &[u8], key: &[u8]) -> Vec<u8> {
 // The bundler's own patterns are addresses of a development server.
 fn externals(options: &BundleOptions<'_>) -> Externals {
     let external = &options.external;
-    let patterns = external.patterns.iter().map(|pattern| (&pattern.prefix[..], &pattern.suffix[..]));
+    let patterns = external
+        .patterns
+        .iter()
+        .map(|pattern| (&pattern.prefix[..], &pattern.suffix[..]));
     let marked_patterns = patterns.filter(|pattern| !DEFAULT_WILDCARD_PATTERNS.contains(pattern));
     Externals {
         are_all_packages: options.packages == PackagesOption::External,
@@ -332,11 +350,17 @@ fn root_directory(
 }
 
 fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) -> Vec<u8> {
-    let paths: Vec<Vec<u8>> =
-        entry_points.iter().map(|entry| absolute_path(working_directory, entry)).collect();
-    let first_directory = paths.first().map(|first| bun_core::dirname(first).unwrap_or(&first[..]));
-    let all: Vec<&[u8]> =
-        first_directory.into_iter().chain(paths.iter().map(|path| &path[..])).collect();
+    let paths: Vec<Vec<u8>> = entry_points
+        .iter()
+        .map(|entry| absolute_path(working_directory, entry))
+        .collect();
+    let first_directory = paths
+        .first()
+        .map(|first| bun_core::dirname(first).unwrap_or(&first[..]));
+    let all: Vec<&[u8]> = first_directory
+        .into_iter()
+        .chain(paths.iter().map(|path| &path[..]))
+        .collect();
     let common = absolute_path(working_directory, longest_common_path_of(&all));
     without_trailing_slash_windows_path(&common).to_vec()
 }
@@ -346,7 +370,9 @@ fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
     let Some((&first, rest)) = paths.split_first() else {
         return b"";
     };
-    rest.iter().fold(first, |common, &path| resolve_path::longest_common_path(&[common, path]))
+    rest.iter().fold(first, |common, &path| {
+        resolve_path::longest_common_path(&[common, path])
+    })
 }
 
 fn real_directory_path(directory: &[u8]) -> Option<Vec<u8>> {
@@ -363,7 +389,10 @@ fn entry_point_names(
     log: &mut Log,
 ) -> Option<Vec<Vec<u8>>> {
     let mut template = entry_name_template(&input.bundle_options.entry_naming);
-    if template.as_ref().is_some_and(|template| template.needs(PlaceholderField::Hash)) {
+    if template
+        .as_ref()
+        .is_some_and(|template| template.needs(PlaceholderField::Hash))
+    {
         log_diagnostic(log, Code::UnsupportedOption, &[b"[hash] in --entry-naming"]);
         return None;
     }
@@ -374,7 +403,11 @@ fn entry_point_names(
             Some(entry_name(template.as_mut(), relative))
         })
         .collect();
-    for (entry, _) in entry_points.iter().zip(&names).filter(|(_, name)| name.is_none()) {
+    for (entry, _) in entry_points
+        .iter()
+        .zip(&names)
+        .filter(|(_, name)| name.is_none())
+    {
         report_long_path(log, "entry point", entry);
     }
     without_equal_names(names.into_iter().collect::<Option<_>>()?, log)
@@ -390,13 +423,16 @@ pub(crate) fn embedded_entry_point_names(
 ) -> Option<Vec<Vec<u8>>> {
     let compile_name = Some(&options.compile_entry_point_name[..]).filter(|name| !name.is_empty());
     let mut template = output_name_template(&options.entry_naming);
-    let names = entry_points.iter().enumerate().map(|(index, entry)| match compile_name {
-        Some(name) if index == 0 => Some(name.to_vec()),
-        _ => {
-            let relative = relative_path(working_directory, root_directory, entry)?;
-            Some(entry_name(Some(&mut template), relative))
-        }
-    });
+    let names = entry_points
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| match compile_name {
+            Some(name) if index == 0 => Some(name.to_vec()),
+            _ => {
+                let relative = relative_path(working_directory, root_directory, entry)?;
+                Some(entry_name(Some(&mut template), relative))
+            }
+        });
     without_equal_names(names.collect::<Option<_>>()?, log)
 }
 
@@ -404,7 +440,10 @@ fn without_equal_names(names: Vec<Vec<u8>>, log: &mut Log) -> Option<Vec<Vec<u8>
     let mut sorted: Vec<&Vec<u8>> = names.iter().collect();
     sorted.sort_unstable();
     let mut has_duplicate = false;
-    for group in sorted.chunk_by(|a, b| a == b).filter(|group| group.len() > 1) {
+    for group in sorted
+        .chunk_by(|a, b| a == b)
+        .filter(|group| group.len() > 1)
+    {
         has_duplicate = true;
         log.add_error_fmt(
             None,
@@ -464,7 +503,7 @@ pub fn expand_entry_points<T: AsRef<[u8]>>(
     log: &mut Log,
 ) -> Option<Vec<Vec<u8>>> {
     let mut expanded = Vec::new();
-    let mut absolute_paths = HashSet::new();
+    let mut absolute_paths = bun_collections::StringSet::new();
     let mut has_failed = false;
     for entry in entry_points.iter().map(T::as_ref) {
         let absolute_entry = absolute_path(working_directory, entry);
@@ -482,11 +521,16 @@ pub fn expand_entry_points<T: AsRef<[u8]>>(
             log.add_error_fmt(
                 None,
                 Loc::EMPTY,
-                format_args!("no file matches the entry point \"{}\"", bstr::BStr::new(entry)),
+                format_args!(
+                    "no file matches the entry point \"{}\"",
+                    bstr::BStr::new(entry)
+                ),
             );
         }
         for file in files {
-            if absolute_paths.insert(absolute_path(working_directory, &file)) {
+            let path = absolute_path(working_directory, &file);
+            if !absolute_paths.contains(&path) {
+                bun_core::handle_oom(absolute_paths.insert(&path));
                 expanded.push(file);
             }
         }

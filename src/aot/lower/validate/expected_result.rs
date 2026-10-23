@@ -210,9 +210,10 @@ pub(super) fn result_type(
     }
     // Every mapped type admits `undefined` and `null`.
     match file.queries.without_nullish(ty) {
-        Ok(listed) if listed == ty => {
-            file.fragment.types.without_primitives(mapped.ty, Primitives::NULLISH)
-        }
+        Ok(listed) if listed == ty => file
+            .fragment
+            .types
+            .without_primitives(mapped.ty, Primitives::NULLISH),
         Ok(_) | Err(_) => mapped.ty,
     }
 }
@@ -234,7 +235,10 @@ fn find_written_result(
         WrittenType::Unwritten | WrittenType::GaveUp(_) => return None,
     };
     // The record says what code that the engine cannot see creates. It sees a body.
-    if target.declaration.is_some_and(|declaration| has_body(file, declaration)) {
+    if target
+        .declaration
+        .is_some_and(|declaration| has_body(file, declaration))
+    {
         return None;
     }
     let position = file.hir[call].pos;
@@ -312,7 +316,12 @@ fn report_validation_error(
 ) {
     let described = match error {
         ValidationError::TypeParameter { text } => {
-            report_at(file, call, Code::ValidationTypeParameter, &[text.as_slice()]);
+            report_at(
+                file,
+                call,
+                Code::ValidationTypeParameter,
+                &[text.as_slice()],
+            );
             return;
         }
         ValidationError::GaveUp(GaveUp::ErrorType) => return,

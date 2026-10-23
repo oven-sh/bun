@@ -8,7 +8,9 @@ fn find_function_of_other_project(
     layout: usize,
 ) -> Option<LayoutId> {
     let base = layouts[layout].base?;
-    let is_function = layouts[base.index()].flags.contains(LayoutFlags::IS_CONSTRUCTOR_FUNCTION);
+    let is_function = layouts[base.index()]
+        .flags
+        .contains(LayoutFlags::IS_CONSTRUCTOR_FUNCTION);
     (is_function && keys[base.index()].project != keys[layout].project).then_some(base)
 }
 

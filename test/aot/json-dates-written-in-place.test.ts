@@ -6,7 +6,9 @@ import { built } from "./run-programs";
 import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "main.ts": `
     interface Comment { id: number; at: Date; replies: Comment[] }
     const comment = (id: number, depth: number): Comment => ({ id, at: new Date(1_700_000_000_000 + id * 86_400_123), replies: depth ? [comment(id * 2 + 1, depth - 1), comment(id * 2 + 2, depth - 1)] : [] });
@@ -49,7 +51,9 @@ test("JSON.stringify takes the slow path for a date with its own toJSON and for 
     const path = join(cwd, "counts-" + argument.replace(" ", "-"));
     const env = { ...bunEnv, BUN_JSC_aotCountsPath: path };
     expect(await run([executable, argument], cwd, env)).toEqual({ stdout, stderr: "", exitCode: 0 });
-    const entries = readFileSync(path, "utf8").split("\n").map(line => line.split("\t"));
+    const entries = readFileSync(path, "utf8")
+      .split("\n")
+      .map(line => line.split("\t"));
     return entries.filter(([, name]) => name === "counter:JSONStringifySlowPaths").map(([count]) => Number(count));
   };
 

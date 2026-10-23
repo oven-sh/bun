@@ -27,24 +27,51 @@ import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } 
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { basename, join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
-import { alwaysFailing, buildCounted, parseCounts, run, tabulate, testsAddedByTheCompiler, withoutCollections, withSteadyCollections } from "../harness/counted-run";
+import {
+  alwaysFailing,
+  buildCounted,
+  parseCounts,
+  run,
+  tabulate,
+  testsAddedByTheCompiler,
+  withoutCollections,
+  withSteadyCollections,
+} from "../harness/counted-run";
 import { compileCommand, runtimeEnvironment } from "../harness/flags";
 import { slot, wanted } from "../run-programs";
 import { describe, test } from "../supported";
 
-const numbers = ["millionInstructions", "testsFailed", "alwaysFailing", "accessesByName", "runtimeOperations", "callsNotExpected"] as const;
+const numbers = [
+  "millionInstructions",
+  "testsFailed",
+  "alwaysFailing",
+  "accessesByName",
+  "runtimeOperations",
+  "callsNotExpected",
+] as const;
 type Budget = Partial<Record<(typeof numbers)[number], number>>;
 
 const budgetsPath = join(import.meta.dir, "small-benchmarks.linux-x64.json");
 const budgets: Record<string, Budget> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
 const mode = process.env.AOT_BUDGETS;
-const skipped = !isLinux || process.arch !== "x64" ? "the budgets are those of Linux on x64" : isDebug || isASAN ? "a debug or ASAN build counts other instructions" : undefined;
+const skipped =
+  !isLinux || process.arch !== "x64"
+    ? "the budgets are those of Linux on x64"
+    : isDebug || isASAN
+      ? "a debug or ASAN build counts other instructions"
+      : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/small-benchmarks.test.ts: ${skipped}`);
 
-const allowed = (budget: number, what: (typeof numbers)[number]) => (what === "millionInstructions" ? budget * 1.03 + 2 : budget * 1.01 + 2);
+const allowed = (budget: number, what: (typeof numbers)[number]) =>
+  what === "millionInstructions" ? budget * 1.03 + 2 : budget * 1.01 + 2;
 
 const folders = [join(import.meta.dir, "..", "programs", "small-benchmarks"), join(import.meta.dir, "witnesses")];
-const programs = folders.flatMap(folder => readdirSync(folder).filter(name => /\.[jt]s$/.test(name)).sort().map(name => join(folder, name)));
+const programs = folders.flatMap(folder =>
+  readdirSync(folder)
+    .filter(name => /\.[jt]s$/.test(name))
+    .sort()
+    .map(name => join(folder, name)),
+);
 const nameOf = (path: string) => basename(path).replace(/\.[jt]s$/, "");
 
 describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
@@ -53,21 +80,44 @@ describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
   let base: Required<Budget>;
   afterAll(() => {
     rmSync(folder, { recursive: true, force: true });
-    if (mode) writeFileSync(budgetsPath, JSON.stringify(Object.fromEntries(Object.entries(budgets).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n");
+    if (mode)
+      writeFileSync(
+        budgetsPath,
+        JSON.stringify(Object.fromEntries(Object.entries(budgets).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) +
+          "\n",
+      );
   });
 
   async function measure(source: string): Promise<Required<Budget> & { printed: string }> {
     const name = nameOf(source);
     const executable = join(folder, `${name}-plain`);
-    const built = await run([bunExe(), ...compileCommand, `./${source}`, "--outfile", executable], folder, { ...bunEnv, NO_COLOR: "1" });
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
-    const { instructions } = await measureCommand(folder, [executable], 300_000, { ...bunEnv, ...withSteadyCollections });
+    const built = await run([bunExe(), ...compileCommand, `./${source}`, "--outfile", executable], folder, {
+      ...bunEnv,
+      NO_COLOR: "1",
+    });
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+      stderr: expect.not.stringMatching(/^error\b/m),
+      exitCode: 0,
+    });
+    const { instructions } = await measureCommand(folder, [executable], 300_000, {
+      ...bunEnv,
+      ...withSteadyCollections,
+    });
     rmSync(executable);
 
     const counted = await buildCounted(folder, `./${source}`);
     const counts = `${counted.executable}.counts`;
-    const ran = await run([counted.executable], folder, { ...bunEnv, ...withoutCollections, [runtimeEnvironment.forbidsInterpreter]: "1", [runtimeEnvironment.countsPath]: counts });
-    expect({ stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ stderr: "", exitCode: 0, signal: null });
+    const ran = await run([counted.executable], folder, {
+      ...bunEnv,
+      ...withoutCollections,
+      [runtimeEnvironment.forbidsInterpreter]: "1",
+      [runtimeEnvironment.countsPath]: counts,
+    });
+    expect({ stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
     const work = tabulate(counted, parseCounts(""), parseCounts(readFileSync(counts, "utf8")), 1);
     rmSync(counted.executable);
     const added = work.tests.filter(each => testsAddedByTheCompiler.has(each.kind));
@@ -85,10 +135,24 @@ describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
   beforeAll(async () => {
     for (const path of programs) cpSync(path, join(folder, basename(path)));
     // With one function and one branch: a build with counters wants something to count.
-    writeFileSync(join(folder, nothing), `function pick(count: number) {\n  return count > 99 ? "another line" : "one line";\n}\nconsole.log(pick(process.argv.length));\n`);
+    writeFileSync(
+      join(folder, nothing),
+      `function pick(count: number) {\n  return count > 99 ? "another line" : "one line";\n}\nconsole.log(pick(process.argv.length));\n`,
+    );
     writeFileSync(
       join(folder, "tsconfig.json"),
-      JSON.stringify({ compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true, typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"], allowJs: true, noEmit: true } }),
+      JSON.stringify({
+        compilerOptions: {
+          target: "esnext",
+          module: "preserve",
+          moduleResolution: "bundler",
+          allowImportingTsExtensions: true,
+          typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")],
+          types: ["bun-types"],
+          allowJs: true,
+          noEmit: true,
+        },
+      }),
     );
     base = await measure(nothing);
   }, 600_000);
@@ -102,7 +166,9 @@ describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
         slot(async () => {
           const whole = await measure(basename(path));
           const now: Budget = {};
-          for (const what of numbers) if (!Number.isNaN(whole[what]) && !Number.isNaN(base[what])) now[what] = Math.max(0, whole[what] - base[what]);
+          for (const what of numbers)
+            if (!Number.isNaN(whole[what]) && !Number.isNaN(base[what]))
+              now[what] = Math.max(0, whole[what] - base[what]);
           const budget = budgets[name];
           if (mode === "accept" || !budget) {
             budgets[name] = now;
@@ -110,12 +176,20 @@ describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
             expect(["accept", "lower"]).toContain(mode);
             return;
           }
-          if (mode === "lower") budgets[name] = Object.fromEntries(numbers.flatMap(what => (now[what] === undefined ? [] : [[what, Math.min(now[what], budget[what] ?? Infinity)]])));
+          if (mode === "lower")
+            budgets[name] = Object.fromEntries(
+              numbers.flatMap(what =>
+                now[what] === undefined ? [] : [[what, Math.min(now[what], budget[what] ?? Infinity)]],
+              ),
+            );
           const judged = numbers.filter(what => now[what] !== undefined && budget[what] !== undefined);
-          const moved = (those: readonly (typeof numbers)[number][]) => those.map(what => `${what} ${budget[what]} -> ${now[what]}`).join(", ");
+          const moved = (those: readonly (typeof numbers)[number][]) =>
+            those.map(what => `${what} ${budget[what]} -> ${now[what]}`).join(", ");
           const worse = judged.filter(what => now[what]! > allowed(budget[what]!, what));
           const better = judged.filter(what => now[what]! < budget[what]! * 0.95 - 2);
-          console.error(`BUDGET ${name}: ${[worse.length ? `WORSE: ${moved(worse)}` : "", better.length ? `better: ${moved(better)}` : ""].filter(Boolean).join("; ") || "within"}`);
+          console.error(
+            `BUDGET ${name}: ${[worse.length ? `WORSE: ${moved(worse)}` : "", better.length ? `better: ${moved(better)}` : ""].filter(Boolean).join("; ") || "within"}`,
+          );
           expect(worse.map(what => `${what}: ${now[what]}, the budget is ${budget[what]}`)).toEqual([]);
         }),
       900_000,

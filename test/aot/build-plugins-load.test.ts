@@ -153,7 +153,9 @@ build.onLoad({ filter: /made-up\\.ts$/ }, () => ({ contents: "export const a: nu
     fails: "must be absolute",
   },
   "onResolve: one path in two namespaces is two modules": {
-    files: { "main.ts": `// @ts-nocheck\nimport { which as one } from "one:same"; import { which as two } from "two:same"; import { which as again } from "one:same"; console.log(one, two, again);` },
+    files: {
+      "main.ts": `// @ts-nocheck\nimport { which as one } from "one:same"; import { which as two } from "two:same"; import { which as again } from "one:same"; console.log(one, two, again);`,
+    },
     plugins: [
       `build.onResolve({ filter: /^(one|two):/ }, (args: any) => ({ path: args.path.slice(4), namespace: args.path.slice(0, 3) }));
 let loads = 0;
@@ -171,11 +173,16 @@ build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "ex
       "node_modules/pkg/index.js": `exports.name = "from the disk";`,
       "node_modules/pkg/index.d.ts": `export const name: string;`,
     },
-    plugins: [`build.onLoad({ filter: /node_modules\\/pkg\\/index\\.js$/ }, () => ({ contents: 'exports.name = "from the plugin";', loader: "js" }));`],
+    plugins: [
+      `build.onLoad({ filter: /node_modules\\/pkg\\/index\\.js$/ }, () => ({ contents: 'exports.name = "from the plugin";', loader: "js" }));`,
+    ],
     prints: "from the plugin\n",
   },
   "onResolve for a package that is not installed": {
-    files: { "main.ts": `// @ts-ignore\nimport { name } from "not-installed"; import { sub } from "not-installed/sub"; console.log(name, sub);`, "stand-in.ts": `export const name = "stand-in", sub = "sub";` },
+    files: {
+      "main.ts": `// @ts-ignore\nimport { name } from "not-installed"; import { sub } from "not-installed/sub"; console.log(name, sub);`,
+      "stand-in.ts": `export const name = "stand-in", sub = "sub";`,
+    },
     plugins: [`build.onResolve({ filter: /^not-installed/ }, () => ({ path: join(folder, "stand-in.ts") }));`],
   },
   "onResolve for a built-in module": {
@@ -183,7 +190,9 @@ build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "ex
       "main.ts": `// @ts-nocheck\nimport { sep } from "node:path"; import os from "os"; import { version } from "bun"; console.log(sep, typeof os, typeof version);`,
       "stand-in.ts": `export const sep = "stand-in"; export default "stand-in"; export const version = 1;`,
     },
-    plugins: [`build.onResolve({ filter: /^(node:path|os|bun)$/ }, (args: any) => { tell("onResolve", args); return { path: join(folder, "stand-in.ts") }; });`],
+    plugins: [
+      `build.onResolve({ filter: /^(node:path|os|bun)$/ }, (args: any) => { tell("onResolve", args); return { path: join(folder, "stand-in.ts") }; });`,
+    ],
   },
   "relative imports from a module in a namespace": {
     files: {
@@ -209,8 +218,13 @@ build.onLoad({ filter: /data\\.json$/ }, (args: any) => { tell("onLoad", args); 
     prints: "<p>plugin</p>\n 1\n",
   },
   "the types are those of the text that the plugin yields": {
-    files: { "main.ts": `import { value } from "./lib"; const n: number = value; console.log(typeof n, n);`, "lib.ts": `export const value: number = 1;` },
-    plugins: [`build.onLoad({ filter: /lib\\.ts$/ }, () => ({ contents: 'export const value: any = "a string";', loader: "ts" }));`],
+    files: {
+      "main.ts": `import { value } from "./lib"; const n: number = value; console.log(typeof n, n);`,
+      "lib.ts": `export const value: number = 1;`,
+    },
+    plugins: [
+      `build.onLoad({ filter: /lib\\.ts$/ }, () => ({ contents: 'export const value: any = "a string";', loader: "ts" }));`,
+    ],
     prints: "string a string\n",
   },
   // The checker resolves an import as TypeScript does, so it reads the file that is written. What runs is the file that onResolve picks.
@@ -228,7 +242,9 @@ build.onLoad({ filter: /data\\.json$/ }, (args: any) => { tell("onLoad", args); 
       "main.ts": `declare const Worker: any; const worker = new Worker("./worker.ts"); worker.onmessage = (event: any) => { console.log(event.data); worker.terminate(); };`,
       "worker.ts": `declare const postMessage: any; postMessage("worker on the disk");`,
     },
-    plugins: [`build.onLoad({ filter: /worker\\.ts$/ }, (args: any) => { tell("onLoad", args); return { contents: 'declare const postMessage: any; postMessage("worker from the plugin");', loader: "ts" }; });`],
+    plugins: [
+      `build.onLoad({ filter: /worker\\.ts$/ }, (args: any) => { tell("onLoad", args); return { contents: 'declare const postMessage: any; postMessage("worker from the plugin");', loader: "ts" }; });`,
+    ],
     options: `entrypoints: ["./main.ts", "./worker.ts"]`,
     prints: "worker from the plugin\n",
   },
@@ -248,6 +264,8 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: 'export 
       "main.ts": `import data from "./data.json"; import text from "./data.json" with { type: "text" }; console.log(data.n, typeof text, JSON.stringify(text));`,
       "data.json": `{ "n": 0 }`,
     },
-    plugins: [`build.onLoad({ filter: /data\\.json$/ }, (args: any) => { tell("onLoad", args); return { contents: '{ "n": 1 }' }; });`],
+    plugins: [
+      `build.onLoad({ filter: /data\\.json$/ }, (args: any) => { tell("onLoad", args); return { contents: '{ "n": 1 }' }; });`,
+    ],
   },
 });

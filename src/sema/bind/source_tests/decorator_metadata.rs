@@ -37,7 +37,11 @@ const ANNOTATIONS: &[(&str, &str, &[&str])] = &[
     ("ns.A", "ns.A", &["ns.A"]),
     ("ns.A | ns.B", "ns.B", &["ns.A", "ns.B"]),
     ("ns.A | Foo", "Object", &["ns.A", "Foo"]),
-    ("T extends Foo ? Bar : Bar", "Bar", &["T", "Foo", "Bar", "Bar"]),
+    (
+        "T extends Foo ? Bar : Bar",
+        "Bar",
+        &["T", "Foo", "Bar", "Bar"],
+    ),
     ("T extends 1 ? Foo : Bar", "Object", &["T", "Foo", "Bar"]),
     ("T extends 1 ? any : Foo", "Object", &["T"]),
     ("T extends 1 ? never : Foo", "Never", &["T"]),
@@ -52,14 +56,26 @@ const READ_ANNOTATIONS: &[(&str, &[&str])] = &[
     ("class E { @d declare a: Foo; }", &["Foo"]),
     ("class E { @d get a(): Foo { return 0 as any; } }", &["Foo"]),
     ("class E { @d set a(v: Foo) {} }", &["Foo"]),
-    ("class E { @d m(a: Foo): Bar { return a as any; } }", &["Foo", "Bar"]),
+    (
+        "class E { @d m(a: Foo): Bar { return a as any; } }",
+        &["Foo", "Bar"],
+    ),
     ("class E { @d m(...r: Foo[]) {} }", &[]),
     ("class E { m(a: Foo): Bar { return a as any; } }", &[]),
     ("class E { m(a: Foo, @d b: Bar) {} }", &["Bar"]),
-    ("class E { m(@d a: Foo, b: Bar): Foo { return a; } }", &["Foo", "Bar"]),
+    (
+        "class E { m(@d a: Foo, b: Bar): Foo { return a; } }",
+        &["Foo", "Bar"],
+    ),
     ("class E { constructor(a: Foo, @d b: Bar) {} }", &["Bar"]),
-    ("@d class E { constructor(a: Foo, b: Bar) {} }", &["Foo", "Bar"]),
-    ("@d class E { constructor(a: Foo); constructor(a: any) {} }", &["Foo"]),
+    (
+        "@d class E { constructor(a: Foo, b: Bar) {} }",
+        &["Foo", "Bar"],
+    ),
+    (
+        "@d class E { constructor(a: Foo); constructor(a: any) {} }",
+        &["Foo"],
+    ),
     ("const E = class { @d a: Foo; };", &["Foo"]),
 ];
 
@@ -100,7 +116,8 @@ fn analyzed_metadata(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send
 }
 
 fn import_spec(s: &Analyzed<'_>, index: u32) -> SymbolId {
-    s.bound.declared_symbol(Decl::ImportSpec(ImportSpecId(index)))
+    s.bound
+        .declared_symbol(Decl::ImportSpec(ImportSpecId(index)))
 }
 
 fn is_unused(s: &Analyzed<'_>, symbol: SymbolId) -> bool {
@@ -185,7 +202,10 @@ fn recorded_names_are_sorted_by_type_node() {
             let ImplicitReferenceKind::DecoratorMetadata(recorded) = reference.kind else {
                 panic!("{reference:?}");
             };
-            assert_eq!(find_metadata_binding(references, recorded), Some(reference.binding));
+            assert_eq!(
+                find_metadata_binding(references, recorded),
+                Some(reference.binding)
+            );
         }
     });
 }
@@ -217,8 +237,14 @@ fn members_serialize_in_js_parser_order() {
             entries_of(0),
             "[(Type, Type(Function)), (ParameterTypes, Types([String])), (ReturnType, Type(Void))]"
         );
-        assert_eq!(entries_of(1), "[(Type, Type(Number)), (ParameterTypes, Types([]))]");
-        assert_eq!(entries_of(2), "[(ParameterTypes, Types([Boolean])), (Type, Type(Boolean))]");
+        assert_eq!(
+            entries_of(1),
+            "[(Type, Type(Number)), (ParameterTypes, Types([]))]"
+        );
+        assert_eq!(
+            entries_of(2),
+            "[(ParameterTypes, Types([Boolean])), (Type, Type(Boolean))]"
+        );
         assert_eq!(
             entries_of(3),
             "[(Type, Type(Function)), (ParameterTypes, Types([])), (ReturnType, Type(Promise))]"
@@ -245,11 +271,14 @@ fn visited_names_keep_imports() {
 
 #[test]
 fn names_resolve_from_class_scope() {
-    analyzed_metadata(&format!("{IMPORTS}class B {{ @d m(Foo: Foo) {{}} }}"), |s| {
-        let references = s.bound.runtime.implicit_references();
-        let bindings: Vec<Binding> = references.iter().map(|r| r.binding).collect();
-        assert_eq!(bindings, [Binding::Symbol(import_spec(s, 0))]);
-    });
+    analyzed_metadata(
+        &format!("{IMPORTS}class B {{ @d m(Foo: Foo) {{}} }}"),
+        |s| {
+            let references = s.bound.runtime.implicit_references();
+            let bindings: Vec<Binding> = references.iter().map(|r| r.binding).collect();
+            assert_eq!(bindings, [Binding::Symbol(import_spec(s, 0))]);
+        },
+    );
 }
 
 #[test]
@@ -330,11 +359,14 @@ fn globals_resolve_from_enclosing_scope() {
         assert_eq!(recorded, Some(Binding::Symbol(s.variable("Number", 0))));
     });
 
-    analyzed_metadata(&format!("{DECORATOR}class String {{ @d x: string; }}"), |s| {
-        let class_symbol = s.bound.class_symbol[s.class("String").idx()];
-        let recorded = global_binding(s, "String", MetadataGlobal::String);
-        assert_eq!(recorded, Some(Binding::Symbol(class_symbol)));
-    });
+    analyzed_metadata(
+        &format!("{DECORATOR}class String {{ @d x: string; }}"),
+        |s| {
+            let class_symbol = s.bound.class_symbol[s.class("String").idx()];
+            let recorded = global_binding(s, "String", MetadataGlobal::String);
+            assert_eq!(recorded, Some(Binding::Symbol(class_symbol)));
+        },
+    );
 }
 
 #[test]

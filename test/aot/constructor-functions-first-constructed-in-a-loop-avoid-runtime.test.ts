@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -42,7 +42,12 @@ const files = {
   `,
 };
 
-const operations = ["operationAOTPutById", "operationAOTPutByIdAndCache", "operationAOTGetConstructPrototype", "operationAOTGetById"];
+const operations = [
+  "operationAOTPutById",
+  "operationAOTPutByIdAndCache",
+  "operationAOTGetConstructPrototype",
+  "operationAOTGetById",
+];
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -53,8 +58,15 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("a loop that holds the first construction by a constructor function stops asking the run time", async () => {
   using dir = tempDir("aot-constructor-functions-first-constructed-in-a-loop", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const counted = async (rounds: number) => {
     const path = join(String(dir), "counts" + rounds);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
@@ -74,6 +86,8 @@ test("a loop that holds the first construction by a constructor function stops a
   const many = await counted(2500);
   // The first construction asks. A renamed operation would count none.
   expect(operations.some(name => few[name]! > 0)).toBe(true);
-  const more = Object.fromEntries(operations.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]));
+  const more = Object.fromEntries(
+    operations.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]),
+  );
   expect(more).toEqual(Object.fromEntries(operations.map(name => [name, "level"])));
 }, 240_000);

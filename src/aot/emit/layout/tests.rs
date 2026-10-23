@@ -105,7 +105,10 @@ fn plan_rejects_more_than_4_gib() {
     let largest = create_plan(&[(ProgramList::Bytes, largest_byte_count)]);
     assert_eq!(u64::from(largest.size_in_bytes), LARGEST_PROGRAM_SIZE);
     let last_section = largest.sections[ProgramList::COUNT - 1];
-    assert_eq!(u64::from(last_section.offset_in_bytes), LARGEST_PROGRAM_SIZE);
+    assert_eq!(
+        u64::from(last_section.offset_in_bytes),
+        LARGEST_PROGRAM_SIZE
+    );
 
     let error = plan_error(&[(ProgramList::Bytes, largest_byte_count + 1)]);
     assert_eq!(error, too_large(1 << 32));
@@ -118,7 +121,10 @@ fn plan_measures_bytes_not_records() {
     assert!(element_size > 1);
     let fitting_count = (LARGEST_PROGRAM_SIZE - HEADER_SIZE) / element_size;
     let fitting = create_plan(&[(list, fitting_count)]);
-    assert_eq!(u64::from(fitting.sections[list as usize].count), fitting_count);
+    assert_eq!(
+        u64::from(fitting.sections[list as usize].count),
+        fitting_count
+    );
 
     let count = (1 << 32) / element_size + 1;
     assert!(count <= u64::from(u32::MAX));
@@ -129,7 +135,10 @@ fn plan_measures_bytes_not_records() {
 #[test]
 fn plan_adds_up_every_list() {
     let bytes = (ProgramList::Bytes, 1 << 31);
-    let code = (ProgramList::Code, (1 << 31) / ProgramList::Code.element_size() as u64);
+    let code = (
+        ProgramList::Code,
+        (1 << 31) / ProgramList::Code.element_size() as u64,
+    );
     assert_eq!(plan_error(&[bytes]), None);
     assert_eq!(plan_error(&[code]), None);
     let size = round_up(HEADER_SIZE + (1 << 32), 8);

@@ -7,9 +7,9 @@
 // round. Each also asks for four types that are within the limit only for a checker that knows what the file in front of it has
 // asked for: ten elements more of the same tuple.
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 setDefaultTimeout(240_000);
 
@@ -26,7 +26,9 @@ function typesModule(): string {
     `export type TooLong = ${tupleOf(9, 400)};`,
   ];
   for (let file = 1; file <= fileCount; file++) {
-    families.forEach((name, family) => lines.push(`export type ${name}${lengthOf(file, family)} = ${tupleOf(family, lengthOf(file, family))};`));
+    families.forEach((name, family) =>
+      lines.push(`export type ${name}${lengthOf(file, family)} = ${tupleOf(family, lengthOf(file, family))};`),
+    );
   }
   return lines.join("\n") + "\n";
 }
@@ -54,7 +56,17 @@ function codeModule(file: number, limitComesFirst: boolean): string {
 function program(limitComesFirst: boolean): Record<string, string> {
   const indices = Array.from({ length: fileCount }, (_, index) => index + 1);
   const files: Record<string, string> = {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", allowImportingTsExtensions: true, noEmit: true, types: [] } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        target: "esnext",
+        module: "esnext",
+        moduleResolution: "bundler",
+        allowImportingTsExtensions: true,
+        noEmit: true,
+        types: [],
+      },
+    }),
     "types.ts": typesModule(),
     "main.ts":
       indices.map(file => `import { read${file}, kept${file} } from "./file${file}.ts";\n`).join("") +
@@ -68,14 +80,27 @@ function program(limitComesFirst: boolean): Record<string, string> {
 async function build(directory: string, threads: number, round: number) {
   const name = `threads-${threads}-${round}`;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, `--aot-out=${name}.program`, "main.ts", "--outfile", "app"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `--aot-threads=${threads}`,
+      `--aot-out=${name}.program`,
+      "main.ts",
+      "--outfile",
+      "app",
+    ],
     cwd: directory,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({ errors: [], exitCode: 0 });
+  expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
+    errors: [],
+    exitCode: 0,
+  });
   return {
     program: Bun.hash(await Bun.file(join(directory, `${name}.program`)).bytes()),
     executable: Bun.hash(await Bun.file(join(directory, "app")).bytes()),

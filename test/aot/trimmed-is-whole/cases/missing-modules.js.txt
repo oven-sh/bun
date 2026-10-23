@@ -58,7 +58,7 @@ try { console.log(require(process.cwd() + "/plugin.js")); } catch (error) { say(
 //@ file cwd/plugin.mjs "export default 'plugin ' + typeof HTMLRewriter;"
 try { console.log((await import(process.cwd() + "/plugin.mjs")).default); } catch (error) { say(error); }
 //// json-present-at-run-time
-//@ todo with --trim a JSON file that is there at run time is not loaded under a computed path: MODULE_NOT_FOUND, "it isn't in this executable"; without --trim it is
+//@ trimmed-says it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external.
 //@ ext cjs
 //@ file cwd/config.json "{\"a\": 1}"
 try { console.log(require(process.cwd() + "/config.json")); } catch (error) { say(error); }

@@ -84,7 +84,10 @@ fn assert_identical(evaluator: &Evaluator<'_, '_>, value: Value, expected: Value
 
 fn concatenate_scratch(evaluator: &Evaluator<'_, '_>, parts: [&'static str; 2]) -> Value {
     let text = evaluator.add_all(parts.map(|part| Str(part).to_value(evaluator)));
-    assert!(matches!(text, Value::Known(Primitive::ScratchString(_))), "{parts:?}");
+    assert!(
+        matches!(text, Value::Known(Primitive::ScratchString(_))),
+        "{parts:?}"
+    );
     text
 }
 
@@ -268,7 +271,10 @@ fn to_string_follows_ecmascript() {
     with_evaluator(|evaluator| {
         for (literal, expected) in cases {
             let mut text = Vec::new();
-            push_string(&mut text, evaluator.operand(literal.to_primitive(evaluator)));
+            push_string(
+                &mut text,
+                evaluator.operand(literal.to_primitive(evaluator)),
+            );
             assert_eq!(text, expected.as_bytes(), "{literal:?}");
         }
     });
@@ -318,10 +324,16 @@ fn is_string_sees_scratch_strings() {
             assert!(evaluator.is_string(scratch), "{parts:?}");
         }
         for literal in [Str(""), Str("a")] {
-            assert!(evaluator.is_string(literal.to_primitive(evaluator)), "{literal:?}");
+            assert!(
+                evaluator.is_string(literal.to_primitive(evaluator)),
+                "{literal:?}"
+            );
         }
         for literal in [Undefined, Null, Bool(true), Num(1.0), Big("1")] {
-            assert!(!evaluator.is_string(literal.to_primitive(evaluator)), "{literal:?}");
+            assert!(
+                !evaluator.is_string(literal.to_primitive(evaluator)),
+                "{literal:?}"
+            );
         }
     });
 }
@@ -418,7 +430,14 @@ fn to_constant_interns_computed_string() {
         let template = evaluator.concatenate(&texts, &[sum]);
         let is_equal = evaluator.binary(BinOp::EqEqEq, sum, template);
         assert_identical(evaluator, is_equal, Bool(false).to_value(evaluator));
-        for text in ["pq", "1234.5", "pq1234.5", "pq1234.5r", "spq1234.5r", "spq1234.5rt"] {
+        for text in [
+            "pq",
+            "1234.5",
+            "pq1234.5",
+            "pq1234.5r",
+            "spq1234.5r",
+            "spq1234.5rt",
+        ] {
             assert_eq!(evaluator.atoms.lookup(text.as_bytes()), None, "{text}");
         }
         let Some(Constant::String(interned)) = to_constant(evaluator, template) else {
@@ -448,26 +467,85 @@ fn scratch_strings_are_operands() {
         let value = |literal: Literal| literal.to_value(evaluator);
         let scratch = |parts| concatenate_scratch(evaluator, parts);
         let binary_cases = [
-            (scratch(["a", "b"]), BinOp::EqEqEq, value(Str("ab")), Bool(true)),
-            (value(Str("ab")), BinOp::EqEqEq, scratch(["a", "b"]), Bool(true)),
-            (scratch(["a", "b"]), BinOp::EqEqEq, scratch(["", "ab"]), Bool(true)),
-            (scratch(["a", "b"]), BinOp::NotEqEq, scratch(["a", "c"]), Bool(true)),
-            (scratch(["a", "b"]), BinOp::EqEqEq, value(Str("a")), Bool(false)),
-            (scratch(["a", "b"]), BinOp::EqEq, value(Str("ab")), Bool(true)),
-            (scratch(["1", "2"]), BinOp::EqEq, value(Num(12.0)), Bool(true)),
-            (scratch(["1", "2"]), BinOp::EqEqEq, value(Num(12.0)), Bool(false)),
+            (
+                scratch(["a", "b"]),
+                BinOp::EqEqEq,
+                value(Str("ab")),
+                Bool(true),
+            ),
+            (
+                value(Str("ab")),
+                BinOp::EqEqEq,
+                scratch(["a", "b"]),
+                Bool(true),
+            ),
+            (
+                scratch(["a", "b"]),
+                BinOp::EqEqEq,
+                scratch(["", "ab"]),
+                Bool(true),
+            ),
+            (
+                scratch(["a", "b"]),
+                BinOp::NotEqEq,
+                scratch(["a", "c"]),
+                Bool(true),
+            ),
+            (
+                scratch(["a", "b"]),
+                BinOp::EqEqEq,
+                value(Str("a")),
+                Bool(false),
+            ),
+            (
+                scratch(["a", "b"]),
+                BinOp::EqEq,
+                value(Str("ab")),
+                Bool(true),
+            ),
+            (
+                scratch(["1", "2"]),
+                BinOp::EqEq,
+                value(Num(12.0)),
+                Bool(true),
+            ),
+            (
+                scratch(["1", "2"]),
+                BinOp::EqEqEq,
+                value(Num(12.0)),
+                Bool(false),
+            ),
             (scratch(["a", "b"]), BinOp::NotEq, value(Null), Bool(true)),
             (scratch(["1", "2"]), BinOp::Mul, value(Num(2.0)), Num(24.0)),
-            (scratch(["0x", "10"]), BinOp::BitOr, value(Num(0.0)), Num(16.0)),
-            (scratch(["a", "b"]), BinOp::Lt, scratch(["a", "c"]), Bool(true)),
+            (
+                scratch(["0x", "10"]),
+                BinOp::BitOr,
+                value(Num(0.0)),
+                Num(16.0),
+            ),
+            (
+                scratch(["a", "b"]),
+                BinOp::Lt,
+                scratch(["a", "c"]),
+                Bool(true),
+            ),
             (scratch(["1", "0"]), BinOp::Lt, value(Num(9.0)), Bool(false)),
             (scratch(["a", "é"]), BinOp::Lt, value(Str("b")), Unknown),
-            (scratch(["a", "b"]), BinOp::Add, scratch(["c", "d"]), Str("abcd")),
+            (
+                scratch(["a", "b"]),
+                BinOp::Add,
+                scratch(["c", "d"]),
+                Str("abcd"),
+            ),
             (value(Num(1.0)), BinOp::Add, scratch(["a", "b"]), Str("1ab")),
             (scratch(["a", "b"]), BinOp::Add, value(Unknown), Unknown),
         ];
         for (left, op, right, expected) in binary_cases {
-            assert_identical(evaluator, evaluator.binary(op, left, right), value(expected));
+            assert_identical(
+                evaluator,
+                evaluator.binary(op, left, right),
+                value(expected),
+            );
         }
         let unary_cases = [
             (UnOp::Typeof, scratch(["a", "b"]), Str("string")),
@@ -529,7 +607,12 @@ fn exponentiation_folds_exact_cases_only() {
         (Num(-0.0), BinOp::Pow, Num(1000001.0), Num(-0.0)),
         (Num(2.0), BinOp::Pow, Num(53.0), Num(9007199254740992.0)),
         (Num(-2.0), BinOp::Pow, Num(53.0), Num(-9007199254740992.0)),
-        (Num(9007199254740992.0), BinOp::Pow, Num(1.0), Num(9007199254740992.0)),
+        (
+            Num(9007199254740992.0),
+            BinOp::Pow,
+            Num(1.0),
+            Num(9007199254740992.0),
+        ),
         (Str("2"), BinOp::Pow, Str("3"), Num(8.0)),
         (Num(0.0), BinOp::Pow, Num(0.0), Num(1.0)),
         (NAN, BinOp::Pow, Num(-0.0), Num(1.0)),
@@ -831,7 +914,11 @@ fn long_strings_are_unknown() {
         assert_identical(evaluator, evaluator.add_all([quarter; 5]), Value::Unknown);
 
         let texts = [known::empty; 3];
-        assert_identical(evaluator, evaluator.concatenate(&texts[..2], &[longest]), longest);
+        assert_identical(
+            evaluator,
+            evaluator.concatenate(&texts[..2], &[longest]),
+            longest,
+        );
         let template = evaluator.concatenate(&texts, &[longest, repeat(1)]);
         assert_identical(evaluator, template, Value::Unknown);
     });

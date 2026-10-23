@@ -14,7 +14,9 @@ const env = { ...bunEnv, NO_COLOR: "1" };
 // Many literals of different shapes through one function, as a registry of tools or routes is built.
 const members = ["call", "check", "label", "map", "render", "summary", "validate", "alpha", "beta", "gamma", "delta"];
 const literals = Array.from({ length: 60 }, (_, index) => {
-  const chosen = members.filter((_, position) => (index >> position % 5) % 2 === 0 || position === index % members.length);
+  const chosen = members.filter(
+    (_, position) => (index >> (position % 5)) % 2 === 0 || position === index % members.length,
+  );
   const methods = chosen.map(name => `${name}(input) { return ${index}; }`);
   const accessor = index % 3 === 0 ? [`get schema() { return { kind: ${index} }; }`] : [];
   return `built.push(build({ name: "tool${index}", ${[...methods, ...accessor].join(", ")} }));`;
@@ -32,7 +34,8 @@ console.log(built.length, schemas, built[7].shownName(), Object.keys(built[3]).j
 `;
 
 function callsIn(output: string) {
-  const callsOf = (overload: string) => output.split("\n").filter(line => line.includes(` overload=${overload}/`)).length;
+  const callsOf = (overload: string) =>
+    output.split("\n").filter(line => line.includes(` overload=${overload}/`)).length;
   return {
     fused: callsOf("CompilerHelpersDefinePropertiesFrom"),
     descriptions: callsOf("ObjectGetOwnPropertyDescriptors"),
@@ -44,10 +47,14 @@ test("no object describes a property on its way from one object to another", asy
   using dir = tempDir("aot-copied-by-descriptors", { "main.js": program });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
-  const build = await spawned([bunExe(), ...compileCommand, "--explain=statistics", "main.js", "--outfile", executable], folder, {
-    ...env,
-    [buildEnvironment.dumpsIR]: "Selected",
-  });
+  const build = await spawned(
+    [bunExe(), ...compileCommand, "--explain=statistics", "main.js", "--outfile", executable],
+    folder,
+    {
+      ...env,
+      [buildEnvironment.dumpsIR]: "Selected",
+    },
+  );
   built(build);
   const output = build.stdout + build.stderr;
   expect(callsIn(output)).toEqual({ fused: 1, descriptions: 0, definitions: 0 });
@@ -63,10 +70,14 @@ test("nor where the copies behind a typed read join between the two calls", asyn
   const programs = join(import.meta.dir, "programs", "definitions-by-descriptor");
   using dir = tempDir("aot-copied-behind-a-typed-read", {});
   const executable = join(String(dir), isWindows ? "app.exe" : "app");
-  const build = await spawned([bunExe(), ...compileCommand, "own-properties-copied-behind-a-typed-read.ts", "--outfile", executable], programs, {
-    ...env,
-    [buildEnvironment.dumpsIR]: "Selected",
-  });
+  const build = await spawned(
+    [bunExe(), ...compileCommand, "own-properties-copied-behind-a-typed-read.ts", "--outfile", executable],
+    programs,
+    {
+      ...env,
+      [buildEnvironment.dumpsIR]: "Selected",
+    },
+  );
   built(build);
   const calls = callsIn(build.stdout + build.stderr);
   expect(calls.fused).toBeGreaterThan(0);

@@ -441,10 +441,18 @@ for (let i = 0; i < cases.length; i++) {
 }
 log(stringify(out));
 `;
-const table = cases.map(({ target, code }) => `  [() => ${target}, () => { ${code.startsWith("Reflect.") ? "return " : ""}${code} }],\n`).join("");
+const table = cases
+  .map(({ target, code }) => `  [() => ${target}, () => { ${code.startsWith("Reflect.") ? "return " : ""}${code} }],\n`)
+  .join("");
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -465,14 +473,21 @@ describe.skipIf(!!unsupported)("writes to built-in objects under --aot", () => {
       bun(cwd, "run", "--debug-aot", "run.cjs"),
     ]);
     const answers = (run: { stdout: string; stderr: string }): string[] => {
-      expect(run.stderr.split("\n").filter(line => /^(error|warn): /.test(line) && !line.startsWith("warn: TS100014: "))).toEqual([]);
+      expect(
+        run.stderr.split("\n").filter(line => /^(error|warn): /.test(line) && !line.startsWith("warn: TS100014: ")),
+      ).toEqual([]);
       return JSON.parse(run.stdout);
     };
     const [was, is, wasSloppy, isSloppy] = [plain, compiled, plainSloppy, compiledSloppy].map(answers);
 
     // Rejected: it changes nothing, and says so, in sloppy code too. Otherwise it does what it does without `--aot`.
-    const verdict = (before: string, now: string) => (now === before ? "same" : /^(throws TypeError|false)$/.test(now) ? "rejected" : `${before} | ${now}`);
-    const found = cases.map(({ code }, i) => ({ code, run: verdict(was[i], is[i]), sloppy: verdict(wasSloppy[i], isSloppy[i]) }));
+    const verdict = (before: string, now: string) =>
+      now === before ? "same" : /^(throws TypeError|false)$/.test(now) ? "rejected" : `${before} | ${now}`;
+    const found = cases.map(({ code }, i) => ({
+      code,
+      run: verdict(was[i], is[i]),
+      sloppy: verdict(wasSloppy[i], isSloppy[i]),
+    }));
     expect(found).toEqual(cases.map(({ code, run, sloppy }) => ({ code, run, sloppy })));
   }, 120_000);
 
@@ -480,33 +495,66 @@ describe.skipIf(!!unsupported)("writes to built-in objects under --aot", () => {
     const numbered = cases.map((each, i) => ({ ...each, file: `writes/${i}.${each.extension}` }));
     using dir = tempDir("aot-locked-builtins", {
       "package.json": `{ "name": "writes", "type": "module" }`,
-      "main.js": numbered.filter(({ build }) => build === "same").map(({ file }) => `import "./${file}";\n`).join(""),
+      "main.js": numbered
+        .filter(({ build }) => build === "same")
+        .map(({ file }) => `import "./${file}";\n`)
+        .join(""),
       ...Object.fromEntries(numbered.map(({ code, file }) => [file, `${head}${code}\n`])),
     });
     const cwd = String(dir);
-    const verdict = (exitCode: number, said: string, errors: string[]) => (exitCode === 0 && errors.length === 0 ? "same" : exitCode === 1 && errors.join() === "TS100014 in line 2" ? "rejected" : said);
+    const verdict = (exitCode: number, said: string, errors: string[]) =>
+      exitCode === 0 && errors.length === 0
+        ? "same"
+        : exitCode === 1 && errors.join() === "TS100014 in line 2"
+          ? "rejected"
+          : said;
     const check = (file: string) =>
       slot(async () => {
         const { stdout, stderr, exitCode } = await bun(cwd, "check", "--aot", "--no-pretty", file);
-        return verdict(exitCode, stdout + stderr, Array.from(stdout.matchAll(/\((\d+),\d+\): error (TS\d+): /g), ([, line, code]) => `${code} in line ${line}`));
+        return verdict(
+          exitCode,
+          stdout + stderr,
+          Array.from(stdout.matchAll(/\((\d+),\d+\): error (TS\d+): /g), ([, line, code]) => `${code} in line ${line}`),
+        );
       });
     const build = (entryPoint: string) =>
       slot(async () => {
         const outfile = entryPoint.replaceAll("/", "-") + ".out";
         const { stderr, exitCode } = await bun(cwd, "build", "--compile", "--aot", entryPoint, "--outfile", outfile);
         rmSync(join(cwd, outfile), { force: true });
-        return verdict(exitCode, stderr, Array.from(stderr.matchAll(/^error: (TS\d+): .*\n\s+at .*:(\d+):\d+$/gm), ([, code, line]) => `${code} in line ${line}`));
+        return verdict(
+          exitCode,
+          stderr,
+          Array.from(
+            stderr.matchAll(/^error: (TS\d+): .*\n\s+at .*:(\d+):\d+$/gm),
+            ([, code, line]) => `${code} in line ${line}`,
+          ),
+        );
       });
 
     // Each write is checked alone. One that stops the build is built alone too, and the others are built as one program.
     const stopping = numbered.filter(each => each.build === "rejected");
-    const [together, checked, built] = await Promise.all([build("main.js"), Promise.all(numbered.map(({ file }) => check(file))), Promise.all(stopping.map(({ file }) => build(file)))]);
-    expect(numbered.map(({ code }, i) => ({ code, build: checked[i] }))).toEqual(numbered.map(({ code, build }) => ({ code, build })));
-    expect(stopping.map(({ code }, i) => ({ code, build: built[i] }))).toEqual(stopping.map(({ code, build }) => ({ code, build })));
+    const [together, checked, built] = await Promise.all([
+      build("main.js"),
+      Promise.all(numbered.map(({ file }) => check(file))),
+      Promise.all(stopping.map(({ file }) => build(file))),
+    ]);
+    expect(numbered.map(({ code }, i) => ({ code, build: checked[i] }))).toEqual(
+      numbered.map(({ code, build }) => ({ code, build })),
+    );
+    expect(stopping.map(({ code }, i) => ({ code, build: built[i] }))).toEqual(
+      stopping.map(({ code, build }) => ({ code, build })),
+    );
     expect(together).toBe("same");
   }, 390_000);
 
-  test.todo("the build reports each of two writes to one member: of `Math.max = f; delete Math.max;` it reports the first alone");
-  test.todo("the build stops at `Object.setPrototypeOf(Math, {})`, `Object.assign(Array, { from: f })`, `Array.prototype[0] = f`, `Array.prototype.length = 3` and `globalThis.globalThis = f`, which always throw");
-  test.todo("a store to __proto__ that changes nothing does not throw: `Array.prototype.__proto__ = Object.prototype`, `Array.prototype.__proto__ = 1`");
+  test.todo(
+    "the build reports each of two writes to one member: of `Math.max = f; delete Math.max;` it reports the first alone",
+  );
+  test.todo(
+    "the build stops at `Object.setPrototypeOf(Math, {})`, `Object.assign(Array, { from: f })`, `Array.prototype[0] = f`, `Array.prototype.length = 3` and `globalThis.globalThis = f`, which always throw",
+  );
+  test.todo(
+    "a store to __proto__ that changes nothing does not throw: `Array.prototype.__proto__ = Object.prototype`, `Array.prototype.__proto__ = 1`",
+  );
 });

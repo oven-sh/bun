@@ -201,7 +201,9 @@ impl EndFinder<'_, '_, '_> {
             }
             Some(NamedValue::PrototypeOperation(_)) => None,
             None => {
-                let declaration = self.named_values.find_library_declaration(self.file, expression);
+                let declaration = self
+                    .named_values
+                    .find_library_declaration(self.file, expression);
                 declaration.map(LinkEnd::LibraryDeclaration)
             }
         }
@@ -212,7 +214,10 @@ impl EndFinder<'_, '_, '_> {
     }
 
     fn find_owner_of_prototype_object(&self, expression: ExprId) -> Option<LinkEnd> {
-        match self.hir.member_key(self.hir.skip_type_assertions(expression))? {
+        match self
+            .hir
+            .member_key(self.hir.skip_type_assertions(expression))?
+        {
             (owner, MemberKey::Name(name)) if name == known::prototype => self.find_end(owner),
             (_, MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_)) => None,
         }
@@ -251,14 +256,16 @@ impl EndFinder<'_, '_, '_> {
         let ExprKind::Call(site) = self.hir[call].kind else {
             return None;
         };
-        self.named_values.find_named_value(self.file, self.hir[site].callee)
+        self.named_values
+            .find_named_value(self.file, self.hir[site].callee)
     }
 
     fn find_called_member(&self, call: ExprId) -> Option<(ExprId, MemberKey)> {
         let ExprKind::Call(site) = self.hir[call].kind else {
             return None;
         };
-        self.hir.member_key(self.hir.skip_type_assertions(self.hir[site].callee))
+        self.hir
+            .member_key(self.hir.skip_type_assertions(self.hir[site].callee))
     }
 
     fn find_parent_in_literal(&self, properties: Span<PropId>) -> Option<LinkEnd> {
@@ -443,7 +450,10 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
                 Some((_, MemberKey::Name(name))) if name == known::call || name == known::apply => {
                     self.visit_call_passing_receiver(call, 0);
                 }
-                Some((_, MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_)))
+                Some((
+                    _,
+                    MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_),
+                ))
                 | None => {}
             },
         }
@@ -551,8 +561,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let caller = self.find_function_of_this(file, passing.this)?;
             Some((caller, passing.call))
         };
-        let mut calls_passing_this: Vec<(FnId, FunctionCall)> =
-            calls_passing_this.into_iter().filter_map(find_caller).collect();
+        let mut calls_passing_this: Vec<(FnId, FunctionCall)> = calls_passing_this
+            .into_iter()
+            .filter_map(find_caller)
+            .collect();
         links_of_parameters.sort_by_key(|entry| entry.0);
         calls_passing_parameters.sort_by_key(|entry| entry.0);
         calls_passing_this.sort_by_key(|&(caller, call)| (caller, hir[call.call].pos, call.call));

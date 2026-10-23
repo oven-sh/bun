@@ -1,14 +1,26 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(120_000);
 
 const isUnsupportedHere = (stderr: string) =>
   /^error: (--aot |ahead-of-time compilation )(only supports|isn't available)/m.test(stderr);
 
 async function build(dir: string, executablePath: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "--compile-executable-path", executablePath, "entry.ts", "--outfile", "out"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--compile-executable-path",
+      executablePath,
+      "entry.ts",
+      "--outfile",
+      "out",
+    ],
     cwd: dir,
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
@@ -37,20 +49,101 @@ test("--compile-executable-path with --aot takes another path to this Bun", asyn
   expect(runExitCode).toBe(0);
 });
 
-test.skipIf(!isLinux)("--compile-executable-path with --aot refuses another build of the same text", async () => {
-  using dir = tempDir("aot-executable-path-another-build", files);
+async function expectAnswer(dir: string) {
+  await using run = Bun.spawn({ cmd: [join(dir, "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "answer 2\n", stderr: "" });
+  expect(exitCode).toBe(0);
+}
+
+function findRuntimeDescription(file: Buffer): number {
+  const magic = Buffer.from("BUNAOTRT", "latin1");
+  // Bun's own code holds the same eight bytes as an immediate.
+  for (let at = file.indexOf(magic); at >= 0; at = file.indexOf(magic, at + 1)) {
+    if (at + 32 <= file.length && file.readUInt32LE(at + 8) === 32 + 4 * file.readUInt32LE(at + 12)) return at;
+  }
+  return -1;
+}
+
+function writeOther(dir: string, name: string, bytes: Buffer) {
+  writeFileSync(join(dir, name), bytes);
+  chmodSync(join(dir, name), 0o755);
+}
+
+test.skipIf(!isLinux)("--compile-executable-path with --aot takes another link of the same run time", async () => {
+  using dir = tempDir("aot-executable-path-another-link", files);
   const other = readFileSync(bunExe());
   const note = other.indexOf(buildIdNote);
   if (note < 0) return;
   other[note + 16] ^= 0xff;
-  writeFileSync(join(String(dir), "another-build"), other);
-  chmodSync(join(String(dir), "another-build"), 0o755);
-  const { stderr, exitCode } = await build(String(dir), "./another-build");
+  writeOther(String(dir), "another-link", other);
+  const { stderr, exitCode } = await build(String(dir), "./another-link");
   if (isUnsupportedHere(stderr)) return;
-  expect(stderr).toContain("error: ./another-build is a different build of Bun");
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  const out = readFileSync(join(String(dir), "out"));
+  expect(out.subarray(note + 16, note + 32).equals(other.subarray(note + 16, note + 32))).toBe(true);
+  await expectAnswer(String(dir));
+});
+
+test.skipIf(!isLinux)(
+  "--compile-executable-path with --aot refuses a run time that differs, and says in what",
+  async () => {
+    using dir = tempDir("aot-executable-path-differs", files);
+    const other = readFileSync(bunExe());
+    const description = findRuntimeDescription(other);
+    if (description < 0) return;
+    const entries = description + 32 + 2 * 4;
+    const here = other.readUInt32LE(entries);
+    other.writeUInt32LE(here + 1, entries);
+    writeOther(String(dir), "differs", other);
+    const { stderr, exitCode } = await build(String(dir), "./differs");
+    if (isUnsupportedHere(stderr)) return;
+    expect(stderr).toContain(
+      `error: ./differs can't run code compiled by this Bun: the number of entries in the table of the run time is ${here + 1} there and ${here} here`,
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  },
+);
+
+test.skipIf(!isLinux)("--compile-executable-path with --aot refuses another revision of Bun", async () => {
+  using dir = tempDir("aot-executable-path-revision", files);
+  const other = readFileSync(bunExe());
+  const record = other.indexOf(Buffer.from("BUNAOTHO\x38\0\0\0", "latin1"));
+  if (record < 0) return;
+  const revision = other.latin1Slice(record + 16, record + 56).replace(/\0+$/, "");
+  if (!revision) return;
+  const changed = (revision[0] === "f" ? "e" : "f") + revision.slice(1);
+  other.write(changed, record + 16, "latin1");
+  writeOther(String(dir), "revision", other);
+  const { stderr, exitCode } = await build(String(dir), "./revision");
+  if (isUnsupportedHere(stderr)) return;
+  expect(stderr).toContain(
+    `error: ./revision can't run code compiled by this Bun: it is revision ${changed} of Bun and this is ${revision}`,
+  );
   expect(exitCode).toBe(1);
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
+
+test.skipIf(!isLinux)(
+  "--compile-executable-path with --aot refuses a Bun whose description it cannot read",
+  async () => {
+    using dir = tempDir("aot-executable-path-unreadable", files);
+    const other = readFileSync(bunExe());
+    const description = findRuntimeDescription(other);
+    if (description < 0) return;
+    other[description] ^= 0xff;
+    writeOther(String(dir), "unreadable", other);
+    const { stderr, exitCode } = await build(String(dir), "./unreadable");
+    if (isUnsupportedHere(stderr)) return;
+    expect(stderr).toContain(
+      "error: ./unreadable can't run code compiled by this Bun: its description of the run time can't be read",
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  },
+);
 
 test.skipIf(!isLinux)("--compile-executable-path with --aot rejects a Bun that has no build id", async () => {
   using dir = tempDir("aot-executable-path-unidentified", files);

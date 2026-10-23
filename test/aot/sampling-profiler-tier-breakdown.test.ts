@@ -26,11 +26,20 @@ const env = { ...bunEnv, BUN_JSC_samplingProfilerTopBytecodesCount: "1" };
 const interpreterAndJITTiers = ["LLInt", "Baseline", "DFG", "FTL"];
 
 function parseReport(run: Awaited<ReturnType<typeof spawned>>) {
-  expect({ stderr: run.stderr, exitCode: run.exitCode, signal: run.signal }).toEqual({ stderr: expect.any(String), exitCode: 0, signal: null });
+  expect({ stderr: run.stderr, exitCode: run.exitCode, signal: run.signal }).toEqual({
+    stderr: expect.any(String),
+    exitCode: 0,
+    signal: null,
+  });
   const { bytecodes, categories } = JSON.parse(run.stdout) as { bytecodes: string; categories: string[] };
   const [breakdown, hottest = ""] = bytecodes.split("Hottest bytecodes");
   return {
-    tiers: Object.fromEntries(Array.from(breakdown.matchAll(/^(.+): +(\d+) +\(/gm), ([, tier, count]): [string, number] => [tier, Number(count)])),
+    tiers: Object.fromEntries(
+      Array.from(breakdown.matchAll(/^(.+): +(\d+) +\(/gm), ([, tier, count]): [string, number] => [
+        tier,
+        Number(count),
+      ]),
+    ),
     hottest: Array.from(hottest.matchAll(/^ *\d+ +'(.*)'$/gm), ([, description]) => description),
     categories,
   };

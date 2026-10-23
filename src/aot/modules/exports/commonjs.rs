@@ -20,7 +20,10 @@ pub(super) struct CommonJsNames {
 
 impl CommonJsNames {
     fn find_entry(&self, index: usize, name: Atom) -> Option<&NameEntry> {
-        self.entries[index].names.iter().find(|entry| entry.name == name)
+        self.entries[index]
+            .names
+            .iter()
+            .find(|entry| entry.name == name)
     }
 
     pub(super) fn refused(&self) -> &[ModuleRef] {
@@ -40,7 +43,9 @@ impl CommonJsNames {
         if self.entries[index].is_half {
             return true;
         }
-        !self.find_entry(index, name).is_some_and(|entry| entry.created_at != u32::MAX)
+        !self
+            .find_entry(index, name)
+            .is_some_and(|entry| entry.created_at != u32::MAX)
     }
 
     /// The names that a loop over the object sees once the body has run, and `default`. `None`: the text does not say.
@@ -50,7 +55,11 @@ impl CommonJsNames {
         if self.is_refused[index] || !entries.has_names || !entries.knows_all_names {
             return None;
         }
-        let own = entries.names.iter().filter(|entry| entry.is_enumerable).map(|entry| entry.name);
+        let own = entries
+            .names
+            .iter()
+            .filter(|entry| entry.is_enumerable)
+            .map(|entry| entry.name);
         let mut names: Vec<Atom> = own.collect();
         names.retain(|&name| name != known::__esModule);
         if !names.contains(&known::default) {
@@ -95,7 +104,13 @@ impl Resolver<'_> {
                 return None;
             }
             let own = Resolution::Synthetic { module, name };
-            return Some(self.names.targets.get(&(module, name)).copied().unwrap_or(own));
+            return Some(
+                self.names
+                    .targets
+                    .get(&(module, name))
+                    .copied()
+                    .unwrap_or(own),
+            );
         }
         let file = self.es_module_file(module)?;
         match self.tables.resolve(self.modules, file, name).resolution {
@@ -145,7 +160,11 @@ pub(super) fn resolve_commonjs_names(
     entries: Vec<ModuleEntries>,
 ) -> CommonJsNames {
     let count = entries.len();
-    let index = entries.iter().enumerate().map(|(index, entries)| (entries.module, index)).collect();
+    let index = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entries)| (entries.module, index))
+        .collect();
     let mut resolver = Resolver {
         modules,
         tables,

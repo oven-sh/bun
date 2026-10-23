@@ -194,6 +194,7 @@ fn count_private_fields(shape: &ClassShape<'_>) -> usize {
         .count()
 }
 
+#[allow(clippy::needless_pass_by_value)] // made for this call
 fn try_add_named_field(
     file: &mut FileLowering<'_, '_, '_, '_>,
     fields: &mut OwnFields,
@@ -252,7 +253,9 @@ fn find_declared_member(
     };
     match file.queries.find_member(receiver, name) {
         Ok(MemberLookup::Member(member)) if member.kind == ObjectMemberKind::Field => Some(member),
-        Ok(MemberLookup::Member(_) | MemberLookup::Index(_) | MemberLookup::Absent) | Err(_) => None,
+        Ok(MemberLookup::Member(_) | MemberLookup::Index(_) | MemberLookup::Absent) | Err(_) => {
+            None
+        }
     }
 }
 
@@ -714,7 +717,11 @@ fn find_inherited_types(
                 file: file.file,
                 class,
             };
-            inherited.extend(file.queries.base_types_of_class(derived).unwrap_or_default());
+            inherited.extend(
+                file.queries
+                    .base_types_of_class(derived)
+                    .unwrap_or_default(),
+            );
         }
     }
     for node in hir.ids(hir[class].implements) {
@@ -731,7 +738,8 @@ fn record_heritage_flows(
     if let Some(base) = base {
         let derived_type = function_types::find_class_function_type(file, class);
         let base_type = function_types::find_class_function_type(file, base);
-        file.fragment.add_function_type_edge(derived_type, base_type);
+        file.fragment
+            .add_function_type_edge(derived_type, base_type);
     }
     let Ok(instance) = file.queries.declared_class_type(class) else {
         return;
@@ -775,7 +783,10 @@ fn is_stored_as_property(file: &FileLowering<'_, '_, '_, '_>, function: FnId) ->
                 target,
                 value,
             } => {
-                let is_member = matches!(file.hir[target].kind, ExprKind::Dot { .. } | ExprKind::Index { .. });
+                let is_member = matches!(
+                    file.hir[target].kind,
+                    ExprKind::Dot { .. } | ExprKind::Index { .. }
+                );
                 value == expression && is_member
             }
             _ => false,
@@ -821,7 +832,10 @@ fn define_constructor_function_layout(
         false => Some(file.reference_function(FunctionKey::Source(function))),
     };
     let declared_this = find_declared_this_layout(file, function);
-    let supertypes: Supertypes = declared_this.into_iter().filter(|&it| it != layout).collect();
+    let supertypes: Supertypes = declared_this
+        .into_iter()
+        .filter(|&it| it != layout)
+        .collect();
     let mut fields = super::own_fields(file, layout).as_slice().to_vec();
     set_field_origins(file, &mut fields, &supertypes);
     let base = find_parent_layout(file, function).filter(|&it| it != layout);

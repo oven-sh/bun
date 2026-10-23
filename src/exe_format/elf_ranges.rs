@@ -9,8 +9,8 @@ use crate::elf::{
     SHT_NOBITS, SHT_PROGBITS, read_ehdr,
 };
 use crate::elf_program_headers::{
-    PAYLOAD_SEGMENT_COUNT, PF_W, PT_BUN_PAYLOAD, PT_BUN_RESERVED, PT_NULL, PT_PHDR, ProgramHeaderTable, bytes_at,
-    read_header,
+    PAYLOAD_SEGMENT_COUNT, PF_W, PT_BUN_PAYLOAD, PT_BUN_RESERVED, PT_NULL, PT_PHDR,
+    ProgramHeaderTable, bytes_at, read_header,
 };
 use crate::image::{
     AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageError, MappedSpan,
@@ -72,7 +72,10 @@ pub(crate) fn cut_model(elf: &[u8]) -> CutModel {
     }
 }
 
-pub(crate) fn remove_ranges(elf: &mut dyn ImageBytes, cuts: &[AddressRange]) -> Result<(), ImageError> {
+pub(crate) fn remove_ranges(
+    elf: &mut dyn ImageBytes,
+    cuts: &[AddressRange],
+) -> Result<(), ImageError> {
     if cuts.is_empty() {
         return Ok(());
     }
@@ -255,8 +258,10 @@ fn read_section_headers(elf: &[u8], ehdr: &Elf64_Ehdr) -> Result<Vec<Elf64_Shdr>
     let table = bytes_at(elf, ehdr.e_shoff, size);
     Ok(table
         .ok_or(ImageError::MalformedHeaders)?
-        .chunks_exact(SECTION_HEADER_SIZE)
-        .map(read_struct)
+        .as_chunks::<SECTION_HEADER_SIZE>()
+        .0
+        .iter()
+        .map(|bytes| read_struct(bytes))
         .collect())
 }
 
@@ -264,7 +269,11 @@ fn read_section_headers(elf: &[u8], ehdr: &Elf64_Ehdr) -> Result<Vec<Elf64_Shdr>
 pub fn reserve_payload_segments(elf: &mut [u8]) -> Result<bool, ImageError> {
     let ehdr = read_header(elf)?;
     let mut table = ProgramHeaderTable::read(elf, &ehdr)?;
-    if table.headers.iter().any(|header| matches!(header.p_type, PT_BUN_RESERVED | PT_BUN_PAYLOAD)) {
+    if table
+        .headers
+        .iter()
+        .any(|header| matches!(header.p_type, PT_BUN_RESERVED | PT_BUN_PAYLOAD))
+    {
         return Ok(true);
     }
     table.headers.retain(|header| header.p_type != PT_NULL);
@@ -295,7 +304,10 @@ fn write_section_table(elf: &mut dyn ImageBytes, table: &SectionTable) {
     }
     let offset = align_up(elf.len() as u64, SECTION_TABLE_ALIGNMENT) as usize;
     elf.grow(offset + table.headers.len() * SECTION_HEADER_SIZE);
-    let entries = elf[offset..].chunks_exact_mut(SECTION_HEADER_SIZE);
+    let entries = elf[offset..]
+        .as_chunks_mut::<SECTION_HEADER_SIZE>()
+        .0
+        .iter_mut();
     for (entry, header) in entries.zip(&table.headers) {
         write_struct(entry, header);
     }
@@ -313,7 +325,10 @@ struct Removal<'a> {
 
 impl Removal<'_> {
     fn compute_moved_offset(&self, offset: u64, size: u64) -> Result<u64, ImageError> {
-        if self.file_ranges.intersects(offset, offset.saturating_add(size)) {
+        if self
+            .file_ranges
+            .intersects(offset, offset.saturating_add(size))
+        {
             return Err(ImageError::MalformedHeaders);
         }
         Ok(self.file_ranges.moved_floor(offset))
@@ -323,7 +338,8 @@ impl Removal<'_> {
         &self,
         headers: &[Elf64_Phdr],
     ) -> Result<Vec<Elf64_Phdr>, ImageError> {
-        let mut updated = Vec::with_capacity(headers.len() + self.cuts.len() + PAYLOAD_SEGMENT_COUNT);
+        let mut updated =
+            Vec::with_capacity(headers.len() + self.cuts.len() + PAYLOAD_SEGMENT_COUNT);
         for header in headers {
             match header.p_type {
                 PT_NULL | PT_BUN_RESERVED => {}
@@ -423,8 +439,7 @@ impl Removal<'_> {
         pieces
             .into_iter()
             .map(|piece| {
-                let offset =
-                    compute_file_offset(section.sh_offset, section.sh_addr, piece.start)?;
+                let offset = compute_file_offset(section.sh_offset, section.sh_addr, piece.start)?;
                 Ok(Elf64_Shdr {
                     sh_addr: piece.start,
                     sh_offset: self.compute_moved_offset(offset, piece.len())?,

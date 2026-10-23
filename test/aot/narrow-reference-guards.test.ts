@@ -108,7 +108,11 @@ const scanKnowsNoNumbers = { BUN_JSC_useNarrowReferenceScan: "0" };
 
 async function build(folder: string, name: string, flags: string[]) {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
-  const built = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", executable], folder, bunEnv);
+  const built = await spawned(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", executable],
+    folder,
+    bunEnv,
+  );
   return { executable, ...built };
 }
 
@@ -120,13 +124,25 @@ describe.concurrent("compile/aot/narrow references and the collector", () => {
     () =>
       slot(async () => {
         using dir = tempDir("aot-narrow-reference-guards", { "main.ts": program });
-        const built = await build(String(dir), "guarded", ["--aot-check=validate-reference-guards", "--explain=statistics"]);
+        const built = await build(String(dir), "guarded", [
+          "--aot-check=validate-reference-guards",
+          "--explain=statistics",
+        ]);
         expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
         const guards = Number(/NarrowReferenceGuards\D+(\d+)/.exec(built.stdout + built.stderr)?.[1]);
         expect(guards).toBeGreaterThan(0);
         for (const env of [{}, scanKnowsNoNumbers]) {
-          const ran = await spawned(withoutCoreDump([built.executable]), String(dir), { ...bunEnv, ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-          expect({ env, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ env, stdout: prints, exitCode: 0, signal: null });
+          const ran = await spawned(withoutCoreDump([built.executable]), String(dir), {
+            ...bunEnv,
+            ...env,
+            BUN_JSC_crashIfInterpreterIsUsed: "1",
+          });
+          expect({ env, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+            env,
+            stdout: prints,
+            exitCode: 0,
+            signal: null,
+          });
         }
       }),
     600_000,
@@ -137,7 +153,10 @@ describe.concurrent("compile/aot/narrow references and the collector", () => {
     () =>
       slot(async () => {
         using dir = tempDir("aot-narrow-reference-guards-dropped", { "main.ts": program });
-        const built = await build(String(dir), "bare", ["--aot-check=validate-reference-guards", "--aot-testing=DropReferenceGuards"]);
+        const built = await build(String(dir), "bare", [
+          "--aot-check=validate-reference-guards",
+          "--aot-testing=DropReferenceGuards",
+        ]);
         expect(built.stderr).toContain("NarrowReferenceWithoutPointer");
         expect(built.exitCode).not.toBe(0);
       }),
@@ -151,8 +170,15 @@ describe.concurrent("compile/aot/narrow references and the collector", () => {
         using dir = tempDir("aot-narrow-reference-guards-scan", { "main.ts": program });
         const built = await build(String(dir), "scanned", ["--aot-testing=DropReferenceGuards"]);
         expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-        const ran = await spawned(withoutCoreDump([built.executable]), String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ stdout: prints, exitCode: 0, signal: null });
+        const ran = await spawned(withoutCoreDump([built.executable]), String(dir), {
+          ...bunEnv,
+          BUN_JSC_crashIfInterpreterIsUsed: "1",
+        });
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+          stdout: prints,
+          exitCode: 0,
+          signal: null,
+        });
       }),
     600_000,
   );

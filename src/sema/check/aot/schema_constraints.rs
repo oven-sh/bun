@@ -187,7 +187,10 @@ mod tests {
     #[test]
     fn count_rejects_fractions_and_out_of_range() {
         assert_eq!(SchemaLiteral::Number(0.0).count(), Some(0));
-        assert_eq!(SchemaLiteral::Number(u32::MAX as f64).count(), Some(u32::MAX));
+        assert_eq!(
+            SchemaLiteral::Number(u32::MAX as f64).count(),
+            Some(u32::MAX)
+        );
         for invalid in [-1.0, 1.5, u32::MAX as f64 + 1.0, f64::NAN, f64::INFINITY] {
             assert_eq!(SchemaLiteral::Number(invalid).count(), None);
         }

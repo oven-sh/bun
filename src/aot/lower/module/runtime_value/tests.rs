@@ -90,10 +90,7 @@ fn default_declaration_is_module_value() {
         "export default class Probe {}",
     ] {
         let value = find_module_value(text);
-        let is_declaration = matches!(
-            value,
-            ModuleValue::DefaultDeclaration(Binding::Symbol(_))
-        );
+        let is_declaration = matches!(value, ModuleValue::DefaultDeclaration(Binding::Symbol(_)));
         assert!(is_declaration, "{text}: {value:?}");
     }
 }
@@ -178,5 +175,8 @@ fn exports_of_other_modules_are_not_module_value() {
 
 #[test]
 fn module_without_exports_has_no_value() {
-    assert_eq!(find_module_value("const a = 1;\nprobe(a);"), ModuleValue::Nothing);
+    assert_eq!(
+        find_module_value("const a = 1;\nprobe(a);"),
+        ModuleValue::Nothing
+    );
 }

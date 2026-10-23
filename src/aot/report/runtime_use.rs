@@ -19,7 +19,10 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     out.push(locale_line(input, &mut positions));
     match input.decision {
         Some(decision) => feature_lines(input, decision, &mut positions, out),
-        None => out.push(entry_at(line_from(&[b"nothing removed: --trim wasn't passed"]), None)),
+        None => out.push(entry_at(
+            line_from(&[b"nothing removed: --trim wasn't passed"]),
+            None,
+        )),
     }
 }
 
@@ -69,11 +72,7 @@ fn write_witness(
     write_location(line, location, positions)
 }
 
-fn cause_lines(
-    input: &ReportInput<'_>,
-    positions: &mut Positions<'_>,
-    out: &mut Vec<ReportEntry>,
-) {
+fn cause_lines(input: &ReportInput<'_>, positions: &mut Positions<'_>, out: &mut Vec<ReportEntry>) {
     if input.used_features.causes.is_empty() {
         let line = line_from(&[b"the compiler can see every API this program uses"]);
         out.push(entry_at(line, None));
@@ -84,9 +83,12 @@ fn cause_lines(
         let sentence = unseen_code_sentence(unseen.cause).as_bytes();
         let mut line = line_from(&[b"blocked by ", code, b": ", sentence]);
         let position = match record_at(input.engine.unseen_code(), unseen.witness) {
-            Some(record) => {
-                write_witness(&mut line, record.builtin, record.witness.location, positions)
-            }
+            Some(record) => write_witness(
+                &mut line,
+                record.builtin,
+                record.witness.location,
+                positions,
+            ),
             None => None,
         };
         out.push(entry_at(line, position));
@@ -106,7 +108,11 @@ fn item_lines(records: &[BuiltinUseRecord]) -> Vec<Vec<u8>> {
         push_item(&mut items, table::root_of(id));
         if record.uses.contains(BuiltinUse::ESCAPED) {
             let holder = table::text_of(id);
-            items.push(line_from(&[b"uses ", holder.as_bytes(), b" (escapes, so any member may be used)"]));
+            items.push(line_from(&[
+                b"uses ",
+                holder.as_bytes(),
+                b" (escapes, so any member may be used)",
+            ]));
         }
     }
     items.sort_unstable();
@@ -168,7 +174,10 @@ fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> Report
         }
         UsedLocales::Listed(tags) => {
             let tags: Vec<&[u8]> = tags.iter().map(|tag| &tag.0[..]).collect();
-            entry_at(line_from(&[b"locales: ", tags.join(&b", "[..]).as_slice()]), None)
+            entry_at(
+                line_from(&[b"locales: ", tags.join(&b", "[..]).as_slice()]),
+                None,
+            )
         }
         UsedLocales::Unknown(witness) => {
             let Some(record) = record_at(input.engine.locales_used(), *witness) else {
@@ -202,7 +211,11 @@ fn feature_lines(
     for feature in decision.unused.iter() {
         let mut line = line_from(&[b"removed "]);
         write_feature(&mut line, feature);
-        line.extend_from_slice(if decision.requested.contains(feature) { b": listed in compile.trim.remove" as &[u8] } else { b": unused" });
+        line.extend_from_slice(if decision.requested.contains(feature) {
+            b": listed in compile.trim.remove" as &[u8]
+        } else {
+            b": unused"
+        });
         out.push(entry_at(line, None));
     }
 }
@@ -250,8 +263,10 @@ fn write_reason(
         }
         RetainReason::NeededBy { .. } => {
             let chain = decision.chain_of(feature);
-            let dependents: Vec<&[u8]> =
-                chain[1..].iter().map(|dependent| dependent.text().as_bytes()).collect();
+            let dependents: Vec<&[u8]> = chain[1..]
+                .iter()
+                .map(|dependent| dependent.text().as_bytes())
+                .collect();
             line.extend_from_slice(b"needed by ");
             line.extend_from_slice(&dependents.join(&b" <- "[..]));
             None

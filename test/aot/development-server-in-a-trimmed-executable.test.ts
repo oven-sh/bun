@@ -25,31 +25,62 @@ const late = {
 };
 
 async function run(cmd: string[], cwd: string) {
-  await using child = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe", timeout: 90_000, killSignal: "SIGKILL" });
+  await using child = Bun.spawn({
+    cmd,
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 90_000,
+    killSignal: "SIGKILL",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   return { stdout, stderr, exitCode };
 }
 
 using probe = tempDir("development-server-probe", { "hello.ts": "console.log(1);" });
-const probed = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stderr: "pipe" });
-
-(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)("the development server in a trimmed executable answers as in the whole one", () => {
-  for (const [name, source] of Object.entries(programs)) {
-    (name === "the options are not seen" ? test.todo : test)(
-      name,
-      () =>
-        slot(async () => {
-          using dir = tempDir("development-server", { "program.mjs": source, ...late });
-          const answers: Record<string, unknown> = {};
-          for (const [kind, flags] of [["whole", []], ["trimmed", ["--trim"]]] as const) {
-            const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", kind], String(dir));
-            expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
-            const ran = await run([join(String(dir), kind)], String(dir));
-            answers[kind] = { answer: ran.stdout.split("\n").filter(line => line.startsWith("answer:")), exitCode: ran.exitCode };
-          }
-          expect(answers).toEqual({ whole: { answer: ["answer: 200 late code 2,4,6"], exitCode: 0 }, trimmed: { answer: ["answer: 200 late code 2,4,6"], exitCode: 0 } });
-        }),
-      600_000,
-    );
-  }
+const probed = Bun.spawnSync({
+  cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],
+  cwd: String(probe),
+  env: bunEnv,
+  stderr: "pipe",
 });
+
+(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)(
+  "the development server in a trimmed executable answers as in the whole one",
+  () => {
+    for (const [name, source] of Object.entries(programs)) {
+      (name === "the options are not seen" ? test.todo : test)(
+        name,
+        () =>
+          slot(async () => {
+            using dir = tempDir("development-server", { "program.mjs": source, ...late });
+            const answers: Record<string, unknown> = {};
+            for (const [kind, flags] of [
+              ["whole", []],
+              ["trimmed", ["--trim"]],
+            ] as const) {
+              const build = await run(
+                [bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", kind],
+                String(dir),
+              );
+              expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+                stderr: expect.not.stringMatching(/^error\b/m),
+                exitCode: 0,
+              });
+              const ran = await run([join(String(dir), kind)], String(dir));
+              answers[kind] = {
+                answer: ran.stdout.split("\n").filter(line => line.startsWith("answer:")),
+                exitCode: ran.exitCode,
+              };
+            }
+            expect(answers).toEqual({
+              whole: { answer: ["answer: 200 late code 2,4,6"], exitCode: 0 },
+              trimmed: { answer: ["answer: 200 late code 2,4,6"], exitCode: 0 },
+            });
+          }),
+        600_000,
+      );
+    }
+  },
+);

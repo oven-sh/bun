@@ -22,16 +22,18 @@ use super::{CheckerTypeId, FileLowering};
 use crate::ir::generated::{FieldFlags, LimitId};
 use crate::ir::{DeclaredType, FunctionId, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
-use self::defined_object_types::{
-    HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,
-};
 #[cfg(test)]
 pub(crate) use self::defined_object_types::late_answers;
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
+use self::defined_object_types::{
+    HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,
+};
 pub(in crate::lower) use self::dictionaries::is_dictionary_type;
 use self::object_types::{FieldName, ListedFields};
 pub(in crate::lower) use self::own_fields::OwnFields;
-pub(in crate::lower) use self::type_parameters::{record_call_type_arguments, type_parameter_layout};
+pub(in crate::lower) use self::type_parameters::{
+    record_call_type_arguments, type_parameter_layout,
+};
 
 #[derive(Default)]
 pub(crate) struct LayoutState {
@@ -90,14 +92,19 @@ impl LayoutState {
 
     // The types of the file that have the layout, in the order they were met.
     fn source_types(&self, layout: LayoutId) -> &[CheckerTypeId] {
-        self.source_types.get(layout.index()).map_or(&[], |types| &types[..])
+        self.source_types
+            .get(layout.index())
+            .map_or(&[], |types| &types[..])
     }
 
     fn take_unsettled_types(&mut self, layout: LayoutId) -> SmallVec<[CheckerTypeId; 1]> {
         if self.settled_type_counts.len() <= layout.index() {
             self.settled_type_counts.resize(layout.index() + 1, 0);
         }
-        let types = self.source_types.get(layout.index()).map_or(&[][..], |types| &types[..]);
+        let types = self
+            .source_types
+            .get(layout.index())
+            .map_or(&[][..], |types| &types[..]);
         let settled = &mut self.settled_type_counts[layout.index()];
         let unsettled = SmallVec::from_slice(&types[*settled as usize..]);
         *settled = types.len() as u32;
@@ -122,7 +129,8 @@ impl LayoutState {
             return false;
         }
         if self.source_types.len() <= layout.index() {
-            self.source_types.resize(layout.index() + 1, SmallVec::new());
+            self.source_types
+                .resize(layout.index() + 1, SmallVec::new());
         }
         self.source_types[layout.index()].push(ty);
         if let Some(fields) = self.own_fields.get_mut(layout.index()) {
@@ -287,7 +295,9 @@ pub(crate) fn define_remaining_layouts(file: &mut FileLowering<'_, '_, '_, '_>) 
         }
     }
     let described_names = core::mem::take(&mut file.layouts.described_names);
-    file.inputs.defined_object_types.hold_names_of_file(file.file, described_names);
+    file.inputs
+        .defined_object_types
+        .hold_names_of_file(file.file, described_names);
 }
 
 // The layouts through whose types the file may see an object that somebody makes: those with which it makes one, those that it converts a value to, and what those extend.
@@ -312,7 +322,10 @@ fn find_layouts_of_objects(file: &FileLowering<'_, '_, '_, '_>) -> FxHashSet<Lay
 fn define_object_types(file: &mut FileLowering<'_, '_, '_, '_>, level: u8) -> bool {
     let mut types_of_level = Vec::new();
     for layout in (0..file.fragment.layout_keys().len()).map(LayoutId::new) {
-        if !matches!(file.fragment.layout_key(layout), LayoutKey::ObjectType { .. }) {
+        if !matches!(
+            file.fragment.layout_key(layout),
+            LayoutKey::ObjectType { .. }
+        ) {
             continue;
         }
         let types = file.layouts.take_unsettled_types(layout);

@@ -98,8 +98,15 @@ fn texts(case: &Case<'_, '_>) -> Vec<FoundText> {
     let found = case.resolved.evaluated_texts().iter();
     found
         .map(|text| {
-            let parts = text.texts.iter().map(|&part| to_text(case.atoms.bytes(part)));
-            (case.text_of(text.call).to_owned(), text.form, parts.collect())
+            let parts = text
+                .texts
+                .iter()
+                .map(|&part| to_text(case.atoms.bytes(part)));
+            (
+                case.text_of(text.call).to_owned(),
+                text.form,
+                parts.collect(),
+            )
         })
         .collect()
 }
@@ -136,7 +143,11 @@ fn texts_are_sorted_by_call() {
             assert_eq!(case.resolved.evaluated_text(text.call), Some(text));
         }
         for other in ["f(\"d\")", "\"a\"", "Function", "0, eval"] {
-            assert_eq!(case.resolved.evaluated_text(case.expr(other)), None, "{other}");
+            assert_eq!(
+                case.resolved.evaluated_text(case.expr(other)),
+                None,
+                "{other}"
+            );
         }
     });
 }
@@ -154,6 +165,9 @@ fn callee_is_predicted() {
             id,
             mutability: Mutability::ConstantUnlessWritten,
         };
-        assert_eq!(callees, [predicted(BuiltinId::Function), predicted(BuiltinId::Eval)]);
+        assert_eq!(
+            callees,
+            [predicted(BuiltinId::Function), predicted(BuiltinId::Eval)]
+        );
     });
 }

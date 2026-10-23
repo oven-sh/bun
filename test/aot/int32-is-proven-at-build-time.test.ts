@@ -7,7 +7,18 @@ import { join } from "node:path";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, allowJs: true, allowImportingTsExtensions: true, types: [] },
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    allowJs: true,
+    allowImportingTsExtensions: true,
+    types: [],
+  },
 });
 const prelude = `import type { int32 } from "bun";\ndeclare const console: { log(...values: unknown[]): void };\n`;
 
@@ -17,13 +28,24 @@ async function run(dir: string, ...cmd: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-const codes = (text: string) => text.split("\n").flatMap(line => (/^error: (TS1000\d\d)/.exec(line) ?? /: error (TS1000\d\d)/.exec(line))?.[1] ?? []);
+const codes = (text: string) =>
+  text.split("\n").flatMap(line => (/^error: (TS1000\d\d)/.exec(line) ?? /: error (TS1000\d\d)/.exec(line))?.[1] ?? []);
 
 async function checkAndBuild(files: Record<string, string>, ...flags: string[]) {
   using dir = tempDir("aot-int32", { "tsconfig.json": tsconfig, ...files });
   const checked = await run(String(dir), bunExe(), "check", "--aot", "--no-pretty", "main.ts");
   const outfile = join(String(dir), isWindows ? "app.exe" : "app");
-  const built = await run(String(dir), bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile);
+  const built = await run(
+    String(dir),
+    bunExe(),
+    "build",
+    "--compile",
+    "--aot",
+    ...flags,
+    "main.ts",
+    "--outfile",
+    outfile,
+  );
   const ran = built.exitCode === 0 ? await run(String(dir), outfile) : undefined;
   const plain = await run(String(dir), bunExe(), "run", "main.ts");
   return { checked, built, ran, plain };
@@ -46,7 +68,10 @@ console.log(add(1, 2), bump(0));
     "main.ts(7,3): error TS100031: Parameter 'count' of 'bump' is declared 'int32', but 'count++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'count = (count + 1) | 0'.",
   ]);
   expect(checked.exitCode).toBe(1);
-  expect({ codes: codes(built.stderr), exitCode: built.exitCode }).toEqual({ codes: ["TS100031", "TS100031"], exitCode: 1 });
+  expect({ codes: codes(built.stderr), exitCode: built.exitCode }).toEqual({
+    codes: ["TS100031", "TS100031"],
+    exitCode: 1,
+  });
   expect(plain).toEqual({ stdout: "3 1\n", stderr: "", exitCode: 0 });
 }, 120_000);
 
@@ -60,7 +85,11 @@ count = (count + 1) | 0;
 console.log(add(2147483647, 1), add(-2147483648, -1), count);
 `,
   });
-  expect({ codes: codes(checked.stdout + built.stderr), checked: checked.exitCode, built: built.exitCode }).toEqual({ codes: [], checked: 0, built: 0 });
+  expect({ codes: codes(checked.stdout + built.stderr), checked: checked.exitCode, built: built.exitCode }).toEqual({
+    codes: [],
+    checked: 0,
+    built: 0,
+  });
   expect(ran).toEqual({ stdout: "-2147483648 2147483647 -2147483648\n", stderr: "", exitCode: 0 });
   expect(plain).toEqual(ran!);
 }, 120_000);
@@ -98,14 +127,27 @@ console.log(halved(given[0]!), new Cursor(given[0]!), [1].map(halved));
 `,
     "typed.ts": `import type { int32 } from "bun";\nexport function half(n: int32): number {\n  return n / 2;\n}\nexport class Cursor {\n  constructor(public line: int32) {}\n}\n`,
   });
-  expect({ codes: codes(built.stderr).sort(), exitCode: built.exitCode }).toEqual({ codes: ["TS100031", "TS100031"], exitCode: 1 });
+  expect({ codes: codes(built.stderr).sort(), exitCode: built.exitCode }).toEqual({
+    codes: ["TS100031", "TS100031"],
+    exitCode: 1,
+  });
 }, 120_000);
 
 test("a module object hands out the functions of its module as values", async () => {
   const typed = `import type { int32 } from "bun";\nexport function half(n: int32): number {\n  return n / 2;\n}\n`;
-  const called = await checkAndBuild({ "main.ts": `${prelude}import * as typed from "./typed.ts";\nconsole.log(typed.half(3));\n`, "typed.ts": typed });
-  expect({ codes: codes(called.built.stderr), exitCode: called.built.exitCode, stdout: called.ran?.stdout }).toEqual({ codes: [], exitCode: 0, stdout: "1.5\n" });
-  for (const main of [`import * as typed from "./typed.ts";\nconsole.log(Object.keys(typed));\n`, `console.log(Object.keys(await import("./typed.ts")));\n`]) {
+  const called = await checkAndBuild({
+    "main.ts": `${prelude}import * as typed from "./typed.ts";\nconsole.log(typed.half(3));\n`,
+    "typed.ts": typed,
+  });
+  expect({ codes: codes(called.built.stderr), exitCode: called.built.exitCode, stdout: called.ran?.stdout }).toEqual({
+    codes: [],
+    exitCode: 0,
+    stdout: "1.5\n",
+  });
+  for (const main of [
+    `import * as typed from "./typed.ts";\nconsole.log(Object.keys(typed));\n`,
+    `console.log(Object.keys(await import("./typed.ts")));\n`,
+  ]) {
     const { built, ran, plain } = await checkAndBuild({ "main.ts": prelude + main, "typed.ts": typed });
     expect({ codes: codes(built.stderr), exitCode: built.exitCode }).toEqual({ codes: [], exitCode: 0 });
     expect(ran).toEqual(plain);

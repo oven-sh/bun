@@ -5,17 +5,16 @@ impl Checker<'_, '_> {
     pub(super) fn check_redeclaration_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for entry in bound.runtime.early_redeclarations() {
-            let code = if is_default_export(hir, entry.earlier)
-                && is_default_export(hir, entry.later)
-            {
-                2528
-            } else if is_block_scoped(hir, bound, entry.earlier)
-                || is_block_scoped(hir, bound, entry.later)
-            {
-                2451
-            } else {
-                2300
-            };
+            let code =
+                if is_default_export(hir, entry.earlier) && is_default_export(hir, entry.later) {
+                    2528
+                } else if is_block_scoped(hir, bound, entry.earlier)
+                    || is_block_scoped(hir, bound, entry.later)
+                {
+                    2451
+                } else {
+                    2300
+                };
             match self.new_diagnostic_for_declaration_name(file, entry.later, code) {
                 Some(diagnostic) => {
                     self.add_diagnostic(diagnostic.with_class(DiagnosticClass::EarlyError));

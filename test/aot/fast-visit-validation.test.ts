@@ -45,7 +45,11 @@ describe("validation of the collector's fast visits", () => {
   const executable = join(String(dir), "program");
 
   beforeAll(async () => {
-    const built = await runProcess([bunExe(), "build", "--compile", "--aot", "--aot-validate", "main.ts", "--outfile", executable], String(dir), bunEnv);
+    const built = await runProcess(
+      [bunExe(), "build", "--compile", "--aot", "--aot-validate", "main.ts", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
     expect(built.stderr).not.toContain("error:");
     expect(built.exitCode).toBe(0);
   });
@@ -53,13 +57,21 @@ describe("validation of the collector's fast visits", () => {
   afterAll(() => dir[Symbol.dispose]());
 
   test("the two visits agree", async () => {
-    const { stdout, stderr, exitCode } = await runProcess([executable], String(dir), { ...bunEnv, ...everyCellIsCompared });
+    const { stdout, stderr, exitCode } = await runProcess([executable], String(dir), {
+      ...bunEnv,
+      ...everyCellIsCompared,
+    });
     expect(stderr).not.toContain("AOT validation: ");
     expect({ stdout, exitCode }).toEqual({ stdout: "sum 1000000\n", exitCode: 0 });
   });
 
   test("a fast visit that misses a reference crashes", async () => {
-    const env = { ...bunEnv, ...everyCellIsCompared, ...withoutCrashReport, BUN_JSC_dropLastFastVisitReferenceForTesting: "1" };
+    const env = {
+      ...bunEnv,
+      ...everyCellIsCompared,
+      ...withoutCrashReport,
+      BUN_JSC_dropLastFastVisitReferenceForTesting: "1",
+    };
     const { stdout, stderr, exitCode } = await runProcess(withoutCoreDump([executable]), String(dir), env);
     expect(stderr).toContain("AOT validation: VisitedCellsDiffer ");
     expect(stdout).not.toContain("sum");

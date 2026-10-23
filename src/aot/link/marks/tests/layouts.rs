@@ -90,7 +90,8 @@ fn retains_class_layout_members() {
         };
         unit.fragment.define_layout(class, definition);
         unit.fragment.define_layout(base, empty_layout(&base_key));
-        unit.fragment.define_layout(unnamed, empty_layout(&unnamed_key));
+        unit.fragment
+            .define_layout(unnamed, empty_layout(&unnamed_key));
         unit.fragment.add_supertype(class, supertype);
         unit.define_body(|builder| {
             builder.new_object(class, &[], None, &[]);
@@ -213,12 +214,18 @@ fn ignored_definition_retains_nothing() {
         },
         instantiation: TypeIdentity([1, 0]),
     };
-    assert_eq!(is_field_name_retained(written_in_another_file), [true, false]);
+    assert_eq!(
+        is_field_name_retained(written_in_another_file),
+        [true, false]
+    );
 }
 
 #[test]
 fn every_definition_of_plain_layout_retains_what_it_names() {
-    assert_eq!(is_field_name_retained(|_| test_object_type_key(1)), [true, true]);
+    assert_eq!(
+        is_field_name_retained(|_| test_object_type_key(1)),
+        [true, true]
+    );
 }
 
 #[test]
@@ -229,7 +236,10 @@ fn only_first_definition_of_plain_layout_retains_its_name() {
         let units = [main, first].map(|file| {
             let mut unit = create_unit_with_allocation(file, layout_key);
             let layout = unit.fragment.declare_layout(layout_key);
-            let name = unit.fragment.strings.intern(format!("Name{}", file.0).as_bytes());
+            let name = unit
+                .fragment
+                .strings
+                .intern(format!("Name{}", file.0).as_bytes());
             names.push((file, name));
             let definition = Layout {
                 name: Some(name),
@@ -249,7 +259,9 @@ fn only_first_definition_of_plain_layout_retains_its_name() {
         assert!(marked.errors.is_empty(), "{:?}", marked.errors);
         assert!(marked.has_layout(layout_key));
         names.sort_unstable_by_key(|&(file, _)| file);
-        let is_retained = names.iter().map(|&(file, name)| marked.unit_marks(file).strings[name.index()]);
+        let is_retained = names
+            .iter()
+            .map(|&(file, name)| marked.unit_marks(file).strings[name.index()]);
         assert_eq!(is_retained.collect::<Vec<bool>>(), [true, false]);
     });
 }

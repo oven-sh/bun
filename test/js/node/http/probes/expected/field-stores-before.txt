@@ -5,6 +5,7 @@ res._contentLength = 1, end(body)
 res._contentLength = 99, end(body)
 res._last = true, end(body)
 res._defaultKeepAlive = false, end(body)
+res.statusCode = 200.5, end(body)
 res._headerSent = true, end(body)
 res._header = "HTTP/1.1 299 Mine\r\nContent-Length: 2\r\n\r\n", end(body)
 res.writable = false, end(body)
@@ -31,6 +32,7 @@ readableState.ended = false, end(body)
 readableState.emitClose = false, end(body)
 readableState.highWaterMark = 1, end(body)
 readableState.closed = true, end(body)
+delete res.statusCode, end(body)
 delete res.finished, end(body)
 delete req._consuming, end(body)
 res.outputData = [a queued chunk], end(body)
@@ -86,6 +88,7 @@ readableState.ended = false, writeHead(), write(), end()
 readableState.emitClose = false, writeHead(), write(), end()
 readableState.highWaterMark = 1, writeHead(), write(), end()
 readableState.closed = true, writeHead(), write(), end()
+delete res.statusCode, writeHead(), write(), end()
 delete res.finished, writeHead(), write(), end()
 delete req._consuming, writeHead(), write(), end()
 res.outputData = [a queued chunk], writeHead(), write(), end()
@@ -112,6 +115,7 @@ res._contentLength = 99, write(), end(body)
 res._last = true, write(), end(body)
 res._removedContLen = true, write(), end(body)
 res._defaultKeepAlive = false, write(), end(body)
+res.statusCode = 200.5, write(), end(body)
 res._headerSent = true, write(), end(body)
 res._header = "HTTP/1.1 299 Mine\r\nContent-Length: 2\r\n\r\n", write(), end(body)
 res.writable = false, write(), end(body)
@@ -138,6 +142,7 @@ readableState.ended = false, write(), end(body)
 readableState.emitClose = false, write(), end(body)
 readableState.highWaterMark = 1, write(), end(body)
 readableState.closed = true, write(), end(body)
+delete res.statusCode, write(), end(body)
 delete res.finished, write(), end(body)
 delete req._consuming, write(), end(body)
 res.outputData = [a queued chunk], write(), end(body)
@@ -463,11 +468,13 @@ res.statusCode = 201, write(), end(body)
     the connection serves another request: true
 res.statusCode = "202", end(body)
     store: done
-    respond: throws TypeError ERR_INVALID_ARG_TYPE
-    when the listener returns: res[headersSent statusCode="202" statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[headersSent destroyed closed statusCode="202" statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
+    respond: done
+    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=202 statusMessage=undefined shouldKeepAlive] req[]
+    response: "HTTP/1.1 202 Accepted\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=202 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    again
+    again
+    the connection serves another request: true
 res.statusCode = "202", writeHead(), write(), end()
     store: done
     respond: done
@@ -479,11 +486,13 @@ res.statusCode = "202", writeHead(), write(), end()
     the connection serves another request: true
 res.statusCode = "202", write(), end(body)
     store: done
-    respond: throws TypeError ERR_INVALID_ARG_TYPE
-    when the listener returns: res[statusCode="202" statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[destroyed closed statusCode="202" statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
+    respond: done
+    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=202 statusMessage=undefined shouldKeepAlive] req[]
+    response: "HTTP/1.1 202 Accepted\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=202 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    again
+    again
+    the connection serves another request: true
 res.statusCode = 999, end(body)
     store: done
     respond: done
@@ -512,14 +521,8 @@ res.statusCode = 999, write(), end(body)
     again
     the connection serves another request: true
 res.statusCode = 1000, end(body)
-res.statusCode = 1000, write(), end(body)
-    store: done
-    respond: throws RangeError ERR_OUT_OF_RANGE
-    when the listener returns: res[statusCode=1000 statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[destroyed closed statusCode=1000 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
 res.statusCode = 1000, writeHead(), write(), end()
+res.statusCode = 1000, write(), end(body)
     store: done
     respond: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     when the listener returns: res[statusCode=1000 statusMessage=undefined shouldKeepAlive] req[]
@@ -527,14 +530,8 @@ res.statusCode = 1000, writeHead(), write(), end()
     after the response: res[destroyed closed statusCode=1000 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
     the connection serves another request: false
 res.statusCode = 99, end(body)
-res.statusCode = 99, write(), end(body)
-    store: done
-    respond: throws RangeError ERR_OUT_OF_RANGE
-    when the listener returns: res[statusCode=99 statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[destroyed closed statusCode=99 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
 res.statusCode = 99, writeHead(), write(), end()
+res.statusCode = 99, write(), end(body)
     store: done
     respond: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     when the listener returns: res[statusCode=99 statusMessage=undefined shouldKeepAlive] req[]
@@ -542,22 +539,10 @@ res.statusCode = 99, writeHead(), write(), end()
     after the response: res[destroyed closed statusCode=99 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
     the connection serves another request: false
 res.statusCode = null, end(body)
-    store: done
-    respond: throws TypeError ERR_INVALID_ARG_TYPE
-    when the listener returns: res[headersSent statusCode=null statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[headersSent destroyed closed statusCode=null statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
 res.statusCode = null, writeHead(), write(), end()
-    store: done
-    respond: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    when the listener returns: res[statusCode=null statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[destroyed closed statusCode=null statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
 res.statusCode = null, write(), end(body)
     store: done
-    respond: throws TypeError ERR_INVALID_ARG_TYPE
+    respond: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     when the listener returns: res[statusCode=null statusMessage=undefined shouldKeepAlive] req[]
     response: "closed"
     after the response: res[destroyed closed statusCode=null statusMessage=undefined shouldKeepAlive] req[complete destroyed]
@@ -600,20 +585,6 @@ res.statusCode = 304, writeHead(), write(), end()
     again
     again
     the connection serves another request: true
-res.statusCode = 200.5, end(body)
-    store: done
-    respond: throws TypeError ERR_INVALID_ARG_TYPE
-    when the listener returns: res[headersSent statusCode=200.5 statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[headersSent destroyed closed statusCode=200.5 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
-res.statusCode = 200.5, write(), end(body)
-    store: done
-    respond: throws TypeError ERR_INVALID_ARG_TYPE
-    when the listener returns: res[statusCode=200.5 statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[destroyed closed statusCode=200.5 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
 res.statusMessage = "Custom", end(body)
     store: done
     respond: done
@@ -1482,31 +1453,6 @@ server.listening = false, write(), end(body)
     again
     again
     after the connection closed: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-delete res.statusCode, end(body)
-    store: done
-    respond: done
-    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=undefined statusMessage=undefined shouldKeepAlive] req[]
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-    again
-    again
-    the connection serves another request: true
-delete res.statusCode, writeHead(), write(), end()
-    store: done
-    respond: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    when the listener returns: res[statusCode=undefined statusMessage=undefined shouldKeepAlive] req[]
-    response: "closed"
-    after the response: res[destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-    the connection serves another request: false
-delete res.statusCode, write(), end(body)
-    store: done
-    respond: done
-    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=undefined statusMessage=undefined shouldKeepAlive] req[]
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-    again
-    again
-    the connection serves another request: true
 delete res.shouldKeepAlive, end(body)
     store: done
     respond: done

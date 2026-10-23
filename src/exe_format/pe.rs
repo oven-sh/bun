@@ -574,7 +574,9 @@ impl PEFile {
             pointer_to_line_numbers: 0,
             number_of_relocations: 0,
             number_of_line_numbers: 0,
-            characteristics: IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | if holds_code { IMAGE_SCN_MEM_EXECUTE } else { 0 },
+            characteristics: IMAGE_SCN_CNT_INITIALIZED_DATA
+                | IMAGE_SCN_MEM_READ
+                | if holds_code { IMAGE_SCN_MEM_EXECUTE } else { 0 },
         };
 
         let new_sh_off =

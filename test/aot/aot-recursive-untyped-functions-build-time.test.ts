@@ -8,7 +8,9 @@ function recursiveFunctions(functionCount: number) {
   let seed = 7;
   const nextCallee = () => (seed = (seed * 48_271) % 2_147_483_647) % functionCount;
   const functions = Array.from({ length: functionCount }, (_, index) => {
-    const calls = [0, 1, 2].map(tag => `  if (node.tag === ${tag}) return f${nextCallee()}(node.next, depth + ${tag});\n`);
+    const calls = [0, 1, 2].map(
+      tag => `  if (node.tag === ${tag}) return f${nextCallee()}(node.next, depth + ${tag});\n`,
+    );
     return `function f${index}(node, depth) {\n${calls.join("")}  return node.value;\n}\n`;
   });
   return `${functions.join("")}export const result = f0({ tag: 9, value: 1, next: null }, 0);\n`;
@@ -32,11 +34,7 @@ async function processorTimeOfCheck(functionCount: number) {
   return Number(checked.resourceUsage()!.cpuTime.total);
 }
 
-test(
-  "build time is linear in the number of mutually recursive untyped functions",
-  async () => {
-    const [timeOfFew, timeOfMany] = await Promise.all([processorTimeOfCheck(few), processorTimeOfCheck(many)]);
-    expect(timeOfMany / timeOfFew).toBeLessThan((2 * many) / few);
-  },
-  600_000,
-);
+test("build time is linear in the number of mutually recursive untyped functions", async () => {
+  const [timeOfFew, timeOfMany] = await Promise.all([processorTimeOfCheck(few), processorTimeOfCheck(many)]);
+  expect(timeOfMany / timeOfFew).toBeLessThan((2 * many) / few);
+}, 600_000);

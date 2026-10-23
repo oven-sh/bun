@@ -41,10 +41,7 @@ fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> b
     })
 }
 
-pub(super) fn lower_enum(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    declaration: EnumId,
-) {
+pub(super) fn lower_enum(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, declaration: EnumId) {
     let (hir, bound) = (lowering.file.hir, lowering.file.bound);
     let data = hir[declaration];
     if data.flags.contains(Flags::AMBIENT) {
@@ -58,12 +55,18 @@ pub(super) fn lower_enum(
         let mut builder = object::begin_object(lowering, layout);
         let mut reverse_keys: SmallVec<[(PropertyName, ValueId); 16]> = SmallVec::new();
         let defines_names_first = has_only_index_reverse_keys(&members);
-        lower_enum_members(lowering, &members, &mut |lowering, name, value| match name {
-            PropertyName::Computed(_) if defines_names_first => reverse_keys.push((name, value)),
-            PropertyName::Computed(_) | PropertyName::Constant(_) => {
-                object::add_property(lowering, &mut builder, name, value);
-            }
-        });
+        lower_enum_members(
+            lowering,
+            &members,
+            &mut |lowering, name, value| match name {
+                PropertyName::Computed(_) if defines_names_first => {
+                    reverse_keys.push((name, value))
+                }
+                PropertyName::Computed(_) | PropertyName::Constant(_) => {
+                    object::add_property(lowering, &mut builder, name, value);
+                }
+            },
+        );
         for (name, value) in reverse_keys {
             object::add_property(lowering, &mut builder, name, value);
         }
@@ -138,9 +141,9 @@ fn emit_reverse_key(
         EnumMemberValue::Number(_)
         | EnumMemberValue::ComputedNumber(_)
         | EnumMemberValue::PreviousPlusOne => Some(PropertyName::Computed(lowered)),
-        EnumMemberValue::Computed(_) => {
-            Some(PropertyName::Computed(lowering.builder.to_property_key(lowered)))
-        }
+        EnumMemberValue::Computed(_) => Some(PropertyName::Computed(
+            lowering.builder.to_property_key(lowered),
+        )),
         EnumMemberValue::Missing => {
             let key = member::name_key(lowering.file, known::undefined);
             Some(PropertyName::Constant(key))

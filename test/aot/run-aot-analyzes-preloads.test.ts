@@ -1,27 +1,42 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 // What --preload names runs in the same process as the program, so `bun run --aot` and `bun test --aot` look at it as they look at the program.
-const settings = { "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true } }` };
+const settings = {
+  "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true } }`,
+};
 const log = `declare const console: { log(...values: unknown[]): void };\n`;
 
 async function ran(files: Record<string, string>, ...args: string[]) {
   using dir = tempDir("run-aot-analyzes-preloads", { ...settings, ...files });
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
 test("a type error in a preload ends bun run --aot before a line runs", async () => {
-  const files = { "pre.ts": log + `console.log("the preload ran"); const port: number = "8080"; console.log(port);`, "main.ts": log + `console.log("the program ran");` };
+  const files = {
+    "pre.ts": log + `console.log("the preload ran"); const port: number = "8080"; console.log(port);`,
+    "main.ts": log + `console.log("the program ran");`,
+  };
   const { stdout, stderr, exitCode } = await ran(files, "run", "--aot", "--preload", "./pre.ts", "main.ts");
   expect(stderr).toContain("TS2322");
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
 test("and bun test --aot", async () => {
-  const files = { "pre.ts": log + `console.log("the preload ran"); const port: number = "8080"; console.log(port);`, "main.test.ts": `import { test } from "bun:test";\n` + log + `test("case", () => { console.log("the test ran"); });` };
+  const files = {
+    "pre.ts": log + `console.log("the preload ran"); const port: number = "8080"; console.log(port);`,
+    "main.test.ts":
+      `import { test } from "bun:test";\n` + log + `test("case", () => { console.log("the test ran"); });`,
+  };
   const { stdout, stderr, exitCode } = await ran(files, "test", "--aot", "--preload", "./pre.ts", "./main.test.ts");
   expect(stderr).toContain("TS2322");
   expect(stdout).not.toContain("ran");
@@ -30,7 +45,9 @@ test("and bun test --aot", async () => {
 
 test("a preload without errors runs first, and a value in it that does not fit its type gives what plain Bun gives", async () => {
   const files = {
-    "pre.ts": log + `function double(n: number): number { return n * 2; } const given: any = JSON.parse('"4"'); try { console.log(double(given)); } catch (e) { console.log(String(e)); }`,
+    "pre.ts":
+      log +
+      `function double(n: number): number { return n * 2; } const given: any = JSON.parse('"4"'); try { console.log(double(given)); } catch (e) { console.log(String(e)); }`,
     "main.ts": log + `console.log("the program ran");`,
   };
   const plain = await ran(files, "run", "--preload", "./pre.ts", "main.ts");

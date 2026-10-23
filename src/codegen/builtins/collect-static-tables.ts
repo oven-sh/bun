@@ -180,7 +180,9 @@ function setterSymbolOf(getter: string): string {
   return `set${getter.includes("js") ? getter.replace("js", "JS") : cap(getter)}`;
 }
 
-function symbolColumnsOf(entry: StaticTableEntry): Pick<EntryColumns, "nativeSymbols" | "creationSymbol" | "hasSetter"> {
+function symbolColumnsOf(
+  entry: StaticTableEntry,
+): Pick<EntryColumns, "nativeSymbols" | "creationSymbol" | "hasSetter"> {
   if (entry.value === builtinCodeGenerator) return { nativeSymbols: [] };
   const symbol = entry.value.startsWith("&") ? entry.value.slice(1) : entry.value;
   const [valueColumn = "Getter"] = entry.attributes.flatMap(word => attributeWords.get(word)?.valueColumn ?? []);

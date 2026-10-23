@@ -11,15 +11,12 @@ use bun_trim::{
 };
 
 use super::build::{
-    corrupted_program, executable_location, graph_path, pair_entry_points,
-    trim_trailing_separators,
+    corrupted_program, executable_location, graph_path, pair_entry_points, trim_trailing_separators,
 };
 use super::failure::log_payload_reference;
 use super::printing::{write_executable_details, write_megabytes};
 use super::reports::write_file;
-use super::trimming::{
-    Trimming, add_build_option_requirements, collect_exec_argv_requirements,
-};
+use super::trimming::{Trimming, add_build_option_requirements, collect_exec_argv_requirements};
 use super::*;
 
 const ORIGINS: [RequestOrigin; 3] = [
@@ -71,14 +68,26 @@ fn autoload_settings_follow_flags() {
         let package_files = [settings.autoloads_package_json, settings.autoloads_tsconfig];
         (settings.autoloads_bunfig, package_files)
     };
-    assert_eq!(trim_settings_of(DEFAULT_FLAGS, b"", false), default_settings());
+    assert_eq!(
+        trim_settings_of(DEFAULT_FLAGS, b"", false),
+        default_settings()
+    );
     let without_bunfig = DEFAULT_FLAGS | Flags::DISABLE_AUTOLOAD_BUNFIG;
     assert_eq!(autoloads(without_bunfig), (false, [false, false]));
-    assert_eq!(autoloads(Flags::DISABLE_AUTOLOAD_TSCONFIG), (true, [true, false]));
-    assert_eq!(autoloads(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON), (true, [false, true]));
+    assert_eq!(
+        autoloads(Flags::DISABLE_AUTOLOAD_TSCONFIG),
+        (true, [true, false])
+    );
+    assert_eq!(
+        autoloads(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON),
+        (true, [false, true])
+    );
     assert_eq!(autoloads(Flags::empty()), (true, [true, true]));
     let without_env_files = DEFAULT_FLAGS | Flags::DISABLE_DEFAULT_ENV_FILES;
-    assert_eq!(trim_settings_of(without_env_files, b"", false), default_settings());
+    assert_eq!(
+        trim_settings_of(without_env_files, b"", false),
+        default_settings()
+    );
 }
 
 #[test]
@@ -159,7 +168,10 @@ fn validating_build_requires_image_compiler() {
 
 #[test]
 fn option_without_requirement_changes_no_setting() {
-    assert_eq!(trim_settings_of(DEFAULT_FLAGS, b"--smol", false), default_settings());
+    assert_eq!(
+        trim_settings_of(DEFAULT_FLAGS, b"--smol", false),
+        default_settings()
+    );
 }
 
 #[test]
@@ -177,7 +189,12 @@ fn source_maps_are_passed_on() {
 fn disabled_request_plans_nothing_for_program_that_is_not_compiled() {
     let template = ZBox::from_bytes(MISSING_DIRECTORY_FILE);
     let used = UsedFeatures::with_cause(UnseenCodeCause::ProgramNotCompiled);
-    let planned = plan_trimming(&used, &default_settings(), &TrimRequest::default(), &template);
+    let planned = plan_trimming(
+        &used,
+        &default_settings(),
+        &TrimRequest::default(),
+        &template,
+    );
     assert!(matches!(planned, Ok(None)));
 }
 
@@ -186,7 +203,10 @@ fn disabled_request_reads_template_for_compiled_program() {
     let template = ZBox::from_bytes(MISSING_DIRECTORY_FILE);
     let (used, settings) = (UsedFeatures::default(), default_settings());
     let planned = plan_trimming(&used, &settings, &TrimRequest::default(), &template);
-    assert!(matches!(planned, Err(CompileFailure::TemplateUnreadable { .. })));
+    assert!(matches!(
+        planned,
+        Err(CompileFailure::TemplateUnreadable { .. })
+    ));
 }
 
 #[test]
@@ -198,12 +218,17 @@ fn enabled_request_reads_template() {
         ..TrimRequest::default()
     };
     let planned = plan_trimming(&used, &settings, &request, &template);
-    assert!(matches!(planned, Err(CompileFailure::TemplateUnreadable { .. })));
+    assert!(matches!(
+        planned,
+        Err(CompileFailure::TemplateUnreadable { .. })
+    ));
 }
 
 #[test]
 fn build_without_trim_request_has_no_decision() {
-    let trimming = Trimming::NotAsked { without_tools: None };
+    let trimming = Trimming::NotAsked {
+        without_tools: None,
+    };
     assert!(trimming.plan().is_none());
     assert!(trimming.decision().is_none());
     assert!(trimming.has_edges());
@@ -241,7 +266,10 @@ fn unavailable_compiler_messages() {
             "compile.aot isn't available in this build of Bun: it was linked without a build id",
         ],
     );
-    for error in [IdentityError::Malformed, IdentityError::UnrecognizedExecutable] {
+    for error in [
+        IdentityError::Malformed,
+        IdentityError::UnrecognizedExecutable,
+    ] {
         assert_messages(
             &CompileFailure::NoIdentity(error),
             [
@@ -282,8 +310,11 @@ fn other_messages_ignore_origin() {
             "./other-bun can't run code compiled by this Bun. It isn't a Bun executable, or it's a different version. Use the same version of Bun, built for this platform",
         ),
         (
-            CompileFailure::TemplateIsAnotherBuild { path: path() },
-            "./other-bun is a different build of Bun. It must be the exact build that runs this command",
+            CompileFailure::TemplateDiffers {
+                path: path(),
+                difference: b"sizeof(Instance) is 8 there and 16 here".to_vec(),
+            },
+            "./other-bun can't run code compiled by this Bun: sizeof(Instance) is 8 there and 16 here\nnote: use a build of the same revision of Bun with the same configuration",
         ),
         (
             CompileFailure::Build {
@@ -326,9 +357,15 @@ fn trim_request_error_keeps_its_message() {
     };
     let mut expected = Vec::new();
     unknown_name().write_message(&mut expected);
-    assert!(strings::contains(&expected, b"unknown name \"no-such-feature\""));
+    assert!(strings::contains(
+        &expected,
+        b"unknown name \"no-such-feature\""
+    ));
     let expected = BStr::new(&expected).to_string();
-    assert_messages(&CompileFailure::Trim(unknown_name()), [expected.as_str(); 3]);
+    assert_messages(
+        &CompileFailure::Trim(unknown_name()),
+        [expected.as_str(); 3],
+    );
 }
 
 #[test]
@@ -343,7 +380,10 @@ fn unwritable_file_is_failure() {
     let message = message_of(&failure, RequestOrigin::CompileCommand);
     let prefix = format!("failed to write {}: ", BStr::new(MISSING_DIRECTORY_FILE));
     assert!(message.starts_with(&prefix), "{message}");
-    assert!(strings::contains(message.as_bytes(), b"ENOENT"), "{message}");
+    assert!(
+        strings::contains(message.as_bytes(), b"ENOENT"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -437,7 +477,10 @@ fn executable_details_need_trim_summary() {
         format: None,
     };
     assert_eq!(BStr::new(&executable_details(None, b"")), "");
-    assert_eq!(BStr::new(&executable_details(Some(executable(None)), b"")), "");
+    assert_eq!(
+        BStr::new(&executable_details(Some(executable(None)), b"")),
+        ""
+    );
     assert_eq!(
         BStr::new(&executable_details(None, b"1 file untyped")),
         "  1 file untyped"
@@ -446,9 +489,15 @@ fn executable_details_need_trim_summary() {
     write_trimmed_size(&executable(None), &mut trimmed_size);
     assert_eq!(BStr::new(&trimmed_size), "");
     write_trimmed_size(&executable(Some(trim_summary.clone())), &mut trimmed_size);
-    assert_eq!(BStr::new(&trimmed_size), "  60.0 MB (30.8 MB of unused Bun APIs removed)");
     assert_eq!(
-        BStr::new(&executable_details(Some(executable(Some(trim_summary))), b"1 file untyped")),
+        BStr::new(&trimmed_size),
+        "  60.0 MB (30.8 MB of unused Bun APIs removed)"
+    );
+    assert_eq!(
+        BStr::new(&executable_details(
+            Some(executable(Some(trim_summary))),
+            b"1 file untyped"
+        )),
         "  60.0 MB (30.8 MB of unused Bun APIs removed)  1 file untyped"
     );
 }
@@ -460,12 +509,16 @@ fn entry_points_pair_with_module_ids() {
         module_path: [&b"/$bunfs/root/"[..], name].concat(),
     });
     let module_ids = [EngineModuleId(7), EngineModuleId(3)];
-    let pairs = pair_entry_points(&entry_points, &module_ids, true).ok().unwrap();
+    let pairs = pair_entry_points(&entry_points, &module_ids, true)
+        .ok()
+        .unwrap();
     assert_eq!(pairs.len(), 2);
     assert_eq!(pairs[1].module_id, EngineModuleId(3));
     assert_eq!(pairs[1].source_path, b"/src/b.js");
     assert_eq!(pairs[1].module_path, b"/$bunfs/root/b.js");
-    let embedded = pair_entry_points(&entry_points, &module_ids, false).ok().unwrap();
+    let embedded = pair_entry_points(&entry_points, &module_ids, false)
+        .ok()
+        .unwrap();
     assert_eq!(embedded[1].source_path, b"/$bunfs/root/b.js");
     assert_eq!(embedded[1].module_path, b"/$bunfs/root/b.js");
     let unpaired = pair_entry_points(&entry_points, &module_ids[..1], true);
@@ -476,6 +529,9 @@ fn entry_points_pair_with_module_ids() {
 fn asset_paths_have_no_trailing_separator() {
     assert_eq!(trim_trailing_separators(b"./public//"), b"./public");
     assert_eq!(trim_trailing_separators(b"public"), b"public");
-    assert_eq!(graph_path(b"/app/public", b"/js/a.js"), b"/app/public/js/a.js");
+    assert_eq!(
+        graph_path(b"/app/public", b"/js/a.js"),
+        b"/app/public/js/a.js"
+    );
     assert_eq!(graph_path(b"/app/data.json", b""), b"/app/data.json");
 }

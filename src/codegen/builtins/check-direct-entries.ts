@@ -1,7 +1,12 @@
 import { describeOverload } from "./check-overloads.ts";
 import type { Problems } from "./declarations.ts";
 import type { ModelOverload, ModelParameter, ModelType, TableModel } from "./model.ts";
-import { directValueTypes, maximumDirectParameterCount, type DirectParameterSpec, type Primitive } from "./vocabulary.ts";
+import {
+  directValueTypes,
+  maximumDirectParameterCount,
+  type DirectParameterSpec,
+  type Primitive,
+} from "./vocabulary.ts";
 
 const cIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const int32Range = { minimum: -(2 ** 31), maximum: 2 ** 31 - 1 };
@@ -15,13 +20,28 @@ function holdsOnlyPrimitive(type: ModelType, primitive: Primitive): boolean {
 
 function holdsOnlyInt32(type: ModelType): boolean {
   const { primitives, integers } = type;
-  if (integers === null || primitives.length > 0 || !holdsOnlyPrimitive({ ...type, integers: null }, "Number")) return false;
+  if (integers === null || primitives.length > 0 || !holdsOnlyPrimitive({ ...type, integers: null }, "Number"))
+    return false;
   return integers.minimum.value >= int32Range.minimum && integers.maximum.value <= int32Range.maximum;
 }
 
-function holdsOnlyInstances({ isAnything, hasAnyObject, hasAnyFunction, hasPlainData, primitives, integers, stringLiterals, parts }: ModelType): boolean {
+function holdsOnlyInstances({
+  isAnything,
+  hasAnyObject,
+  hasAnyFunction,
+  hasPlainData,
+  primitives,
+  integers,
+  stringLiterals,
+  parts,
+}: ModelType): boolean {
   if (isAnything || hasAnyObject || hasAnyFunction || hasPlainData || integers !== null) return false;
-  return primitives.length === 0 && stringLiterals.length === 0 && parts.length > 0 && parts.every(({ part }) => part === "Instance");
+  return (
+    primitives.length === 0 &&
+    stringLiterals.length === 0 &&
+    parts.length > 0 &&
+    parts.every(({ part }) => part === "Instance")
+  );
 }
 
 const takesReceiver = ({ value }: DirectParameterSpec) => value === "NativeObjectOfReceiver" || value === "Receiver";
@@ -70,7 +90,8 @@ function findArgumentProblems(direct: DirectParameterSpec, parameter: ModelParam
   if ((parameter.mode === "Optional") !== (direct.value === "ValueOrEmpty")) {
     problems.push(`${parameter.name}: ValueOrEmpty is for an operand that can be left out, and for nothing else`);
   }
-  if (!isHandedOverAs(direct, parameter)) problems.push(`${parameter.name} can be something that ${direct.value} does not hand over`);
+  if (!isHandedOverAs(direct, parameter))
+    problems.push(`${parameter.name} can be something that ${direct.value} does not hand over`);
   return problems;
 }
 
@@ -111,18 +132,25 @@ function findReceiverProblems({ mode, receiver, code: { directEntry } }: ModelOv
 }
 
 function findProblems(overload: ModelOverload): string[] {
-  const { builtin, parameters, code: { directEntry, implementation } } = overload;
+  const {
+    builtin,
+    parameters,
+    code: { directEntry, implementation },
+  } = overload;
   if (directEntry === null) return [];
   const { symbol } = directEntry;
   const problems = [...findFormProblems(symbol, directEntry.parameters), ...findReceiverProblems(overload)];
   if (!cIdentifierPattern.test(symbol)) problems.push(`${JSON.stringify(symbol)} is not the name of a C function`);
   if (builtin.scope === "Module" && builtin.attachments.nativeFunction === null) {
-    problems.push(`compiled code knows the function that ${symbol} stands in for by its native code, so the entry has functionObjectCode`);
+    problems.push(
+      `compiled code knows the function that ${symbol} stands in for by its native code, so the entry has functionObjectCode`,
+    );
   }
   if (builtin.origin !== "Host") {
     problems.push(`${symbol} is bound with the functions of the host, and the entry is the engine's`);
   }
-  if (implementation.how !== "HostCall") problems.push(`${symbol} stands in for native code of the host, so the overload is a call of the host`);
+  if (implementation.how !== "HostCall")
+    problems.push(`${symbol} stands in for native code of the host, so the overload is a call of the host`);
   const taken = directEntry.parameters.filter(takesArgument);
   if (taken.length === 1 && taken[0].value === "FrameOfValues") return problems;
   if (taken.length !== parameters.length) {
@@ -130,7 +158,9 @@ function findProblems(overload: ModelOverload): string[] {
   }
   return [
     ...problems,
-    ...parameters.flatMap((parameter, index) => findArgumentProblems(taken[index], parameter, index === parameters.length - 1)),
+    ...parameters.flatMap((parameter, index) =>
+      findArgumentProblems(taken[index], parameter, index === parameters.length - 1),
+    ),
   ];
 }
 
@@ -139,6 +169,7 @@ export function checkDirectEntries({ overloads }: Pick<TableModel, "overloads">,
   for (const overload of overloads) {
     // What is written for a native binding describes the function that it makes, whose entry has the same overloads.
     if (overload.builtin.kind === "NativeBinding") continue;
-    for (const problem of findProblems(overload)) problems.add(overload.source, `${describeOverload(overload)}: ${problem}`);
+    for (const problem of findProblems(overload))
+      problems.add(overload.source, `${describeOverload(overload)}: ${problem}`);
   }
 }

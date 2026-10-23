@@ -78,9 +78,14 @@ function guardEdges(input: EdgeInput): FeatureEdge[] {
       if (from === feature) continue;
       // A setting enters a start-up feature, so the setting's own requirement answers for a guard in it and for a guard of it.
       const isAnsweredByGuard =
-        origin === "Definition" || stub === "Throw" || (isProgramFeature[from] !== 0 && isProgramFeature[feature] === 0);
+        origin === "Definition" ||
+        stub === "Throw" ||
+        (isProgramFeature[from] !== 0 && isProgramFeature[feature] === 0);
       const isFollowed =
-        !isAnsweredByGuard && nativeFeatures.includes(from) && isStartupFeature[from] === 0 && isStartupFeature[feature] === 0;
+        !isAnsweredByGuard &&
+        nativeFeatures.includes(from) &&
+        isStartupFeature[from] === 0 &&
+        isStartupFeature[feature] === 0;
       edges.push({ from, to: feature, strength: strengthOfStub[stub], isFollowed });
     }
   }

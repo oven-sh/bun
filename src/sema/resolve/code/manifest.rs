@@ -786,15 +786,34 @@ mod tests {
         let installed = "/p/node_modules/s/package.json";
         let host = MemoryHost::new(&[
             (installed, r#"{"name": "s", "version": "1.0.0"}"#),
-            ("/p/node_modules/s/dist/package.json", r#"{"type": "module"}"#),
-            ("/p/node_modules/s/unnamed/package.json", r#"{"name": "", "version": "0"}"#),
-            ("/p/node_modules/s/unversioned/package.json", r#"{"name": "inner"}"#),
+            (
+                "/p/node_modules/s/dist/package.json",
+                r#"{"type": "module"}"#,
+            ),
+            (
+                "/p/node_modules/s/unnamed/package.json",
+                r#"{"name": "", "version": "0"}"#,
+            ),
+            (
+                "/p/node_modules/s/unversioned/package.json",
+                r#"{"name": "inner"}"#,
+            ),
             ("/p/node_modules/s/rejected/package.json", "{,}"),
-            ("/p/node_modules/s/inner/package.json", r#"{"name": "inner", "version": "2.0.0"}"#),
+            (
+                "/p/node_modules/s/inner/package.json",
+                r#"{"name": "inner", "version": "2.0.0"}"#,
+            ),
             ("/p/package.json", r#"{"name": "app"}"#),
         ]);
         let outer = "s@1.0.0 in /p/node_modules/s";
-        for directory in ["", "dist/", "unnamed/", "unversioned/", "rejected/", "missing/deep/"] {
+        for directory in [
+            "",
+            "dist/",
+            "unnamed/",
+            "unversioned/",
+            "rejected/",
+            "missing/deep/",
+        ] {
             let file = format!("/p/node_modules/s/{directory}index.js");
             assert_eq!(find_package(&host, &file), outer, "{file}");
         }
@@ -851,7 +870,10 @@ mod tests {
             (r#""sideEffects": false"#, NONE),
             (r#""sideEffects": []"#, NONE),
             (r#""sideEffects": [1, null]"#, NONE),
-            (r#""sideEffects": ["./a.js", 1, "lib/*.js"]"#, r#"["./a.js", "lib/*.js"] in /p/x"#),
+            (
+                r#""sideEffects": ["./a.js", 1, "lib/*.js"]"#,
+                r#"["./a.js", "lib/*.js"] in /p/x"#,
+            ),
             (r#""sideEffects": true"#, "unspecified"),
             (r#""sideEffects": "./a.js""#, "unspecified"),
             (r#""sideEffects": null"#, "unspecified"),
@@ -859,7 +881,11 @@ mod tests {
         ] {
             let text = format!(r#"{{"name": "x", {field}}}"#);
             let host = MemoryHost::new(&[("/p/x/package.json", text.as_str())]);
-            assert_eq!(find_side_effects(&host, "/p/x/lib/a.js"), expected, "{field}");
+            assert_eq!(
+                find_side_effects(&host, "/p/x/lib/a.js"),
+                expected,
+                "{field}"
+            );
         }
     }
 
@@ -867,12 +893,27 @@ mod tests {
     fn nearest_named_manifest_declares_side_effects() {
         let host = MemoryHost::new(&[
             ("/p/package.json", r#"{"name": "app"}"#),
-            ("/p/node_modules/s/package.json", r#"{"name": "s", "sideEffects": false}"#),
-            ("/p/node_modules/s/esm/package.json", r#"{"type": "module"}"#),
-            ("/p/node_modules/s/unnamed/package.json", r#"{"name": "", "sideEffects": ["./a.js"]}"#),
-            ("/p/node_modules/s/inner/package.json", r#"{"name": "inner"}"#),
+            (
+                "/p/node_modules/s/package.json",
+                r#"{"name": "s", "sideEffects": false}"#,
+            ),
+            (
+                "/p/node_modules/s/esm/package.json",
+                r#"{"type": "module"}"#,
+            ),
+            (
+                "/p/node_modules/s/unnamed/package.json",
+                r#"{"name": "", "sideEffects": ["./a.js"]}"#,
+            ),
+            (
+                "/p/node_modules/s/inner/package.json",
+                r#"{"name": "inner"}"#,
+            ),
             ("/p/node_modules/s/rejected/package.json", "{,}"),
-            ("/p/node_modules/nameless/package.json", r#"{"sideEffects": false}"#),
+            (
+                "/p/node_modules/nameless/package.json",
+                r#"{"sideEffects": false}"#,
+            ),
         ]);
         for directory in ["", "esm/", "unnamed/", "rejected/", "missing/deep/"] {
             let file = format!("/p/node_modules/s/{directory}a.js");
@@ -900,7 +941,10 @@ mod tests {
                 let package = resolver.enclosing_package(&path).unwrap();
                 assert!(std::ptr::eq(package.name, manifest.name), "{file}");
                 assert!(std::ptr::eq(package.version, manifest.version), "{file}");
-                assert!(std::ptr::eq(package.directory, manifest.directory), "{file}");
+                assert!(
+                    std::ptr::eq(package.directory, manifest.directory),
+                    "{file}"
+                );
             }
         });
         assert_eq!(host.reads(installed), 1);

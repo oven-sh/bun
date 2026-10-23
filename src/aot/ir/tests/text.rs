@@ -33,7 +33,9 @@ fn assert_same_text(name: &str, printed: &str, expected: &str) {
         return;
     }
     let bytes = printed.bytes().zip(expected.bytes());
-    let common_length = bytes.take_while(|(printed, expected)| printed == expected).count();
+    let common_length = bytes
+        .take_while(|(printed, expected)| printed == expected)
+        .count();
     let line = 1 + count_char(&expected.as_bytes()[..common_length], b'\n');
     panic!("{name}: the printed text differs from line {line} on:\n{printed}");
 }
@@ -47,7 +49,11 @@ fn every_record_survives_parse_and_print() {
 #[test]
 fn every_operation_survives_parse_and_print() {
     let program = parse_named("every_operation.ir", EVERY_OPERATION);
-    assert_same_text("every_operation.ir", &print_program(&program), EVERY_OPERATION);
+    assert_same_text(
+        "every_operation.ir",
+        &print_program(&program),
+        EVERY_OPERATION,
+    );
 }
 
 #[test]
@@ -55,7 +61,11 @@ fn every_operation_and_terminator_occurs() {
     let program = parse_named("every_operation.ir", EVERY_OPERATION);
     let mut has_opcode = [false; Opcode::COUNT];
     let mut has_terminator_kind = [false; TerminatorKind::COUNT];
-    for block in program.functions.iter().flat_map(|function| function.body.blocks()) {
+    for block in program
+        .functions
+        .iter()
+        .flat_map(|function| function.body.blocks())
+    {
         for value in block.values() {
             has_opcode[value.opcode as usize] = true;
         }
@@ -79,7 +89,11 @@ fn intrinsic_operations_are_in_library_functions() {
     for (index, function) in program.functions.iter().enumerate() {
         let mut values = function.body.blocks().flat_map(|block| block.values());
         let has_intrinsic = values.any(|value| value.opcode.is_intrinsic());
-        assert_eq!(has_intrinsic, function.role == FunctionRole::Library, "f{index}");
+        assert_eq!(
+            has_intrinsic,
+            function.role == FunctionRole::Library,
+            "f{index}"
+        );
     }
 }
 
@@ -97,8 +111,14 @@ fn every_keyword_occurs() {
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),
         (ProgramList::Entries, program.entries.len()),
-        (ProgramList::RuntimeFunctions, program.runtime_functions.len()),
-        (ProgramList::WebAssemblyModules, program.web_assembly_modules.len()),
+        (
+            ProgramList::RuntimeFunctions,
+            program.runtime_functions.len(),
+        ),
+        (
+            ProgramList::WebAssemblyModules,
+            program.web_assembly_modules.len(),
+        ),
     ];
     let lists_with_keyword: Vec<ProgramList> = ProgramList::ALL
         .into_iter()
@@ -165,7 +185,10 @@ fn structural_checks_reject_unsorted_lists() {
     let ascending = parse("layout L0\nlayout L1\nlayout L2 supertypes=[L0, L1]\n");
     assert_eq!(check_program(&ascending), Ok(()));
     let descending = parse("layout L0\nlayout L1\nlayout L2 supertypes=[L1, L0]\n");
-    assert_eq!(check_program(&descending), failure(unsorted, ProgramList::Layouts, 2));
+    assert_eq!(
+        check_program(&descending),
+        failure(unsorted, ProgramList::Layouts, 2)
+    );
 
     let function = "module m0 path=\"/a\" displayPath=\"/a\"\nfunction f0 module=m0\n";
     let first = "runtimefunction id=1 function=f0\n";
@@ -243,7 +266,12 @@ fn prefixes_agree_with_schema() {
     ];
     for list in ProgramList::ALL {
         let entry = prefixes.iter().find(|(prefixed, _)| *prefixed == list);
-        assert_eq!(list.prefix(), entry.map(|&(_, prefix)| prefix), "{}", list.name());
+        assert_eq!(
+            list.prefix(),
+            entry.map(|&(_, prefix)| prefix),
+            "{}",
+            list.name()
+        );
     }
 }
 
@@ -341,7 +369,12 @@ fn built_program_survives() {
 fn print_function_prints_one_line_and_body() {
     let program = build_program();
     let mut text = String::new();
-    print_function(program.name_tables(), FunctionId::new(0), &program.functions[0], &mut text);
+    print_function(
+        program.name_tables(),
+        FunctionId::new(0),
+        &program.functions[0],
+        &mut text,
+    );
     assert_same_text("the built function", &text, BUILT_FUNCTION);
 }
 
@@ -350,7 +383,12 @@ fn function_without_body_prints_one_line() {
     let declaration = function_with_parameters(FunctionFlags::IS_ASYNC, &[TypeTable::STRING]);
     let mut text = String::from("entry module=m0\n");
     let names = Program::new();
-    print_function(names.name_tables(), FunctionId::new(7), &declaration, &mut text);
+    print_function(
+        names.name_tables(),
+        FunctionId::new(7),
+        &declaration,
+        &mut text,
+    );
     let expected = "\
 entry module=m0
 function f7 module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{type=string}] results=[{type=anything}]
@@ -459,7 +497,12 @@ fn line_errors_name_offending_token() {
 }
 
 fn assert_body_error(lines: &str, line: u32, column: u32, expected: &'static str) {
-    assert_parse_error(&format!("function f0 {{\n{lines}}}\n"), line, column, expected);
+    assert_parse_error(
+        &format!("function f0 {{\n{lines}}}\n"),
+        line,
+        column,
+        expected,
+    );
 }
 
 #[test]
@@ -485,19 +528,36 @@ fn block_errors_name_offending_token() {
 #[test]
 fn value_errors_name_offending_token() {
     let assert_value_error = |value: &str, column: u32, expected: &'static str| {
-        assert_body_error(&format!("  b0(v0):\n    {value}\n    Return\n"), 3, column, expected);
+        assert_body_error(
+            &format!("  b0(v0):\n    {value}\n    Return\n"),
+            3,
+            column,
+            expected,
+        );
     };
     assert_value_error("v2 = Undefined", 5, "the next value id");
-    assert_value_error("Undefined", 5, "a value id before an operation with a result");
+    assert_value_error(
+        "Undefined",
+        5,
+        "a value id before an operation with a result",
+    );
     assert_value_error("v1 = LoopHint", 10, "an operation with a result");
     assert_value_error("v1 = Return", 10, "an operation with a result");
     assert_value_error("v1 = Frobnicate", 10, "an operation or a terminator");
     assert_value_error("v1 = Add", 13, "an operand");
-    assert_value_error("v1 = TypeOf v0, v0", 23, "no more operands than the entry takes");
+    assert_value_error(
+        "v1 = TypeOf v0, v0",
+        23,
+        "no more operands than the entry takes",
+    );
     assert_value_error(
         "v1 = Integer number=1",
         25,
         "a field of the entry, in the order of its declaration",
     );
-    assert_value_error("v1 = Undefined [isFreeName]", 20, "no flags: the entry declares none");
+    assert_value_error(
+        "v1 = Undefined [isFreeName]",
+        20,
+        "no flags: the entry declares none",
+    );
 }

@@ -54,7 +54,10 @@ fn builtin_module_entry_point_fails() {
     let host = ScriptedHost(&disk, script);
     for specifier in ["node:fs", "util"] {
         let failure = load_with_host(&host, &[specifier]).unwrap_err();
-        assert_eq!(failure.unresolved_entry_points, builtin_module, "{specifier}");
+        assert_eq!(
+            failure.unresolved_entry_points, builtin_module,
+            "{specifier}"
+        );
     }
 
     let failure = load_with_host(&disk, &["node:fs"]).unwrap_err();
@@ -116,11 +119,18 @@ fn configuration_errors_do_not_stop_load() {
 
 #[test]
 fn configuration_error_of_runtime_project_is_internal() {
-    let files = [("tsconfig.json", UNKNOWN_MODULE_KIND), ("a.ts", "export {};\n")];
+    let files = [
+        ("tsconfig.json", UNKNOWN_MODULE_KIND),
+        ("a.ts", "export {};\n"),
+    ];
     with_runtime_project(&files, &["a.ts"], |program| {
         let diagnostics = &program.loaded.diagnostics;
         assert!(!diagnostics.is_empty());
-        assert!(diagnostics.iter().all(|it| it.effect == Effect::InternalError));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|it| it.effect == Effect::InternalError)
+        );
     });
 }
 
@@ -140,19 +150,39 @@ fn tsconfig_override_replaces_nearest_configuration() {
         let failure = loaded.map(|_| ()).unwrap_err();
         assert!(failure.unresolved_entry_points.is_empty());
         assert_eq!(codes(&failure.diagnostics), [5083]);
-        assert!(failure.diagnostics.iter().all(|it| it.effect == Effect::StopsBuild));
+        assert!(
+            failure
+                .diagnostics
+                .iter()
+                .all(|it| it.effect == Effect::StopsBuild)
+        );
     });
 }
 
 #[test]
 fn tree_of_leaf_that_no_task_reads_is_freed() {
     let files = [
-        ("main.ts", "import { a } from './used.ts';\nexport const b: number = a + version;\n"),
+        (
+            "main.ts",
+            "import { a } from './used.ts';\nexport const b: number = a + version;\n",
+        ),
         ("used.ts", "export const a = 1;\n"),
-        ("unread.test.ts", "import { a } from './used.ts';\nimport { check } from './helper.ts';\ncheck(a);\n"),
-        ("helper.ts", "import { twice } from './each-other.ts';\nexport function check(value: number) { return twice(value); }\n"),
-        ("each-other.ts", "import { check } from './helper.ts';\nexport function twice(value: number) { return value && check(0); }\n"),
-        ("adds-global.ts", "import { size } from './of-global.ts';\ndeclare global { var version: typeof size; }\n"),
+        (
+            "unread.test.ts",
+            "import { a } from './used.ts';\nimport { check } from './helper.ts';\ncheck(a);\n",
+        ),
+        (
+            "helper.ts",
+            "import { twice } from './each-other.ts';\nexport function check(value: number) { return twice(value); }\n",
+        ),
+        (
+            "each-other.ts",
+            "import { check } from './helper.ts';\nexport function twice(value: number) { return value && check(0); }\n",
+        ),
+        (
+            "adds-global.ts",
+            "import { size } from './of-global.ts';\ndeclare global { var version: typeof size; }\n",
+        ),
         ("of-global.ts", "export const size = 1;\n"),
         ("leaf.d.ts", "export type Size = number;\n"),
     ];
@@ -167,7 +197,13 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
             assert!(!has_text(name), "{name}");
         }
         // Compiled, compiled, seen by every file, referred to by such a file, and checked unless `skipLibCheck` is on.
-        for name in ["main.ts", "used.ts", "adds-global.ts", "of-global.ts", "leaf.d.ts"] {
+        for name in [
+            "main.ts",
+            "used.ts",
+            "adds-global.ts",
+            "of-global.ts",
+            "leaf.d.ts",
+        ] {
             assert!(has_tree(name), "{name}");
             assert!(has_text(name), "{name}");
         }
@@ -177,13 +213,28 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
 #[test]
 fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
     let files = [
-        ("main.ts", "import type { Size } from './types.ts';\nexport const b: Size = version;\n"),
-        ("types.ts", "import type { Inner } from './inner.ts';\nexport type Size = Inner;\n"),
-        ("inner.ts", "export type Inner = number;\nexport class Holder { #held = 1; get() { return this.#held; } }\n"),
-        ("unread.test.ts", "import { check } from './helper.ts';\ncheck();\n"),
+        (
+            "main.ts",
+            "import type { Size } from './types.ts';\nexport const b: Size = version;\n",
+        ),
+        (
+            "types.ts",
+            "import type { Inner } from './inner.ts';\nexport type Size = Inner;\n",
+        ),
+        (
+            "inner.ts",
+            "export type Inner = number;\nexport class Holder { #held = 1; get() { return this.#held; } }\n",
+        ),
+        (
+            "unread.test.ts",
+            "import { check } from './helper.ts';\ncheck();\n",
+        ),
         ("helper.ts", "export function check() {}\n"),
         ("hands-on.ts", "export * from './helper.ts';\n"),
-        ("adds-global.ts", "import { size } from './of-global.ts';\ndeclare global { var version: typeof size; }\n"),
+        (
+            "adds-global.ts",
+            "import { size } from './of-global.ts';\ndeclare global { var version: typeof size; }\n",
+        ),
         ("of-global.ts", "export const size = 1;\n"),
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
@@ -193,7 +244,14 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
         assert!(files.module(program.file("unread.test.ts")).is_leaf);
         assert_eq!(symbol_count("unread.test.ts"), 0);
         // Read by a compiled file, by what that reads, by a file that hands it on, by every file, and by such a file.
-        for name in ["types.ts", "inner.ts", "helper.ts", "hands-on.ts", "adds-global.ts", "of-global.ts"] {
+        for name in [
+            "types.ts",
+            "inner.ts",
+            "helper.ts",
+            "hands-on.ts",
+            "adds-global.ts",
+            "of-global.ts",
+        ] {
             assert!(!is_unbound(name), "{name}");
             assert!(symbol_count(name) > 0, "{name}");
         }
@@ -210,15 +268,26 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
 #[test]
 fn module_that_is_reached_has_the_bodies_of_its_functions() {
     let files = [
-        ("main.ts", "import type { Width } from './types.ts';\nexport const b: Width = 1;\n"),
-        ("types.ts", "export function make() { return { width: 1 }; }\nexport type Width = ReturnType<typeof make>['width'];\n"),
-        ("unread.test.ts", "export function check() { return { width: 1 }; }\n"),
+        (
+            "main.ts",
+            "import type { Width } from './types.ts';\nexport const b: Width = 1;\n",
+        ),
+        (
+            "types.ts",
+            "export function make() { return { width: 1 }; }\nexport type Width = ReturnType<typeof make>['width'];\n",
+        ),
+        (
+            "unread.test.ts",
+            "export function check() { return { width: 1 }; }\n",
+        ),
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
         let returns = |name: &str| {
             let statements = files.module(program.file(name)).hir.stmts.iter();
-            statements.filter(|it| matches!(it.kind, bun_sema::hir::StmtKind::Return(_))).count()
+            statements
+                .filter(|it| matches!(it.kind, bun_sema::hir::StmtKind::Return(_)))
+                .count()
         };
         assert_eq!(returns("types.ts"), 1);
         assert_eq!(returns("unread.test.ts"), 0);
@@ -232,32 +301,73 @@ fn specifiers_by_both_parses(path: &str, text: &str) -> [Option<Vec<String>>; 2]
     let options = Options::default().for_parsing();
     let disk = project_disk(&[], 1);
     let spell = |list: Vec<Atom>| -> Vec<String> {
-        let texts = list.iter().map(|&it| String::from_utf8_lossy(atoms.bytes(it)));
+        let texts = list
+            .iter()
+            .map(|&it| String::from_utf8_lossy(atoms.bytes(it)));
         texts.map(|text| text.into_owned()).collect()
     };
     let top = disk.parse_top_level(arena, path.as_bytes(), text.as_bytes(), &atoms, options);
     let whole = disk.parse(arena, path.as_bytes(), text.as_bytes(), &atoms, options);
     let of_top = top.as_ref().and_then(specifiers_of_closed_module);
-    [of_top.map(spell), specifiers_of_closed_module(&whole).map(spell)]
+    [
+        of_top.map(spell),
+        specifiers_of_closed_module(&whole).map(spell),
+    ]
 }
 
 #[test]
 fn top_level_says_what_the_whole_file_says() {
     for (path, text) in [
-        ("/project/a.ts", "import a from './a';\nexport function f() { return a + '}' + `${a}}` + /}/.source; }\nexport { b } from './b';"),
-        ("/project/a.ts", "import a from './a';\nexport function f() { return import('./late'); }"),
-        ("/project/a.ts", "import a from './a';\nexport function f() { let b: import('./type').T; return (a) / 2; }"),
-        ("/project/a.ts", "export class C { m() { return () => { if (1) { return { a: {} }; } }; } get g() { return 1; } }\nimport './effect';"),
-        ("/project/a.ts", "export const f = () => { return 1; };\nexport const g = function () { return 2; };\nimport './effect';"),
-        ("/project/a.ts", "export function f() { {} }\ndeclare global { var a: number }"),
-        ("/project/a.ts", "export function f() { return 1; }\ndeclare module 'm' { export const a: number }"),
-        ("/project/a.ts", "export function f() { return 1; }\nexport * from './a';"),
-        ("/project/a.tsx", "import a from './a';\nexport function f() { return <p>don't {a}</p>; }\nexport { b } from './b';"),
-        ("/project/a.tsx", "import a from './a';\nexport function f() { return <a href=\"x\">http://x {a}</a>; }\nexport { b } from './b';"),
-        ("/project/a.ts", "export function f() { // }\n return 1; /* } */ }\nimport './effect';"),
+        (
+            "/project/a.ts",
+            "import a from './a';\nexport function f() { return a + '}' + `${a}}` + /}/.source; }\nexport { b } from './b';",
+        ),
+        (
+            "/project/a.ts",
+            "import a from './a';\nexport function f() { return import('./late'); }",
+        ),
+        (
+            "/project/a.ts",
+            "import a from './a';\nexport function f() { let b: import('./type').T; return (a) / 2; }",
+        ),
+        (
+            "/project/a.ts",
+            "export class C { m() { return () => { if (1) { return { a: {} }; } }; } get g() { return 1; } }\nimport './effect';",
+        ),
+        (
+            "/project/a.ts",
+            "export const f = () => { return 1; };\nexport const g = function () { return 2; };\nimport './effect';",
+        ),
+        (
+            "/project/a.ts",
+            "export function f() { {} }\ndeclare global { var a: number }",
+        ),
+        (
+            "/project/a.ts",
+            "export function f() { return 1; }\ndeclare module 'm' { export const a: number }",
+        ),
+        (
+            "/project/a.ts",
+            "export function f() { return 1; }\nexport * from './a';",
+        ),
+        (
+            "/project/a.tsx",
+            "import a from './a';\nexport function f() { return <p>don't {a}</p>; }\nexport { b } from './b';",
+        ),
+        (
+            "/project/a.tsx",
+            "import a from './a';\nexport function f() { return <a href=\"x\">http://x {a}</a>; }\nexport { b } from './b';",
+        ),
+        (
+            "/project/a.ts",
+            "export function f() { // }\n return 1; /* } */ }\nimport './effect';",
+        ),
     ] {
         let [of_top, of_whole] = specifiers_by_both_parses(path, text);
-        assert!(of_top.is_none() || of_top == of_whole, "{text}: {of_top:?} | {of_whole:?}");
+        assert!(
+            of_top.is_none() || of_top == of_whole,
+            "{text}: {of_top:?} | {of_whole:?}"
+        );
     }
 }
 
@@ -288,9 +398,12 @@ fn specifiers_without_binding(text: &str) -> Option<Vec<String>> {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
     let options = Options::default().for_parsing();
-    let file = project_disk(&[], 1).parse(arena, b"/project/case.ts", text.as_bytes(), &atoms, options);
+    let file =
+        project_disk(&[], 1).parse(arena, b"/project/case.ts", text.as_bytes(), &atoms, options);
     let spell = |list: &[Atom]| -> Vec<String> {
-        let texts = list.iter().map(|&it| String::from_utf8_lossy(atoms.bytes(it)));
+        let texts = list
+            .iter()
+            .map(|&it| String::from_utf8_lossy(atoms.bytes(it)));
         texts.map(|text| text.into_owned()).collect()
     };
     let found = specifiers_of_closed_module(&file)?;
@@ -312,7 +425,10 @@ fn specifiers_of_statements_come_first_and_each_specifier_once() {
         export const d = 1;
     "#;
     let expected = ["./a", "./effect", "./b", "./c", "./late", "./type"].map(String::from);
-    assert_eq!(specifiers_without_binding(text).as_deref(), Some(&expected[..]));
+    assert_eq!(
+        specifiers_without_binding(text).as_deref(),
+        Some(&expected[..])
+    );
 }
 
 #[test]
@@ -371,26 +487,40 @@ export type Copy = Size;
         ("node_modules/dep/plain.js", "export {};\n"),
         ("node_modules/shapes/package.json", shapes_manifest),
         ("node_modules/shapes/index.js", "export const sides = 4;\n"),
-        (".sound/shapes/index.ts", "export const sides: number = 4;\n"),
+        (
+            ".sound/shapes/index.ts",
+            "export const sides: number = 4;\n",
+        ),
     ];
     let disk = project_disk(&files, 1);
     let script = HostScript {
         typed_versions: &[("node_modules/shapes/index.js", ".sound/shapes/index.ts")],
         ..HostScript::default()
     };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.ts", |program| {
-        let expected = [
-            ("main.ts", FileOrigin::ProgramSource),
-            ("own.js", FileOrigin::ProgramJavaScript),
-            ("types.d.ts", FileOrigin::Declarations),
-            ("node_modules/dep/index.ts", FileOrigin::DependencySource),
-            ("node_modules/dep/plain.js", FileOrigin::DependencyJavaScript),
-            ("node_modules/shapes/index.js", FileOrigin::ProjectTypedVersion),
-        ];
-        for (path, origin) in expected {
-            assert_eq!(program.loaded.origin(program.file(path)), origin, "{path}");
-        }
-    });
+    with_host(
+        &ScriptedHost(&disk, script),
+        PROJECT,
+        "./main.ts",
+        |program| {
+            let expected = [
+                ("main.ts", FileOrigin::ProgramSource),
+                ("own.js", FileOrigin::ProgramJavaScript),
+                ("types.d.ts", FileOrigin::Declarations),
+                ("node_modules/dep/index.ts", FileOrigin::DependencySource),
+                (
+                    "node_modules/dep/plain.js",
+                    FileOrigin::DependencyJavaScript,
+                ),
+                (
+                    "node_modules/shapes/index.js",
+                    FileOrigin::ProjectTypedVersion,
+                ),
+            ];
+            for (path, origin) in expected {
+                assert_eq!(program.loaded.origin(program.file(path)), origin, "{path}");
+            }
+        },
+    );
 }
 
 #[test]
@@ -420,7 +550,10 @@ const BUN_TYPES: [(&str, &str); 2] = [
         "node_modules/@types/bun/package.json",
         r#"{ "name": "@types/bun", "version": "1.0.0", "types": "index.d.ts" }"#,
     ),
-    ("node_modules/@types/bun/index.d.ts", "declare const Bun: number;\n"),
+    (
+        "node_modules/@types/bun/index.d.ts",
+        "declare const Bun: number;\n",
+    ),
 ];
 
 fn libraries_of(options: &Options) -> (Vec<u8>, Option<Vec<Vec<u8>>>) {

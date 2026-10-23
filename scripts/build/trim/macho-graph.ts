@@ -17,7 +17,12 @@ export function* pointersInMachO(path: string): Generator<[at: number, target: n
   let fixups: Buffer | undefined;
   for (let at = 0; at < commands.length; at += commands.readUInt32LE(at + 4)) {
     const kind = commands.readUInt32LE(at);
-    if (kind === LC_SEGMENT_64) segments.push({ address: Number(commands.readBigUInt64LE(at + 24)), offset: Number(commands.readBigUInt64LE(at + 40)), size: Number(commands.readBigUInt64LE(at + 48)) });
+    if (kind === LC_SEGMENT_64)
+      segments.push({
+        address: Number(commands.readBigUInt64LE(at + 24)),
+        offset: Number(commands.readBigUInt64LE(at + 40)),
+        size: Number(commands.readBigUInt64LE(at + 48)),
+      });
     else if (kind === 0x80000034) fixups = readAt(fd, commands.readUInt32LE(at + 8), commands.readUInt32LE(at + 12));
   }
   const base = segments.find(segment => segment.offset === 0 && segment.size > 0)?.address ?? 0;
@@ -25,16 +30,21 @@ export function* pointersInMachO(path: string): Generator<[at: number, target: n
   for (let index = 0; index < (fixups?.readUInt32LE(starts) ?? 0); index++) {
     const inSegment = fixups!.readUInt32LE(starts + 4 + index * 4);
     if (inSegment === 0) continue;
-    const [sizeOfPage, format, pages] = [4, 6, 20].map(field => fixups!.readUInt16LE(starts + inSegment + field)) as [number, number, number];
+    const [sizeOfPage, format, pages] = [4, 6, 20].map(field => fixups!.readUInt16LE(starts + inSegment + field)) as [
+      number,
+      number,
+      number,
+    ];
     if (format !== 2 && format !== 6) continue;
     const { address, offset, size } = segments[index]!;
     const data = readAt(fd, offset, size);
     for (let page = 0; page < pages; page++) {
       const first = fixups!.readUInt16LE(starts + inSegment + 22 + page * 2);
       if (first === 0xffff) continue;
-      for (let at = page * sizeOfPage + first; ; ) {
+      for (let at = page * sizeOfPage + first; ;) {
         const high = data.readUInt32LE(at + 4);
-        if (high >>> 31 === 0) yield [address + at, data.readUInt32LE(at) + (high & 15) * 0x100000000 + (format === 6 ? base : 0)];
+        if (high >>> 31 === 0)
+          yield [address + at, data.readUInt32LE(at) + (high & 15) * 0x100000000 + (format === 6 ? base : 0)];
         const next = (high >>> 19) & 0xfff;
         if (next === 0) break;
         at += next * 4;
@@ -44,7 +54,8 @@ export function* pointersInMachO(path: string): Generator<[at: number, target: n
   closeSync(fd);
 }
 
-export const isOneUnitOfAssembly = (output: string) => output === "__TEXT,__jsc_bytecode" || output === "__TEXT,__jsc_wasm";
+export const isOneUnitOfAssembly = (output: string) =>
+  output === "__TEXT,__jsc_bytecode" || output === "__TEXT,__jsc_wasm";
 
 const textOutput = "__TEXT,__text";
 const stubsOutput = "__TEXT,__stubs";
@@ -121,17 +132,33 @@ function parseMap(mapPath: string): LinkMap {
       if (match !== null) files.set(Number(match[1]), match[2]!);
     } else if (stage === "Sections") {
       const words = line.split(/\s+/);
-      if (words.length >= 4) sections.push({ address: parseInt(words[0]!, 16), size: parseInt(words[1]!, 16), name: `${words[2]},${words[3]}` });
+      if (words.length >= 4)
+        sections.push({
+          address: parseInt(words[0]!, 16),
+          size: parseInt(words[1]!, 16),
+          name: `${words[2]},${words[3]}`,
+        });
     } else if (stage === "Symbols") {
       const match = /^0x([0-9A-F]+)\s+0x([0-9A-F]+)\s+\[\s*(\d+)\] (.*)$/.exec(line);
       if (match === null) continue;
-      const symbol = { address: parseInt(match[1]!, 16), size: parseInt(match[2]!, 16), file: Number(match[3]), name: match[4]! };
+      const symbol = {
+        address: parseInt(match[1]!, 16),
+        size: parseInt(match[2]!, 16),
+        file: Number(match[3]),
+        name: match[4]!,
+      };
       if (symbol.size > 0) atoms.push(symbol);
       else zeroSizeSymbols.push(symbol);
     }
   }
   const literals = sections.find(section => section.name === literalOutput);
-  for (let at = 0; literals !== undefined && at + 4 <= literals.size; at += 4) atoms.push({ address: literals.address + at, size: 4, file: 0, name: `literal ${(literals.address + at).toString(16)}` });
+  for (let at = 0; literals !== undefined && at + 4 <= literals.size; at += 4)
+    atoms.push({
+      address: literals.address + at,
+      size: 4,
+      file: 0,
+      name: `literal ${(literals.address + at).toString(16)}`,
+    });
   atoms.sort((a, b) => a.address - b.address);
   return { files, sections, atoms, zeroSizeSymbols, literals };
 }
@@ -162,7 +189,11 @@ function readObjects(listedFiles: Map<number, string>, compiledFromBitcode: stri
   return { files, objects, unreadReasons };
 }
 
-function createAtomLookup(nodeInFile: Map<string, number>, nodeByName: Map<string, number>, external: Map<string, number>): AtomLookup {
+function createAtomLookup(
+  nodeInFile: Map<string, number>,
+  nodeByName: Map<string, number>,
+  external: Map<string, number>,
+): AtomLookup {
   const findExternalName = (names: string) => names.split("\x01").find(name => external.has(name));
   return {
     findExternalName,
@@ -185,7 +216,11 @@ function createAtomLookup(nodeInFile: Map<string, number>, nodeByName: Map<strin
   };
 }
 
-function indexSymbols({ atoms, zeroSizeSymbols }: LinkMap, output: string[], { files, objects }: InputObjects): SymbolIndex {
+function indexSymbols(
+  { atoms, zeroSizeSymbols }: LinkMap,
+  output: string[],
+  { files, objects }: InputObjects,
+): SymbolIndex {
   const nodeByAddress = new Map(atoms.map((atom, node) => [atom.address, node]));
   const nodeInFile = new Map<string, number>();
   const nodeByName = new Map<string, number>();
@@ -243,31 +278,44 @@ function findUnreadInputs({ files, unreadReasons }: InputObjects, fileOfNode: nu
   const failures: GraphFailure[] = [];
   for (const [file, reason] of unreadReasons) {
     const path = files.get(file)!;
-    if (filesWithNodes.has(file) && !/\.(tbd|dylib)$/.test(path)) failures.push({ kind: "UnreadInput", object: path, reason });
+    if (filesWithNodes.has(file) && !/\.(tbd|dylib)$/.test(path))
+      failures.push({ kind: "UnreadInput", object: path, reason });
   }
   return failures;
 }
 
 function computePaddedSizes(atoms: MapSymbol[], output: string[], image: LinkedImage): number[] {
   const sizes = atoms.map(atom => atom.size);
-  const isZeroFilled = (address: number, length: number) => image.bytes(address, length)?.every(byte => byte === 0) === true;
+  const isZeroFilled = (address: number, length: number) =>
+    image.bytes(address, length)?.every(byte => byte === 0) === true;
   const segmentOf = (name: string | undefined) => name?.slice(0, name.indexOf(","));
   for (let node = 1; node < atoms.length; node++) {
     const end = atoms[node - 1]!.address + atoms[node - 1]!.size;
     const padding = atoms[node]!.address - end;
-    if (padding <= 0 || padding >= machOPageBytes || segmentOf(output[node - 1]) !== segmentOf(output[node]) || output[node - 1] === textOutput) continue;
+    if (
+      padding <= 0 ||
+      padding >= machOPageBytes ||
+      segmentOf(output[node - 1]) !== segmentOf(output[node]) ||
+      output[node - 1] === textOutput
+    )
+      continue;
     if (isZeroFilled(end, padding)) sizes[node - 1]! += padding;
   }
   atoms.forEach((atom, node) => {
     if (segmentOf(output[node]) === segmentOf(output[node + 1])) return;
     const end = atom.address + atom.size;
-    const padding = Math.min(Math.ceil(end / machOPageBytes) * machOPageBytes, atoms[node + 1]?.address ?? Infinity) - end;
+    const padding =
+      Math.min(Math.ceil(end / machOPageBytes) * machOPageBytes, atoms[node + 1]?.address ?? Infinity) - end;
     if (padding > 0 && isZeroFilled(end, padding)) sizes[node]! += padding;
   });
   return sizes;
 }
 
-function indexStrings(atoms: MapSymbol[], output: string[], image: LinkedImage): { stringByText: Map<string, number>; stringHash: Map<number, number> } {
+function indexStrings(
+  atoms: MapSymbol[],
+  output: string[],
+  image: LinkedImage,
+): { stringByText: Map<string, number>; stringHash: Map<number, number> } {
   const stringByText = new Map<string, number>();
   const stringHash = new Map<number, number>();
   atoms.forEach((atom, node) => {
@@ -279,7 +327,11 @@ function indexStrings(atoms: MapSymbol[], output: string[], image: LinkedImage):
   return { stringByText, stringHash };
 }
 
-function indexLiteralCells(literals: OutputSection | undefined, placedNodes: PlacedNodes, image: LinkedImage): Map<string, number[]> {
+function indexLiteralCells(
+  literals: OutputSection | undefined,
+  placedNodes: PlacedNodes,
+  image: LinkedImage,
+): Map<string, number[]> {
   const cellsByValue = new Map<string, number[]>();
   if (literals === undefined) return cellsByValue;
   const firstCell = nodeAt(placedNodes, literals.address);
@@ -313,16 +365,19 @@ function connectReferences(
   const definedExternals = new Set<string>();
   for (const read of objects.values()) for (const name of read?.externals ?? []) definedExternals.add(name);
   const externalStrings = new Map<string, { text: string; file: number }>();
-  for (const [file, read] of objects) for (const [name, text] of read?.textOfExternalName ?? []) externalStrings.set(name, { text, file });
+  for (const [file, read] of objects)
+    for (const [name, text] of read?.textOfExternalName ?? []) externalStrings.set(name, { text, file });
   const connectAtom = (file: number, source: string, from: number, isLocal: boolean, names: string) => {
     const node = (isLocal ? findInFile(file, names) : undefined) ?? findInAnyFile(names);
     if (node !== undefined) {
       successors[from]!.add(node);
       return;
     }
-    const hasNoBytes = (name: string) => (isLocal ? symbolsWithoutBytes.has(file + "\0" + name) : namesWithoutBytes.has(name));
+    const hasNoBytes = (name: string) =>
+      isLocal ? symbolsWithoutBytes.has(file + "\0" + name) : namesWithoutBytes.has(name);
     if (names.split("\x01").some(hasNoBytes)) symbolsOutsideGraph++;
-    else if (isLocal || (definedExternals.has(names) && !externalStrings.has(names))) failures.push({ kind: "UnresolvedReference", object: files.get(file)!, section: source, target: names });
+    else if (isLocal || (definedExternals.has(names) && !externalStrings.has(names)))
+      failures.push({ kind: "UnresolvedReference", object: files.get(file)!, section: source, target: names });
   };
   const addStringReferrer = (file: number, node: number) => {
     const referrers = stringReferrers.get(node);
@@ -341,7 +396,8 @@ function connectReferences(
   const connectLiteral = (from: number, value: string) => {
     const cells = cellsByValue.get(value);
     if (cells === undefined) literalsNotFollowed++;
-    for (const first of cells ?? []) for (let cell = first; cell < first + value.length / 8; cell++) successors[from]!.add(cell);
+    for (const first of cells ?? [])
+      for (let cell = first; cell < first + value.length / 8; cell++) successors[from]!.add(cell);
   };
   for (const [file, read] of objects) {
     if (read === undefined) continue;
@@ -382,15 +438,37 @@ function connectReferences(
       }
     }
   }
-  return { successors, retained, liveWithoutReference, stringReferrers, failures, stringsNotFound, literalsNotFollowed, symbolsOutsideGraph };
+  return {
+    successors,
+    retained,
+    liveWithoutReference,
+    stringReferrers,
+    failures,
+    stringsNotFound,
+    literalsNotFollowed,
+    symbolsOutsideGraph,
+  };
 }
 
-function connectFixups(executable: string, placedNodes: PlacedNodes, fileOfNode: number[], successors: Set<number>[]): number {
+function connectFixups(
+  executable: string,
+  placedNodes: PlacedNodes,
+  fileOfNode: number[],
+  successors: Set<number>[],
+): number {
   let pointersOnlyInFixups = 0;
   for (const [at, target] of pointersInMachO(executable)) {
     const from = nodeAt(placedNodes, at);
     const to = nodeAt(placedNodes, target);
-    if (from < 0 || to < 0 || from === to || fileOfNode[from] === 0 || fileOfNode[to] === 0 || successors[from]!.has(to)) continue;
+    if (
+      from < 0 ||
+      to < 0 ||
+      from === to ||
+      fileOfNode[from] === 0 ||
+      fileOfNode[to] === 0 ||
+      successors[from]!.has(to)
+    )
+      continue;
     successors[from]!.add(to);
     pointersOnlyInFixups++;
   }
@@ -421,12 +499,18 @@ function findRoots(
       return;
     }
     const file = fileOfNode[node]!;
-    if (file === 0 || objects.get(file) === undefined || (name.startsWith("__TEXT,__jsc_") && !isOneUnitOfAssembly(name))) roots.add(node);
+    if (
+      file === 0 ||
+      objects.get(file) === undefined ||
+      (name.startsWith("__TEXT,__jsc_") && !isOneUnitOfAssembly(name))
+    )
+      roots.add(node);
   });
   let stringsRetained = 0;
   for (const node of stringNodes) {
     const isReferrer = (file: number) => stringReferrers.get(node)?.has(file) === true;
-    if (stringsNotFound === 0 && isReferrer(fileOfNode[node]!) && (mergedStringFiles.get(node) ?? []).every(isReferrer)) continue;
+    if (stringsNotFound === 0 && isReferrer(fileOfNode[node]!) && (mergedStringFiles.get(node) ?? []).every(isReferrer))
+      continue;
     roots.add(node);
     stringsRetained++;
   }
@@ -444,20 +528,30 @@ function findExportedNodes(exportedSymbols: string, external: Map<string, number
   return exported;
 }
 
-function createResolver(files: Map<number, string>, { findInFile, findExternalName, external }: SymbolIndex): GraphReading["resolve"] {
+function createResolver(
+  files: Map<number, string>,
+  { findInFile, findExternalName, external }: SymbolIndex,
+): GraphReading["resolve"] {
   const fileByPath = new Map([...files].map(([file, path]) => [path, file]));
   return (object, reference) => {
     const file = fileByPath.get(object);
     if (file === undefined) return undefined;
     const names = reference.slice(1);
     const externalName = findExternalName(names);
-    const node = (reference[0] === "L" ? findInFile(file, names) : undefined) ?? (externalName === undefined ? undefined : external.get(externalName));
+    const node =
+      (reference[0] === "L" ? findInFile(file, names) : undefined) ??
+      (externalName === undefined ? undefined : external.get(externalName));
     if (node === undefined) return undefined;
     return { node, section: externalName === undefined ? file + "\0" + names : "X" + externalName };
   };
 }
 
-export function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode: string[], exportedSymbols: string): GraphReading {
+export function readMachOGraph(
+  executable: string,
+  mapPath: string,
+  compiledFromBitcode: string[],
+  exportedSymbols: string,
+): GraphReading {
   const map = parseMap(mapPath);
   const { atoms } = map;
   const inputs = readObjects(map.files, compiledFromBitcode);
@@ -465,7 +559,11 @@ export function readMachOGraph(executable: string, mapPath: string, compiledFrom
   const output = findOutputs(atoms, map.sections);
   const index = indexSymbols(map, output, inputs);
   const image = machOImage(executable);
-  const placedNodes = { address: atoms.map(atom => atom.address), size: computePaddedSizes(atoms, output, image), placedCount: atoms.length };
+  const placedNodes = {
+    address: atoms.map(atom => atom.address),
+    size: computePaddedSizes(atoms, output, image),
+    placedCount: atoms.length,
+  };
   const { stringByText, stringHash } = indexStrings(atoms, output, image);
   const cellsByValue = indexLiteralCells(map.literals, placedNodes, image);
   const connections = connectReferences(atoms.length, inputs, index, stringByText, cellsByValue);
@@ -492,13 +590,21 @@ export function readMachOGraph(executable: string, mapPath: string, compiledFrom
   });
   const recordSections: RecordSection[] = [];
   for (const [file, read] of objects) {
-    for (const { bytes, references } of read?.recordSections ?? []) recordSections.push({ object: files.get(file)!, bytes, references });
+    for (const { bytes, references } of read?.recordSections ?? [])
+      recordSections.push({ object: files.get(file)!, bytes, references });
   }
   return {
     graph,
     recordSections,
     resolve: createResolver(files, index),
     failures: [...findUnreadInputs(inputs, index.fileOfNode), ...connections.failures],
-    statistics: { stringsFollowed: stringHash.size - stringsRetained, stringsRetained, stringsNotFound, literalsNotFollowed, pointersOnlyInFixups, symbolsOutsideGraph },
+    statistics: {
+      stringsFollowed: stringHash.size - stringsRetained,
+      stringsRetained,
+      stringsNotFound,
+      literalsNotFollowed,
+      pointersOnlyInFixups,
+      symbolsOutsideGraph,
+    },
   };
 }

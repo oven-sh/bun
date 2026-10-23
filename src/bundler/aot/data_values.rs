@@ -99,6 +99,7 @@ pub(crate) fn write_expr(
 }
 
 impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
+    #[allow(clippy::needless_pass_by_value)] // popped off the stack of steps
     fn run_step(&mut self, step: Step<'e>) -> Result<(), NotData> {
         match step {
             Step::Expr(expr) => return self.write_value(expr),
@@ -242,7 +243,8 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
     fn open_json_array(&mut self, array: StoreRef<E::ArrayJSON>) {
         let items = array.get().items();
         self.stack.push(Step::EndArray(items.len(), None));
-        self.stack.extend(items.iter().rev().map(|item| Step::Json(*item)));
+        self.stack
+            .extend(items.iter().rev().map(|item| Step::Json(*item)));
     }
 
     fn enter_node(&mut self, address: *const ()) -> Result<NodeAddress, NotData> {
@@ -388,6 +390,7 @@ pub(crate) fn write_data_value(
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // the end of the error
 pub(crate) fn report_not_data(log: &mut Log, path: &[u8], subject: &str, error: NotData) {
     let path = bstr::BStr::new(path);
     match error {
@@ -493,7 +496,8 @@ impl ValueSink for DataValueBuilder<'_, '_> {
     }
 
     fn big_int(&mut self, digits: &[u8]) {
-        self.values.push(DataValue::BigInt(self.atoms.intern(digits)));
+        self.values
+            .push(DataValue::BigInt(self.atoms.intern(digits)));
     }
 
     fn array(&mut self, length: usize) {
@@ -648,11 +652,13 @@ impl ValueSink for ExprBuilder<'_> {
     }
 
     fn boolean(&mut self, value: bool) {
-        self.values.push(Expr::init(E::Boolean { value }, Loc::EMPTY));
+        self.values
+            .push(Expr::init(E::Boolean { value }, Loc::EMPTY));
     }
 
     fn number(&mut self, value: f64) {
-        self.values.push(Expr::init(E::Number::new(value), Loc::EMPTY));
+        self.values
+            .push(Expr::init(E::Number::new(value), Loc::EMPTY));
     }
 
     fn string(&mut self, text: &[u8]) {
@@ -662,7 +668,8 @@ impl ValueSink for ExprBuilder<'_> {
 
     fn big_int(&mut self, digits: &[u8]) {
         let value = E::Str::new(self.arena.alloc_slice_copy(digits));
-        self.values.push(Expr::init(E::BigInt { value }, Loc::EMPTY));
+        self.values
+            .push(Expr::init(E::BigInt { value }, Loc::EMPTY));
     }
 
     fn array(&mut self, length: usize) {

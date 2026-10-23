@@ -124,10 +124,9 @@ pub(super) fn start_of_dots_before(
 /// `isLiteralExpressionOfObject`
 pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     let is_literal = match hir[e].kind {
-        ExprKind::Object(_)
-        | ExprKind::Array(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Class(_) => true,
+        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex { .. } | ExprKind::Class(_) => {
+            true
+        }
         ExprKind::Fn(f) => hir[f].kind == FnKind::Expr,
         _ => false,
     };

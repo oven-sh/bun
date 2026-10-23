@@ -108,7 +108,9 @@ impl DefinedObjectTypes {
     pub fn add_definition(&self, ty: DefinedObjectType, level: u8, definer: FileId) {
         let of_layout = match self.first_definers_of_layouts.get_ref(&ty.names) {
             Some(first_definer) => first_definer,
-            None => self.first_definers_of_layouts.insert_ref(ty.names, AtomicU32::new(u32::MAX)),
+            None => self
+                .first_definers_of_layouts
+                .insert_ref(ty.names, AtomicU32::new(u32::MAX)),
         };
         of_layout.fetch_min(definer.0, Ordering::Relaxed);
         if level & HAS_PLACE != 0 {
@@ -133,7 +135,9 @@ impl DefinedObjectTypes {
         let level = level & !(NAMES_THE_SAME_IN_EVERY_FILE | HAS_PLACE);
         first_definers.by_level[level as usize].fetch_min(definer.0, Ordering::Relaxed);
         if names_the_same && level < LAST_DEFINITION_LEVEL {
-            first_definers.gone_on_for_all.fetch_min(definer.0, Ordering::Relaxed);
+            first_definers
+                .gone_on_for_all
+                .fetch_min(definer.0, Ordering::Relaxed);
         }
     }
 

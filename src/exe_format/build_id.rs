@@ -18,7 +18,9 @@ pub fn compute(payload: &[u8]) -> [u8; SIZE] {
     let threads = std::thread::available_parallelism().map_or(1, |count| count.get());
     let chunks_per_thread = chunks.len().div_ceil(threads.min(MAX_THREADS)).max(1);
     std::thread::scope(|scope| {
-        let parts = chunks.chunks(chunks_per_thread).zip(digests.chunks_mut(chunks_per_thread));
+        let parts = chunks
+            .chunks(chunks_per_thread)
+            .zip(digests.chunks_mut(chunks_per_thread));
         for (chunks, digests) in parts {
             scope.spawn(move || {
                 for (chunk, digest) in chunks.iter().zip(digests) {
@@ -38,7 +40,10 @@ pub fn compute(payload: &[u8]) -> [u8; SIZE] {
 pub fn write(template: &mut [u8], id: &[u8; SIZE]) -> bool {
     let len = template.len();
     let mut read = |offset: usize, out: &mut [u8]| read_bytes_at(template, offset, out);
-    let image = &mut Image { len, read: &mut read };
+    let image = &mut Image {
+        len,
+        read: &mut read,
+    };
     let Ok(location) = find_known_section(image, KnownSection::BuildId) else {
         return false;
     };
@@ -58,7 +63,10 @@ pub fn write(template: &mut [u8], id: &[u8; SIZE]) -> bool {
 fn write_into_gnu_build_id(template: &mut [u8], id: &[u8; SIZE]) {
     let len = template.len();
     let mut read = |offset: usize, out: &mut [u8]| read_bytes_at(template, offset, out);
-    let rest = find_rest_of_gnu_build_id(&mut Image { len, read: &mut read });
+    let rest = find_rest_of_gnu_build_id(&mut Image {
+        len,
+        read: &mut read,
+    });
     if let Some(rest) = rest.and_then(|rest| template.get_mut(rest)) {
         let length = rest.len().min(SIZE);
         rest[..length].copy_from_slice(&id[..length]);
@@ -71,7 +79,9 @@ mod tests {
 
     #[test]
     fn name_follows_the_bytes_alone() {
-        let payload: Vec<u8> = (0..CHUNK_SIZE * 2 + 5).map(|index| (index / 7) as u8).collect();
+        let payload: Vec<u8> = (0..CHUNK_SIZE * 2 + 5)
+            .map(|index| (index / 7) as u8)
+            .collect();
         let mut changed = payload.clone();
         *changed.last_mut().unwrap() ^= 1;
         assert_eq!(compute(&payload), compute(&payload));
@@ -82,7 +92,9 @@ mod tests {
 
     #[test]
     fn name_is_made_of_the_digests_of_the_chunks() {
-        let payload: Vec<u8> = (0..CHUNK_SIZE + 3).map(|index| (index % 251) as u8).collect();
+        let payload: Vec<u8> = (0..CHUNK_SIZE + 3)
+            .map(|index| (index % 251) as u8)
+            .collect();
         let mut digests = [[0u8; 32]; 2];
         sha256_hash(&payload[..CHUNK_SIZE], &mut digests[0]);
         sha256_hash(&payload[CHUNK_SIZE..], &mut digests[1]);

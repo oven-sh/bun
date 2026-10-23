@@ -222,7 +222,11 @@ fn create_receiver_position(
         position,
     };
     let site = add_type_site(file, origin, None);
-    DeclaredType::new(Mapped::checked(receiver), Some(site), PositionFlags::default())
+    DeclaredType::new(
+        Mapped::checked(receiver),
+        Some(site),
+        PositionFlags::default(),
+    )
 }
 
 fn get_awaited_types(
@@ -267,6 +271,9 @@ fn create_awaited_position(
     let Some(mut source) = super::choose_source(file, types, Some(origin)) else {
         return DeclaredType::untyped();
     };
-    source.mapped.ty = file.fragment.types.union(source.mapped.ty, TypeTable::OBJECT);
+    source.mapped.ty = file
+        .fragment
+        .types
+        .union(source.mapped.ty, TypeTable::OBJECT);
     super::finish_position(file, source, Some(origin), PositionFlags::default())
 }

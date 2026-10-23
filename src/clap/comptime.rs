@@ -583,8 +583,7 @@ impl<Id> ComptimeClap<Id> {
                 if single_options.len() != 0 {
                     single_options[param.id] = Some(arg.value.unwrap_or(b""));
                 }
-            } else if param.takes_value == Values::Many
-                || param.takes_value == Values::ManyOptional
+            } else if param.takes_value == Values::Many || param.takes_value == Values::ManyOptional
             {
                 debug_assert!(multis.len() != 0);
                 if multis.len() != 0 {

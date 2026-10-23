@@ -47,26 +47,54 @@ const UNFILLABLE_RANGE_BYTES: u64 = 0x8_0000;
 const ALLOWED_RANGE_BYTES: u64 = 0x8_0000;
 const RAGGED_RANGE_OFFSET: u64 = 0x2_0010;
 const RANDOM_CASES_PER_TARGET: u64 = 8;
-const ELF_X86_64: Target = Target { format: ExecutableFormat::Elf, architecture: Architecture::X86_64 };
-const PE_X86_64: Target = Target { format: ExecutableFormat::Pe, architecture: Architecture::X86_64 };
-const ALWAYS_ENTERED: [Feature; 4] = [Feature::Bunfig, Feature::CliOptions, Feature::CrashReport, Feature::Profilers];
+const ELF_X86_64: Target = Target {
+    format: ExecutableFormat::Elf,
+    architecture: Architecture::X86_64,
+};
+const PE_X86_64: Target = Target {
+    format: ExecutableFormat::Pe,
+    architecture: Architecture::X86_64,
+};
+const ALWAYS_ENTERED: [Feature; 4] = [
+    Feature::Bunfig,
+    Feature::CliOptions,
+    Feature::CrashReport,
+    Feature::Profilers,
+];
 
 fn image_over(bytes: &[u8]) -> impl FnMut(usize, &mut [u8]) -> bool {
     move |offset, out| read_bytes_at(bytes, offset, out)
 }
 
-fn compute_plan(used: &UsedFeatures, request: &TrimRequest, file: &[u8]) -> Result<TrimPlan, TrimError> {
+fn compute_plan(
+    used: &UsedFeatures,
+    request: &TrimRequest,
+    file: &[u8],
+) -> Result<TrimPlan, TrimError> {
     let mut read = image_over(file);
     let settings = ExecutableSettings::default();
-    let input = TrimInput { used, settings: &settings, request };
-    bun_trim::plan(&input, &mut Image { len: file.len(), read: &mut read })
+    let input = TrimInput {
+        used,
+        settings: &settings,
+        request,
+    };
+    bun_trim::plan(
+        &input,
+        &mut Image {
+            len: file.len(),
+            read: &mut read,
+        },
+    )
 }
 
 struct Random(u64);
 
 impl Random {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 33
     }
 }
@@ -75,14 +103,25 @@ fn chosen_features() -> [Feature; 5] {
     let features: Vec<Feature> = Feature::ALL
         .iter()
         .copied()
-        .filter(|feature| feature.entered_from() == EnteredFrom::Program && !ALWAYS_ENTERED.contains(feature))
+        .filter(|feature| {
+            feature.entered_from() == EnteredFrom::Program && !ALWAYS_ENTERED.contains(feature)
+        })
         .take(5)
         .collect();
-    features.try_into().expect("the program enters five features that can be unused")
+    features
+        .try_into()
+        .expect("the program enters five features that can be unused")
 }
 
 fn sets_of(f: [Feature; 5]) -> Vec<Vec<Feature>> {
-    vec![vec![f[0]], vec![f[1]], vec![f[2]], vec![f[0], f[1]], vec![f[1], f[2], f[3]], vec![f[4]]]
+    vec![
+        vec![f[0]],
+        vec![f[1]],
+        vec![f[2]],
+        vec![f[0], f[1]],
+        vec![f[1], f[2], f[3]],
+        vec![f[4]],
+    ]
 }
 
 fn create_table(ranges: Vec<ToyRange>) -> ToyTable {
@@ -98,15 +137,24 @@ fn create_table(ranges: Vec<ToyRange>) -> ToyTable {
 }
 
 fn removing_unused() -> TrimRequest {
-    TrimRequest { removes_unused: true, ..TrimRequest::default() }
+    TrimRequest {
+        removes_unused: true,
+        ..TrimRequest::default()
+    }
 }
 
 fn removing(features: &[Feature]) -> TrimRequest {
-    TrimRequest { remove_internal: features.to_vec(), ..TrimRequest::default() }
+    TrimRequest {
+        remove_internal: features.to_vec(),
+        ..TrimRequest::default()
+    }
 }
 
 fn public_names_of(features: &[Feature]) -> Vec<TrimFeature> {
-    features.iter().filter_map(|feature| feature.narrowest_trim_feature()).collect()
+    features
+        .iter()
+        .filter_map(|feature| feature.narrowest_trim_feature())
+        .collect()
 }
 
 fn nothing_used() -> UsedFeatures {
@@ -138,7 +186,12 @@ fn trim(label: &str, before: Vec<u8>, used: &UsedFeatures, request: &TrimRequest
     let mut after = before.clone();
     let summary = bun_trim::apply(&mut after, &plan)
         .unwrap_or_else(|error| panic!("{label}: apply failed on the toy executable: {error:?}"));
-    Trimmed { before, after, plan, summary }
+    Trimmed {
+        before,
+        after,
+        plan,
+        summary,
+    }
 }
 
 fn subtract_ranges(interval: AddressRange, excluded: &[AddressRange]) -> Vec<AddressRange> {
@@ -149,12 +202,18 @@ fn subtract_ranges(interval: AddressRange, excluded: &[AddressRange]) -> Vec<Add
             continue;
         }
         if start < range.start {
-            parts.push(AddressRange { start, end: range.start });
+            parts.push(AddressRange {
+                start,
+                end: range.start,
+            });
         }
         start = range.end;
     }
     if start < interval.end {
-        parts.push(AddressRange { start, end: interval.end });
+        parts.push(AddressRange {
+            start,
+            end: interval.end,
+        });
     }
     parts
 }
@@ -200,15 +259,21 @@ fn check_trimmed(
 
 impl TrimmedCheck<'_> {
     fn is_set_removed(&self, set: u16) -> bool {
-        self.table.sets[set as usize].iter().all(|feature| self.removed.contains(*feature))
+        self.table.sets[set as usize]
+            .iter()
+            .all(|feature| self.removed.contains(*feature))
     }
 
     fn removed_ranges(&self) -> impl Iterator<Item = &ToyRange> {
-        self.table.ranges.iter().filter(|range| self.is_set_removed(range.set))
+        self.table
+            .ranges
+            .iter()
+            .filter(|range| self.is_set_removed(range.set))
     }
 
     fn check_stable_bytes(&self) {
-        let mut excluded: Vec<AddressRange> = self.removed_ranges().map(|range| range.range).collect();
+        let mut excluded: Vec<AddressRange> =
+            self.removed_ranges().map(|range| range.range).collect();
         excluded.extend(self.table.icu_packages.iter().map(|package| package.range));
         excluded.sort_by_key(|range| range.start);
         for stable in &self.layout.stable {
@@ -253,7 +318,11 @@ impl TrimmedCheck<'_> {
         if let Some(bytes) = self.new.bytes(range.range) {
             for (address, byte) in addresses.zip(bytes) {
                 let fill = fill_byte(architecture, range.is_code, address);
-                assert!(byte == fill, "{}: {address:#x} holds {byte:#x}, not fill {fill:#x}", self.label);
+                assert!(
+                    byte == fill,
+                    "{}: {address:#x} holds {byte:#x}, not fill {fill:#x}",
+                    self.label
+                );
             }
             return;
         }
@@ -261,7 +330,8 @@ impl TrimmedCheck<'_> {
             let byte = self.new.byte_at(address);
             let fill = fill_byte(architecture, range.is_code, address);
             assert!(
-                matches!(byte, MemoryByte::Unmapped | MemoryByte::NoAccess) || byte == MemoryByte::Mapped(fill),
+                matches!(byte, MemoryByte::Unmapped | MemoryByte::NoAccess)
+                    || byte == MemoryByte::Mapped(fill),
                 "{}: removed address {address:#x} is {byte:?}",
                 self.label
             );
@@ -294,8 +364,14 @@ impl TrimmedCheck<'_> {
 
     fn check_image_identity(&self) {
         let label = self.label;
-        assert!(self.new.entry_point == self.old.entry_point, "{label}: the entry point moved");
-        assert!(self.new.identity == self.old.identity, "{label}: the identity changed");
+        assert!(
+            self.new.entry_point == self.old.entry_point,
+            "{label}: the entry point moved"
+        );
+        assert!(
+            self.new.identity == self.old.identity,
+            "{label}: the identity changed"
+        );
     }
 
     fn check_zero_filled_memory(&self) {
@@ -305,37 +381,68 @@ impl TrimmedCheck<'_> {
             .bytes(self.layout.zero_filled)
             .unwrap_or_else(|| panic!("{label}: zero-filled memory is not mapped"));
         let position = zero_filled.iter().position(|byte| *byte != 0);
-        assert!(position.is_none(), "{label}: zero-filled memory is not zero at index {position:?}");
+        assert!(
+            position.is_none(),
+            "{label}: zero-filled memory is not zero at index {position:?}"
+        );
     }
 
     fn check_state(&self) -> Vec<u8> {
         let label = self.label;
-        let state = self.new.bytes(self.layout.state).unwrap_or_else(|| panic!("{label}: the state is not mapped"));
-        assert!(state[..8] == RemovableFeatureState::MAGIC, "{label}: the state lost its magic");
-        assert!(u32_at(&state, STATE_IS_TRIMMED_OFFSET) == 1, "{label}: the state is not trimmed");
+        let state = self
+            .new
+            .bytes(self.layout.state)
+            .unwrap_or_else(|| panic!("{label}: the state is not mapped"));
+        assert!(
+            state[..8] == RemovableFeatureState::MAGIC,
+            "{label}: the state lost its magic"
+        );
+        assert!(
+            u32_at(&state, STATE_IS_TRIMMED_OFFSET) == 1,
+            "{label}: the state is not trimmed"
+        );
         let mut expected = vec![0u8; Feature::INDEX_LIMIT];
         for feature in Feature::ALL {
             expected[feature.index() as usize] = self.trimmed.plan.removal_of(*feature) as u8;
         }
-        assert!(state[STATE_REMOVAL_OFFSET..] == expected[..], "{label}: wrong removal bytes");
+        assert!(
+            state[STATE_REMOVAL_OFFSET..] == expected[..],
+            "{label}: wrong removal bytes"
+        );
         state
     }
 
     fn check_removed_range_list(&self, state: &[u8]) {
         let label = self.label;
-        let section =
-            self.new.bytes(self.layout.table).unwrap_or_else(|| panic!("{label}: the table section is not mapped"));
-        assert!(section[..8] == TRIMMED_MAGIC, "{label}: the table section lost its magic");
-        assert!(u32_at(&section, 8) == TABLE_VERSION, "{label}: wrong version of the removed ranges");
+        let section = self
+            .new
+            .bytes(self.layout.table)
+            .unwrap_or_else(|| panic!("{label}: the table section is not mapped"));
+        assert!(
+            section[..8] == TRIMMED_MAGIC,
+            "{label}: the table section lost its magic"
+        );
+        assert!(
+            u32_at(&section, 8) == TABLE_VERSION,
+            "{label}: wrong version of the removed ranges"
+        );
         let count = u32_at(&section, 12) as usize;
         let state_count = u32_at(state, STATE_RANGE_COUNT_OFFSET) as usize;
-        assert!(count == state_count, "{label}: {count} removed ranges, the state says {state_count}");
+        assert!(
+            count == state_count,
+            "{label}: {count} removed ranges, the state says {state_count}"
+        );
         let ranges_offset = i64::from_le_bytes(
-            state[STATE_RANGES_OFFSET_OFFSET..STATE_RANGES_OFFSET_OFFSET + 8].try_into().expect("eight bytes"),
+            state[STATE_RANGES_OFFSET_OFFSET..STATE_RANGES_OFFSET_OFFSET + 8]
+                .try_into()
+                .expect("eight bytes"),
         );
         let expected_offset = (self.layout.table.start + REMOVED_RANGES_HEADER_BYTES as u64) as i64
             - self.layout.state.start as i64;
-        assert!(count == 0 || ranges_offset == expected_offset, "{label}: wrong offset {ranges_offset:#x}");
+        assert!(
+            count == 0 || ranges_offset == expected_offset,
+            "{label}: wrong offset {ranges_offset:#x}"
+        );
         let records = decode_removed_ranges(&section, count);
         for range in &self.table.ranges {
             self.check_range_lookup(range, &records);
@@ -346,7 +453,8 @@ impl TrimmedCheck<'_> {
         let is_removed = self.is_set_removed(range.set);
         let set = &self.table.sets[range.set as usize];
         for address in [range.range.start, range.range.end - 1] {
-            let found = find_removed_range(records, address as i64 - self.layout.state.start as i64);
+            let found =
+                find_removed_range(records, address as i64 - self.layout.state.start as i64);
             if is_removed {
                 let feature = found.and_then(Feature::from_index);
                 assert!(
@@ -355,7 +463,11 @@ impl TrimmedCheck<'_> {
                     self.label
                 );
             } else {
-                assert!(found.is_none(), "{}: {address:#x} is reported as removed", self.label);
+                assert!(
+                    found.is_none(),
+                    "{}: {address:#x} is reported as removed",
+                    self.label
+                );
             }
         }
     }
@@ -370,7 +482,11 @@ impl TrimmedCheck<'_> {
                     dead_bytes += run_bytes;
                 } else if self.unwanted_run_groups.contains(group) {
                     let has_own_tombstone = tombstoned_end != Some(*first_item);
-                    let retained_bytes = if has_own_tombstone { ICU_TOMBSTONE.len() as u64 } else { 0 };
+                    let retained_bytes = if has_own_tombstone {
+                        ICU_TOMBSTONE.len() as u64
+                    } else {
+                        0
+                    };
                     dead_bytes += run_bytes - retained_bytes;
                     tombstoned_end = Some(first_item + item_count);
                 }
@@ -382,29 +498,51 @@ impl TrimmedCheck<'_> {
     fn check_summary(&self) {
         let label = self.label;
         let summary = &self.trimmed.summary;
-        let range_bytes: u64 = self.removed_ranges().map(|range| self.cut_or_filled_bytes(range)).sum();
+        let range_bytes: u64 = self
+            .removed_ranges()
+            .map(|range| self.cut_or_filled_bytes(range))
+            .sum();
         let expected_bytes = range_bytes + self.icu_dead_bytes();
         assert!(
             summary.removed_bytes() == expected_bytes,
             "{label}: removed_bytes is {:#x}, not {expected_bytes:#x}",
             summary.removed_bytes()
         );
-        assert!(summary.removed == self.removed, "{label}: the summary lists other features than the plan");
+        assert!(
+            summary.removed == self.removed,
+            "{label}: the summary lists other features than the plan"
+        );
         let saved = (self.trimmed.before.len() - self.trimmed.after.len()) as u64;
-        assert!(summary.file_bytes_saved == saved, "{label}: the file shrank by {saved:#x}");
-        assert!(summary.format == Some(self.layout.target.format), "{label}: wrong format");
+        assert!(
+            summary.file_bytes_saved == saved,
+            "{label}: the file shrank by {saved:#x}"
+        );
+        assert!(
+            summary.format == Some(self.layout.target.format),
+            "{label}: wrong format"
+        );
         let libraries: Vec<&ToyLibrary> = self
             .table
             .libraries
             .iter()
             .filter(|library| library.has_retained_bytes || !library.sets.is_empty())
             .collect();
-        assert!(summary.libraries.len() == libraries.len(), "{label}: wrong number of libraries");
+        assert!(
+            summary.libraries.len() == libraries.len(),
+            "{label}: wrong number of libraries"
+        );
         for (library, status) in libraries.iter().zip(&summary.libraries) {
-            let is_removed =
-                !library.has_retained_bytes && library.sets.iter().all(|set| self.is_set_removed(*set));
-            assert!(&*status.name == library.name, "{label}: libraries are out of order");
-            assert!(status.is_removed == is_removed, "{label}: wrong status of {}", library.name);
+            let is_removed = !library.has_retained_bytes
+                && library.sets.iter().all(|set| self.is_set_removed(*set));
+            assert!(
+                &*status.name == library.name,
+                "{label}: libraries are out of order"
+            );
+            assert!(
+                status.is_removed == is_removed,
+                "{label}: wrong status of {}",
+                library.name
+            );
         }
     }
 
@@ -413,18 +551,27 @@ impl TrimmedCheck<'_> {
         let plan = &self.trimmed.plan;
         let again = bun_trim::apply(&mut self.trimmed.after.clone(), plan);
         assert!(
-            matches!(again, Err(TrimError::Unsupported(UnsupportedReason::AlreadyTrimmed))),
+            matches!(
+                again,
+                Err(TrimError::Unsupported(UnsupportedReason::AlreadyTrimmed))
+            ),
             "{label}: apply on its own output is {again:?}"
         );
         let planned = compute_plan(&nothing_used(), &removing_unused(), &self.trimmed.after);
         assert!(
-            matches!(planned, Err(TrimError::Unsupported(UnsupportedReason::AlreadyTrimmed))),
+            matches!(
+                planned,
+                Err(TrimError::Unsupported(UnsupportedReason::AlreadyTrimmed))
+            ),
             "{label}: plan on a trimmed executable is {planned:?}"
         );
         let mut repeated = self.trimmed.before.clone();
         bun_trim::apply(&mut repeated, plan)
             .unwrap_or_else(|error| panic!("{label}: the second apply failed: {error:?}"));
-        assert!(repeated == self.trimmed.after, "{label}: a second run gave other bytes");
+        assert!(
+            repeated == self.trimmed.after,
+            "{label}: a second run gave other bytes"
+        );
     }
 }
 
@@ -465,7 +612,8 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
         FlowGaveUp | EvaluatesText | RunsUnseenCode => program_features
             .iter()
             .filter(|feature| {
-                let is_added_for_cause = cause == RunsUnseenCode && *feature == Feature::NativeAddons;
+                let is_added_for_cause =
+                    cause == RunsUnseenCode && *feature == Feature::NativeAddons;
                 is_added_for_cause || (feature.is_engine() && !outside_language.contains(feature))
             })
             .collect(),
@@ -473,8 +621,19 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
     }
 }
 
-fn check_plan(label: &str, table: &ToyTable, used: &UsedFeatures, request: &TrimRequest, plan: &TrimPlan) {
-    let mut seed: FeatureSet = used.features.iter().map(|used| used.feature).chain(ALWAYS_ENTERED).collect();
+fn check_plan(
+    label: &str,
+    table: &ToyTable,
+    used: &UsedFeatures,
+    request: &TrimRequest,
+    plan: &TrimPlan,
+) {
+    let mut seed: FeatureSet = used
+        .features
+        .iter()
+        .map(|used| used.feature)
+        .chain(ALWAYS_ENTERED)
+        .collect();
     for name in &request.allow {
         seed.union_with(&name.features());
     }
@@ -487,7 +646,12 @@ fn check_plan(label: &str, table: &ToyTable, used: &UsedFeatures, request: &Trim
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {
         if seed.contains(Feature::Bundler) {
-            seed.union_with(&FeatureSet::from_features(&[Feature::Check, Feature::AotCompiler, Feature::ImageCompiler, Feature::Jit]));
+            seed.union_with(&FeatureSet::from_features(&[
+                Feature::Check,
+                Feature::AotCompiler,
+                Feature::ImageCompiler,
+                Feature::Jit,
+            ]));
         }
         let mut entered_by_programs = FeatureSet::all();
         entered_by_programs.subtract(&Feature::all_outside_compiled_programs());
@@ -497,13 +661,25 @@ fn check_plan(label: &str, table: &ToyTable, used: &UsedFeatures, request: &Trim
     for feature in Feature::ALL.iter().copied() {
         let is_forced = request.remove_internal.contains(&feature);
         let is_unused = (request.removes_unused || is_compiled) && !retained.contains(feature);
-        let expected = if is_forced || is_unused { Removal::Unused } else { Removal::Present };
+        let expected = if is_forced || is_unused {
+            Removal::Unused
+        } else {
+            Removal::Present
+        };
         let removal = plan.removal_of(feature);
-        assert!(removal == expected, "{label}: {feature:?} is {removal:?}, not {expected:?}");
+        assert!(
+            removal == expected,
+            "{label}: {feature:?} is {removal:?}, not {expected:?}"
+        );
     }
 }
 
-fn append_random_ranges(random: &mut Random, region: AddressRange, is_code: bool, ranges: &mut Vec<ToyRange>) {
+fn append_random_ranges(
+    random: &mut Random,
+    region: AddressRange,
+    is_code: bool,
+    ranges: &mut Vec<ToyRange>,
+) {
     let mut start = region.start + NEVER_REMOVED_BYTES;
     while start < region.end {
         let length = match random.next() % 4 {
@@ -516,7 +692,13 @@ fn append_random_ranges(random: &mut Random, region: AddressRange, is_code: bool
             let set = (random.next() % 6) as u16;
             let can_be_cut = random.next() % 4 != 0;
             let can_be_filled = !can_be_cut || random.next() % 4 != 0;
-            ranges.push(ToyRange { range: AddressRange { start, end }, set, is_code, can_be_cut, can_be_filled });
+            ranges.push(ToyRange {
+                range: AddressRange { start, end },
+                set,
+                is_code,
+                can_be_cut,
+                can_be_filled,
+            });
         }
         start = end;
     }
@@ -540,28 +722,56 @@ fn random_table(random: &mut Random, layout: &ToyLayout, f: [Feature; 5]) -> Toy
     .map(|(_, edge)| edge)
     .collect();
     let libraries = vec![
-        ToyLibrary { name: "alpha", version: "1.0", has_retained_bytes: false, sets: vec![0, 3] },
-        ToyLibrary { name: "beta", version: "2", has_retained_bytes: true, sets: vec![5] },
+        ToyLibrary {
+            name: "alpha",
+            version: "1.0",
+            has_retained_bytes: false,
+            sets: vec![0, 3],
+        },
+        ToyLibrary {
+            name: "beta",
+            version: "2",
+            has_retained_bytes: true,
+            sets: vec![5],
+        },
     ];
-    ToyTable { edges, libraries, ..create_table(ranges) }
+    ToyTable {
+        edges,
+        libraries,
+        ..create_table(ranges)
+    }
 }
 
 fn random_used(random: &mut Random, case: u64, f: [Feature; 5]) -> UsedFeatures {
     let bits = random.next();
-    let features = f.iter().enumerate().filter(|(index, _)| (bits >> index) & 1 != 0).map(|(_, feature)| *feature);
+    let features = f
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| (bits >> index) & 1 != 0)
+        .map(|(_, feature)| *feature);
     let used = UsedFeatures::from_features(&features.collect::<Vec<Feature>>());
     if case % 4 != 3 {
         return used;
     }
     let cause = UnseenCodeCause::ALL[(bits >> f.len()) as usize % UnseenCodeCause::ALL.len()];
-    UsedFeatures { features: used.features, ..UsedFeatures::with_cause(cause) }
+    UsedFeatures {
+        features: used.features,
+        ..UsedFeatures::with_cause(cause)
+    }
 }
 
 fn random_request(case: u64, f: [Feature; 5]) -> TrimRequest {
-    let allow = if case % 4 >= 2 { public_names_of(&[f[1], f[2]]) } else { Vec::new() };
+    let allow = if case % 4 >= 2 {
+        public_names_of(&[f[1], f[2]])
+    } else {
+        Vec::new()
+    };
     let request = match case % 3 {
         0 => removing_unused(),
-        1 => TrimRequest { remove_internal: vec![f[1]], ..removing_unused() },
+        1 => TrimRequest {
+            remove_internal: vec![f[1]],
+            ..removing_unused()
+        },
         _ => removing(&[f[0], f[1]]),
     };
     TrimRequest { allow, ..request }
@@ -587,28 +797,58 @@ fn random_tables_on_every_target() {
 }
 
 fn removable_code(range: AddressRange, set: u16) -> ToyRange {
-    ToyRange { range, set, is_code: true, can_be_cut: true, can_be_filled: true }
+    ToyRange {
+        range,
+        set,
+        is_code: true,
+        can_be_cut: true,
+        can_be_filled: true,
+    }
 }
 
 #[test]
 fn allowed_name_keeps_bytes_nothing_uses() {
     let f = chosen_features();
-    let name = f[0].narrowest_trim_feature().expect("the first chosen feature has a public name");
-    assert!(!name.features().contains(f[4]), "{} also names {:?}", name.name(), f[4]);
-    let request = TrimRequest { allow: vec![name], ..removing_unused() };
+    let name = f[0]
+        .narrowest_trim_feature()
+        .expect("the first chosen feature has a public name");
+    assert!(
+        !name.features().contains(f[4]),
+        "{} also names {:?}",
+        name.name(),
+        f[4]
+    );
+    let request = TrimRequest {
+        allow: vec![name],
+        ..removing_unused()
+    };
     for target in ALL_TARGETS {
         let label = format!("{target:?} allowing {}", name.name());
         let layout = layout_of(target);
         let start = layout.code.start + RAGGED_RANGE_OFFSET;
-        let allowed = AddressRange { start, end: start + ALLOWED_RANGE_BYTES };
-        let unused = AddressRange { start: allowed.end, end: allowed.end + ALLOWED_RANGE_BYTES };
+        let allowed = AddressRange {
+            start,
+            end: start + ALLOWED_RANGE_BYTES,
+        };
+        let unused = AddressRange {
+            start: allowed.end,
+            end: allowed.end + ALLOWED_RANGE_BYTES,
+        };
         let table = create_table(vec![removable_code(allowed, 0), removable_code(unused, 5)]);
         let before = build_executable(&layout, Some(&encode_table(&table)), &[]);
         let trimmed = trim(&label, before, &nothing_used(), &request);
         check_plan(&label, &table, &nothing_used(), &request, &trimmed.plan);
         check_trimmed(&label, &layout, &table, &trimmed, &[]);
-        assert!(trimmed.plan.removal_of(f[0]) == Removal::Present, "{label}: {:?} was removed", f[0]);
-        assert!(trimmed.plan.removal_of(f[4]) == Removal::Unused, "{label}: {:?} stayed", f[4]);
+        assert!(
+            trimmed.plan.removal_of(f[0]) == Removal::Present,
+            "{label}: {:?} was removed",
+            f[0]
+        );
+        assert!(
+            trimmed.plan.removal_of(f[4]) == Removal::Unused,
+            "{label}: {:?} stayed",
+            f[4]
+        );
         assert!(
             trimmed.summary.removed_bytes() == unused.len(),
             "{label}: removed_bytes is {:#x}, the unused range has {:#x}",
@@ -625,27 +865,58 @@ struct IcuToy {
     range: AddressRange,
 }
 
-fn create_icu_toy(target: Target, runs: Vec<(u32, u32, u16, u16)>, languages: Vec<(&'static str, u16)>) -> IcuToy {
+fn create_icu_toy(
+    target: Target,
+    runs: Vec<(u32, u32, u16, u16)>,
+    languages: Vec<(&'static str, u16)>,
+) -> IcuToy {
     let layout = layout_of(target);
     let package = icu_package(&ICU_ITEM_NAMES.map(|name| (name, ICU_ITEM_BYTES)));
     let start = layout.read_only_data.start + ICU_PACKAGE_OFFSET;
-    let range = AddressRange { start, end: start + package.len() as u64 };
+    let range = AddressRange {
+        start,
+        end: start + package.len() as u64,
+    };
     let icu_packages = vec![ToyIcuPackage { range, runs }];
-    let table = ToyTable { icu_packages, languages, ..create_table(Vec::new()) };
-    IcuToy { layout, table, package, range }
+    let table = ToyTable {
+        icu_packages,
+        languages,
+        ..create_table(Vec::new())
+    };
+    IcuToy {
+        layout,
+        table,
+        package,
+        range,
+    }
 }
 
 impl IcuToy {
-    fn trim(&self, label: &str, used: &UsedFeatures, request: &TrimRequest, unwanted_run_groups: &[u16]) -> Trimmed {
+    fn trim(
+        &self,
+        label: &str,
+        used: &UsedFeatures,
+        request: &TrimRequest,
+        unwanted_run_groups: &[u16],
+    ) -> Trimmed {
         let overlays = [(self.range.start, self.package.as_slice())];
         let before = build_executable(&self.layout, Some(&encode_table(&self.table)), &overlays);
         let trimmed = trim(label, before, used, request);
-        check_trimmed(label, &self.layout, &self.table, &trimmed, unwanted_run_groups);
+        check_trimmed(
+            label,
+            &self.layout,
+            &self.table,
+            &trimmed,
+            unwanted_run_groups,
+        );
         trimmed
     }
 }
 
-fn trim_icu_package(target: Target, forced: Feature) -> (ToyLayout, Vec<u8>, AddressRange, Trimmed) {
+fn trim_icu_package(
+    target: Target,
+    forced: Feature,
+) -> (ToyLayout, Vec<u8>, AddressRange, Trimmed) {
     let label = format!("{target:?} without {forced:?}");
     let toy = create_icu_toy(target, vec![(1, 2, 0, 0), (4, 1, 1, 0)], Vec::new());
     let trimmed = toy.trim(&label, &nothing_used(), &removing(&[forced]), &[]);
@@ -658,14 +929,22 @@ fn icu_items_follow_feature_removal() {
     for target in [ELF_X86_64, PE_X86_64] {
         let (layout, package, range, trimmed) = trim_icu_package(target, f[0]);
         let new = LoadedImage::load(&trimmed.after);
-        let head_range = AddressRange { start: range.start, end: range.start + ICU_HEAD_BYTES };
-        let head = new.bytes(head_range).unwrap_or_else(|| panic!("{target:?}: the table of contents is not mapped"));
+        let head_range = AddressRange {
+            start: range.start,
+            end: range.start + ICU_HEAD_BYTES,
+        };
+        let head = new
+            .bytes(head_range)
+            .unwrap_or_else(|| panic!("{target:?}: the table of contents is not mapped"));
         for (index, name) in ICU_ITEM_NAMES.iter().enumerate() {
             let old_offset = find_icu_item(&package, name).expect("the toy package has the item");
             let item_start = range.start + old_offset as u64;
             let item_end = item_start + ICU_ITEM_BYTES as u64;
             if index == 1 || index == 2 {
-                assert!(find_icu_item(&head, name).is_none(), "{target:?}: {name} is still listed");
+                assert!(
+                    find_icu_item(&head, name).is_none(),
+                    "{target:?}: {name} is still listed"
+                );
                 for address in item_start..item_end {
                     let byte = new.byte_at(address);
                     assert!(
@@ -675,27 +954,48 @@ fn icu_items_follow_feature_removal() {
                 }
                 continue;
             }
-            assert!(find_icu_item(&head, name) == Some(old_offset), "{target:?}: {name} moved");
+            assert!(
+                find_icu_item(&head, name) == Some(old_offset),
+                "{target:?}: {name} moved"
+            );
             let fill = MemoryByte::Mapped(0x40 + index as u8);
-            assert!(new.byte_at(item_start) == fill, "{target:?}: first byte of {name} changed");
-            assert!(new.byte_at(item_end - 1) == fill, "{target:?}: last byte of {name} changed");
+            assert!(
+                new.byte_at(item_start) == fill,
+                "{target:?}: first byte of {name} changed"
+            );
+            assert!(
+                new.byte_at(item_end - 1) == fill,
+                "{target:?}: last byte of {name} changed"
+            );
         }
         let dead_bytes = 2 * ICU_ITEM_BYTES as u64;
-        assert!(trimmed.summary.removed_bytes() == dead_bytes, "{target:?}: wrong removed_bytes");
+        assert!(
+            trimmed.summary.removed_bytes() == dead_bytes,
+            "{target:?}: wrong removed_bytes"
+        );
         assert!(
             trimmed.summary.file_bytes_saved >= dead_bytes - 2 * layout.cut_alignment,
             "{target:?}: the dead items stayed in the file"
         );
 
         let (_, package, range, trimmed) = trim_icu_package(target, f[2]);
-        let head_range = AddressRange { start: range.start, end: range.start + ICU_HEAD_BYTES };
+        let head_range = AddressRange {
+            start: range.start,
+            end: range.start + ICU_HEAD_BYTES,
+        };
         let head = LoadedImage::load(&trimmed.after)
             .bytes(head_range)
             .unwrap_or_else(|| panic!("{target:?}: the table of contents is not mapped"));
         for name in ICU_ITEM_NAMES {
-            assert!(find_icu_item(&head, name) == find_icu_item(&package, name), "{target:?}: {name} moved");
+            assert!(
+                find_icu_item(&head, name) == find_icu_item(&package, name),
+                "{target:?}: {name} moved"
+            );
         }
-        assert!(trimmed.summary.removed_bytes() == 0, "{target:?}: an unrelated feature removed items");
+        assert!(
+            trimmed.summary.removed_bytes() == 0,
+            "{target:?}: an unrelated feature removed items"
+        );
     }
 }
 
@@ -709,14 +1009,22 @@ enum IcuItem {
 fn check_dead_bytes(label: &str, image: &LoadedImage, range: AddressRange) {
     for address in range.start..range.end {
         let byte = image.byte_at(address);
-        assert!(!matches!(byte, MemoryByte::Mapped(value) if value != 0), "{label}: dead {address:#x} is {byte:?}");
+        assert!(
+            !matches!(byte, MemoryByte::Mapped(value) if value != 0),
+            "{label}: dead {address:#x} is {byte:?}"
+        );
     }
 }
 
 fn check_icu_items(label: &str, toy: &IcuToy, trimmed: &Trimmed, expected: [IcuItem; 6]) {
     let new = LoadedImage::load(&trimmed.after);
-    let head_range = AddressRange { start: toy.range.start, end: toy.range.start + ICU_HEAD_BYTES };
-    let head = new.bytes(head_range).unwrap_or_else(|| panic!("{label}: the table of contents is not mapped"));
+    let head_range = AddressRange {
+        start: toy.range.start,
+        end: toy.range.start + ICU_HEAD_BYTES,
+    };
+    let head = new
+        .bytes(head_range)
+        .unwrap_or_else(|| panic!("{label}: the table of contents is not mapped"));
     for (index, (name, item)) in ICU_ITEM_NAMES.iter().zip(expected).enumerate() {
         let old_offset = find_icu_item(&toy.package, name).expect("the toy package has the item");
         let start = toy.range.start + old_offset as u64;
@@ -726,15 +1034,37 @@ fn check_icu_items(label: &str, toy: &IcuToy, trimmed: &Trimmed, expected: [IcuI
             IcuItem::Retained => {
                 let fill = MemoryByte::Mapped(0x40 + index as u8);
                 assert!(listed_offset == Some(old_offset), "{label}: {name} moved");
-                assert!(new.byte_at(start) == fill, "{label}: first byte of {name} changed");
-                assert!(new.byte_at(end - 1) == fill, "{label}: last byte of {name} changed");
+                assert!(
+                    new.byte_at(start) == fill,
+                    "{label}: first byte of {name} changed"
+                );
+                assert!(
+                    new.byte_at(end - 1) == fill,
+                    "{label}: last byte of {name} changed"
+                );
             }
             IcuItem::Tombstoned => {
                 let tombstone_end = start + ICU_TOMBSTONE.len() as u64;
-                let tombstone = new.bytes(AddressRange { start, end: tombstone_end });
-                assert!(listed_offset == Some(old_offset), "{label}: {name} is not listed at its tombstone");
-                assert!(tombstone.as_deref() == Some(&ICU_TOMBSTONE[..]), "{label}: {name} starts with {tombstone:x?}");
-                check_dead_bytes(label, &new, AddressRange { start: tombstone_end, end });
+                let tombstone = new.bytes(AddressRange {
+                    start,
+                    end: tombstone_end,
+                });
+                assert!(
+                    listed_offset == Some(old_offset),
+                    "{label}: {name} is not listed at its tombstone"
+                );
+                assert!(
+                    tombstone.as_deref() == Some(&ICU_TOMBSTONE[..]),
+                    "{label}: {name} starts with {tombstone:x?}"
+                );
+                check_dead_bytes(
+                    label,
+                    &new,
+                    AddressRange {
+                        start: tombstone_end,
+                        end,
+                    },
+                );
             }
             IcuItem::Removed => {
                 assert!(listed_offset.is_none(), "{label}: {name} is still listed");
@@ -759,15 +1089,45 @@ fn icu_items_follow_wanted_languages() {
     ];
     let used = UsedFeatures::from_features(&[f[0], f[1]]);
     let norwegian = LocaleTag(Box::from(&b"no-NO"[..]));
-    let used_in_norwegian = UsedFeatures { locales: UsedLocales::Listed(vec![norwegian]), ..used.clone() };
-    let requesting_norwegian = TrimRequest { locales: Some(vec![Box::from(&b"nb"[..])]), ..removing_unused() };
+    let used_in_norwegian = UsedFeatures {
+        locales: UsedLocales::Listed(vec![norwegian]),
+        ..used.clone()
+    };
+    let requesting_norwegian = TrimRequest {
+        locales: Some(vec![Box::from(&b"nb"[..])]),
+        ..removing_unused()
+    };
     let without_german = [Tombstoned, Retained, Retained, Tombstoned, Removed, Removed];
     let every_language = [Retained, Retained, Retained, Retained, Removed, Removed];
     let cases: [(&str, &UsedFeatures, TrimRequest, &[u16], [IcuItem; 6]); 4] = [
-        ("used in Norwegian", &used_in_norwegian, removing_unused(), &[GERMAN_RUN_GROUP], without_german),
-        ("with Norwegian requested", &used, requesting_norwegian, &[GERMAN_RUN_GROUP], without_german),
-        ("used in unknown locales", &used, removing_unused(), &[], every_language),
-        ("without one feature only", &used_in_norwegian, removing(&[f[2]]), &[], every_language),
+        (
+            "used in Norwegian",
+            &used_in_norwegian,
+            removing_unused(),
+            &[GERMAN_RUN_GROUP],
+            without_german,
+        ),
+        (
+            "with Norwegian requested",
+            &used,
+            requesting_norwegian,
+            &[GERMAN_RUN_GROUP],
+            without_german,
+        ),
+        (
+            "used in unknown locales",
+            &used,
+            removing_unused(),
+            &[],
+            every_language,
+        ),
+        (
+            "without one feature only",
+            &used_in_norwegian,
+            removing(&[f[2]]),
+            &[],
+            every_language,
+        ),
     ];
     for target in ALL_TARGETS {
         let toy = create_icu_toy(target, runs.clone(), ICU_LANGUAGES.to_vec());
@@ -795,32 +1155,71 @@ fn trim_one_range(layout: &ToyLayout, range: ToyRange) -> Trimmed {
 }
 
 fn trim_one_code_range(layout: &ToyLayout, range: AddressRange, can_be_cut: bool) -> Trimmed {
-    trim_one_range(layout, ToyRange { range, set: 0, is_code: true, can_be_cut, can_be_filled: true })
+    trim_one_range(
+        layout,
+        ToyRange {
+            range,
+            set: 0,
+            is_code: true,
+            can_be_cut,
+            can_be_filled: true,
+        },
+    )
 }
 
 fn trim_one_unfillable_range(layout: &ToyLayout, range: AddressRange) -> Trimmed {
-    trim_one_range(layout, ToyRange { range, set: 0, is_code: false, can_be_cut: true, can_be_filled: false })
+    trim_one_range(
+        layout,
+        ToyRange {
+            range,
+            set: 0,
+            is_code: false,
+            can_be_cut: true,
+            can_be_filled: false,
+        },
+    )
 }
 
 fn assert_all_filled(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange) {
     let target = layout.target;
-    assert!(trimmed.summary.file_bytes_saved == 0, "{target:?}: a range was cut");
-    assert!(trimmed.after.len() == trimmed.before.len(), "{target:?}: the file changed size");
+    assert!(
+        trimmed.summary.file_bytes_saved == 0,
+        "{target:?}: a range was cut"
+    );
+    assert!(
+        trimmed.after.len() == trimmed.before.len(),
+        "{target:?}: the file changed size"
+    );
     let bytes = LoadedImage::load(&trimmed.after)
         .bytes(range)
         .unwrap_or_else(|| panic!("{target:?}: a filled range is not mapped"));
     for (address, byte) in (range.start..range.end).zip(bytes) {
         let fill = fill_byte(target.architecture, true, address);
-        assert!(byte == fill, "{target:?}: {address:#x} holds {byte:#x}, not fill {fill:#x}");
+        assert!(
+            byte == fill,
+            "{target:?}: {address:#x} holds {byte:#x}, not fill {fill:#x}"
+        );
     }
 }
 
 fn assert_all_cut(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange) {
     let target = layout.target;
     let summary = &trimmed.summary;
-    assert!(summary.cut_bytes == range.len(), "{target:?}: {:#x} bytes were cut", summary.cut_bytes);
-    assert!(summary.filled_bytes == 0, "{target:?}: {:#x} bytes were filled", summary.filled_bytes);
-    assert!(summary.uncut.is_none(), "{target:?}: {:?} stayed in the file", summary.uncut);
+    assert!(
+        summary.cut_bytes == range.len(),
+        "{target:?}: {:#x} bytes were cut",
+        summary.cut_bytes
+    );
+    assert!(
+        summary.filled_bytes == 0,
+        "{target:?}: {:#x} bytes were filled",
+        summary.filled_bytes
+    );
+    assert!(
+        summary.uncut.is_none(),
+        "{target:?}: {:?} stayed in the file",
+        summary.uncut
+    );
     assert!(
         summary.file_bytes_saved + ELF_SECTION_HEADER_BYTES >= range.len(),
         "{target:?}: only {:#x} bytes left the file",
@@ -829,7 +1228,10 @@ fn assert_all_cut(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange) {
     let new = LoadedImage::load(&trimmed.after);
     for address in [range.start, range.end - 1] {
         let byte = new.byte_at(address);
-        assert!(!matches!(byte, MemoryByte::Mapped(_)), "{target:?}: cut address {address:#x} is {byte:?}");
+        assert!(
+            !matches!(byte, MemoryByte::Mapped(_)),
+            "{target:?}: cut address {address:#x} is {byte:?}"
+        );
     }
 }
 
@@ -838,7 +1240,10 @@ fn aligned_range_is_cut_ragged_range_is_filled() {
     for target in ALL_TARGETS {
         let layout = layout_of(target);
         let start = layout.code.start + RAGGED_RANGE_OFFSET;
-        let range = AddressRange { start, end: start + LARGE_RANGE_BYTES };
+        let range = AddressRange {
+            start,
+            end: start + LARGE_RANGE_BYTES,
+        };
 
         let trimmed = trim_one_code_range(&layout, range, true);
         assert!(
@@ -848,19 +1253,32 @@ fn aligned_range_is_cut_ragged_range_is_filled() {
         );
         let new = LoadedImage::load(&trimmed.after);
         let middle = new.byte_at(start + LARGE_RANGE_BYTES / 2);
-        assert!(!matches!(middle, MemoryByte::Mapped(_)), "{target:?}: the middle is {middle:?}");
+        assert!(
+            !matches!(middle, MemoryByte::Mapped(_)),
+            "{target:?}: the middle is {middle:?}"
+        );
         let fill = MemoryByte::Mapped(fill_byte(target.architecture, true, start));
-        assert!(new.byte_at(start) == fill, "{target:?}: the ragged start is not filled");
+        assert!(
+            new.byte_at(start) == fill,
+            "{target:?}: the ragged start is not filled"
+        );
 
         let trimmed = trim_one_code_range(&layout, range, false);
         assert_all_filled(&layout, &trimmed, range);
 
-        let start = (layout.code.start + NEVER_REMOVED_BYTES).next_multiple_of(layout.cut_alignment);
-        let aligned = AddressRange { start, end: start + layout.cut_alignment };
+        let start =
+            (layout.code.start + NEVER_REMOVED_BYTES).next_multiple_of(layout.cut_alignment);
+        let aligned = AddressRange {
+            start,
+            end: start + layout.cut_alignment,
+        };
         let trimmed = trim_one_code_range(&layout, aligned, true);
         assert_all_cut(&layout, &trimmed, aligned);
 
-        let ragged = AddressRange { start: aligned.start + 16, end: aligned.end + 16 };
+        let ragged = AddressRange {
+            start: aligned.start + 16,
+            end: aligned.end + 16,
+        };
         let trimmed = trim_one_code_range(&layout, ragged, true);
         assert_all_filled(&layout, &trimmed, ragged);
     }
@@ -889,9 +1307,26 @@ fn unfillable_range_is_cut_or_left_unchanged() {
 
         let trimmed = trim_one_unfillable_range(&layout, AddressRange { start, end });
         let middle = LoadedImage::load(&trimmed.after).byte_at(start + UNFILLABLE_RANGE_BYTES / 2);
-        assert!(!matches!(middle, MemoryByte::Mapped(_)), "{target:?}: the middle is {middle:?}");
-        assert_unchanged(&layout, &trimmed, AddressRange { start, end: cut_start });
-        assert_unchanged(&layout, &trimmed, AddressRange { start: cut_end, end });
+        assert!(
+            !matches!(middle, MemoryByte::Mapped(_)),
+            "{target:?}: the middle is {middle:?}"
+        );
+        assert_unchanged(
+            &layout,
+            &trimmed,
+            AddressRange {
+                start,
+                end: cut_start,
+            },
+        );
+        assert_unchanged(
+            &layout,
+            &trimmed,
+            AddressRange {
+                start: cut_end,
+                end,
+            },
+        );
         assert!(
             trimmed.summary.removed_bytes() == cut_end - cut_start,
             "{target:?}: removed_bytes is {:#x}, the cut has {:#x}",
@@ -899,16 +1334,29 @@ fn unfillable_range_is_cut_or_left_unchanged() {
             cut_end - cut_start
         );
 
-        let start = (layout.read_only_data.start + NEVER_REMOVED_BYTES).next_multiple_of(layout.cut_alignment);
-        let aligned = AddressRange { start, end: start + layout.cut_alignment };
+        let start = (layout.read_only_data.start + NEVER_REMOVED_BYTES)
+            .next_multiple_of(layout.cut_alignment);
+        let aligned = AddressRange {
+            start,
+            end: start + layout.cut_alignment,
+        };
         let trimmed = trim_one_unfillable_range(&layout, aligned);
         assert_all_cut(&layout, &trimmed, aligned);
 
-        let ragged = AddressRange { start: aligned.start + 16, end: aligned.end + 16 };
+        let ragged = AddressRange {
+            start: aligned.start + 16,
+            end: aligned.end + 16,
+        };
         let trimmed = trim_one_unfillable_range(&layout, ragged);
         assert_unchanged(&layout, &trimmed, ragged);
-        assert!(trimmed.summary.removed_bytes() == 0, "{target:?}: bytes that stay are counted as removed");
-        assert!(trimmed.summary.file_bytes_saved == 0, "{target:?}: a range without a whole page was cut");
+        assert!(
+            trimmed.summary.removed_bytes() == 0,
+            "{target:?}: bytes that stay are counted as removed"
+        );
+        assert!(
+            trimmed.summary.file_bytes_saved == 0,
+            "{target:?}: a range without a whole page was cut"
+        );
     }
 }
 
@@ -918,13 +1366,24 @@ fn panicking_read(_offset: usize, _out: &mut [u8]) -> bool {
 
 fn assert_untouched(label: &str, file: &[u8]) {
     let mut read = panicking_read;
-    let mut image = Image { len: file.len(), read: &mut read };
+    let mut image = Image {
+        len: file.len(),
+        read: &mut read,
+    };
     let used = UsedFeatures::with_cause(UnseenCodeCause::ProgramNotCompiled);
     let (settings, request) = (ExecutableSettings::default(), TrimRequest::default());
-    let input = TrimInput { used: &used, settings: &settings, request: &request };
-    let plan = bun_trim::plan(&input, &mut image)
-        .unwrap_or_else(|error| panic!("{label}: plan failed on a request that is not enabled: {error:?}"));
-    assert!(plan.is_empty(), "{label}: a request that is not enabled removes something");
+    let input = TrimInput {
+        used: &used,
+        settings: &settings,
+        request: &request,
+    };
+    let plan = bun_trim::plan(&input, &mut image).unwrap_or_else(|error| {
+        panic!("{label}: plan failed on a request that is not enabled: {error:?}")
+    });
+    assert!(
+        plan.is_empty(),
+        "{label}: a request that is not enabled removes something"
+    );
     let mut after = file.to_vec();
     bun_trim::apply(&mut after, &plan)
         .unwrap_or_else(|error| panic!("{label}: apply failed on an empty plan: {error:?}"));
@@ -935,7 +1394,10 @@ fn assert_untouched(label: &str, file: &[u8]) {
 fn default_request_changes_nothing() {
     for target in ALL_TARGETS {
         let layout = layout_of(target);
-        assert_untouched(&format!("{target:?}"), &build_executable(&layout, None, &[]));
+        assert_untouched(
+            &format!("{target:?}"),
+            &build_executable(&layout, None, &[]),
+        );
     }
     assert_untouched("hello", b"hello");
 }
@@ -944,7 +1406,10 @@ fn assert_message(error: &TrimError, expected: &str) {
     let mut bytes = Vec::new();
     error.write_message(&mut bytes);
     let message = String::from_utf8(bytes).expect("trim messages are UTF-8 here");
-    assert!(message == expected, "{error:?} says {message:?}, not {expected:?}");
+    assert!(
+        message == expected,
+        "{error:?} says {message:?}, not {expected:?}"
+    );
     match error {
         TrimError::Unsupported(_) => assert!(!message.contains("bug"), "{message}"),
         TrimError::Internal(_) => assert!(!message.contains("doesn't support"), "{message}"),
@@ -961,54 +1426,133 @@ fn plan_error(label: &str, file: &[u8]) -> TrimError {
 fn apply_error(layout: &ToyLayout, range: ToyRange) -> TrimError {
     let target = layout.target;
     let mut file = build_executable(layout, Some(&encode_table(&create_table(vec![range]))), &[]);
-    let plan = compute_plan(&nothing_used(), &removing_unused(), &file)
-        .unwrap_or_else(|error| panic!("{target:?}: plan failed on a well-formed table: {error:?}"));
-    bun_trim::apply(&mut file, &plan).err().unwrap_or_else(|| panic!("{target:?}: apply succeeded on {range:?}"))
+    let plan = compute_plan(&nothing_used(), &removing_unused(), &file).unwrap_or_else(|error| {
+        panic!("{target:?}: plan failed on a well-formed table: {error:?}")
+    });
+    bun_trim::apply(&mut file, &plan)
+        .err()
+        .unwrap_or_else(|| panic!("{target:?}: apply succeeded on {range:?}"))
 }
 
 #[test]
 fn untrimmable_input_reports_reason() {
     const NO_TABLE: &str = "this build of Bun doesn't support --trim (NoTrimTable)";
-    const MALFORMED: &str = "--trim failed (MalformedTable). This is a bug in Bun, please report it";
+    const MALFORMED: &str =
+        "--trim failed (MalformedTable). This is a bug in Bun, please report it";
     const DIRECTORY_MIDDLE_BYTES: usize = 64;
 
     for target in ALL_TARGETS {
         let layout = layout_of(target);
         let label = format!("{target:?}");
         let error = plan_error(&label, &build_executable(&layout, None, &[]));
-        assert!(matches!(error, TrimError::Unsupported(UnsupportedReason::NoTrimTable)), "{label}: {error:?}");
+        assert!(
+            matches!(
+                error,
+                TrimError::Unsupported(UnsupportedReason::NoTrimTable)
+            ),
+            "{label}: {error:?}"
+        );
         assert_message(&error, NO_TABLE);
 
         let error = plan_error(&label, &build_executable(&layout, Some(&[]), &[]));
-        assert!(matches!(error, TrimError::Unsupported(UnsupportedReason::NoTrimTable)), "{label}: {error:?}");
+        assert!(
+            matches!(
+                error,
+                TrimError::Unsupported(UnsupportedReason::NoTrimTable)
+            ),
+            "{label}: {error:?}"
+        );
         assert_message(&error, NO_TABLE);
     }
 
     let layout = layout_of(ELF_X86_64);
-    let other_list = ToyTable { features_hash: FEATURES_HASH ^ 1, ..create_table(Vec::new()) };
-    let error = plan_error("another feature list", &build_executable(&layout, Some(&encode_table(&other_list)), &[]));
-    assert!(matches!(error, TrimError::Unsupported(UnsupportedReason::FeatureListMismatch)), "{error:?}");
-    assert_message(&error, "this build of Bun doesn't support --trim (FeatureListMismatch)");
+    let other_list = ToyTable {
+        features_hash: FEATURES_HASH ^ 1,
+        ..create_table(Vec::new())
+    };
+    let error = plan_error(
+        "another feature list",
+        &build_executable(&layout, Some(&encode_table(&other_list)), &[]),
+    );
+    assert!(
+        matches!(
+            error,
+            TrimError::Unsupported(UnsupportedReason::FeatureListMismatch)
+        ),
+        "{error:?}"
+    );
+    assert_message(
+        &error,
+        "this build of Bun doesn't support --trim (FeatureListMismatch)",
+    );
 
     let error = plan_error("hello, world", b"hello, world");
-    assert!(matches!(error, TrimError::Unsupported(UnsupportedReason::UnrecognizedExecutable)), "{error:?}");
-    assert_message(&error, "this build of Bun doesn't support --trim (UnrecognizedExecutable)");
+    assert!(
+        matches!(
+            error,
+            TrimError::Unsupported(UnsupportedReason::UnrecognizedExecutable)
+        ),
+        "{error:?}"
+    );
+    assert_message(
+        &error,
+        "this build of Bun doesn't support --trim (UnrecognizedExecutable)",
+    );
 
     let mut cut_off = encode_table(&create_table(Vec::new()));
     cut_off.truncate(DIRECTORY_MIDDLE_BYTES);
-    let error = plan_error("a truncated table", &build_executable(&layout, Some(&cut_off), &[]));
-    assert!(matches!(error, TrimError::Internal(TrimInternalError::MalformedTable)), "{error:?}");
+    let error = plan_error(
+        "a truncated table",
+        &build_executable(&layout, Some(&cut_off), &[]),
+    );
+    assert!(
+        matches!(
+            error,
+            TrimError::Internal(TrimInternalError::MalformedTable)
+        ),
+        "{error:?}"
+    );
     assert_message(&error, MALFORMED);
 
-    let past_code = AddressRange { start: layout.code.end - 0x1000, end: layout.code.end + 16 };
-    let range = ToyRange { range: past_code, set: 0, is_code: true, can_be_cut: false, can_be_filled: true };
+    let past_code = AddressRange {
+        start: layout.code.end - 0x1000,
+        end: layout.code.end + 16,
+    };
+    let range = ToyRange {
+        range: past_code,
+        set: 0,
+        is_code: true,
+        can_be_cut: false,
+        can_be_filled: true,
+    };
     let error = apply_error(&layout, range);
-    assert!(matches!(error, TrimError::Internal(TrimInternalError::RangeOutsideImage)), "{error:?}");
-    assert_message(&error, "--trim failed (RangeOutsideImage). This is a bug in Bun, please report it");
+    assert!(
+        matches!(
+            error,
+            TrimError::Internal(TrimInternalError::RangeOutsideImage)
+        ),
+        "{error:?}"
+    );
+    assert_message(
+        &error,
+        "--trim failed (RangeOutsideImage). This is a bug in Bun, please report it",
+    );
 
-    let range = ToyRange { range: layout.state, set: 0, is_code: false, can_be_cut: false, can_be_filled: true };
+    let range = ToyRange {
+        range: layout.state,
+        set: 0,
+        is_code: false,
+        can_be_cut: false,
+        can_be_filled: true,
+    };
     let error = apply_error(&layout, range);
-    assert!(matches!(error, TrimError::Internal(TrimInternalError::MalformedTable)), "{error:?}");
+    assert!(
+        matches!(
+            error,
+            TrimError::Internal(TrimInternalError::MalformedTable)
+        ),
+        "{error:?}"
+    );
     assert_message(&error, MALFORMED);
 }
 
@@ -1028,19 +1572,36 @@ fn toy_executables_load() {
         for range in [layout.code, layout.read_only_data] {
             for address in [range.start, range.end - 1] {
                 let byte = image.byte_at(address);
-                assert!(byte == MemoryByte::Mapped(pattern_byte(address)), "{target:?}: {address:#x} is {byte:?}");
+                assert!(
+                    byte == MemoryByte::Mapped(pattern_byte(address)),
+                    "{target:?}: {address:#x} is {byte:?}"
+                );
             }
         }
-        assert!(image.entry_point == layout.code.start, "{target:?}: wrong entry point");
+        assert!(
+            image.entry_point == layout.code.start,
+            "{target:?}: wrong entry point"
+        );
         let identity: &[u8] = match target.format {
             ExecutableFormat::Elf => &[0xb1; 20],
             ExecutableFormat::MachO => &[0xd1; 16],
             ExecutableFormat::Pe => &[],
         };
-        assert!(image.identity == identity, "{target:?}: wrong identity {:x?}", image.identity);
+        assert!(
+            image.identity == identity,
+            "{target:?}: wrong identity {:x?}",
+            image.identity
+        );
         let (below, below_byte, past) = image_edges(target.format);
-        assert!(image.byte_at(below) == below_byte, "{target:?}: {below:#x} is {:?}", image.byte_at(below));
-        assert!(image.byte_at(past) == MemoryByte::Unmapped, "{target:?}: {past:#x} is mapped");
+        assert!(
+            image.byte_at(below) == below_byte,
+            "{target:?}: {below:#x} is {:?}",
+            image.byte_at(below)
+        );
+        assert!(
+            image.byte_at(past) == MemoryByte::Unmapped,
+            "{target:?}: {past:#x} is mapped"
+        );
     }
 }
 

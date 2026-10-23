@@ -43,7 +43,11 @@ describe("crashIfInterpreterIsUsed", () => {
   const withOption = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
   beforeAll(async () => {
-    const built = await runProcess([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", program], String(dir), bunEnv);
+    const built = await runProcess(
+      [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", program],
+      String(dir),
+      bunEnv,
+    );
     expect(built.stderr).not.toContain("error:");
     expect(built.exitCode).toBe(0);
   });
@@ -82,7 +86,11 @@ describe("crashIfInterpreterIsUsed", () => {
   });
 
   test("a WebAssembly module made from bytes, which only an import embeds, runs", async () => {
-    const { stdout, stderr, exitCode } = await runProcess([program, "module-from-bytes"], String(outsideDir), withOption);
+    const { stdout, stderr, exitCode } = await runProcess(
+      [program, "module-from-bytes"],
+      String(outsideDir),
+      withOption,
+    );
     expect(stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout, exitCode }).toEqual({ stdout: "42\nfinished\n", exitCode: 0 });
   });

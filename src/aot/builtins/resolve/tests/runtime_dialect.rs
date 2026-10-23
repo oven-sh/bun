@@ -63,7 +63,12 @@ case_tests! {
 fn member_intrinsics() {
     with_case(RUNTIME, "f.$call(t, 1);", |case| {
         let found = case.intrinsic("f.$call");
-        let is_call = matches!(found, Some(Intrinsic::Call { is_never_inlined: false }));
+        let is_call = matches!(
+            found,
+            Some(Intrinsic::Call {
+                is_never_inlined: false
+            })
+        );
         assert!(is_call, "{found:?}");
     });
     with_case(RUNTIME, "o.$then;", |case| {
@@ -110,14 +115,19 @@ fn originals_are_locked() {
 fn prefixed_global() {
     with_case(RUNTIME, "Array;", |case| {
         let found = case.intrinsic("Array");
-        assert!(matches!(found, Some(Intrinsic::Builtin(BuiltinId::Array))), "{found:?}");
+        assert!(
+            matches!(found, Some(Intrinsic::Builtin(BuiltinId::Array))),
+            "{found:?}"
+        );
         assert!(case.mentions(BuiltinId::Array));
     });
     with_case(PROGRAM, "Array;", |case| {
         assert_builtin(case, "Array", BuiltinId::Array);
         assert!(case.intrinsic("Array").is_none());
     });
-    with_case(RUNTIME, "Math;", |case| assert_builtin(case, "Math", BuiltinId::Math));
+    with_case(RUNTIME, "Math;", |case| {
+        assert_builtin(case, "Math", BuiltinId::Math)
+    });
 }
 
 struct NativeBinding {
@@ -189,7 +199,11 @@ fn linked_function_is_called() {
     let (name, function) = find_linked_function().unwrap();
     let source = format!("${}(x);", BStr::new(table::text_of_name(name)));
     with_case(RUNTIME, &source, |case| {
-        assert!(case.resolved.called_functions().any(|called| called == function));
+        assert!(
+            case.resolved
+                .called_functions()
+                .any(|called| called == function)
+        );
         assert!(case.resolved.mentioned().is_empty());
     });
     with_case(PROGRAM, &source, |case| {

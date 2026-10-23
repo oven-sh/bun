@@ -84,7 +84,12 @@ fn find_listed_nullish_at(
     mapped: TypeId,
 ) -> Primitives {
     let says_which = file.is_checked() && file.queries.files().options.strict_null_checks;
-    let holds_any = file.fragment.types.get(mapped).primitives.intersects(Primitives::NULLISH);
+    let holds_any = file
+        .fragment
+        .types
+        .get(mapped)
+        .primitives
+        .intersects(Primitives::NULLISH);
     if !says_which || !holds_any {
         return Primitives::NULLISH;
     }
@@ -114,11 +119,13 @@ fn find_listed_nullish(
     match shape.kind {
         ShapeKind::Undefined => Primitives::UNDEFINED,
         ShapeKind::Null => Primitives::NULL,
-        ShapeKind::Anything(_) | ShapeKind::TypeVariable { .. } | ShapeKind::Never => Primitives::NULLISH,
+        ShapeKind::Anything(_) | ShapeKind::TypeVariable { .. } | ShapeKind::Never => {
+            Primitives::NULLISH
+        }
         ShapeKind::Union(members) => {
             let mut listed = Primitives::default();
             for &member in members {
-                listed = listed | find_listed_nullish(file, member, depth + 1);
+                listed |= find_listed_nullish(file, member, depth + 1);
             }
             listed
         }
@@ -154,19 +161,15 @@ fn find_omitted_nullish(
     let omitted = (held & Primitives::NULLISH).without(source.listed_nullish);
     let mut flags = PositionFlags::default();
     if omitted.contains(Primitives::NULL) {
-        flags = flags | PositionFlags::OMITS_NULL;
+        flags |= PositionFlags::OMITS_NULL;
     }
     if omitted.contains(Primitives::UNDEFINED) {
-        flags = flags | PositionFlags::OMITS_UNDEFINED;
+        flags |= PositionFlags::OMITS_UNDEFINED;
     }
     flags
 }
 
-fn add_nullish_of(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: TypeId,
-    listing: TypeId,
-) -> TypeId {
+fn add_nullish_of(file: &mut FileLowering<'_, '_, '_, '_>, ty: TypeId, listing: TypeId) -> TypeId {
     let types = &mut file.fragment.types;
     let listed = types.get(listing).primitives & Primitives::NULLISH;
     if types.get(ty).primitives.contains(listed) {
@@ -198,16 +201,13 @@ fn choose_source(
     // `x?: number` is written `number`.
     if let Some(checked) = checked {
         source.mapped.ty = add_nullish_of(file, source.mapped.ty, checked.mapped.ty);
-        source.listed_nullish = source.listed_nullish | checked.listed_nullish;
+        source.listed_nullish |= checked.listed_nullish;
     }
     Some(source)
 }
 
 // Only who writes `int32` asks the build for the proof.
-fn find_promise(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    source: PositionSource,
-) -> PositionFlags {
+fn find_promise(file: &mut FileLowering<'_, '_, '_, '_>, source: PositionSource) -> PositionFlags {
     let is_tested =
         file.is_checked() && source.mapped.is_checked && source.mapped.ty != TypeTable::ANYTHING;
     if !is_tested || !source.is_annotation || !types::lists_int32(file, source.ty) {
@@ -240,7 +240,11 @@ fn finish_position(
     file.types.positions.has_int32_promise |= flags.contains(PositionFlags::IS_INT32_PROMISE);
     let declared = DeclaredType::new(mapped, site, flags);
     if declared.site.is_some() {
-        file.types.positions.sources.entry(declared).or_insert(source.ty);
+        file.types
+            .positions
+            .sources
+            .entry(declared)
+            .or_insert(source.ty);
     }
     declared
 }
@@ -306,7 +310,11 @@ pub(crate) fn add_undefined(
         ..position
     };
     if let Some(source) = find_position_source(file, position) {
-        file.types.positions.sources.entry(widened).or_insert(source);
+        file.types
+            .positions
+            .sources
+            .entry(widened)
+            .or_insert(source);
     }
     widened
 }
@@ -357,7 +365,10 @@ pub(crate) fn binding_position(
         | ImportBinding::NamespaceRead { .. }
         | ImportBinding::Exports { .. } => file.queries.canonical_symbol(file.file, symbol),
     };
-    file.types.positions.named_variables.insert(symbol, variable);
+    file.types
+        .positions
+        .named_variables
+        .insert(symbol, variable);
     variable_position(file, variable)
 }
 

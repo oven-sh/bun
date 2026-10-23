@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "the-look-of-an-error.cjs": `"use strict";\nconst { inspect } = require("node:util");\nfunction patch(errorConstructor) {\n  const inspectSymbol = Symbol.for("nodejs.util.inspect.custom");\n  errorConstructor.prototype[inspectSymbol] = function () { return "an error that says " + this.message; };\n}\npatch(Error);\nconsole.log(inspect(new Error("one")), inspect(new TypeError("two")), typeof Error.prototype[Symbol.for("nodejs.util.inspect.custom")]);\n`,
@@ -28,7 +28,9 @@ for (const [what, attempt] of Object.entries(attempts)) {
 }
 `;
 
-const tsconfigWithTypesOfBun = JSON.stringify({ compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] } });
+const tsconfigWithTypesOfBun = JSON.stringify({
+  compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] },
+});
 
 async function run(cwd: string, cmd: string[]) {
   await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -44,8 +46,19 @@ test.concurrent.each(Object.keys(files))(
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(plain.stdout).not.toBe("");
     expect(await run(String(dir), [bunExe(), "run", "--debug-aot", `./${entry}`])).toEqual(plain);
-    const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", `./${entry}.exe`]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const built = await run(String(dir), [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `./${entry}`,
+      "--outfile",
+      `./${entry}.exe`,
+    ]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     expect(await run(String(dir), [`./${entry}.exe`])).toEqual(plain);
   },
   120_000,
@@ -53,7 +66,16 @@ test.concurrent.each(Object.keys(files))(
 
 test("the prototype of a constructor and the other prototypes are locked as before", async () => {
   using dir = tempDir("aot-error-prototypes-refused", { "refused.cjs": refused });
-  const expected = ["the constructor's prototype", "Object.prototype", "Array.prototype.push", "Function.prototype", "Promise.prototype", "Promise.prototype.then"].map(what => what + " TypeError\n").join("");
+  const expected = [
+    "the constructor's prototype",
+    "Object.prototype",
+    "Array.prototype.push",
+    "Function.prototype",
+    "Promise.prototype",
+    "Promise.prototype.then",
+  ]
+    .map(what => what + " TypeError\n")
+    .join("");
   const ran = await run(String(dir), [bunExe(), "run", "--debug-aot", "./refused.cjs"]);
   expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
 }, 120_000);

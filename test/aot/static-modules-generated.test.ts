@@ -40,16 +40,31 @@ for (const { name, takesEsEntryPoints, seeds } of generators) {
           slot(async () => {
             using directory = tempDir("aot-static-modules-generated", {});
             const folder = join(String(directory), "program");
-            const generated = await spawned([python!, "-B", join(import.meta.dir, "static-modules-generated", `${name}.py`), String(seed), folder], String(directory), { ...process.env, PYTHONUTF8: "1" });
+            const generated = await spawned(
+              [python!, "-B", join(import.meta.dir, "static-modules-generated", `${name}.py`), String(seed), folder],
+              String(directory),
+              { ...process.env, PYTHONUTF8: "1" },
+            );
             expect({ stderr: generated.stderr, exitCode: generated.exitCode }).toEqual({ stderr: "", exitCode: 0 });
             const entry = existsSync(join(folder, "main.mjs")) ? "main.mjs" : "main.js";
-            if (entry === "main.mjs" && !takesEsEntryPoints) return void console.log(`${name} ${seed}: passed over: the entry point is an ES module`);
+            if (entry === "main.mjs" && !takesEsEntryPoints)
+              return void console.log(`${name} ${seed}: passed over: the entry point is an ES module`);
 
             const plain = await spawned([bunExe(), "run", entry], folder, bunEnv);
-            if (plain.exitCode !== 0 || countOf(plain.stdout, /^m\d+ starts$/gm) !== countOf(plain.stdout, /^m\d+ ends$/gm)) return void console.log(`${name} ${seed}: passed over: a module throws`);
+            if (
+              plain.exitCode !== 0 ||
+              countOf(plain.stdout, /^m\d+ starts$/gm) !== countOf(plain.stdout, /^m\d+ ends$/gm)
+            )
+              return void console.log(`${name} ${seed}: passed over: a module throws`);
 
             const executable = join(String(directory), isWindows ? "compiled.exe" : "compiled");
-            built(await spawned([bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), entry, "--outfile", executable], folder, bunEnv));
+            built(
+              await spawned(
+                [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), entry, "--outfile", executable],
+                folder,
+                bunEnv,
+              ),
+            );
             const compiled = await spawned([executable], folder, bunEnv);
             expect({ signal: compiled.signal, ...told(compiled) }).toEqual({ signal: null, ...told(plain) });
           }),

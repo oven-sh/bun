@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 test("a package that ships its TypeScript stays typed where only tsc's output for the application's older target would differ", async () => {
   using dir = tempDir("aot-dependency-older-target", {
@@ -11,7 +11,11 @@ test("a package that ships its TypeScript stays typed where only tsc's output fo
 declare const console: { log(...values: unknown[]): void };
 console.log(Named.name, new Limited("seven").max, new Limited("seven").text, new Late(true).text, new Late(false).extra, pick(undefined));
 `,
-    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/package.json": JSON.stringify({
+      name: "ships-typescript",
+      main: "index.ts",
+      types: "index.ts",
+    }),
     "node_modules/ships-typescript/index.ts": `const limit = 3;
 const fallback = "outer";
 export class Named { static name = "a name of its own"; }
@@ -21,7 +25,13 @@ export function pick(options?: { name?: string }, name = options?.name ?? fallba
 `,
   });
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [printed, said, built] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   expect(printed + said).not.toContain("ships-typescript");
   expect(built).toBe(0);

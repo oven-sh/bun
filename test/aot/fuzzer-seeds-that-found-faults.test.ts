@@ -42,7 +42,8 @@ describe.concurrent("compile/aot/fuzzer/seeds that found faults", () => {
           const [source, seed] = name.split(":");
           const program = sources[source](Number(seed), bed)!;
           const verdicts: Record<string, unknown> = {};
-          for (const mode of bed.modes(program)) verdicts[mode.name] = (await bed.judge(String(folder), [program], mode.flags))[0].verdict;
+          for (const mode of bed.modes(program))
+            verdicts[mode.name] = (await bed.judge(String(folder), [program], mode.flags))[0].verdict;
           expect(verdicts).toEqual(Object.fromEntries(bed.modes(program).map(mode => [mode.name, { kind: "same" }])));
         }),
       600_000,

@@ -21,9 +21,8 @@ const MIN_PROGRAM_COUNT: usize = 1_000;
 const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 const DECLARATION_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
-pub(crate) const SOURCE_EXTENSIONS: [&str; 8] = [
-    ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
-];
+pub(crate) const SOURCE_EXTENSIONS: [&str; 8] =
+    [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
 #[derive(Copy, Clone)]
 pub(crate) struct Workspace<'s> {
@@ -195,7 +194,9 @@ pub(crate) fn for_each_program(
 
 // `name.d.txt.ts` declares what `name.txt` exports.
 fn declares_file_of_another_kind(path: &str) -> bool {
-    let stem = path.strip_suffix(".ts").and_then(|stem| stem.rsplit_once('.'));
+    let stem = path
+        .strip_suffix(".ts")
+        .and_then(|stem| stem.rsplit_once('.'));
     stem.is_some_and(|(name, _)| name.ends_with(".d"))
 }
 

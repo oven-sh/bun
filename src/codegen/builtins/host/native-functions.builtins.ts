@@ -104,13 +104,18 @@ const typeTestsOfNode = [
 ];
 
 export default b.declarations(
-  typeTestsOfNode.flatMap(name => b.static(`node:util/types.${name}`, { ...testsKindOfCell, implementation: b.generic })),
+  typeTestsOfNode.flatMap(name =>
+    b.static(`node:util/types.${name}`, { ...testsKindOfCell, implementation: b.generic }),
+  ),
   // Nothing leads from the realm to a member of a module: its native code tells which function it is. That of these two belongs to the functions below.
   typeTestsOfNode
     .filter(name => name !== "isMapIterator" && name !== "isSetIterator")
     .flatMap(name =>
       b.extend(`node:util/types.${name}`, {
-        functionObjectCode: { symbol: `jsFunction${name[0].toUpperCase()}${name.slice(1)}`, header: "NodeUtilTypesModule.h" },
+        functionObjectCode: {
+          symbol: `jsFunction${name[0].toUpperCase()}${name.slice(1)}`,
+          header: "NodeUtilTypesModule.h",
+        },
         length: 1,
       }),
     ),

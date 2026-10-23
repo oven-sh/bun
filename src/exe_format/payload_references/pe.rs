@@ -53,10 +53,13 @@ impl Headers {
         let sections_at = optional_at + usize::from(header.size_of_optional_header);
         let sections_size = usize::from(header.number_of_sections) * size_of::<SectionHeader>();
         let sections = file.bytes(sections_at, sections_size)?;
-        let sections = sections.chunks_exact(size_of::<SectionHeader>());
+        let sections = sections
+            .as_chunks::<{ size_of::<SectionHeader>() }>()
+            .0
+            .iter();
         Ok(Headers {
             optional,
-            sections: sections.map(read_struct).collect(),
+            sections: sections.map(|bytes| read_struct(bytes)).collect(),
         })
     }
 
@@ -109,7 +112,7 @@ fn check_base_relocations(blocks: &[u8], payload: Payload) -> Checked {
         let block_size: u32 = struct_in(rest, size_of::<u32>())?;
         let block = rest.get(..block_size as usize).ok_or(MALFORMED)?;
         let entries = block.get(RELOCATION_BLOCK_HEADER_SIZE..).ok_or(MALFORMED)?;
-        for entry in entries.chunks_exact(size_of::<u16>()) {
+        for entry in entries.as_chunks::<{ size_of::<u16>() }>().0 {
             let entry: u16 = read_struct(entry);
             let size = match entry >> RELOCATION_TYPE_SHIFT {
                 IMAGE_REL_BASED_ABSOLUTE => continue,
@@ -143,7 +146,7 @@ fn check_exports(
     let functions = headers.bytes_at(file, header.address_of_functions, table_size)?;
     let directory_start = directory.virtual_address;
     let directory_end = u64::from(directory_start) + u64::from(directory.size);
-    for function in functions.chunks_exact(size_of::<u32>()) {
+    for function in functions.as_chunks::<{ size_of::<u32>() }>().0 {
         let address: u32 = read_struct(function);
         let is_forwarder = directory_start <= address && u64::from(address) < directory_end;
         if address != 0 && !is_forwarder {

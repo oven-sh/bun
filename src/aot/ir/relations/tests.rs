@@ -58,10 +58,20 @@ fn describe(relations: &FunctionRelations) -> Vec<String> {
         lines.push(line);
     }
     for handed in &relations.handed {
-        lines.push(format!("{} to {} as {}", number(handed.source), handed.call, handed.argument));
+        lines.push(format!(
+            "{} to {} as {}",
+            number(handed.source),
+            handed.call,
+            handed.argument
+        ));
     }
     for operand in &relations.operands {
-        lines.push(format!("{} in {} at {}", number(operand.source), operand.user, operand.position));
+        lines.push(format!(
+            "{} in {} at {}",
+            number(operand.source),
+            operand.user,
+            operand.position
+        ));
     }
     lines.push(format!("listed {}", relations.results_fully_listed));
     lines
@@ -81,7 +91,14 @@ fn parameter_that_is_returned() {
         let parameter = builder.parameter(1);
         builder.return_value(Some(parameter));
     });
-    assert_eq!(lines, ["Parameter 0", "Parameter 1 IsReturned results 1", "listed 1"]);
+    assert_eq!(
+        lines,
+        [
+            "Parameter 0",
+            "Parameter 1 IsReturned results 1",
+            "listed 1"
+        ]
+    );
 }
 
 #[test]
@@ -117,7 +134,10 @@ fn path_ends_behind_four_reads() {
         }
         builder.return_value(Some(value));
     });
-    assert_eq!(lines[4], "ReadFrom 4 of 3 key 1 HasMembersRead IsIncomplete");
+    assert_eq!(
+        lines[4],
+        "ReadFrom 4 of 3 key 1 HasMembersRead IsIncomplete"
+    );
     assert_eq!(lines[5..], ["listed 0"]);
 }
 
@@ -143,18 +163,29 @@ fn parameter_is_stored_into_parameter() {
 #[test]
 fn store_behind_departure_of_target_is_not_first() {
     let lines = relate(3, |builder| {
-        let (object, value, callee) = (builder.parameter(0), builder.parameter(1), builder.parameter(2));
+        let (object, value, callee) = (
+            builder.parameter(0),
+            builder.parameter(1),
+            builder.parameter(2),
+        );
         call(builder, callee, &[object]);
         builder.prop_set(object, key(7), ECMAMode::Strict, value, false);
         builder.return_value(None);
     });
-    assert!(lines.contains(&"1 into 0 key 7 always".to_owned()), "{lines:?}");
+    assert!(
+        lines.contains(&"1 into 0 key 7 always".to_owned()),
+        "{lines:?}"
+    );
 }
 
 #[test]
 fn store_on_one_side_of_branch_is_not_on_every_path() {
     let lines = relate(3, |builder| {
-        let (object, value, condition) = (builder.parameter(0), builder.parameter(1), builder.parameter(2));
+        let (object, value, condition) = (
+            builder.parameter(0),
+            builder.parameter(1),
+            builder.parameter(2),
+        );
         let test = builder.to_boolean(condition);
         let (stores, leaves) = (builder.create_block(None), builder.create_block(None));
         builder.branch(test, Edge::to(stores), Edge::to(leaves));
@@ -166,7 +197,10 @@ fn store_on_one_side_of_branch_is_not_on_every_path() {
         builder.switch_to(leaves);
         builder.return_value(None);
     });
-    assert!(lines.contains(&"1 into 0 key 7 first".to_owned()), "{lines:?}");
+    assert!(
+        lines.contains(&"1 into 0 key 7 first".to_owned()),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -197,10 +231,7 @@ fn operand_that_is_no_subject_has_no_row() {
         call(builder, callee, &[unknown]);
         builder.return_value(Some(unknown));
     });
-    assert_eq!(
-        lines,
-        ["Parameter 0 IsCalled", "0 to 2 as 0", "listed 0"]
-    );
+    assert_eq!(lines, ["Parameter 0 IsCalled", "0 to 2 as 0", "listed 0"]);
 }
 
 #[test]
@@ -287,7 +318,11 @@ fn operand_of_operator_that_is_no_subject_has_no_row() {
 fn values_that_meet_keep_their_own_fates() {
     let lines = relate(3, |builder| {
         let test = builder.to_boolean(builder.parameter(2));
-        let (left, right, joined) = (builder.create_block(None), builder.create_block(None), builder.create_block(None));
+        let (left, right, joined) = (
+            builder.create_block(None),
+            builder.create_block(None),
+            builder.create_block(None),
+        );
         let met = builder.add_parameter(joined, None);
         builder.branch(test, Edge::to(left), Edge::to(right));
         builder.seal(left);
@@ -300,7 +335,13 @@ fn values_that_meet_keep_their_own_fates() {
         builder.switch_to(joined);
         builder.return_value(Some(met));
     });
-    assert_eq!(lines[..2], ["Parameter 0 IsReturned results 1", "Parameter 1 IsReturned results 1"]);
+    assert_eq!(
+        lines[..2],
+        [
+            "Parameter 0 IsReturned results 1",
+            "Parameter 1 IsReturned results 1"
+        ]
+    );
     assert_eq!(lines.last().unwrap(), "listed 1");
 }
 
@@ -310,7 +351,14 @@ fn stored_in_variable_and_thrown() {
         builder.put_module_variable(VariableId::new(0), builder.parameter(0));
         builder.throw(builder.parameter(1));
     });
-    assert_eq!(lines, ["Parameter 0 IsStoredInVariable", "Parameter 1 IsThrown", "listed 1"]);
+    assert_eq!(
+        lines,
+        [
+            "Parameter 0 IsStoredInVariable",
+            "Parameter 1 IsThrown",
+            "listed 1"
+        ]
+    );
 }
 
 #[test]
@@ -393,7 +441,12 @@ fn capture_is_handed_to_function_of_closure() {
     });
     assert_eq!(
         lines,
-        ["Parameter 0", "Allocation 1 IsReturned results 1", "0 to 1 as 0", "listed 1"]
+        [
+            "Parameter 0",
+            "Allocation 1 IsReturned results 1",
+            "0 to 1 as 0",
+            "listed 1"
+        ]
     );
 }
 
@@ -420,8 +473,16 @@ fn field_of_environment_is_read_and_stored_without_flags() {
 #[test]
 fn step_of_iteration_reads_out_of_what_is_iterated() {
     let lines = relate(1, |builder| {
-        let iterator = builder.iterator_open(builder.parameter(0), IteratorKind::Sync, None, false, false);
-        let step = builder.iterator_resume(iterator, None, IteratorKind::Sync, ResumeMode::Next, None, false);
+        let iterator =
+            builder.iterator_open(builder.parameter(0), IteratorKind::Sync, None, false, false);
+        let step = builder.iterator_resume(
+            iterator,
+            None,
+            IteratorKind::Sync,
+            ResumeMode::Next,
+            None,
+            false,
+        );
         let value = builder.result_at(step, IteratorResumeResult::Value as u32);
         builder.return_value(Some(value));
     });
@@ -438,8 +499,16 @@ fn step_of_iteration_reads_out_of_what_is_iterated() {
 #[test]
 fn whether_iteration_is_done_is_no_subject() {
     let lines = relate(1, |builder| {
-        let iterator = builder.iterator_open(builder.parameter(0), IteratorKind::Sync, None, false, false);
-        let step = builder.iterator_resume(iterator, None, IteratorKind::Sync, ResumeMode::Next, None, false);
+        let iterator =
+            builder.iterator_open(builder.parameter(0), IteratorKind::Sync, None, false, false);
+        let step = builder.iterator_resume(
+            iterator,
+            None,
+            IteratorKind::Sync,
+            ResumeMode::Next,
+            None,
+            false,
+        );
         let done = builder.result_at(step, IteratorResumeResult::Done as u32);
         builder.return_value(Some(done));
     });
@@ -459,13 +528,20 @@ fn object_made_again_behind_store_has_not_been_through_it() {
         builder.prop_set(object, key(5), ECMAMode::Strict, one, false);
         let second = builder.new_object(LayoutId::new(0), &[], None, &[]);
         let test = builder.to_boolean(builder.parameter(0));
-        builder.branch(test, Edge::with_arguments(turn, &[second]), Edge::with_arguments(leave, &[second]));
+        builder.branch(
+            test,
+            Edge::with_arguments(turn, &[second]),
+            Edge::with_arguments(leave, &[second]),
+        );
         builder.seal(turn);
         builder.seal(leave);
         builder.switch_to(leave);
         builder.return_value(Some(result));
     });
-    let stores: Vec<&String> = lines.iter().filter(|line| line.contains(" into ")).collect();
+    let stores: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains(" into "))
+        .collect();
     assert_eq!(stores, ["3 into 1 key 5", "3 into 2 key 5"]);
 }
 
@@ -473,7 +549,11 @@ fn object_made_again_behind_store_has_not_been_through_it() {
 fn operand_that_may_also_be_no_subject_has_marker_beside_its_rows() {
     let lines = relate(2, |builder| {
         let test = builder.to_boolean(builder.parameter(1));
-        let (left, right, joined) = (builder.create_block(None), builder.create_block(None), builder.create_block(None));
+        let (left, right, joined) = (
+            builder.create_block(None),
+            builder.create_block(None),
+            builder.create_block(None),
+        );
         let met = builder.add_parameter(joined, None);
         builder.branch(test, Edge::to(left), Edge::to(right));
         builder.seal(left);
@@ -518,7 +598,11 @@ fn what_is_read_out_of_computed_value_stands_behind_it() {
 fn store_that_lands_in_one_of_two_is_sure_of_neither() {
     let lines = relate(4, |builder| {
         let test = builder.to_boolean(builder.parameter(2));
-        let (left, right, joined) = (builder.create_block(None), builder.create_block(None), builder.create_block(None));
+        let (left, right, joined) = (
+            builder.create_block(None),
+            builder.create_block(None),
+            builder.create_block(None),
+        );
         let object = builder.add_parameter(joined, None);
         builder.branch(test, Edge::to(left), Edge::to(right));
         builder.seal(left);
@@ -529,10 +613,19 @@ fn store_that_lands_in_one_of_two_is_sure_of_neither() {
         builder.jump(Edge::with_arguments(joined, &[builder.parameter(1)]));
         builder.seal(joined);
         builder.switch_to(joined);
-        builder.prop_set(object, key(7), ECMAMode::Strict, builder.parameter(3), false);
+        builder.prop_set(
+            object,
+            key(7),
+            ECMAMode::Strict,
+            builder.parameter(3),
+            false,
+        );
         builder.return_value(None);
     });
-    let stores: Vec<&String> = lines.iter().filter(|line| line.contains(" into ")).collect();
+    let stores: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains(" into "))
+        .collect();
     assert_eq!(stores, ["3 into 0 key 7", "3 into 1 key 7"]);
 }
 
@@ -543,7 +636,13 @@ fn store_behind_allocation_in_its_block_holds_in_loop() {
         builder.jump(Edge::to(turn));
         builder.switch_to(turn);
         let object = builder.new_object(LayoutId::new(0), &[], None, &[]);
-        builder.prop_set(object, key(5), ECMAMode::Strict, builder.parameter(0), false);
+        builder.prop_set(
+            object,
+            key(5),
+            ECMAMode::Strict,
+            builder.parameter(0),
+            false,
+        );
         let test = builder.to_boolean(builder.parameter(0));
         builder.branch(test, Edge::to(turn), Edge::to(leave));
         builder.seal(turn);
@@ -551,21 +650,34 @@ fn store_behind_allocation_in_its_block_holds_in_loop() {
         builder.switch_to(leave);
         builder.return_value(Some(object));
     });
-    let stores: Vec<&String> = lines.iter().filter(|line| line.contains(" into ")).collect();
+    let stores: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains(" into "))
+        .collect();
     assert_eq!(stores, ["0 into 1 key 5 always first"]);
 }
 
 #[test]
 fn store_in_later_block_of_loop_claims_nothing() {
     let lines = relate(1, |builder| {
-        let (turn, stores, leave) = (builder.create_block(None), builder.create_block(None), builder.create_block(None));
+        let (turn, stores, leave) = (
+            builder.create_block(None),
+            builder.create_block(None),
+            builder.create_block(None),
+        );
         builder.jump(Edge::to(turn));
         builder.switch_to(turn);
         let object = builder.new_object(LayoutId::new(0), &[], None, &[]);
         builder.jump(Edge::to(stores));
         builder.seal(stores);
         builder.switch_to(stores);
-        builder.prop_set(object, key(5), ECMAMode::Strict, builder.parameter(0), false);
+        builder.prop_set(
+            object,
+            key(5),
+            ECMAMode::Strict,
+            builder.parameter(0),
+            false,
+        );
         let test = builder.to_boolean(builder.parameter(0));
         builder.branch(test, Edge::to(turn), Edge::to(leave));
         builder.seal(turn);
@@ -573,7 +685,10 @@ fn store_in_later_block_of_loop_claims_nothing() {
         builder.switch_to(leave);
         builder.return_value(Some(object));
     });
-    let stores: Vec<&String> = lines.iter().filter(|line| line.contains(" into ")).collect();
+    let stores: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains(" into "))
+        .collect();
     assert_eq!(stores, ["0 into 1 key 5"]);
 }
 
@@ -600,7 +715,11 @@ fn contents_go_where_nobody_follows_them_out_of_operation_without_listed_result(
     });
     assert_eq!(
         lines,
-        ["Parameter 0 HasMembersRead", "ReadFrom 1 of 0 IsIncomplete", "listed 0"]
+        [
+            "Parameter 0 HasMembersRead",
+            "ReadFrom 1 of 0 IsIncomplete",
+            "listed 0"
+        ]
     );
 }
 
@@ -608,12 +727,22 @@ fn contents_go_where_nobody_follows_them_out_of_operation_without_listed_result(
 fn what_is_stored_into_built_in_object_is_kept() {
     let lines = relate(1, |builder| {
         let global = builder.builtin(BuiltinId::GlobalThis);
-        builder.prop_set(global, key(1), ECMAMode::Sloppy, builder.parameter(0), false);
+        builder.prop_set(
+            global,
+            key(1),
+            ECMAMode::Sloppy,
+            builder.parameter(0),
+            false,
+        );
         builder.return_value(None);
     });
     assert_eq!(
         lines,
-        ["Parameter 0 IsStoredInUnknownObject", "Constant ? IsReturned results 1", "listed 1"]
+        [
+            "Parameter 0 IsStoredInUnknownObject",
+            "Constant ? IsReturned results 1",
+            "listed 1"
+        ]
     );
 }
 
@@ -621,7 +750,13 @@ fn what_is_stored_into_built_in_object_is_kept() {
 fn what_is_stored_into_computed_object_is_kept() {
     let lines = relate(2, |builder| {
         let prototype = builder.get_class_prototype(builder.parameter(1), LayoutId::new(0));
-        builder.prop_set(prototype, key(1), ECMAMode::Strict, builder.parameter(0), false);
+        builder.prop_set(
+            prototype,
+            key(1),
+            ECMAMode::Strict,
+            builder.parameter(0),
+            false,
+        );
         builder.return_value(None);
     });
     assert_eq!(lines[0], "Parameter 0 IsStoredInUnknownObject");
@@ -652,7 +787,14 @@ fn copy_of_what_is_no_subject_is_born_with_what_nobody_lists() {
         let copy = builder.copy_object(unknown, &[], &[]);
         builder.return_value(Some(copy));
     });
-    assert_eq!(lines, ["Allocation 1 IsReturned results 1", "? into 0 always first", "listed 1"]);
+    assert_eq!(
+        lines,
+        [
+            "Allocation 1 IsReturned results 1",
+            "? into 0 always first",
+            "listed 1"
+        ]
+    );
 }
 
 #[test]
@@ -661,7 +803,14 @@ fn literal_of_constants_is_born_with_what_nobody_lists() {
         let literal = builder.data(DataId::new(0));
         builder.return_value(Some(literal));
     });
-    assert_eq!(lines, ["Allocation 0 IsReturned results 1", "? into 0 always first", "listed 1"]);
+    assert_eq!(
+        lines,
+        [
+            "Allocation 0 IsReturned results 1",
+            "? into 0 always first",
+            "listed 1"
+        ]
+    );
 }
 
 #[test]
@@ -673,7 +822,11 @@ fn values_that_meet_may_be_subjects_far_apart() {
             last = builder.new_object(LayoutId::new(0), &[], None, &[]);
         }
         let test = builder.to_boolean(builder.parameter(0));
-        let (left, right, joined) = (builder.create_block(None), builder.create_block(None), builder.create_block(None));
+        let (left, right, joined) = (
+            builder.create_block(None),
+            builder.create_block(None),
+            builder.create_block(None),
+        );
         let met = builder.add_parameter(joined, None);
         builder.branch(test, Edge::to(left), Edge::to(right));
         builder.seal(left);
@@ -686,8 +839,17 @@ fn values_that_meet_may_be_subjects_far_apart() {
         builder.switch_to(joined);
         builder.return_value(Some(met));
     });
-    let returned: Vec<&String> = lines.iter().filter(|line| line.contains("IsReturned")).collect();
-    assert_eq!(returned, ["Allocation 1 IsReturned results 1", "Allocation 131 IsReturned results 1"]);
+    let returned: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains("IsReturned"))
+        .collect();
+    assert_eq!(
+        returned,
+        [
+            "Allocation 1 IsReturned results 1",
+            "Allocation 131 IsReturned results 1"
+        ]
+    );
     assert_eq!(lines.last().unwrap(), "listed 1");
 }
 
@@ -704,19 +866,33 @@ fn what_comes_round_outer_loop_reaches_inner_loop() {
         builder.jump(Edge::with_arguments(inner, &[carried]));
         builder.switch_to(inner);
         let test = builder.to_boolean(builder.parameter(2));
-        builder.branch(test, Edge::with_arguments(inner, &[turned]), Edge::to(after));
+        builder.branch(
+            test,
+            Edge::with_arguments(inner, &[turned]),
+            Edge::to(after),
+        );
         builder.seal(inner);
         builder.seal(after);
         builder.switch_to(after);
         let test = builder.to_boolean(builder.parameter(2));
         let next = builder.parameter(1);
-        builder.branch(test, Edge::with_arguments(outer, &[next]), Edge::with_arguments(leave, &[turned]));
+        builder.branch(
+            test,
+            Edge::with_arguments(outer, &[next]),
+            Edge::with_arguments(leave, &[turned]),
+        );
         builder.seal(outer);
         builder.seal(leave);
         builder.switch_to(leave);
         builder.return_value(Some(result));
     });
-    assert_eq!(lines[..2], ["Parameter 0 IsReturned results 1", "Parameter 1 IsReturned results 1"]);
+    assert_eq!(
+        lines[..2],
+        [
+            "Parameter 0 IsReturned results 1",
+            "Parameter 1 IsReturned results 1"
+        ]
+    );
     assert_eq!(lines.last().unwrap(), "listed 1");
 }
 
@@ -749,7 +925,10 @@ fn departure_of_another_subject_is_none_of_target() {
         call(builder, callee, &[object]);
         builder.return_value(None);
     });
-    assert!(lines.contains(&"1 into 0 key 7 always first".to_owned()), "{lines:?}");
+    assert!(
+        lines.contains(&"1 into 0 key 7 always first".to_owned()),
+        "{lines:?}"
+    );
 }
 
 #[test]

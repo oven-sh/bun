@@ -33,7 +33,10 @@ pub fn specifiers_of_closed_module(file: &File) -> Option<Vec<Atom>> {
         StmtKind::ExportStar { .. } | StmtKind::ExportAsNamespace(_) => None,
         _ => Some(0),
     };
-    let all_statements = file.stmts.iter().map(|statement| names_other_files(statement.kind));
+    let all_statements = file
+        .stmts
+        .iter()
+        .map(|statement| names_other_files(statement.kind));
     if all_statements.sum::<Option<usize>>() != Some(statement_count) {
         return None;
     }

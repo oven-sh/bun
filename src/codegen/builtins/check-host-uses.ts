@@ -64,7 +64,10 @@ function collectWrittenUses(model: CheckedModel): DescribedUses[] {
     ...usesOfLoads(null, model.startup.loads),
     ...usesOfCalledFunctions(null, model.startup.functionsCalledWithLoads),
     ...model.hostObjects.flatMap(({ cell, internalFields }) =>
-      internalFields.map(({ index, uses }) => ({ row: `internal field ${index} of the host object ${cell.text}`, uses })),
+      internalFields.map(({ index, uses }) => ({
+        row: `internal field ${index} of the host object ${cell.text}`,
+        uses,
+      })),
     ),
     ...model.hostMethodCalls.map(({ name, cell, call }) => ({
       row: `a host method named ${name.text} uses what lies in ${cell.text}`,
@@ -105,9 +108,14 @@ function checkCall(row: string, call: ModelHostCall, problems: Problems): void {
   }
   for (const value of valuesOfCall(call)) {
     if (value.place !== "NewValue") continue;
-    const { isAnything, hasAnyObject, hasAnyFunction, hasPlainData, primitives, integers, stringLiterals, parts } = value.type;
+    const { isAnything, hasAnyObject, hasAnyFunction, hasPlainData, primitives, integers, stringLiterals, parts } =
+      value.type;
     const isNever =
-      !isAnything && !hasAnyObject && !hasAnyFunction && !hasPlainData && integers === null &&
+      !isAnything &&
+      !hasAnyObject &&
+      !hasAnyFunction &&
+      !hasPlainData &&
+      integers === null &&
       primitives.length + stringLiterals.length + parts.length === 0;
     if (isNever) problems.add(null, `${row}: native code passes a value that has no type`);
   }
@@ -126,7 +134,10 @@ function checkUse(row: string, use: ModelHostUse, problems: Problems): void {
       return;
     case "IsValueOf":
       if (kindsHoldingValues.includes(use.builtin.kind)) return;
-      problems.add(null, `${row}: it is the value of ${use.builtin.text}, and a ${use.builtin.kind} holds no value that native code makes later`);
+      problems.add(
+        null,
+        `${row}: it is the value of ${use.builtin.text}, and a ${use.builtin.kind} holds no value that native code makes later`,
+      );
       return;
   }
 }
@@ -162,7 +173,10 @@ function collectReadValues(model: CheckedModel, written: readonly DescribedUses[
   }
   for (const { cell, fields } of model.hostObjects) {
     for (const { name, value } of fields) {
-      values.push({ row: `${name === null ? "the other names" : `the field ${name.text}`} of the host object ${cell.text}`, value });
+      values.push({
+        row: `${name === null ? "the other names" : `the field ${name.text}`} of the host object ${cell.text}`,
+        value,
+      });
     }
   }
   for (const { name, arguments: passed } of model.namedMemberCalls) {
@@ -190,8 +204,14 @@ function checkHostObjects({ hostObjects }: CheckedModel, problems: Problems): vo
   for (const { cell, function: described, internalFields, source } of hostObjects) {
     if (cells.has(cell)) problems.add(source, `two host objects lie in the native cell ${cell.text}`);
     cells.add(cell);
-    if (described !== null && !described.overloads.some(({ mode, flags }) => mode === "Call" && !flags.includes("IsUndeclared"))) {
-      problems.add(source, `the host object ${cell.text} is a function, and ${described.text} has no Call overload that says what a call does`);
+    if (
+      described !== null &&
+      !described.overloads.some(({ mode, flags }) => mode === "Call" && !flags.includes("IsUndeclared"))
+    ) {
+      problems.add(
+        source,
+        `the host object ${cell.text} is a function, and ${described.text} has no Call overload that says what a call does`,
+      );
     }
     const indexes = new Set<number>();
     for (const { index } of internalFields) {
@@ -214,25 +234,34 @@ function checkNamedMemberCalls({ namedMemberCalls, overloads }: CheckedModel, pr
   for (const { name, source } of namedMemberCalls) {
     if (names.has(name)) problems.add(source, `two rows say what native code passes to a member named ${name.text}`);
     names.add(name);
-    if (!calledNames.has(name)) problems.add(source, `no operand has b.calls("${name.text}"), so nothing calls a member of that name`);
+    if (!calledNames.has(name))
+      problems.add(source, `no operand has b.calls("${name.text}"), so nothing calls a member of that name`);
   }
 }
 
 function checkHostMethodCalls({ hostMethodCalls, startup }: CheckedModel, problems: Problems): void {
   for (const { name, source } of hostMethodCalls) {
     if (startup.namesOfMethodsCallingLoads.includes(name)) continue;
-    problems.add(source, `${name.text} is not among namesOfMethodsCallingLoads of b.startup, so nothing says that the host has methods of that name`);
+    problems.add(
+      source,
+      `${name.text} is not among namesOfMethodsCallingLoads of b.startup, so nothing says that the host has methods of that name`,
+    );
   }
 }
 
 const isIndex = (text: string): boolean => String(Number(text) >>> 0) === text;
 
 // The list lets what a program stores under another name stay in the program. That takes one object of the realm that a program can store to, and a chain above it that the table knows.
-export function checkNamesReadByNativeCode({ namesReadByNativeCode }: Pick<TableModel, "namesReadByNativeCode">, problems: Problems): void {
+export function checkNamesReadByNativeCode(
+  { namesReadByNativeCode }: Pick<TableModel, "namesReadByNativeCode">,
+  problems: Problems,
+): void {
   for (const { holder, names, namesOnlyInspected } of namesReadByNativeCode) {
-    const refuse = (reason: string) => problems.add(null, `${holder.text} lists the names that native code reads, and ${reason}`);
+    const refuse = (reason: string) =>
+      problems.add(null, `${holder.text} lists the names that native code reads, and ${reason}`);
     if (holder.scope !== "Realm") refuse("every module has an object of its own");
-    if (holder.sameObjectAs !== null) refuse(`it is the same object as ${holder.sameObjectAs.text}, where the list belongs`);
+    if (holder.sameObjectAs !== null)
+      refuse(`it is the same object as ${holder.sameObjectAs.text}, where the list belongs`);
     if (holder.flags.includes("IsGlobalObject")) refuse("native code finds every global variable on the global object");
     if (holder.flags.includes("IsLockedObject")) refuse("it is locked, so a program puts nothing there");
     if (holder.prototype.link === "Unknown") refuse("nothing says what lies above it, where a lookup goes on");

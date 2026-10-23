@@ -19,14 +19,14 @@ import {
 import type { BuiltinUses, FeatureEdge } from "../../../scripts/build/trim/types.ts";
 import {
   A,
-  B,
-  C,
-  Tools,
   abc,
   abcWith,
+  B,
+  C,
   edgeKindOf,
   partitioned,
   tableOutput,
+  Tools,
   type Guard,
   type Partitioned,
   type Section,
@@ -310,7 +310,12 @@ describe("an address in a static table", () => {
 
   test("gives the function the feature of other code that refers to it", () => {
     const result = partitioned(
-      { ...table, main: { root: true, to: ["table", "guardB"] }, guardB: { to: ["entryB"] }, entryB: { to: ["entryA"] } },
+      {
+        ...table,
+        main: { root: true, to: ["table", "guardB"] },
+        guardB: { to: ["entryB"] },
+        entryB: { to: ["entryA"] },
+      },
       [...tableGuards, ["guardB", "entryB", B]],
     );
     expect(result.failures).toEqual([]);
@@ -422,7 +427,14 @@ describe("a violation", () => {
 describe("failure reports and review files", () => {
   const uses: BuiltinUses = {
     entries: [
-      { id: 7, path: "Bun.alpha", kind: "Function", uses: [{ feature: "A", isConditional: false }], nativeSymbols: [], hasHiddenRoot: false },
+      {
+        id: 7,
+        path: "Bun.alpha",
+        kind: "Function",
+        uses: [{ feature: "A", isConditional: false }],
+        nativeSymbols: [],
+        hasHiddenRoot: false,
+      },
     ],
   };
   const contextOf = (result: Partitioned): ReportContext => ({
@@ -545,19 +557,35 @@ describe("failure reports and review files", () => {
   });
 
   test("a built-in that the uses do not list, or a context without uses, is named by its id", () => {
-    expect(describeFailures([{ ...useWithoutGuard, builtin: 9 }], contextOf(guarded))).toStartWith('UseWithoutGuard: built-in 9 declares "uses A"');
+    expect(describeFailures([{ ...useWithoutGuard, builtin: 9 }], contextOf(guarded))).toStartWith(
+      'UseWithoutGuard: built-in 9 declares "uses A"',
+    );
     expect(describeFailures([useWithoutGuard], { ...contextOf(guarded), uses: undefined })).toStartWith(
       'UseWithoutGuard: built-in 7 declares "uses A"',
     );
   });
 
   test("failures are printed by kind, in the order of the steps that find them", () => {
-    const failures = [guardWithoutUser, referenceIntoRange, useWithoutGuard, guardWithoutReference, undeclaredUse, guardOfUnknownBuiltin];
+    const failures = [
+      guardWithoutUser,
+      referenceIntoRange,
+      useWithoutGuard,
+      guardWithoutReference,
+      undeclaredUse,
+      guardOfUnknownBuiltin,
+    ];
     expect(
       describeFailures(failures, contextOf(guarded))
         .split("\n")
         .map(line => line.slice(0, line.indexOf(":"))),
-    ).toEqual(["GuardWithoutReference", "GuardOfUnknownBuiltin", "UndeclaredUse", "UseWithoutGuard", "GuardWithoutUser", "ReferenceIntoRemovableRange"]);
+    ).toEqual([
+      "GuardWithoutReference",
+      "GuardOfUnknownBuiltin",
+      "UndeclaredUse",
+      "UseWithoutGuard",
+      "GuardWithoutUser",
+      "ReferenceIntoRemovableRange",
+    ]);
   });
 
   function retainedChain(length: number): Partitioned {
@@ -601,10 +629,11 @@ describe("failure reports and review files", () => {
   });
 
   test("failures past the limit are counted", () => {
-    const failures = Array.from(
-      { length: maxPrintedFailures + 5 },
-      (_, index): LinkFailure => ({ kind: "UnreadInput", object: `toy${index}.o`, reason: "NotFound" }),
-    );
+    const failures = Array.from({ length: maxPrintedFailures + 5 }, (_, index): LinkFailure => ({
+      kind: "UnreadInput",
+      object: `toy${index}.o`,
+      reason: "NotFound",
+    }));
     const lines = describeFailures(failures, contextOf(guarded)).split("\n");
     expect(lines).toHaveLength(maxPrintedFailures + 1);
     expect(lines.filter(line => line.startsWith("UnreadInput: "))).toHaveLength(maxPrintedFailures);

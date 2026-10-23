@@ -409,7 +409,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn reads_untrusted_declaration(&mut self, ty: TypeId) -> bool {
-        if let Some(known) = self.kept.find_type(ty).and_then(|answers| answers.reads_untrusted_declaration) {
+        if let Some(known) = self
+            .kept
+            .find_type(ty)
+            .and_then(|answers| answers.reads_untrusted_declaration)
+        {
             return known;
         }
         let answer = self.has_untrusted_declaration(ty, &mut FxHashSet::default());
@@ -487,13 +491,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return false;
         }
         let declarations = self.c.files().decls_of(value);
-        declarations.iter().all(|&(file, declaration)| match declaration {
-            Decl::Var(pattern) | Decl::Param(pattern) => {
-                let annotation = self.c.type_annotation_of_pat(file, pattern);
-                annotation.is_some() && !self.mentions_untrusted_alias(file, annotation)
-            }
-            _ => true,
-        })
+        declarations
+            .iter()
+            .all(|&(file, declaration)| match declaration {
+                Decl::Var(pattern) | Decl::Param(pattern) => {
+                    let annotation = self.c.type_annotation_of_pat(file, pattern);
+                    annotation.is_some() && !self.mentions_untrusted_alias(file, annotation)
+                }
+                _ => true,
+            })
     }
 
     fn has_untrusted_mention(&mut self, named: &NamedTypes) -> bool {
@@ -761,14 +767,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut unstable: Vec<Sym> = Vec::new();
         for component in &components {
             for &member in component {
-                self.memo.alias_forms.insert(aliases[member], AliasForm::InProgress);
+                self.memo
+                    .alias_forms
+                    .insert(aliases[member], AliasForm::InProgress);
             }
             let answers: SmallVec<[Result<TypeId, GaveUp>; 4]> = component
                 .iter()
                 .map(|&member| self.compute_alias_form(aliases[member]))
                 .collect();
             for (&member, &answer) in component.iter().zip(&answers) {
-                self.memo.alias_forms.insert(aliases[member], AliasForm::Computed(answer));
+                self.memo
+                    .alias_forms
+                    .insert(aliases[member], AliasForm::Computed(answer));
             }
             if !answers.iter().all(|&answer| is_function_of_key(answer)) {
                 unstable.extend(component.iter().map(|&member| aliases[member]));

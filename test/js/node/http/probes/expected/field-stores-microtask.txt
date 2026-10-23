@@ -52,6 +52,7 @@ readableState.highWaterMark = 1, end(body)
 readableState.destroyed = true, end(body)
 readableState.endEmitted = true, end(body)
 readableState.closed = true, end(body)
+delete res.statusCode, end(body)
 delete res.sendDate, end(body)
 delete res.req, end(body)
 delete req._consuming, end(body)
@@ -132,6 +133,7 @@ readableState.highWaterMark = 1, writeHead(), write(), end()
 readableState.destroyed = true, writeHead(), write(), end()
 readableState.endEmitted = true, writeHead(), write(), end()
 readableState.closed = true, writeHead(), write(), end()
+delete res.statusCode, writeHead(), write(), end()
 delete res.sendDate, writeHead(), write(), end()
 delete res.req, writeHead(), write(), end()
 delete req._consuming, writeHead(), write(), end()
@@ -212,6 +214,7 @@ readableState.highWaterMark = 1, write(), end(body)
 readableState.destroyed = true, write(), end(body)
 readableState.endEmitted = true, write(), end(body)
 readableState.closed = true, write(), end(body)
+delete res.statusCode, write(), end(body)
 delete res.sendDate, write(), end(body)
 delete res.req, write(), end(body)
 delete req._consuming, write(), end(body)
@@ -1168,33 +1171,6 @@ server.listening = false, write(), end(body)
     again
     again
     after the connection closed: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-delete res.statusCode, end(body)
-    respond: done
-    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=200 statusMessage=undefined shouldKeepAlive] req[]
-    store: done
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-    again
-    again
-    the connection serves another request: true
-delete res.statusCode, writeHead(), write(), end()
-    respond: done
-    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=200 statusMessage="OK" shouldKeepAlive] req[]
-    store: done
-    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-    again
-    again
-    the connection serves another request: true
-delete res.statusCode, write(), end(body)
-    respond: done
-    when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=200 statusMessage=undefined shouldKeepAlive] req[]
-    store: done
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-    again
-    again
-    the connection serves another request: true
 delete res.shouldKeepAlive, end(body)
     respond: done
     when the listener returns: res[finished headersSent writableEnded writableFinished statusCode=200 statusMessage=undefined shouldKeepAlive] req[]

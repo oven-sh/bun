@@ -5,7 +5,13 @@ import { describe, test } from "./supported";
 
 async function explain(text: string, ...flags: string[]) {
   using dir = tempDirWithBunTypes("aot-explain-counts", { "main.ts": text });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const lines = (stdout + stderr).split("\n");
   return { lines, exitCode, count: lines.find(line => line.includes("of property accesses are one load")) };
@@ -28,11 +34,16 @@ console.log(total);
 describe.concurrent("what is counted", () => {
   test("the reads of `parse`, `push` and `log` are parts of calls of built-ins: `item.price` is the one access", async () => {
     const { count, exitCode } = await explain(items(`const saved: any = JSON.parse('{ "sku": "B-2", "price": 10 }');`));
-    expect({ count, exitCode }).toEqual({ count: "0% of property accesses are one load: 0 free, 1 tested, 0 by name (1)", exitCode: 0 });
+    expect({ count, exitCode }).toEqual({
+      count: "0% of property accesses are one load: 0 free, 1 tested, 0 by name (1)",
+      exitCode: 0,
+    });
   });
 
   test("a program that only calls built-ins has no access", async () => {
-    const { count, exitCode } = await explain(`console.log(Math.max(1, 2), JSON.stringify([1]), [1, 2].map(n => n + 1).join());\n`);
+    const { count, exitCode } = await explain(
+      `console.log(Math.max(1, 2), JSON.stringify([1]), [1, 2].map(n => n + 1).join());\n`,
+    );
     expect({ count, exitCode }).toEqual({ count: undefined, exitCode: 0 });
   });
 });
@@ -53,12 +64,19 @@ describe.concurrent("an object that JSON.parse has made reaches a type", () => {
 
   test("it belongs to the family unknown-code", async () => {
     const { lines } = await explain(program, "--explain=unknown-code");
-    expect(lines.filter(line => line.startsWith("aot: "))).toEqual(["aot: unknown-code: unknown-object at main.ts:7:25, 1 access, types 'Item', why external-data"]);
-    expect((await explain(program, "--explain=unproven-type")).lines.filter(line => line.startsWith("aot: "))).toEqual([]);
+    expect(lines.filter(line => line.startsWith("aot: "))).toEqual([
+      "aot: unknown-code: unknown-object at main.ts:7:25, 1 access, types 'Item', why external-data",
+    ]);
+    expect((await explain(program, "--explain=unproven-type")).lines.filter(line => line.startsWith("aot: "))).toEqual(
+      [],
+    );
   });
 
   test("an object literal of another shape behind a cast is no data from outside", async () => {
-    const { lines } = await explain(items(`const saved = { sku: "B-2", price: 10, more: true, other: 1 } as any;`), "--explain=json");
+    const { lines } = await explain(
+      items(`const saved = { sku: "B-2", price: 10, more: true, other: 1 } as any;`),
+      "--explain=json",
+    );
     const reasons = lines.filter(line => line.startsWith('{"rank"')).map(line => JSON.parse(line).reason);
     expect(reasons).not.toContain("unknown-object");
   });

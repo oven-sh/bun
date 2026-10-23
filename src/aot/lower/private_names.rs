@@ -90,13 +90,12 @@ fn find_referenced_name(
 fn find_states<'a>(file: &FileLowering<'a, '_, '_, '_>) -> Option<&'a FilePrivateStates> {
     let inputs = file.inputs;
     let files = file.queries.files();
-    inputs.known_helpers.private_states(files, inputs.modules, file.file)
+    inputs
+        .known_helpers
+        .private_states(files, inputs.modules, file.file)
 }
 
-fn resolve_state(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    state: SymbolId,
-) -> Option<StateField> {
+fn resolve_state(file: &mut FileLowering<'_, '_, '_, '_>, state: SymbolId) -> Option<StateField> {
     let found = find_states(file)?.state(state)?;
     let (layout, field) = class::find_private_state_field(file, found.owner, state)?;
     Some(StateField {
@@ -164,7 +163,13 @@ fn emit_entry_of_collection(
     arguments.extend(value);
     let method = expression::emit_locked_builtin(lowering, method);
     let arguments = Arguments::Values(arguments);
-    call::emit_call(lowering, method, Some(access.collection), arguments, CallSite::default());
+    call::emit_call(
+        lowering,
+        method,
+        Some(access.collection),
+        arguments,
+        CallSite::default(),
+    );
 }
 
 // `new WeakMap()` that is stored in a variable of private state.
@@ -326,7 +331,9 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
 
     fn count(main: &str, opcode: Opcode) -> usize {
         let lowered = lower(main);
-        let functions = lowered.iter().flat_map(|lowered| lowered.fragment.functions.iter());
+        let functions = lowered
+            .iter()
+            .flat_map(|lowered| lowered.fragment.functions.iter());
         let blocks = functions.flat_map(|(_, function)| function.body.blocks());
         let values = blocks.flat_map(|block| block.values());
         values.filter(|value| value.opcode == opcode).count()
@@ -335,7 +342,9 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
     fn count_hidden_fields(main: &str) -> usize {
         let hidden = FieldFlags::IS_PRIVATE | FieldFlags::IS_HIDDEN;
         let lowered = lower(main);
-        let layouts = lowered.iter().flat_map(|lowered| lowered.fragment.layouts.iter());
+        let layouts = lowered
+            .iter()
+            .flat_map(|lowered| lowered.fragment.layouts.iter());
         let fields = layouts.flat_map(|(_, layout)| layout.fields.iter());
         fields.filter(|field| field.flags.contains(hidden)).count()
     }
@@ -358,7 +367,11 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
     fn a_collection_that_something_else_can_reach_has_no_field() {
         let main = format!("{COUNTER}console.log(_Counter_x, _Counter_instances);");
         assert_eq!(count_hidden_fields(&main), 0);
-        for opcode in [Opcode::NewClassToken, Opcode::PrivateDefine, Opcode::PrivateHas] {
+        for opcode in [
+            Opcode::NewClassToken,
+            Opcode::PrivateDefine,
+            Opcode::PrivateHas,
+        ] {
             assert_eq!(count(&main, opcode), 0, "{opcode:?}");
         }
     }

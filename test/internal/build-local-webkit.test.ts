@@ -133,10 +133,16 @@ describe("which builds compile WebKit", () => {
     const source = webkit.source(prebuilt);
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     const dest = source.destDir!;
-    expect(names.map(name => webkitAotFile(prebuilt, name))).toEqual(under(join(dest, "Source", "JavaScriptCore", "aot")));
+    expect(names.map(name => webkitAotFile(prebuilt, name))).toEqual(
+      under(join(dest, "Source", "JavaScriptCore", "aot")),
+    );
     expect(webkitTestAotPath(prebuilt)).toBe(join(dest, "bin", "testaot"));
     // Nothing is written into the tarball.
-    expect(webkitEngineSources(prebuilt)).toMatchObject({ javaScriptCore: undefined, schemaOutputs: [], builtinTableOutputs: [] });
+    expect(webkitEngineSources(prebuilt)).toMatchObject({
+      javaScriptCore: undefined,
+      schemaOutputs: [],
+      builtinTableOutputs: [],
+    });
 
     const local = linux({ localDeps: `WebKit=${join("/elsewhere", "WebKit")}` });
     const jsc = join(resolve("/elsewhere", "WebKit"), "Source", "JavaScriptCore");
@@ -450,7 +456,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "JSC/aot/ir/generated/AOTSchemaInputs.sha256",
     ]);
     expect(engine.builtinTableInputs.map(short)).toEqual(
-      expect.arrayContaining(["JSC/aot/builtins/array.builtins.ts", "JSC/builtins/MapPrototype.js", "JSC/CMakeLists.txt"]),
+      expect.arrayContaining([
+        "JSC/aot/builtins/array.builtins.ts",
+        "JSC/builtins/MapPrototype.js",
+        "JSC/CMakeLists.txt",
+      ]),
     );
     expect(engine.builtinTableOutputs.map(short)).toEqual(
       expect.arrayContaining([
@@ -494,7 +504,10 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       ],
       [
         "lines out of order",
-        { "aot/ir/AOTType.cpp": "", "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/ir/AOTType.cpp @no-unify\n" },
+        {
+          "aot/ir/AOTType.cpp": "",
+          "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/ir/AOTType.cpp @no-unify\n",
+        },
         "aot/Sources.txt: not in ascending order",
       ],
       [
@@ -550,10 +563,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       ["testb3", ["JSC/b3/testb3_1.cpp", "JSC/b3/testb3_bun_loops.cpp", "B/programs/testb3/AOTNoFeatureRemoved.cpp"]],
       ["testair", ["JSC/b3/air/testair.cpp", "B/programs/testair/AOTNoFeatureRemoved.cpp"]],
       ["testmasm", ["JSC/assembler/testmasm.cpp", "B/programs/testmasm/AOTNoFeatureRemoved.cpp"]],
-      [
-        "testRegExp",
-        ["JSC/testRegExp.cpp", "B/programs/testRegExp/AOTNoFeatureRemoved.cpp"],
-      ],
+      ["testRegExp", ["JSC/testRegExp.cpp", "B/programs/testRegExp/AOTNoFeatureRemoved.cpp"]],
       // Its own sources define what AOTNoFeatureRemoved.cpp defines for the others.
       ["testaot", ["JSC/aot/tests/testaot.cpp"]],
     ]);

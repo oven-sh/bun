@@ -47,9 +47,10 @@ pub(crate) fn emit_iterator_step(
     kind: IteratorKind,
     step_index: Option<u32>,
 ) -> IteratorStep {
-    let results = lowering
-        .builder
-        .iterator_resume(iterator, None, kind, ResumeMode::Next, step_index, false);
+    let results =
+        lowering
+            .builder
+            .iterator_resume(iterator, None, kind, ResumeMode::Next, step_index, false);
     read_step_results(lowering, results)
 }
 

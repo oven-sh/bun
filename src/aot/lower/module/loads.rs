@@ -1,8 +1,8 @@
 use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::known;
-use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::bind::{CommonJsVariable, Decl};
+use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{self, Branches, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, find_own_require,
@@ -17,6 +17,7 @@ use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
 use crate::ir::{BlockId, Edge, StringId, Type, ValueId};
+use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::named_loads::modules_named_in;
 use crate::load::sources::parsed_source;
 use crate::lower::call::{self, Arguments, CallSite, Callee};
@@ -144,8 +145,13 @@ pub(super) fn lower_import_call(
             let reject = lowering.builder.builtin(BuiltinId::PromiseReject);
             let promise = lowering.builder.builtin(BuiltinId::Promise);
             let arguments = Arguments::Values(smallvec![error]);
-            let rejected =
-                call::emit_call(lowering, reject, Some(promise), arguments, CallSite::default());
+            let rejected = call::emit_call(
+                lowering,
+                reject,
+                Some(promise),
+                arguments,
+                CallSite::default(),
+            );
             lowering.builder.write_variable(result, rejected);
             lowering.jump(done);
 
@@ -174,7 +180,9 @@ pub(super) fn lower_import_call(
                 return emit_computed_load(lowering, ComputedLoad::Import, specifier);
             }
             let referrer = lowering.file.module_id();
-            lowering.builder.import_dynamic(specifier, options, referrer)
+            lowering
+                .builder
+                .import_dynamic(specifier, options, referrer)
         }
         SiteAnswer::Erased => {
             lower_arguments_for_effect(lowering, args, 0);
@@ -231,7 +239,8 @@ pub(super) fn try_lower_module_call(
     let require_call = matches!(site.kind, ImportSiteKind::Require(_))
         .then(|| find_require_call(hir, bound, hir[id].callee, arguments))
         .flatten();
-    let is_module_require = matches!(site.kind, ImportSiteKind::Require(_)) && require_call.is_none();
+    let is_module_require =
+        matches!(site.kind, ImportSiteKind::Require(_)) && require_call.is_none();
     let given = require_call.map_or(arguments, |found| found.args);
     let modules = lowering.file.inputs.modules;
     let answer = modules.site_answer(lowering.file.file, site.kind);
@@ -243,7 +252,12 @@ pub(super) fn try_lower_module_call(
         plan: find_plan(lowering.file, call),
     };
     // The transpiler writes `require(..)` in place of `module.require(..)` without reading `module`, and `Bun` in place of `require("bun")` without reading `require`.
-    if is_module_require && matches!(answer, SiteAnswer::Module(ModuleRef::Runtime(RuntimeModule::Bun))) {
+    if is_module_require
+        && matches!(
+            answer,
+            SiteAnswer::Module(ModuleRef::Runtime(RuntimeModule::Bun))
+        )
+    {
         let specifier = lower_site_arguments(lowering, call, answer, arguments);
         return Some(emit_operation(lowering, operation, site, specifier));
     }
@@ -260,16 +274,22 @@ pub(super) fn try_lower_module_call(
                 expected: method,
                 chain_exit,
             };
-            return Some(lower_call_through_method(lowering, guarded, found.form, require, operation, site));
+            return Some(lower_call_through_method(
+                lowering, guarded, found.form, require, operation, site,
+            ));
         }
     }
     if holds_import_meta_require(hir, bound, hir[id].callee) {
-        return Some(lower_call_of_filled_binding(lowering, call, chain_exit, operation, site));
+        return Some(lower_call_of_filled_binding(
+            lowering, call, chain_exit, operation, site,
+        ));
     }
     match classify_callee(lowering.file, hir[id].callee) {
         CalleeKnowledge::Unresolved if is_require_made_for_own_file(hir, bound, hir[id].callee) => {
             if may_still_be_undefined(hir, bound, hir[id].callee) {
-                return Some(lower_call_of_filled_binding(lowering, call, chain_exit, operation, site));
+                return Some(lower_call_of_filled_binding(
+                    lowering, call, chain_exit, operation, site,
+                ));
             }
             expression::lower_expression(lowering, hir[id].callee);
             let specifier = lower_site_arguments(lowering, call, answer, arguments);
@@ -330,19 +350,29 @@ fn try_lower_library_module_named_to_made_require(
     if !is_plain_call || has_spread_argument(hir, arguments) {
         return None;
     }
-    if !is_made_require(hir, lowering.file.bound, hir[id].callee) {
+    let is_made_require = is_made_require(hir, lowering.file.bound, hir[id].callee);
+    let decisions = lowering.file.decisions();
+    if !is_made_require
+        && resolve_loader_alias(hir, lowering.file.bound, decisions, hir[id].callee).is_none()
+    {
         return None;
     }
     let argument = hir.id_at(arguments, 0);
-    let name = match lowering.file.decisions().constant(hir, expression::skip_type_syntax(lowering.file, argument)) {
+    let name = match lowering
+        .file
+        .decisions()
+        .constant(hir, expression::skip_type_syntax(lowering.file, argument))
+    {
         FoldedValue::Constant(Constant::String(name))
         | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => name,
-        FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_) | FoldedValue::Unknown => {
+        FoldedValue::Constant(_)
+        | FoldedValue::ConstantOutsideDeadZone(_)
+        | FoldedValue::Unknown => {
             return None;
         }
     };
     let source = parsed_source(lowering.file.queries.files(), lowering.file.file)?;
-    let named = modules_named_in(&source.modules_named_in_choices, argument);
+    let named = modules_named_in(source.named_modules(), argument);
     let module = ModuleRef::Runtime(named.iter().find(|it| it.name == name)?.module);
     let site = AnsweredSite {
         specifier: ImportSpecifier::Constant(name),
@@ -350,12 +380,23 @@ fn try_lower_library_module_named_to_made_require(
         answer: SiteAnswer::Module(module),
         plan: None,
     };
-    if may_still_be_undefined(hir, lowering.file.bound, hir[id].callee) {
-        return Some(lower_call_of_filled_binding(lowering, call, None, ModuleOperation::Require, site));
+    if !is_made_require || may_still_be_undefined(hir, lowering.file.bound, hir[id].callee) {
+        return Some(lower_call_of_filled_binding(
+            lowering,
+            call,
+            None,
+            ModuleOperation::Require,
+            site,
+        ));
     }
     expression::lower_expression(lowering, hir[id].callee);
     let specifier = lower_site_arguments(lowering, call, site.answer, arguments);
-    Some(emit_operation(lowering, ModuleOperation::Require, site, specifier))
+    Some(emit_operation(
+        lowering,
+        ModuleOperation::Require,
+        site,
+        specifier,
+    ))
 }
 
 // `process.getBuiltinModule(flag ? "node:vm" : "node:v8")`
@@ -370,7 +411,7 @@ fn try_lower_choice_of_builtin_modules(
     };
     let argument = hir.ids(hir[id].args).next()?;
     let source = parsed_source(lowering.file.queries.files(), lowering.file.file)?;
-    let named = modules_named_in(&source.modules_named_in_choices, argument).iter();
+    let named = modules_named_in(source.named_modules(), argument).iter();
     let spelled_modules: Vec<SpelledModule> = named
         .map(|it| SpelledModule {
             spelling: it.name,
@@ -381,22 +422,38 @@ fn try_lower_choice_of_builtin_modules(
         return None;
     }
     find_modules_of_every_value(lowering.file, argument, &spelled_modules)?;
-    let expected = match classify_callee(lowering.file, hir[id].callee) {
-        CalleeKnowledge::Expected(expected) => expected,
-        CalleeKnowledge::Unresolved | CalleeKnowledge::Bound => return None,
-    };
-    let guarded = GuardedCall {
-        call,
-        expected,
-        chain_exit,
-    };
     let site = AnsweredSite {
         specifier: ImportSpecifier::Unknown,
         specifier_node: argument,
         answer: SiteAnswer::Computed(Candidates::Modules(&spelled_modules)),
         plan: None,
     };
-    Some(lower_guarded_call(lowering, guarded, ModuleOperation::Require, site))
+    let expected = match classify_callee(lowering.file, hir[id].callee) {
+        CalleeKnowledge::Expected(expected) => expected,
+        CalleeKnowledge::Unresolved => {
+            let (bound, decisions) = (lowering.file.bound, lowering.file.decisions());
+            resolve_loader_alias(hir, bound, decisions, hir[id].callee)?;
+            return Some(lower_call_of_filled_binding(
+                lowering,
+                call,
+                chain_exit,
+                ModuleOperation::Require,
+                site,
+            ));
+        }
+        CalleeKnowledge::Bound => return None,
+    };
+    let guarded = GuardedCall {
+        call,
+        expected,
+        chain_exit,
+    };
+    Some(lower_guarded_call(
+        lowering,
+        guarded,
+        ModuleOperation::Require,
+        site,
+    ))
 }
 
 pub(super) fn lower_import_equals_require(
@@ -408,7 +465,10 @@ pub(super) fn lower_import_equals_require(
     let site = analysis.import_sites[analysis.import_site_index(kind)?];
     let modules = lowering.file.inputs.modules;
     let own_file = lowering.file.file;
-    let name = lowering.file.bound.declared_symbol(Decl::ImportEquals(declaration));
+    let name = lowering
+        .file
+        .bound
+        .declared_symbol(Decl::ImportEquals(declaration));
     let yields_value = modules.holder(own_file, name).is_none();
     let site = AnsweredSite {
         specifier: site.specifier,
@@ -543,7 +603,12 @@ fn lower_guarded_call(
         .branch(is_expected, Edge::to(matched), other_edge);
 
     lowering.continue_in(matched);
-    let loaded = emit_operation(lowering, operation, site.under_test(), values.first().copied());
+    let loaded = emit_operation(
+        lowering,
+        operation,
+        site.under_test(),
+        values.first().copied(),
+    );
     lowering.builder.write_variable(result, loaded);
     lowering.jump(done);
 
@@ -594,7 +659,12 @@ fn lower_call_of_filled_binding(
         .branch(is_empty, Edge::to(not_filled), Edge::to(filled));
 
     lowering.continue_in(filled);
-    let loaded = emit_operation(lowering, operation, site.under_test(), values.first().copied());
+    let loaded = emit_operation(
+        lowering,
+        operation,
+        site.under_test(),
+        values.first().copied(),
+    );
     lowering.builder.write_variable(result, loaded);
     lowering.jump(done);
 
@@ -648,9 +718,11 @@ fn lower_call_through_method(
     let decided = lowering.create_block();
     let expected_method = emit_expected_callee(lowering, expected);
     let is_method = lowering.builder.strict_eq(callee.function, expected_method);
-    lowering
-        .builder
-        .branch(is_method, Edge::to(method_is_expected), Edge::to(method_is_other));
+    lowering.builder.branch(
+        is_method,
+        Edge::to(method_is_expected),
+        Edge::to(method_is_other),
+    );
 
     lowering.continue_in(method_is_expected);
     let is_require = match require {
@@ -861,7 +933,9 @@ fn emit_require(
             };
             emit_computed_load(lowering, ComputedLoad::Require, specifier)
         }
-        SiteAnswer::Failed(failure) => emit_require_failure(lowering, site.specifier, failure, true),
+        SiteAnswer::Failed(failure) => {
+            emit_require_failure(lowering, site.specifier, failure, true)
+        }
         SiteAnswer::Erased => lowering.builder.undefined(),
     }
 }
@@ -909,16 +983,25 @@ fn emit_path_from_own_directory(
     text: ValueId,
 ) -> ValueId {
     let directory = commonjs::get_commonjs_variable(lowering, CommonJsVariable::Dirname);
-    let starts_with = lowering.builder.builtin(BuiltinId::StringPrototypeStartsWith);
+    let starts_with = lowering
+        .builder
+        .builtin(BuiltinId::StringPrototypeStartsWith);
     let arguments = Arguments::Values(smallvec![directory]);
-    let is_below =
-        call::emit_call(lowering, starts_with, Some(text), arguments, CallSite::default());
+    let is_below = call::emit_call(
+        lowering,
+        starts_with,
+        Some(text),
+        arguments,
+        CallSite::default(),
+    );
     let is_below = lowering.builder.to_boolean(is_below);
     let spelled = lowering.builder.create_variable(None);
     lowering.builder.write_variable(spelled, text);
     let below = lowering.create_block();
     let done = lowering.create_block();
-    lowering.builder.branch(is_below, Edge::to(below), Edge::to(done));
+    lowering
+        .builder
+        .branch(is_below, Edge::to(below), Edge::to(done));
 
     lowering.continue_in(below);
     let length = PropertyName::Constant(lowering.file.atom_key(known::length));
@@ -955,7 +1038,12 @@ fn branch_on_path_made_by_call(
     if !lowering.file.decisions().is_path_made_by_call(node) {
         return None;
     }
-    let is_windows = lowering.file.inputs.options.platform.contains(Platforms::WINDOWS);
+    let is_windows = lowering
+        .file
+        .inputs
+        .options
+        .platform
+        .contains(Platforms::WINDOWS);
     let separator: &[u8] = if is_windows { b"\\" } else { b"/" };
     let bytes = lowering.file.queries.atom_bytes(written).to_vec();
     let mut below = bytes.strip_prefix(b".").unwrap_or(&bytes);
@@ -966,14 +1054,27 @@ fn branch_on_path_made_by_call(
         below = rest;
         let separator = lowering.file.intern_bytes(separator);
         let separator = lowering.builder.string(separator);
-        let last_index_of = lowering.builder.builtin(BuiltinId::StringPrototypeLastIndexOf);
+        let last_index_of = lowering
+            .builder
+            .builtin(BuiltinId::StringPrototypeLastIndexOf);
         let arguments = Arguments::Values(smallvec![separator]);
-        let end =
-            call::emit_call(lowering, last_index_of, Some(directory), arguments, CallSite::default());
+        let end = call::emit_call(
+            lowering,
+            last_index_of,
+            Some(directory),
+            arguments,
+            CallSite::default(),
+        );
         let start = lowering.builder.integer(0);
         let slice = lowering.builder.builtin(BuiltinId::StringPrototypeSlice);
         let arguments = Arguments::Values(smallvec![start, end]);
-        directory = call::emit_call(lowering, slice, Some(directory), arguments, CallSite::default());
+        directory = call::emit_call(
+            lowering,
+            slice,
+            Some(directory),
+            arguments,
+            CallSite::default(),
+        );
     }
     let below: Vec<u8> = bun_core::strings::split(below, b"/")
         .collect::<Vec<_>>()
@@ -984,7 +1085,9 @@ fn branch_on_path_made_by_call(
     let is_as_written = lowering.builder.strict_eq(text, expected);
     let as_written = lowering.create_block();
     let other = lowering.create_unlikely_block();
-    lowering.builder.branch(is_as_written, Edge::to(as_written), Edge::to(other));
+    lowering
+        .builder
+        .branch(is_as_written, Edge::to(as_written), Edge::to(other));
     let written = lowering.file.intern_atom(written);
     Some(PathTest {
         as_written,
@@ -1041,7 +1144,11 @@ fn emit_computed_load(
     let otherwise = lowering.create_block();
     let done = lowering.create_block();
     let edges: Vec<Edge<'static>> = arms.iter().map(|&arm| Edge::to(arm)).collect();
-    let spelled = match lowering.file.decisions().is_path_from_own_directory(computed.node) {
+    let spelled = match lowering
+        .file
+        .decisions()
+        .is_path_from_own_directory(computed.node)
+    {
         true => emit_path_from_own_directory(lowering, specifier),
         false => specifier,
     };
@@ -1103,9 +1210,13 @@ fn emit_require_resolve(
         SiteAnswer::Computed(_) => {
             let specifier = specifier.unwrap_or_else(|| lowering.builder.undefined());
             let referrer = lowering.file.module_id();
-            lowering.builder.resolve_dynamic(specifier, referrer, false, false)
+            lowering
+                .builder
+                .resolve_dynamic(specifier, referrer, false, false)
         }
-        SiteAnswer::Failed(failure) => emit_require_failure(lowering, site.specifier, failure, false),
+        SiteAnswer::Failed(failure) => {
+            emit_require_failure(lowering, site.specifier, failure, false)
+        }
         SiteAnswer::Erased => lowering.builder.undefined(),
     }
 }
@@ -1135,7 +1246,9 @@ fn emit_resolve_module(
     let module = lowering.file.fragment.declare_module(module);
     let referrer = lowering.file.module_id();
     let text = lowering.file.intern_atom(text);
-    lowering.builder.resolve_module(module, referrer, text, is_url)
+    lowering
+        .builder
+        .resolve_module(module, referrer, text, is_url)
 }
 
 // The error of `require` and of `require.resolve` is worded by the host's resolver, which is told which of the two asks. It is another than that of `import`.
@@ -1150,7 +1263,9 @@ fn emit_require_failure(
             let text = lowering.file.intern_atom(text);
             let specifier = lowering.builder.string(text);
             let referrer = lowering.file.module_id();
-            lowering.builder.resolve_dynamic(specifier, referrer, false, is_for_require);
+            lowering
+                .builder
+                .resolve_dynamic(specifier, referrer, false, is_for_require);
         }
         ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => {}
     }
@@ -1199,7 +1314,13 @@ fn emit_resolved_import(
     let resolve = lowering.builder.builtin(BuiltinId::PromiseResolve);
     let promise = lowering.builder.builtin(BuiltinId::Promise);
     let arguments = Arguments::Values(smallvec![value]);
-    call::emit_call(lowering, resolve, Some(promise), arguments, CallSite::default())
+    call::emit_call(
+        lowering,
+        resolve,
+        Some(promise),
+        arguments,
+        CallSite::default(),
+    )
 }
 
 fn emit_rejected_import(
@@ -1218,7 +1339,13 @@ fn emit_rejected_import(
     let reject = lowering.builder.builtin(BuiltinId::PromiseReject);
     let promise = lowering.builder.builtin(BuiltinId::Promise);
     let arguments = Arguments::Values(smallvec![error]);
-    call::emit_call(lowering, reject, Some(promise), arguments, CallSite::default())
+    call::emit_call(
+        lowering,
+        reject,
+        Some(promise),
+        arguments,
+        CallSite::default(),
+    )
 }
 
 fn lower_site_arguments(

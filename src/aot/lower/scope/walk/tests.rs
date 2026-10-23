@@ -47,7 +47,9 @@ fn created_at(walk: &ScopeWalk, function: WalkedFunctionId) -> u32 {
 
 fn initialized_at(walk: &ScopeWalk, symbol: SymbolId) -> u32 {
     let initialization = walk.symbol_initializations[symbol.idx()];
-    initialization.expect("the walk met the initialization").time
+    initialization
+        .expect("the walk met the initialization")
+        .time
 }
 
 fn slot_initialized_at(walk: &ScopeWalk, scope: ScopeId, slot: ClassSlot) -> u32 {

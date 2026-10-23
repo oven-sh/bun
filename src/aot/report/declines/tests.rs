@@ -49,7 +49,10 @@ fn report(records: &[DeclineRecord]) -> Vec<(BString, Option<Position>)> {
 
 fn merged_times(records: &[DeclineRecord]) -> Vec<(DeclineRecord, u32)> {
     let merged = merge(records);
-    merged.iter().map(|decline| (*decline.record, decline.times)).collect()
+    merged
+        .iter()
+        .map(|decline| (*decline.record, decline.times))
+        .collect()
 }
 
 fn written(write: impl FnOnce(&mut Vec<u8>)) -> BString {
@@ -66,7 +69,13 @@ fn decline_line(record: &DeclineRecord, times: u32, function_name: &[u8]) -> BSt
     };
     let decline = MergedDecline { record, times };
     written(|out| {
-        write_decline_line(out, &decline, Some(&position), function_name, LOWERED_LIMIT_VALUE);
+        write_decline_line(
+            out,
+            &decline,
+            Some(&position),
+            function_name,
+            LOWERED_LIMIT_VALUE,
+        );
     })
 }
 
@@ -80,7 +89,10 @@ fn merge_counts_records_at_one_location() {
 fn merge_joins_nonadjacent_records() {
     let first = record(DeclineKind::LoopNotVersioned, PROGRAM, 10, 0);
     let second = record(DeclineKind::LoopNotVersioned, PROGRAM, 4, 0);
-    assert_eq!(merged_times(&[first, second, first]), [(second, 1), (first, 2)]);
+    assert_eq!(
+        merged_times(&[first, second, first]),
+        [(second, 1), (first, 2)]
+    );
 }
 
 #[test]
@@ -148,7 +160,10 @@ fn merge_separates_positions() {
 fn merge_sorts_absent_module_last() {
     let unlocated = record(DeclineKind::Unknown, ABSENT_WORD, 0, 0);
     let located = record(DeclineKind::StretchNotGuarded, 7, 99, 0);
-    assert_eq!(merged_times(&[unlocated, located]), [(located, 1), (unlocated, 1)]);
+    assert_eq!(
+        merged_times(&[unlocated, located]),
+        [(located, 1), (unlocated, 1)]
+    );
 }
 
 #[test]
@@ -165,8 +180,14 @@ fn runtime_declines_are_not_listed() {
         witness: witness(RUNTIME_FUNCTION, NO_LOCATION),
         ..unlocated
     };
-    assert!(is_listed(&record(DeclineKind::LoopNotVersioned, PROGRAM, 0, 0), &names));
-    assert!(!is_listed(&record(DeclineKind::LoopNotVersioned, RUNTIME, 0, 0), &names));
+    assert!(is_listed(
+        &record(DeclineKind::LoopNotVersioned, PROGRAM, 0, 0),
+        &names
+    ));
+    assert!(!is_listed(
+        &record(DeclineKind::LoopNotVersioned, RUNTIME, 0, 0),
+        &names
+    ));
     assert!(is_listed(&unlocated, &names));
     assert!(!is_listed(&unlocated_in_runtime, &names));
 }
@@ -188,7 +209,10 @@ fn limit_clause_has_name_and_build_value() {
     let limit = LimitId::MaxInlineDepth;
     assert_eq!(
         written(|out| write_limit(out, limit, LOWERED_LIMIT_VALUE)),
-        format!(", limit MaxInlineDepth = 1,204 (limits {})", limit.purpose())
+        format!(
+            ", limit MaxInlineDepth = 1,204 (limits {})",
+            limit.purpose()
+        )
     );
 }
 
@@ -207,13 +231,19 @@ fn decline_line_has_every_clause() {
     };
     let limit_clause = written(|out| write_limit(out, limit, LOWERED_LIMIT_VALUE));
     let line = "missed: loop-guards-not-hoisted at a.ts:3:5 in load, 3 times, the loop exceeds a compiler limit, count 2,000";
-    assert_eq!(decline_line(&record, 3, b"load"), format!("{line}{limit_clause}"));
+    assert_eq!(
+        decline_line(&record, 3, b"load"),
+        format!("{line}{limit_clause}")
+    );
 }
 
 #[test]
 fn decline_line_omits_absent_clauses() {
     let record = record(DeclineKind::LoopNotVersioned, PROGRAM, 10, 0);
-    assert_eq!(decline_line(&record, 1, b""), "missed: loop-guards-not-hoisted at a.ts:3:5");
+    assert_eq!(
+        decline_line(&record, 1, b""),
+        "missed: loop-guards-not-hoisted at a.ts:3:5"
+    );
 }
 
 #[test]
@@ -328,7 +358,10 @@ fn count_is_not_read_as_reason() {
     let count = TypedResultDeclineReason::NoTarget.to_wire();
     let record = record(DeclineKind::TypedResultNotSelected, PROGRAM, 10, count);
     assert_eq!(reason_of(&record), Reason::Absent);
-    assert_eq!(decline_line(&record, 1, b""), "missed: boxed-result at a.ts:3:5, count 1");
+    assert_eq!(
+        decline_line(&record, 1, b""),
+        "missed: boxed-result at a.ts:3:5, count 1"
+    );
 }
 
 #[test]
@@ -341,7 +374,11 @@ fn reason_of_allocation_is_flag_word() {
         "missed: heap-allocation at a.ts:3:5, it is returned; a callee keeps a reference to it"
     );
     assert_eq!(
-        decline_line(&record_with_reason(DeclineKind::AllocationNotSunk, 0), 1, b""),
+        decline_line(
+            &record_with_reason(DeclineKind::AllocationNotSunk, 0),
+            1,
+            b""
+        ),
         "missed: heap-allocation at a.ts:3:5"
     );
 }
@@ -361,7 +398,10 @@ fn reason_of_interpreted_node_is_cause() {
         "missed: generic-validator at a.ts:3:5, the key of a member is a symbol"
     );
     assert_eq!(
-        line(DeclineKind::ResultNodeInterpreted, InterpretedCause::None.to_wire()),
+        line(
+            DeclineKind::ResultNodeInterpreted,
+            InterpretedCause::None.to_wire()
+        ),
         "missed: generic-validator at a.ts:3:5"
     );
     assert_eq!(
@@ -387,10 +427,17 @@ fn merge_separates_reasons_at_one_location() {
 #[test]
 fn typed_result_without_reason_has_no_sentence() {
     let line = |reason| {
-        decline_line(&record_with_reason(DeclineKind::TypedResultNotSelected, reason), 1, b"")
+        decline_line(
+            &record_with_reason(DeclineKind::TypedResultNotSelected, reason),
+            1,
+            b"",
+        )
     };
     let without_reason = "missed: boxed-result at a.ts:3:5";
-    assert_eq!(line(TypedResultDeclineReason::None.to_wire()), without_reason);
+    assert_eq!(
+        line(TypedResultDeclineReason::None.to_wire()),
+        without_reason
+    );
     assert_eq!(line(TypedResultDeclineReason::COUNT as u32), without_reason);
 }
 
@@ -398,7 +445,10 @@ fn typed_result_without_reason_has_no_sentence() {
 fn build_without_listed_decline_says_none() {
     let none = [(BString::from("missed optimizations: none"), None)];
     assert_eq!(report(&[]), none);
-    assert_eq!(report(&[record(DeclineKind::LoopNotVersioned, RUNTIME, 0, 0)]), none);
+    assert_eq!(
+        report(&[record(DeclineKind::LoopNotVersioned, RUNTIME, 0, 0)]),
+        none
+    );
 }
 
 #[test]
@@ -438,5 +488,8 @@ fn report_lists_totals_by_kind_then_declines_by_position() {
             at(DEPENDENCY, 0),
         ),
     ];
-    assert_eq!(report(&records), expected.map(|(text, position)| (BString::from(text), position)));
+    assert_eq!(
+        report(&records),
+        expected.map(|(text, position)| (BString::from(text), position))
+    );
 }

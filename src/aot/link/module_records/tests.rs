@@ -1,17 +1,17 @@
 use super::*;
 use crate::builtins::table::{HostReadContext, STARTUP_MODULES, host_reads};
 use crate::builtins::{BuiltinId, RuntimeModule};
-use crate::ir::{Program, print_program};
 use crate::ir::generated::{
     ImportPhase, Module, ModuleRequest, ModuleRequestKind, RequiredName, VariableInitialization,
 };
+use crate::ir::{Program, print_program};
 use crate::link::entries::host_reads_of;
 use crate::link::testing::{
     Numbered, Projects, SHARED_NAME_IMPORTERS, application_file, find_file, forward, link_sources,
     link_sources_without_bun_modules, link_units, number_units, with_lowered_units,
 };
-use crate::modules::testing::with_graph;
 use crate::modules::ModuleFailure;
+use crate::modules::testing::with_graph;
 
 const PLUGIN_URL: &str = "https://example.com/plugin.js";
 
@@ -74,7 +74,9 @@ fn blank_record(record: &Module) -> Module {
 fn count_namespace_reads(program: &Program, module: usize) -> usize {
     let operand = format!("module=m{module}");
     let text = print_program(program);
-    let reads = text.lines().filter(|line| line.contains(" = ModuleNamespace "));
+    let reads = text
+        .lines()
+        .filter(|line| line.contains(" = ModuleNamespace "));
     reads
         .filter(|line| line.split_whitespace().any(|word| word == operand))
         .count()
@@ -120,7 +122,10 @@ fn build_records(projects: &Projects<'_, '_>, numbered: &mut Numbered) -> Module
 }
 
 fn numbered_module(numbered: &Numbered, file: ProgramFile) -> ModuleId {
-    let index = numbered.prepared.modules.index_of(ProgramModule::File(file));
+    let index = numbered
+        .prepared
+        .modules
+        .index_of(ProgramModule::File(file));
     numbered.numbering.modules[index as usize].expect("the module has no record")
 }
 
@@ -143,9 +148,10 @@ fn es_module_record_has_body_and_requests() {
     assert_eq!(record.kind, ModuleKind::SourceText);
     assert!(record.body.is_some());
     assert!(!record.positions.line_starts.is_empty());
-    let path = program.modules.iter().position(|record| {
-        record.runtime_module == Some(RuntimeModule::NodePath)
-    });
+    let path = program
+        .modules
+        .iter()
+        .position(|record| record.runtime_module == Some(RuntimeModule::NodePath));
     let request = |target, phase| ModuleRequest {
         target,
         phase,
@@ -177,8 +183,14 @@ fn es_module_record_has_body_and_requests() {
 #[test]
 fn commonjs_record_has_body_and_requests_and_no_names_for_the_loader() {
     let program = link_program(&[
-        ("main.js", "import value from './legacy.cjs';\nconsole.log(value);\n"),
-        ("legacy.cjs", "require('./other.cjs');\nmodule.exports = 1;\n"),
+        (
+            "main.js",
+            "import value from './legacy.cjs';\nconsole.log(value);\n",
+        ),
+        (
+            "legacy.cjs",
+            "require('./other.cjs');\nmodule.exports = 1;\n",
+        ),
         ("other.cjs", "exports.a = 1;\n"),
     ]);
     let record = record_named(&program, "legacy.cjs");
@@ -191,7 +203,9 @@ fn commonjs_record_has_body_and_requests_and_no_names_for_the_loader() {
     assert_eq!(request.target, module_named(&program, "other.cjs"));
     assert_eq!(request.kind, ModuleRequestKind::Require);
     assert_eq!(request.phase, ImportPhase::Evaluation);
-    let exports = record.exports_variable.expect("the exports of legacy.cjs are one value");
+    let exports = record
+        .exports_variable
+        .expect("the exports of legacy.cjs are one value");
     let exports = &program.variables[exports.index()];
     assert_eq!(exports.initialization, VariableInitialization::Undefined);
     let expected = Module {
@@ -210,7 +224,10 @@ fn commonjs_record_has_body_and_requests_and_no_names_for_the_loader() {
 fn face_has_a_path_of_its_own_and_the_file_keeps_the_line_table() {
     let legacy = "exports.n = 1;\nexports.set = function () {\n  exports.n = 2;\n};\n";
     let program = link_program_without_bun_modules(&[
-        ("main.js", "import { n, set } from './legacy.cjs';\nset();\nconsole.log(n);\n"),
+        (
+            "main.js",
+            "import { n, set } from './legacy.cjs';\nset();\nconsole.log(n);\n",
+        ),
         ("legacy.cjs", legacy),
     ]);
     let file = module_named(&program, "legacy.cjs");
@@ -218,10 +235,17 @@ fn face_has_a_path_of_its_own_and_the_file_keeps_the_line_table() {
     let is_face = |record: &Module| {
         record.kind == ModuleKind::SourceText && record.display_path == display_path
     };
-    let face = program.modules.iter().position(is_face).expect("legacy.cjs has no face");
+    let face = program
+        .modules
+        .iter()
+        .position(is_face)
+        .expect("legacy.cjs has no face");
     assert_eq!(face, file.index() + 1);
     let record = &program.modules[face];
-    assert_eq!(program.strings.get(record.path), format!("#{face}").as_bytes());
+    assert_eq!(
+        program.strings.get(record.path),
+        format!("#{face}").as_bytes()
+    );
     assert!(record.positions.line_starts.is_empty());
     assert!(record.function_text.is_empty());
     assert!(record.requests.iter().any(|request| request.target == file));
@@ -229,14 +253,21 @@ fn face_has_a_path_of_its_own_and_the_file_keeps_the_line_table() {
     assert_eq!(program.functions[body.index()].module, file);
 
     let requests = &record_named(&program, "main.js").requests;
-    assert!(requests.iter().any(|request| request.target == ModuleId::new(face)));
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.target == ModuleId::new(face))
+    );
     assert!(requests.iter().all(|request| request.target != file));
     let is_copy = |variable: &&generated::Variable| variable.module == ModuleId::new(face);
     let copies: Vec<&generated::Variable> = program.variables.iter().filter(is_copy).collect();
     let [copy] = copies.as_slice() else {
         panic!("only `n` is stored where a copy can be told from the variable");
     };
-    assert_eq!(copy.name.map(|name| program.strings.get(name)), Some(&b"n"[..]));
+    assert_eq!(
+        copy.name.map(|name| program.strings.get(name)),
+        Some(&b"n"[..])
+    );
     assert_eq!(copy.initialization, VariableInitialization::Uninitialized);
 }
 
@@ -276,8 +307,16 @@ fn native_bun_module_record_is_named_by_its_namespace() {
 #[test]
 fn namespace_import_of_bun_module_reads_the_namespace_of_its_record() {
     let cases = [
-        (RuntimeModule::NodeBuffer, "node:buffer", ModuleKind::Runtime),
-        (RuntimeModule::NodePath, "node:path", ModuleKind::RuntimeSource),
+        (
+            RuntimeModule::NodeBuffer,
+            "node:buffer",
+            ModuleKind::Runtime,
+        ),
+        (
+            RuntimeModule::NodePath,
+            "node:path",
+            ModuleKind::RuntimeSource,
+        ),
     ];
     for (runtime_module, specifier, kind) in cases {
         let main = format!("import * as all from '{specifier}';\nconsole.log(all);\n");
@@ -312,7 +351,10 @@ fn import_call_of_replaced_namespace_resolves_the_object() {
     assert!(!replaced.contains(" = ImportModule "));
     assert!(replaced.contains(" = Builtin builtin=PromiseResolve"));
     for loaded in ["'node:buffer'", "name"] {
-        assert!(!print(loaded).contains(" = Builtin builtin=PromiseResolve"), "{loaded}");
+        assert!(
+            !print(loaded).contains(" = Builtin builtin=PromiseResolve"),
+            "{loaded}"
+        );
     }
     assert!(print("'node:buffer'").contains(" = ImportModule "));
 }
@@ -391,7 +433,11 @@ fn function_files_of_bun_have_only_positions() {
         let linked = link_units(units, projects, &forward).expect("the program links");
 
         for library in libraries {
-            let index = linked.keys.modules.iter().position(|&module| module == library);
+            let index = linked
+                .keys
+                .modules
+                .iter()
+                .position(|&module| module == library);
             let record = &linked.program.modules[index.expect("a function file has no record")];
             assert!(!record.positions.line_starts.is_empty());
             let expected = Module {
@@ -433,9 +479,20 @@ fn files_left_out(package: &[(&str, &str)]) -> Vec<String> {
     ];
     files.extend_from_slice(package);
     let program = link_program(&files);
-    let names = ["main.js", "local.js", "s/a.js", "lib/b.js", "lib/c.cjs", "esm/d.js"];
+    let names = [
+        "main.js",
+        "local.js",
+        "s/a.js",
+        "lib/b.js",
+        "lib/c.cjs",
+        "esm/d.js",
+    ];
     let is_left_out = |name: &&str| find_module(&program, name).is_none();
-    names.into_iter().filter(is_left_out).map(str::to_owned).collect()
+    names
+        .into_iter()
+        .filter(is_left_out)
+        .map(str::to_owned)
+        .collect()
 }
 
 fn manifest_of_s(side_effects: &str) -> String {
@@ -496,7 +553,10 @@ fn application_may_declare_its_own_files() {
     let manifest = manifest_of_s("");
     let left_out = files_left_out(&[
         ("node_modules/s/package.json", &manifest),
-        ("package.json", r#"{ "name": "application", "sideEffects": ["./main.js"] }"#),
+        (
+            "package.json",
+            r#"{ "name": "application", "sideEffects": ["./main.js"] }"#,
+        ),
     ]);
     assert_eq!(left_out, ["local.js"]);
 }
@@ -504,19 +564,31 @@ fn application_may_declare_its_own_files() {
 #[test]
 fn data_and_modules_of_bun_are_never_flagged() {
     let program = link_program(&[
-        ("main.js", "import 'node:path';\nimport data from 's/data.json';\nconsole.log(data);\n"),
-        ("node_modules/s/package.json", r#"{ "name": "s", "sideEffects": false }"#),
+        (
+            "main.js",
+            "import 'node:path';\nimport data from 's/data.json';\nconsole.log(data);\n",
+        ),
+        (
+            "node_modules/s/package.json",
+            r#"{ "name": "s", "sideEffects": false }"#,
+        ),
         ("node_modules/s/data.json", "{}"),
     ]);
     for record in &program.modules {
         let path = bstr::BStr::new(program.strings.get(record.path));
-        assert!(!record.flags.contains(ModuleFlags::HAS_NO_SIDE_EFFECTS), "{path}");
+        assert!(
+            !record.flags.contains(ModuleFlags::HAS_NO_SIDE_EFFECTS),
+            "{path}"
+        );
     }
 }
 
 #[test]
 fn export_has_an_entry_where_the_object_of_the_module_is_asked_for_it() {
-    let library = ("library.js", "export const read = 1;\nexport const unread = 2;\n");
+    let library = (
+        "library.js",
+        "export const read = 1;\nexport const unread = 2;\n",
+    );
     let main = "import { read } from './library.js';\nconsole.log(read);\n";
     let program = link_program_without_bun_modules(&[("main.js", main), library]);
     assert!(record_named(&program, "library.js").exports.is_empty());
@@ -571,7 +643,10 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
 fn star_export_copies_are_flagged() {
     let program = link_program(&[
         ("main.js", observe("barrel.js").as_str()),
-        ("barrel.js", "export * from './star.js';\nexport const own = 1;\n"),
+        (
+            "barrel.js",
+            "export * from './star.js';\nexport const own = 1;\n",
+        ),
         ("star.js", "export const copied = 2;\n"),
     ]);
     let barrel = record_named(&program, "barrel.js");
@@ -609,7 +684,12 @@ fn namespace_exports_have_import_phase() {
     let expected: [(&[u8], ModuleExportKind, Option<ModuleId>, ImportPhase); 3] = [
         (b"deferred", namespace, target, ImportPhase::Defer),
         (b"eager", namespace, target, ImportPhase::Evaluation),
-        (b"own", ModuleExportKind::Variable, None, ImportPhase::Evaluation),
+        (
+            b"own",
+            ModuleExportKind::Variable,
+            None,
+            ImportPhase::Evaluation,
+        ),
     ];
     assert_eq!(exports, expected);
 }
@@ -635,7 +715,10 @@ fn re_export_of_uncompiled_code_is_indirect() {
 #[test]
 fn names_resolved_at_run_time_are_required() {
     let program = link_program(&[
-        ("main.js", "import { x } from './barrel.js';\nconsole.log(x);\n"),
+        (
+            "main.js",
+            "import { x } from './barrel.js';\nconsole.log(x);\n",
+        ),
         (
             "barrel.js",
             "export * from './one.cjs';\nexport * from './two.cjs';\n",
@@ -646,12 +729,20 @@ fn names_resolved_at_run_time_are_required() {
     let [required] = record_named(&program, "main.js").required_names.as_slice() else {
         panic!("main.js requires one name");
     };
-    let RequiredName { module, name, may_be_absent } = *required;
+    let RequiredName {
+        module,
+        name,
+        may_be_absent,
+    } = *required;
     assert!(!may_be_absent);
     assert_eq!(module, module_named(&program, "barrel.js"));
     assert_eq!(program.strings.get(name), b"x");
     let requests = &record_named(&program, "barrel.js").requests;
-    assert!(requests.iter().all(|request| request.is_dynamic_star_export));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.is_dynamic_star_export)
+    );
     assert_eq!(requests.len(), 2);
 }
 
@@ -696,7 +787,10 @@ fn names_of_a_commonjs_file_are_variables_that_its_body_stores() {
     assert!(record.exports.is_empty());
     assert_eq!(record.exports_variable, None);
     let module = module_named(&program, "legacy.cjs");
-    let own_variables = program.variables.iter().filter(|variable| variable.module == module);
+    let own_variables = program
+        .variables
+        .iter()
+        .filter(|variable| variable.module == module);
     let mut names = Vec::new();
     for variable in own_variables {
         assert_eq!(variable.initialization, VariableInitialization::Undefined);
@@ -814,7 +908,11 @@ fn runtime_functions_ascend_by_id() {
     assert!(!entries.is_empty());
     assert!(entries.is_sorted_by(|first, second| first.id < second.id));
     let function_count = program.functions.len();
-    assert!(entries.iter().all(|entry| entry.function.index() < function_count));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.function.index() < function_count)
+    );
 }
 
 #[test]
@@ -841,7 +939,10 @@ fn additional_entry_adds_worker_reads() {
     let entry_point_count = count_of(HostReadContext::EntryPoint);
     let worker_count = count_of(HostReadContext::Worker);
     assert!(entry_point_count > 0 && worker_count > 0);
-    assert_eq!(host_reads_of(EntryPointKind::Main).count(), entry_point_count);
+    assert_eq!(
+        host_reads_of(EntryPointKind::Main).count(),
+        entry_point_count
+    );
     assert_eq!(
         host_reads_of(EntryPointKind::Additional).count(),
         entry_point_count + worker_count

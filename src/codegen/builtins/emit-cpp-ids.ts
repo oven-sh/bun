@@ -1,6 +1,12 @@
 import { cap } from "../helpers.ts";
 import { Problems } from "./declarations.ts";
-import { hashOfBuiltinTokens, nameArraysOf, slotTokenOf, textNameSlotsArray, textNamesArray } from "./emit-cpp-names.ts";
+import {
+  hashOfBuiltinTokens,
+  nameArraysOf,
+  slotTokenOf,
+  textNameSlotsArray,
+  textNamesArray,
+} from "./emit-cpp-names.ts";
 import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
 import type {
@@ -164,9 +170,11 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["BuiltinClass", "builtinTableClasses", model.classes.length],
     ["BuiltinSlot", "builtinTableSlots", model.slots.length],
     ["BuiltinLayout", "builtinTableLayouts", model.layouts.length],
-    ...nameArraysOf(model).arrays.map(
-      ({ cppType, name, elements }): ArrayDeclaration => [cppType, name, elements.length],
-    ),
+    ...nameArraysOf(model).arrays.map(({ cppType, name, elements }): ArrayDeclaration => [
+      cppType,
+      name,
+      elements.length,
+    ]),
     ["BuiltinFeatureUse", "builtinTableFeatureUses", countAttached(attachments => attachments.featureUses)],
     ["BuiltinUnseenCode", "builtinTableUnseenCode", countBuiltins(hasUnseenCodeCondition)],
     ["BuiltinModuleLoad", "builtinTableModuleLoads", countAttached(attachments => attachments.moduleLoads)],
@@ -179,7 +187,11 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["BuiltinForms", "builtinTableForms", countBuiltins(hasForms)],
     ["BuiltinBoxedCall", "builtinTableBoxedCalls", countBuiltins(hasBoxedCallStub)],
     ["BuiltinNumberConstant", "builtinTableNumberConstants", countBuiltins(isNumberConstant)],
-    ["BuiltinStringConstant", "builtinTableStringConstants", builtins.reduce((count, builtin) => count + countTexts(builtin), 0)],
+    [
+      "BuiltinStringConstant",
+      "builtinTableStringConstants",
+      builtins.reduce((count, builtin) => count + countTexts(builtin), 0),
+    ],
     ["BuiltinOverloadSummary", "builtinTableOverloadSummaries", model.overloads.length],
     ["RuntimeModuleData", "builtinTableRuntimeModules", model.modules.length],
     ["RuntimeFunctionData", "builtinTableRuntimeFunctions", model.functions.length],

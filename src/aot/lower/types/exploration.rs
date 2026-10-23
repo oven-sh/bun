@@ -97,13 +97,19 @@ fn leave_type(walk: &mut Walk) {
 }
 
 pub(super) fn explore(file: &mut FileLowering<'_, '_, '_, '_>, root: CheckerTypeId) -> Exploration {
-    debug_assert!(!file.types.mapped.contains_key(&root), "only an unmapped type is explored");
+    debug_assert!(
+        !file.types.mapped.contains_key(&root),
+        "only an unmapped type is explored"
+    );
     if file.types.exhausted.contains(&root) {
         return Exploration::Exhausted;
     }
     let edges = collect_edges(file, root);
     // Most types have no part, or parts that are mapped: a component by itself, which needs no walk to be found.
-    if edges.iter().all(|edge| file.types.mapped.contains_key(&edge.target)) {
+    if edges
+        .iter()
+        .all(|edge| file.types.mapped.contains_key(&edge.target))
+    {
         let members = smallvec![ExploredType { ty: root, edges }];
         return Exploration::Complete(smallvec![Component { members }]);
     }

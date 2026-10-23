@@ -14,7 +14,12 @@ fn namespaces_belong_to_modules() {
     for module in RuntimeModule::ALL {
         let namespace = namespace_of(module);
         assert_eq!(namespace, module_data(module).namespace);
-        assert_eq!(entry(namespace).module, Some(module), "{}", text_of(namespace));
+        assert_eq!(
+            entry(namespace).module,
+            Some(module),
+            "{}",
+            text_of(namespace)
+        );
     }
     assert_eq!(namespace_of(RuntimeModule::Bun), BuiltinId::Bun);
     assert_eq!(namespace_of(RuntimeModule::NodeProcess), BuiltinId::Process);
@@ -24,11 +29,18 @@ fn namespaces_belong_to_modules() {
 #[test]
 fn specifier_finds_module() {
     assert_eq!(module_by_specifier(b"node:fs"), Some(RuntimeModule::NodeFs));
-    assert_eq!(module_by_specifier(b"bun:sqlite"), Some(RuntimeModule::BunSqlite));
+    assert_eq!(
+        module_by_specifier(b"bun:sqlite"),
+        Some(RuntimeModule::BunSqlite)
+    );
     assert_eq!(module_by_specifier(b"bun"), Some(RuntimeModule::Bun));
     for module in RuntimeModule::ALL {
         let specifier = module_data(module).specifier;
-        assert_eq!(module_by_specifier(specifier.as_bytes()), Some(module), "{specifier}");
+        assert_eq!(
+            module_by_specifier(specifier.as_bytes()),
+            Some(module),
+            "{specifier}"
+        );
     }
 }
 
@@ -42,8 +54,7 @@ fn other_text_finds_no_module() {
 
 #[test]
 fn module_export_lists() {
-    let lists_all_exports =
-        |module| module_flags(module).contains(ModuleFlags::LISTS_ALL_EXPORTS);
+    let lists_all_exports = |module| module_flags(module).contains(ModuleFlags::LISTS_ALL_EXPORTS);
     assert!(lists_all_exports(RuntimeModule::BunJsc));
     assert!(lists_all_exports(RuntimeModule::NodeBuffer));
     assert!(lists_all_exports(RuntimeModule::NodeModule));
@@ -51,9 +62,16 @@ fn module_export_lists() {
     assert!(!lists_all_exports(RuntimeModule::Bun));
     assert!(!lists_all_exports(RuntimeModule::NodeFs));
     assert!(!lists_all_exports(RuntimeModule::NodeProcess));
-    for module in RuntimeModule::ALL.into_iter().filter(|&module| lists_all_exports(module)) {
+    for module in RuntimeModule::ALL
+        .into_iter()
+        .filter(|&module| lists_all_exports(module))
+    {
         let open_or_compiled = ModuleFlags::HAS_SOURCE | ModuleFlags::HAS_OPEN_NAMESPACE;
-        assert!(!module_flags(module).intersects(open_or_compiled), "{}", module.name());
+        assert!(
+            !module_flags(module).intersects(open_or_compiled),
+            "{}",
+            module.name()
+        );
     }
 }
 
@@ -61,7 +79,10 @@ fn module_export_lists() {
 fn open_namespace() {
     assert!(module_flags(RuntimeModule::Bun).contains(ModuleFlags::HAS_OPEN_NAMESPACE));
     assert!(!module_flags(RuntimeModule::BunJsc).contains(ModuleFlags::HAS_OPEN_NAMESPACE));
-    assert_eq!(object_replacing_namespace(RuntimeModule::Bun), Some(BuiltinId::Bun));
+    assert_eq!(
+        object_replacing_namespace(RuntimeModule::Bun),
+        Some(BuiltinId::Bun)
+    );
     assert_eq!(object_replacing_namespace(RuntimeModule::BunJsc), None);
     assert_eq!(object_replacing_namespace(RuntimeModule::NodeFs), None);
 }
@@ -92,7 +113,12 @@ fn default_export_is_the_module_object() {
         RuntimeModule::NodeProcess,
         RuntimeModule::Bun,
     ] {
-        assert_eq!(default_export_of(module), module_object_of(module), "{}", module.name());
+        assert_eq!(
+            default_export_of(module),
+            module_object_of(module),
+            "{}",
+            module.name()
+        );
     }
 }
 
@@ -100,14 +126,25 @@ fn default_export_is_the_module_object() {
 fn default_export_is_the_own_default_of_the_module_object() {
     let own_default = ExportLookup::Found(BuiltinId::BunSqliteDefault);
     assert_eq!(default_export_of(RuntimeModule::BunSqlite), own_default);
-    assert_eq!(entry(BuiltinId::BunSqliteDefault).holder, Some(BuiltinId::BunSqlite));
-    assert_eq!(canonical_id(BuiltinId::BunSqliteDefault), BuiltinId::BunSqliteDefault);
+    assert_eq!(
+        entry(BuiltinId::BunSqliteDefault).holder,
+        Some(BuiltinId::BunSqlite)
+    );
+    assert_eq!(
+        canonical_id(BuiltinId::BunSqliteDefault),
+        BuiltinId::BunSqliteDefault
+    );
 }
 
 #[test]
 fn own_default_that_holds_the_module_object_is_the_module_object() {
     for module in [RuntimeModule::Undici, RuntimeModule::AbortController] {
-        assert_eq!(default_export_of(module), module_object_of(module), "{}", module.name());
+        assert_eq!(
+            default_export_of(module),
+            module_object_of(module),
+            "{}",
+            module.name()
+        );
     }
 }
 
@@ -121,14 +158,21 @@ fn export_that_only_the_namespace_holds() {
     assert_eq!(find_export(abort_controller, name("__esModule")), held);
     assert_eq!(own_member(abort_controller, name("__esModule")), None);
     let signal = own_member(abort_controller, name("AbortSignal")).unwrap();
-    assert_eq!(find_export(abort_controller, name("AbortSignal")), ExportLookup::Found(signal));
+    assert_eq!(
+        find_export(abort_controller, name("AbortSignal")),
+        ExportLookup::Found(signal)
+    );
 }
 
 #[test]
 fn module_object_that_is_a_class_is_a_constructor_with_other_members() {
     let module_object = entry(namespace_of(RuntimeModule::AbortController));
     assert_eq!(module_object.kind, BuiltinKind::Constructor);
-    assert!(!module_object.flags.contains(BuiltinFlags::LISTS_ALL_MEMBERS));
+    assert!(
+        !module_object
+            .flags
+            .contains(BuiltinFlags::LISTS_ALL_MEMBERS)
+    );
 }
 
 #[test]
@@ -142,7 +186,10 @@ fn export_holds_one_result_of_a_getter_that_answers_another_object_each_time() {
 fn default_export_of_a_module_without_a_list_is_unlisted() {
     assert!(has_source(RuntimeModule::NodeFetch));
     assert!(members(namespace_of(RuntimeModule::NodeFetch)).is_empty());
-    assert_eq!(default_export_of(RuntimeModule::NodeFetch), ExportLookup::Unlisted);
+    assert_eq!(
+        default_export_of(RuntimeModule::NodeFetch),
+        ExportLookup::Unlisted
+    );
 }
 
 #[test]
@@ -150,7 +197,10 @@ fn named_export_is_the_member() {
     let database = own_member(BuiltinId::BunSqlite, name("Database")).unwrap();
     let found = find_export(BuiltinId::BunSqlite, name("Database"));
     assert_eq!(found, ExportLookup::Found(database));
-    assert_eq!(find_export(BuiltinId::BunSqlite, name("push")), ExportLookup::Unlisted);
+    assert_eq!(
+        find_export(BuiltinId::BunSqlite, name("push")),
+        ExportLookup::Unlisted
+    );
 }
 
 #[test]

@@ -51,7 +51,10 @@ fn computed_tables_are_readable() {
 
 #[test]
 fn binding_from_symbol() {
-    assert_eq!(Binding::from_symbol(SymbolId(3)), Binding::Symbol(SymbolId(3)));
+    assert_eq!(
+        Binding::from_symbol(SymbolId(3)),
+        Binding::Symbol(SymbolId(3))
+    );
     assert_eq!(Binding::from_symbol(SymbolId::NONE), Binding::Free);
 }
 
@@ -94,7 +97,10 @@ fn created_scope_without_entry_is_none() {
 }
 
 fn assert_moved_lists(runtime: &RuntimeBindings<'_>) {
-    assert_eq!(runtime.field_initializer_scopes(), [(MemberId(1), ScopeId(8))]);
+    assert_eq!(
+        runtime.field_initializer_scopes(),
+        [(MemberId(1), ScopeId(8))]
+    );
     assert_eq!(runtime.private_class(ExprId(3)), Some(ClassId(1)));
     assert_eq!(runtime.private_class(ExprId(5)), Some(ClassId(0)));
     assert_eq!(runtime.private_class(ExprId(4)), None);
@@ -175,11 +181,17 @@ fn jsx_references_precede_decorator_metadata() {
     };
     let type_name = |node| {
         let recorded = MetadataReference::TypeName(TypeNodeId(node));
-        reference(NodeData::File, ImplicitReferenceKind::DecoratorMetadata(recorded))
+        reference(
+            NodeData::File,
+            ImplicitReferenceKind::DecoratorMetadata(recorded),
+        )
     };
     let sorted = vec![
         reference(NodeData::Expr(ExprId(4)), ImplicitReferenceKind::JsxFactory),
-        reference(NodeData::Expr(ExprId(4)), ImplicitReferenceKind::JsxFragment),
+        reference(
+            NodeData::Expr(ExprId(4)),
+            ImplicitReferenceKind::JsxFragment,
+        ),
         reference(NodeData::Expr(ExprId(9)), ImplicitReferenceKind::JsxFactory),
         type_name(1),
         type_name(3),

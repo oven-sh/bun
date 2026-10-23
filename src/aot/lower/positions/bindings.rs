@@ -1,7 +1,5 @@
 use bun_sema::bind::{Bound, ClassOwner, Decl, InitialState, Parent, PatParent};
-use bun_sema::check::aot::{
-    ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone,
-};
+use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone};
 use bun_sema::hir::{File, Flags, FnBody, MemberKind, PatId, StmtKind, VarDeclId};
 use bun_sema::program::{FileId, Sym};
 
@@ -26,7 +24,9 @@ pub(super) fn compute_variable_position(
     }
     let files = file.queries.files();
     let declarations = files.decls_of(symbol);
-    let mut values = declarations.iter().filter(|&&(_, it)| !declares_type_alone(it));
+    let mut values = declarations
+        .iter()
+        .filter(|&&(_, it)| !declares_type_alone(it));
     let Some(&(declaring_file, declaration)) = values.next() else {
         return DeclaredType::untyped();
     };
@@ -123,28 +123,30 @@ fn find_defined_function(
 ) -> Option<FunctionKey> {
     let compiled = file.queries.files().compiled(function.file)?;
     let is_defined = is_lowered_file(file, function.file)
-        && !compiled.analysis.decisions.is_dead_function(function.function);
+        && !compiled
+            .analysis
+            .decisions
+            .is_dead_function(function.function);
     is_defined.then_some(FunctionKey::Source(function))
 }
 
-fn find_only_definition(
-    file: &FileLowering<'_, '_, '_, '_>,
-    symbol: Sym,
-) -> Option<FunctionRef> {
+fn find_only_definition(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> Option<FunctionRef> {
     let files = file.queries.files();
     let declarations = files.decls_of(symbol);
-    let mut definitions = declarations.iter().filter_map(|&(declaring_file, declaration)| {
-        let Decl::Fn(function) = declaration else {
-            return None;
-        };
-        match files.hir(declaring_file)[function].body {
-            FnBody::None => None,
-            FnBody::Block(_) | FnBody::Expr(_) => Some(FunctionRef {
-                file: declaring_file,
-                function,
-            }),
-        }
-    });
+    let mut definitions = declarations
+        .iter()
+        .filter_map(|&(declaring_file, declaration)| {
+            let Decl::Fn(function) = declaration else {
+                return None;
+            };
+            match files.hir(declaring_file)[function].body {
+                FnBody::None => None,
+                FnBody::Block(_) | FnBody::Expr(_) => Some(FunctionRef {
+                    file: declaring_file,
+                    function,
+                }),
+            }
+        });
     let definition = definitions.next()?;
     definitions.next().is_none().then_some(definition)
 }

@@ -1462,7 +1462,10 @@ function emitDirect(
     if (g.pch !== undefined && groupPch !== undefined) pchByHeader.set(g.pch, groupPch);
     for (const { header, base } of g.chainedPch ?? []) {
       const basePch = pchByHeader.get(base);
-      assert(basePch !== undefined, `${name}: ${header} builds on ${base}, which ${g.name} has not precompiled before it`);
+      assert(
+        basePch !== undefined,
+        `${name}: ${header} builds on ${base}, which ${g.name} has not precompiled before it`,
+      );
       pchByHeader.set(
         header,
         pch(n, cfg, resolve(srcDir, header), { flags: flags.cxx, orderOnlyInputs: [groupReady], base: basePch }),
@@ -1482,7 +1485,10 @@ function emitDirect(
         });
       }
       const sourcePch = src.noPch ? undefined : src.pch === undefined ? groupPch : pchByHeader.get(src.pch);
-      assert(src.pch === undefined || sourcePch !== undefined, `${name}: ${src.path} names a PCH ${g.name} does not have`);
+      assert(
+        src.pch === undefined || sourcePch !== undefined,
+        `${name}: ${src.path} names a PCH ${g.name} does not have`,
+      );
       return cxx(n, cfg, abs, {
         ...opts,
         flags: [...flags.cxx, ...extra],

@@ -4,8 +4,8 @@ use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
 use crate::check::spans::is_word_at;
 use crate::hir::{
-    ExprId, ExprKind, File, Flags, FnBody, MemberId, MemberKind, PropKey, StmtId, StmtKind, VarKind,
-    has_body, is_parenthesized,
+    ExprId, ExprKind, File, Flags, FnBody, MemberId, MemberKind, PropKey, StmtId, StmtKind,
+    VarKind, has_body, is_parenthesized,
 };
 use crate::node::{Kind, Node};
 use crate::program::FileId;
@@ -202,7 +202,8 @@ impl Checker<'_, '_> {
         declaration: (FileId, Decl),
         code: u32,
     ) -> DiagnosticClass {
-        let is_constructor = |it: &&(FileId, Decl)| self.is_instance_constructor_implementation(**it);
+        let is_constructor =
+            |it: &&(FileId, Decl)| self.is_instance_constructor_implementation(**it);
         let is_early_error = code == 2392
             && self.is_instance_constructor_implementation(declaration)
             && declarations.iter().filter(is_constructor).count() > 1;

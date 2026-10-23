@@ -68,7 +68,9 @@ const getter = (path: b.BuiltinPath, hasSetter: boolean) =>
     ...accessorColumns,
     getter: b.any,
     uses: { this: objectHandedOver },
-    ...(hasSetter && { setter: { ...accessorColumns, value: b.any, uses: { this: objectHandedOver, value: handedOver } } }),
+    ...(hasSetter && {
+      setter: { ...accessorColumns, value: b.any, uses: { this: objectHandedOver, value: handedOver } },
+    }),
   });
 
 // What a native binding answers is described by one entry: the function itself, or every function of the object.
@@ -148,7 +150,12 @@ const constructorsRequiringNew = [
   "Bun.SHA512_256",
   "Bun.Transpiler",
 ];
-const requiresNew = { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall } satisfies b.FunctionField;
+const requiresNew = {
+  returns: b.never,
+  capability: "heap",
+  throws: true,
+  implementation: b.hostCall,
+} satisfies b.FunctionField;
 
 // The setter keeps the value for the getter and does not look at it. Until then the getter answers a string that native code makes.
 const keptValue = (path: b.BuiltinPath) =>
@@ -199,7 +206,9 @@ const handlerOf = (path: b.BuiltinPath, call: HandlerCall) => keptHandler(path, 
 
 export default b.declarations(
   readingMethods.flatMap(name => fillsOperands(`%NodeJSFS%.prototype.${name}`)),
-  compressors.flatMap(className => compressorMethods.flatMap(name => fillsOperands(`%${className}%.prototype.${name}`))),
+  compressors.flatMap(className =>
+    compressorMethods.flatMap(name => fillsOperands(`%${className}%.prototype.${name}`)),
+  ),
   // It answers the view that it has filled.
   b.method("Crypto.prototype.getRandomValues", {
     args: { view: b.any.optional, others: b.any.rest },
@@ -234,7 +243,11 @@ export default b.declarations(
   // randomFill and randomFillSync.
   binding("native:Rust:node_crypto_binding.rs:createNodeCryptoBindingZig", filledWithBytes),
   // getWindowSize stores the columns and the rows into the array it is handed.
-  bindingAnswering("native:Cpp:ProcessBindingTTYWrap.cpp:createBunTTYFunctions", b.builtin(ttyFunctions), filledWithBytes),
+  bindingAnswering(
+    "native:Cpp:ProcessBindingTTYWrap.cpp:createBunTTYFunctions",
+    b.builtin(ttyFunctions),
+    filledWithBytes,
+  ),
   // Whether the message went out at once, or null where it cannot go out at all.
   binding(
     "native:NewRustFunction:node_cluster_binding.rs:sendHelperPrimary",
@@ -242,7 +255,11 @@ export default b.declarations(
     b.union(b.bool, b.strictNull),
   ),
   // A callback that is closed has no address any more.
-  binding("native:NewRustFunction:ffi.rs:closeCallback", [...handedOver, b.definesName(["ptr"], b.strictNull)], b.undefined),
+  binding(
+    "native:NewRustFunction:ffi.rs:closeCallback",
+    [...handedOver, b.definesName(["ptr"], b.strictNull)],
+    b.undefined,
+  ),
   // markAsUncloneable and markAsUntransferable put a mark on the object under a private name.
   binding("native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding", [...handedOver, b.definesName(b.anyKey, b.bool)]),
   // An error that is reported gets its stack, and with it the position before the source map.
@@ -251,9 +268,13 @@ export default b.declarations(
     [...handedOver, b.definesName(["stack", "originalLine", "originalColumn"], b.any)],
     b.undefined,
   ),
-  Object.entries(bindingsChangingNothing).flatMap(([path, { taken, refused }]) => bindingTakingObjects(path, [...taken, ...refused])),
+  Object.entries(bindingsChangingNothing).flatMap(([path, { taken, refused }]) =>
+    bindingTakingObjects(path, [...taken, ...refused]),
+  ),
   constructorsRequiringNew.flatMap(path => b.callOfConstructor(path, requiresNew)),
-  ["BuildMessage.prototype.message", "ResolveMessage.prototype.message", "ResolveMessage.prototype.stack"].flatMap(keptValue),
+  ["BuildMessage.prototype.message", "ResolveMessage.prototype.message", "ResolveMessage.prototype.stack"].flatMap(
+    keptValue,
+  ),
   b.construction("ReadableStream", {
     args: { source: b.any.optional, strategy: b.any.optional },
     returns: b.instance("ReadableStream").fresh,

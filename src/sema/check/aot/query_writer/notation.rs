@@ -208,9 +208,16 @@ impl Writer<'_, '_, '_, '_> {
     }
 
     fn constrained_text(&mut self, base: TypeId, constraints: &[SchemaConstraint]) -> Vec<u8> {
-        let texts = constraints.iter().map(|&constraint| self.constraint_text(constraint));
+        let texts = constraints
+            .iter()
+            .map(|&constraint| self.constraint_text(constraint));
         let texts: Vec<Vec<u8>> = texts.collect();
-        [self.queries.type_text(base), b"; ".to_vec(), texts.join(&b", "[..])].concat()
+        [
+            self.queries.type_text(base),
+            b"; ".to_vec(),
+            texts.join(&b", "[..]),
+        ]
+        .concat()
     }
 
     fn builtin_text(&mut self, class: BuiltinTypeClass, arguments: &[TypeId]) -> Vec<u8> {
@@ -219,7 +226,12 @@ impl Writer<'_, '_, '_, '_> {
         if arguments.is_empty() {
             return name.into_bytes();
         }
-        [name.as_bytes(), b"; ", &self.type_list_text(arguments, b", ")[..]].concat()
+        [
+            name.as_bytes(),
+            b"; ",
+            &self.type_list_text(arguments, b", ")[..],
+        ]
+        .concat()
     }
 
     fn type_parameter_text(&self, parameter: TypeParameterRef) -> Vec<u8> {
@@ -237,9 +249,12 @@ impl Writer<'_, '_, '_, '_> {
     ) -> Vec<u8> {
         let constraint = self.optional_type_text(constraint);
         match parameter {
-            Some(parameter) => {
-                [&constraint[..], b"; ", &self.type_parameter_text(parameter)[..]].concat()
-            }
+            Some(parameter) => [
+                &constraint[..],
+                b"; ",
+                &self.type_parameter_text(parameter)[..],
+            ]
+            .concat(),
             None => constraint,
         }
     }

@@ -11,10 +11,7 @@ use crate::lower::control::{self, BreakTargetKind, CleanupLanding, CleanupPath};
 use crate::lower::types::find_contents_type;
 use crate::lower::{FileLowering, FunctionLowering, convert};
 
-pub(super) fn lower_for_of(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    statement: StmtId,
-) {
+pub(super) fn lower_for_of(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, statement: StmtId) {
     let StmtKind::ForOf {
         left,
         expr,

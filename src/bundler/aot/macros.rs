@@ -207,6 +207,7 @@ fn run_jobs(shared: &Shared, mut run_job: impl FnMut(&PortableCall) -> Outcome) 
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // the thread's own
 fn thread_main(shared: Arc<Shared>, context: BuildContext) {
     Output::Source::configure_named_thread(zstr!("bun macros"));
     // The virtual machine keeps the log pointer of its first call, so every job uses one log.

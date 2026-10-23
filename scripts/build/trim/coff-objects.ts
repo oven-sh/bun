@@ -59,7 +59,17 @@ export class CoffObject {
         relocationCount = readAt(fd, base + relocations, 4).readUInt32LE(0) - 1;
         relocations += 10;
       }
-      this.sections.push({ name, size: table.readUInt32LE(at + 16), contents: table.readUInt32LE(at + 20), flags, relocations, relocationCount, selection: 0, parent: 0, leader: -1 });
+      this.sections.push({
+        name,
+        size: table.readUInt32LE(at + 16),
+        contents: table.readUInt32LE(at + 20),
+        flags,
+        relocations,
+        relocationCount,
+        selection: 0,
+        parent: 0,
+        leader: -1,
+      });
     }
     this.symbolSection = new Int32Array(symbolCount);
     this.symbolValue = new Uint32Array(symbolCount);
@@ -74,17 +84,29 @@ export class CoffObject {
       this.symbolSection[index] = section;
       this.symbolValue[index] = this.symbols.readUInt32LE(at + 8);
       this.symbolClass[index] = storage;
-      if (storage === IMAGE_SYM_CLASS_WEAK_EXTERNAL && auxiliaries > 0) this.symbolDefault[index] = this.symbols.readUInt32LE(at + this.entry);
+      if (storage === IMAGE_SYM_CLASS_WEAK_EXTERNAL && auxiliaries > 0)
+        this.symbolDefault[index] = this.symbols.readUInt32LE(at + this.entry);
       if (section > 0 && section <= sectionCount) {
         const found = this.sections[section - 1]!;
-        const isDefinition = storage === 3 && auxiliaries > 0 && this.symbolValue[index] === 0 && !defined.has(section) && this.nameOf(index) === found.name;
+        const isDefinition =
+          storage === 3 &&
+          auxiliaries > 0 &&
+          this.symbolValue[index] === 0 &&
+          !defined.has(section) &&
+          this.nameOf(index) === found.name;
         if (isDefinition) {
           defined.add(section);
           const auxiliary = at + this.entry;
           found.selection = this.symbols[auxiliary + 14]!;
-          found.parent = this.symbols.readUInt16LE(auxiliary + 12) | (isBig ? this.symbols.readUInt16LE(auxiliary + 16) << 16 : 0);
+          found.parent =
+            this.symbols.readUInt16LE(auxiliary + 12) | (isBig ? this.symbols.readUInt16LE(auxiliary + 16) << 16 : 0);
         } else {
-          if (found.leader < 0 && found.flags & IMAGE_SCN_LNK_COMDAT && found.selection !== IMAGE_COMDAT_SELECT_ASSOCIATIVE) found.leader = index;
+          if (
+            found.leader < 0 &&
+            found.flags & IMAGE_SCN_LNK_COMDAT &&
+            found.selection !== IMAGE_COMDAT_SELECT_ASSOCIATIVE
+          )
+            found.leader = index;
           const name = this.nameOf(index);
           const list = this.byName.get(name);
           if (list === undefined) this.byName.set(name, [index]);
@@ -120,7 +142,10 @@ export class CoffObject {
   }
 
   contentsOf(section: CoffSection): string {
-    return `${section.name}\0${section.relocationCount}\0` + readAt(this.fd, this.base + section.contents, section.size).toString("latin1");
+    return (
+      `${section.name}\0${section.relocationCount}\0` +
+      readAt(this.fd, this.base + section.contents, section.size).toString("latin1")
+    );
   }
 
   bytesOf(section: CoffSection): Buffer {

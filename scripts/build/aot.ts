@@ -387,7 +387,12 @@ export function emitCutProfileCheck(n: Ninja, cfg: Config, check: CutProfileChec
     outputs: [stamp],
     rule: "cut_profiles",
     inputs: [check.exe],
-    implicitInputs: [script, trimScript(cfg, "profile-runner.ts"), trimScript(cfg, "types.ts"), removableFeaturesJson(cfg)],
+    implicitInputs: [
+      script,
+      trimScript(cfg, "profile-runner.ts"),
+      trimScript(cfg, "types.ts"),
+      removableFeaturesJson(cfg),
+    ],
     ...(check.strippedExe !== undefined ? { orderOnlyInputs: [check.strippedExe] } : {}),
   });
   return [stamp];

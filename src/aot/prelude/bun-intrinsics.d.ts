@@ -24,7 +24,9 @@ declare module "bun" {
     type MinItems<N extends number> = { readonly "bun.minItems"?: N };
     type MaxItems<N extends number> = { readonly "bun.maxItems"?: N };
     type Pattern<S extends string> = { readonly "bun.pattern"?: S };
-    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
+    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = {
+      readonly "bun.format"?: S;
+    };
     type Message<S extends string> = { readonly "bun.message"?: S };
     type Default<V extends string | number | boolean | null> = { readonly "bun.default"?: V };
     type Strict = { readonly "bun.strict"?: true };

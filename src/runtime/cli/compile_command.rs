@@ -118,14 +118,27 @@ pub(crate) enum CompileFailure {
     NoCompiler,
     CrossCompilation,
     NoIdentity(IdentityError),
-    TemplateUnreadable { error: bun_sys::Error },
-    TemplateIsNotBun { path: Vec<u8> },
-    TemplateIsAnotherBuild { path: Vec<u8> },
+    TemplateUnreadable {
+        error: bun_sys::Error,
+    },
+    TemplateIsNotBun {
+        path: Vec<u8>,
+    },
+    TemplateDiffers {
+        path: Vec<u8>,
+        difference: Vec<u8>,
+    },
     /// `files_checked`: 0 where the build ended before it had counted them.
-    Build { refused_entry_points: Option<Vec<u32>>, files_checked: u32 },
+    Build {
+        refused_entry_points: Option<Vec<u32>>,
+        files_checked: u32,
+    },
     Assets(String),
     Trim(TrimError),
     Executable(CompileError),
     Graph(bun_standalone_graph::Error),
-    FileNotWritten { path: Vec<u8>, error: bun_sys::Error },
+    FileNotWritten {
+        path: Vec<u8>,
+        error: bun_sys::Error,
+    },
 }

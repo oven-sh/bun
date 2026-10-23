@@ -31,7 +31,9 @@ function variantRs(variant: Variant): string[] {
   const cases = variant.cases.map(variantCase => {
     const attribute = variantCase.number === 0 ? "#[default] " : "";
     if (variantCase.fields.length === 0) return `${indentation}${attribute}${variantCase.name},`;
-    const fields = variantCase.fields.map(field => `${rustIdentifier(field.name)}: ${rustTypeOf(field.kind, field.isOptional)}`);
+    const fields = variantCase.fields.map(
+      field => `${rustIdentifier(field.name)}: ${rustTypeOf(field.kind, field.isOptional)}`,
+    );
     return `${indentation}${attribute}${variantCase.name} { ${fields.join(", ")} },`;
   });
   return [derivesOf({ tag: "Variant", variant }), `pub enum ${rustTypeName(variant.name)} {`, ...cases, "}"];
@@ -61,7 +63,12 @@ function flatFieldWords(fields: readonly Field[]): (readonly [Field, number])[] 
   });
 }
 
-function appendExpressions(fields: readonly Field[], base: string, firstWords: Lines = [], lastWords: Lines = []): string[] {
+function appendExpressions(
+  fields: readonly Field[],
+  base: string,
+  firstWords: Lines = [],
+  lastWords: Lines = [],
+): string[] {
   const statements: string[] = [];
   let run = [...firstWords];
   const flush = (): void => {
@@ -86,7 +93,8 @@ function appendExpressions(fields: readonly Field[], base: string, firstWords: L
 }
 
 function readExpression(field: Field, word: number): string {
-  if (field.kind.tag === "Record" || field.kind.tag === "Variant") return `${rustTypeOf(field.kind)}::from_words(&words[${word}..])?`;
+  if (field.kind.tag === "Record" || field.kind.tag === "Variant")
+    return `${rustTypeOf(field.kind)}::from_words(&words[${word}..])?`;
   const words = Array.from({ length: field.wireWords }, (_, index) => `words[${word + index}]`);
   return fromWords(field.kind, field.isOptional, words);
 }
@@ -103,7 +111,8 @@ function visitStatements(fields: readonly Field[], first: number): string[] {
     const isOperand = kind.tag === "Id" && kind.id.name === "Value";
     if (!isOperand && !isReference(kind)) continue;
     const fieldWord = isOperand ? "FieldWord::Operand" : `FieldWord::Reference(${referenceKind(kind)})`;
-    if (field.isOptional) statements.push(`if words.get(${position})? != ABSENT_WORD { visit(${fieldWord}, ${position}); }`);
+    if (field.isOptional)
+      statements.push(`if words.get(${position})? != ABSENT_WORD { visit(${fieldWord}, ${position}); }`);
     else statements.push(`visit(${fieldWord}, ${position});`);
   }
   return statements;
@@ -159,7 +168,11 @@ function recordWordsImpl(record: SchemaRecord): string[] {
   );
 }
 
-export function casePattern(variant: Variant, variantCase: VariantCase, bound: readonly Field[] = variantCase.fields): string {
+export function casePattern(
+  variant: Variant,
+  variantCase: VariantCase,
+  bound: readonly Field[] = variantCase.fields,
+): string {
   const path = `${rustTypeName(variant.name)}::${variantCase.name}`;
   if (variantCase.fields.length === 0) return path;
   const names = bound.map(field => rustIdentifier(field.name));
@@ -179,7 +192,9 @@ function variantWordsImpl(variant: Variant): string[] {
     const statements = appendExpressions(fields, "", [String(number)], padding);
     const body = statements.length === 1 ? statements[0].replace(/;$/, ",") : `{ ${statements.join(" ")} }`;
     appends.push(`${casePattern(variant, variantCase)} => ${body}`);
-    const values = flatFieldWords(fields).map(([field, word]) => `${rustIdentifier(field.name)}: ${readExpression(field, 1 + word)}`);
+    const values = flatFieldWords(fields).map(
+      ([field, word]) => `${rustIdentifier(field.name)}: ${readExpression(field, 1 + word)}`,
+    );
     reads.push(`${number} => ${name}::${variantCase.name}${values.length > 0 ? ` { ${values.join(", ")} }` : ""},`);
     const visited = visitStatements(fields, 1);
     visits.push(visited.length > 0 ? `${number} => { ${visited.join(" ")} }` : `${number} => {}`);
@@ -219,7 +234,10 @@ function recordWordsRs(schema: Schema): string[] {
     idsImport,
     "use crate::ir::references::ReferenceKind;",
     "",
-    ...blocks(wordHelpers, ...types.map(type => (type.tag === "Record" ? recordWordsImpl(type.record) : variantWordsImpl(type.variant)))),
+    ...blocks(
+      wordHelpers,
+      ...types.map(type => (type.tag === "Record" ? recordWordsImpl(type.record) : variantWordsImpl(type.variant))),
+    ),
   ];
 }
 

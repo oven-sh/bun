@@ -277,7 +277,10 @@ fn constraints_become_rules() {
         ("matched", vec![pattern]),
         ("formatted", vec![format]),
         ("explained", vec![minimum(1.0), message]),
-        ("port", vec![ValidationRule::DefaultNumber { value: 8080.0 }]),
+        (
+            "port",
+            vec![ValidationRule::DefaultNumber { value: 8080.0 }],
+        ),
         ("host", vec![default_host]),
         ("small", int32_range),
         ("plain", Vec::new()),
@@ -629,7 +632,9 @@ fn arm_nodes(ty: &str) -> Vec<ValidationNode> {
     let ValidationShape::Union { arms } = &nodes[0].shape else {
         panic!("{:?}", nodes[0].shape);
     };
-    arms.iter().map(|&arm| nodes[arm as usize].clone()).collect()
+    arms.iter()
+        .map(|&arm| nodes[arm as usize].clone())
+        .collect()
 }
 
 #[test]
@@ -663,13 +668,18 @@ fn one_union_type_written_in_two_orders_has_two_descriptions() {
     let body = "export const first = JSON.parse<Zed | Abe>(text);\n\
         export const second = JSON.parse<Abe | Zed>(text);\n\
         export const third = JSON.parse<Zed | Abe>(text);\n";
-    let lowered = lower_main(&format!("{HEADER}{TEXT_DECLARATION}{OVERLAPPING_TYPES}{body}"));
+    let lowered = lower_main(&format!(
+        "{HEADER}{TEXT_DECLARATION}{OVERLAPPING_TYPES}{body}"
+    ));
     let fragment = &lowered.fragment;
     let [first, second, third] = &fragment.expected_results[..] else {
         panic!("{:?}", fragment.expected_results);
     };
     assert_eq!(arm_texts(fragment, &first.validation, ROOT), ["Zed", "Abe"]);
-    assert_eq!(arm_texts(fragment, &second.validation, ROOT), ["Abe", "Zed"]);
+    assert_eq!(
+        arm_texts(fragment, &second.validation, ROOT),
+        ["Abe", "Zed"]
+    );
     assert_eq!(first.validation, third.validation);
 }
 

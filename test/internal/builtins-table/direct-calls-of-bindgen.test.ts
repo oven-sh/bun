@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import * as b from "../../../src/codegen/bindgen-lib.ts";
 import { Type, type FunctionDefinition } from "../../../src/codegen/bindgen-lib-internal.ts";
+import * as b from "../../../src/codegen/bindgen-lib.ts";
 import { declareFunction } from "../../../src/codegen/builtins/collect-bindgen.ts";
 import type { MemberDeclaration } from "../../../src/codegen/builtins/declarations.ts";
 
@@ -26,7 +26,11 @@ const summarize = ({ signatures }: MemberDeclaration) =>
 test("a function whose arguments are taken as they are is entered with them", () => {
   const member = declare(b.fn({ args: { flag: b.bool, fd: b.i32, time: b.f64, anything: b.any } }));
   expect(summarize(member)).toEqual([
-    { accepted: [boolean, int32, number, anything], isSpecialCase: false, handedOver: ["Realm", "Boolean", "Int32", "Double", "Value"] },
+    {
+      accepted: [boolean, int32, number, anything],
+      isSpecialCase: false,
+      handedOver: ["Realm", "Boolean", "Int32", "Double", "Value"],
+    },
   ]);
   expect(member.signatures[0].directEntry).toMatchObject({
     symbol: "Bun__Bindgen__X__f",
@@ -38,18 +42,26 @@ test("a function whose arguments are taken as they are is entered with them", ()
       { cppType: "JSC::EncodedJSValue" },
     ],
   });
-  expect(member.signatures[0].directEntry?.declaration).toStartWith('extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__X__f(JSC::JSGlobalObject*, ');
+  expect(member.signatures[0].directEntry?.declaration).toStartWith(
+    'extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__X__f(JSC::JSGlobalObject*, ',
+  );
   expect(member.dispatches).toEqual([{ mode: "Call", root: { signature: 0 } }]);
 });
 
 test("a function without arguments takes the realm", () => {
-  expect(summarize(declare(b.fn({ returns: b.f64 })))).toEqual([{ accepted: [], isSpecialCase: false, handedOver: ["Realm"] }]);
+  expect(summarize(declare(b.fn({ returns: b.f64 })))).toEqual([
+    { accepted: [], isSpecialCase: false, handedOver: ["Realm"] },
+  ]);
 });
 
 test("arguments that converting would leave as they are have an overload of their own", () => {
   const member = declare(b.fn({ args: { value: b.any, force: b.bool.loose.default(false), time: b.f64.loose } }));
   const [special, general] = summarize(member);
-  expect(special).toEqual({ accepted: [anything, boolean, number], isSpecialCase: true, handedOver: ["Realm", "Value", "Boolean", "Double"] });
+  expect(special).toEqual({
+    accepted: [anything, boolean, number],
+    isSpecialCase: true,
+    handedOver: ["Realm", "Value", "Boolean", "Double"],
+  });
   expect(general).toMatchObject({ isSpecialCase: false, handedOver: null });
   expect(member.signatures[0].parameters.map(({ type }) => [type.mode, type.conversion])).toEqual([
     ["Required", "None"],
@@ -63,17 +75,32 @@ test("arguments that converting would leave as they are have an overload of thei
       mode: "Call",
       root: {
         argument: 1,
-        branches: [{ tested: boolean, then: { argument: 2, branches: [{ tested: number, then: { signature: 0 } }, otherwise] } }, otherwise],
+        branches: [
+          { tested: boolean, then: { argument: 2, branches: [{ tested: number, then: { signature: 0 } }, otherwise] } },
+          otherwise,
+        ],
       },
     },
   ]);
 });
 
 test("what only the host function can make for the thunk leaves the function without an entry", () => {
-  for (const type of [b.string, b.string.utf8, b.u32, b.usize, b.i32.validateInteger(0, 10), b.bool.optional, b.array(b.f64)]) {
-    expect(summarize(declare(b.fn({ args: { flag: b.bool, operand: type } })))).toMatchObject([{ isSpecialCase: false, handedOver: null }]);
+  for (const type of [
+    b.string,
+    b.string.utf8,
+    b.u32,
+    b.usize,
+    b.i32.validateInteger(0, 10),
+    b.bool.optional,
+    b.array(b.f64),
+  ]) {
+    expect(summarize(declare(b.fn({ args: { flag: b.bool, operand: type } })))).toMatchObject([
+      { isSpecialCase: false, handedOver: null },
+    ]);
   }
-  expect(summarize(declare(b.fn({ args: { fd: b.i32.validateInteger() } })))).toMatchObject([{ handedOver: ["Realm", "Int32"] }]);
+  expect(summarize(declare(b.fn({ args: { fd: b.i32.validateInteger() } })))).toMatchObject([
+    { handedOver: ["Realm", "Int32"] },
+  ]);
 });
 
 test("the realm and five arguments are the most", () => {
@@ -83,7 +110,12 @@ test("the realm and five arguments are the most", () => {
 });
 
 test("each signature of a function has its own thunk", () => {
-  const member = declare(b.overloads({ args: { fd: b.i32, flag: b.bool }, rustPath: "x::a" }, { args: { flag: b.bool.loose }, rustPath: "x::b" }));
+  const member = declare(
+    b.overloads(
+      { args: { fd: b.i32, flag: b.bool }, rustPath: "x::a" },
+      { args: { flag: b.bool.loose }, rustPath: "x::b" },
+    ),
+  );
   expect(member.signatures.map(({ directEntry }) => directEntry?.symbol ?? null)).toEqual([
     "Bun__Bindgen__X__f1",
     "Bun__Bindgen__X__f2",
@@ -145,28 +177,57 @@ test("an argument that a null pointer stands in for can be left out of a direct 
 });
 
 test("a value that may be left out is handed over as it is or as nothing, in one overload", () => {
-  const member = declare(b.fn({ args: { value: b.any, name: b.any.orAbsent, options: b.any.orAbsent }, capability: "js", throws: true }));
+  const member = declare(
+    b.fn({ args: { value: b.any, name: b.any.orAbsent, options: b.any.orAbsent }, capability: "js", throws: true }),
+  );
   expect(summarize(member)).toEqual([
-    { accepted: [anything, anything, anything], isSpecialCase: false, handedOver: ["Realm", "Value", "ValueOrEmpty", "ValueOrEmpty"] },
+    {
+      accepted: [anything, anything, anything],
+      isSpecialCase: false,
+      handedOver: ["Realm", "Value", "ValueOrEmpty", "ValueOrEmpty"],
+    },
   ]);
   expect(member.signatures[0].parameters.map(({ type }) => type.mode)).toEqual(["Required", "Optional", "Optional"]);
-  expect(member.signatures[0].directEntry?.parameters.slice(1).map(({ cppType }) => cppType)).toEqual(Array(3).fill("JSC::EncodedJSValue"));
+  expect(member.signatures[0].directEntry?.parameters.slice(1).map(({ cppType }) => cppType)).toEqual(
+    Array(3).fill("JSC::EncodedJSValue"),
+  );
 });
 
 test("one that another argument follows is always there", () => {
   const member = declare(b.fn({ args: { name: b.any.orAbsent, value: b.f64 }, capability: "js" }));
-  expect(summarize(member)).toEqual([{ accepted: [anything, number], isSpecialCase: false, handedOver: ["Realm", "Value", "Double"] }]);
+  expect(summarize(member)).toEqual([
+    { accepted: [anything, number], isSpecialCase: false, handedOver: ["Realm", "Value", "Double"] },
+  ]);
 });
 
 test("a function whose body is C++ is entered at that function", () => {
   const member = declare(
     b.overloads(
-      { args: { value: b.f64, name: b.any.orAbsent }, capability: "js", throws: true, cppSymbol: "Bun__Checks__checkNumber" },
-      { args: { value: b.any.orAbsent, name: b.any.orAbsent }, capability: "js", throws: true, cppSymbol: "Bun__Checks__check" },
+      {
+        args: { value: b.f64, name: b.any.orAbsent },
+        capability: "js",
+        throws: true,
+        cppSymbol: "Bun__Checks__checkNumber",
+      },
+      {
+        args: { value: b.any.orAbsent, name: b.any.orAbsent },
+        capability: "js",
+        throws: true,
+        cppSymbol: "Bun__Checks__check",
+      },
     ),
   );
-  expect(member.signatures.map(({ directEntry }) => directEntry?.symbol)).toEqual(["Bun__Checks__checkNumber", "Bun__Checks__check"]);
-  expect(member.signatures[0].directEntry?.declaration).toStartWith('extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Checks__checkNumber(JSC::JSGlobalObject*, ');
-  expect(() => b.fn({ rustPath: "crate::check", cppSymbol: "Bun__Checks__check" })).toThrow("rustPath or cppSymbol, not both");
-  expect(() => b.fn({ cppInlineBody: { name: "Bun::Checks::check", header: "Checks.h" } })).toThrow("cppInlineBody goes with a cppSymbol");
+  expect(member.signatures.map(({ directEntry }) => directEntry?.symbol)).toEqual([
+    "Bun__Checks__checkNumber",
+    "Bun__Checks__check",
+  ]);
+  expect(member.signatures[0].directEntry?.declaration).toStartWith(
+    'extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Checks__checkNumber(JSC::JSGlobalObject*, ',
+  );
+  expect(() => b.fn({ rustPath: "crate::check", cppSymbol: "Bun__Checks__check" })).toThrow(
+    "rustPath or cppSymbol, not both",
+  );
+  expect(() => b.fn({ cppInlineBody: { name: "Bun::Checks::check", header: "Checks.h" } })).toThrow(
+    "cppInlineBody goes with a cppSymbol",
+  );
 });

@@ -117,7 +117,10 @@ impl<'a, 's> TreeWriter<'a, 's> {
         let body: Vec<StmtId> = self.file.ids(self.file.body).collect();
         let is_directive =
             |&statement: &StmtId| matches!(self.file[statement].kind, StmtKind::Directive { .. });
-        let prologue_len = body.iter().rposition(is_directive).map_or(0, |last| last + 1);
+        let prologue_len = body
+            .iter()
+            .rposition(is_directive)
+            .map_or(0, |last| last + 1);
         let (prologue, rest) = body.split_at(prologue_len);
         let statements = [prologue, &before[..], rest, &after[..]].concat();
         self.file.body = self.file.list(&statements);
@@ -185,7 +188,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
                 .map(|symbol| self.resolve_symbol_name(symbol, &outside_names))
                 .collect(),
             origins: generated.symbols.iter().map(|it| it.origin).collect(),
-            last_position: spans.iter().fold(record.start, |last, span| last.max(span.1)),
+            last_position: spans
+                .iter()
+                .fold(record.start, |last, span| last.max(span.1)),
             spans,
             fallback_position: record.start,
             is_strict: record.is_strict,

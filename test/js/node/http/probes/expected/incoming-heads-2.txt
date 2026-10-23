@@ -330,21 +330,8 @@ seed 2, connection 16
     requestLine "GET" "/warm-up" "1.1" 1 1
     response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
     request: "GET /café HTTP/1.1"
-    headersDistinct null-prototype{if-unmodified-since:["w87"],content-length-x:["café ü"],etag:["v0"],proxy-authorization:["a=1; b=2"],keep-alive:["v4"],content-type:["a=1; b=2"],host:["localhost"]}
-    headers Object{if-unmodified-since:"w87",content-length-x:"café ü",etag:"v0",proxy-authorization:"a=1; b=2",keep-alive:"v4",content-type:"a=1; b=2",host:"localhost"}
-    requestLine "GET" "/caf�" "1.1" 1 1
-    rawHeaders ["if-unmodified-since","w87","content-length-x","café ü","etag","v0","proxy-authorization","a=1; b=2","keep-alive","v4","content-type","a=1; b=2","Host","localhost"]
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
-    request: "PATCH /a?b=c&d=e HTTP/1.1"
-    trailers Object{} []
-    headersDistinct null-prototype{set-cookie:["with: colon","v4"],host:["localhost"],content-length:["0"],proxy-authorization:["café ü"],retry-after:["a, b,c"],server:["padded"],accept:["café ü"],authorization:["w5"]}
-    singleHeaders undefined undefined ["with: colon","v4"] "localhost"
-    requestLine "PATCH" "/a?b=c&d=e" "1.1" 1 1
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
-    request: "OPTIONS /p2 HTTP/1.1"
-    singleHeaders undefined undefined undefined "localhost"
-    rawHeaders ["Host","localhost","content-type","with: colon","Host","second","location","v7"]
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    clientError HPE_INVALID_URL
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
 seed 2, connection 17
     request: "GET /warm-up HTTP/1.1"
     trailers Object{} []
@@ -515,15 +502,8 @@ seed 2, connection 23
     headers Object{host:"localhost",origin:"v7, \"quoted, text\"",cache-control:"a=1; b=2",expires:"a=1; b=2",connection-x:"w10, v4",x-forwarded-for:"v6",retry-after:"v4",set-cookie:["0"],x-b:"a, b,c",server:"v7",last-modified:"padded",x_under:"café ü",age:"w47",x-1:"tabbed",etag:"w56",pragma:"padded",te:"café ü"}
     response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
     request: "PATCH /café HTTP/1.1"
-    headersDistinct null-prototype{host:["localhost"],content-length:["0"]}
-    requestLine "PATCH" "/caf�" "1.1" 1 1
-    headers Object{host:"localhost",content-length:"0"}
-    headerKeys ["host","content-length"]
-    rawHeaders ["Host","localhost","Content-Length","0"]
-    singleHeaders undefined undefined undefined "localhost"
-    trailers Object{} []
-    identity true true true
-    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    clientError HPE_INVALID_URL
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
 seed 2, connection 24
     request: "GET /warm-up HTTP/1.1"
     rawHeaders ["Host","localhost"]

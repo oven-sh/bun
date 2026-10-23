@@ -64,8 +64,15 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("aot-request-whose-socket-is-taken-away", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
+    expect({
+      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
     const plain = await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv);
     const compiled = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: expected, exitCode: 0 });

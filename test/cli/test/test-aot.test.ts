@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { unsupported } from "../../aot/run-programs";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
 
@@ -34,9 +34,15 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   };
 }
 
-const theWarningThatAFileIsCompiledUntyped = /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors? \([^\n]*\), so it is compiled without its types\.[^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
+const theWarningThatAFileIsCompiledUntyped =
+  /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors? \([^\n]*\), so it is compiled without its types\.[^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
 
-async function expectSameAsBunTest(files: Record<string, string>, args?: string[], builds = true, compiledUntyped: string[] = []) {
+async function expectSameAsBunTest(
+  files: Record<string, string>,
+  args?: string[],
+  builds = true,
+  compiledUntyped: string[] = [],
+) {
   using expectedDir = tempDir("test-aot", files);
   using actualDir = tempDir("test-aot", files);
   const [expected, actual] = await Promise.all([
@@ -44,7 +50,10 @@ async function expectSameAsBunTest(files: Record<string, string>, args?: string[
     runTests(String(actualDir), true, args, builds),
   ]);
   const warnedOf: string[] = [];
-  actual.stderr = actual.stderr.replace(theWarningThatAFileIsCompiledUntyped, (_warning, file) => (warnedOf.push(file), ""));
+  actual.stderr = actual.stderr.replace(
+    theWarningThatAFileIsCompiledUntyped,
+    (_warning, file) => (warnedOf.push(file), ""),
+  );
   expect(warnedOf).toEqual(compiledUntyped);
   expect(actual).toEqual(expected);
   return actual;
@@ -207,7 +216,9 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(actual).toEqual(expected);
     expect(actual.stderr).toContain(" 3 pass");
     const snapshot = join("__snapshots__", "names.test.ts.snap");
-    expect(readFileSync(join(String(actualDir), snapshot), "utf8")).toBe(readFileSync(join(String(expectedDir), snapshot), "utf8"));
+    expect(readFileSync(join(String(actualDir), snapshot), "utf8")).toBe(
+      readFileSync(join(String(expectedDir), snapshot), "utf8"),
+    );
   });
 
   test.concurrent("other options work the same as without --aot", async () => {
@@ -231,7 +242,8 @@ describe.skipIf(!supported)("bun test --aot", () => {
   });
 
   test.concurrent.each([[["--cwd=app"]], [["--cwd", "app"]]])("a relative %j is applied once", async flags => {
-    const file = (path: string) => `import { test } from "bun:test";\ntest("runs", () => { console.log("${path}", process.cwd()); });`;
+    const file = (path: string) =>
+      `import { test } from "bun:test";\ntest("runs", () => { console.log("${path}", process.cwd()); });`;
     const { stdout, stderr, exitCode } = await expectSameAsBunTest(
       { "app/a.test.ts": file("app/a.test.ts"), "app/app/a.test.ts": file("app/app/a.test.ts") },
       [...flags, "./a.test.ts"],
@@ -336,9 +348,12 @@ describe.skipIf(!supported)("bun test --aot", () => {
   });
 
   test.concurrent("test files with the same name and different extensions", async () => {
-    const file = (name: string) => `import { test } from "bun:test"; test("in ${name}", () => { console.log("ran ${name}"); });`;
+    const file = (name: string) =>
+      `import { test } from "bun:test"; test("in ${name}", () => { console.log("ran ${name}"); });`;
     const { stderr } = await expectSameAsBunTest(
-      Object.fromEntries(["a.test.js", "a.test.mjs", "a.test.ts", "a.test.tsx", "sub/a.test.ts"].map(name => [name, file(name)])),
+      Object.fromEntries(
+        ["a.test.js", "a.test.mjs", "a.test.ts", "a.test.tsx", "sub/a.test.ts"].map(name => [name, file(name)]),
+      ),
     );
     expect(stderr).toContain(" 5 pass");
   });

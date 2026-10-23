@@ -303,7 +303,7 @@ public:
             }
         } else
 #endif
-        if (auto* fn = dynamicDowncast<JSFunction>(value)) {
+            if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, );

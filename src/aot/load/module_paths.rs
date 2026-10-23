@@ -7,7 +7,9 @@ use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
 use crate::diagnostics::InternalError;
-use crate::load::loaders::{BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_name};
+use crate::load::loaders::{
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_name,
+};
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
 use crate::options::PathOptions;
 use crate::statistics::Stage;
@@ -240,7 +242,10 @@ pub(super) fn check_unique_public_paths<'a>(
     let mut modules: Vec<(FileId, ModulePaths<'a>)> = paths.collect();
     let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
     seen.reserve(modules.len());
-    if modules.iter().all(|(_, paths)| seen.insert(paths.public_path)) {
+    if modules
+        .iter()
+        .all(|(_, paths)| seen.insert(paths.public_path))
+    {
         return Ok(());
     }
     modules.shared_sort_unstable_by_key(|&(file, paths)| (paths.public_path, file));
@@ -347,7 +352,10 @@ mod tests {
     fn program_paths_follow_options() {
         let paths = path_options();
         let path = |native, index| compute_program_path(false, &paths, native, index);
-        assert_eq!(path(b"/project/src/main.ts", Some(1)), b"/$bunfs/root/worker.js");
+        assert_eq!(
+            path(b"/project/src/main.ts", Some(1)),
+            b"/$bunfs/root/worker.js"
+        );
         assert_eq!(path(b"/project/src/a.ts", None), b"/$bunfs/root/src/a.ts");
         assert_eq!(path(b"/other/a.ts", None), b"/$bunfs/root/_.._/other/a.ts");
         assert_eq!(path(b"/a.ts", None), b"/$bunfs/root/_.._/a.ts");
@@ -373,7 +381,10 @@ mod tests {
         };
         let outside = compute_program_path(false, &deep_root, b"/other/a.ts", None);
         let parents = b"_.._/".repeat(depth);
-        assert_eq!(outside, [&b"/$bunfs/root/"[..], &parents, b"other/a.ts"].concat());
+        assert_eq!(
+            outside,
+            [&b"/$bunfs/root/"[..], &parents, b"other/a.ts"].concat()
+        );
     }
 
     #[test]
@@ -424,7 +435,10 @@ mod tests {
 
     #[test]
     fn plugin_module_path_has_namespace() {
-        assert_eq!(plugin_public_path(b"v", b"virtual:config"), b"v:virtual:config");
+        assert_eq!(
+            plugin_public_path(b"v", b"virtual:config"),
+            b"v:virtual:config"
+        );
     }
 
     #[test]
@@ -518,13 +532,17 @@ mod tests {
         let path = b"/project/types/globals.d.ts";
         let mut maps = FileMaps::default();
         let index_without_name = path_options().entry_point_names.len();
-        maps.entry_point_indexes.insert(FileId(0), index_without_name);
+        maps.entry_point_indexes
+            .insert(FileId(0), index_without_name);
         maps.add_linkable_file(path, FileId(0), BY_NAME);
         let input = PathInput {
             kind: SourceKind::TypesOnly,
             ..program_file(0, path, BY_NAME)
         };
-        assert_eq!(public_path(&maps, input), b"/$bunfs/root/types/globals.d.ts");
+        assert_eq!(
+            public_path(&maps, input),
+            b"/$bunfs/root/types/globals.d.ts"
+        );
     }
 
     #[test]

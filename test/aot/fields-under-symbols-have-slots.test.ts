@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // A member that a `const` symbol names is a field of the layout like a member under a name: of a class that declares it, and of a
 // function that stores it into `this`. Making the object, reading the field and storing into it ask the run time for nothing.

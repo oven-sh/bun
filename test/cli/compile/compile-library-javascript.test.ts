@@ -4,7 +4,13 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -44,7 +50,18 @@ export default function main(...values) {
   "clamp.js": `export const clamp = (value, low, high) => Math.min(high, Math.max(low, value));\n`,
 };
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"], skipLibCheck: false, noEmit: true } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    strict: true,
+    module: "esnext",
+    moduleResolution: "bundler",
+    target: "esnext",
+    types: [],
+    lib: ["esnext"],
+    skipLibCheck: false,
+    noEmit: true,
+  },
+});
 
 describe.concurrent("bun compile --library with JavaScript sources", () => {
   test("infers the declaration files, and reads JSDoc", async () => {
@@ -57,7 +74,9 @@ describe.concurrent("bun compile --library with JavaScript sources", () => {
     const declarations = readFileSync(join(dist, "index.d.ts"), "utf8");
     expect(declarations).toContain("export type Point = {\n    x: number;\n    y: number;\n};");
     expect(declarations).toContain("export declare function distance(a: Point, b: Point): number;");
-    expect(declarations).toContain("export declare function scale(point: any, factor?: number): {\n    x: number;\n    y: number;\n};");
+    expect(declarations).toContain(
+      "export declare function scale(point: any, factor?: number): {\n    x: number;\n    y: number;\n};",
+    );
     expect(declarations).toContain("    step: any;\n    count: number;\n");
     expect(declarations).toContain("export declare const names: string[];");
     expect(JSON.parse(readFileSync(join(dist, "package.json"), "utf8")).exports).toEqual({
@@ -75,7 +94,14 @@ describe.concurrent("bun compile --library with JavaScript sources", () => {
       "app/app.ts": `import twice = require("twice");\nexport const result: number = twice(21);\nexport const wrong: string = twice(1);\n`,
       "app/run.cjs": `console.log(require("twice")(21));\n`,
     });
-    const built = await bun(join(String(dir), "library"), "compile", "--library", "--format=cjs", "--outdir", "../app/node_modules/twice");
+    const built = await bun(
+      join(String(dir), "library"),
+      "compile",
+      "--library",
+      "--format=cjs",
+      "--outdir",
+      "../app/node_modules/twice",
+    );
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const installed = join(String(dir), "app/node_modules/twice");
@@ -95,7 +121,10 @@ describe.concurrent("bun compile --library with JavaScript sources", () => {
     await Bun.write(join(String(dir), "app/package.json"), JSON.stringify({ name: "app", type: "commonjs" }));
     for (const check of [["check"], [require.resolve("typescript/bin/tsc")]]) {
       const { stdout, stderr, exitCode } = await bun(join(String(dir), "app"), ...check, "-p", "tsconfig.json");
-      expect({ said: (stdout + stderr).match(/TS\d+/g), failed: exitCode !== 0 }).toEqual({ said: ["TS2322"], failed: true });
+      expect({ said: (stdout + stderr).match(/TS\d+/g), failed: exitCode !== 0 }).toEqual({
+        said: ["TS2322"],
+        failed: true,
+      });
     }
   });
 
@@ -109,12 +138,21 @@ export const results: [number, number, number, string] = [main(1, 2), distance(o
 export const wrong: string = distance(origin, origin);
 `,
     });
-    const built = await bun(join(String(dir), "library"), "compile", "--library", "--outdir", "../app/node_modules/points");
+    const built = await bun(
+      join(String(dir), "library"),
+      "compile",
+      "--library",
+      "--outdir",
+      "../app/node_modules/points",
+    );
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     for (const check of [["check"], [require.resolve("typescript/bin/tsc")]]) {
       const { stdout, stderr, exitCode } = await bun(join(String(dir), "app"), ...check, "-p", "tsconfig.json");
-      expect({ said: (stdout + stderr).match(/TS\d+/g), failed: exitCode !== 0 }).toEqual({ said: ["TS2322"], failed: true });
+      expect({ said: (stdout + stderr).match(/TS\d+/g), failed: exitCode !== 0 }).toEqual({
+        said: ["TS2322"],
+        failed: true,
+      });
     }
   });
 });

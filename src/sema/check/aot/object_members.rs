@@ -1,6 +1,6 @@
 use super::answers::{
-    CheckedMember, GaveUp, IndexSignature, ListedMember, MemberLookup, MemberName, ObjectMember, PositionTypes,
-    WrittenType,
+    CheckedMember, GaveUp, IndexSignature, ListedMember, MemberLookup, MemberName, ObjectMember,
+    PositionTypes, WrittenType,
 };
 use super::queries::Queries;
 use super::type_shape::{ShapeKind, TypeShape};
@@ -200,7 +200,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return PositionTypes::unwritten(Err(GaveUp::Unresolved));
         };
         let prop = &members.shape().props[member.property_index as usize];
-        self.member_of_prop(prop, members.mapper, members.mapper).types
+        self.member_of_prop(prop, members.mapper, members.mapper)
+            .types
     }
 
     pub(super) fn compute_index_signatures(
@@ -232,10 +233,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.lookup_member(receiver, name, UsesReceiverArguments::Yes)
     }
 
-    pub(super) fn compute_member_access(
-        &mut self,
-        access: ExprId,
-    ) -> Result<MemberLookup, GaveUp> {
+    pub(super) fn compute_member_access(&mut self, access: ExprId) -> Result<MemberLookup, GaveUp> {
         let file = self.file;
         let Some((object, key)) = self.c.hir(file).member_key(access) else {
             return Ok(MemberLookup::Absent);

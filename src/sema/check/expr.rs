@@ -1259,7 +1259,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let printed = self.apparent_type_of_intersection(apparent);
                 self.error_at(node, 2542, &[Arg::Type(printed)]);
             }
-            if self.module_options(file).no_property_access_from_index_signature
+            if self
+                .module_options(file)
+                .no_property_access_from_index_signature
                 && !bound.is_in_type_query(e)
             {
                 let right = self.span_of_right(file, name, name_pos);

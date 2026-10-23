@@ -41,7 +41,11 @@ fn immutable_binding_is_copied() {
         assert_eq!(probe.placement_of("a"), expected);
         let arrow = probe.only_function(FnKind::Arrow);
         assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("a"))]);
-        assert!(!probe.analysis.has_environment(probe.top_scope(probe.function("f"))));
+        assert!(
+            !probe
+                .analysis
+                .has_environment(probe.top_scope(probe.function("f")))
+        );
     });
 }
 
@@ -60,10 +64,17 @@ fn assert_entry_slot_is_copied(expression: &str, slot: ScopeSlot) {
     analyze_source("main.mjs", &source, |probe| {
         let binding = probe.slot(probe.function("f"), slot);
         let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(binding)], "{expression}");
+        assert_eq!(
+            probe.captures(arrow),
+            [Capture::Value(binding)],
+            "{expression}"
+        );
         let placement = probe.placement(binding);
         assert_eq!(placement.storage, Storage::Local, "{expression}");
-        assert!(placement.is_shared && placement.is_immutable, "{expression}");
+        assert!(
+            placement.is_shared && placement.is_immutable,
+            "{expression}"
+        );
     });
 }
 
@@ -89,7 +100,12 @@ fn unused_slot_has_no_placement() {
         for slot in [ScopeSlot::This, ScopeSlot::NewTarget, ScopeSlot::Callee] {
             assert_eq!(probe.analysis.placement(probe.slot(function, slot)), None);
         }
-        assert!(probe.analysis.bindings(probe.top_scope(function)).is_empty());
+        assert!(
+            probe
+                .analysis
+                .bindings(probe.top_scope(function))
+                .is_empty()
+        );
     });
 }
 
@@ -137,7 +153,10 @@ fn hoisted_function_takes_the_environment() {
         const a = 1; function g() { return a; } const h = () => a; return [g, h]; }";
     analyze_source("main.mjs", source, |probe| {
         let top = probe.top_scope(probe.function("f"));
-        assert_eq!(probe.captures(probe.function("g")), [Capture::Environment(top)]);
+        assert_eq!(
+            probe.captures(probe.function("g")),
+            [Capture::Environment(top)]
+        );
         let arrow = probe.only_function(FnKind::Arrow);
         assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("a"))]);
         let placement = probe.placement_of("a");
@@ -151,7 +170,10 @@ fn closure_in_hoisted_function_takes_the_environment() {
     let source = "export function f() { const a = 1; function g() { return () => a; } return g; }";
     analyze_source("main.mjs", source, |probe| {
         let environment = [Capture::Environment(probe.top_scope(probe.function("f")))];
-        assert_eq!(probe.captures(probe.only_function(FnKind::Arrow)), environment);
+        assert_eq!(
+            probe.captures(probe.only_function(FnKind::Arrow)),
+            environment
+        );
         assert_eq!(probe.captures(probe.function("g")), environment);
     });
 }
@@ -160,7 +182,10 @@ fn closure_in_hoisted_function_takes_the_environment() {
 fn hoisted_function_copies_parameter() {
     let source = "export function f(p) { function g() { return p; } return g; }";
     analyze_source("main.mjs", source, |probe| {
-        assert_eq!(probe.captures(probe.function("g")), [Capture::Value(probe.binding("p"))]);
+        assert_eq!(
+            probe.captures(probe.function("g")),
+            [Capture::Value(probe.binding("p"))]
+        );
         assert_eq!(probe.placement_of("p").storage, Storage::Local);
     });
 }
@@ -170,7 +195,10 @@ fn hoisted_block_function_does_not_copy_var() {
     let source = "export function f() { { h(); var a = 1; function h() { return a; } } }";
     analyze_source("main.mjs", source, |probe| {
         let top = probe.top_scope(probe.function("f"));
-        assert_eq!(probe.captures(probe.function("h")), [Capture::Environment(top)]);
+        assert_eq!(
+            probe.captures(probe.function("h")),
+            [Capture::Environment(top)]
+        );
         assert_eq!(probe.analysis.environment_fields(top), [probe.binding("a")]);
     });
 }
@@ -198,7 +226,10 @@ fn hoisted_function_symbol_is_copied_by_later_closure() {
     let sibling = "export function f() { function g() { return h; } function h() {} return g; }";
     analyze_source("main.mjs", sibling, |probe| {
         let top = probe.top_scope(probe.function("f"));
-        assert_eq!(probe.captures(probe.function("g")), [Capture::Environment(top)]);
+        assert_eq!(
+            probe.captures(probe.function("g")),
+            [Capture::Environment(top)]
+        );
         assert_eq!(probe.analysis.environment_fields(top), [probe.binding("h")]);
         assert!(probe.placement_of("h").has_local);
     });
@@ -211,7 +242,11 @@ fn loop_binding_is_copied() {
         let statement = probe.first_statement(|kind| matches!(kind, StmtKind::ForOf { .. }));
         let arrow = probe.only_function(FnKind::Arrow);
         assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("x"))]);
-        assert!(!probe.analysis.has_environment(probe.bound.own_scope(statement)));
+        assert!(
+            !probe
+                .analysis
+                .has_environment(probe.bound.own_scope(statement))
+        );
     });
 }
 
@@ -223,8 +258,15 @@ fn switch_binding_has_a_field() {
         let statement = probe.first_statement(|kind| matches!(kind, StmtKind::Switch { .. }));
         let scope = probe.bound.own_scope(statement);
         assert!(probe.analysis.is_switch_scope(scope));
-        assert!(!probe.analysis.is_switch_scope(probe.top_scope(probe.function("g"))));
-        assert_eq!(probe.placement_of("x").storage, Storage::Field { scope, field: 0 });
+        assert!(
+            !probe
+                .analysis
+                .is_switch_scope(probe.top_scope(probe.function("g")))
+        );
+        assert_eq!(
+            probe.placement_of("x").storage,
+            Storage::Field { scope, field: 0 }
+        );
         let arrow = probe.only_function(FnKind::Arrow);
         assert_eq!(probe.captures(arrow), [Capture::Environment(scope)]);
     });
@@ -277,7 +319,12 @@ fn module_body_and_other_files_capture_nothing() {
         let elsewhere = source_key(FileId(file.0 + 1), arrow);
         assert!(!probe.analysis.captures(source_key(file, arrow)).is_empty());
         assert!(probe.analysis.captures(elsewhere).is_empty());
-        assert!(probe.analysis.captures(FunctionKey::ModuleBody(file)).is_empty());
+        assert!(
+            probe
+                .analysis
+                .captures(FunctionKey::ModuleBody(file))
+                .is_empty()
+        );
     });
 }
 
@@ -318,7 +365,11 @@ fn capture_list_at_the_limit_stays() {
         let all = probe.functions(FnKind::Arrow)[0];
         assert!(!probe.analysis.has_too_many_captures(probe.key(all)));
         assert_eq!(probe.captures(all).len(), count);
-        assert!(!probe.analysis.has_environment(probe.top_scope(probe.function("f"))));
+        assert!(
+            !probe
+                .analysis
+                .has_environment(probe.top_scope(probe.function("f")))
+        );
     });
 }
 
@@ -340,7 +391,11 @@ fn later_closures_copy() {
         "export function f() { try { f(); } catch ([probe]) { return () => probe; } }",
     ];
     for source in sources {
-        assert_eq!(probe_storage("main.mjs", source), Storage::Local, "{source}");
+        assert_eq!(
+            probe_storage("main.mjs", source),
+            Storage::Local,
+            "{source}"
+        );
     }
 }
 
@@ -384,7 +439,11 @@ fn parameters_precede_hoisted_functions() {
         "export function f([probe], g = () => probe) { return g; }",
     ];
     for source in bound_first {
-        assert_eq!(probe_storage("main.mjs", source), Storage::Local, "{source}");
+        assert_eq!(
+            probe_storage("main.mjs", source),
+            Storage::Local,
+            "{source}"
+        );
     }
     let captured_first = "export function f(g = () => probe, [probe] = []) { return g; }";
     assert!(is_field(probe_storage("main.mjs", captured_first)));
@@ -396,7 +455,10 @@ fn jsx_factory_use_counts_as_capture() {
     let files = [("main.jsx", later), ("tsconfig.json", CLASSIC_JSX)];
     analyze_files(&files, |probe| {
         let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("probe"))]);
+        assert_eq!(
+            probe.captures(arrow),
+            [Capture::Value(probe.binding("probe"))]
+        );
     });
     let hoisted = "export function f(it) { const [probe] = it; \
         function g() { return <a />; } return g; }";
@@ -408,16 +470,23 @@ fn dead_closure_shares_nothing() {
     let dead = "export function f(g) { let x = 1; if (false) { g(() => x); } return x; }";
     analyze_source("main.mjs", dead, |probe| {
         assert!(!probe.placement_of("x").is_shared);
-        assert!(probe.captures(probe.only_function(FnKind::Arrow)).is_empty());
+        assert!(
+            probe
+                .captures(probe.only_function(FnKind::Arrow))
+                .is_empty()
+        );
     });
     let live = "export function f(g) { let x = 1; if (true) { g(() => x); } return x; }";
-    analyze_source("main.mjs", live, |probe| assert!(probe.placement_of("x").is_shared));
+    analyze_source("main.mjs", live, |probe| {
+        assert!(probe.placement_of("x").is_shared)
+    });
 }
 
 #[test]
 fn dead_store_leaves_binding_immutable() {
     let dead = "export function f() { let x = 1; if (false) { x = 2; } return () => x; }";
     assert_eq!(storage_in("main.mjs", dead, "x"), Storage::Local);
-    let live = "export function f(c) { let x = 1; const read = () => x; if (c) { x = 2; } return read; }";
+    let live =
+        "export function f(c) { let x = 1; const read = () => x; if (c) { x = 2; } return read; }";
     assert!(is_field(storage_in("main.mjs", live, "x")));
 }

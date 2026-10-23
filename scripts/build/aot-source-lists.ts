@@ -61,7 +61,9 @@ function includedAotHeaders(file: string): string[] {
 }
 
 export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
-  const evaluated = evaluateCMake(join(javaScriptCore, aotCMake), { variables: { JAVASCRIPTCORE_DIR: javaScriptCore } });
+  const evaluated = evaluateCMake(join(javaScriptCore, aotCMake), {
+    variables: { JAVASCRIPTCORE_DIR: javaScriptCore },
+  });
   const librarySources = readFileSync(join(javaScriptCore, sourcesTxt), "utf8")
     .split(/\r?\n/)
     .filter(line => line !== "")
@@ -175,7 +177,11 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
   const exported = [...written.exportedHeaders, ...written.tableExportedHeaders];
   const exportedNames = new Set(exported.map(path => basename(path)));
   const problems = [
-    ...describeDifference(sourcesTxt, written.librarySources, sources.filter(path => !isTestSource(path))),
+    ...describeDifference(
+      sourcesTxt,
+      written.librarySources,
+      sources.filter(path => !isTestSource(path)),
+    ),
     ...describeDifference("JavaScriptCore_AOT_TEST_SOURCES", written.testSources, sources.filter(isTestSource)),
     ...describeDifference(
       "JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES",
@@ -187,7 +193,10 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
       .map(path => `${path}: listed, and there is no such file`),
   ];
   const librarySources = sources.filter(path => !isTestSource(path));
-  if (problems.length === 0 && readFileSync(join(javaScriptCore, sourcesTxt), "utf8") !== formatSourcesTxt(librarySources)) {
+  if (
+    problems.length === 0 &&
+    readFileSync(join(javaScriptCore, sourcesTxt), "utf8") !== formatSourcesTxt(librarySources)
+  ) {
     problems.push(`${sourcesTxt}: a line is a path, a space and @no-unify`);
   }
   for (const header of exported) {

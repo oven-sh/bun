@@ -55,10 +55,15 @@ async function runTests(cwd: string, flags: string[]) {
 test("bun test --debug-aot prints a class prototype that nothing has read from as bun test does", async () => {
   using plainDir = tempDir("unread-class-prototype-snapshot", files);
   using compiledDir = tempDir("unread-class-prototype-snapshot", files);
-  const [plain, compiled] = await Promise.all([runTests(String(plainDir), []), runTests(String(compiledDir), ["--debug-aot"])]);
+  const [plain, compiled] = await Promise.all([
+    runTests(String(plainDir), []),
+    runTests(String(compiledDir), ["--debug-aot"]),
+  ]);
 
   expect(plain.exitCode).toBe(0);
-  expect(plain.printed).toBe("Inspected {\n  alpha: [Function: alpha],\n  size: [Getter],\n  zeta: [Function: zeta],\n}\n");
+  expect(plain.printed).toBe(
+    "Inspected {\n  alpha: [Function: alpha],\n  size: [Getter],\n  zeta: [Function: zeta],\n}\n",
+  );
   for (const method of ["alpha", "zeta", "own"]) expect(plain.snapshots).toContain(`"${method}": `);
   expect(plain.snapshots).not.toContain("constructor");
   expect(plain.snapshots).not.toContain("inherited");

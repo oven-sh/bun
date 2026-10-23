@@ -60,9 +60,14 @@ impl Resolver<'_, '_> {
         let has_direct_eval = direct_evals
             .iter()
             .any(|&(call, _)| !input.decisions.is_dead_expr(call));
-        let uses_arguments = input.bound.ident_bindings().iter().any(|&(ident, binding)| {
-            binding == Binding::Arguments(CodeUnit::File) && !input.decisions.is_dead_expr(ident)
-        });
+        let uses_arguments = input
+            .bound
+            .ident_bindings()
+            .iter()
+            .any(|&(ident, binding)| {
+                binding == Binding::Arguments(CodeUnit::File)
+                    && !input.decisions.is_dead_expr(ident)
+            });
         let is_mapped = uses_arguments && has_mapped_arguments(input.hir, CodeUnit::File);
         for (variable, is_stored) in [
             (CommonJsVariable::Module, stores_module),
@@ -186,7 +191,11 @@ impl Resolver<'_, '_> {
                 | CommonJsVariable::Dirname,
             ) => {}
         }
-        if input.bound.dynamic_lookup_scope(NodeData::Expr(expr)).is_some() {
+        if input
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(expr))
+            .is_some()
+        {
             self.expose_commonjs_variable(variable);
             return ExprState::Unresolved;
         }

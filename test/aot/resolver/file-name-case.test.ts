@@ -11,13 +11,11 @@ const specifiers: [name: string, specifier: string, notYet?: string][] = [
   ["a directory name", "./Dir/inner"],
 ];
 
-const cases = specifiers.map(
-  ([name, specifier, notYet]): ResolutionCase => ({
-    notYet,
-    name: `${name} in another letter case`,
-    files: { "foo.ts": "", "dir/inner.ts": "" },
-    pins: [["importer.js", specifier]],
-  }),
-);
+const cases = specifiers.map(([name, specifier, notYet]): ResolutionCase => ({
+  notYet,
+  name: `${name} in another letter case`,
+  files: { "foo.ts": "", "dir/inner.ts": "" },
+  pins: [["importer.js", specifier]],
+}));
 
 describe("code resolution", () => testResolution(cases));

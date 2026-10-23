@@ -581,7 +581,9 @@ mod written_files {
             [".", "./extra", "./tools", "./package.json"]
         );
         assert_eq!(
-            written.string_at(&["exports", "./tools", "types"]).as_deref(),
+            written
+                .string_at(&["exports", "./tools", "types"])
+                .as_deref(),
             Some("./tools/index.d.ts")
         );
         assert_eq!(written.string_at(&["main"]).as_deref(), Some("./index.js"));
@@ -623,7 +625,9 @@ mod written_files {
         );
         assert_eq!(written.keys_at(&["exports", "."]), ["types", "default"]);
         assert_eq!(
-            written.string_at(&["exports", "./more", "default"]).as_deref(),
+            written
+                .string_at(&["exports", "./more", "default"])
+                .as_deref(),
             Some("./extra.js")
         );
         assert_eq!(
@@ -683,9 +687,7 @@ mod written_files {
         );
         assert_eq!(
             written.warnings,
-            [
-                "dist/package.json has no \"shapes\" bin, because ./src/cli.ts is not an entry point"
-            ]
+            ["dist/package.json has no \"shapes\" bin, because ./src/cli.ts is not an entry point"]
         );
         assert_eq!(written.string_at(&["bin"]), None);
     }

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { test } from "./supported";
 
 test("compiling and running a one-line program takes little memory", async () => {
   using folder = tempDir("aot-memory-of-small-programs", { "program.ts": `console.log("one line");\n` });

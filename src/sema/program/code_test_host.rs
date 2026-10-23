@@ -199,8 +199,8 @@ impl Host for StatementsHost {
 
     fn is_dir(&self, path: &[u8]) -> bool {
         let is_same = |directory: &[u8]| is_same_path(directory, path, self.is_case_sensitive);
-        let mut directories = (self.files.iter())
-            .flat_map(|file| ancestors(dirname::<Posix>(file.0.as_bytes())));
+        let mut directories =
+            (self.files.iter()).flat_map(|file| ancestors(dirname::<Posix>(file.0.as_bytes())));
         directories.any(is_same)
     }
 
@@ -292,7 +292,9 @@ impl Host for StatementsHost {
 impl CodeHost for StatementsHost {
     fn parse_runtime_tsconfig(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
         let names = strings::split(text, b"\n").filter(|name| !name.is_empty());
-        let flags = names.map(|name| (name.to_vec(), Json::Bool(true))).collect();
+        let flags = names
+            .map(|name| (name.to_vec(), Json::Bool(true)))
+            .collect();
         let options = (b"compilerOptions".to_vec(), Json::object(flags));
         Some(Json::object(vec![options]))
     }
@@ -598,7 +600,8 @@ impl<'s> StatementParser<'_, '_, 's> {
         self.file.has_errors = true;
         self.file.has_parse_diagnostics = true;
         let end = self.offset();
-        self.file.error(DiagnosticKind::Parse, start, end, EXPRESSION_EXPECTED);
+        self.file
+            .error(DiagnosticKind::Parse, start, end, EXPRESSION_EXPECTED);
     }
 
     fn add_statement(&mut self, kind: StmtKind, start: u32) -> StmtId {
@@ -611,7 +614,8 @@ impl<'s> StatementParser<'_, '_, 's> {
     }
 
     fn add_name(&mut self, name: Token) -> ExprId {
-        self.file.expr(ExprKind::Ident(name.text), name.start, name.end)
+        self.file
+            .expr(ExprKind::Ident(name.text), name.start, name.end)
     }
 
     fn add_specifier_use(&mut self, specifier: Token, kind: SpecifierKind) {
@@ -766,7 +770,10 @@ impl<'s> StatementParser<'_, '_, 's> {
         let arguments = self.arguments()?;
         self.add_call_specifier_use(arguments[0], SpecifierKind::ImportCall);
         let args = self.file.list(&arguments);
-        Some(self.file.expr(ExprKind::ImportCall { args }, start, self.offset()))
+        Some(
+            self.file
+                .expr(ExprKind::ImportCall { args }, start, self.offset()),
+        )
     }
 
     fn call(&mut self, callee: ExprId, start: u32) -> Option<ExprId> {
@@ -805,7 +812,9 @@ impl<'s> StatementParser<'_, '_, 's> {
         while self.eat(b" + ") {
             let right = self.operand()?;
             let op = BinOp::Add;
-            left = self.file.expr(ExprKind::Binary { op, left, right }, start, self.offset());
+            left = self
+                .file
+                .expr(ExprKind::Binary { op, left, right }, start, self.offset());
         }
         Some(left)
     }
@@ -861,7 +870,9 @@ impl<'s> StatementParser<'_, '_, 's> {
                 self.expect(b" }")?;
                 let closed = open.pop()?;
                 let properties = self.file.add_props(&closed.properties);
-                value = self.file.expr(ExprKind::Object(properties), closed.start, self.offset());
+                value = self
+                    .file
+                    .expr(ExprKind::Object(properties), closed.start, self.offset());
                 if open.is_empty() {
                     return Some(value);
                 }
@@ -934,6 +945,12 @@ pub(super) fn with_compile_context<R>(
 pub(super) fn load_files<'s>(session: &'s Session, build: &TestBuild<'_>) -> Files<'s> {
     with_compile_inputs(session, build, |inputs| {
         let (options, roots) = (build.options.clone(), to_paths(build.roots));
-        Files::load_for_compile(session, build.host, options, RootFileNames::Listed(&roots), inputs)
+        Files::load_for_compile(
+            session,
+            build.host,
+            options,
+            RootFileNames::Listed(&roots),
+            inputs,
+        )
     })
 }

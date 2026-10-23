@@ -314,7 +314,11 @@ export default b.declarations(
   extendAll(["OpenInEditor", "ChildProcess"], "Bun.openInEditor"),
   extendAll(["Unsafe"], "Bun.unsafe"),
 
-  extendAll(["Ffi", ...nativeAddonFeatures], "Bun.FFI", ...nativeBindings("NewRustFunction", "ffi.rs", "Bun__FFI__cc", "closeCallback")),
+  extendAll(
+    ["Ffi", ...nativeAddonFeatures],
+    "Bun.FFI",
+    ...nativeBindings("NewRustFunction", "ffi.rs", "Bun__FFI__cc", "closeCallback"),
+  ),
   extendAll(["Ffi"], "bun:ffi", "%FFI%"),
 
   extendAll(["Plugin", ...runtimeTranspilerFeatures], "Bun.plugin"),
@@ -596,6 +600,7 @@ export default b.declarations(
       ...usesWhenOptionsHave(["http2", "http3"], "ServeHttp2"),
       ...usesWhenOptionsHave(["http3"], "Http3"),
       ...usesWhenOptionsHave(["onNodeHTTPRequest"], "NodeHttp"),
+      ...usesWhenOptionsHave(["app"], ...bundlerFeatures.filter(feature => feature !== "Buffer")),
     ],
     "Bun.serve",
   ),

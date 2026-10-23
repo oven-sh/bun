@@ -30,7 +30,11 @@ impl FileLowering<'_, '_, '_, '_> {
         key: FunctionKey,
         create_header: impl FnOnce(&mut Self) -> Function,
     ) -> FunctionId {
-        debug_assert_eq!(key.home_file(), self.file, "a file declares its own functions");
+        debug_assert_eq!(
+            key.home_file(),
+            self.file,
+            "a file declares its own functions"
+        );
         let function = self.fragment.declare_function(key);
         if self.functions.header(function).is_some() {
             return function;

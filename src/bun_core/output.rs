@@ -651,7 +651,10 @@ pub mod stdio {
     /// With one of these flags `bun run` and `bun test` compile the program and then replace this process with one that runs it (`exec_self`).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn compiles_in_place(arg: &[u8]) -> bool {
-        matches!(arg, b"--aot" | b"--debug-aot" | b"--aot-log-type-mismatches")
+        matches!(
+            arg,
+            b"--aot" | b"--debug-aot" | b"--aot-log-type-mismatches"
+        )
     }
 
     pub fn init() {

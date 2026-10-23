@@ -119,20 +119,25 @@ fn last_call_counts() {
             export const target: B<unknown> = source;"#,
         ),
     ];
-    with_program(&files, &["./assigns-a.ts", "./assigns-b.ts"], 4, |program| {
-        let modules = program.files().modules.iter();
-        let calls: Vec<AtomicUsize> = modules.map(|_| AtomicUsize::new(0)).collect();
-        let build = check(program, &|_, file| {
-            calls[file.idx()].fetch_add(1, Ordering::Relaxed) + 1
-        });
-        let mut expected = ["assigns-a.ts", "assigns-b.ts"].map(|path| {
-            let file = program.file(path);
-            (file, calls[file.idx()].load(Ordering::Relaxed))
-        });
-        expected.shared_sort_unstable();
-        assert!(expected.iter().all(|&(_, count)| count != 0));
-        assert_eq!(build.program.lowered, expected);
-    });
+    with_program(
+        &files,
+        &["./assigns-a.ts", "./assigns-b.ts"],
+        4,
+        |program| {
+            let modules = program.files().modules.iter();
+            let calls: Vec<AtomicUsize> = modules.map(|_| AtomicUsize::new(0)).collect();
+            let build = check(program, &|_, file| {
+                calls[file.idx()].fetch_add(1, Ordering::Relaxed) + 1
+            });
+            let mut expected = ["assigns-a.ts", "assigns-b.ts"].map(|path| {
+                let file = program.file(path);
+                (file, calls[file.idx()].load(Ordering::Relaxed))
+            });
+            expected.shared_sort_unstable();
+            assert!(expected.iter().all(|&(_, count)| count != 0));
+            assert_eq!(build.program.lowered, expected);
+        },
+    );
 }
 
 #[test]
@@ -217,7 +222,10 @@ fn trees_stay_without_frees_trees() {
 fn task_numbers_differ_between_passes() {
     let files = [
         ("f.ts", "export function f() {\n  return 1;\n}\n"),
-        ("main.ts", "import { f } from \"./f.ts\";\nexport const a: string = f();\n"),
+        (
+            "main.ts",
+            "import { f } from \"./f.ts\";\nexport const a: string = f();\n",
+        ),
     ];
     for threads in [1, 4] {
         with_program(&files, &["./main.ts"], threads, |program| {

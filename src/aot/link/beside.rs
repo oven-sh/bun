@@ -112,8 +112,11 @@ function unused(): string {
 
     #[test]
     fn both_results_are_returned() {
-        let runners: [Beside<'_>; 3] =
-            [&run_one_after_the_other, &run_second_first, &run_on_two_threads];
+        let runners: [Beside<'_>; 3] = [
+            &run_one_after_the_other,
+            &run_second_first,
+            &run_on_two_threads,
+        ];
         for beside in runners {
             let text = vec![b'a'];
             assert_eq!(run_beside(beside, move || text, || 2), (vec![b'a'], 2));

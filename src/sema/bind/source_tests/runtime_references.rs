@@ -35,18 +35,35 @@ const CAST_INDIRECT_EVALS: &[&str] = &[
 ];
 
 const DECORATED_MEMBER_KEY_IMPORTS: &[(&str, bool)] = &[
-    (r#"import { k } from "m"; class A { @d declare [k]: number; }"#, false),
-    (r#"import { k } from "m"; abstract class A { @d abstract [k]: number; }"#, false),
-    (r#"import { k } from "m"; abstract class A { @d abstract [k](): void; }"#, true),
-    (r#"import { k } from "m"; class A { @d [k](): void; [k]() {} }"#, false),
-    (r#"import { k } from "m"; declare class A { @d [k]: number; }"#, true),
+    (
+        r#"import { k } from "m"; class A { @d declare [k]: number; }"#,
+        false,
+    ),
+    (
+        r#"import { k } from "m"; abstract class A { @d abstract [k]: number; }"#,
+        false,
+    ),
+    (
+        r#"import { k } from "m"; abstract class A { @d abstract [k](): void; }"#,
+        true,
+    ),
+    (
+        r#"import { k } from "m"; class A { @d [k](): void; [k]() {} }"#,
+        false,
+    ),
+    (
+        r#"import { k } from "m"; declare class A { @d [k]: number; }"#,
+        true,
+    ),
 ];
 
 fn block_symbol(s: &Analyzed<'_>, name: &str) -> SymbolId {
     let name = s.workspace.atom(name);
     let scopes = s.bound.scopes.iter();
     let mut blocks = scopes.filter(|scope| matches!(scope.kind, ScopeKind::Module(_)));
-    blocks.find_map(|scope| s.bound.lookup(scope.locals, name)).unwrap()
+    blocks
+        .find_map(|scope| s.bound.lookup(scope.locals, name))
+        .unwrap()
 }
 
 fn member_symbol(s: &Analyzed<'_>, block_symbol: SymbolId) -> SymbolId {
@@ -98,7 +115,11 @@ fn exported_declaration_binds_in_namespace_block() {
             for &decl in s.bound.symbol(block).decls {
                 if !matches!(decl, Decl::Interface(_)) {
                     assert_eq!(s.bound.declared_symbol(decl), block, "{text}: {decl:?}");
-                    assert_eq!(s.bound.symbol_of_declaration(decl), member, "{text}: {decl:?}");
+                    assert_eq!(
+                        s.bound.symbol_of_declaration(decl),
+                        member,
+                        "{text}: {decl:?}"
+                    );
                 }
             }
         });
@@ -119,13 +140,17 @@ fn exported_variable_is_namespace_member() {
 
 #[test]
 fn unexported_declaration_is_invisible_in_other_block() {
-    analyzed("a.ts", "namespace N { function v() {} v; } namespace N { v; }", |s| {
-        let block = block_symbol(s, "v");
-        assert_eq!(s.bound.symbol(block).export_symbol, SymbolId::NONE);
-        assert_eq!(s.bound.declared_symbol(Decl::Fn(s.function("v"))), block);
-        assert_eq!(s.binding("v", 0), Symbol(block));
-        assert_eq!(s.binding("v", 1), Free);
-    });
+    analyzed(
+        "a.ts",
+        "namespace N { function v() {} v; } namespace N { v; }",
+        |s| {
+            let block = block_symbol(s, "v");
+            assert_eq!(s.bound.symbol(block).export_symbol, SymbolId::NONE);
+            assert_eq!(s.bound.declared_symbol(Decl::Fn(s.function("v"))), block);
+            assert_eq!(s.binding("v", 0), Symbol(block));
+            assert_eq!(s.binding("v", 1), Free);
+        },
+    );
 }
 
 #[test]
@@ -153,11 +178,15 @@ fn reopened_namespace_has_block_binding_per_block() {
 
 #[test]
 fn block_binding_stores_and_eval() {
-    analyzed("a.ts", "namespace N { export function v() {} v = null!; }", |s| {
-        let block = block_symbol(s, "v");
-        assert_eq!(s.bound.stores_to(block).len(), 1);
-        assert_eq!(s.bound.stores_to(member_symbol(s, block)), []);
-    });
+    analyzed(
+        "a.ts",
+        "namespace N { export function v() {} v = null!; }",
+        |s| {
+            let block = block_symbol(s, "v");
+            assert_eq!(s.bound.stores_to(block).len(), 1);
+            assert_eq!(s.bound.stores_to(member_symbol(s, block)), []);
+        },
+    );
     let text = r#"namespace N { export function v() {} export const w = 1; eval(""); }"#;
     analyzed("a.ts", text, |s| {
         let (v, w) = (block_symbol(s, "v"), block_symbol(s, "w"));
@@ -179,16 +208,24 @@ fn entity_root_is_block_binding() {
 
 #[test]
 fn implicit_block_binding_is_visible_from_parameters() {
-    analyzed("a.cjs", "if (a) function f(x = f) { { function f() {} } }", |s| {
-        let (outer, inner) = outer_and_inner_hoists(s);
-        assert_ne!(outer.block_symbol, inner.var_symbol);
-        assert_eq!(s.binding("f", 0), Symbol(outer.block_symbol));
-    });
-    analyzed("a.cjs", "if (a) function f(x = f) { { function f() {} } f; }", |s| {
-        let (outer, inner) = outer_and_inner_hoists(s);
-        assert_eq!(s.binding("f", 0), Symbol(outer.block_symbol));
-        assert_eq!(s.binding("f", 1), Symbol(inner.var_symbol));
-    });
+    analyzed(
+        "a.cjs",
+        "if (a) function f(x = f) { { function f() {} } }",
+        |s| {
+            let (outer, inner) = outer_and_inner_hoists(s);
+            assert_ne!(outer.block_symbol, inner.var_symbol);
+            assert_eq!(s.binding("f", 0), Symbol(outer.block_symbol));
+        },
+    );
+    analyzed(
+        "a.cjs",
+        "if (a) function f(x = f) { { function f() {} } f; }",
+        |s| {
+            let (outer, inner) = outer_and_inner_hoists(s);
+            assert_eq!(s.binding("f", 0), Symbol(outer.block_symbol));
+            assert_eq!(s.binding("f", 1), Symbol(inner.var_symbol));
+        },
+    );
     analyzed("a.cjs", "if (a) function f(f) { f; }", |s| {
         let parameter = s.bound.declared_symbol(Decl::Param(s.pat("f", 0)));
         assert_eq!(s.binding("f", 0), Symbol(parameter));
@@ -201,32 +238,61 @@ fn implicit_block_binding_is_outside_function_scope() {
         let owner = CodeUnit::Function(s.function("arguments"));
         assert_eq!(s.binding("arguments", 0), Arguments(owner));
     });
-    analyzed("a.cjs", r#"if (a) function f() { eval("var f"); f; }"#, |s| {
-        let function = s.function("f");
-        let scope = s.bound.fns[function.idx()].scope;
-        let block = s.bound.declared_symbol(Decl::Fn(function));
-        assert_eq!(s.binding("f", 0), Symbol(block));
-        assert_eq!(s.bound.dynamic_lookup_scope(NodeData::Expr(s.ident("f", 0))), Some(scope));
-        assert!(s.bound.is_visible_to_eval(block));
-    });
+    analyzed(
+        "a.cjs",
+        r#"if (a) function f() { eval("var f"); f; }"#,
+        |s| {
+            let function = s.function("f");
+            let scope = s.bound.fns[function.idx()].scope;
+            let block = s.bound.declared_symbol(Decl::Fn(function));
+            assert_eq!(s.binding("f", 0), Symbol(block));
+            assert_eq!(
+                s.bound
+                    .dynamic_lookup_scope(NodeData::Expr(s.ident("f", 0))),
+                Some(scope)
+            );
+            assert!(s.bound.is_visible_to_eval(block));
+        },
+    );
     analyzed("a.cjs", "if (a) function f() { f; }", |s| {
-        assert_eq!(s.bound.dynamic_lookup_scope(NodeData::Expr(s.ident("f", 0))), None);
+        assert_eq!(
+            s.bound
+                .dynamic_lookup_scope(NodeData::Expr(s.ident("f", 0))),
+            None
+        );
     });
 }
 
 #[test]
 fn hoisted_require_initializes_catch_parameter() {
-    analyzed("a.cjs", r#"try {} catch (e) { var e = require("m"); }"#, |s| {
-        let (parameter, variable) = (s.variable("e", 0), s.variable("e", 1));
-        assert_ne!(parameter, variable);
-        assert_eq!(s.bound.initialized_binding(s.pat("e", 1)), Symbol(parameter));
-    });
+    analyzed(
+        "a.cjs",
+        r#"try {} catch (e) { var e = require("m"); }"#,
+        |s| {
+            let (parameter, variable) = (s.variable("e", 0), s.variable("e", 1));
+            assert_ne!(parameter, variable);
+            assert_eq!(
+                s.bound.initialized_binding(s.pat("e", 1)),
+                Symbol(parameter)
+            );
+        },
+    );
     analyzed("a.cjs", r#"{ var e = require("m"); }"#, |s| {
-        assert_eq!(s.bound.initialized_binding(s.pat("e", 0)), Symbol(s.variable("e", 0)));
+        assert_eq!(
+            s.bound.initialized_binding(s.pat("e", 0)),
+            Symbol(s.variable("e", 0))
+        );
     });
-    analyzed("a.cjs", r#"try {} catch (e) { { const e = require("m"); } }"#, |s| {
-        assert_eq!(s.bound.initialized_binding(s.pat("e", 1)), Symbol(s.variable("e", 1)));
-    });
+    analyzed(
+        "a.cjs",
+        r#"try {} catch (e) { { const e = require("m"); } }"#,
+        |s| {
+            assert_eq!(
+                s.bound.initialized_binding(s.pat("e", 1)),
+                Symbol(s.variable("e", 1))
+            );
+        },
+    );
 }
 
 #[test]
@@ -236,24 +302,36 @@ fn class_expression_decorator_skips_class_scopes() {
         assert_eq!(s.bound.stores_to(s.variable("C", 0)).len(), 1);
         assert_eq!(s.bound.stores_to(class), []);
     });
-    analyzed("a.ts", "function g() { let C; return @d(() => C) class C {}; }", |s| {
-        assert_eq!(s.binding("C", 0), Symbol(s.variable("C", 0)));
-    });
-    analyzed("a.ts", r#"const D = @(eval("")) class C { static m() { eval(""); } };"#, |s| {
-        let class = s.bound.class_symbol[s.class("C").idx()];
-        let lists_class = |call: ExprId| {
-            let symbols = s.bound.eval_scope(call).unwrap().symbols;
-            s.bound.ids(symbols).any(|symbol| symbol == class)
-        };
-        let [decorator, method] = calls(s)[..] else {
-            panic!("{:?}", calls(s));
-        };
-        assert!(!lists_class(decorator));
-        assert!(lists_class(method));
-    });
-    analyzed("a.ts", "function g() { let x; return @d(() => x) class {}; }", |s| {
-        assert_eq!(s.binding("x", 0), Symbol(s.variable("x", 0)));
-    });
+    analyzed(
+        "a.ts",
+        "function g() { let C; return @d(() => C) class C {}; }",
+        |s| {
+            assert_eq!(s.binding("C", 0), Symbol(s.variable("C", 0)));
+        },
+    );
+    analyzed(
+        "a.ts",
+        r#"const D = @(eval("")) class C { static m() { eval(""); } };"#,
+        |s| {
+            let class = s.bound.class_symbol[s.class("C").idx()];
+            let lists_class = |call: ExprId| {
+                let symbols = s.bound.eval_scope(call).unwrap().symbols;
+                s.bound.ids(symbols).any(|symbol| symbol == class)
+            };
+            let [decorator, method] = calls(s)[..] else {
+                panic!("{:?}", calls(s));
+            };
+            assert!(!lists_class(decorator));
+            assert!(lists_class(method));
+        },
+    );
+    analyzed(
+        "a.ts",
+        "function g() { let x; return @d(() => x) class {}; }",
+        |s| {
+            assert_eq!(s.binding("x", 0), Symbol(s.variable("x", 0)));
+        },
+    );
 }
 
 #[test]

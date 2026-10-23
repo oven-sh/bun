@@ -9,8 +9,13 @@ use crate::load::runtime_modules::RuntimeModules;
 
 pub(crate) const PATH: &[u8] = b"/$bun/types/runtime.d.ts";
 
-const NAMES_OF_EVERY_MODULE: [&[u8]; 5] =
-    [b"require", b"module", b"exports", b"__filename", b"__dirname"];
+const NAMES_OF_EVERY_MODULE: [&[u8]; 5] = [
+    b"require",
+    b"module",
+    b"exports",
+    b"__filename",
+    b"__dirname",
+];
 
 // No file declares these two: TypeScript knows them by itself.
 const NAMES_WITHOUT_DECLARATIONS: [&[u8]; 2] = [b"undefined", b"globalThis"];
@@ -74,12 +79,15 @@ pub(crate) fn text(runtime_modules: &RuntimeModules, runs_tests: bool) -> &'stat
 fn is_identifier(name: &[u8]) -> bool {
     let is_start = |byte: u8| byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$');
     name.first().is_some_and(|&first| is_start(first))
-        && name.iter().all(|&byte| is_start(byte) || byte.is_ascii_digit())
+        && name
+            .iter()
+            .all(|&byte| is_start(byte) || byte.is_ascii_digit())
 }
 
 fn collect_global_names(runs_tests: bool) -> Vec<&'static [u8]> {
     let names = (0..BuiltinName::COUNT).map(BuiltinName);
-    let globals = names.filter(|&name| !table::is_symbol_name(name) && table::global(name).is_some());
+    let globals =
+        names.filter(|&name| !table::is_symbol_name(name) && table::global(name).is_some());
     let mut names: Vec<&'static [u8]> = globals.map(table::text_of_name).collect();
     names.retain(|name| !NAMES_WITHOUT_DECLARATIONS.contains(name));
     names.extend(NAMES_OF_EVERY_MODULE);
@@ -108,7 +116,10 @@ fn write_declarations(runtime_modules: &RuntimeModules, runs_tests: bool) -> Vec
     }
     specifiers.shared_sort_unstable();
     specifiers.dedup();
-    for specifier in specifiers.iter().filter(|it| it.as_slice() != MODULE_WITH_DECLARATIONS) {
+    for specifier in specifiers
+        .iter()
+        .filter(|it| it.as_slice() != MODULE_WITH_DECLARATIONS)
+    {
         text.extend_from_slice(&[b"declare module \"", specifier.as_slice(), b"\";\n"].concat());
     }
     text
@@ -149,7 +160,10 @@ mod tests {
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
         let text = text(&runtime_modules, false);
         for name in ["undefined", "globalThis"] {
-            for line in [format!("declare var {name}: any;"), format!("type {name} = any;")] {
+            for line in [
+                format!("declare var {name}: any;"),
+                format!("type {name} = any;"),
+            ] {
                 assert!(!contains(text, line.as_bytes()), "{line}");
             }
         }
@@ -158,12 +172,18 @@ mod tests {
     #[test]
     fn test_files_have_names_of_test_runner() {
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
-        assert!(contains(text(&runtime_modules, true), b"declare var describe: any;\n"));
+        assert!(contains(
+            text(&runtime_modules, true),
+            b"declare var describe: any;\n"
+        ));
         for name in OTHER_NAMES_OF_TEST_RUNNER_MODULES {
             let module = [b"declare module \"", name, b"\";\n"].concat();
             assert!(contains(text(&runtime_modules, true), &module));
             assert!(!contains(text(&runtime_modules, false), &module));
-            assert!(contains(OTHER_NAMES_OF_TEST_RUNNER, &module[..module.len() - 2]));
+            assert!(contains(
+                OTHER_NAMES_OF_TEST_RUNNER,
+                &module[..module.len() - 2]
+            ));
         }
     }
 }

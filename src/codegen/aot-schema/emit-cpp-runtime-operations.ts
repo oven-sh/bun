@@ -162,13 +162,9 @@ function runtimeSource(schema: Schema): string[] {
     "    RELEASE_ASSERT_NOT_REACHED();",
     "}",
   ];
-  const body = blocks(
-    ["namespace JSC { namespace AOT {"],
-    arrays,
-    signatureOf,
-    addressOf,
-    ["} } // namespace JSC::AOT"],
-  );
+  const body = blocks(["namespace JSC { namespace AOT {"], arrays, signatureOf, addressOf, [
+    "} } // namespace JSC::AOT",
+  ]);
   return cppSource(['"AOTSchemaRuntimeOperations.h"'], body);
 }
 

@@ -74,7 +74,7 @@ pub fn build_id() -> Option<[u8; 16]> {
 
 pub fn write_hexadecimal(id: &[u8]) -> [u8; 32] {
     let mut text = [b'0'; 32];
-    for (byte, digits) in id.iter().zip(text.chunks_exact_mut(2)) {
+    for (byte, digits) in id.iter().zip(text.as_chunks_mut::<2>().0.iter_mut()) {
         digits[0] = b"0123456789abcdef"[usize::from(byte >> 4)];
         digits[1] = b"0123456789abcdef"[usize::from(byte & 15)];
     }

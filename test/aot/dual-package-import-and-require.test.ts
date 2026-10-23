@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { describe, test } from "./supported";
 
 // One file that both imports and requires a package whose "exports" give `import` and `require` a different file. Each gets its own.
 
@@ -86,7 +86,9 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("dual-package", { ...files, [entry]: programs[entry] });
     const plain = await run([bunExe(), "run", entry], String(dir));
-    const aot = await run([bunExe(), "run", "--debug-aot", entry], String(dir), { BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const aot = await run([bunExe(), "run", "--debug-aot", entry], String(dir), {
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+    });
     expect(plain.exitCode).toBe(0);
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
@@ -95,7 +97,13 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     using dir = tempDir("dual-package-compiled", { ...files, [entry]: programs[entry] });
     const plain = await run([bunExe(), "run", entry], String(dir));
     const build = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], String(dir));
-    expect({ stderr: build.stderr.split("\n").filter(line => line.startsWith("error")).join("\n"), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({
+      stderr: build.stderr
+        .split("\n")
+        .filter(line => line.startsWith("error"))
+        .join("\n"),
+      exitCode: build.exitCode,
+    }).toEqual({ stderr: "", exitCode: 0 });
     const aot = await run([join(String(dir), "program")], String(dir));
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });

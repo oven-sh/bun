@@ -32,5 +32,9 @@ test.skipIf(process.platform === "win32")("history of a readline interface and o
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ lines: stdout.trimEnd().split("\n"), stderr, exitCode }).toEqual({ lines: expected, stderr: "", exitCode: 0 });
+  expect({ lines: stdout.trimEnd().split("\n"), stderr, exitCode }).toEqual({
+    lines: expected,
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -16,25 +16,27 @@ const program = `
 
 function bodyOf(dump: string, name: string) {
   const lines = dump.split("\n");
-  const start = lines.findIndex(line => line.startsWith("function ") && line.includes(` name="${name}" `) && line.includes(" role=Library "));
+  const start = lines.findIndex(
+    line => line.startsWith("function ") && line.includes(` name="${name}" `) && line.includes(" role=Library "),
+  );
   expect(start).toBeGreaterThanOrEqual(0);
   return lines.slice(start, lines.indexOf("}", start));
 }
 
 describe("the ticks of the library", () => {
   for (const shortcut of ["queueTick1", "queueTick2"]) {
-    test(
-      `${shortcut} asks whether process.nextTick is the library's own`,
-      async () => {
-        using dir = tempDir("aot-library-ticks", { "main.mjs": program });
-        const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "Selected", BUN_JSC_aotFunctionToDump: shortcut };
-        const build = await spawned([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "main"], String(dir), env);
-        built(build);
-        const body = bodyOf(build.stdout + build.stderr, shortcut);
-        expect(body.some(line => line.includes(" = StrictEq "))).toBe(true);
-        expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
-      },
-      240_000,
-    );
+    test(`${shortcut} asks whether process.nextTick is the library's own`, async () => {
+      using dir = tempDir("aot-library-ticks", { "main.mjs": program });
+      const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "Selected", BUN_JSC_aotFunctionToDump: shortcut };
+      const build = await spawned(
+        [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "main"],
+        String(dir),
+        env,
+      );
+      built(build);
+      const body = bodyOf(build.stdout + build.stderr, shortcut);
+      expect(body.some(line => line.includes(" = StrictEq "))).toBe(true);
+      expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
+    }, 240_000);
   }
 });

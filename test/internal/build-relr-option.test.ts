@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 
 import { binaryExpectations } from "../../scripts/build/binary-expectations.ts";
-import { glibcLoadsPackedRelocations, resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import {
+  glibcLoadsPackedRelocations,
+  resolveConfig,
+  type Config,
+  type PartialConfig,
+  type Toolchain,
+} from "../../scripts/build/config.ts";
 import { computeFlags } from "../../scripts/build/flags.ts";
 
 function mockToolchain(): Toolchain {
@@ -41,7 +47,19 @@ function mockToolchain(): Toolchain {
 }
 
 function config(partial: PartialConfig, buildDir: string): Config {
-  return resolveConfig({ os: "linux", arch: "x64", abi: "gnu", buildType: "Release", webkit: "local", buildDir, linuxSysroot: buildDir, ...partial }, mockToolchain());
+  return resolveConfig(
+    {
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      buildType: "Release",
+      webkit: "local",
+      buildDir,
+      linuxSysroot: buildDir,
+      ...partial,
+    },
+    mockToolchain(),
+  );
 }
 
 const packs = "-Wl,-z,pack-relative-relocs";
@@ -68,5 +86,12 @@ test("it is refused where the target is not Linux with glibc", () => {
 });
 
 test("glibc reads them from 2.36 on", () => {
-  expect(["2.17", "2.31", "2.35", "2.36", "2.41", "3.0"].map(glibcLoadsPackedRelocations)).toEqual([false, false, false, true, true, true]);
+  expect(["2.17", "2.31", "2.35", "2.36", "2.41", "3.0"].map(glibcLoadsPackedRelocations)).toEqual([
+    false,
+    false,
+    false,
+    true,
+    true,
+    true,
+  ]);
 });

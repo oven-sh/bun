@@ -46,7 +46,9 @@ struct UnitOutput {
 
 // A file may be in the build for the types it declares alone. Nothing loads it then, so the program has no record of it.
 fn forget_module_without_record(layout: &mut Layout, map: &IdMap<'_>) {
-    let has_record = layout.module.is_none_or(|module| map.modules[module.index()].is_some());
+    let has_record = layout
+        .module
+        .is_none_or(|module| map.modules[module.index()].is_some());
     if layout.kind == LayoutKind::Record && !has_record {
         layout.module = None;
         layout.position = 0;
@@ -106,7 +108,10 @@ impl DefinitionMover<'_> {
         let members = self.builtin_members;
         let start = members.partition_point(|&(owner, _)| owner < function_type);
         let members = members[start..].iter();
-        members.take_while(|&&(owner, _)| owner == function_type).map(|&(_, builtin)| builtin).collect()
+        members
+            .take_while(|&&(owner, _)| owner == function_type)
+            .map(|&(_, builtin)| builtin)
+            .collect()
     }
 
     fn move_unit(&self, index: u32, unit: &mut LinkUnit) -> UnitOutput {
@@ -116,11 +121,15 @@ impl DefinitionMover<'_> {
         let defined = &self.defined;
         let mut output = UnitOutput::default();
         let mut next_function = None;
-        for (merged, mut function) in
-            defined.functions.take_from(index, &mut unit.function_definitions)
+        for (merged, mut function) in defined
+            .functions
+            .take_from(index, &mut unit.function_definitions)
         {
             let id = program_id(&numbering.functions, merged).index();
-            assert!(next_function.is_none_or(|next| next == id), "program ids follow the order of the unit");
+            assert!(
+                next_function.is_none_or(|next| next == id),
+                "program ids follow the order of the unit"
+            );
             next_function = Some(id + 1);
             // The record stays where it is, with the ids of its unit. Only one that several keys share is copied.
             let record = Arc::make_mut(&mut function);
@@ -128,8 +137,9 @@ impl DefinitionMover<'_> {
             record.builtin_members = self.builtin_members_of(merged);
             output.functions.push(function);
         }
-        for (merged, site, is_chosen, mut layout) in
-            defined.layouts.take_retained_from(index, &mut unit.layout_definitions)
+        for (merged, site, is_chosen, mut layout) in defined
+            .layouts
+            .take_retained_from(index, &mut unit.layout_definitions)
         {
             let id = program_id(&numbering.layouts, merged);
             forget_module_without_record(&mut layout, &map);
@@ -146,8 +156,9 @@ impl DefinitionMover<'_> {
                 output.other_layout_definitions.push((id, layout));
             }
         }
-        for (merged, mut variable) in
-            defined.variables.take_from(index, &mut unit.variable_definitions)
+        for (merged, mut variable) in defined
+            .variables
+            .take_from(index, &mut unit.variable_definitions)
         {
             variable.remap_ids(&map);
             let id = program_id(&numbering.variables, merged);
@@ -231,7 +242,10 @@ fn join_records<I: Id + Send, T: Send>(
     for_each_mut(&mut tasks, in_parallel, &|(first, list, slots)| {
         let numbered_slots = (*first..).zip(slots.iter_mut());
         for ((id, record), (index, slot)) in take(list).into_iter().zip(numbered_slots) {
-            assert!(id.index() == index, "program ids follow the order of the units");
+            assert!(
+                id.index() == index,
+                "program ids follow the order of the units"
+            );
             slot.write(record);
         }
     });
@@ -365,10 +379,17 @@ pub(super) fn move_definitions(
         let name = strings.intern(input.atoms.bytes(export.name));
         let module = numbering.modules[export.module as usize]
             .expect("the mark keeps the module of a retained synthetic export");
-        variables.insert(export.id, synthetic_export_variable(name, module, export.writer));
+        variables.insert(
+            export.id,
+            synthetic_export_variable(name, module, export.writer),
+        );
     }
     let (type_sites, expected_results, eval_scopes, data) = joined;
-    assert_eq!(functions.iter().map(Vec::len).sum::<usize>(), counts.functions, "every program id has a record");
+    assert_eq!(
+        functions.iter().map(Vec::len).sum::<usize>(),
+        counts.functions,
+        "every program id has a record"
+    );
     ProgramTables {
         functions_by_unit: functions,
         layouts,

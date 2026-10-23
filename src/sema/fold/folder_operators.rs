@@ -192,7 +192,11 @@ impl<'s> Folder<'_, 's> {
     fn is_nullish(&self, e: ExprId) -> Option<bool> {
         match self.folded(e).value {
             Value::Known(value) => Some(self.evaluator.is_nullish(value)),
-            Value::Unknown => self.conditions.get(&e).is_some_and(|&it| it).then_some(false),
+            Value::Unknown => self
+                .conditions
+                .get(&e)
+                .is_some_and(|&it| it)
+                .then_some(false),
         }
     }
 

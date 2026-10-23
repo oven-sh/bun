@@ -65,7 +65,10 @@ impl Walker<'_, '_> {
     }
 
     pub(super) fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
-        self.push_task(Task::MarkCreated(id), self.create_function_context(function, id));
+        self.push_task(
+            Task::MarkCreated(id),
+            self.create_function_context(function, id),
+        );
         self.push_function_code(function, id);
     }
 
@@ -306,7 +309,9 @@ impl Walker<'_, '_> {
         if kind == FnKind::Constructor {
             self.record_slot_store(context, scope, ScopeSlot::This);
             self.use_lexical_slot(context, ScopeSlot::Callee);
-            self.walk.function_references.push((context.function, function));
+            self.walk
+                .function_references
+                .push((context.function, function));
         }
     }
 

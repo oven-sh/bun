@@ -12,11 +12,10 @@ use bun_sema::hir::ExprId;
 use bun_sema::hir_from_data::HostValue;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
-    CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest, EnclosingPackage,
-    ExternalKind, FileStamp, FinishedFile, Host, HostPayload, HostResolution, LoaderRequest,
-    MacroRequest,
-    ModuleDetection, ParsedCode, ScriptKind, TransformRequest, TreeChange,
-    is_declaration_file_name, to_path, to_path_in,
+    CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
+    EnclosingPackage, ExternalKind, FileStamp, FinishedFile, Host, HostPayload, HostResolution,
+    LoaderRequest, MacroRequest, ModuleDetection, ParsedCode, ScriptKind, TransformRequest,
+    TreeChange, is_declaration_file_name, to_path, to_path_in,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
@@ -41,10 +40,10 @@ use crate::load::loaders::{
     loader_by_name, loader_by_path, script_kind_of, script_loader, to_host_loader,
 };
 use crate::load::macros::{self, MacroInput};
+use crate::load::named_loads::find_library_modules_named_in_choices;
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_declarations;
-use crate::load::named_loads::find_library_modules_named_in_choices;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
@@ -53,7 +52,6 @@ use crate::load::typed_packages::TypedPackages;
 use crate::options::Options;
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
-
 
 pub(crate) fn create_disk(options: &Options<'_>, threads: NonZeroUsize) -> Disk {
     let load = &options.load;
@@ -217,9 +215,7 @@ impl LoadHost<'_> {
                     && !is_declaration_file_name(path)
                     && self.default_loader(path) != Loader::Html
             }
-            ServedBy::EvaluatedText
-            | ServedBy::Declarations(_)
-            | ServedBy::TypedFile(_) => false,
+            ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::TypedFile(_) => false,
         }
     }
 
@@ -276,7 +272,10 @@ impl LoadHost<'_> {
                     continue;
                 }
             };
-            if self.plugin_loader(path).is_some_and(|loader| loader != Loader::File) {
+            if self
+                .plugin_loader(path)
+                .is_some_and(|loader| loader != Loader::File)
+            {
                 are_assets = false;
                 continue;
             }
@@ -292,7 +291,8 @@ impl LoadHost<'_> {
             let _ = messages.with_log(|log| provider.check_embedded_files(log));
         }
         if !are_assets {
-            self.background_reads_disabled.store(true, Ordering::Release);
+            self.background_reads_disabled
+                .store(true, Ordering::Release);
         }
         are_assets
     }
@@ -373,9 +373,7 @@ impl Host for LoadHost<'_> {
             return self.disk.is_file(path);
         }
         match self.served_by(path) {
-            ServedBy::PluginModule
-            | ServedBy::EvaluatedText
-            | ServedBy::Declarations(_) => true,
+            ServedBy::PluginModule | ServedBy::EvaluatedText | ServedBy::Declarations(_) => true,
             ServedBy::TypedFile(_) | ServedBy::Disk => false,
         }
     }
@@ -478,7 +476,10 @@ impl CodeHost for LoadHost<'_> {
 
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         let working_directory = &self.input.options.code.working_directory;
-        match self.plugins.directory_of_virtual_module(path, working_directory) {
+        match self
+            .plugins
+            .directory_of_virtual_module(path, working_directory)
+        {
             Some(directory) => Cow::Owned(directory),
             None => Cow::Borrowed(dirname::<Posix>(path)),
         }
@@ -493,14 +494,13 @@ impl CodeHost for LoadHost<'_> {
         modules.into_iter().map(HostResolution::Module).collect()
     }
 
-    fn typed_version(
-        &self,
-        path: &[u8],
-        package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
+    fn typed_version(&self, path: &[u8], package: Option<EnclosingPackage<'_>>) -> Option<Vec<u8>> {
         // A typed version whose sound.json does not fit what is installed is not used: the build says so and goes on.
         let packages = self.input.typed_packages;
-        if packages.find_manifest_mismatch(package?, self.input.defined).is_some() {
+        if packages
+            .find_manifest_mismatch(package?, self.input.defined)
+            .is_some()
+        {
             return None;
         }
         packages.typed_version(path, package)
@@ -735,13 +735,23 @@ impl CodeHost for LoadHost<'_> {
         };
         let forbids_text_evaluation = self.input.options.aot.forbids_text_evaluation;
         let texts = (!forbids_text_evaluation).then_some(&self.evaluated_texts);
-        let mut answers =
-            builtin_uses::finish_application_file(&input, texts, needs_declarations, request, source);
+        let mut answers = builtin_uses::finish_application_file(
+            &input,
+            texts,
+            needs_declarations,
+            request,
+            source,
+        );
         let runtime_modules = self.input.runtime_modules;
-        let named = find_library_modules_named_in_choices(request, &source.builtins, runtime_modules);
-        let modules = named.iter().map(|it| HostModuleId(it.module.registry_id()));
+        let named =
+            find_library_modules_named_in_choices(request, &source.builtins, runtime_modules);
+        let modules = named
+            .modules
+            .iter()
+            .map(|it| HostModuleId(it.module.registry_id()));
         answers.extend(modules.map(HostResolution::Module));
-        source.modules_named_in_choices = named;
+        source.modules_named_in_choices = named.modules;
+        source.library_names_passed_to_imports = named.passed_to_imports;
         answers
     }
 }

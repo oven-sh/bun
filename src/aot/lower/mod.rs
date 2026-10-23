@@ -135,11 +135,7 @@ fn lower_function(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId)
     }
 }
 
-fn lower_source_body(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    source: FnId,
-) {
+fn lower_source_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId, source: FnId) {
     let written = FunctionRef {
         file: file.file,
         function: source,
@@ -148,7 +144,12 @@ fn lower_source_body(
         function::lower_left_out_function(file, function);
         return;
     }
-    if file.inputs.modules.inner_module(file.file, source).is_some() {
+    if file
+        .inputs
+        .modules
+        .inner_module(file.file, source)
+        .is_some()
+    {
         commonjs::lower_inner_module_body(file, function, source);
         return;
     }

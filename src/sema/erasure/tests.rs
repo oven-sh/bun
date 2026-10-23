@@ -429,10 +429,16 @@ fn empty_files_are_exact() {
 #[test]
 fn mismatch_kind_names_differing_part() {
     assert_eq!(mismatch_kind(identifier(A), identifier(A)), None);
-    assert_eq!(mismatch_kind(identifier(A), identifier(B)), Some(Kind::Name));
+    assert_eq!(
+        mismatch_kind(identifier(A), identifier(B)),
+        Some(Kind::Name)
+    );
     let this = Tree::default().with_expr_stmt(ExprKind::This);
     assert_eq!(mismatch_kind(identifier(A), this), Some(Kind::NodeKind));
-    assert_eq!(mismatch_kind(number(0.0), number(-0.0)), Some(Kind::Literal));
+    assert_eq!(
+        mismatch_kind(number(0.0), number(-0.0)),
+        Some(Kind::Literal)
+    );
     assert_eq!(mismatch_kind(number(f64::NAN), number(f64::NAN)), None);
     let kind = mismatch_kind(unary(UnOp::Plus), unary(UnOp::Minus));
     assert_eq!(kind, Some(Kind::Operator));
@@ -482,13 +488,21 @@ fn syntax_errors_are_unknown() {
         assert_eq!(erasure(typed, Tree::default()), Erasure::Unknown, "{index}");
         let mut untyped = Tree::default();
         mark(&mut untyped.file);
-        assert_eq!(erasure(Tree::default(), untyped), Erasure::Unknown, "{index}");
+        assert_eq!(
+            erasure(Tree::default(), untyped),
+            Erasure::Unknown,
+            "{index}"
+        );
     }
 }
 
 #[test]
 fn other_diagnostics_are_no_syntax_errors() {
-    for kind in [DiagnosticKind::Grammar, DiagnosticKind::Checker, DiagnosticKind::JsDoc] {
+    for kind in [
+        DiagnosticKind::Grammar,
+        DiagnosticKind::Checker,
+        DiagnosticKind::JsDoc,
+    ] {
         let mut typed = Tree::default();
         typed.file.error(kind, 0, 0, 1);
         assert_eq!(erasure(typed, Tree::default()), Erasure::Exact, "{kind:?}");
@@ -504,16 +518,28 @@ fn typed_file_cannot_add_pure_annotation() {
 
 #[test]
 fn deferred_import_is_compared() {
-    assert_eq!(mismatch_kind(import_call(true), import_call(false)), Some(Kind::Flags));
-    assert_eq!(mismatch_kind(import_call(false), import_call(true)), Some(Kind::Flags));
+    assert_eq!(
+        mismatch_kind(import_call(true), import_call(false)),
+        Some(Kind::Flags)
+    );
+    assert_eq!(
+        mismatch_kind(import_call(false), import_call(true)),
+        Some(Kind::Flags)
+    );
     assert_eq!(mismatch_kind(import_call(true), import_call(true)), None);
 }
 
 #[test]
 fn parentheses_inside_assertion_end_chain() {
     let installed = || member_of_chain(true, false);
-    assert_eq!(mismatch_kind(member_of_chain(true, true), installed()), None);
-    assert_eq!(mismatch_kind(member_of_chain(false, true), installed()), Some(Kind::Flags));
+    assert_eq!(
+        mismatch_kind(member_of_chain(true, true), installed()),
+        None
+    );
+    assert_eq!(
+        mismatch_kind(member_of_chain(false, true), installed()),
+        Some(Kind::Flags)
+    );
 }
 
 #[test]
@@ -521,7 +547,10 @@ fn erased_export_cannot_select_esm() {
     let erased_export = || Tree::default().with_stmt(StmtKind::ExportAsNamespace(A));
     let expected = mismatch(Kind::EmitsCode, NodeData::Stmt(StmtId(0)), NodeData::File);
     assert_eq!(erasure(erased_export(), Tree::default()), expected);
-    let (typed, untyped) = (default_export(erased_export()), default_export(Tree::default()));
+    let (typed, untyped) = (
+        default_export(erased_export()),
+        default_export(Tree::default()),
+    );
     assert_eq!(mismatch_kind(typed, untyped), None);
 }
 
@@ -530,7 +559,10 @@ fn erased_type_import_selects_no_format() {
     assert_eq!(mismatch_kind(import_statement(true), Tree::default()), None);
     let kind = mismatch_kind(import_statement(false), Tree::default());
     assert_eq!(kind, Some(Kind::ChildCount));
-    assert_eq!(mismatch_kind(import_statement(false), import_statement(false)), None);
+    assert_eq!(
+        mismatch_kind(import_statement(false), import_statement(false)),
+        None
+    );
 }
 
 #[test]
@@ -626,18 +658,33 @@ fn declared_field_is_erased_in_typed_file_only() {
 fn accessor_field_emits_code() {
     let member = NodeData::Member(MemberId(0));
     let expected = mismatch(Kind::EmitsCode, member, member);
-    let found = erasure(class_with_field(Flags::ACCESSOR), class_with_field(Flags::ACCESSOR));
+    let found = erasure(
+        class_with_field(Flags::ACCESSOR),
+        class_with_field(Flags::ACCESSOR),
+    );
     assert_eq!(found, expected);
-    let kind = mismatch_kind(class_with_field(Flags::empty()), class_with_field(Flags::empty()));
+    let kind = mismatch_kind(
+        class_with_field(Flags::empty()),
+        class_with_field(Flags::empty()),
+    );
     assert_eq!(kind, None);
 }
 
 #[test]
 fn with_is_no_block() {
     assert_eq!(mismatch_kind(with_statement(), with_statement()), None);
-    assert_eq!(mismatch_kind(with_statement(), block_statement()), Some(Kind::NodeKind));
-    assert_eq!(mismatch_kind(block_statement(), with_statement()), Some(Kind::NodeKind));
-    assert_eq!(mismatch_kind(with_statement(), while_statement()), Some(Kind::NodeKind));
+    assert_eq!(
+        mismatch_kind(with_statement(), block_statement()),
+        Some(Kind::NodeKind)
+    );
+    assert_eq!(
+        mismatch_kind(block_statement(), with_statement()),
+        Some(Kind::NodeKind)
+    );
+    assert_eq!(
+        mismatch_kind(with_statement(), while_statement()),
+        Some(Kind::NodeKind)
+    );
 }
 
 #[test]
@@ -667,6 +714,10 @@ fn jsx_without_installed_operand_emits_code() {
     let text = typed.expr(ExprKind::JsxText(A));
     let typed = typed.with_stmt(StmtKind::Return(text));
     let untyped = Tree::default().with_stmt(StmtKind::Return(ExprId::NONE));
-    let expected = mismatch(Kind::EmitsCode, NodeData::Expr(text), NodeData::Stmt(StmtId(0)));
+    let expected = mismatch(
+        Kind::EmitsCode,
+        NodeData::Expr(text),
+        NodeData::Stmt(StmtId(0)),
+    );
     assert_eq!(erasure(typed, untyped), expected);
 }

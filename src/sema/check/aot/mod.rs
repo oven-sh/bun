@@ -33,11 +33,11 @@ mod written_type;
 pub mod written_union_order;
 
 pub use answers::{
-    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef,
-    ClassShape, EnumConstant, FunctionRef, GaveUp, IndexKey, IndexSignature, ListedMember, MemberLookup, MemberName,
-    ObjectMember, ObjectMemberKind, PositionTypes, QueryStatistics, SchemaConstraint, SchemaDefault,
-    SchemaFormat, SignatureParameter, SignatureShape, SymbolCreation, TypeArgument, TypeDisplayName,
-    TypeParameterRef, WrittenType,
+    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
+    ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexKey, IndexSignature,
+    ListedMember, MemberLookup, MemberName, ObjectMember, ObjectMemberKind, PositionTypes,
+    QueryStatistics, SchemaConstraint, SchemaDefault, SchemaFormat, SignatureParameter,
+    SignatureShape, SymbolCreation, TypeArgument, TypeDisplayName, TypeParameterRef, WrittenType,
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
@@ -45,8 +45,8 @@ pub use builtin_types::{
 };
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
-pub use kept_answers::KeptFact;
 pub(crate) use kept_answers::KeptAnswers;
+pub use kept_answers::KeptFact;
 pub use left_out_bodies::LeftOutBodies;
 pub use program_symbols::COMPILER_DECLARATIONS_PATH;
 pub use prototype_links::{NamedValue, NamedValues, PrototypeOperation};

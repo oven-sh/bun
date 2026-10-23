@@ -127,7 +127,7 @@ fn skip_opening_parentheses(text: &[u8], mut at: usize) -> usize {
         let rest = text.get(at..).unwrap_or_default();
         at += match rest {
             [b'(' | b' ' | b'\t' | b'\n' | b'\r', ..] => 1,
-            [b'/', b'*', ..] => match rest.windows(2).position(|it| it == b"*/") {
+            [b'/', b'*', ..] => match bun_core::strings::index_of(rest, b"*/") {
                 Some(end) => end + 2,
                 None => return at,
             },

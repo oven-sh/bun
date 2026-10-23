@@ -4,7 +4,10 @@ use crate::load::source_provider::WithoutServices;
 use std::num::NonZeroU32;
 
 const PROGRAM: [(&str, &str); 2] = [
-    ("a.ts", "import { b } from \"./b\";\nexport const a: number = b + 1;"),
+    (
+        "a.ts",
+        "import { b } from \"./b\";\nexport const a: number = b + 1;",
+    ),
     ("b.ts", "export const b: number = 1;"),
 ];
 
@@ -42,7 +45,10 @@ fn steps_of_link_and_emit_are_timed() {
         let times = STEPS_OF_LINK_AND_EMIT.map(|step| statistics.get(step));
         assert!(times.iter().all(|&time| time > 0), "{times:?}");
         let stage_time = statistics.get(Stage::LinkAndEmit.time());
-        assert!(times.iter().sum::<u64>() <= stage_time, "{times:?} in {stage_time}");
+        assert!(
+            times.iter().sum::<u64>() <= stage_time,
+            "{times:?} in {stage_time}"
+        );
     }
 }
 

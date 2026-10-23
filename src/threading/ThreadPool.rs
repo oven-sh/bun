@@ -264,14 +264,20 @@ impl ThreadPool {
 
     /// From now on the pool starts no thread while it has `count` or more. Tasks wait for the threads there are.
     pub fn limit_threads(&self, count: usize) {
-        let count = u32::try_from(count).unwrap_or(u32::MAX).clamp(1, self.max_threads);
+        let count = u32::try_from(count)
+            .unwrap_or(u32::MAX)
+            .clamp(1, self.max_threads);
         self.allowed_threads.store(count, Ordering::Relaxed);
     }
 
     /// Raises the limit of `limit_threads` to `count`, if it's lower. Tasks that wait for a thread get one.
     pub fn allow_threads(&self, count: usize) {
-        let count = u32::try_from(count).unwrap_or(u32::MAX).clamp(1, self.max_threads);
-        if self.allowed_threads.fetch_max(count, Ordering::Relaxed) < count && self.has_waiting_task() {
+        let count = u32::try_from(count)
+            .unwrap_or(u32::MAX)
+            .clamp(1, self.max_threads);
+        if self.allowed_threads.fetch_max(count, Ordering::Relaxed) < count
+            && self.has_waiting_task()
+        {
             self.notify_slow(false);
         }
     }
@@ -794,7 +800,8 @@ impl ThreadPool {
     }
 }
 
-pub const POOL_THREAD_STACK_SIZE: u32 = if cfg!(bun_asan) { 8 } else { 1 } * DEFAULT_THREAD_STACK_SIZE;
+pub const POOL_THREAD_STACK_SIZE: u32 =
+    if cfg!(bun_asan) { 8 } else { 1 } * DEFAULT_THREAD_STACK_SIZE;
 
 pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     // 4mb

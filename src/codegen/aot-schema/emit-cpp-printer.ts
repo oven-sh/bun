@@ -7,7 +7,17 @@ import {
   isEmbeddedInEngineRecords,
   twoWordScalars,
 } from "./cpp-types.ts";
-import { blocks, cppHeader, cppLiteral, cppSource, groupedCases, indent, indentation, inNamespace, pack } from "./lines.ts";
+import {
+  blocks,
+  cppHeader,
+  cppLiteral,
+  cppSource,
+  groupedCases,
+  indent,
+  indentation,
+  inNamespace,
+  pack,
+} from "./lines.ts";
 import type { Entry, Field, Kind, Schema, SchemaType, Variant } from "./model.ts";
 import { entriesOf, fieldsOf, isId, isNested, nameOf } from "./model.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
@@ -31,7 +41,9 @@ function isList(kind: Kind): kind is ListKind {
 
 export function printedTypes(schema: Schema): SchemaType[] {
   const own = engineTypesInDependencyOrder(schema).filter(type => !(type.tag === "Record" && type.record.isCustomText));
-  const abi = schema.types.filter(type => type.tag === "Record" && type.record.form === "abi" && isEmbeddedInEngineRecords(schema, type));
+  const abi = schema.types.filter(
+    type => type.tag === "Record" && type.record.form === "abi" && isEmbeddedInEngineRecords(schema, type),
+  );
   return [...abi, ...own];
 }
 
@@ -72,8 +84,10 @@ function typedValue(schema: Schema, kind: Kind, isOptional: boolean, expression:
   const isUInt8 = kind.tag === "Scalar" && kind.scalar === "UInt8";
   if (inAbi) {
     if (isId(kind)) return `${engineTypeOf(kind)}(${expression})`;
-    if (kind.tag === "Enum") return isAbiEnum(schema, kind) && !isOptional ? expression : `static_cast<${kind.type.name}>(${expression})`;
-    if (kind.tag === "Flags") return `OptionSet<${kind.type.name}>::fromRaw(static_cast<OptionSet<${kind.type.name}>::StorageType>(${expression}))`;
+    if (kind.tag === "Enum")
+      return isAbiEnum(schema, kind) && !isOptional ? expression : `static_cast<${kind.type.name}>(${expression})`;
+    if (kind.tag === "Flags")
+      return `OptionSet<${kind.type.name}>::fromRaw(static_cast<OptionSet<${kind.type.name}>::StorageType>(${expression}))`;
     if (kind.tag === "Scalar" && kind.scalar === "Bool") return `!!${expression}`;
     return isUInt8 ? `static_cast<uint32_t>(${expression})` : expression;
   }
@@ -114,11 +128,15 @@ export function presenceTest(
   if (isId(kind)) return isOptional ? expression : null;
   if (isOptional) return expression;
   if (kind.tag === "Enum") {
-    return kind.type.isGenerated ? `static_cast<uint32_t>(${expression})` : `${expression} != ${kind.type.name}::${kind.type.members[0].name}`;
+    return kind.type.isGenerated
+      ? `static_cast<uint32_t>(${expression})`
+      : `${expression} != ${kind.type.name}::${kind.type.members[0].name}`;
   }
   if (kind.tag === "External") return `static_cast<uint32_t>(${expression})`;
   if (kind.tag === "Flags") {
-    return hasEngineMembers(schema, kind) && !forZeroTest ? `!printedFlags(printer, ${expression}).isEmpty()` : `!${expression}.isEmpty()`;
+    return hasEngineMembers(schema, kind) && !forZeroTest
+      ? `!printedFlags(printer, ${expression}).isEmpty()`
+      : `!${expression}.isEmpty()`;
   }
   if (kind.tag === "Scalar" && kind.scalar === "Double") return `std::bit_cast<uint64_t>(${expression})`;
   if (kind.tag === "PlacedWord") return `${expression}.value()`;
@@ -141,7 +159,8 @@ function valueStatements(schema: Schema, value: PrintedValue): string[] {
       return [`printer.beginField(${name});`, `printVariant(printer, ${expression});`];
     case "Span":
     case "List":
-      if (kind.element.tag === "Scalar" && kind.element.scalar === "Byte") return [`printer.field(${name}, ${expression});`];
+      if (kind.element.tag === "Scalar" && kind.element.scalar === "Byte")
+        return [`printer.field(${name}, ${expression});`];
       return [
         `printer.beginField(${name});`,
         `printer.list(${expression}, [&](const auto& element) {`,
@@ -171,7 +190,14 @@ function printStatements(schema: Schema, value: PrintedValue): string[] {
   return [`if (${test}) {`, ...indent(body), "}"];
 }
 
-function fieldsFunction(schema: Schema, typeName: string, fields: readonly Field[], inAbi: boolean, isStatic: boolean, isWire: boolean): string[] {
+function fieldsFunction(
+  schema: Schema,
+  typeName: string,
+  fields: readonly Field[],
+  inAbi: boolean,
+  isStatic: boolean,
+  isWire: boolean,
+): string[] {
   const statementsOf = (field: Field): string[] =>
     printStatements(schema, {
       name: field.name,
@@ -212,7 +238,9 @@ function zeroFunction(schema: Schema, type: SchemaType): string[] {
     const first = type.variant.cases[0];
     const tests = [
       `variant.kind() == ${name}::Kind::${first.name}`,
-      ...first.fields.map(field => zeroTest(schema, field, `variant.as<${name}::${first.name}>().${field.name}`, false)),
+      ...first.fields.map(field =>
+        zeroTest(schema, field, `variant.as<${name}::${first.name}>().${field.name}`, false),
+      ),
     ];
     return [`static bool isZero(const ${name}& variant)`, "{", `${indentation}return ${tests.join(" && ")};`, "}"];
   }
@@ -240,7 +268,10 @@ function nestedTypeNames(schema: Schema): Set<string> {
 function variantFunction(schema: Schema, variant: Variant): string[] {
   const cases = variant.cases.map(variantCase => ({
     label: variantCase.name,
-    body: variantCase.fields.length === 0 ? ["return;"] : [`printRecord(printer, variant.as<${variant.name}::${variantCase.name}>());`, "return;"],
+    body:
+      variantCase.fields.length === 0
+        ? ["return;"]
+        : [`printRecord(printer, variant.as<${variant.name}::${variantCase.name}>());`, "return;"],
   }));
   return [
     `void printVariant(IRPrinter& printer, const ${variant.name}& variant)`,
@@ -283,7 +314,16 @@ function recordPrinterSource(schema: Schema): string[] {
   const functions = types.flatMap(type => {
     if (type.tag === "Record") {
       const { form } = type.record;
-      return [fieldsFunction(schema, engineRecordNameOf(type.record), printedFields(schema, type), form === "abi", false, form === "wire")];
+      return [
+        fieldsFunction(
+          schema,
+          engineRecordNameOf(type.record),
+          printedFields(schema, type),
+          form === "abi",
+          false,
+          form === "wire",
+        ),
+      ];
     }
     const variant = type.variant;
     const caseFunctions = casesWithFields(variant).map(variantCase =>
@@ -293,9 +333,16 @@ function recordPrinterSource(schema: Schema): string[] {
   });
   const caseDeclarations = types.flatMap(type => {
     if (type.tag === "Record") return [];
-    return casesWithFields(type.variant).map(variantCase => `static void printFields(IRPrinter&, const ${type.variant.name}::${variantCase.name}&);`);
+    return casesWithFields(type.variant).map(
+      variantCase => `static void printFields(IRPrinter&, const ${type.variant.name}::${variantCase.name}&);`,
+    );
   });
-  const body = blocks(caseDeclarations, printRecordHelpers, ...zeroFunctions(schema, nestedTypeNames(schema)), ...functions);
+  const body = blocks(
+    caseDeclarations,
+    printRecordHelpers,
+    ...zeroFunctions(schema, nestedTypeNames(schema)),
+    ...functions,
+  );
   return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
 }
 
@@ -331,7 +378,10 @@ function printEntry(schema: Schema, entry: Entry, subject: string, optionalNames
     if (parameter.tag === "Operand") {
       if (!parameter.isEngine) return [];
       const operand = `${subject}.operand(${parameter.index})`;
-      return [`if (printsEngineFields && ${operand})`, `${indentation}printer.field(${cppLiteral(parameter.name)}, ${operand});`];
+      return [
+        `if (printsEngineFields && ${operand})`,
+        `${indentation}printer.field(${cppLiteral(parameter.name)}, ${operand});`,
+      ];
     }
     return printStatements(schema, {
       name: parameter.name,
@@ -346,7 +396,14 @@ function printEntry(schema: Schema, entry: Entry, subject: string, optionalNames
   return [...statements, "break;"];
 }
 
-function entryFunction(schema: Schema, entries: readonly Entry[], typeName: string, subject: string, tag: string, enumName: string): string[] {
+function entryFunction(
+  schema: Schema,
+  entries: readonly Entry[],
+  typeName: string,
+  subject: string,
+  tag: string,
+  enumName: string,
+): string[] {
   const optionalNames = optionalByName(schema);
   const cases = entries.map(entry => ({ label: entry.name, body: printEntry(schema, entry, subject, optionalNames) }));
   return [

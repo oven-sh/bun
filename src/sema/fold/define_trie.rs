@@ -6,6 +6,7 @@ use crate::atom::Atom;
 use crate::session::Arena;
 
 impl<'s> FoldInputs<'s> {
+    #[allow(clippy::large_types_passed_by_value)] // made for this call
     pub fn new(options: FoldOptions<'s>, arena: &'s Arena) -> FoldInputs<'s> {
         let mut trie = TrieBuilder::default();
         for define in options.defines {

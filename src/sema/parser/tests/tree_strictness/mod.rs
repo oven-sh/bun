@@ -151,11 +151,14 @@ fn directive_prologues() {
 fn strings_outside_prologues() {
     for &(path, text) in STRINGS_OUTSIDE_PROLOGUES {
         for keeps_function_directives in [true, false] {
-            parsed_source(&with_option(path, text, keeps_function_directives), |w, hir| {
-                assert!(directives(w, hir).is_empty(), "{text}");
-                assert!(!hir.is_strict_by_syntax, "{text}");
-                assert!(strict_functions(w, hir).is_empty(), "{text}");
-            });
+            parsed_source(
+                &with_option(path, text, keeps_function_directives),
+                |w, hir| {
+                    assert!(directives(w, hir).is_empty(), "{text}");
+                    assert!(!hir.is_strict_by_syntax, "{text}");
+                    assert!(strict_functions(w, hir).is_empty(), "{text}");
+                },
+            );
         }
     }
     parsed(DEFAULT_PATH, STATIC_BLOCK, |w, hir| {
@@ -169,10 +172,13 @@ fn strings_outside_prologues() {
 fn strictness_by_syntax() {
     for &(path, text, is_file_strict, functions) in STRICTNESS {
         for keeps_function_directives in [true, false] {
-            parsed_source(&with_option(path, text, keeps_function_directives), |w, hir| {
-                assert_eq!(hir.is_strict_by_syntax, is_file_strict, "{text}");
-                assert_eq!(strict_functions(w, hir), functions, "{text}");
-            });
+            parsed_source(
+                &with_option(path, text, keeps_function_directives),
+                |w, hir| {
+                    assert_eq!(hir.is_strict_by_syntax, is_file_strict, "{text}");
+                    assert_eq!(strict_functions(w, hir), functions, "{text}");
+                },
+            );
         }
     }
 }

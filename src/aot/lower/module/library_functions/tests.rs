@@ -20,7 +20,9 @@ const ARRAY_PROTOTYPE: &str = "ArrayPrototype";
 fn find_runtime_function(file: &str, export_name: &str) -> RuntimeFunction {
     let mut functions = table::runtime_functions().iter();
     let found = functions.find(|data| data.file == file && data.export_name == export_name);
-    found.expect("the built-ins table lists the function").function
+    found
+        .expect("the built-ins table lists the function")
+        .function
 }
 
 fn flat_into_array() -> RuntimeFunction {

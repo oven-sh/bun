@@ -104,7 +104,12 @@ test.each(casesOf(importForms, ["ts"]))("%s with import() in main.%s", (_, exten
 test.each(unboundDefineForms)("without the define both arms are followed: %s", (_, text) => {
   using graph = describeTree(formFiles("js", text), ["main.js"]);
 
-  expect(graph.file("main.js").sites.map(site => site.answer).toSorted()).toEqual(["dead.js", "live.js"]);
+  expect(
+    graph
+      .file("main.js")
+      .sites.map(site => site.answer)
+      .toSorted(),
+  ).toEqual(["dead.js", "live.js"]);
   expect(graph.compiledFiles.toSorted()).toEqual(["dead.js", "live.js", "main.js"]);
 });
 

@@ -87,7 +87,10 @@ impl Resolver<'_, '_> {
             matches!(input.hir[e].kind, ExprKind::Ident(name) if name == known::undefined);
         let is_global_undefined = names_undefined
             && input.bound.binding(e) == Binding::Free
-            && input.bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none();
+            && input
+                .bound
+                .dynamic_lookup_scope(NodeData::Expr(e))
+                .is_none();
         is_global_undefined
             || matches!(
                 input.decisions.constant(input.hir, e),
@@ -279,11 +282,13 @@ impl Resolver<'_, '_> {
             BuiltinId::ModuleObject if is_held => None,
             BuiltinId::ModuleObject => {
                 let owner = ModuleObjectOwner::OwnFile;
-                self.find_use_of_object(e, owner).map(|object_use| (owner, object_use))
+                self.find_use_of_object(e, owner)
+                    .map(|object_use| (owner, object_use))
             }
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
                 let owner = ModuleObjectOwner::EntryPoint;
-                self.find_use_of_object(e, owner).map(|object_use| (owner, object_use))
+                self.find_use_of_object(e, owner)
+                    .map(|object_use| (owner, object_use))
             }
             id @ (BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent) => {
                 self.find_use_of_member(e, id)
@@ -317,7 +322,10 @@ impl Resolver<'_, '_> {
                     PropKey::Name(name) if !prop.is_rest => {
                         self.find_named_member(some_module_object(), name)
                     }
-                    PropKey::Name(_) | PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {
+                    PropKey::Name(_)
+                    | PropKey::None
+                    | PropKey::Private(_)
+                    | PropKey::Computed(_) => {
                         ways.push((owner, ModuleObjectUse::Parent));
                         ways.push((owner, ModuleObjectUse::Children));
                         continue;

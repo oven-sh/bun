@@ -1,15 +1,10 @@
 // Must come before ../replacements.ts: the two import each other, and builtin-parser.ts reads function_replacements while it loads.
-import "../builtin-parser.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { census, censusOfText } from "../builtin-name-census.ts";
 import { jscNames } from "../builtin-names.ts";
-import {
-  functionFiles,
-  locate,
-  sourceFiles,
-  type NativeCall,
-} from "../builtins-manifest-model.ts";
+import "../builtin-parser.ts";
+import { functionFiles, locate, sourceFiles, type NativeCall } from "../builtins-manifest-model.ts";
 import { define, globalsToPrefix, numberedClasses, numberedErrorCodes } from "../replacements.ts";
 import type { ModelBuilder } from "./build-entries.ts";
 import type { Problems, Source, SourcedDeclaration } from "./declarations.ts";
@@ -304,10 +299,7 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
   }
 }
 
-function buildNativeBindings(
-  builder: ModelBuilder,
-  declarations: readonly SourcedDeclaration[],
-): ModelNativeBinding[] {
+function buildNativeBindings(builder: ModelBuilder, declarations: readonly SourcedDeclaration[]): ModelNativeBinding[] {
   return declarations
     .flatMap(({ declaration, source }): ModelNativeBinding[] => {
       if (declaration.declares !== "NativeBinding" || declaration.isHandedByNativeCode === true) return [];
@@ -350,9 +342,10 @@ export function buildSyntax(
       return [{ name: builder.internName(line.name, "Text"), position: line.position, meaning }];
     });
   const intrinsics = resolveLines(table.lines);
-  const prefixedGlobals = resolveLines(table.prefixedGlobals).map(
-    ({ name, meaning }): ModelPrefixedGlobal => ({ name, meaning }),
-  );
+  const prefixedGlobals = resolveLines(table.prefixedGlobals).map(({ name, meaning }): ModelPrefixedGlobal => ({
+    name,
+    meaning,
+  }));
   const meanings = [...intrinsics, ...prefixedGlobals].map(({ meaning }) => meaning);
   builder.syntax = {
     intrinsics,

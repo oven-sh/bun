@@ -105,7 +105,10 @@ const rejected: [string[], string][] = [
   [["build", "--compile", "--aot", "--bytecode-depth=1"], "--aot does not support --bytecode-depth"],
   [["compile", "--bytecode-order=app.order"], "--aot does not support --bytecode-order"],
   [["build", "--compile", "--aot", "--format=cjs"], "--aot requires --format=esm"],
-  [["compile", "--aot-type-errors=warn"], "unknown flag --aot-type-errors. The --aot flags for this command are --aot, --aot-huge-heap, --aot-log-type-mismatches"],
+  [
+    ["compile", "--aot-type-errors=warn"],
+    "unknown flag --aot-type-errors. The --aot flags for this command are --aot, --aot-huge-heap, --aot-log-type-mismatches",
+  ],
   [["compile", "--explain=nonsense"], invalidExplain("nonsense")],
   [["compile", "--explain=json", "--explain=allocation"], invalidExplain("allocation")],
   [["build", "--aot", "--explain=nonsense"], "--aot requires --compile"],

@@ -377,7 +377,6 @@ function getDefaultHeapSnapshotPath() {
   return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
 }
 
-
 function writeHeapSnapshot(path, _options) {
   if (path !== undefined) {
     if (typeof path !== "string") {

@@ -259,9 +259,17 @@ fn imports_of_virtual_module_start_in_directory_of_its_path() {
             panic!("the provider answers every request");
         };
         let found = plugins.directory_of_virtual_module(&path, b"/work");
-        assert_eq!(found.as_deref(), Some(directory), "{}", BStr::new(plugin_path));
+        assert_eq!(
+            found.as_deref(),
+            Some(directory),
+            "{}",
+            BStr::new(plugin_path)
+        );
     }
-    assert_eq!(plugins.directory_of_virtual_module(b"/p/main.ts", b"/work"), None);
+    assert_eq!(
+        plugins.directory_of_virtual_module(b"/p/main.ts", b"/work"),
+        None
+    );
 }
 
 #[test]
@@ -333,10 +341,7 @@ fn virtual_path_keeps_extension_and_namespace_boundary() {
 fn virtual_path_is_normalized() {
     let path = create_virtual_path(b"..", b"./a/../b//");
     assert_eq!(path, b"/$bun/plugin/%2e%2e/%2e/a/%2e%2e/b/%2f/%2f");
-    assert_eq!(
-        create_virtual_path(b"v", b"/a"),
-        b"/$bun/plugin/v/%2f/a"
-    );
+    assert_eq!(create_virtual_path(b"v", b"/a"), b"/$bun/plugin/v/%2f/a");
     assert_ne!(
         create_virtual_path(b"v", b"a/b"),
         create_virtual_path(b"v", b"a//b")
@@ -424,7 +429,10 @@ fn plain_file_gone_on_later_read_is_missing() {
     let path = b"/project/gone.ts";
 
     assert_eq!(text(plugins.read(path, Loader::Ts)), b"let a");
-    assert!(matches!(plugins.read(path, Loader::Ts), ModuleText::Missing));
+    assert!(matches!(
+        plugins.read(path, Loader::Ts),
+        ModuleText::Missing
+    ));
     assert_eq!(provider.load_count.load(Relaxed), 1);
 }
 
@@ -553,7 +561,10 @@ fn in_memory_file_name_case_follows_disk() {
     let plugins = PluginModules::new(&provider, &disk, &messages, &in_memory_files);
 
     let read = plugins.read(b"/project/A.bin", Loader::File);
-    assert_eq!(matches!(read, ModuleText::Text(_)), !disk.is_case_sensitive());
+    assert_eq!(
+        matches!(read, ModuleText::Text(_)),
+        !disk.is_case_sensitive()
+    );
 }
 
 #[test]
@@ -568,7 +579,10 @@ fn deferred_module_gets_text_once() {
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
 
     for _ in 0..2 {
-        assert!(matches!(plugins.read(path, Loader::Ts), ModuleText::Deferred));
+        assert!(matches!(
+            plugins.read(path, Loader::Ts),
+            ModuleText::Deferred
+        ));
     }
     assert_eq!(provider.load_count.load(Relaxed), 1);
     assert!(plugins.loaded(path).is_none());
@@ -606,7 +620,10 @@ fn deferred_virtual_module_is_answered_by_plugin_name() {
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     let path = resolved_path(plugins.resolve(&request(b"virtual:Config", b"/p/a.ts")));
-    assert!(matches!(plugins.read(&path, Loader::Js), ModuleText::Deferred));
+    assert!(matches!(
+        plugins.read(&path, Loader::Js),
+        ModuleText::Deferred
+    ));
 
     let reads = plugins.finish_deferred_reads();
     assert_eq!(reads.texts.len(), 1);

@@ -46,7 +46,10 @@ fn text(bytes: &[u8]) -> String {
 
 fn render_candidates(config: Option<&CodeConfig<'_>>, specifier: &str) -> String {
     match config {
-        Some(config) => text(&bstr::join(" ", config.path_candidates(specifier.as_bytes()))),
+        Some(config) => text(&bstr::join(
+            " ",
+            config.path_candidates(specifier.as_bytes()),
+        )),
         None => NO_CONFIG.to_owned(),
     }
 }
@@ -475,7 +478,10 @@ fn exact_key_matches_only_own_prefixes() {
 fn config_without_paths_matches_no_prefix() {
     for options in ["{}", r#"{"paths": {}}"#, r#"{"baseUrl": "."}"#] {
         for prefix in ["", "@/a", "lib"] {
-            assert!(!can_match_prefix(options, prefix), "{prefix} under {options}");
+            assert!(
+                !can_match_prefix(options, prefix),
+                "{prefix} under {options}"
+            );
         }
     }
 }
@@ -504,7 +510,10 @@ fn override_replaces_every_config() {
     let import_source = |path| text(&settings_with(&host, &options, path).jsx.import_source);
     assert_eq!(import_source("/app/a.tsx"), "custom");
     assert_eq!(import_source("/app/nested/a.tsx"), "custom");
-    assert_eq!(text(&settings(&host, "/app/a.tsx").jsx.import_source), "react");
+    assert_eq!(
+        text(&settings(&host, "/app/a.tsx").jsx.import_source),
+        "react"
+    );
 }
 
 #[test]
@@ -516,7 +525,10 @@ fn override_is_reported_for_every_directory() {
                 resolver.is_under_tsconfig_override(directory.as_bytes())
             })
         };
-        assert!(is_under_override(&with_override("/elsewhere/custom.json")), "{directory}");
+        assert!(
+            is_under_override(&with_override("/elsewhere/custom.json")),
+            "{directory}"
+        );
         assert!(!is_under_override(&bun_run()), "{directory}");
     }
 }
@@ -633,7 +645,10 @@ fn forced_development_wins_over_config() {
         assert!(is_development(bun_run(), None, path), "{path}");
         assert!(!is_development(bun_run(), Some(false), path), "{path}");
         assert!(!is_development(production_override(), None, path), "{path}");
-        assert!(is_development(production_override(), Some(true), path), "{path}");
+        assert!(
+            is_development(production_override(), Some(true), path),
+            "{path}"
+        );
     }
 }
 

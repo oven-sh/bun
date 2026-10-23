@@ -63,7 +63,12 @@ fn locate_texts(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<driver::Dia
     let mut parts: Vec<(&[u8], Option<Position>)> = Vec::new();
     for entry in entries {
         parts.push((&entry.text[..], entry.position));
-        parts.extend(entry.notes.iter().map(|note| (&note.text[..], note.position)));
+        parts.extend(
+            entry
+                .notes
+                .iter()
+                .map(|note| (&note.text[..], note.position)),
+        );
     }
     // Ascending, so the locator scans the text of each module once. Entries arrive by rank.
     let mut order: Vec<usize> = (0..parts.len()).collect();
@@ -120,7 +125,10 @@ mod tests {
     ];
 
     fn texts() -> SourceTexts {
-        SourceTexts::new(vec![Some(ModuleSource::new(b"/p/a.ts", b"first;\nsecond;\n"))])
+        SourceTexts::new(vec![Some(ModuleSource::new(
+            b"/p/a.ts",
+            b"first;\nsecond;\n",
+        ))])
     }
 
     fn messages_of(entries: &[ReportEntry]) -> Vec<ReportMessage> {
@@ -152,7 +160,10 @@ mod tests {
             (ExplainSet::DECLINES, "missed optimizations: none"),
             (ExplainSet::STATISTICS, "TypesInterned 3"),
         ];
-        assert_eq!(lines(&entries, false), "aot: missed optimizations: none\nTypesInterned 3\n");
+        assert_eq!(
+            lines(&entries, false),
+            "aot: missed optimizations: none\nTypesInterned 3\n"
+        );
     }
 
     #[test]
@@ -164,7 +175,10 @@ mod tests {
             (ExplainSet::ONLY_MUTATION, "mutation: field-deleted"),
         ];
         assert_eq!(lines(&entries, false), "aot: mutation: field-deleted\n");
-        assert_eq!(lines(&entries, true), "{\"rank\":1}\n{\"aot\":\"type-check\"}\n");
+        assert_eq!(
+            lines(&entries, true),
+            "{\"rank\":1}\n{\"aot\":\"type-check\"}\n"
+        );
         assert_eq!(lines(&[], false), "");
     }
 

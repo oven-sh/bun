@@ -9,7 +9,13 @@ import { test } from "./supported";
 setDefaultTimeout(240_000);
 
 async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
 }
@@ -18,9 +24,15 @@ async function build(directory: string, entry: string) {
   const executable = join(directory, entry.replace(".js", isWindows ? ".exe" : ""));
   const report = join(directory, entry + ".report.json");
   const flags = ["--aot-report=" + report, "--aot-report-detail=functions"];
-  const built = await run([bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", executable], directory);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", executable],
+    directory,
+  );
   expect({ errors: built.errors, exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });
-  const { statistics, functions } = (await Bun.file(report).json()) as { statistics: Record<string, number>; functions: { file: string }[] };
+  const { statistics, functions } = (await Bun.file(report).json()) as {
+    statistics: Record<string, number>;
+    functions: { file: string }[];
+  };
   return { executable, functionsLowered: statistics.FunctionsLowered, files: new Set(functions.map(it => it.file)) };
 }
 

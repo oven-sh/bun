@@ -51,7 +51,9 @@ test("a loop over the own entries of an object nobody knows makes no pair on the
   for (const body of bodies) {
     expect(body).toContain(" overload=CompilerHelpersOwnEntriesFlat/");
     expect(body).not.toContain("ObjectEntries");
-    expect(body.split("\n").filter(line => line.includes(" = NewArray ") && !line.includes(" storage=Frame"))).toEqual([]);
+    expect(body.split("\n").filter(line => line.includes(" = NewArray ") && !line.includes(" storage=Frame"))).toEqual(
+      [],
+    );
     expect(body).not.toContain(" = DestructureIterable ");
   }
 }, 300_000);

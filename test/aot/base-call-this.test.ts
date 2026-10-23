@@ -37,10 +37,20 @@ function program(event: string, wayIn: string) {
 
 async function byNameEachRound(folder: string) {
   const executable = join(folder, isWindows ? "main.exe" : "main");
-  built(await spawned([bunExe(), "build", "--compile", "--aot", "--aot-count-arrivals", "./main.mjs", "--outfile", executable], folder, bunEnv));
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", "--aot-count-arrivals", "./main.mjs", "--outfile", executable],
+      folder,
+      bunEnv,
+    ),
+  );
   const counted = async (rounds: number) => {
     const path = join(folder, `counts-${rounds}`);
-    const ran = await spawned([executable, String(rounds)], folder, { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path });
+    const ran = await spawned([executable, String(rounds)], folder, {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      BUN_JSC_aotCountsPath: path,
+    });
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
     let byName = 0;
     for (const line of readFileSync(path, "utf8").split("\n")) {

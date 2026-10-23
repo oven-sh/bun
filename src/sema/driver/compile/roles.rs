@@ -1,8 +1,7 @@
 use super::effects::{can_lose_trust, requested_diagnostics};
 use super::queue::{QueuePass, ROLE_ROUNDS, run_queue};
 use super::{
-    BuildDiagnostic, CompileRequest, Demotion, DemotionCause, FileWork, LoadedProgram,
-    RoleDecision,
+    BuildDiagnostic, CompileRequest, Demotion, DemotionCause, FileWork, LoadedProgram, RoleDecision,
 };
 use bun_sema::check::aot::{DiagnosticClass, Effect};
 use bun_sema::program::{FileId, FileRole, Files};
@@ -27,7 +26,11 @@ pub fn decide_roles<'s>(
         .iter()
         .copied()
         .filter(|&file| can_lose_trust(loaded.origin(file), roles[file.idx()]))
-        .filter(|&file| !request.left_out_bodies.is_some_and(|left_out| left_out.contains_file(file)))
+        .filter(|&file| {
+            !request
+                .left_out_bodies
+                .is_some_and(|left_out| left_out.contains_file(file))
+        })
         .collect();
     if candidates.is_empty() {
         demoted.shared_sort_by_key(|demotion| demotion.file);
@@ -167,7 +170,10 @@ fn find_rejected_neighbors(files: &Files<'_>, files_to_lower: &[FileId]) -> Vec<
                 compiled.typed_source_path.is_some() && rejected_directories.contains(directory)
             })
     };
-    let neighbors = files_to_lower.iter().copied().filter(|&file| is_neighbor(file));
+    let neighbors = files_to_lower
+        .iter()
+        .copied()
+        .filter(|&file| is_neighbor(file));
     neighbors
         .map(|file| Demotion {
             file,

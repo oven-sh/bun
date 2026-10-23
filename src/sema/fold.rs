@@ -148,7 +148,9 @@ impl<'s> Decisions<'s> {
         if let FoldedValue::Constant(constant) = literal_constant(hir, node.kind) {
             return FoldedValue::Constant(constant);
         }
-        let found = self.constants.binary_search_by_key(&expr, |entry| entry.expr);
+        let found = self
+            .constants
+            .binary_search_by_key(&expr, |entry| entry.expr);
         match found.map(|index| self.constants[index]) {
             Ok(entry) if entry.checks_dead_zone => {
                 FoldedValue::ConstantOutsideDeadZone(entry.constant)
@@ -159,7 +161,10 @@ impl<'s> Decisions<'s> {
     }
 
     pub fn specifier(&self, argument: ExprId) -> ImportSpecifier {
-        match self.specifiers.binary_search_by_key(&argument, |entry| entry.0) {
+        match self
+            .specifiers
+            .binary_search_by_key(&argument, |entry| entry.0)
+        {
             Ok(index) => self.specifiers[index].1,
             Err(_) => ImportSpecifier::Unknown,
         }
@@ -167,7 +172,9 @@ impl<'s> Decisions<'s> {
 
     /// The pattern of `argument` begins with "." where the program wrote `__dirname`.
     pub fn is_path_from_own_directory(&self, argument: ExprId) -> bool {
-        self.paths_from_own_directory.binary_search(&argument).is_ok()
+        self.paths_from_own_directory
+            .binary_search(&argument)
+            .is_ok()
     }
 
     /// The constant of `argument` is what `path.join` or `path.resolve` makes of `__dirname` and written texts.

@@ -13,7 +13,11 @@ const [headerSize, programHeaderSize, sectionHeaderSize] = [64, 56, 64];
 const [loadable, progBits] = [1, 1];
 const [mayExecute, mayRead] = [1, 4];
 
-function createElf(segments: { flags: number; offset: number; address: number; size: number }[], sections: { offset: number; size: number }[], size: number) {
+function createElf(
+  segments: { flags: number; offset: number; address: number; size: number }[],
+  sections: { offset: number; size: number }[],
+  size: number,
+) {
   const file = Buffer.alloc(size + sections.length * sectionHeaderSize, 0xcc);
   file.fill(0, 0, headerSize + segments.length * programHeaderSize);
   file.fill(0, size);
@@ -28,7 +32,9 @@ function createElf(segments: { flags: number; offset: number; address: number; s
     const at = headerSize + index * programHeaderSize;
     file.writeUInt32LE(loadable, at);
     file.writeUInt32LE(flags, at + 4);
-    [offset, address, address, size, size, pageSize].forEach((value, word) => file.writeBigUInt64LE(BigInt(value), at + 8 + word * 8));
+    [offset, address, address, size, size, pageSize].forEach((value, word) =>
+      file.writeBigUInt64LE(BigInt(value), at + 8 + word * 8),
+    );
   });
   sections.forEach(({ offset, size: length }, index) => {
     const at = size + index * sectionHeaderSize;
@@ -96,10 +102,17 @@ test.each([true, false])("the strip rule runs it when hardened is %p", hardened 
     esbuild: tool("esbuild"),
     cmake: tool("cmake"),
   } as Toolchain;
-  const cfg = resolveConfig({ buildDir, buildType: "Release", os: "linux", arch: "x64", abi: "gnu", webkit: "local", hardened }, toolchain);
+  const cfg = resolveConfig(
+    { buildDir, buildType: "Release", os: "linux", arch: "x64", abi: "gnu", webkit: "local", hardened },
+    toolchain,
+  );
   const ninja = new Ninja({ buildDir });
   const exe = resolve(buildDir, "bun-profile");
   emitPostLink(ninja, cfg, exe, "bun-profile", [], [exe + ".o"]);
   const command = /^rule strip\n  command = (.*)$/m.exec(ninja.toString().replace(/ \$\n +/g, " "))![1];
-  expect(command).toBe(hardened ? `/fake/bin/llvm-strip $stripflags $in -o $out && /fake/bin/bun ${script} $out` : "/fake/bin/strip $stripflags $in -o $out");
+  expect(command).toBe(
+    hardened
+      ? `/fake/bin/llvm-strip $stripflags $in -o $out && /fake/bin/bun ${script} $out`
+      : "/fake/bin/strip $stripflags $in -o $out",
+  );
 });

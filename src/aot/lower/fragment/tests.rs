@@ -52,7 +52,10 @@ fn repeated_module_failure_has_one_id() {
     let failures = [ModuleFailureId(7), ModuleFailureId(3)];
     let ids = failures.map(|failure| builder.declare_module_failure(failure));
     assert_eq!(ids.map(Id::index), [0, 1]);
-    assert_eq!(failures.map(|failure| builder.declare_module_failure(failure)), ids);
+    assert_eq!(
+        failures.map(|failure| builder.declare_module_failure(failure)),
+        ids
+    );
     assert_eq!(finish(builder).module_failure_keys, failures);
 }
 
@@ -73,13 +76,25 @@ fn definitions_set_defined() {
     let mut builder = FragmentBuilder::new(FILE);
     let layouts = [0, 1].map(|class| builder.declare_layout(test_class_key(0, class)));
     let variables = [0, 1].map(|symbol| builder.declare_variable(test_variable_key(0, symbol)));
-    assert_eq!(layouts.map(|id| builder.is_layout_defined(id)), [false, false]);
-    assert_eq!(variables.map(|id| builder.is_variable_defined(id)), [false, false]);
+    assert_eq!(
+        layouts.map(|id| builder.is_layout_defined(id)),
+        [false, false]
+    );
+    assert_eq!(
+        variables.map(|id| builder.is_variable_defined(id)),
+        [false, false]
+    );
 
     builder.define_layout(layouts[1], Layout::default());
     builder.define_variable(variables[0], Variable::default());
-    assert_eq!(layouts.map(|id| builder.is_layout_defined(id)), [false, true]);
-    assert_eq!(variables.map(|id| builder.is_variable_defined(id)), [true, false]);
+    assert_eq!(
+        layouts.map(|id| builder.is_layout_defined(id)),
+        [false, true]
+    );
+    assert_eq!(
+        variables.map(|id| builder.is_variable_defined(id)),
+        [true, false]
+    );
 }
 
 #[test]

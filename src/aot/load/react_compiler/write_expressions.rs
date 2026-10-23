@@ -153,7 +153,9 @@ impl TreeWriter<'_, '_> {
     // `expression` is the last one added: `parens` is sorted by expression.
     fn parenthesize(&mut self, expression: ExprId) {
         let written = self.file[expression];
-        self.file.parens.push((expression, written.pos, written.end));
+        self.file
+            .parens
+            .push((expression, written.pos, written.end));
         self.file.add_flags(expression, ExprFlags::PARENTHESIZED);
     }
 
@@ -338,9 +340,10 @@ impl TreeWriter<'_, '_> {
         let pos = key_range.0;
         let (key, name_kind) = self.write_property_key(key, property.flags)?;
         let (kind, value) = match method_kinds {
-            Some((kind, function_kind)) => {
-                (kind, self.write_method(value, function_kind, (key, key_range))?)
-            }
+            Some((kind, function_kind)) => (
+                kind,
+                self.write_method(value, function_kind, (key, key_range))?,
+            ),
             None => {
                 let value = self.write_property_value(value, property.initializer.as_ref())?;
                 (PropKind::Init, value)
@@ -389,7 +392,10 @@ impl TreeWriter<'_, '_> {
                 true => NameKind::ComputedString,
                 false => NameKind::StringLiteral,
             };
-            return Ok((PropKey::Name(self.atoms.intern(&string_text(text))), name_kind));
+            return Ok((
+                PropKey::Name(self.atoms.intern(&string_text(text))),
+                name_kind,
+            ));
         }
         if let ExprData::ENumber(number) = &key.data
             && !is_negative(number.value())
@@ -515,7 +521,9 @@ impl TreeWriter<'_, '_> {
         let name_range = self.range_of(dot.name_loc);
         if !is_identifier(dot.name.slice()) {
             let index = self.add_expression_at(ExprKind::String(name), name_range);
-            return Ok(self.file.expr(ExprKind::Index { obj, index, chain }, pos, end));
+            return Ok(self
+                .file
+                .expr(ExprKind::Index { obj, index, chain }, pos, end));
         }
         let kind = self.file.dot((obj, chain), (name, name_range.0), end);
         Ok(self.file.expr(kind, pos, end))
@@ -611,7 +619,9 @@ impl TreeWriter<'_, '_> {
             return false;
         };
         unary.op == OpCode::UnTypeof
-            && !unary.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+            && !unary
+                .flags
+                .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
             && self.origin_of(name.ref_) == SymbolOrigin::Source
     }
 
@@ -732,7 +742,9 @@ impl TreeWriter<'_, '_> {
         if !written.any(|it| matches!(it.kind, ExprKind::This)) {
             return ParamId::NONE;
         }
-        let pat = self.file.pat(PatKind::Ident(known::this), position, position);
+        let pat = self
+            .file
+            .pat(PatKind::Ident(known::this), position, position);
         let ty = self.any_type(position);
         self.file.add_param(Param {
             pat,

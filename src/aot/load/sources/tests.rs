@@ -384,19 +384,35 @@ fn kinds_and_loaders_follow_payloads() {
         let describe = |name: &str| {
             let file = file_at(input.files, name);
             assert!(!sources.is_from_plugin(file), "{name}");
-            (sources.kind(file), sources.loader(file), sources.is_data(file))
+            (
+                sources.kind(file),
+                sources.loader(file),
+                sources.is_data(file),
+            )
         };
-        assert_eq!(describe("main.ts"), (SourceKind::Program, Loader::Ts, false));
-        assert_eq!(describe("data.json"), (SourceKind::Data, Loader::Json, true));
+        assert_eq!(
+            describe("main.ts"),
+            (SourceKind::Program, Loader::Ts, false)
+        );
+        assert_eq!(
+            describe("data.json"),
+            (SourceKind::Data, Loader::Json, true)
+        );
         assert_eq!(describe("note.txt"), (SourceKind::Data, Loader::Text, true));
-        assert_eq!(describe("globals.d.ts"), (SourceKind::TypesOnly, Loader::Ts, false));
+        assert_eq!(
+            describe("globals.d.ts"),
+            (SourceKind::TypesOnly, Loader::Ts, false)
+        );
 
         let declarations = file_at(input.files, "globals.d.ts");
         assert!(parsed_source(input.files, declarations).is_none());
         assert!(parsed_source(input.files, file_at(input.files, "main.ts")).is_some());
         let paths = sources.module_paths(declarations);
         assert_eq!(paths.display_path, b"globals.d.ts");
-        assert_eq!(sources.diagnostic_path(declarations), b"/project/globals.d.ts");
+        assert_eq!(
+            sources.diagnostic_path(declarations),
+            b"/project/globals.d.ts"
+        );
     });
 }
 
@@ -404,7 +420,9 @@ fn kinds_and_loaders_follow_payloads() {
 fn entry_point_uses_configured_name() {
     let files = [("main.ts", "import './app.js';"), ("app.js", "export {};")];
     with_freeze_input(&files, &LoadSetup::default(), |input| {
-        let sources = freeze_with_entry_point_names(input, &["app.js"]).unwrap().sources;
+        let sources = freeze_with_entry_point_names(input, &["app.js"])
+            .unwrap()
+            .sources;
         let main = input.files.entry_points()[0];
         let paths = sources.module_paths(main);
         assert_eq!(paths.public_path, b"/$bunfs/root/app.js");
@@ -418,12 +436,18 @@ fn entry_point_uses_configured_name() {
 
 #[test]
 fn entry_point_name_cannot_leave_module_prefix() {
-    with_freeze_input(&[("main.ts", "export {};")], &LoadSetup::default(), |input| {
-        let sources = freeze_with_entry_point_names(input, &["../out/app.js"]).unwrap().sources;
-        let main = input.files.entry_points()[0];
-        let public_path = sources.module_paths(main).public_path;
-        assert_eq!(public_path, b"/$bunfs/root/_.._/out/app.js");
-    });
+    with_freeze_input(
+        &[("main.ts", "export {};")],
+        &LoadSetup::default(),
+        |input| {
+            let sources = freeze_with_entry_point_names(input, &["../out/app.js"])
+                .unwrap()
+                .sources;
+            let main = input.files.entry_points()[0];
+            let public_path = sources.module_paths(main).public_path;
+            assert_eq!(public_path, b"/$bunfs/root/_.._/out/app.js");
+        },
+    );
 }
 
 #[test]
@@ -526,7 +550,10 @@ fn second_loader_of_path_has_suffix() {
             (Loader::Ts, b"/$bunfs/root/dep.ts".to_vec()),
             (Loader::Text, b"/$bunfs/root/dep.ts?text".to_vec()),
         ];
-        assert_eq!(public_paths_at(input.files, input.sources, "dep.ts"), expected);
+        assert_eq!(
+            public_paths_at(input.files, input.sources, "dep.ts"),
+            expected
+        );
     });
 }
 
@@ -536,7 +563,10 @@ fn only_loader_of_path_has_no_suffix() {
     let files = [("main.ts", main), ("note.ts", "export default 1;")];
     with_bind_input(&files, &default_settings(), |input| {
         let expected = vec![(Loader::Text, b"/$bunfs/root/note.ts".to_vec())];
-        assert_eq!(public_paths_at(input.files, input.sources, "note.ts"), expected);
+        assert_eq!(
+            public_paths_at(input.files, input.sources, "note.ts"),
+            expected
+        );
     });
 }
 
@@ -550,7 +580,10 @@ fn runtime_module_uses_specifier() {
         let paths = sources.module_paths(file);
         assert_eq!(paths.public_path, b"node:fs");
         assert_eq!(paths.display_path, b"node:fs");
-        assert_eq!(sources.kind(file), SourceKind::RuntimeModule(RuntimeModule::NodeFs));
+        assert_eq!(
+            sources.kind(file),
+            SourceKind::RuntimeModule(RuntimeModule::NodeFs)
+        );
     });
 }
 
@@ -558,7 +591,10 @@ fn runtime_module_uses_specifier() {
 fn application_has_no_runtime_module_files() {
     let main = "import fs from 'node:fs';\nconsole.log(fs);";
     with_bind_input(&[("main.ts", main)], &default_settings(), |input| {
-        assert_eq!(input.sources.runtime_module_file(RuntimeModule::NodeFs), None);
+        assert_eq!(
+            input.sources.runtime_module_file(RuntimeModule::NodeFs),
+            None
+        );
         assert!(input.sources.runtime_module_files().is_empty());
     });
 }
@@ -569,11 +605,22 @@ fn runtime_module_files_ascend_by_registry_id() {
     with_runtime_bind_input(&[("main.ts", main)], |input| {
         let modules = input.sources.runtime_module_files();
         assert!(modules.is_sorted_by(|a, b| a.0.registry_id() < b.0.registry_id()));
-        for imported in [RuntimeModule::NodePath, RuntimeModule::NodeOs, RuntimeModule::NodeFs] {
-            assert!(modules.iter().any(|&(module, _)| module == imported), "{imported:?}");
+        for imported in [
+            RuntimeModule::NodePath,
+            RuntimeModule::NodeOs,
+            RuntimeModule::NodeFs,
+        ] {
+            assert!(
+                modules.iter().any(|&(module, _)| module == imported),
+                "{imported:?}"
+            );
         }
         for &(module, file) in modules {
-            assert_eq!(input.sources.runtime_module_file(module), Some(file), "{module:?}");
+            assert_eq!(
+                input.sources.runtime_module_file(module),
+                Some(file),
+                "{module:?}"
+            );
             assert_eq!(input.sources.kind(file), SourceKind::RuntimeModule(module));
         }
     });
@@ -587,7 +634,10 @@ fn runtime_function_needs_runtime_functions_file() {
         assert_eq!(input.sources.runtime_function(main, b"from"), None);
     });
     with_runtime_bind_input(&files, |input| {
-        let module = input.sources.runtime_module_file(RuntimeModule::NodeFs).unwrap();
+        let module = input
+            .sources
+            .runtime_module_file(RuntimeModule::NodeFs)
+            .unwrap();
         assert_eq!(input.sources.runtime_function(module, b"readFile"), None);
     });
 }
@@ -598,9 +648,14 @@ fn host_function_is_found_through_the_manifest() {
         let path = [VIRTUAL_ROOT, b"builtins/JSBufferConstructor.ts"].concat();
         let file = input.files.by_path.get(&path).unwrap();
         assert_eq!(input.sources.kind(file), SourceKind::RuntimeFunctions);
-        let id = Archive::embedded().manifest().builtin_function_id(&path, b"from");
+        let id = Archive::embedded()
+            .manifest()
+            .builtin_function_id(&path, b"from");
         assert!(id.is_some());
-        assert_eq!(input.sources.runtime_function(file, b"from"), id.map(RuntimeFunction));
+        assert_eq!(
+            input.sources.runtime_function(file, b"from"),
+            id.map(RuntimeFunction)
+        );
         assert_eq!(input.sources.runtime_function(file, b"noSuchExport"), None);
     });
 }
@@ -608,7 +663,9 @@ fn host_function_is_found_through_the_manifest() {
 #[test]
 fn compiler_function_is_found_through_the_table() {
     let mut functions = table::runtime_functions().iter();
-    let decorators = functions.find(|data| data.file == "prelude/decorators").unwrap();
+    let decorators = functions
+        .find(|data| data.file == "prelude/decorators")
+        .unwrap();
     with_runtime_bind_input(&[("main.ts", "export {};")], |input| {
         let path = [VIRTUAL_ROOT, decorators.file.as_bytes(), b".ts"].concat();
         let file = input.files.by_path.get(&path).unwrap();
@@ -642,7 +699,10 @@ fn function_files_are_library_entry_points() {
         assert_eq!(libraries, function_files);
 
         let is_command_line_file = |entry_point: &EntryPoint| {
-            matches!(entry_point.kind, EntryPointKind::Main | EntryPointKind::Additional)
+            matches!(
+                entry_point.kind,
+                EntryPointKind::Main | EntryPointKind::Additional
+            )
         };
         assert!(!entry_points.iter().any(is_command_line_file));
     });
@@ -671,15 +731,25 @@ fn implied_runtime_module_is_host_loaded() {
         assert!(implied_modules.contains(&RuntimeModule::BunSql));
         assert!(!implied_modules.contains(&RuntimeModule::NodeOs));
         let kind_of = |module| entry_point_kind(&sources, sources.runtime_module_file(module)?);
-        assert_eq!(kind_of(RuntimeModule::BunSql), Some(EntryPointKind::HostLoadedModule));
-        assert_eq!(kind_of(RuntimeModule::NodeOs), Some(EntryPointKind::ImportedModule));
+        assert_eq!(
+            kind_of(RuntimeModule::BunSql),
+            Some(EntryPointKind::HostLoadedModule)
+        );
+        assert_eq!(
+            kind_of(RuntimeModule::NodeOs),
+            Some(EntryPointKind::ImportedModule)
+        );
         for &(module, file) in sources.runtime_module_files() {
             let expected = if implied_modules.contains(&module) {
                 EntryPointKind::HostLoadedModule
             } else {
                 EntryPointKind::ImportedModule
             };
-            assert_eq!(entry_point_kind(&sources, file), Some(expected), "{module:?}");
+            assert_eq!(
+                entry_point_kind(&sources, file),
+                Some(expected),
+                "{module:?}"
+            );
         }
     });
 }
@@ -694,8 +764,14 @@ fn listed_runtime_module_is_host_loaded() {
         };
         let (os, path) = (RuntimeModule::NodeOs, RuntimeModule::NodePath);
         assert_eq!(kind_with_list(&[]), Some(EntryPointKind::ImportedModule));
-        assert_eq!(kind_with_list(&[path]), Some(EntryPointKind::ImportedModule));
-        assert_eq!(kind_with_list(&[path, os, os]), Some(EntryPointKind::HostLoadedModule));
+        assert_eq!(
+            kind_with_list(&[path]),
+            Some(EntryPointKind::ImportedModule)
+        );
+        assert_eq!(
+            kind_with_list(&[path, os, os]),
+            Some(EntryPointKind::HostLoadedModule)
+        );
     });
 }
 
@@ -709,7 +785,9 @@ fn compiled_file_without_payload_is_internal_error() {
         let main = input.files.entry_points()[0];
         assert!(input.files.is_compiled(main));
         assert!(parsed_source(input.files, main).is_none());
-        let error = freeze_sources(input, &run_serially).err().expect("main.ts has no payload");
+        let error = freeze_sources(input, &run_serially)
+            .err()
+            .expect("main.ts has no payload");
         assert_eq!(error.stage, Stage::Load);
         assert_eq!(error.message, b"no payload for /project/main.ts");
     });
@@ -725,7 +803,10 @@ fn macro_diagnostic_lands_on_its_file() {
     let files = [
         ("main.ts", main),
         ("dep.ts", dependency),
-        ("macro.ts", "export function double(n: number) { return 2 * n; }"),
+        (
+            "macro.ts",
+            "export function double(n: number) { return 2 * n; }",
+        ),
     ];
     with_freeze_input(&files, &LoadSetup::default(), |input| {
         let FrozenSources {
@@ -820,7 +901,10 @@ fn evaluated_function_is_found_by_file_and_call() {
         assert_eq!(sources.kind(function.file), SourceKind::EvaluatedText);
         let text = parsed_source(files, function.file).unwrap();
         assert_eq!(text.evaluated_function, Some(function.function));
-        assert_eq!(files.hir(function.file)[function.function].kind, FnKind::Expr);
+        assert_eq!(
+            files.hir(function.file)[function.function].kind,
+            FnKind::Expr
+        );
         let paths = sources.module_paths(function.file);
         assert!(paths.public_path.starts_with(b"/$bun/text/"));
         assert_eq!(paths.display_path, paths.public_path);
@@ -847,7 +931,10 @@ fn uncompiled_text_has_no_function() {
             panic!("expected the file of the text");
         };
         assert_eq!(sources.kind(text_file), SourceKind::EvaluatedText);
-        assert_eq!(parsed_source(files, text_file).unwrap().evaluated_function, None);
+        assert_eq!(
+            parsed_source(files, text_file).unwrap().evaluated_function,
+            None
+        );
         assert_eq!(sources.evaluated_function(main, site.call), None);
         assert!(sources.evaluated_functions_of(main).is_empty());
     });
@@ -876,14 +963,23 @@ fn folded_string_over_limit_is_a_loss_with_span() {
         assert_eq!(counters.losses(), [expected]);
     });
     with_freeze_input(&[("main.ts", source)], &LoadSetup::default(), |input| {
-        assert!(freeze_sources(input, &run_serially).unwrap().counters.losses().is_empty());
+        assert!(
+            freeze_sources(input, &run_serially)
+                .unwrap()
+                .counters
+                .losses()
+                .is_empty()
+        );
     });
 }
 
 #[test]
 fn order_of_runs_does_not_change_frozen_files() {
     let names: Vec<String> = (0..200).map(|index| format!("f{index}.ts")).collect();
-    let main: String = names.iter().map(|name| format!("import './{name}';\n")).collect();
+    let main: String = names
+        .iter()
+        .map(|name| format!("import './{name}';\n"))
+        .collect();
     let mut files = vec![("main.ts", main.as_str())];
     files.extend(names.iter().map(|name| (name.as_str(), "export {};")));
     let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| {
@@ -896,7 +992,10 @@ fn order_of_runs_does_not_change_frozen_files() {
         let sources = freeze_sources(input, &in_reverse).unwrap().sources;
         for file in file_ids(input.files.modules.len()) {
             assert_eq!(sources.module_paths(file), expected.module_paths(file));
-            assert_eq!(sources.diagnostic_path(file), expected.diagnostic_path(file));
+            assert_eq!(
+                sources.diagnostic_path(file),
+                expected.diagnostic_path(file)
+            );
             assert_eq!(sources.kind(file), expected.kind(file));
         }
     });

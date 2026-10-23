@@ -81,8 +81,17 @@ async function slowPathCalls(files: Record<string, string>, expectedOutput: (rou
   const calls: number[] = [];
   for (const rounds of [100, 1100]) {
     const path = join(String(dir), "counts" + rounds);
-    const env = { ...bunEnv, ROUNDS: String(rounds), BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotCountsPath: path };
-    expect(await run([executable], String(dir), env)).toEqual({ stdout: expectedOutput(rounds), stderr: "", exitCode: 0 });
+    const env = {
+      ...bunEnv,
+      ROUNDS: String(rounds),
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+      BUN_JSC_aotCountsPath: path,
+    };
+    expect(await run([executable], String(dir), env)).toEqual({
+      stdout: expectedOutput(rounds),
+      stderr: "",
+      exitCode: 0,
+    });
     let count = 0;
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [number, name] = line.split("\toperation:");
@@ -94,13 +103,19 @@ async function slowPathCalls(files: Record<string, string>, expectedOutput: (rou
 }
 
 test("136 native getters read alternately stay cached", async () => {
-  const calls = await slowPathCalls(files, rounds => `136 getters of 18 kinds of native objects, read ${rounds} times: 134\n`);
+  const calls = await slowPathCalls(
+    files,
+    rounds => `136 getters of 18 kinds of native objects, read ${rounds} times: 134\n`,
+  );
   expect(calls[0]).toBeGreaterThan(0);
   expect(calls[1] - calls[0]).toBeLessThan(3000);
 }, 240_000);
 
 test("416 native getters read alternately stay cached", async () => {
-  const calls = await slowPathCalls(subclasses, rounds => `13 getters of 32 subclasses of Event, read ${rounds} times: 416\n`);
+  const calls = await slowPathCalls(
+    subclasses,
+    rounds => `13 getters of 32 subclasses of Event, read ${rounds} times: 416\n`,
+  );
   expect(calls[0]).toBeGreaterThan(0);
   expect(calls[1] - calls[0]).toBeLessThan(9000);
 }, 240_000);

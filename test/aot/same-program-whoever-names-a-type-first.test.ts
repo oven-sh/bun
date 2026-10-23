@@ -2,9 +2,9 @@
 // `Box<[[[number]]]>` out, another makes the same type by instantiation, and which of the two threads comes first differs from
 // run to run. How far the family is followed does not: same bytes, whatever the number of threads.
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 setDefaultTimeout(240_000);
 
@@ -14,7 +14,16 @@ const work =
   Array.from({ length: 10 }, (_, index) => `export type Work${index} = Repeat<900, ${index}>;\n`).join("");
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", noEmit: true, types: [] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: {
+      strict: true,
+      target: "esnext",
+      module: "esnext",
+      moduleResolution: "bundler",
+      noEmit: true,
+      types: [],
+    },
+  }),
   "shared.ts": `export interface Box<T> { v: T; next: Box<[T]> | null }\nexport interface Crate<T> { v: T; next: Crate<[T]> | null }\n`,
   "compared.ts":
     `import type { Box, Crate } from "./shared";\n${work}` +
@@ -33,14 +42,27 @@ const files = {
 async function build(directory: string, threads: number, round: number) {
   const name = `threads-${threads}-${round}`;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, `--aot-out=${name}.program`, "main.ts", "--outfile", "app"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `--aot-threads=${threads}`,
+      `--aot-out=${name}.program`,
+      "main.ts",
+      "--outfile",
+      "app",
+    ],
     cwd: directory,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({ errors: [], exitCode: 0 });
+  expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
+    errors: [],
+    exitCode: 0,
+  });
   return {
     program: Bun.hash(await Bun.file(join(directory, `${name}.program`)).bytes()),
     executable: Bun.hash(await Bun.file(join(directory, "app")).bytes()),

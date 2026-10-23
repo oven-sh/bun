@@ -403,7 +403,8 @@ function printWordFunction(schema: Schema, kind: Kind): string {
     case "Flags":
       return `|printer, word| print_flags(printer, &${rustTypeOf(kind)}::NAMES, word)`;
     case "Scalar":
-      if (kind.scalar === "Bool") return '|printer, word| printer.out.push_str(if word != 0 { "true" } else { "false" })';
+      if (kind.scalar === "Bool")
+        return '|printer, word| printer.out.push_str(if word != 0 { "true" } else { "false" })';
       if (kind.scalar === "UInt32" || kind.scalar === "Field") return "print_number";
       return throwNotOneWord(kind);
     case "PlacedWord":
@@ -449,7 +450,8 @@ function printParameter(schema: Schema, parameter: Parameter): string {
   if (isRecordOrVariant(kind)) return `p.record::<${rustTypeOf(kind)}>(${name});`;
   if (isScalar(kind, "Int64")) return `p.integer(${name});`;
   if (isScalar(kind, "Double")) return `p.double(${name});`;
-  if (kind.tag === "Enum") return `p.${parameter.isOptional ? "name_unless_absent" : "name_unless_zero"}(${name}, &${rustTypeOf(kind)}::NAMES);`;
+  if (kind.tag === "Enum")
+    return `p.${parameter.isOptional ? "name_unless_absent" : "name_unless_zero"}(${name}, &${rustTypeOf(kind)}::NAMES);`;
   if (parameter.isOptional) return `p.unless_absent(${name}, ${printWordFunction(schema, kind)});`;
   if (kind.tag === "Flags") return `p.flags(${name}, &${rustTypeOf(kind)}::NAMES);`;
   if (isScalar(kind, "Bool")) return `p.unless_zero(${name}, print_true);`;
@@ -511,7 +513,9 @@ function entryTextFunctions(
     "",
     `pub fn print_${suffix}_fields(${parameter}: ${enumName}, fields: &[u32], printer: &mut Printer<'_>) {`,
     ...indent([
-      ...(hasFlags ? [`let names = flag_names(${parameter});`, "let first = usize::from(!names.is_empty());"] : ["let first = 0;"]),
+      ...(hasFlags
+        ? [`let names = flag_names(${parameter});`, "let first = usize::from(!names.is_empty());"]
+        : ["let first = 0;"]),
       "let mut p = EntryPrinter { printer, words: fields, at: first, prints_fields: false, operands: SmallVec::new() };",
       `print_${suffix}_pass(${parameter}, &mut p);`,
       "p.print_operands();",

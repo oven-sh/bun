@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { isLinux } from "harness";
+import { readFileSync } from "node:fs";
 
 test.skipIf(!isLinux)("the static TLS block that every thread pays for stays small", () => {
   const file = readFileSync(process.execPath);

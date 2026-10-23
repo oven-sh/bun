@@ -23,12 +23,7 @@ import {
 import type { RelocationFailure } from "./validate-elf-relocations.ts";
 
 export type LinkFailure =
-  | GraphFailure
-  | EntryPointFailure
-  | PartitionFailure
-  | DeclaredUseFailure
-  | RangeFailure
-  | RelocationFailure;
+  GraphFailure | EntryPointFailure | PartitionFailure | DeclaredUseFailure | RangeFailure | RelocationFailure;
 
 export interface ReportContext {
   graph: SectionGraph;
@@ -94,7 +89,9 @@ export class Demangler {
       });
       if (demangled.status !== 0) throw new BuildError(`failed to run ${this.path}`, { cause: demangled.error });
       const lines = demangled.stdout.split("\n");
-      unknown.forEach((name, index) => this.demangledNames.set(name, (lines[index] ?? name).replace(/ \(\.llvm\.\d+\)$/, "")));
+      unknown.forEach((name, index) =>
+        this.demangledNames.set(name, (lines[index] ?? name).replace(/ \(\.llvm\.\d+\)$/, "")),
+      );
     }
     return names.map(name => this.demangledNames.get(name)!);
   }
@@ -335,7 +332,8 @@ function describeGuardWithoutReference(
   failure: Extract<LinkFailure, { kind: "GuardWithoutReference" }>,
   printer: Printer,
 ): string {
-  const missing = failure.entry === undefined ? `${failure.target}, which is not in the image` : printer.describe(failure.entry);
+  const missing =
+    failure.entry === undefined ? `${failure.target}, which is not in the image` : printer.describe(failure.entry);
   return (
     `the guard in ${printer.describe(failure.guard)} has no reference to ${missing}, ` +
     `an entry point of ${printer.featureName(failure.feature)}: the compiler inlined it, so nothing can be cut. ` +
@@ -500,7 +498,12 @@ function aliasNames(graph: SectionGraph, node: number): string[] {
   return (graph.aliases.get(node) ?? []).map(([, name]) => name);
 }
 
-function entryPointLines(graph: SectionGraph, partition: Partition, entryPoints: EntryPoint[], printer: Printer): string[] {
+function entryPointLines(
+  graph: SectionGraph,
+  partition: Partition,
+  entryPoints: EntryPoint[],
+  printer: Printer,
+): string[] {
   const lines = entryPoints.map(
     ({ feature, stub, entry, guard }) =>
       `${printer.featureName(feature)} ${stub} ${graph.size[entry]} ${printer.describe(entry)} <- ${printer.describe(guard)}`,

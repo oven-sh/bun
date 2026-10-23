@@ -240,7 +240,8 @@ fn find_kept_typeof(
 ) -> Option<ExprId> {
     let file = &*lowering.file;
     let kind = find_unchanging_local(lowering, node)?;
-    let BindingInitializer::Expression(initializer) = file.bound.binding_initializer(file.hir, kind)
+    let BindingInitializer::Expression(initializer) =
+        file.bound.binding_initializer(file.hir, kind)
     else {
         return None;
     };

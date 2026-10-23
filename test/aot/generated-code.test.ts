@@ -13,7 +13,9 @@ import { isASAN, isDebug } from "harness";
 import { join } from "path";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
-const skipReason = scriptSkipReason ?? (isASAN || isDebug ? "a sanitizer or debug build generates the same code many times slower" : undefined);
+const skipReason =
+  scriptSkipReason ??
+  (isASAN || isDebug ? "a sanitizer or debug build generates the same code many times slower" : undefined);
 if (skipReason) console.error(`SKIPPED: test/aot/generated-code.test.ts: ${skipReason}`);
 
 test.skipIf(!!skipReason)(

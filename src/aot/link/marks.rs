@@ -2,9 +2,7 @@
 mod tests;
 
 use super::keys::MergedKeys;
-use super::program_keys::{
-    KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey,
-};
+use super::program_keys::{KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey};
 use super::state::{
     DefinitionSite, Definitions, ModuleTable, Retained, UnitMarks, VariableDefinition,
 };
@@ -74,7 +72,9 @@ impl<'a> MarkContext<'a> {
         let projects = input.projects;
         MarkContext {
             units: input.units,
-            keys: projects.as_ref().map(|project, _| key_context(projects, project)),
+            keys: projects
+                .as_ref()
+                .map(|project, _| key_context(projects, project)),
             functions: input.functions,
             layouts: input.layouts,
             variables: input.variables,
@@ -107,17 +107,22 @@ fn keep_first_referrers(undefined: &mut Vec<(u32, ProgramFile)>) {
 pub(super) fn mark(input: &MarkInput<'_, '_>, errors: &mut Vec<LinkError>) -> Retained {
     let context = MarkContext::new(input);
     let unit_count = input.units.len() as u32;
-    let mut markers: Vec<Marker<'_>> =
-        (0..unit_count).map(|unit| Marker::new(&context, unit)).collect();
+    let mut markers: Vec<Marker<'_>> = (0..unit_count)
+        .map(|unit| Marker::new(&context, unit))
+        .collect();
     markers.push(Marker::without_unit(&context));
     push_roots(input, &mut markers);
     loop {
-        let mut busy_markers: Vec<&mut Marker<'_>> =
-            markers.iter_mut().filter(|marker| !marker.stack.is_empty()).collect();
+        let mut busy_markers: Vec<&mut Marker<'_>> = markers
+            .iter_mut()
+            .filter(|marker| !marker.stack.is_empty())
+            .collect();
         if busy_markers.is_empty() {
             break;
         }
-        for_each_mut(&mut busy_markers, input.in_parallel, &|marker| marker.work_off());
+        for_each_mut(&mut busy_markers, input.in_parallel, &|marker| {
+            marker.work_off()
+        });
         for sender in 0..markers.len() {
             for (unit, work) in take(&mut markers[sender].sent) {
                 markers[unit as usize].stack.push(work);
@@ -138,7 +143,9 @@ pub(super) fn mark(input: &MarkInput<'_, '_>, errors: &mut Vec<LinkError>) -> Re
         functions: into_marks(context.is_function_retained),
         layouts: into_marks(context.is_layout_retained),
         variables: into_marks(context.is_variable_retained),
-        module_failures: context.is_failure_retained.map(|_, marks| into_marks(marks)),
+        module_failures: context
+            .is_failure_retained
+            .map(|_, marks| into_marks(marks)),
         units: unit_marks,
     }
 }
@@ -171,7 +178,9 @@ fn report_undefined(
 ) {
     errors.append(&mut undefined.errors);
     keep_first_referrers(&mut undefined.functions);
-    undefined.functions.sort_unstable_by_key(|&(index, _)| context.functions.keys[index as usize]);
+    undefined
+        .functions
+        .sort_unstable_by_key(|&(index, _)| context.functions.keys[index as usize]);
     for (index, referenced_in) in undefined.functions {
         errors.push(LinkError::UndefinedFunction {
             key: context.functions.keys[index as usize],
@@ -353,7 +362,14 @@ impl<'a> Marker<'a> {
         };
         if try_mark_shared(is_retained) {
             let definition = site.index;
-            self.send(site.unit, Work::Function { index, definition, from });
+            self.send(
+                site.unit,
+                Work::Function {
+                    index,
+                    definition,
+                    from,
+                },
+            );
         }
     }
 
@@ -380,7 +396,9 @@ impl<'a> Marker<'a> {
     fn mark_layout(&mut self, index: u32, referrer: u32, layout_use: LayoutUse) {
         let context = self.context;
         match layout_use {
-            LayoutUse::Direct => lower_to(&context.first_direct_layout_use[index as usize], referrer),
+            LayoutUse::Direct => {
+                lower_to(&context.first_direct_layout_use[index as usize], referrer)
+            }
             LayoutUse::InType => {}
         }
         lower_to(&context.first_layout_referrer[index as usize], referrer);

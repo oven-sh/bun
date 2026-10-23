@@ -34,7 +34,10 @@ fn module_not_found_is_refined_by_specifier_form() {
     };
     let paths: [&[u8]; 4] = [b"./nope", b"/nope", b"pkg/nope", b"@scope/nope"];
     for kind in KINDS {
-        assert_eq!(refine(b"node:nope", kind), CodeFailure::BuiltinModuleNotFound);
+        assert_eq!(
+            refine(b"node:nope", kind),
+            CodeFailure::BuiltinModuleNotFound
+        );
         for path in paths {
             assert_eq!(refine(path, kind), CodeFailure::ModuleNotFound);
         }

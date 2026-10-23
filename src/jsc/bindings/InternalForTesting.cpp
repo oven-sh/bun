@@ -156,7 +156,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinValue, (JSC::JSGlobalObject * glob
         RELEASE_AND_RETURN(scope, JSValue::encode(JS2Native::nativeBinding(globalObject, *hostNumber)));
     }
 
-    auto key = part == "getter"_s ? BuiltinCellKey::getter(id) : part == "setter"_s ? BuiltinCellKey::setter(id) : BuiltinCellKey::object(id);
+    auto key = part == "getter"_s ? BuiltinCellKey::getter(id) : part == "setter"_s ? BuiltinCellKey::setter(id)
+                                                                                    : BuiltinCellKey::object(id);
     auto cell = findInRealm(globalObject, key);
     return JSValue::encode(cell ? JSValue(*cell) : jsUndefined());
 #else

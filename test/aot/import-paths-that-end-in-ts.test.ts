@@ -3,7 +3,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { relative } from "node:path";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: [] as string[], strict: true, outDir: "dist" };
+const options = {
+  target: "ESNext",
+  module: "ESNext",
+  moduleResolution: "bundler",
+  types: [] as string[],
+  strict: true,
+  outDir: "dist",
+};
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -12,7 +19,8 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+const errors = (said: string) =>
+  [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
 const buildErrors = (said: string, root: string) =>
   [...said.matchAll(/^error: (TS\d+):[^]*?^ +at (.+):(\d+):\d+$/gm)]
     .map(match => `${relative(root, match[2]).replaceAll("\\", "/")}:${match[3]} ${match[1]}`)
@@ -39,7 +47,9 @@ test("an import path that ends in .ts needs no allowImportingTsExtensions under 
   expect(checked.exitCode).toBe(0);
 }, 120_000);
 
-test.todo("a tsconfig.json with an outDir and no rootDir does not stop bun test --aot with TS6059 where a test imports a file outside its folder: nothing is emitted");
+test.todo(
+  "a tsconfig.json with an outDir and no rootDir does not stop bun test --aot with TS6059 where a test imports a file outside its folder: nothing is emitted",
+);
 
 test("bun check without --aot reports it as tsc does", async () => {
   using dir = tempDir("import-paths-that-end-in-ts", files);

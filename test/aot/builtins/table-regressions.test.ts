@@ -175,7 +175,8 @@ const regressions: Regression[] = [
   },
   {
     name: "borrowed-methods.js",
-    covers: "AOTFlowSolverBuiltinCalls.cpp: the columns of a built-in hold for a receiver of its class, or for its holder",
+    covers:
+      "AOTFlowSolverBuiltinCalls.cpp: the columns of a built-in hold for a receiver of its class, or for its holder",
     source: `
       const arrayLike = { length: 2 ** 53 - 2, push: Array.prototype.push };
       class Stack {
@@ -195,7 +196,8 @@ const regressions: Regression[] = [
   },
   {
     name: "names-defined-by-capture-stack-trace.js",
-    covers: "Error.captureStackTrace defines originalLine and originalColumn beside stack where positions are mapped back to sources",
+    covers:
+      "Error.captureStackTrace defines originalLine and originalColumn beside stack where positions are mapped back to sources",
     source: `
       function capture() { const target = { a: 1 }; Error.captureStackTrace(target); return target; }
       function agrees(target, name) { return Object.getOwnPropertyNames(target).includes(name) === (target[name] !== undefined); }
@@ -220,7 +222,8 @@ const regressions: Regression[] = [
   },
   {
     name: "object-made-by-from-entries.js",
-    covers: "the object that the compiled code of Object.fromEntries makes is the instance of Object that the table declares",
+    covers:
+      "the object that the compiled code of Object.fromEntries makes is the instance of Object that the table declares",
     source: `
       function* generated() { yield ["g", 1]; yield [Symbol.iterator, 2]; }
       const iterable = { [Symbol.iterator]() { return [["i", 1]][Symbol.iterator](); } };

@@ -320,9 +320,8 @@ impl Checker<'_, '_> {
         let target = self.p.files.options.target;
         let is_rule_of_ecmascript =
             self.is_in_compile_build(file) && class == DiagnosticClass::EarlyError;
-        let is_allowed_by_target = !is_rule_of_ecmascript
-            && target != ScriptTarget::None
-            && target < ScriptTarget::ES2016;
+        let is_allowed_by_target =
+            !is_rule_of_ecmascript && target != ScriptTarget::None && target < ScriptTarget::ES2016;
         if non_simple_parameters.is_empty() || is_allowed_by_target {
             return false;
         }
@@ -403,7 +402,11 @@ impl Checker<'_, '_> {
             }
             if !has_body_node(f) {
                 let end = self.end_of_fn(file, func);
-                return self.early_grammar_error_at((file, end - 1, end), 1005, &[Arg::Bytes(b"{")]);
+                return self.early_grammar_error_at(
+                    (file, end - 1, end),
+                    1005,
+                    &[Arg::Bytes(b"{")],
+                );
             }
             return self.check_grammar_for_generator(file, func);
         };
@@ -437,7 +440,11 @@ impl Checker<'_, '_> {
         if !has_body_node(f) {
             if !is_in_type && !is_abstract && !hir.is_ambient(hir.node(func)) {
                 let end = self.end_of_fn(file, func);
-                return self.early_grammar_error_at((file, end - 1, end), 1005, &[Arg::Bytes(b"{")]);
+                return self.early_grammar_error_at(
+                    (file, end - 1, end),
+                    1005,
+                    &[Arg::Bytes(b"{")],
+                );
             }
         } else if is_abstract {
             return self.grammar_error_on_node(file, func, 1318, &[]);

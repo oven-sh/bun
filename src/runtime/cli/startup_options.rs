@@ -136,7 +136,9 @@ impl BuildRecord {
     fn obstacle_to(self, requirement: RuntimeRequirement) -> Option<Obstacle> {
         match requirement {
             // What the build proved holds while nothing but the code it saw runs.
-            RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime if self.omits_function_source => {
+            RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime
+                if self.omits_function_source =>
+            {
                 Some(Obstacle::BuiltWithoutFunctionSource)
             }
             RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime => {
@@ -152,7 +154,9 @@ impl BuildRecord {
 
 fn obstacle_of_removal(requirement: RuntimeRequirement) -> Obstacle {
     match requirement {
-        RuntimeRequirement::Feature(feature) if Feature::all_outside_compiled_programs().contains(feature) => {
+        RuntimeRequirement::Feature(feature)
+            if Feature::all_outside_compiled_programs().contains(feature) =>
+        {
             Obstacle::NoCommandLine
         }
         _ => Obstacle::FeatureRemoved,
@@ -187,7 +191,9 @@ pub(crate) fn walk_option_words<'w>(words: &'w [&'w [u8]]) -> Vec<WrittenOption<
         if names.long.is_none() && names.short.is_none() {
             break;
         }
-        let index = params.iter().position(|param| core::ptr::eq(param, arg.param));
+        let index = params
+            .iter()
+            .position(|param| core::ptr::eq(param, arg.param));
         options.push(WrittenOption {
             index: index.expect("the stream returns parameters of its table"),
             value: arg.value,
@@ -208,7 +214,9 @@ fn label_of(index: usize) -> Vec<u8> {
 fn bootstrap_flag_name(flag: &[u8]) -> &[u8] {
     let text = flag.strip_prefix(b"--").unwrap_or(flag);
     // `append_options_env` leaves a quoted value in the option's word.
-    let name_end = text.iter().position(|byte| *byte == b'=' || byte.is_ascii_whitespace());
+    let name_end = text
+        .iter()
+        .position(|byte| *byte == b'=' || byte.is_ascii_whitespace());
     &text[..name_end.unwrap_or(text.len())]
 }
 
@@ -219,7 +227,9 @@ pub(crate) struct ExecArgvOptions {
 
 impl ExecArgvOptions {
     fn first_with(&self, requirement: RuntimeRequirement) -> Option<&OptionRequirement> {
-        self.requirements.iter().find(|option| option.requirement == requirement)
+        self.requirements
+            .iter()
+            .find(|option| option.requirement == requirement)
     }
 
     pub(crate) fn admits_inspector(&self) -> bool {
@@ -228,7 +238,10 @@ impl ExecArgvOptions {
 
     pub(crate) fn first_that_loads_code(&self) -> Option<&OptionRequirement> {
         let loads_code = |option: &&OptionRequirement| {
-            matches!(option.requirement, RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime)
+            matches!(
+                option.requirement,
+                RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime
+            )
         };
         self.requirements.iter().find(loads_code)
     }
@@ -293,7 +306,8 @@ fn find_options_with_obstacle(
     are_only_for_diagnosis: bool,
 ) -> impl Iterator<Item = UnusableOption> {
     let requirements = read_option_words(words).requirements.into_iter();
-    let asked_for = requirements.filter(move |option| is_only_for_diagnosis(option.requirement) == are_only_for_diagnosis);
+    let asked_for = requirements
+        .filter(move |option| is_only_for_diagnosis(option.requirement) == are_only_for_diagnosis);
     asked_for.filter_map(move |option| {
         Some(UnusableOption {
             obstacle: obstacle_to(option.requirement)?,
@@ -332,11 +346,18 @@ fn find_unusable_bunfig_setting(
     obstacle_to: impl Fn(RuntimeRequirement) -> Option<Obstacle>,
 ) -> Option<UnusableOption> {
     let settings = [
-        ("preload", RuntimeRequirement::RuntimeCode, !ctx.preloads.is_empty()),
+        (
+            "preload",
+            RuntimeRequirement::RuntimeCode,
+            !ctx.preloads.is_empty(),
+        ),
         (
             "serve.static.plugins",
             RuntimeRequirement::RuntimeCode,
-            ctx.args.serve_plugins.as_ref().is_some_and(|plugins| !plugins.is_empty()),
+            ctx.args
+                .serve_plugins
+                .as_ref()
+                .is_some_and(|plugins| !plugins.is_empty()),
         ),
         (
             "install.auto",
@@ -407,7 +428,11 @@ fn build_of_this_executable() -> Option<BuildRecord> {
 }
 
 fn obstacle_in_this_executable(requirement: RuntimeRequirement) -> Option<Obstacle> {
-    find_obstacle(requirement, build_of_this_executable(), RuntimeRequirement::is_available)
+    find_obstacle(
+        requirement,
+        build_of_this_executable(),
+        RuntimeRequirement::is_available,
+    )
 }
 
 #[inline]
@@ -456,8 +481,14 @@ pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData) {
     if !is_trimmed() && is_removed(Feature::Install) {
         ctx.debug.global_cache = GlobalCache::disable;
     }
-    ignore_code_of_bunfig(ctx, obstacle_in_this_executable(RuntimeRequirement::RuntimeCode));
-    exit_if_unusable(find_unusable_bunfig_setting(ctx, obstacle_in_this_executable));
+    ignore_code_of_bunfig(
+        ctx,
+        obstacle_in_this_executable(RuntimeRequirement::RuntimeCode),
+    );
+    exit_if_unusable(find_unusable_bunfig_setting(
+        ctx,
+        obstacle_in_this_executable,
+    ));
 }
 
 // The file is the one that happens to lie in the working directory, and it may be there for `bun`.

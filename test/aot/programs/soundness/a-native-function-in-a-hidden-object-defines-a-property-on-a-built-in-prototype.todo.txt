@@ -1,0 +1,1 @@
+The executable crashes: the compiler does not see the new property, because no statement of the program makes the call that defines it, and takes the value that is read for a string.

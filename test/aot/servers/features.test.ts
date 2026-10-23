@@ -14,7 +14,7 @@ import { cpSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
-import { installPackages, filterRequested, startServer, requestedServers } from "./run-servers";
+import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
 
 type RequestSpec = [method: string, path: string, headers?: Record<string, string>, body?: string];
 
@@ -22,7 +22,10 @@ const json = { "Content-Type": "application/json" };
 const form = { "Content-Type": "application/x-www-form-urlencoded" };
 const item = JSON.stringify({ name: "kettle", tags: ["kitchen", "steel"], price: 24.99 });
 
-const multipart = "--line\r\n" + 'Content-Disposition: form-data; name="a"\r\n\r\n1\r\n--line\r\n' + 'Content-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--line--\r\n';
+const multipart =
+  "--line\r\n" +
+  'Content-Disposition: form-data; name="a"\r\n\r\n1\r\n--line\r\n' +
+  'Content-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--line--\r\n';
 
 const requests: Record<string, RequestSpec[]> = {
   "bun.ts": [
@@ -134,7 +137,15 @@ const requests: Record<string, RequestSpec[]> = {
   "hono.ts": [
     ["GET", "/open/data", { Origin: "https://example.com" }],
     ["GET", "/open/data", { Origin: "https://example.org" }],
-    ["OPTIONS", "/open/data", { Origin: "https://example.com", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "x-user" }],
+    [
+      "OPTIONS",
+      "/open/data",
+      {
+        Origin: "https://example.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "x-user",
+      },
+    ],
     ["GET", "/safe/data"],
     ["GET", "/tagged/data"],
     ["GET", "/tagged/data", { "If-None-Match": '"nothing"' }],
@@ -295,7 +306,8 @@ async function runWebSocketSession(origin: string) {
   const connect = (name: string) => {
     const socket = new WebSocket(`${origin.replace("http", "ws")}/socket?name=${name}`);
     socket.binaryType = "arraybuffer";
-    socket.onmessage = event => messages[name].push(typeof event.data === "string" ? event.data : `bytes ${new Uint8Array(event.data)}`);
+    socket.onmessage = event =>
+      messages[name].push(typeof event.data === "string" ? event.data : `bytes ${new Uint8Array(event.data)}`);
     socket.onclose = event => messages[name].push(`closed: ${event.code} ${event.reason}`);
     return socket;
   };
@@ -334,7 +346,10 @@ async function abortEventStream(origin: string) {
   return { type: response.headers.get("Content-Type"), first: text.slice(0, text.indexOf("id: 5\n")), counters };
 }
 
-if (!requestedServers) console.error("SKIPPED: test/aot/servers/features.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
+if (!requestedServers)
+  console.error(
+    "SKIPPED: test/aot/servers/features.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it",
+  );
 
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/features", () => {
   const folder = String(tempDir("aot-servers-features", {}));
@@ -347,33 +362,60 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/feature
     await installPackages(folder);
   }, 120_000);
 
-  test.each(servers)("%s matches the build without --aot", async file => {
-    const executables = [];
-    for (const flags of [["--aot"], []]) {
-      const executable = join(folder, `${file}${flags[0] ?? "--no-aot"}${isWindows ? ".exe" : ""}`);
-      built(await spawned([bunExe(), "build", "--compile", ...flags, "--define", 'process.env.NODE_ENV="production"', "--target=bun", `./features/${file}`, "--outfile", executable], folder, bunEnv));
-      executables.push(executable);
-    }
-    using aot = await startServer([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    using aotWithoutRegExpJIT = await startServer([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_useRegExpJIT: "0" });
-    using aotZombieMode = await startServer([executables[0]], folder, {
-      ...bunEnv,
-      BUN_JSC_crashIfInterpreterIsUsed: "1",
-      BUN_JSC_useZombieMode: "1",
-      BUN_JSC_sweepSynchronously: "1",
-      BUN_JSC_slowPathAllocsBetweenGCs: "50",
-    });
-    using reference = await startServer([executables[1]], folder, bunEnv);
-    const expected = await collectResponses(reference.origin, requests[file]);
-    expect(await collectResponses(aot.origin, requests[file])).toEqual(expected);
-    expect(await collectResponses(aotWithoutRegExpJIT.origin, requests[file])).toEqual(expected);
-    expect(await collectResponses(aotZombieMode.origin, requests[file])).toEqual(expected);
-    expect(await collectRawHeaders(aot.origin, requests[file])).toEqual(await collectRawHeaders(reference.origin, requests[file]));
-    if (file === "bun.ts") {
-      const messages = await runWebSocketSession(reference.origin);
-      expect(messages.ada).toContain("bob left: 4001 said bye");
-      expect(await runWebSocketSession(aot.origin)).toEqual(messages);
-      expect(await abortEventStream(aot.origin)).toEqual(await abortEventStream(reference.origin));
-    }
-  }, 120_000);
+  test.each(servers)(
+    "%s matches the build without --aot",
+    async file => {
+      const executables = [];
+      for (const flags of [["--aot"], []]) {
+        const executable = join(folder, `${file}${flags[0] ?? "--no-aot"}${isWindows ? ".exe" : ""}`);
+        built(
+          await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...flags,
+              "--define",
+              'process.env.NODE_ENV="production"',
+              "--target=bun",
+              `./features/${file}`,
+              "--outfile",
+              executable,
+            ],
+            folder,
+            bunEnv,
+          ),
+        );
+        executables.push(executable);
+      }
+      using aot = await startServer([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+      using aotWithoutRegExpJIT = await startServer([executables[0]], folder, {
+        ...bunEnv,
+        BUN_JSC_crashIfInterpreterIsUsed: "1",
+        BUN_JSC_useRegExpJIT: "0",
+      });
+      using aotZombieMode = await startServer([executables[0]], folder, {
+        ...bunEnv,
+        BUN_JSC_crashIfInterpreterIsUsed: "1",
+        BUN_JSC_useZombieMode: "1",
+        BUN_JSC_sweepSynchronously: "1",
+        BUN_JSC_slowPathAllocsBetweenGCs: "50",
+      });
+      using reference = await startServer([executables[1]], folder, bunEnv);
+      const expected = await collectResponses(reference.origin, requests[file]);
+      expect(await collectResponses(aot.origin, requests[file])).toEqual(expected);
+      expect(await collectResponses(aotWithoutRegExpJIT.origin, requests[file])).toEqual(expected);
+      expect(await collectResponses(aotZombieMode.origin, requests[file])).toEqual(expected);
+      expect(await collectRawHeaders(aot.origin, requests[file])).toEqual(
+        await collectRawHeaders(reference.origin, requests[file]),
+      );
+      if (file === "bun.ts") {
+        const messages = await runWebSocketSession(reference.origin);
+        expect(messages.ada).toContain("bob left: 4001 said bye");
+        expect(await runWebSocketSession(aot.origin)).toEqual(messages);
+        expect(await abortEventStream(aot.origin)).toEqual(await abortEventStream(reference.origin));
+      }
+    },
+    120_000,
+  );
 });

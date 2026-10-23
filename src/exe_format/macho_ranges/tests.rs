@@ -31,7 +31,9 @@ fn command_offset(bytes: &[u8], cmd: u32) -> usize {
 
 fn segment_command_offset(bytes: &[u8], segment_index: usize) -> usize {
     let commands = parse(bytes).unwrap().commands;
-    let mut segments = commands.iter().filter(|(kind, _)| matches!(kind, CommandKind::Segment));
+    let mut segments = commands
+        .iter()
+        .filter(|(kind, _)| matches!(kind, CommandKind::Segment));
     segments.nth(segment_index).unwrap().1.start
 }
 
@@ -224,7 +226,11 @@ fn assert_signature_room(trimmed: &[u8]) {
     let size = MachoSigner::compute_signature_size(u64::from(command.dataoff));
     assert_eq!(command.datasize as usize, size);
     assert_eq!(command.dataoff as usize + size, trimmed.len());
-    assert!(trimmed[command.dataoff as usize..].iter().all(|byte| *byte == 0));
+    assert!(
+        trimmed[command.dataoff as usize..]
+            .iter()
+            .all(|byte| *byte == 0)
+    );
 }
 
 fn assert_removal_can_be_planned(bytes: &[u8]) {
@@ -234,7 +240,10 @@ fn assert_removal_can_be_planned(bytes: &[u8]) {
 
 fn assert_no_cuts(bytes: &[u8], reason: NoCutReason) {
     let model = cut_model(bytes);
-    assert_eq!(model, CutModel::without_cuts(ExecutableFormat::MachO, CUT_ALIGNMENT, reason));
+    assert_eq!(
+        model,
+        CutModel::without_cuts(ExecutableFormat::MachO, CUT_ALIGNMENT, reason)
+    );
     assert_eq!(model.max_cuts(), 0);
 }
 
@@ -282,7 +291,10 @@ fn reads_toy_headers() {
     let model = cut_model(&toy());
     assert_eq!(model.format, ExecutableFormat::MachO);
     assert_eq!(model.alignment, CUT_ALIGNMENT);
-    assert_eq!(model.capacity, CutCapacity::Cuts(HEADER_PAD / BYTES_PER_CUT));
+    assert_eq!(
+        model.capacity,
+        CutCapacity::Cuts(HEADER_PAD / BYTES_PER_CUT)
+    );
     let small_pad = create_toy(ToyOptions {
         header_pad: 100,
         ..LINKED_TOY
@@ -480,7 +492,11 @@ fn section_ordinals_limit_cuts() {
 #[test]
 fn malformed_files_are_rejected() {
     let edits: [fn(&mut Vec<u8>); 7] = [
-        |bytes| edit_struct(bytes, 0, |header: &mut mach_header_64| header.sizeofcmds = u32::MAX),
+        |bytes| {
+            edit_struct(bytes, 0, |header: &mut mach_header_64| {
+                header.sizeofcmds = u32::MAX
+            })
+        },
         |bytes| edit_segment(bytes, PAGEZERO_INDEX, |segment| segment.cmdsize = 4),
         |bytes| edit_segment(bytes, TEXT_INDEX, |segment| segment.nsects += 1),
         |bytes| {
@@ -534,7 +550,11 @@ fn unsupported_files_have_no_cuts() {
             ImageError::MalformedHeaders,
         ),
         (
-            |bytes| edit_command(bytes, LC::SYMTAB, |table: &mut symtab_command| table.stroff = 8),
+            |bytes| {
+                edit_command(bytes, LC::SYMTAB, |table: &mut symtab_command| {
+                    table.stroff = 8
+                })
+            },
             ImageError::MalformedHeaders,
         ),
         (
@@ -565,7 +585,12 @@ fn unsupported_files_have_no_cuts() {
         (
             |bytes| {
                 let add_relocations_offset = |section: &mut section_64| section.reloff = 8;
-                edit_section(bytes, TEXT_INDEX, TEXT_SECTION_INDEX, add_relocations_offset);
+                edit_section(
+                    bytes,
+                    TEXT_INDEX,
+                    TEXT_SECTION_INDEX,
+                    add_relocations_offset,
+                );
             },
             ImageError::MalformedHeaders,
         ),

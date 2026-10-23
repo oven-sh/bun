@@ -42,7 +42,11 @@ fn operands_are_positions_of_arguments() {
         (BuiltinId::FunctionPrototypeApply, call_function),
     ];
     for (builtin, operation) in cases {
-        assert_eq!(prototype_operation_of(builtin), Some(operation), "{builtin:?}");
+        assert_eq!(
+            prototype_operation_of(builtin),
+            Some(operation),
+            "{builtin:?}"
+        );
     }
 }
 

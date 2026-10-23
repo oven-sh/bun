@@ -61,7 +61,9 @@ export function writeRust(table: Table): string {
     "pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[",
   ];
   for (const entry of table.entries) {
-    const references = entry.references.map(([name, reference]) => `(${rustString(name)}, ${rustReference(reference)})`);
+    const references = entry.references.map(
+      ([name, reference]) => `(${rustString(name)}, ${rustReference(reference)})`,
+    );
     lines.push(
       "    PublishedFunction {",
       `        shape: Shape::${entry.line.shape},`,

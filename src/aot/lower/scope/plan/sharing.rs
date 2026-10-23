@@ -61,8 +61,9 @@ pub(super) fn compute_sharing(
             sharing.shared.push(binding);
         }
         let body = context.module_body_of(owner);
-        let is_used_by_other_body =
-            run.iter().any(|&(_, user)| context.module_body_of(user) != body);
+        let is_used_by_other_body = run
+            .iter()
+            .any(|&(_, user)| context.module_body_of(user) != body);
         let key = match binding {
             BindingRef::Symbol(symbol) if is_exported => Some(symbol_key(context, symbol)),
             BindingRef::Symbol(_) | BindingRef::Slot(..) if is_used_by_other_body => {
@@ -76,7 +77,9 @@ pub(super) fn compute_sharing(
             sharing.variables.push((binding, key));
             continue;
         }
-        sharing.captured.push(describe_captured_binding(context, binding, owner));
+        sharing
+            .captured
+            .push(describe_captured_binding(context, binding, owner));
         let run_uses = run.iter().map(|&(binding, user)| (user, binding));
         sharing.captured_uses.extend(run_uses);
     }
@@ -93,8 +96,8 @@ fn describe_captured_binding(
     binding: BindingRef,
     owner: WalkedFunctionId,
 ) -> CapturedBinding {
-    let is_immutable = is_immutable(context, binding)
-        || is_stored_only_by_own_loop_update(context, binding);
+    let is_immutable =
+        is_immutable(context, binding) || is_stored_only_by_own_loop_update(context, binding);
     let initialization = find_initialization(context, binding);
     if !is_immutable && let Some(time) = find_time_of_last_store(context, binding, owner) {
         return CapturedBinding {
@@ -176,8 +179,8 @@ fn drop_users_behind_initialization(
         return;
     }
     users.retain(|&mut (_, user)| {
-        let is_behind = user != owner
-            && is_initialized_before(&walk.functions, &holder, user, u32::MAX);
+        let is_behind =
+            user != owner && is_initialized_before(&walk.functions, &holder, user, u32::MAX);
         if is_behind {
             sharing.initialized_holders.push((user, symbol));
         }
@@ -189,7 +192,10 @@ pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bo
     let (scope, slot) = match binding {
         BindingRef::Symbol(symbol) => {
             let is_dead_store = |target| context.decisions.is_dead_expr(target);
-            let stability = context.input.bound.binding_stability_ignoring(symbol, &is_dead_store);
+            let stability = context
+                .input
+                .bound
+                .binding_stability_ignoring(symbol, &is_dead_store);
             return stability == BindingStability::Stable;
         }
         BindingRef::Slot(scope, slot) => (scope, slot),
@@ -201,9 +207,11 @@ pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bo
         | ScopeSlot::Arguments
         | ScopeSlot::WithObject
         | ScopeSlot::EvalVariables => true,
-        ScopeSlot::This | ScopeSlot::ArgumentsBinding | ScopeSlot::CommonJs(_) => {
-            context.walk.stored_slots.binary_search(&(scope, slot)).is_err()
-        }
+        ScopeSlot::This | ScopeSlot::ArgumentsBinding | ScopeSlot::CommonJs(_) => context
+            .walk
+            .stored_slots
+            .binary_search(&(scope, slot))
+            .is_err(),
         ScopeSlot::Class(
             ClassSlot::ClassObject
             | ClassSlot::ClassToken
@@ -235,7 +243,10 @@ fn find_variable_key_between_bodies(
     let is_entered_once = context.input.bound.code_unit(scope) == CodeUnit::File
         && !context.walk.is_repeated_scope[scope.idx()];
     let key = create_variable_key(context, binding).filter(|_| is_entered_once);
-    debug_assert!(key.is_some(), "an inner module names only what the top of its file declares");
+    debug_assert!(
+        key.is_some(),
+        "an inner module names only what the top of its file declares"
+    );
     key
 }
 
@@ -336,8 +347,9 @@ fn add_bindings_named_by_commonjs_exports(
 ) {
     let (input, bound) = (context.input, context.input.bound);
     let callbacks = input.modules.inner_modules(input.file).iter();
-    let mut body_scopes: SmallVec<[ScopeId; 4]> =
-        callbacks.map(|callback| bound.fns[callback.idx()].scope).collect();
+    let mut body_scopes: SmallVec<[ScopeId; 4]> = callbacks
+        .map(|callback| bound.fns[callback.idx()].scope)
+        .collect();
     if input.modules.kind(input.file) == ModuleKind::CommonJs {
         body_scopes.push(context.file_scope);
     }
@@ -348,7 +360,9 @@ fn add_bindings_named_by_commonjs_exports(
     let commonjs = input.modules.commonjs();
     for (symbol, &form) in (0..).map(SymbolId).zip(forms) {
         if form == BindingForm::Stored
-            && body_scopes.binary_search(&context.declaring_scope(symbol)).is_ok()
+            && body_scopes
+                .binary_search(&context.declaring_scope(symbol))
+                .is_ok()
             && commonjs.is_exported_binding(input.file, symbol)
         {
             symbols.push(symbol);
@@ -368,7 +382,9 @@ fn add_unused_exports(
         let is_used = find_by_key(&sharing.variables[..used_count], binding).is_some();
         if forms[symbol.idx()] == BindingForm::Stored && !is_used {
             sharing.shared.push(binding);
-            sharing.variables.push((binding, symbol_key(context, symbol)));
+            sharing
+                .variables
+                .push((binding, symbol_key(context, symbol)));
         }
     }
 }

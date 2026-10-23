@@ -3,9 +3,7 @@ use super::standalone_options::StandaloneBuild;
 use super::test_file::{DiagnosticName, OptionWord, parse_decimal, parse_engine_diagnostic_name};
 use bun_aot::emit::emit;
 use bun_aot::ir::generated::{InternalErrorKind, StatisticId};
-use bun_aot::ir::{
-    FunctionId, Id, Program, print_function, print_program, run_serially,
-};
+use bun_aot::ir::{FunctionId, Id, Program, print_function, print_program, run_serially};
 use bun_aot::statistics::Statistics;
 use bun_aot::{BuildFailed, WithoutServices, link_program};
 use bun_ast::{Log, Metadata};
@@ -192,7 +190,9 @@ fn print_selection(
         return select(program);
     }
     let functions = program.functions.iter_mut();
-    let relations: Vec<_> = functions.map(|function| take(&mut function.relations)).collect();
+    let relations: Vec<_> = functions
+        .map(|function| take(&mut function.relations))
+        .collect();
     let output = select(program);
     for (function, relations) in program.functions.iter_mut().zip(relations) {
         function.relations = relations;
@@ -215,7 +215,9 @@ fn run_front_end(input: &CommandInput<'_>, select: fn(&Program) -> String) -> Co
         Err(error) => return CommandOutcome::Failed(format!("emit failed: {error:?}")),
     };
     let byte_count = bytes.as_slice().len() as u64;
-    result.statistics.push((StatisticId::ProgramBytes, byte_count));
+    result
+        .statistics
+        .push((StatisticId::ProgramBytes, byte_count));
     let testaot = std::env::var_os(ENGINE_TOOL_VARIABLE);
     check_with_engine(testaot.as_deref(), bytes.as_slice(), &text, result)
 }
@@ -540,7 +542,10 @@ mod tests {
         let CommandOutcome::Finished(result) = outcome else {
             panic!("the CHECK lines are compared without the engine");
         };
-        assert_eq!(result.engine_was_skipped.as_deref(), Some("TESTAOT is not set"));
+        assert_eq!(
+            result.engine_was_skipped.as_deref(),
+            Some("TESTAOT is not set")
+        );
         assert_eq!(result.output, "function f0\n");
     }
 
@@ -551,14 +556,19 @@ mod tests {
         let CommandOutcome::Failed(why) = outcome else {
             panic!("a tool that cannot be started verifies nothing");
         };
-        assert!(why.starts_with("testaot print: cannot be started: "), "{why}");
+        assert!(
+            why.starts_with("testaot print: cannot be started: "),
+            "{why}"
+        );
     }
 
     #[test]
     fn other_schema_is_recognized() {
         let message = InternalErrorKind::SchemaMismatch.message();
         assert!(reports_other_schema(&format!("{message}\n")));
-        assert!(reports_other_schema(&format!("testaot: x.bin: {message}\nmore\n")));
+        assert!(reports_other_schema(&format!(
+            "testaot: x.bin: {message}\nmore\n"
+        )));
         assert!(!reports_other_schema("testaot: unknown option\n"));
         assert!(!reports_other_schema(""));
     }
@@ -566,7 +576,10 @@ mod tests {
     #[test]
     fn missing_engine_cannot_start() {
         let why = print_with_engine(OsStr::new(MISSING_EXECUTABLE), b"").unwrap_err();
-        assert!(why.starts_with("testaot print: cannot be started: "), "{why}");
+        assert!(
+            why.starts_with("testaot print: cannot be started: "),
+            "{why}"
+        );
     }
 
     #[cfg(unix)]

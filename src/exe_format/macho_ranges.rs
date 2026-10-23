@@ -11,9 +11,9 @@ use crate::macho_fixups::{SegmentPiece, rebuild_chained_fixups};
 use crate::macho_types::{
     CPU_TYPE_ARM64, CPU_TYPE_X86_64, CommandKind, LC, LoadCommandIterator, MH_EXECUTE, MH_MAGIC_64,
     N_SECT, N_STAB, N_TYPE, S_4BYTE_LITERALS, S_8BYTE_LITERALS, S_16BYTE_LITERALS,
-    S_CSTRING_LITERALS, S_GB_ZEROFILL, S_REGULAR, S_THREAD_LOCAL_ZEROFILL, S_ZEROFILL, SECTION_TYPE,
-    command_kind, dysymtab_command, linkedit_data_command, load_command, mach_header_64, nlist_64,
-    section_64, segment_command_64, symtab_command,
+    S_CSTRING_LITERALS, S_GB_ZEROFILL, S_REGULAR, S_THREAD_LOCAL_ZEROFILL, S_ZEROFILL,
+    SECTION_TYPE, command_kind, dysymtab_command, linkedit_data_command, load_command,
+    mach_header_64, nlist_64, section_64, segment_command_64, symtab_command,
 };
 use crate::{align_up, read_struct, write_struct};
 
@@ -124,7 +124,9 @@ fn find_cuttable_spans(parsed: &Parsed) -> Vec<AddressRange> {
     let segments = &parsed.segments[..parsed.linkedit];
     let headers = AddressRange {
         start: parsed.image_base,
-        end: parsed.image_base.saturating_add(parsed.header_room_end as u64),
+        end: parsed
+            .image_base
+            .saturating_add(parsed.header_room_end as u64),
     };
     let mut required = vec![headers];
     let sections = segments.iter().flat_map(|segment| &segment.sections);
@@ -196,7 +198,7 @@ fn parse(macho: &[u8]) -> Result<Parsed> {
 
 fn read_segment(bytes: &[u8], file_size: u64, previous: &[Segment]) -> Result<Segment> {
     let command: segment_command_64 = read_command(bytes)?;
-    let section_headers = bytes[SEGMENT_COMMAND_SIZE..].chunks_exact(SECTION_SIZE);
+    let (section_headers, rest) = bytes[SEGMENT_COMMAND_SIZE..].as_chunks::<SECTION_SIZE>();
     let file_end = command.fileoff.checked_add(command.filesize);
     let mut previous_commands = previous.iter().map(|segment| &segment.command);
     let file_backed = previous_commands.rfind(|command| command.filesize > 0);
@@ -206,7 +208,7 @@ fn read_segment(bytes: &[u8], file_size: u64, previous: &[Segment]) -> Result<Se
         (vm_addresses(&segment.command).end, next_ordinal)
     });
     if section_headers.len() != command.nsects as usize
-        || !section_headers.remainder().is_empty()
+        || !rest.is_empty()
         || file_end.is_none_or(|file_end| file_end > file_size)
         || command.vmaddr.checked_add(command.vmsize).is_none()
         || (command.filesize > command.vmsize && command.vmsize != 0)
@@ -215,7 +217,9 @@ fn read_segment(bytes: &[u8], file_size: u64, previous: &[Segment]) -> Result<Se
     {
         return Err(ImageError::MalformedHeaders);
     }
-    let sections: Vec<section_64> = section_headers.map(read_struct).collect();
+    let sections: Vec<section_64> = (section_headers.iter())
+        .map(|bytes| read_struct(bytes))
+        .collect();
     for section in &sections {
         check_section_layout(section, &command)?;
     }
@@ -316,9 +320,11 @@ fn plan_removal(macho: &[u8], parsed: &Parsed, cuts: &[AddressRange]) -> Result<
     let old_fixups = find_blob(LC::DYLD_CHAINED_FIXUPS)?;
     let old_signature = find_blob(LC::CODE_SIGNATURE)?;
     let old_symbols = match find_command::<symtab_command>(macho, parsed, LC::SYMTAB)? {
-        Some(table) if table.nsyms > 0 => {
-            find_linkedit_blob(&old_linkedit, table.symoff, SYMBOL_SIZE * table.nsyms as usize)?
-        }
+        Some(table) if table.nsyms > 0 => find_linkedit_blob(
+            &old_linkedit,
+            table.symoff,
+            SYMBOL_SIZE * table.nsyms as usize,
+        )?,
         _ => 0..0,
     };
     let fixups = match &old_fixups {
@@ -550,7 +556,7 @@ fn append_segment(headers: &mut Vec<u8>, segment: &NewSegment, piece_number: usi
     write_struct(command, &segment.command);
     let name = create_piece_name(segment.command.seg_name(), piece_number);
     command[SEGMENT_NAME_OFFSET..][..SEGMENT_NAME_SIZE].copy_from_slice(&name);
-    let section_headers = section_headers.chunks_exact_mut(SECTION_SIZE);
+    let section_headers = section_headers.as_chunks_mut::<SECTION_SIZE>().0.iter_mut();
     for (bytes, (_, section)) in section_headers.zip(&segment.sections) {
         write_struct(bytes, section);
     }
@@ -625,7 +631,7 @@ fn apply_plan(macho: &mut Vec<u8>, header_room_end: usize, plan: &Plan) {
 }
 
 fn renumber_symbols(symbols: &mut [u8], new_ordinals: &[Vec<(u64, u8)>]) {
-    for bytes in symbols.chunks_exact_mut(SYMBOL_SIZE) {
+    for bytes in symbols.as_chunks_mut::<SYMBOL_SIZE>().0 {
         let mut symbol: nlist_64 = read_struct(bytes);
         let is_in_section = symbol.n_type & N_STAB == 0 && symbol.n_type & N_TYPE == N_SECT;
         let parts = new_ordinals.get(usize::from(symbol.n_sect));

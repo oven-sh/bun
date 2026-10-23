@@ -4,11 +4,11 @@ use core::ops::Range;
 use crate::builtins;
 use crate::elf::{EI_CLASS, EI_DATA, ELFCLASS64, ELFDATA2LSB, Elf64_Ehdr, Elf64_Phdr};
 use crate::elf_program_headers::{PT_NOTE, find_note_descriptor, note_alignment};
-use crate::image::ExecutableFormat;
+use crate::image::{ExecutableFormat, KnownSection};
 use crate::macho_types::{LC, LoadCommandIterator, mach_header_64};
 use crate::pe::{DOSHeader, OptionalHeader64, PE_SIGNATURE, PEHeader, SectionHeader};
 use crate::read_struct;
-use crate::section::SectionError;
+use crate::section::{SectionError, find_known_section};
 
 const NT_GNU_BUILD_ID: u32 = 3;
 const GNU_NOTE_NAME: &[u8] = b"GNU\0";
@@ -83,6 +83,83 @@ pub fn find_file_identity(file: &mut builtins::Image<'_>) -> Result<[u8; 16], Id
     id.and_then(check_identity)
 }
 
+const MAX_DESCRIPTION_BYTES: u64 = 1 << 20;
+const DESCRIPTION_RECORD_HEAD: usize = 12;
+
+pub struct RuntimeDescription {
+    section: Vec<u8>,
+}
+
+impl RuntimeDescription {
+    pub const ENGINE: [u8; 8] = *b"BUNAOTRT";
+    pub const HOST: [u8; 8] = *b"BUNAOTHO";
+
+    pub fn read(file: &mut builtins::Image<'_>) -> Result<RuntimeDescription, SectionError> {
+        let location = find_known_section(file, KnownSection::RuntimeDescription)?;
+        if location.size > MAX_DESCRIPTION_BYTES {
+            return Err(SectionError::Invalid);
+        }
+        let offset = usize::try_from(location.file_offset).map_err(|_| SectionError::Invalid)?;
+        let section = file.bytes(offset, location.size as usize)?;
+        Ok(RuntimeDescription { section })
+    }
+
+    pub fn record(&self, kind: [u8; 8]) -> Option<&[u8]> {
+        let mut rest = &self.section[..];
+        while rest.len() >= DESCRIPTION_RECORD_HEAD {
+            let size = crate::builtins::u32_at(rest, 8) as usize;
+            if size < DESCRIPTION_RECORD_HEAD || size > rest.len() {
+                return None;
+            }
+            if rest[..8] == kind {
+                return Some(&rest[..size]);
+            }
+            rest = rest.get(size.next_multiple_of(8)..)?;
+        }
+        None
+    }
+}
+
+#[repr(C)]
+pub struct HostDescription {
+    pub kind: [u8; 8],
+    pub size: u32,
+    pub reserved: u32,
+    pub revision: [u8; 40],
+}
+
+impl HostDescription {
+    pub const fn new(revision: &str) -> HostDescription {
+        let digits = revision.as_bytes();
+        let mut padded = [0u8; 40];
+        let mut index = 0;
+        while index < digits.len() && index < padded.len() {
+            padded[index] = digits[index];
+            index += 1;
+        }
+        HostDescription {
+            kind: RuntimeDescription::HOST,
+            size: size_of::<HostDescription>() as u32,
+            reserved: 0,
+            revision: padded,
+        }
+    }
+
+    pub fn revision_in(record: &[u8]) -> Option<&[u8]> {
+        let revision = record.get(core::mem::offset_of!(HostDescription, revision)..)?;
+        let revision = revision.get(..40)?;
+        let length = revision.iter().position(|&byte| byte == 0).unwrap_or(40);
+        Some(&revision[..length])
+    }
+}
+
+pub fn read_stamp_of_builtin_modules(file: &mut builtins::Image<'_>) -> Result<u32, SectionError> {
+    let location = find_known_section(file, KnownSection::BuiltinModules)?;
+    let offset = usize::try_from(location.file_offset).map_err(|_| SectionError::Invalid)?;
+    let header = file.bytes(offset, builtins::HEADER_SIZE)?;
+    Ok(builtins::u32_at(&header, 12))
+}
+
 pub fn find_process_identity() -> Result<[u8; 16], IdentityError> {
     process::find_identity().and_then(check_identity)
 }
@@ -147,8 +224,10 @@ fn find_in_elf_notes<T>(
         segment_count * size_of::<Elf64_Phdr>(),
     )?;
     for segment in table
-        .chunks_exact(size_of::<Elf64_Phdr>())
-        .map(read_struct::<Elf64_Phdr>)
+        .as_chunks::<{ size_of::<Elf64_Phdr>() }>()
+        .0
+        .iter()
+        .map(|bytes| read_struct::<Elf64_Phdr>(bytes))
     {
         if segment.p_type != PT_NOTE {
             continue;
@@ -231,8 +310,10 @@ fn find_code_view_guid(
     };
     let entries = read_headers(pe, directory_offset, directory.size as usize)?;
     for entry in entries
-        .chunks_exact(size_of::<DebugDirectoryEntry>())
-        .map(read_struct::<DebugDirectoryEntry>)
+        .as_chunks::<{ size_of::<DebugDirectoryEntry>() }>()
+        .0
+        .iter()
+        .map(|bytes| read_struct::<DebugDirectoryEntry>(bytes))
     {
         if entry.kind != IMAGE_DEBUG_TYPE_CODEVIEW
             || (entry.size_of_data as usize) < size_of::<CodeViewRecord>()
@@ -253,8 +334,10 @@ fn find_code_view_guid(
 
 fn find_file_offset(sections: &[u8], rva: u32) -> Result<usize, IdentityError> {
     sections
-        .chunks_exact(size_of::<SectionHeader>())
-        .map(read_struct::<SectionHeader>)
+        .as_chunks::<{ size_of::<SectionHeader>() }>()
+        .0
+        .iter()
+        .map(|bytes| read_struct::<SectionHeader>(bytes))
         .find_map(|section| {
             let offset_in_section = rva.checked_sub(section.virtual_address)?;
             let size = section.virtual_size.max(section.size_of_raw_data);
@@ -426,6 +509,61 @@ mod tests {
 
     fn zeroed<T: Copy>() -> T {
         read_struct(&vec![0; size_of::<T>()])
+    }
+
+    fn description_record(kind: [u8; 8], body: &[u8]) -> Vec<u8> {
+        let mut record = kind.to_vec();
+        record.extend_from_slice(&((DESCRIPTION_RECORD_HEAD + body.len()) as u32).to_le_bytes());
+        record.extend_from_slice(body);
+        record
+    }
+
+    #[test]
+    fn description_records_are_found_in_either_order_behind_padding() {
+        let engine = description_record(RuntimeDescription::ENGINE, &[1, 2, 3]);
+        let host = description_record(RuntimeDescription::HOST, &[4; 9]);
+        for (first, second) in [(&engine, &host), (&host, &engine)] {
+            let mut section = first.clone();
+            section.resize(section.len().next_multiple_of(8), 0);
+            section.extend_from_slice(second);
+            let description = RuntimeDescription { section };
+            assert_eq!(
+                description.record(RuntimeDescription::ENGINE),
+                Some(&engine[..])
+            );
+            assert_eq!(
+                description.record(RuntimeDescription::HOST),
+                Some(&host[..])
+            );
+            assert_eq!(description.record(*b"BUNAOT??"), None);
+        }
+    }
+
+    #[test]
+    fn description_record_that_leaves_the_section_is_not_found() {
+        let mut section = description_record(RuntimeDescription::ENGINE, &[0; 4]);
+        section[8] += 1;
+        let description = RuntimeDescription { section };
+        assert_eq!(description.record(RuntimeDescription::ENGINE), None);
+        let too_small = RuntimeDescription {
+            section: [&RuntimeDescription::ENGINE[..], &4u32.to_le_bytes()].concat(),
+        };
+        assert_eq!(too_small.record(RuntimeDescription::ENGINE), None);
+    }
+
+    #[test]
+    fn host_description_holds_the_revision() {
+        let host = HostDescription::new("0123abcd");
+        assert_eq!(host.size as usize, size_of::<HostDescription>());
+        // SAFETY: a `repr(C)` struct of bytes and two `u32` without padding.
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                (&raw const host).cast::<u8>(),
+                size_of::<HostDescription>(),
+            )
+        };
+        assert_eq!(HostDescription::revision_in(bytes), Some(&b"0123abcd"[..]));
+        assert_eq!(HostDescription::revision_in(&bytes[..20]), None);
     }
 
     fn with_image<T>(
@@ -706,7 +844,10 @@ mod tests {
     fn elf_header_errors() {
         let elf = elf_with_notes(&[BUILD_ID_NOTE], 4);
         let header_patches: [Patch<Elf64_Ehdr>; 6] = [
-            (|header| header.e_ident[EI_CLASS] = 1, UnrecognizedExecutable),
+            (
+                |header| header.e_ident[EI_CLASS] = 1,
+                UnrecognizedExecutable,
+            ),
             (|header| header.e_ident[EI_DATA] = 2, UnrecognizedExecutable),
             (|header| header.e_phoff = 1 << 40, Malformed),
             (|header| header.e_phoff = u64::MAX, Malformed),
@@ -717,7 +858,10 @@ mod tests {
         let segment_patches: [Patch<Elf64_Phdr>; 4] = [
             (|segment| segment.p_offset = 1 << 40, Malformed),
             (|segment| segment.p_filesz += 1, Malformed),
-            (|segment| segment.p_filesz = MAX_HEADER_BYTES as u64 + 1, Malformed),
+            (
+                |segment| segment.p_filesz = MAX_HEADER_BYTES as u64 + 1,
+                Malformed,
+            ),
             (|segment| segment.p_type = PT_LOAD, NoBuildId),
         ];
         check_patches(&elf, NOTE_SEGMENT_OFFSET, &segment_patches);
@@ -744,7 +888,10 @@ mod tests {
             &[(LC::UUID, &[0; 16])],
         ];
         for commands in command_lists {
-            assert_eq!(find_identity(&macho_with_commands(commands)), Err(NoBuildId));
+            assert_eq!(
+                find_identity(&macho_with_commands(commands)),
+                Err(NoBuildId)
+            );
         }
     }
 
@@ -753,7 +900,10 @@ mod tests {
         let macho = macho_with_commands(&[(LC::SEGMENT_64, &[0; 64]), (LC::UUID, &IDENTITY)]);
         let header_patches: [Patch<mach_header_64>; 4] = [
             (|header| header.sizeofcmds += 1, Malformed),
-            (|header| header.sizeofcmds = MAX_HEADER_BYTES as u32 + 1, Malformed),
+            (
+                |header| header.sizeofcmds = MAX_HEADER_BYTES as u32 + 1,
+                Malformed,
+            ),
             (|header| header.sizeofcmds -= 24, Malformed),
             (|header| header.ncmds = 1, NoBuildId),
         ];
@@ -786,7 +936,10 @@ mod tests {
         };
         let file = pe_with_guid(IDENTITY);
         assert_eq!(find_guid(&file, PeAddressing::File), Ok(IDENTITY));
-        assert_eq!(find_guid(&map_pe(&file), PeAddressing::Mapped), Ok(IDENTITY));
+        assert_eq!(
+            find_guid(&map_pe(&file), PeAddressing::Mapped),
+            Ok(IDENTITY)
+        );
         assert_eq!(find_guid(&file, PeAddressing::Mapped), Err(Malformed));
     }
 
@@ -807,15 +960,24 @@ mod tests {
         check_patches(&pe, 0, &dos_header_patches);
         let pe_header_patches: [Patch<PEHeader>; 3] = [
             (|header| header.signature = 0, UnrecognizedExecutable),
-            (|header| header.size_of_optional_header = 224, UnrecognizedExecutable),
+            (
+                |header| header.size_of_optional_header = 224,
+                UnrecognizedExecutable,
+            ),
             (|header| header.number_of_sections = 1, Malformed),
         ];
         check_patches(&pe, PE_HEADER_OFFSET, &pe_header_patches);
         let optional_header_patches: [Patch<OptionalHeader64>; 4] = [
             (|header| header.magic = 0x010b, UnrecognizedExecutable),
-            (|header| header.number_of_rva_and_sizes = DEBUG as u32, NoBuildId),
+            (
+                |header| header.number_of_rva_and_sizes = DEBUG as u32,
+                NoBuildId,
+            ),
             (|header| header.data_directories[DEBUG].size = 0, NoBuildId),
-            (|header| header.data_directories[DEBUG].virtual_address = 0x3000, Malformed),
+            (
+                |header| header.data_directories[DEBUG].virtual_address = 0x3000,
+                Malformed,
+            ),
         ];
         check_patches(&pe, OPTIONAL_HEADER_OFFSET, &optional_header_patches);
         let entry_patches: [Patch<DebugDirectoryEntry>; 3] = [

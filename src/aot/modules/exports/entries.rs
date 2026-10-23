@@ -24,8 +24,13 @@ pub(in crate::modules) struct WrittenName {
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) enum ExportEntry {
     Local(SymbolId),
-    ImportedNamespace { site: u32, phase: ImportPhase },
-    Namespace { site: u32 },
+    ImportedNamespace {
+        site: u32,
+        phase: ImportPhase,
+    },
+    Namespace {
+        site: u32,
+    },
     Indirect {
         site: u32,
         name: Atom,
@@ -76,7 +81,13 @@ fn collect_namespace_loads(
     let mut loads = Vec::new();
     for &file in &modules.compiled_files {
         let scan = scans.of(file);
-        for (site, scanned) in input.files.analysis(file).import_sites.iter().zip(&scan.sites) {
+        for (site, scanned) in input
+            .files
+            .analysis(file)
+            .import_sites
+            .iter()
+            .zip(&scan.sites)
+        {
             match site.kind {
                 ImportSiteKind::ImportCall(_) | ImportSiteKind::ExportStar(_) => {}
                 _ => continue,
@@ -86,7 +97,9 @@ fn collect_namespace_loads(
                 ScannedSite::Candidates(range) => {
                     let spelled = &scan.spellings[range.start as usize..range.end as usize];
                     let candidates = spelled.iter().map(|spelled| spelled.module);
-                    loads.extend(candidates.filter_map(|module| find_commonjs_file(modules, module)));
+                    loads.extend(
+                        candidates.filter_map(|module| find_commonjs_file(modules, module)),
+                    );
                 }
                 ScannedSite::Unresolved | ScannedSite::AllModules | ScannedSite::Erased => {}
             }
@@ -130,7 +143,9 @@ pub(in crate::modules) fn collect_export_entries(
         module.stars = collector.collect_stars();
         module.commonjs_imports = collector.collect_commonjs_imports(&module.own);
     });
-    let commonjs_imports = entries.iter_mut().flat_map(|module| module.commonjs_imports.drain(..));
+    let commonjs_imports = entries
+        .iter_mut()
+        .flat_map(|module| module.commonjs_imports.drain(..));
     CollectedEntries {
         commonjs_imports: commonjs_imports.collect(),
         tables: entries,
@@ -211,7 +226,13 @@ impl EntryCollector<'_, '_> {
         for (position, specifier_id) in (1..).zip(import.named.iter()) {
             let specifier = self.hir[specifier_id];
             let declaration = Decl::ImportSpec(specifier_id);
-            add_name(declaration, specifier.imported, position, specifier.start, specifier.end);
+            add_name(
+                declaration,
+                specifier.imported,
+                position,
+                specifier.start,
+                specifier.end,
+            );
         }
     }
 

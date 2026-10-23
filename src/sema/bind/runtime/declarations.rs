@@ -83,7 +83,10 @@ pub(super) fn append_symbol(
 }
 
 pub(super) fn is_var_scope(kind: ScopeKind) -> bool {
-    matches!(kind, ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_))
+    matches!(
+        kind,
+        ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_)
+    )
 }
 
 pub(super) fn scope_boundary(hir: &File<'_>, kind: ScopeKind) -> (Option<CodeUnit>, Option<bool>) {
@@ -159,7 +162,10 @@ impl Declarations<'_, '_> {
             if let Some(CodeUnit::FieldInitializer(member)) = unit {
                 field_initializer_scopes.push((member, ScopeId(index as u32)));
             }
-            let parent = self.bound.runtime_parent_scope(hir, ScopeId(index as u32)).some();
+            let parent = self
+                .bound
+                .runtime_parent_scope(hir, ScopeId(index as u32))
+                .some();
             let inherited = parent.map_or(CodeUnit::File, |parent| units[parent.idx()]);
             units.push(unit.unwrap_or(inherited));
             let is_strict = is_strict.unwrap_or_else(|| {
@@ -288,7 +294,9 @@ impl Declarations<'_, '_> {
 
     fn container_export(&self, scope: ScopeId, name: Atom) -> Option<SymbolId> {
         let bound = &*self.bound;
-        let container = bound.scopes[bound.container_scope(scope).idx()].symbol.some()?;
+        let container = bound.scopes[bound.container_scope(scope).idx()]
+            .symbol
+            .some()?;
         bound.find_in_table(bound.symbols[container.idx()].exports, name)
     }
 
@@ -329,7 +337,10 @@ impl Declarations<'_, '_> {
             let import = &hir[ImportId(index as u32)];
             let locals = bound.scopes[bound.container_scope(scope).idx()].locals;
             let find = |name: Atom| {
-                let symbol = name.is_some().then(|| bound.find_in_table(locals, name)).flatten();
+                let symbol = name
+                    .is_some()
+                    .then(|| bound.find_in_table(locals, name))
+                    .flatten();
                 let symbol = symbol.filter(|&it| hir.is_js || !has_local_value(hir, bound, it));
                 symbol.unwrap_or(SymbolId::NONE)
             };
@@ -364,7 +375,9 @@ impl Declarations<'_, '_> {
     fn visible_symbol(&self, scope: ScopeId, name: Atom) -> Option<SymbolId> {
         let bound = &*self.bound;
         let symbol = bound.find_in_table(bound.scopes[scope.idx()].locals, name)?;
-        self.scopes.is_scope_binding(bound, symbol).then_some(symbol)
+        self.scopes
+            .is_scope_binding(bound, symbol)
+            .then_some(symbol)
     }
 
     pub(super) fn first_table_scope_binding(&self, symbol: SymbolId) -> Option<Declaration> {
@@ -396,27 +409,45 @@ impl Declarations<'_, '_> {
         declaration: Declaration,
     ) -> SymbolId {
         let symbol = append_symbol(self.bound, name, flags, kind, declaration.decl, scope);
-        self.appended_declarations.insert((scope, name), (symbol, declaration));
+        self.appended_declarations
+            .insert((scope, name), (symbol, declaration));
         symbol
     }
 
     fn check_duplicate_names(&mut self) {
-        self.redeclarations.extend(find_duplicate_names(self.hir, self.bound));
+        self.redeclarations
+            .extend(find_duplicate_names(self.hir, self.bound));
     }
 
     fn finish(mut self) -> RuntimeScopes {
         let appended = self.appended_declarations.iter();
         self.scopes.appended_bindings = appended.map(|(&key, entry)| (key, entry.0)).collect();
-        self.bound.runtime.early_error_redeclarations.shared_sort_unstable();
+        self.bound
+            .runtime
+            .early_error_redeclarations
+            .shared_sort_unstable();
         let declarations = &mut self.bound.runtime.declarations;
-        declarations.pattern_symbols.shared_sort_by_key(|entry| entry.0);
-        declarations.function_symbols.shared_sort_by_key(|entry| entry.0);
-        declarations.inner_class_symbols.shared_sort_by_key(|entry| entry.0);
-        declarations.annex_b_functions.shared_sort_by_key(|entry| entry.function);
-        declarations.parameter_var_copies.shared_sort_by_key(|entry| entry.function);
-        self.scopes.body_variables.shared_sort_by_key(|entry| entry.0);
+        declarations
+            .pattern_symbols
+            .shared_sort_by_key(|entry| entry.0);
+        declarations
+            .function_symbols
+            .shared_sort_by_key(|entry| entry.0);
+        declarations
+            .inner_class_symbols
+            .shared_sort_by_key(|entry| entry.0);
+        declarations
+            .annex_b_functions
+            .shared_sort_by_key(|entry| entry.function);
+        declarations
+            .parameter_var_copies
+            .shared_sort_by_key(|entry| entry.function);
+        self.scopes
+            .body_variables
+            .shared_sort_by_key(|entry| entry.0);
         declarations.goal_independent_redeclaration_count = self.redeclarations.len() as u32;
-        self.redeclarations.append(&mut self.module_only_redeclarations);
+        self.redeclarations
+            .append(&mut self.module_only_redeclarations);
         declarations.early_redeclarations = self.redeclarations;
         record_declared_binding_kinds(self.hir, self.bound);
         self.scopes

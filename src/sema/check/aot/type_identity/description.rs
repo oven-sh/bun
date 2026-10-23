@@ -1,3 +1,4 @@
+use super::lanes::Lanes;
 use crate::atom::Atom;
 use crate::check::aot::answers::{
     ClassRef, MemberName, ObjectMemberKind, SchemaConstraint, SchemaDefault,
@@ -5,7 +6,6 @@ use crate::check::aot::answers::{
 use crate::check::aot::program_symbols::SchemaAlias;
 use crate::check::aot::queries::Queries;
 use crate::program::{FileId, Sym};
-use super::lanes::Lanes;
 use std::hash::Hasher;
 
 pub(super) type Key = [u64; 2];

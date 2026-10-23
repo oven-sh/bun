@@ -1,13 +1,26 @@
 import { expect, test } from "bun:test";
 import { checkFieldsHoldingOnlyWhatIsStored } from "../../../src/codegen/builtins/check.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
-import type { ModelOverload, ModelPlace, ModelPropertyAction, ModelTransfer } from "../../../src/codegen/builtins/model.ts";
+import type {
+  ModelOverload,
+  ModelPlace,
+  ModelPropertyAction,
+  ModelTransfer,
+} from "../../../src/codegen/builtins/model.ts";
 
-const field = (index: number, holdsOnlyWhatIsStored: boolean): ModelPlace => ({ place: "ResultField", index, holdsOnlyWhatIsStored });
+const field = (index: number, holdsOnlyWhatIsStored: boolean): ModelPlace => ({
+  place: "ResultField",
+  index,
+  holdsOnlyWhatIsStored,
+});
 const nativeMemory: ModelPlace = { place: "NativeMemory" };
-const action = (kind: ModelPropertyAction["action"], value: ModelPlace) => ({ action: kind, value }) as ModelPropertyAction;
+const action = (kind: ModelPropertyAction["action"], value: ModelPlace) =>
+  ({ action: kind, value }) as ModelPropertyAction;
 
-function problemsOf(transfers: readonly ModelTransfer[], propertyActions: readonly ModelPropertyAction[] = []): readonly string[] {
+function problemsOf(
+  transfers: readonly ModelTransfer[],
+  propertyActions: readonly ModelPropertyAction[] = [],
+): readonly string[] {
   const overload = {
     indexInBuiltin: 0,
     builtin: { text: "describe" },

@@ -469,9 +469,16 @@ fn assert_chain(storing_block_count: usize, reads_in_every_block: bool) {
         }
         builder.return_value(None);
     });
-    let read_count = if reads_in_every_block { CHAIN_LENGTH } else { 1 };
+    let read_count = if reads_in_every_block {
+        CHAIN_LENGTH
+    } else {
+        1
+    };
     assert_eq!(function.body.block_count as usize, CHAIN_LENGTH);
-    assert_eq!(function.body.value_count as usize, storing_block_count + read_count);
+    assert_eq!(
+        function.body.value_count as usize,
+        storing_block_count + read_count
+    );
 }
 
 #[test]

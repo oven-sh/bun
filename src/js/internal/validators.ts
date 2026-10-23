@@ -211,10 +211,7 @@ export default {
     encoding: unknown,
   ) => void,
   /** `(buffer, name = 'buffer')` */
-  validateBuffer: $bindgen("node_validators.bind.ts", "validateBuffer") as (
-    buffer: unknown,
-    name?: string,
-  ) => void,
+  validateBuffer: $bindgen("node_validators.bind.ts", "validateBuffer") as (buffer: unknown, name?: string) => void,
   /** `(value, name, oneOf)` */
   validateOneOf: $bindgen("node_validators.bind.ts", "validateOneOf") as (
     value: unknown,

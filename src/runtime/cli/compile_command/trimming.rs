@@ -18,7 +18,10 @@ pub(crate) fn collect_exec_argv_requirements(exec_argv: &[u8]) -> Vec<OptionRequ
 }
 
 fn validates_at_run_time(options: &AotOptions) -> bool {
-    options.option_words.iter().any(|word| &**word == b"validate")
+    options
+        .option_words
+        .iter()
+        .any(|word| &**word == b"validate")
 }
 
 // An embedded `--inspect` admits the inspector too, and is listed already.
@@ -27,7 +30,11 @@ pub(super) fn add_build_option_requirements(
     requirements: &mut Vec<OptionRequirement>,
 ) {
     let build_options = [
-        (options.admits_inspector, INSPECTOR_REQUIREMENT, "--compile-inspector"),
+        (
+            options.admits_inspector,
+            INSPECTOR_REQUIREMENT,
+            "--compile-inspector",
+        ),
         (
             validates_at_run_time(options),
             RuntimeRequirement::Feature(Feature::ImageCompiler),
@@ -35,7 +42,9 @@ pub(super) fn add_build_option_requirements(
         ),
     ];
     for (is_set, requirement, label) in build_options {
-        let is_listed = requirements.iter().any(|option| option.requirement == requirement);
+        let is_listed = requirements
+            .iter()
+            .any(|option| option.requirement == requirement);
         if is_set && !is_listed {
             requirements.push(OptionRequirement {
                 requirement,
@@ -83,9 +92,16 @@ pub(crate) fn plan_trimming(
 }
 
 /// `without_tools`: what every executable leaves out, `--trim` or not.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum Trimming {
-    NotAsked { without_tools: Option<TrimPlan> },
-    Decided { decision: Decision, has_edges: bool, without_tools: Option<TrimPlan> },
+    NotAsked {
+        without_tools: Option<TrimPlan>,
+    },
+    Decided {
+        decision: Decision,
+        has_edges: bool,
+        without_tools: Option<TrimPlan>,
+    },
     Planned(TrimPlan),
 }
 
@@ -93,7 +109,9 @@ impl Trimming {
     pub(super) fn plan(&self) -> Option<&TrimPlan> {
         match self {
             Trimming::Planned(plan) => Some(plan),
-            Trimming::NotAsked { without_tools } | Trimming::Decided { without_tools, .. } => without_tools.as_ref(),
+            Trimming::NotAsked { without_tools } | Trimming::Decided { without_tools, .. } => {
+                without_tools.as_ref()
+            }
         }
     }
 
@@ -142,7 +160,13 @@ pub(super) fn decide_trimming(
     match plan {
         Some(plan) if trim.is_enabled() => Ok(Trimming::Planned(plan)),
         without_tools if trim.is_enabled() || options.explain.contains(ExplainSet::RUNTIME_USE) => {
-            Ok(decide_without_plan(used, &settings, trim, &template, without_tools))
+            Ok(decide_without_plan(
+                used,
+                &settings,
+                trim,
+                &template,
+                without_tools,
+            ))
         }
         without_tools => Ok(Trimming::NotAsked { without_tools }),
     }

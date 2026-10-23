@@ -155,7 +155,9 @@ function isSamePlace(left: ModelPlace, right: ModelPlace): boolean {
     case "NewValue":
       return right.place === "NewValue" && left.type === right.type;
     case "Member":
-      return right.place === "Member" && left.firstStep === right.firstStep && isSameOperand(left.operand, right.operand);
+      return (
+        right.place === "Member" && left.firstStep === right.firstStep && isSameOperand(left.operand, right.operand)
+      );
     case "NativeCell":
       return right.place === "NativeCell" && left.cell === right.cell;
   }

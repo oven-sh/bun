@@ -8,9 +8,7 @@ use crate::link::testing::{
     test_class_key, unit_in, with_test_files,
 };
 use crate::link::type_hashes::ContentHash;
-use crate::link::types::{
-    TypeTableInput, build_type_table, merge_types, order_types_by_contents,
-};
+use crate::link::types::{TypeTableInput, build_type_table, merge_types, order_types_by_contents};
 use crate::link::unit::ShardIndex;
 use crate::link::{LinkError, LinkUnit};
 use crate::load::{ProgramFile, ProjectId};
@@ -235,9 +233,8 @@ fn equal_types_merge_to_one_program_type() {
 #[test]
 fn well_known_types_keep_ids() {
     with_test_files(|projects, _| {
-        let units = [false, true].map(|is_reversed| {
-            create_unit(projects, u32::from(is_reversed), is_reversed).unit
-        });
+        let units = [false, true]
+            .map(|is_reversed| create_unit(projects, u32::from(is_reversed), is_reversed).unit);
         let merged = merge(&units, &[], &forward);
         for id in (0..TypeTable::WELL_KNOWN_COUNT).map(TypeId::new) {
             assert_eq!(merged.program_id(0, id), Some(id));
@@ -380,7 +377,10 @@ fn task_order_does_not_change_table() {
 
         let in_order = merge(&units, &[], &forward);
         let in_reverse = merge(&units, &[], &reverse);
-        assert_eq!(in_order.type_representatives, in_reverse.type_representatives);
+        assert_eq!(
+            in_order.type_representatives,
+            in_reverse.type_representatives
+        );
         for (ids, reverse_ids) in in_order.ids.iter().zip(&in_reverse.ids) {
             assert_eq!(ids.types, reverse_ids.types);
         }
@@ -399,15 +399,23 @@ fn order_in_which_a_file_met_its_types_does_not_change_table() {
             let layouts = [0, 1, 2].map(|class| fragment.declare_layout(test_class_key(9, class)));
             for class in classes {
                 let element = fragment.types.intern(Type::layout(layouts[class]));
-                let array = fragment.types.intern(Type::class(BuiltinClass::Array, &[element]));
-                fragment.types.intern(Type::class(BuiltinClass::Array, &[array]));
+                let array = fragment
+                    .types
+                    .intern(Type::class(BuiltinClass::Array, &[element]));
+                fragment
+                    .types
+                    .intern(Type::class(BuiltinClass::Array, &[array]));
             }
             merge(&[finish(projects, fragment)], &[], &forward)
         };
         let ascending = merge_met_in_order([0, 1, 2]);
         for classes in [[0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
             let merged = merge_met_in_order(classes);
-            assert_eq!(merged.table().types(), ascending.table().types(), "{classes:?}");
+            assert_eq!(
+                merged.table().types(),
+                ascending.table().types(),
+                "{classes:?}"
+            );
             assert_children_precede_parents(merged.table());
         }
     });

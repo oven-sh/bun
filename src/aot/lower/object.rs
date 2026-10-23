@@ -126,7 +126,9 @@ pub(crate) fn add_spread(
     source: ValueId,
 ) {
     let head = builder::open_head(lowering, object);
-    lowering.builder.copy_data_properties(head, source, &[], &[]);
+    lowering
+        .builder
+        .copy_data_properties(head, source, &[], &[]);
 }
 
 pub(in crate::lower) fn set_prototype(

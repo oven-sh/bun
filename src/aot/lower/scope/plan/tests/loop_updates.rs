@@ -29,8 +29,15 @@ fn loop_variable_is_copied() {
         assert_eq!(probe.placement_of("i"), expected);
         let arrow = probe.only_function(FnKind::Arrow);
         assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("i"))]);
-        assert!(!probe.analysis.has_environment(probe.bound.own_scope(statement)));
-        assert_eq!(probe.analysis.stored_in_loop(statement), [probe.binding("i")]);
+        assert!(
+            !probe
+                .analysis
+                .has_environment(probe.bound.own_scope(statement))
+        );
+        assert_eq!(
+            probe.analysis.stored_in_loop(statement),
+            [probe.binding("i")]
+        );
     });
 }
 
@@ -148,8 +155,14 @@ fn each_variable_of_the_head_is_decided_alone() {
     analyze_source("main.mjs", source, |probe| {
         let scope = probe.bound.own_scope(probe.first_statement(is_for_loop));
         assert_eq!(probe.placement_of("i").storage, Storage::Local);
-        assert_eq!(probe.placement_of("j").storage, Storage::Field { scope, field: 0 });
-        let expected = [Capture::Environment(scope), Capture::Value(probe.binding("i"))];
+        assert_eq!(
+            probe.placement_of("j").storage,
+            Storage::Field { scope, field: 0 }
+        );
+        let expected = [
+            Capture::Environment(scope),
+            Capture::Value(probe.binding("i")),
+        ];
         assert_eq!(probe.captures(probe.only_function(FnKind::Arrow)), expected);
     });
 }
@@ -167,7 +180,10 @@ fn field_of_a_loop_variable_is_not_immutable() {
             is_shared: true,
         };
         assert_eq!(probe.placement_of("i"), expected);
-        assert_eq!(probe.captures(probe.function("h")), [Capture::Environment(scope)]);
+        assert_eq!(
+            probe.captures(probe.function("h")),
+            [Capture::Environment(scope)]
+        );
         let arrow = probe.only_function(FnKind::Arrow);
         assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("i"))]);
     });

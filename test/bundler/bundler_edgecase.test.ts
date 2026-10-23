@@ -1872,7 +1872,11 @@ describe("bundler", () => {
   });
   // `bun build --compile --aot` resolves entry points with a resolver of its own, to the same answers.
   const itCompiledAheadOfTime = (id: string, opts: BundlerTestInput) =>
-    (unsupported ? itBundled.skip : itBundled)(`edgecase/aot/${id}`, { target: "bun", compile: { aot: true }, ...opts });
+    (unsupported ? itBundled.skip : itBundled)(`edgecase/aot/${id}`, {
+      target: "bun",
+      compile: { aot: true },
+      ...opts,
+    });
   for (const [id, entryPoint] of [
     ["EntryPointIsNodeBuiltin", "node:fs"],
     ["EntryPointIsBareNodeBuiltin", "fs"],

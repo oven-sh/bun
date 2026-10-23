@@ -11,7 +11,10 @@ const MIXED_PROGRAM: &[(&str, &str)] = &[
          import \"./y/two\"",
     ),
     ("/a.ts", "import \"./b\""),
-    ("/b.ts", "import \"./a\"\nimport type t from \"./only-types\""),
+    (
+        "/b.ts",
+        "import \"./a\"\nimport type t from \"./only-types\"",
+    ),
     ("/only-types.ts", ""),
     ("/dep.js", "import \"./deeper.js\""),
     ("/deeper.js", ""),
@@ -105,7 +108,10 @@ fn entry_points_stay_in_build_order() {
     with_program(&host, &["/first.ts", "/second.ts"], |files| {
         let entry_points = names_of(files, files.entry_points());
         assert_eq!(entry_points, ["/first.ts", "/second.ts"]);
-        assert_eq!(names_of(files, files.compiled_files()), ["/second.ts", "/first.ts"]);
+        assert_eq!(
+            names_of(files, files.compiled_files()),
+            ["/second.ts", "/first.ts"]
+        );
     });
 }
 
@@ -126,7 +132,10 @@ fn every_file_is_ordered_once_after_loaded_files() {
             ("/y/two.ts", "/y/node_modules/pkg/index.js"),
         ];
         for (importer, loaded) in loads {
-            assert!(rank_of(files, loaded) < rank_of(files, importer), "{importer}: {loaded}");
+            assert!(
+                rank_of(files, loaded) < rank_of(files, importer),
+                "{importer}: {loaded}"
+            );
         }
     });
 }
@@ -188,7 +197,10 @@ fn root_file_with_code_is_one_file() {
     with_build(&build, |files| {
         let names = names_of(files, &all_files(files));
         assert_eq!(names, ["/only-root.ts", "/main.ts", "/a.ts"]);
-        assert_eq!(names_of(files, files.compiled_files()), ["/a.ts", "/main.ts"]);
+        assert_eq!(
+            names_of(files, files.compiled_files()),
+            ["/a.ts", "/main.ts"]
+        );
         assert_eq!(names_of(files, files.entry_points()), ["/main.ts"]);
 
         let only_root = file_at(files, "/only-root.ts");
@@ -228,7 +240,12 @@ fn payload_is_found_by_file() {
             let expected = files.is_compiled(file).then(|| name_of(files, file));
             assert_eq!(payload_path(files, file), expected);
         }
-        assert_eq!(files.host_payload(FileId(files.modules.len() as u32)).map(|_| ()), None);
+        assert_eq!(
+            files
+                .host_payload(FileId(files.modules.len() as u32))
+                .map(|_| ()),
+            None
+        );
     });
 }
 
@@ -236,7 +253,11 @@ fn payload_is_found_by_file() {
 fn code_file_keeps_analysis_and_payload_when_ids_shift() {
     let host = StatementsHost {
         is_case_sensitive: false,
-        ..host_of(&[("/lib.ts", ""), ("/main.ts", "import \"./a\""), ("/a.ts", "")])
+        ..host_of(&[
+            ("/lib.ts", ""),
+            ("/main.ts", "import \"./a\""),
+            ("/a.ts", ""),
+        ])
     };
     let build = TestBuild {
         roots: &["/lib.ts", "/LIB.ts"],
@@ -311,7 +332,11 @@ fn with_code_files(
         session: &session,
         atoms: Interner::new_in(&session),
         is_case_sensitive: true,
-        entries: files_of_entries.iter().copied().map(entry_of_file).collect(),
+        entries: files_of_entries
+            .iter()
+            .copied()
+            .map(entry_of_file)
+            .collect(),
         entry_points: Vec::new(),
         entry_of_file: Vec::new(),
         is_in_types_program: is_in_types_program.to_vec(),
@@ -323,27 +348,35 @@ fn with_code_files(
 #[test]
 fn renumbering_moves_entries_to_remaining_files() {
     let is_in_types_program = [true, false, false, true];
-    with_code_files(&[Some(0), Some(1), Some(3)], &is_in_types_program, |mut code_files| {
-        assert_eq!(code_files.entry_of(FileId(3)), Some(2));
-        assert_eq!(code_files.entry_of(FileId(2)), None);
+    with_code_files(
+        &[Some(0), Some(1), Some(3)],
+        &is_in_types_program,
+        |mut code_files| {
+            assert_eq!(code_files.entry_of(FileId(3)), Some(2));
+            assert_eq!(code_files.entry_of(FileId(2)), None);
 
-        code_files.renumber(&[Some(FileId(0)), None, Some(FileId(1)), Some(FileId(1))]);
-        let files: Vec<Option<FileId>> = code_files.entries.iter().map(|it| it.file).collect();
-        assert_eq!(files, [Some(FileId(0)), None, Some(FileId(1))]);
-        assert_eq!(code_files.entry_of(FileId(0)), Some(0));
-        assert_eq!(code_files.entry_of(FileId(1)), Some(2));
-        assert_eq!(code_files.entry_of(FileId(2)), None);
-        assert_eq!(code_files.is_in_types_program, [true, true]);
-    });
+            code_files.renumber(&[Some(FileId(0)), None, Some(FileId(1)), Some(FileId(1))]);
+            let files: Vec<Option<FileId>> = code_files.entries.iter().map(|it| it.file).collect();
+            assert_eq!(files, [Some(FileId(0)), None, Some(FileId(1))]);
+            assert_eq!(code_files.entry_of(FileId(0)), Some(0));
+            assert_eq!(code_files.entry_of(FileId(1)), Some(2));
+            assert_eq!(code_files.entry_of(FileId(2)), None);
+            assert_eq!(code_files.is_in_types_program, [true, true]);
+        },
+    );
 }
 
 #[test]
 fn first_entry_of_file_is_found() {
-    with_code_files(&[Some(1), Some(1), None], &[false, false], |mut code_files| {
-        assert_eq!(code_files.entry_of(FileId(1)), Some(0));
-        assert_eq!(code_files.entry_of(FileId(0)), None);
-        assert!(code_files.take_loaded(FileId(1)).is_none());
-        assert!(!CodeFiles::has_loaded(&Some(code_files), FileId(1)));
-        assert!(!CodeFiles::has_loaded(&None, FileId(1)));
-    });
+    with_code_files(
+        &[Some(1), Some(1), None],
+        &[false, false],
+        |mut code_files| {
+            assert_eq!(code_files.entry_of(FileId(1)), Some(0));
+            assert_eq!(code_files.entry_of(FileId(0)), None);
+            assert!(code_files.take_loaded(FileId(1)).is_none());
+            assert!(!CodeFiles::has_loaded(&Some(code_files), FileId(1)));
+            assert!(!CodeFiles::has_loaded(&None, FileId(1)));
+        },
+    );
 }

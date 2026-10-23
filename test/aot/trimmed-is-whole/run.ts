@@ -23,6 +23,7 @@ interface Program {
   /** The build does not see that the call reaches an evaluator, or the script of the Worker is a text: both executables end with the same EvalError. */
   isNotSeen: boolean;
   removes: string[];
+  trimmedSays?: string;
 }
 
 const casesFolder = join(import.meta.dir, "cases");
@@ -47,6 +48,7 @@ function programsOf(file: string): Program[] {
       else if (directive === "evaluated-code-uses-removed-api") program.evaluatedCodeUsesRemovedApi = true;
       else if (directive === "not-seen") program.isNotSeen = true;
       else if (directive === "removes") program.removes.push(value);
+      else if (directive === "trimmed-says") program.trimmedSays = value;
       else throw new Error(`${file}: ${program.name}: unknown directive ${directive}`);
     }
     programs.push(program);
@@ -113,6 +115,10 @@ export function testTrimmedMatchesUntrimmed(part: number, parts: number) {
             if (program.exitCode === 0) expect(untrimmed.stdout).not.toBe("");
             const stillThere = program.removes.filter(api => !removed!.includes(model.features.find(feature => feature.name === featureOf(api))!.index));
             expect(stillThere).toEqual([]);
+            if (program.trimmedSays !== undefined) {
+              expect(untrimmed.stdout + untrimmed.stderr).not.toContain(program.trimmedSays);
+              return expect(trimmed!.stdout + trimmed!.stderr).toContain(program.trimmedSays);
+            }
             if (!program.evaluatedCodeUsesRemovedApi || !removed!.includes(color)) return expect(trimmed).toEqual(untrimmed);
             expect(untrimmed).toEqual({ stdout: "#ff0000 function\n", stderr: "", exitCode: 0, signal: null });
             const isThrown = /^\w*rror: .*\bBun\.color\b.*\n code: "ERR_FEATURE_REMOVED"$/m.test(trimmed!.stderr);

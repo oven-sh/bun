@@ -14,32 +14,6 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
-/// The longest `message` [`Error::to_system_error`] makes, in UTF-8 bytes.
-const MAX_MESSAGE_BYTES: usize = 4096;
-
-/// `path` as a string; `is_ascii` spares the second scan.
-#[inline]
-fn clone_path(path: &[u8], is_ascii: bool) -> BunString {
-    if is_ascii {
-        BunString::clone_latin1(path)
-    } else {
-        BunString::clone_utf8(path)
-    }
-}
-
-/// Concatenates `pieces` into `out` and drops what does not fit.
-fn copy_pieces(pieces: &[&[u8]], out: &mut [u8]) {
-    let mut filled = 0;
-    for piece in pieces {
-        let count = piece.len().min(out.len() - filled);
-        if count == 0 {
-            continue;
-        }
-        out[filled..filled + count].copy_from_slice(&piece[..count]);
-        filled += count;
-    }
-}
-
 #[cfg(windows)]
 const RETRY_ERRNO: Int = E::EINTR as Int;
 #[cfg(not(windows))]
@@ -310,11 +284,11 @@ impl Error {
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
     /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
     /// and returns the looked-up `(code, label)` so each caller can build its own
-    /// `message` (shell: static label; node: [`Error::node_message`]), and whether `path` and `dest` are all ASCII.
+    /// `message` (shell: static label; node: formatted stack buffer).
     fn fill_system_error_common(
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
-    ) -> (SystemError, Option<(&'static str, &'static str)>, bool) {
+    ) -> (SystemError, Option<(&'static str, &'static str)>) {
         // Node reports libuv's codes in `err.errno` on every platform. On POSIX
         // that is just the negated host errno; on Windows the discriminant maps
         // back to its `UV_E*` value.
@@ -336,14 +310,12 @@ impl Error {
             (code, map[system_errno])
         });
 
-        let path_is_ascii = bun_core::strings::is_all_ascii(&self.path);
         if !self.path.is_empty() {
-            err.path = clone_path(&self.path, path_is_ascii);
+            err.path = BunString::clone_utf8(&self.path);
         }
 
-        let dest_is_ascii = bun_core::strings::is_all_ascii(&self.dest);
         if !self.dest.is_empty() {
-            err.dest = clone_path(&self.dest, dest_is_ascii);
+            err.dest = BunString::clone_utf8(&self.dest);
         }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
@@ -358,12 +330,12 @@ impl Error {
             }
         }
 
-        (err, looked_up, path_is_ascii && dest_is_ascii)
+        (err, looked_up)
     }
 
     /// Simpler formatting which does not allocate a message
     pub fn to_shell_system_error(&self) -> SystemError {
-        let (mut err, looked_up, _) =
+        let (mut err, looked_up) =
             self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
         if let Some((_, label)) = looked_up {
             err.message = BunString::static_(label.as_bytes());
@@ -374,53 +346,65 @@ impl Error {
     /// More complex formatting to precisely match the printing that Node.js emits.
     /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
     pub fn to_system_error(&self) -> SystemError {
-        let (mut err, looked_up, paths_are_ascii) =
-            self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
-        err.message = self.node_message(looked_up, paths_are_ascii);
+        let (mut err, looked_up) = self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
+
+        // format taken from Node.js 'exceptions.cc'
+        // search keyword: `Local<Value> UVException(Isolate* isolate,`
+        let mut message_buf = [0u8; 4096];
+        let pos = {
+            use std::io::Write as _;
+            let mut cursor = std::io::Cursor::new(&mut message_buf[..]);
+            'brk: {
+                if let Some((code, _)) = looked_up {
+                    if cursor.write_all(code.as_bytes()).is_err() {
+                        break 'brk;
+                    }
+                    if cursor.write_all(b": ").is_err() {
+                        break 'brk;
+                    }
+                }
+                let label = looked_up.map(|(_, l)| l).unwrap_or("Unknown Error");
+                if cursor.write_all(label.as_bytes()).is_err() {
+                    break 'brk;
+                }
+                if cursor.write_all(b", ").is_err() {
+                    break 'brk;
+                }
+                if cursor
+                    .write_all(<&'static str>::from(self.syscall).as_bytes())
+                    .is_err()
+                {
+                    break 'brk;
+                }
+                if !self.path.is_empty() {
+                    if cursor.write_all(b" '").is_err() {
+                        break 'brk;
+                    }
+                    if cursor.write_all(&self.path).is_err() {
+                        break 'brk;
+                    }
+                    if cursor.write_all(b"'").is_err() {
+                        break 'brk;
+                    }
+
+                    if !self.dest.is_empty() {
+                        if cursor.write_all(b" -> '").is_err() {
+                            break 'brk;
+                        }
+                        if cursor.write_all(&self.dest).is_err() {
+                            break 'brk;
+                        }
+                        if cursor.write_all(b"'").is_err() {
+                            break 'brk;
+                        }
+                    }
+                }
+            }
+            usize::try_from(cursor.position()).expect("int cast")
+        };
+        err.message = BunString::clone_utf8(&message_buf[..pos]);
+
         err
-    }
-
-    /// `code: label, syscall 'path' -> 'dest'`, cut off at [`MAX_MESSAGE_BYTES`]; the format of Node's `UVException` (exceptions.cc).
-    fn node_message(
-        &self,
-        looked_up: Option<(&'static str, &'static str)>,
-        paths_are_ascii: bool,
-    ) -> BunString {
-        fn when(condition: bool, piece: &[u8]) -> &[u8] {
-            if condition { piece } else { &[] }
-        }
-
-        let (code, label) = looked_up.unwrap_or(("", "Unknown Error"));
-        debug_assert!(label.is_ascii());
-        let has_path = !self.path.is_empty();
-        let has_dest = has_path && !self.dest.is_empty();
-        let pieces: [&[u8]; 11] = [
-            code.as_bytes(),
-            when(looked_up.is_some(), b": "),
-            label.as_bytes(),
-            b", ",
-            <&'static str>::from(self.syscall).as_bytes(),
-            when(has_path, b" '"),
-            when(has_path, &self.path),
-            when(has_path, b"'"),
-            when(has_dest, b" -> '"),
-            when(has_dest, &self.dest),
-            when(has_dest, b"'"),
-        ];
-        let length = pieces
-            .iter()
-            .map(|piece| piece.len())
-            .sum::<usize>()
-            .min(MAX_MESSAGE_BYTES);
-
-        if paths_are_ascii {
-            let (message, bytes) = BunString::create_uninitialized_latin1(length);
-            copy_pieces(&pieces, bytes);
-            return message;
-        }
-        let mut bytes = vec![0u8; length];
-        copy_pieces(&pieces, &mut bytes);
-        BunString::clone_utf8(&bytes)
     }
 
     #[inline]
@@ -517,17 +501,4 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     fn errno(self) -> Option<crate::E> {
         (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int() as c_int))
     }
-}
-
-#[cfg(test)]
-#[test]
-fn copy_pieces_drops_what_does_not_fit() {
-    let pieces: [&[u8]; 4] = [b"ab", b"", b"cde", b"f"];
-    let mut whole = [0u8; 6];
-    copy_pieces(&pieces, &mut whole);
-    assert_eq!(&whole, b"abcdef");
-    let mut cut = [0u8; 4];
-    copy_pieces(&pieces, &mut cut);
-    assert_eq!(&cut, b"abcd");
-    copy_pieces(&pieces, &mut []);
 }

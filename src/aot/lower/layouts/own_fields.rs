@@ -13,7 +13,10 @@ pub(in crate::lower) struct OwnFields {
 
 impl OwnFields {
     pub(super) fn add(&mut self, field: Field) -> u32 {
-        debug_assert!(self.fields_by_key.is_empty(), "fields are added before finish");
+        debug_assert!(
+            self.fields_by_key.is_empty(),
+            "fields are added before finish"
+        );
         let index = u32::try_from(self.fields.len()).expect("the fields of a layout fit 32 bits");
         if field.flags.contains(FieldFlags::IS_BRAND) {
             debug_assert!(self.brand.is_none(), "a layout has one brand");
@@ -24,7 +27,10 @@ impl OwnFields {
     }
 
     pub(super) fn add_accessor_storage(&mut self, member: MemberId, field: Field) -> u32 {
-        debug_assert!(field.flags.contains(FieldFlags::IS_PRIVATE), "storage is private state");
+        debug_assert!(
+            field.flags.contains(FieldFlags::IS_PRIVATE),
+            "storage is private state"
+        );
         let index = self.add(field);
         self.accessor_storages.push((member, index));
         index
@@ -48,8 +54,9 @@ impl OwnFields {
         by_key.sort_unstable_by_key(|&index| fields[index as usize].key);
         debug_assert!(
             by_key
-                .windows(2)
-                .all(|pair| fields[pair[0] as usize].key != fields[pair[1] as usize].key),
+                .iter()
+                .zip(by_key.iter().skip(1))
+                .all(|(&left, &right)| fields[left as usize].key != fields[right as usize].key),
             "a key names one own field"
         );
         self.fields_by_key = by_key;

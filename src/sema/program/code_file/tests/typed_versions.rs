@@ -32,7 +32,10 @@ fn rejection_by(host: &StatementsHost, typed_path: &str) -> (ErasureMismatchKind
         assert_eq!(FileRole::of_tree(&parsed.parse.hir), FileRole::Inferred);
         let analyzed = &parsed.code.analyzed;
         assert_eq!(analyzed.typed_source_path, None);
-        assert_eq!(analyzed.typed_version_origin, Some(TypedVersionOrigin::Host));
+        assert_eq!(
+            analyzed.typed_version_origin,
+            Some(TypedVersionOrigin::Host)
+        );
         let rejected = analyzed.rejected_typed_version;
         let rejected = rejected.expect("the typed version is rejected");
         assert_eq!(rejected.path, typed_path.as_bytes());
@@ -58,7 +61,10 @@ fn exact_typed_version_replaces_installed_tree() {
         let analyzed = &parsed.code.analyzed;
         assert_eq!(analyzed.typed_source_path, Some(TYPED.as_bytes()));
         assert_eq!(analyzed.rejected_typed_version, None);
-        assert_eq!(analyzed.typed_version_origin, Some(TypedVersionOrigin::Host));
+        assert_eq!(
+            analyzed.typed_version_origin,
+            Some(TypedVersionOrigin::Host)
+        );
         assert!(analyzed.analysis.import_sites.is_empty());
     });
 }
@@ -68,7 +74,10 @@ fn accepted_tree_keeps_own_payload() {
     let host = typed_host(&[(INSTALLED, "a\nb"), (TYPED, TYPED_TEXT)]);
     with_context(&host, |context| {
         let parsed = load(context, INSTALLED);
-        assert_eq!(*downcast_payload(&parsed.payload), parse_payload(TYPED, false));
+        assert_eq!(
+            *downcast_payload(&parsed.payload),
+            parse_payload(TYPED, false)
+        );
     });
     assert_eq!(parsed_paths(&host), [TYPED, INSTALLED]);
 }
@@ -78,7 +87,10 @@ fn rejected_typed_version_leaves_payload_of_installed_tree() {
     let host = typed_host(&[(INSTALLED, "a"), (TYPED, "b")]);
     with_context(&host, |context| {
         let parsed = load(context, INSTALLED);
-        assert_eq!(*downcast_payload(&parsed.payload), parse_payload(INSTALLED, true));
+        assert_eq!(
+            *downcast_payload(&parsed.payload),
+            parse_payload(INSTALLED, true)
+        );
         assert_eq!(parsed.parse.hir.text[..], *b"a");
     });
     assert_eq!(parsed_paths(&host), [TYPED, INSTALLED, INSTALLED]);
@@ -215,10 +227,16 @@ fn type_only_import_adds_no_esm_syntax_to_typed_version() {
     with_context(&host, |context| {
         let typed = load(context, INSTALLED_COMMON_JS);
         assert!(typed.parse.hir.is_typed_version);
-        assert_eq!(typed.code.analyzed.analysis.module_format, ModuleFormat::CommonJs);
+        assert_eq!(
+            typed.code.analyzed.analysis.module_format,
+            ModuleFormat::CommonJs
+        );
 
         let plain = load(context, "/p/plain.cts");
-        assert_eq!(plain.code.analyzed.analysis.module_format, ModuleFormat::Esm);
+        assert_eq!(
+            plain.code.analyzed.analysis.module_format,
+            ModuleFormat::Esm
+        );
     });
 }
 
@@ -242,7 +260,10 @@ fn replacement_after_stack_overflow_stays_typed_version() {
         assert!(hir.ran_out_of_stack && hir.has_errors && hir.has_parse_diagnostics);
         assert_eq!(hir.source_len as usize, TYPED_TEXT.len());
         assert_eq!(FileRole::of_tree(hir), FileRole::Checked);
-        assert_eq!(*downcast_payload(&tree.payload), parse_payload(TYPED, false));
+        assert_eq!(
+            *downcast_payload(&tree.payload),
+            parse_payload(TYPED, false)
+        );
     });
     assert_eq!(parsed_paths(&host), [TYPED, INSTALLED, TYPED]);
 }

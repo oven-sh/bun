@@ -3317,7 +3317,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
         if (!held) {
             held = holder.get(lexicalGlobalObject, name);
             RETURN_IF_EXCEPTION(scope, {});
-            holder = { };
+            holder = {};
         }
         bool isSame = JSValue::strictEqual(lexicalGlobalObject, held, value);
         RETURN_IF_EXCEPTION(scope, {});

@@ -115,9 +115,7 @@ pub(crate) fn bind_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, val
     this::bind_this(lowering, value);
 }
 
-pub(in crate::lower) fn is_this_of_module(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-) -> bool {
+pub(in crate::lower) fn is_this_of_module(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     this::is_this_of_module(lowering)
 }
 

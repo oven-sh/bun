@@ -46,7 +46,10 @@ const toolNames: Record<string, { readonly folder: string; readonly title: strin
   "@swc/core": { folder: "swc", title: "SWC" },
 };
 
-function emitEachFile(program: Program, emitFile: (name: string, text: string) => string | undefined): Emitted | undefined {
+function emitEachFile(
+  program: Program,
+  emitFile: (name: string, text: string) => string | undefined,
+): Emitted | undefined {
   const emitted: Emitted = new Map();
   for (const [name, text] of program.files) {
     const output = name.endsWith(".cjs") ? text : emitFile(name, text);
@@ -67,7 +70,10 @@ async function inWorkFolder<T>(program: Program, use: (work: string) => T | Prom
   }
 }
 
-function run(command: string[], options: { cwd?: string; input?: string; env?: Record<string, string> }): string | undefined {
+function run(
+  command: string[],
+  options: { cwd?: string; input?: string; env?: Record<string, string> },
+): string | undefined {
   const result = Bun.spawnSync(command, {
     cwd: options.cwd,
     env: options.env,
@@ -83,7 +89,14 @@ function bundleOf(format: "cjs" | "esm", text: string | undefined): Emitted | un
 }
 
 function typescript(version: string, target: string, programs: readonly string[], downlevelIteration = false): Build {
-  const flags = ["--target", target, ...(downlevelIteration ? ["--downlevelIteration"] : []), "--module", "CommonJS", "--esModuleInterop"];
+  const flags = [
+    "--target",
+    target,
+    ...(downlevelIteration ? ["--downlevelIteration"] : []),
+    "--module",
+    "CommonJS",
+    "--esModuleInterop",
+  ];
   return {
     tool: "typescript",
     version,
@@ -106,7 +119,10 @@ function typescript(version: string, target: string, programs: readonly string[]
 }
 
 function esbuild(version: string, target: string, programs: readonly string[], bundleFormat?: "cjs" | "esm"): Build {
-  const flags = bundleFormat === undefined ? ["--format=cjs", `--target=${target}`] : ["--bundle", `--format=${bundleFormat}`, "--platform=node", `--target=${target}`];
+  const flags =
+    bundleFormat === undefined
+      ? ["--format=cjs", `--target=${target}`]
+      : ["--bundle", `--format=${bundleFormat}`, "--platform=node", `--target=${target}`];
   return {
     tool: "esbuild",
     version,
@@ -115,8 +131,13 @@ function esbuild(version: string, target: string, programs: readonly string[], b
     programs,
     emit(folder, program) {
       const binary = path.join(folder, "bin/esbuild");
-      if (bundleFormat === undefined) return emitEachFile(program, (_, text) => run([binary, "--loader=js", ...flags, "--log-level=error"], { input: text }));
-      return inWorkFolder(program, work => bundleOf(bundleFormat, run([binary, "main.js", ...flags, "--log-level=error"], { cwd: work })));
+      if (bundleFormat === undefined)
+        return emitEachFile(program, (_, text) =>
+          run([binary, "--loader=js", ...flags, "--log-level=error"], { input: text }),
+        );
+      return inWorkFolder(program, work =>
+        bundleOf(bundleFormat, run([binary, "main.js", ...flags, "--log-level=error"], { cwd: work })),
+      );
     },
   };
 }
@@ -131,7 +152,9 @@ function bun(version: string, format: "cjs" | "esm", programs: readonly string[]
     programs,
     emit(folder, program) {
       const command = [path.join(folder, "bin/bun"), "build", "main.js", ...flags];
-      return inWorkFolder(program, work => bundleOf(format, run(command, { cwd: work, env: { PATH: "", HOME: work } })));
+      return inWorkFolder(program, work =>
+        bundleOf(format, run(command, { cwd: work, env: { PATH: "", HOME: work } })),
+      );
     },
   };
 }
@@ -147,8 +170,17 @@ function rolldown(version: string, format: "cjs" | "esm", programs: readonly str
     emit(folder, program) {
       return inWorkFolder(program, async work => {
         const loaded = await import(Bun.resolveSync("rolldown", folder));
-        const bundle = await loaded.rolldown({ input: path.join(work, "main.js"), cwd: work, platform: "node", logLevel: "silent" });
-        const generated = await bundle.generate({ format, entryFileNames: `[name].${extension}`, chunkFileNames: `[name].${extension}` });
+        const bundle = await loaded.rolldown({
+          input: path.join(work, "main.js"),
+          cwd: work,
+          platform: "node",
+          logLevel: "silent",
+        });
+        const generated = await bundle.generate({
+          format,
+          entryFileNames: `[name].${extension}`,
+          chunkFileNames: `[name].${extension}`,
+        });
         await bundle.close?.();
         const emitted: Emitted = new Map();
         for (const chunk of generated.output) if (chunk.type === "chunk") emitted.set(chunk.fileName, chunk.code);
@@ -188,7 +220,10 @@ function babel(version: string, engine: string, engineVersion: string, programs:
       const presets = [[Bun.resolveSync("@babel/preset-env", folder), presetOptions]];
       const plugins = babelPlugins.flatMap(name => resolveFrom(folder, name) ?? []);
       const options = { babelrc: false, configFile: false, sourceType: "module", presets, plugins };
-      return emitEachFile(program, (name, text) => transformSync(text, { ...options, filename: path.join(folder, name) })?.code ?? undefined);
+      return emitEachFile(
+        program,
+        (name, text) => transformSync(text, { ...options, filename: path.join(folder, name) })?.code ?? undefined,
+      );
     },
   };
 }
@@ -203,7 +238,10 @@ function swc(version: string, target: string, programs: readonly string[]): Buil
     async emit(folder, program) {
       const transformSync = await loadSwc(folder);
       const options = { swcrc: false, jsc: { parser: { syntax: "typescript" }, target }, module: { type: "commonjs" } };
-      return emitEachFile(program, (name, text) => transformSync(text, { ...options, filename: name.replace(/\.js$/, ".ts") }).code);
+      return emitEachFile(
+        program,
+        (name, text) => transformSync(text, { ...options, filename: name.replace(/\.js$/, ".ts") }).code,
+      );
     },
   };
 }
@@ -255,14 +293,19 @@ function countKnownFunctionsOf(unit: Unit, entryOfTree: ReadonlyMap<string, Tabl
     if (expected.kind !== "helper") return found.kind === expected.kind;
     if (found.kind !== "definition") return false;
     const held = functions.filter(other => other.publishedName === found.publishedName);
-    return held.length > 0 && held.every(other => isKnown(other) && entryOfTree.get(other.tree)!.line.helper === expected.helper);
+    return (
+      held.length > 0 &&
+      held.every(other => isKnown(other) && entryOfTree.get(other.tree)!.line.helper === expected.helper)
+    );
   };
   const isKnown = (one: FoundFunction): boolean => {
     const verdict = verdicts.get(one);
     if (verdict !== undefined) return verdict;
     verdicts.set(one, false);
     const references = entryOfTree.get(one.tree)?.references;
-    const isAccepted = references?.length === one.references.length && references.every(([, expected], index) => agrees(expected, one.references[index]));
+    const isAccepted =
+      references?.length === one.references.length &&
+      references.every(([, expected], index) => agrees(expected, one.references[index]));
     verdicts.set(one, isAccepted);
     return isAccepted;
   };
@@ -295,11 +338,22 @@ function removeWrittenFixtures(into: string): void {
 }
 
 function runsUnderPlainBun(folder: string, main: string): boolean {
-  const result = Bun.spawnSync([process.execPath, "run", `./${main}`], { cwd: folder, stdin: "ignore", stdout: "ignore", stderr: "ignore", timeout: 30_000 });
+  const result = Bun.spawnSync([process.execPath, "run", `./${main}`], {
+    cwd: folder,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: 30_000,
+  });
   return result.exitCode === 0;
 }
 
-export async function writeFixtures(packages: string, fetched: readonly FetchedVersion[], table: Table, into: string): Promise<string[]> {
+export async function writeFixtures(
+  packages: string,
+  fetched: readonly FetchedVersion[],
+  table: Table,
+  into: string,
+): Promise<string[]> {
   const written: string[] = [];
   removeWrittenFixtures(into);
   for (const build of builds) {
@@ -329,7 +383,8 @@ export async function writeFixtures(packages: string, fetched: readonly FetchedV
       const head = `// ${program.about} Emitted by ${title} ${version.version}: ${build.settings}.\n// STATISTIC: KnownHelperFunctions >= ${count}\n`;
       const target = path.join(into, label);
       mkdirSync(target, { recursive: true });
-      for (const [file, text] of emitted) writeFileSync(path.join(target, file), (file === main ? head : "") + text + (text.endsWith("\n") ? "" : "\n"));
+      for (const [file, text] of emitted)
+        writeFileSync(path.join(target, file), (file === main ? head : "") + text + (text.endsWith("\n") ? "" : "\n"));
       if (runsUnderPlainBun(target, main)) written.push(`${label}: ${emitted.size} files, ${count} known functions`);
       else {
         rmSync(target, { recursive: true, force: true });

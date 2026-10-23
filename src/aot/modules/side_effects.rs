@@ -49,14 +49,24 @@ mod tests {
     #[test]
     fn field_without_list_speaks_for_every_file() {
         let path = b"/p/node_modules/s/a.js";
-        assert!(is_declared_free_of_side_effects(DeclaredSideEffects::None, path));
-        assert!(!is_declared_free_of_side_effects(DeclaredSideEffects::Unspecified, path));
+        assert!(is_declared_free_of_side_effects(
+            DeclaredSideEffects::None,
+            path
+        ));
+        assert!(!is_declared_free_of_side_effects(
+            DeclaredSideEffects::Unspecified,
+            path
+        ));
     }
 
     #[test]
     fn listed_path_has_side_effects() {
         for entries in [[b"./a.js".as_slice()], [b"a.js"], [b"lib/../a.js"]] {
-            assert!(!is_free(&entries, "a.js"), "{:?}", bstr::BStr::new(entries[0]));
+            assert!(
+                !is_free(&entries, "a.js"),
+                "{:?}",
+                bstr::BStr::new(entries[0])
+            );
             assert!(is_free(&entries, "b.js"));
             assert!(is_free(&entries, "lib/a.js"));
         }
@@ -65,18 +75,34 @@ mod tests {
     #[test]
     fn file_that_pattern_matches_has_side_effects() {
         let cases: [(&[u8], &[&str], &[&str]); 5] = [
-            (b"./lib/*.js", &["lib/a.js"], &["a.js", "lib/deep/a.js", "lib/a.mjs"]),
-            (b"**/*.setup.js", &["a.setup.js", "lib/deep/a.setup.js"], &["a.js"]),
+            (
+                b"./lib/*.js",
+                &["lib/a.js"],
+                &["a.js", "lib/deep/a.js", "lib/a.mjs"],
+            ),
+            (
+                b"**/*.setup.js",
+                &["a.setup.js", "lib/deep/a.setup.js"],
+                &["a.js"],
+            ),
             (b"lib/{a,b}.js", &["lib/a.js", "lib/b.js"], &["lib/c.js"]),
             (b"lib/[ab].js", &["lib/a.js"], &["lib/c.js"]),
             (b"lib/@(a|b).js", &["lib/b.js"], &["lib/c.js"]),
         ];
         for (pattern, matched, others) in cases {
             for file in matched {
-                assert!(!is_free(&[pattern], file), "{} {file}", bstr::BStr::new(pattern));
+                assert!(
+                    !is_free(&[pattern], file),
+                    "{} {file}",
+                    bstr::BStr::new(pattern)
+                );
             }
             for file in others {
-                assert!(is_free(&[pattern], file), "{} {file}", bstr::BStr::new(pattern));
+                assert!(
+                    is_free(&[pattern], file),
+                    "{} {file}",
+                    bstr::BStr::new(pattern)
+                );
             }
         }
     }
@@ -95,6 +121,9 @@ mod tests {
             directory: DIRECTORY,
             entries: &[b"./a.js"],
         };
-        assert!(!is_declared_free_of_side_effects(declared, b"/p/elsewhere/b.js"));
+        assert!(!is_declared_free_of_side_effects(
+            declared,
+            b"/p/elsewhere/b.js"
+        ));
     }
 }

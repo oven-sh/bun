@@ -83,7 +83,10 @@ fn hashed_writers_agree_with_intern() {
     assert_eq!(table.intern_hashed(hash, b"a"), hashed);
     let interned = table.intern(b"b");
     assert_ne!(interned, hashed);
-    assert_eq!(table.intern_hashed(StringTable::hash_of(b"b"), b"b"), interned);
+    assert_eq!(
+        table.intern_hashed(StringTable::hash_of(b"b"), b"b"),
+        interned
+    );
     assert_eq!(table.find(b"b"), Some(interned));
     assert_eq!(table.hash(interned), StringTable::hash_of(b"b"));
     assert_eq!(table.len(), 2);
@@ -205,7 +208,10 @@ fn intern_from_copies_class_and_name() {
     assert_eq!(table.hash(copied_length), source.hash(length));
     assert_eq!(table.name_class(copied_length), NameClass::Length);
     assert_eq!(table.name_class(copied_prototype), NameClass::Prototype);
-    assert_eq!(table.builtin_name(copied_prototype), source.builtin_name(prototype));
+    assert_eq!(
+        table.builtin_name(copied_prototype),
+        source.builtin_name(prototype)
+    );
     assert!(table.builtin_name(copied_prototype).is_some());
 }
 

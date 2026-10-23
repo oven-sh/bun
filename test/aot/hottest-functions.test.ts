@@ -18,8 +18,14 @@ async function bytesOfFunctions(program: string) {
   const cwd = String(dir);
   const executable = join(cwd, isWindows ? "main.exe" : "main");
   const map = join(cwd, "main.map");
-  const built = await run([bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", executable], cwd, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
-  expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
+  const built = await run([bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", executable], cwd, {
+    ...bunEnv,
+    BUN_JSC_aotMapFilePath: map,
+  });
+  expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
+    output: "",
+    exitCode: 0,
+  });
   const plain = await run([bunExe(), "run", "./main.js"], cwd);
   expect(plain.exitCode).toBe(0);
   expect(await run([executable], cwd)).toEqual(plain);
@@ -41,7 +47,9 @@ test.todo(
     const count = 3_000;
     const reads = 12;
     const names = Array.from({ length: count }, (_, i) => `reads${i}`);
-    const functions = names.map(name => `function ${name}(o) { return [${Array.from({ length: reads }, (_, r) => `o.p${r}`).join(", ")}]; }\n`);
+    const functions = names.map(
+      name => `function ${name}(o) { return [${Array.from({ length: reads }, (_, r) => `o.p${r}`).join(", ")}]; }\n`,
+    );
     const thing = `{ ${Array.from({ length: reads }, (_, r) => `p${r}: ${r}`).join(", ")} }`;
     const bytes = await bytesOfFunctions(functions.join("") + callsEach(names, thing));
     const sizes = new Map<number, number>();
@@ -68,13 +76,24 @@ test.todo(
       ["searchParams", "searchParamz"],
       ["status", "statut"],
     ];
-    const functions = pairs.flat().map(name => `function reads_${name}(o) { return o.${name}; }\nfunction stores_${name}(o) { o.${name} = 1; return o; }\n`);
+    const functions = pairs
+      .flat()
+      .map(
+        name =>
+          `function reads_${name}(o) { return o.${name}; }\nfunction stores_${name}(o) { o.${name} = 1; return o; }\n`,
+      );
     const names = pairs.flat().flatMap(name => [`reads_${name}`, `stores_${name}`]);
-    const thing = `{ ${pairs.flat().map(name => `${name}: "${name}"`).join(", ")} }`;
+    const thing = `{ ${pairs
+      .flat()
+      .map(name => `${name}: "${name}"`)
+      .join(", ")} }`;
     const bytes = await bytesOfFunctions(functions.join("") + callsEach(names, thing));
     for (const [ofHost, other] of pairs) {
       for (const what of ["reads_", "stores_"]) {
-        expect({ name: what + ofHost, isSmaller: bytes.get(what + ofHost)! + 20 < bytes.get(what + other)! }).toEqual({ name: what + ofHost, isSmaller: true });
+        expect({ name: what + ofHost, isSmaller: bytes.get(what + ofHost)! + 20 < bytes.get(what + other)! }).toEqual({
+          name: what + ofHost,
+          isSmaller: true,
+        });
       }
     }
   },

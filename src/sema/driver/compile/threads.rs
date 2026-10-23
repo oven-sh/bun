@@ -23,7 +23,10 @@ pub fn run_on_one_thread_while<A: Send, B>(
         other_result = meanwhile.take().map(|meanwhile| meanwhile());
     });
     let result = result.lock().take();
-    (result.expect("the region ended"), other_result.expect("called once"))
+    (
+        result.expect("the region ended"),
+        other_result.expect("called once"),
+    )
 }
 
 /// Calls `run(argument)` once, on a thread of the pool that parallel regions run on.
@@ -47,7 +50,11 @@ pub unsafe extern "C" fn run_on_region_thread(
         node: Node::default(),
         callback: call,
     };
-    let call = bun_core::heap::into_raw(Box::new(Call { task, run, argument }));
+    let call = bun_core::heap::into_raw(Box::new(Call {
+        task,
+        run,
+        argument,
+    }));
     region_pool().schedule(Batch::from(call.cast::<Task>()));
 }
 
@@ -79,7 +86,11 @@ mod tests {
                 visits[outer * INNER + inner].fetch_add(1, Ordering::Relaxed);
             });
         });
-        assert!(visits.iter().all(|visit| visit.load(Ordering::Relaxed) == 1));
+        assert!(
+            visits
+                .iter()
+                .all(|visit| visit.load(Ordering::Relaxed) == 1)
+        );
     }
 
     #[test]
@@ -97,7 +108,10 @@ mod tests {
                 for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
                     arrived.fetch_add(1, Ordering::SeqCst);
                     while arrived.load(Ordering::SeqCst) < 2 {
-                        assert!(std::time::Instant::now() < deadline, "no thread joined the region");
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "no thread joined the region"
+                        );
                         std::thread::yield_now();
                     }
                 });
@@ -157,8 +171,14 @@ mod tests {
             schedule_on(pool, || {
                 DONE.fetch_add(1, Ordering::SeqCst);
             });
-            wait_until(|| DONE.load(Ordering::SeqCst) == round, "the task never ran");
-            wait_until(|| pool.available_threads() == 8, "the thread never came to rest");
+            wait_until(
+                || DONE.load(Ordering::SeqCst) == round,
+                "the task never ran",
+            );
+            wait_until(
+                || pool.available_threads() == 8,
+                "the thread never came to rest",
+            );
         }
         assert_eq!(pool.started_threads(), 1);
     }
@@ -170,12 +190,18 @@ mod tests {
         static ARRIVED: AtomicUsize = AtomicUsize::new(0);
         let meet = |all: usize| {
             ARRIVED.fetch_add(1, Ordering::SeqCst);
-            wait_until(|| ARRIVED.load(Ordering::SeqCst) >= all, "a task has no thread");
+            wait_until(
+                || ARRIVED.load(Ordering::SeqCst) >= all,
+                "a task has no thread",
+            );
         };
         for _ in 0..4 {
             schedule_on(pool, move || meet(4));
         }
-        wait_until(|| ARRIVED.load(Ordering::SeqCst) == 4, "a task has no thread");
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 4,
+            "a task has no thread",
+        );
         // From a thread of the pool, which keeps what it schedules in its own queue.
         schedule_on(pool, move || {
             for _ in 0..3 {
@@ -183,7 +209,10 @@ mod tests {
             }
             meet(8);
         });
-        wait_until(|| ARRIVED.load(Ordering::SeqCst) == 8, "a task has no thread");
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 8,
+            "a task has no thread",
+        );
     }
 
     #[test]
@@ -204,7 +233,10 @@ mod tests {
                 });
             }
         });
-        wait_until(|| DONE.load(Ordering::SeqCst) == SCHEDULERS * TASKS, "a task never ran");
+        wait_until(
+            || DONE.load(Ordering::SeqCst) == SCHEDULERS * TASKS,
+            "a task never ran",
+        );
     }
 
     #[test]
@@ -216,19 +248,37 @@ mod tests {
         for _ in 0..6 {
             schedule_on(pool, || {
                 ARRIVED.fetch_add(1, Ordering::SeqCst);
-                wait_until(|| ARRIVED.load(Ordering::SeqCst) >= 6, "a task has no thread");
+                wait_until(
+                    || ARRIVED.load(Ordering::SeqCst) >= 6,
+                    "a task has no thread",
+                );
             });
         }
-        wait_until(|| ARRIVED.load(Ordering::SeqCst) == 2, "too few threads at first");
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 2,
+            "too few threads at first",
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
-        assert_eq!((ARRIVED.load(Ordering::SeqCst), pool.started_threads()), (2, 2));
+        assert_eq!(
+            (ARRIVED.load(Ordering::SeqCst), pool.started_threads()),
+            (2, 2)
+        );
         pool.allow_threads(3);
-        wait_until(|| ARRIVED.load(Ordering::SeqCst) == 3, "the third thread never came");
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 3,
+            "the third thread never came",
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
-        assert_eq!((ARRIVED.load(Ordering::SeqCst), pool.started_threads()), (3, 3));
+        assert_eq!(
+            (ARRIVED.load(Ordering::SeqCst), pool.started_threads()),
+            (3, 3)
+        );
         pool.allow_threads(2);
         pool.allow_threads(8);
-        wait_until(|| ARRIVED.load(Ordering::SeqCst) == 6, "a task has no thread");
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 6,
+            "a task has no thread",
+        );
         assert_eq!(pool.started_threads(), 6);
     }
 
@@ -250,7 +300,11 @@ mod tests {
             },
             &mut vec![(); 8],
         );
-        assert!(visits.iter().all(|visit| visit.load(Ordering::Relaxed) == 1));
+        assert!(
+            visits
+                .iter()
+                .all(|visit| visit.load(Ordering::Relaxed) == 1)
+        );
         assert!(pool.started_threads() <= 2);
     }
 }

@@ -12,7 +12,22 @@ test.skipIf(!!unsupported)(
       using dir = tempDir("aot-primordials", {});
       const fixture = join(import.meta.dir, "primordials-are-bound-by-name.fixture.mjs");
       const executable = join(String(dir), "program");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--compile-exec-argv=--expose-internals", fixture, "--outfile", executable], String(dir), bunEnv));
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            "--compile-exec-argv=--expose-internals",
+            fixture,
+            "--outfile",
+            executable,
+          ],
+          String(dir),
+          bunEnv,
+        ),
+      );
       const plain = await spawned([bunExe(), "--expose-internals", fixture], String(dir), bunEnv);
       const compiled = await spawned([executable], String(dir), bunEnv);
       expect(compiled.signal).toBeNull();

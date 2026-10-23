@@ -48,7 +48,14 @@ const buildLimit = 300_000;
 
 async function writeReport(folder: string, name: string, detail: ReportDetail) {
   const path = join(folder, name + ".json");
-  const command = [bunExe(), ...compileCommand, ...withReport(path, detail), "main.ts", "--outfile", isWindows ? "app.exe" : "app"];
+  const command = [
+    bunExe(),
+    ...compileCommand,
+    ...withReport(path, detail),
+    "main.ts",
+    "--outfile",
+    isWindows ? "app.exe" : "app",
+  ];
   built(await spawned(command, folder, { ...bunEnv, NO_COLOR: "1" }));
   return path;
 }
@@ -103,8 +110,17 @@ describe.concurrent("the build report", () => {
         "arrivalSites",
         "layouts",
       ]);
-      const { functions, accessSites, allocationSites, typeTestSites, arrivalSites, layouts, retainedFeatures } = report as typeof report & { arrivalSites: unknown; layouts: unknown };
-      expect({ functions, accessSites, allocationSites, typeTestSites, arrivalSites, layouts, retainedFeatures }).toEqual({
+      const { functions, accessSites, allocationSites, typeTestSites, arrivalSites, layouts, retainedFeatures } =
+        report as typeof report & { arrivalSites: unknown; layouts: unknown };
+      expect({
+        functions,
+        accessSites,
+        allocationSites,
+        typeTestSites,
+        arrivalSites,
+        layouts,
+        retainedFeatures,
+      }).toEqual({
         functions: null,
         accessSites: null,
         allocationSites: null,
@@ -127,7 +143,9 @@ describe.concurrent("the build report", () => {
       expect(sumAccessCounts(own.map(record => record.accesses))).toEqual(report.summary.accesses);
       expect(sumLevelCounts(own.map(record => record.calls))).toEqual(report.summary.calls);
       const operations = new Set(registry().operations);
-      expect([...new Set(functions.flatMap(record => Object.keys(record.operations)))].filter(name => !operations.has(name))).toEqual([]);
+      expect(
+        [...new Set(functions.flatMap(record => Object.keys(record.operations)))].filter(name => !operations.has(name)),
+      ).toEqual([]);
       expect(functions.filter(record => record.line > record.endLine)).toEqual([]);
       expect(report.accessSites).toBeNull();
     }),
@@ -138,7 +156,9 @@ describe.concurrent("the build report", () => {
     "detail sites: the access sites add up to the summary, and each below proven has a loss",
     withReportOf("sites", ({ summary, losses, accessSites }) => {
       const sites = accessSites!;
-      expect(countAccessSites(sites.filter(site => !isCall(site)))).toEqual(sumAccessCounts([summary.accesses, summary.dependencyAccesses]));
+      expect(countAccessSites(sites.filter(site => !isCall(site)))).toEqual(
+        sumAccessCounts([summary.accesses, summary.dependencyAccesses]),
+      );
       expect(countByLevel(sites.filter(isCall))).toEqual(summary.calls);
       expect(sites.filter(site => site.loss !== null && !(site.loss >= 0 && site.loss < losses.length))).toEqual([]);
       expect(sites.filter(site => (site.level === "proven") !== (site.loss === null))).toEqual([]);
@@ -152,8 +172,12 @@ describe.concurrent("the build report", () => {
     withReportOf("summary", report => {
       const { statistics, limits, lossReasons } = registry();
       expect(Object.keys(report.statistics)).toEqual(statistics);
-      expect(report.limits.map(({ name, value }) => ({ name, value }))).toEqual(limits.map(({ name, value }) => ({ name, value })));
-      expect([...new Set(report.losses.map(loss => loss.reason))].filter(reason => !lossReasons.includes(reason))).toEqual([]);
+      expect(report.limits.map(({ name, value }) => ({ name, value }))).toEqual(
+        limits.map(({ name, value }) => ({ name, value })),
+      );
+      expect(
+        [...new Set(report.losses.map(loss => loss.reason))].filter(reason => !lossReasons.includes(reason)),
+      ).toEqual([]);
     }),
     buildLimit,
   );
@@ -161,8 +185,12 @@ describe.concurrent("the build report", () => {
   test(
     "the loss of a read of parsed data names the call that parsed it",
     withReportOf("sites", ({ losses, accessSites }) => {
-      const reads = accessSites!.filter(site => site.file === "main.ts" && site.line === lineOf(readOfParsedValue) && site.kind === "read");
-      expect(reads).toEqual([expect.objectContaining({ level: expect.stringMatching(/^(unknown|guarded)$/), loss: expect.any(Number) })]);
+      const reads = accessSites!.filter(
+        site => site.file === "main.ts" && site.line === lineOf(readOfParsedValue) && site.kind === "read",
+      );
+      expect(reads).toEqual([
+        expect.objectContaining({ level: expect.stringMatching(/^(unknown|guarded)$/), loss: expect.any(Number) }),
+      ]);
       expect(losses[reads[0]!.loss!]!.witness).toMatchObject({ file: "main.ts", line: lineOf(parse) });
     }),
     buildLimit,
@@ -174,11 +202,15 @@ describe.concurrent("the build report", () => {
       slot(async () => {
         using dir = tempDir("aot-build-report-twice", { "main.ts": source });
         // How often the checker is asked, and how often it gives up inside an answer, is work done, as a time is: each thread keeps the answers that it has got, so the sums follow from which files fall to which thread.
-        const isWorkDone = (key: string) => key.endsWith("anoseconds") || key === "CheckerQueries" || key === "CheckerMembersGivenUp";
-        const withoutTimes = (path: string) => JSON.parse(readFileSync(path, "utf8"), (key, value) => (isWorkDone(key) ? undefined : value));
+        const isWorkDone = (key: string) =>
+          key.endsWith("anoseconds") || key === "CheckerQueries" || key === "CheckerMembersGivenUp";
+        const withoutTimes = (path: string) =>
+          JSON.parse(readFileSync(path, "utf8"), (key, value) => (isWorkDone(key) ? undefined : value));
         const first = await writeReport(String(dir), "first", "sites");
         const second = await writeReport(String(dir), "second", "sites");
-        expect(Object.keys(readBuildReport(first).statistics).filter(name => name.endsWith("Nanoseconds"))).not.toEqual([]);
+        expect(Object.keys(readBuildReport(first).statistics).filter(name => name.endsWith("Nanoseconds"))).not.toEqual(
+          [],
+        );
         expect(withoutTimes(second)).toEqual(withoutTimes(first));
       }),
     buildLimit,

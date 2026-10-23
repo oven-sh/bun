@@ -278,7 +278,13 @@ RangeError: bad id -1
 Bun writes `repo.map` next to the executable. The program doesn't read that file, so don't ship it. It's a source map. The two numbers of a frame are a line and a column in it, and it leads to the name, the file, the line and the column that a build without `--obfuscate` prints.
 
 ```json title="repo.map" icon="file-json"
-{ "version": 3, "file": "repo", "sources": ["repo.ts"], "names": ["Repo", "find"], "mappings": "AAAA,CAOM,CAPN,CAOa,CAEI,CAAP;AATJA,CAAAA;AACJC,CAAAA;AAAAA,CACwBA" }
+{
+  "version": 3,
+  "file": "repo",
+  "sources": ["repo.ts"],
+  "names": ["Repo", "find"],
+  "mappings": "AAAA,CAOM,CAPN,CAOa,CAEI,CAAP;AATJA,CAAAA;AACJC,CAAAA;AAAAA,CACwBA"
+}
 ```
 
 Any library that reads source maps can restore a trace. This script uses [`source-map-js`](https://www.npmjs.com/package/source-map-js).

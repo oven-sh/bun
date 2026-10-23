@@ -20,8 +20,13 @@ import { withProgramOutput } from "./harness/flags";
 import { built, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
-const sanitized = process.env.TESTAOT_THREAD_SANITIZER ?? [join(dirname(bunExe()), "testaot-thread-sanitizer")].find(existsSync);
-const skipped = !isLinux ? "ThreadSanitizer builds are made for Linux" : !sanitized ? "there is no testaot built with ThreadSanitizer: not in $TESTAOT_THREAD_SANITIZER, no testaot-thread-sanitizer beside the Bun under test" : undefined;
+const sanitized =
+  process.env.TESTAOT_THREAD_SANITIZER ?? [join(dirname(bunExe()), "testaot-thread-sanitizer")].find(existsSync);
+const skipped = !isLinux
+  ? "ThreadSanitizer builds are made for Linux"
+  : !sanitized
+    ? "there is no testaot built with ThreadSanitizer: not in $TESTAOT_THREAD_SANITIZER, no testaot-thread-sanitizer beside the Bun under test"
+    : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/thread-sanitizer.test.ts: ${skipped}`);
 
 const mode = process.env.AOT_THREAD_SANITIZER;
@@ -39,10 +44,24 @@ const programs: { path: string; flags?: string[] }[] = [
 ];
 
 // JavaScriptCore's and WTF's own, racy by design upstream: the collector, the traps of the VM, the options; the parking lot and the word locks order by their own atomics.
-const suppressions = ["race:JSC::Heap::", "race:JSC::MarkedBlock", "race:JSC::VMTraps", "race:JSC::Options::", "race:WTF::ParkingLot", "race:WTF::WordLock"];
+const suppressions = [
+  "race:JSC::Heap::",
+  "race:JSC::MarkedBlock",
+  "race:JSC::VMTraps",
+  "race:JSC::Options::",
+  "race:WTF::ParkingLot",
+  "race:WTF::WordLock",
+];
 
-const shortened = (name: string) => name.replace(/\(.*/, "").replaceAll("JSC::AOT::Typed::", "").replaceAll("JSC::AOT::", "").replaceAll("(anonymous namespace)::", "").trim();
-const inSources = (path: string) => (path.includes("/JavaScriptCore/") ? path.split("/JavaScriptCore/")[1] : basename(path));
+const shortened = (name: string) =>
+  name
+    .replace(/\(.*/, "")
+    .replaceAll("JSC::AOT::Typed::", "")
+    .replaceAll("JSC::AOT::", "")
+    .replaceAll("(anonymous namespace)::", "")
+    .trim();
+const inSources = (path: string) =>
+  path.includes("/JavaScriptCore/") ? path.split("/JavaScriptCore/")[1] : basename(path);
 
 /** The names of the reports in what ThreadSanitizer wrote. */
 export function racesIn(log: string): string[] {
@@ -56,7 +75,10 @@ export function racesIn(log: string): string[] {
       .split(/\n\n/)
       .filter(part => /^\s*(Previous )?(atomic )?(write|read) of size/i.test(part))
       .slice(0, 2)) {
-      const frames = Array.from(stack.matchAll(/^\s+#\d+ (.*?) (\S+?):\d+(?::\d+)? \(/gm), ([, name, path]) => ({ name: shortened(name), path: inSources(path) }));
+      const frames = Array.from(stack.matchAll(/^\s+#\d+ (.*?) (\S+?):\d+(?::\d+)? \(/gm), ([, name, path]) => ({
+        name: shortened(name),
+        path: inSources(path),
+      }));
       const ours = frames.find(frame => frame.path.startsWith("aot/"));
       if (ours) sides.push(`${ours.name} ${ours.path}`);
     }
@@ -70,7 +92,15 @@ describe.skipIf(!!skipped)("compile/aot/thread sanitizer", () => {
   afterAll(() => {
     rmSync(folder, { recursive: true, force: true });
     if (mode === "accept") writeFileSync(knownPath, JSON.stringify([...seen].sort(), null, 2) + "\n");
-    if (mode === "shorten") writeFileSync(knownPath, JSON.stringify(known.filter(name => seen.has(name)), null, 2) + "\n");
+    if (mode === "shorten")
+      writeFileSync(
+        knownPath,
+        JSON.stringify(
+          known.filter(name => seen.has(name)),
+          null,
+          2,
+        ) + "\n",
+      );
   });
 
   test.each(programs)(
@@ -79,10 +109,33 @@ describe.skipIf(!!skipped)("compile/aot/thread sanitizer", () => {
       const source = join(import.meta.dir, path);
       const name = basename(dirname(source)) + "-" + basename(source).replace(/\.[a-z]+$/, "");
       const program = join(folder, `${name}.program`);
-      built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, withProgramOutput(program), source, "--outfile", join(folder, name)], dirname(source), bunEnv));
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...flags,
+            withProgramOutput(program),
+            source,
+            "--outfile",
+            join(folder, name),
+          ],
+          dirname(source),
+          bunEnv,
+        ),
+      );
       rmSync(join(folder, name), { force: true });
 
-      const options = ["halt_on_error=0", "report_signal_unsafe=0", "history_size=4", "exitcode=0", `log_path=${join(folder, name)}.reports`, `suppressions=${join(folder, "suppressions.txt")}`];
+      const options = [
+        "halt_on_error=0",
+        "report_signal_unsafe=0",
+        "history_size=4",
+        "exitcode=0",
+        `log_path=${join(folder, name)}.reports`,
+        `suppressions=${join(folder, "suppressions.txt")}`,
+      ];
       await using compile = Bun.spawn({
         cmd: [sanitized!, "compile", program, `--output=${join(folder, name)}.image`, `threads=${threads}`],
         cwd: folder,
@@ -103,7 +156,9 @@ describe.skipIf(!!skipped)("compile/aot/thread sanitizer", () => {
           .flatMap(file => racesIn(readFileSync(join(folder, file), "utf8"))),
       );
       for (const race of races) seen.add(race);
-      console.error(`THREAD SANITIZER ${path}: ${races.size} different races under aot/, ${[...races].filter(race => !known.includes(race)).length} of them not known`);
+      console.error(
+        `THREAD SANITIZER ${path}: ${races.size} different races under aot/, ${[...races].filter(race => !known.includes(race)).length} of them not known`,
+      );
       if (mode !== "accept") expect([...races].filter(race => !known.includes(race)).sort()).toEqual([]);
     },
     1_800_000,

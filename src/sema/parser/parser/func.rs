@@ -246,7 +246,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let had_await_identifier = self.has_await_identifier;
         if self.options.skips_function_blocks
             && self.token() == T::OpenBrace
-            && let Some(close) = super::skipped_blocks::find_end_of_block(self.lx.src, open as usize)
+            && let Some(close) =
+                super::skipped_blocks::find_end_of_block(self.lx.src, open as usize)
         {
             self.lx.start_at(close as u32);
         }

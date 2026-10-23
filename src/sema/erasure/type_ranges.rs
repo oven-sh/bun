@@ -94,7 +94,7 @@ fn is_line_break(byte: u8) -> bool {
 
 fn find_block_comment_at_end(text: &[u8]) -> Option<usize> {
     let before_close = text.strip_suffix(b"*/")?;
-    before_close.windows(2).rposition(|pair| pair == b"/*")
+    bun_core::strings::last_index_of(before_close, b"/*")
 }
 
 fn find_line_comment_in_last_line(text: &[u8]) -> Option<usize> {
@@ -112,7 +112,7 @@ fn find_line_comment_in_last_line(text: &[u8]) -> Option<usize> {
         } else if rest.starts_with(b"//") {
             return Some(at);
         } else if rest.starts_with(b"/*") {
-            let length = rest[2..].windows(2).position(|pair| pair == b"*/");
+            let length = bun_core::strings::index_of(&rest[2..], b"*/");
             at += length.map_or(rest.len(), |length| length + 3);
         } else if matches!(byte, b'"' | b'\'' | b'`') {
             quote = byte;
@@ -223,7 +223,7 @@ impl Finder<'_, '_> {
                 let length = rest.iter().position(|&byte| is_line_break(byte));
                 at += length.unwrap_or(rest.len());
             } else if rest.starts_with(b"/*") {
-                let length = rest[2..].windows(2).position(|pair| pair == b"*/");
+                let length = bun_core::strings::index_of(&rest[2..], b"*/");
                 at += length.map_or(rest.len(), |length| length + 4);
             } else {
                 return at;
@@ -341,7 +341,9 @@ impl Finder<'_, '_> {
             return;
         }
         let start = self.skip_trivia_back(keyword_end - keyword.len());
-        let implemented = file.ids(class.implements).chain(file.ids(class.other_implements));
+        let implemented = file
+            .ids(class.implements)
+            .chain(file.ids(class.other_implements));
         let end = implemented.map(|ty| file[ty].end).max().unwrap_or_default();
         self.add(start as u32, end);
     }
@@ -381,7 +383,9 @@ impl Finder<'_, '_> {
         if let Some(function) = member.func.some() {
             let function = &file[function];
             return match function.type_params.iter().next() {
-                Some(first) => self.skip_trivia_back(file[first].start as usize).saturating_sub(1),
+                Some(first) => self
+                    .skip_trivia_back(file[first].start as usize)
+                    .saturating_sub(1),
                 None => function.anchor as usize,
             };
         }

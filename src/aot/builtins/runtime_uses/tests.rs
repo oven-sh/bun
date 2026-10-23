@@ -26,8 +26,16 @@ fn exists_on_linux(function: RuntimeFunction) -> bool {
 
 fn own_functions(id: BuiltinId) -> impl Iterator<Item = RuntimeFunction> {
     let entry = table::entry(id);
-    let for_texts = entry.calls_for_texts().iter().flat_map(|listed| listed.calls);
-    let listed = entry.calls().iter().chain(entry.implemented_by()).chain(for_texts).copied();
+    let for_texts = entry
+        .calls_for_texts()
+        .iter()
+        .flat_map(|listed| listed.calls);
+    let listed = entry
+        .calls()
+        .iter()
+        .chain(entry.implemented_by())
+        .chain(for_texts)
+        .copied();
     listed.filter(|&function| exists_on_linux(function))
 }
 
@@ -40,7 +48,10 @@ fn own_modules(id: BuiltinId) -> impl Iterator<Item = RuntimeModule> {
 }
 
 fn has_conditional_load(id: BuiltinId) -> bool {
-    table::entry(id).loads().iter().any(|load| load.is_conditional)
+    table::entry(id)
+        .loads()
+        .iter()
+        .any(|load| load.is_conditional)
 }
 
 fn sorted_unique<T: Ord>(items: impl Iterator<Item = T>) -> Vec<T> {
@@ -93,7 +104,10 @@ fn find_class_with_own_method_functions() -> Option<(BuiltinId, BuiltinId)> {
         let has_own_function = |method: &BuiltinId| {
             own_functions(*method).any(|function| !lists_function(constructor, function))
         };
-        let method = table::members(prototype).iter().copied().find(has_own_function)?;
+        let method = table::members(prototype)
+            .iter()
+            .copied()
+            .find(has_own_function)?;
         Some((constructor, method))
     })
 }
@@ -105,7 +119,10 @@ fn nothing_mentioned_needs_nothing() {
 
 #[test]
 fn entry_without_lists_needs_nothing() {
-    assert_eq!(uses_of(&[BuiltinId::MathFloor], &[]), RuntimeUses::default());
+    assert_eq!(
+        uses_of(&[BuiltinId::MathFloor], &[]),
+        RuntimeUses::default()
+    );
 }
 
 #[test]
@@ -117,11 +134,17 @@ fn logging_needs_nothing() {
 #[test]
 fn lists_ascend_and_are_unique() {
     let stdout = BuiltinId::ProcessStdout;
-    let uses = uses_of(&[stdout, stdout, stdout], &[BuiltinId::Process, BuiltinId::Process]);
+    let uses = uses_of(
+        &[stdout, stdout, stdout],
+        &[BuiltinId::Process, BuiltinId::Process],
+    );
     assert!(!uses.modules.is_empty() && !uses.functions.is_empty());
     assert!(uses.modules.is_sorted_by(|left, right| left < right));
     assert!(uses.functions.is_sorted_by(|left, right| left < right));
-    assert_eq!(uses_of(&[stdout, stdout, stdout], &[]), uses_of(&[stdout], &[]));
+    assert_eq!(
+        uses_of(&[stdout, stdout, stdout], &[]),
+        uses_of(&[stdout], &[])
+    );
 }
 
 #[test]
@@ -154,12 +177,27 @@ fn call_with_another_text_does_without_what_some_texts_need() {
         .flat_map(|listed| listed.calls.iter().copied())
         .collect();
     assert!(!for_texts.is_empty());
-    assert!(for_texts.iter().all(|&function| !table::entry(on).calls().contains(&function)));
-    let has_all = |uses: &RuntimeUses| for_texts.iter().all(|function| uses.functions.contains(function));
-    let has_none = |uses: &RuntimeUses| for_texts.iter().all(|function| !uses.functions.contains(function));
+    assert!(
+        for_texts
+            .iter()
+            .all(|&function| !table::entry(on).calls().contains(&function))
+    );
+    let has_all = |uses: &RuntimeUses| {
+        for_texts
+            .iter()
+            .all(|function| uses.functions.contains(function))
+    };
+    let has_none = |uses: &RuntimeUses| {
+        for_texts
+            .iter()
+            .all(|function| !uses.functions.contains(function))
+    };
     assert!(has_all(&uses_of(&[on], &[])));
     assert!(has_all(&uses_of(&[], &[BuiltinId::Process])));
-    assert!(has_none(&uses_of(&[BuiltinId::EventEmitterPrototypeEmit], &[])));
+    assert!(has_none(&uses_of(
+        &[BuiltinId::EventEmitterPrototypeEmit],
+        &[]
+    )));
     let mentions = Mentions {
         mentioned: &[BuiltinId::Process, on],
         called_with_other_texts: &[on],
@@ -245,7 +283,11 @@ fn language_has_every_engine_function() {
         for &function in entry.implemented_by() {
             let data = table::runtime_function(function).unwrap();
             if data.role == RuntimeFunctionRole::EngineBuiltin && data.platforms.contains(LINUX) {
-                assert!(language.functions.contains(&function), "{}", table::text_of(id));
+                assert!(
+                    language.functions.contains(&function),
+                    "{}",
+                    table::text_of(id)
+                );
                 engine_function_count += 1;
             }
         }
@@ -257,9 +299,17 @@ fn language_has_every_engine_function() {
 fn language_has_every_compiler_helper() {
     let language = RuntimeUses::of_language(LINUX);
     let helpers = table::members(BuiltinId::CompilerHelpers);
-    assert!(helpers.iter().any(|&helper| own_functions(helper).next().is_some()));
+    assert!(
+        helpers
+            .iter()
+            .any(|&helper| own_functions(helper).next().is_some())
+    );
     for &helper in helpers {
-        assert!(table::entry(helper).flags.contains(BuiltinFlags::IS_COMPILER_HELPER));
+        assert!(
+            table::entry(helper)
+                .flags
+                .contains(BuiltinFlags::IS_COMPILER_HELPER)
+        );
         let mut functions = own_functions(helper);
         assert!(
             functions.all(|function| language.functions.contains(&function)),

@@ -55,8 +55,12 @@ test("the list is refused where a program stores nothing, where native code read
 
 test("a name is listed once, and an index is no name", () => {
   const emit = nameOf("emit", 0);
-  expect(problemsOf(entry(), [emit, emit])).toEqual(["host lists the names that native code reads, and emit is listed twice"]);
-  expect(problemsOf(entry(), [nameOf("7", 0)])).toEqual(["host lists the names that native code reads, and 7 is an index"]);
+  expect(problemsOf(entry(), [emit, emit])).toEqual([
+    "host lists the names that native code reads, and emit is listed twice",
+  ]);
+  expect(problemsOf(entry(), [nameOf("7", 0)])).toEqual([
+    "host lists the names that native code reads, and 7 is an index",
+  ]);
 });
 
 test("a name that native code only inspects is one of the names that it reads", () => {
@@ -78,10 +82,13 @@ function* cppFilesUnder(directory: string): Generator<string> {
 // In a member function of Process the object is `this`. Everywhere else it is a variable named process or processObject, or the call that answers it.
 const lookupOnProcess =
   /(?:\bprocess|\bprocessObject|processObject\(\))->(?:get|getIfPropertyExists|getDirect|put|putInline|hasProperty)\(\s*(?:\w+,\s*)?(?:JSC::)?(?:Identifier::fromString\(vm, "([^"]+)"_s\)|(\w+))/g;
-const lookupOnThis = /\bthis->(?:get|getIfPropertyExists|put|hasProperty)\(\s*\w+,\s*(?:JSC::)?Identifier::fromString\(vm, "([^"]+)"_s\)/g;
+const lookupOnThis =
+  /\bthis->(?:get|getIfPropertyExists|put|hasProperty)\(\s*\w+,\s*(?:JSC::)?Identifier::fromString\(vm, "([^"]+)"_s\)/g;
 // The texts that an Identifier in a variable is made of: a literal, or each literal of the list that a loop goes through.
 function textsOfIdentifier(text: string, variable: string): string[] {
-  const made = new RegExp(`\\b${variable}\\s*=\\s*(?:JSC::)?Identifier::fromString\\(vm, (?:"([^"]+)"_s|(\\w+))\\)`).exec(text);
+  const made = new RegExp(
+    `\\b${variable}\\s*=\\s*(?:JSC::)?Identifier::fromString\\(vm, (?:"([^"]+)"_s|(\\w+))\\)`,
+  ).exec(text);
   if (made === null) return [];
   if (made[1] !== undefined) return [made[1]];
   const listed = new RegExp(`for \\(ASCIILiteral ${made[2]} : \\{([^}]*)\\}\\)`).exec(text);

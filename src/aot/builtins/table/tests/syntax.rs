@@ -170,12 +170,21 @@ fn resolves_native_bindings_by_whole_key() {
 #[test]
 fn no_key_finds_what_native_code_hands_over() {
     for id in HANDED_OVER_BY_NATIVE_CODE {
-        assert_eq!(entry(id).kind, BuiltinKind::NativeBinding, "{}", text_of(id));
+        assert_eq!(
+            entry(id).kind,
+            BuiltinKind::NativeBinding,
+            "{}",
+            text_of(id)
+        );
         let Some((file, symbol)) = split_binding_text(&text_of(id)) else {
             continue;
         };
         let mut found = native_call_kinds().map(|kind| native_binding(kind, file, symbol));
-        assert!(!found.any(|found| is_binding_of(found, id)), "{}", text_of(id));
+        assert!(
+            !found.any(|found| is_binding_of(found, id)),
+            "{}",
+            text_of(id)
+        );
     }
 }
 

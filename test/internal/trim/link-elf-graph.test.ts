@@ -112,7 +112,11 @@ describeLink("the graph reader", () => {
     const folder = String(dir);
     const linkedObjects = [...objects, "notes"];
     await compileObjects(folder, linkedObjects);
-    const { executable, map, log } = await linkByHand(folder, { name: "second", output: "hand", objects: linkedObjects });
+    const { executable, map, log } = await linkByHand(folder, {
+      name: "second",
+      output: "hand",
+      objects: linkedObjects,
+    });
     expect(readFileSync(map, "latin1")).toMatch(/^ +0 +0 +[0-9a-f]+ +\d+ \.toy_notes$/m);
     const { graph, failures } = readElfGraph(executable, map, log);
     expect(failures).toEqual([]);
@@ -217,7 +221,13 @@ describeLink("the linker's own relocations", () => {
   function check(links: Links, graph: SectionGraph = links.reading.graph, shipped: Link = links.shipped) {
     const { withRelocations, reading, features, format } = links;
     const { entryPoints } = readEntryPoints(reading, features);
-    const partitioned = partition({ graph, entryPoints, model: features, isMovable: format.isMovable, isCode: format.isCode });
+    const partitioned = partition({
+      graph,
+      entryPoints,
+      model: features,
+      isMovable: format.isMovable,
+      isCode: format.isCode,
+    });
     expect(partitioned.failures).toEqual([]);
     const { ranges } = removableRanges(graph, partitioned, format);
     return checkElfRelocations({ shipped, withRelocations, graph, partition: partitioned, ranges }).failures;
@@ -242,7 +252,9 @@ describeLink("the linker's own relocations", () => {
       validatesRelocations: true,
     });
     expect(linkOutput).toMatch(validatorSummary);
-    expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true }]);
+    expect(table.edges).toEqual([
+      { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
+    ]);
   });
 
   test("find a reference the graph reader missed", async () => {

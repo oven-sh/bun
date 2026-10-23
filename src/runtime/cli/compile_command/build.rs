@@ -1,13 +1,17 @@
 use std::time::Instant;
 
 use bun_aot::engine::{
-    EngineModuleId, ExecutableIdentity, has_compiler, image_alignment, used_features,
+    EngineModuleId, ExecutableIdentity, describe_difference_of_runtime, has_compiler,
+    image_alignment, used_features,
 };
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
 use bun_bundler::options::{self, OutputFile};
 use bun_core::{ZBox, fmt as bun_fmt};
-use bun_exe_format::identity::{find_file_identity, find_process_identity};
+use bun_exe_format::identity::{
+    HostDescription, RuntimeDescription, find_file_identity, find_process_identity,
+    read_stamp_of_builtin_modules,
+};
 use bun_options_types::Format;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -84,6 +88,7 @@ pub(crate) fn compile_to_executable(
     Ok(outcome)
 }
 
+#[allow(clippy::needless_pass_by_value)] // made for this call
 fn write_product(
     request: &mut CompileRequest<'_, '_>,
     build: &mut AotBuild,
@@ -203,28 +208,85 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<ExecutableIdentity,
     if !request.executable.target.is_default() {
         return Err(CompileFailure::CrossCompilation);
     }
-    let identity = ExecutableIdentity(find_process_identity().map_err(CompileFailure::NoIdentity)?);
     if let CompileProduct::Executable { .. } = request.product {
         if let Some(path) = request.executable.executable_path {
-            check_template(path, identity)?;
+            return check_template(path);
         }
     }
-    Ok(identity)
+    find_process_identity()
+        .map(ExecutableIdentity)
+        .map_err(CompileFailure::NoIdentity)
 }
 
-fn check_template(path: &[u8], identity: ExecutableIdentity) -> Result<(), CompileFailure> {
-    match with_executable_image(&ZBox::from_bytes(path), find_file_identity) {
-        Err(error) => Err(CompileFailure::TemplateUnreadable { error }),
-        Ok(Err(_)) => Err(CompileFailure::TemplateIsNotBun {
-            path: path.to_vec(),
-        }),
-        Ok(Ok(found)) if ExecutableIdentity(found) != identity => {
-            Err(CompileFailure::TemplateIsAnotherBuild {
+struct Template {
+    identity: [u8; 16],
+    description: RuntimeDescription,
+    stamp_of_builtin_modules: u32,
+}
+
+#[repr(C)]
+struct BuiltinModulesHeader {
+    magic: [u8; 8],
+    version: u32,
+    source_stamp: u32,
+}
+
+unsafe extern "C" {
+    static bun_internal_modules_header: BuiltinModulesHeader;
+}
+
+fn check_template(path: &[u8]) -> Result<ExecutableIdentity, CompileFailure> {
+    let read = with_executable_image(&ZBox::from_bytes(path), |file| {
+        Some(Template {
+            identity: find_file_identity(file).ok()?,
+            description: RuntimeDescription::read(file).ok()?,
+            stamp_of_builtin_modules: read_stamp_of_builtin_modules(file).ok()?,
+        })
+    });
+    let template = match read {
+        Err(error) => return Err(CompileFailure::TemplateUnreadable { error }),
+        Ok(None) => {
+            return Err(CompileFailure::TemplateIsNotBun {
                 path: path.to_vec(),
-            })
+            });
         }
-        Ok(Ok(_)) => Ok(()),
+        Ok(Some(template)) => template,
+    };
+    match find_difference(&template) {
+        Some(difference) => Err(CompileFailure::TemplateDiffers {
+            path: path.to_vec(),
+            difference,
+        }),
+        None => Ok(ExecutableIdentity(template.identity)),
     }
+}
+
+fn find_difference(template: &Template) -> Option<Vec<u8>> {
+    let unreadable = || Some(b"its description of the run time can't be read".to_vec());
+    let Some(revision) = template
+        .description
+        .record(RuntimeDescription::HOST)
+        .and_then(HostDescription::revision_in)
+    else {
+        return unreadable();
+    };
+    let own_revision = bun_core::env::GIT_SHA.as_bytes();
+    if revision != own_revision {
+        let mut sentence = b"it is revision ".to_vec();
+        sentence.extend_from_slice(revision);
+        sentence.extend_from_slice(b" of Bun and this is ");
+        sentence.extend_from_slice(own_revision);
+        return Some(sentence);
+    }
+    // SAFETY: the header of the section with the modules, which nothing writes.
+    let own_stamp = unsafe { bun_internal_modules_header.source_stamp };
+    if template.stamp_of_builtin_modules != own_stamp {
+        return Some(b"its built-in modules have another text".to_vec());
+    }
+    let Some(engine) = template.description.record(RuntimeDescription::ENGINE) else {
+        return unreadable();
+    };
+    describe_difference_of_runtime(engine)
 }
 
 fn build_program(
@@ -280,7 +342,7 @@ fn has_no_text(file: &OutputFile) -> bool {
     file.size == 0 && file.output_kind.is_file_in_standalone_mode()
 }
 
-type ModulesWithoutText = std::collections::HashMap<Box<[u8]>, usize>;
+type ModulesWithoutText = std::collections::BTreeMap<Box<[u8]>, usize>;
 
 fn modules_without_text(output_files: &[OutputFile]) -> ModulesWithoutText {
     output_files
@@ -343,7 +405,7 @@ fn add_assets_in_place(
         .map_err(|error| format!("failed to read the working directory: {error}"))?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     // What a module has embedded stands at the path of its source already.
-    let embedded: std::collections::HashSet<Box<[u8]>> = output_files
+    let embedded: std::collections::BTreeSet<Box<[u8]>> = output_files
         .iter()
         .filter(|file| file.size > 0)
         .map(|file| file.dest_path.clone())

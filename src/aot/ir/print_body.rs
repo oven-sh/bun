@@ -23,16 +23,20 @@ pub(super) fn print_body(printer: &mut Printer<'_>, body: &Body) {
     printer.out.push('}');
 }
 
+#[allow(clippy::large_types_passed_by_value)] // made for this call
 fn print_block(printer: &mut Printer<'_>, block: BlockView<'_>) {
     let _ = write!(printer.out, "  {}(", block.id);
-    printer.print_separated(block.parameter_types().enumerate(), |printer, (index, ty)| {
-        let value = ValueId::new(block.first_parameter.index() + index);
-        let _ = write!(printer.out, "{value}");
-        if let Some(ty) = ty {
-            printer.out.push_str(": ");
-            printer.print_type(ty);
-        }
-    });
+    printer.print_separated(
+        block.parameter_types().enumerate(),
+        |printer, (index, ty)| {
+            let value = ValueId::new(block.first_parameter.index() + index);
+            let _ = write!(printer.out, "{value}");
+            if let Some(ty) = ty {
+                printer.out.push_str(": ");
+                printer.print_type(ty);
+            }
+        },
+    );
     printer.out.push(')');
     if block.role != BlockRole::default() {
         let _ = write!(printer.out, " role={}", block.role.name());
@@ -72,12 +76,15 @@ fn print_terminator(printer: &mut Printer<'_>, terminator: TerminatorView<'_>) {
     let target_count = terminator.target_count();
     if target_count > 0 {
         printer.out.push_str(" -> ");
-        printer.print_separated(terminator.targets().enumerate(), |printer, (index, target)| {
-            let name = kind.target_name(index, target_count);
-            printer.out.push_str(name.unwrap_or("<invalid target>"));
-            printer.out.push(' ');
-            print_target(printer, target);
-        });
+        printer.print_separated(
+            terminator.targets().enumerate(),
+            |printer, (index, target)| {
+                let name = kind.target_name(index, target_count);
+                printer.out.push_str(name.unwrap_or("<invalid target>"));
+                printer.out.push(' ');
+                print_target(printer, target);
+            },
+        );
     }
     print_position(printer, terminator.position);
     printer.out.push('\n');
@@ -90,7 +97,9 @@ fn print_target(printer: &mut Printer<'_>, target: TargetView<'_>) {
     });
     if !target.proofs.is_empty() {
         let has_arguments = target.arguments().next().is_some();
-        printer.out.push_str(if has_arguments { " | " } else { "| " });
+        printer
+            .out
+            .push_str(if has_arguments { " | " } else { "| " });
         printer.print_separated(target.proofs, |printer, proof| {
             let _ = write!(printer.out, "{proof}");
         });

@@ -1,9 +1,9 @@
 // The executable holds a module of Bun's own only if code names it. A specifier that is computed names none, so it brings none
 // into the build, and at run time it finds the ones that are there for another reason.
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 setDefaultTimeout(240_000);
 
@@ -20,7 +20,13 @@ await import(name).then(
 `;
 
 async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
 }
@@ -28,7 +34,10 @@ async function run(cmd: string[], cwd: string) {
 async function build(directory: string, entry: string) {
   const executable = join(directory, entry.replace(".js", isWindows ? ".exe" : ""));
   const report = join(directory, entry + ".report.json");
-  const built = await run([bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, entry, "--outfile", executable], directory);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, entry, "--outfile", executable],
+    directory,
+  );
   expect({ errors: built.errors, exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });
   const { statistics } = await Bun.file(report).json();
   return { executable, filesOfBun: statistics.SourceFilesRuntime as number };

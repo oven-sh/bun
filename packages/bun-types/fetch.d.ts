@@ -47,15 +47,12 @@ declare module "bun" {
       [Symbol.iterator](): ReturnType<UndiciHeaders["entries"]>;
     }
 
-    interface FallbackRequest
-      extends Omit<import("undici-types").Request, keyof FallbackBody | "clone">,
-        FallbackBody {
+    interface FallbackRequest extends Omit<import("undici-types").Request, keyof FallbackBody | "clone">, FallbackBody {
       clone(): Request;
     }
 
     interface FallbackResponse
-      extends Omit<import("undici-types").Response, keyof FallbackBody | "clone">,
-        FallbackBody {
+      extends Omit<import("undici-types").Response, keyof FallbackBody | "clone">, FallbackBody {
       clone(): Response;
     }
 

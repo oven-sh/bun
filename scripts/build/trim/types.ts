@@ -124,7 +124,11 @@ export const EdgeKind = { Ordinary: 0, Guarded: 1, Unguarded: 2, Soft: 3 } as co
 
 export type EdgeStrength = "Reference" | "AbortingGuard" | "RecoverableGuard";
 
-export const edgeStrengths = ["Reference", "AbortingGuard", "RecoverableGuard"] as const satisfies readonly EdgeStrength[];
+export const edgeStrengths = [
+  "Reference",
+  "AbortingGuard",
+  "RecoverableGuard",
+] as const satisfies readonly EdgeStrength[];
 
 export interface FeatureEdge {
   from: number;

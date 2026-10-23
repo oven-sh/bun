@@ -7,7 +7,19 @@ import {
   guardedFeaturesReachedFrom,
 } from "../../../scripts/build/trim/declared-uses.ts";
 import type { BuiltinEntry, BuiltinUses, FeatureModel } from "../../../scripts/build/trim/types.ts";
-import { A, B, C, Startup, Tools, abc, partitioned, tableOutput, type Guard, type Partitioned, type Section } from "./toy-graph.ts";
+import {
+  A,
+  B,
+  C,
+  Startup,
+  Tools,
+  abc,
+  partitioned,
+  tableOutput,
+  type Guard,
+  type Partitioned,
+  type Section,
+} from "./toy-graph.ts";
 
 type Use = string | { conditional: string };
 
@@ -15,7 +27,11 @@ const builtin = (id: number, ...uses: Use[]): BuiltinEntry => ({
   id,
   path: `Bun.builtin${id}`,
   kind: "Function",
-  uses: uses.map(use => (typeof use === "string" ? { feature: use, isConditional: false } : { feature: use.conditional, isConditional: true })),
+  uses: uses.map(use =>
+    typeof use === "string"
+      ? { feature: use, isConditional: false }
+      : { feature: use.conditional, isConditional: true },
+  ),
   nativeSymbols: [],
   hasHiddenRoot: false,
 });
@@ -102,7 +118,13 @@ describe("GuardOfUnknownBuiltin", () => {
   test("a guard with an id that the uses do not list fails", () => {
     const { result, failures } = check(callsC, callsCGuards, [builtin(8, "A")]);
     expect(failures).toEqual([
-      { kind: "GuardOfUnknownBuiltin", builtin: 7, guard: result.node("guardA"), entry: result.node("entryA"), feature: A },
+      {
+        kind: "GuardOfUnknownBuiltin",
+        builtin: 7,
+        guard: result.node("guardA"),
+        entry: result.node("entryA"),
+        feature: A,
+      },
     ]);
   });
 
@@ -167,7 +189,9 @@ describe("UndeclaredUse: an edge no line declares", () => {
     ["a setting enters at start-up", Startup],
     ["only the command line enters", Tools],
   ])("a guard of a feature that %s needs no line: no use by the program retains it", (_, feature) => {
-    expect(check(callsC, [callsCGuards[0]!, ["entryA", "entryC", feature, { stub: "Throw" }]], [builtin(7, "A")]).failures).toEqual([]);
+    expect(
+      check(callsC, [callsCGuards[0]!, ["entryA", "entryC", feature, { stub: "Throw" }]], [builtin(7, "A")]).failures,
+    ).toEqual([]);
   });
 
   test("a function that a table in the built-in's code lists needs no line", () => {
@@ -295,7 +319,9 @@ describe("GuardWithoutUser", () => {
 
   test("a feature of the program with a guard, no use and no entering edge fails, at its lowest guard and entry point", () => {
     const { result, failures } = check(guarded, guards(A), []);
-    expect(failures).toEqual([{ kind: "GuardWithoutUser", guard: result.node("guardA"), entry: result.node("otherEntryA"), feature: A }]);
+    expect(failures).toEqual([
+      { kind: "GuardWithoutUser", guard: result.node("guardA"), entry: result.node("otherEntryA"), feature: A },
+    ]);
   });
 
   test("a use, also a conditional one, is a user", () => {
@@ -304,7 +330,11 @@ describe("GuardWithoutUser", () => {
   });
 
   test("an edge from another feature's code is a user, followed or not", () => {
-    const { result, failures } = check(callsC, callsCGuards, [builtin(7, "A", "C")].map(entry => ({ ...entry, uses: entry.uses.slice(0, 1) })));
+    const { result, failures } = check(
+      callsC,
+      callsCGuards,
+      [builtin(7, "A", "C")].map(entry => ({ ...entry, uses: entry.uses.slice(0, 1) })),
+    );
     expect(result.edges).toEqual([{ from: A, to: C, strength: "RecoverableGuard", isFollowed: false }]);
     expect(failures).toEqual([{ kind: "UndeclaredUse", builtin: 7, entry: result.node("entryA"), feature: C }]);
   });
@@ -341,7 +371,13 @@ test("failures come by kind, each kind sorted by its numbers", () => {
     [builtin(5, "A"), builtin(6, "A"), builtin(10, "C")],
   );
   expect(failures).toEqual([
-    { kind: "GuardOfUnknownBuiltin", builtin: 99, guard: result.node("guardT"), entry: result.node("unknownA"), feature: A },
+    {
+      kind: "GuardOfUnknownBuiltin",
+      builtin: 99,
+      guard: result.node("guardT"),
+      entry: result.node("unknownA"),
+      feature: A,
+    },
     { kind: "UndeclaredUse", builtin: 5, entry: result.node("entryA"), feature: C },
     { kind: "UndeclaredUse", builtin: 6, entry: result.node("secondA"), feature: C },
     { kind: "UseWithoutGuard", builtin: 10, feature: C },

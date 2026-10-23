@@ -22,7 +22,9 @@ fn imported_files(files: &Files<'_>, importer: FileId, specifier: &str) -> Vec<F
 
 fn count_files_named(files: &Files<'_>, suffix: &str) -> usize {
     let names = files.modules.iter().map(|module| module.file_name());
-    names.filter(|name| name.ends_with(suffix.as_bytes())).count()
+    names
+        .filter(|name| name.ends_with(suffix.as_bytes()))
+        .count()
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -152,7 +154,9 @@ fn numbers_do_not_depend_on_threads() {
     let files = generated.iter().map(|(name, text)| (&name[..], &text[..]));
     let files: Vec<(&str, &str)> = files.collect();
     let [sequential, parallel] = [1, 8].map(|threads| {
-        with_program(&files, &["./f1.ts"], threads, |program| ProgramShape::of(program.files()))
+        with_program(&files, &["./f1.ts"], threads, |program| {
+            ProgramShape::of(program.files())
+        })
     });
     let is_generated = |file: &&FileShape| file.name.starts_with(b"/project/f");
     let generated_count = sequential.files.iter().filter(is_generated).count();
@@ -220,12 +224,27 @@ const EVERY_KIND_OF_IMPORT: [(&str, &str); 17] = [
     ("cycle/a.ts", r#"import "./b.ts";"#),
     ("cycle/b.ts", r#"import "./a.ts";"#),
     ("node_modules/accepted/package.json", ACCEPTED_MANIFEST),
-    ("node_modules/accepted/index.js", "export const sides = 4;\n"),
-    ("node_modules/accepted/index.sound.ts", "export const sides: number = 4;\n"),
+    (
+        "node_modules/accepted/index.js",
+        "export const sides = 4;\n",
+    ),
+    (
+        "node_modules/accepted/index.sound.ts",
+        "export const sides: number = 4;\n",
+    ),
     ("node_modules/rejected/package.json", REJECTED_MANIFEST),
-    ("node_modules/rejected/index.js", "export const sides = 4;\n"),
-    ("node_modules/rejected/index.sound.ts", "export const sides: number = 5;\n"),
-    ("node_modules/react/package.json", r#"{ "name": "react", "version": "19.0.0" }"#),
+    (
+        "node_modules/rejected/index.js",
+        "export const sides = 4;\n",
+    ),
+    (
+        "node_modules/rejected/index.sound.ts",
+        "export const sides: number = 5;\n",
+    ),
+    (
+        "node_modules/react/package.json",
+        r#"{ "name": "react", "version": "19.0.0" }"#,
+    ),
     ("node_modules/react/jsx-runtime.js", ""),
     ("declared.d.ts", "export declare const declared: number;"),
     ("lib/tsconfig.json", "{}"),
@@ -251,8 +270,16 @@ fn every_kind_of_import_does_not_depend_on_threads() {
     let sequential = load_with_threads(1);
     let names = sequential.files.iter().map(|file| &file.name[..]);
     let names: Vec<&[u8]> = names.collect();
-    for path in ["pages/a.js", "cycle/a.ts", "lib/governed.ts", "node_modules/rejected/index.js"] {
-        assert!(names.contains(&format!("/project/{path}").as_bytes()), "{path}");
+    for path in [
+        "pages/a.js",
+        "cycle/a.ts",
+        "lib/governed.ts",
+        "node_modules/rejected/index.js",
+    ] {
+        assert!(
+            names.contains(&format!("/project/{path}").as_bytes()),
+            "{path}"
+        );
     }
     for threads in [2, 8] {
         assert_eq!(load_with_threads(threads), sequential, "{threads} threads");
@@ -382,7 +409,10 @@ fn package_copies() {
     with_program(&files, &["./main.ts"], 1, |program| {
         assert_eq!(count_files_named(program.files(), "/dep/index.d.ts"), 1);
         let retained = program.file("node_modules/dep/index.d.ts");
-        assert_eq!(program.find("sub/node_modules/dep/index.d.ts"), Some(retained));
+        assert_eq!(
+            program.find("sub/node_modules/dep/index.d.ts"),
+            Some(retained)
+        );
         assert_separate_code_copies(program);
     });
 }

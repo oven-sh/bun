@@ -1,8 +1,29 @@
 import { engineFieldsOf, engineRecordNameOf, engineTypeOf, listFirstWord } from "./cpp-types.ts";
 import { closureOfZeroTests, presenceTest, printedTypes, zeroFunctions } from "./emit-cpp-printer.ts";
 import { caseWords, convertedTypes } from "./emit-cpp-reader.ts";
-import { blocks, cppHeader, cppLiteral, cppSource, groupedCases, indent, indentation, inNamespace, type Lines } from "./lines.ts";
-import type { Entry, Field, Kind, NestedKind, PayloadField, ScalarKind, Schema, SchemaRecord, SchemaType, Variant } from "./model.ts";
+import {
+  blocks,
+  cppHeader,
+  cppLiteral,
+  cppSource,
+  groupedCases,
+  indent,
+  indentation,
+  inNamespace,
+  type Lines,
+} from "./lines.ts";
+import type {
+  Entry,
+  Field,
+  Kind,
+  NestedKind,
+  PayloadField,
+  ScalarKind,
+  Schema,
+  SchemaRecord,
+  SchemaType,
+  Variant,
+} from "./model.ts";
 import { fieldsOf, innermostKindOf, isId, isNested, isWireType, nameOf, payloadWordsOf } from "./model.ts";
 import { cppIdTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
@@ -15,9 +36,7 @@ const idValueParsers: ReadonlyMap<string, string> = new Map([
   ["CalleeSet", "parser.parseCalleeSet()"],
 ]);
 
-const patchTranslators: ReadonlyMap<string, string> = new Map([
-  ["Type", "type"],
-]);
+const patchTranslators: ReadonlyMap<string, string> = new Map([["Type", "type"]]);
 
 const scalarParsers: Readonly<Record<ScalarKind, string>> = {
   Bool: "parser.parseBool()",
@@ -112,15 +131,19 @@ function parsedBits(kind: Kind): string | null {
 function parsedValue(kind: Kind, inAbi = false): string {
   if (inAbi) {
     if (kind.tag === "Enum" && kind.type.isAbi) return `parser.parseEnumerator<${kind.type.name}>()`;
-    if (kind.tag === "Flags" && kind.type.isAbi) return `static_cast<${kind.type.name}>(parser.parseFlagWord<${kind.type.name}>())`;
-    if (kind.tag === "Scalar" && (kind.scalar === "UInt64" || kind.scalar === "UInt8")) return scalarParsers[kind.scalar];
+    if (kind.tag === "Flags" && kind.type.isAbi)
+      return `static_cast<${kind.type.name}>(parser.parseFlagWord<${kind.type.name}>())`;
+    if (kind.tag === "Scalar" && (kind.scalar === "UInt64" || kind.scalar === "UInt8"))
+      return scalarParsers[kind.scalar];
     return parsedWord(kind);
   }
   switch (kind.tag) {
     case "Id":
       return idValueParsers.get(kind.id.name) ?? `${cppIdTypeName(kind.id.name)}(${parsedWord(kind)})`;
     case "External":
-      return kind.external.form === "id" ? `parser.parse${kind.external.name}()` : `static_cast<${engineTypeOf(kind)}>(parser.parseUInt32())`;
+      return kind.external.form === "id"
+        ? `parser.parse${kind.external.name}()`
+        : `static_cast<${engineTypeOf(kind)}>(parser.parseUInt32())`;
     case "Enum":
       return `parser.parseEnumerator<${kind.type.name}>()`;
     case "Flags": {
@@ -163,7 +186,9 @@ function nestedCall(kind: NestedKind, wire: string, engine: string): string {
 }
 
 function engineNestedCall(kind: NestedKind, target: string): string {
-  return kind.tag === "Variant" ? `parseVariant(parser, ${target});` : `parser.parseRecord([&] { parseFields(parser, ${target}); });`;
+  return kind.tag === "Variant"
+    ? `parseVariant(parser, ${target});`
+    : `parser.parseRecord([&] { parseFields(parser, ${target}); });`;
 }
 
 function parseWireSpan(field: Field, element: Kind, engine: string | null): string[] {
@@ -178,7 +203,10 @@ function parseWireSpan(field: Field, element: Kind, engine: string | null): stri
   const name = nameOf(element);
   const hasEngine = hasEngineFields(element);
   if (hasEngine && engine === null) {
-    throw new SchemaError(field.location, `field ${field.name}: a wire variant cannot hold ${name}, which has engine fields`);
+    throw new SchemaError(
+      field.location,
+      `field ${field.name}: a wire variant cannot hold ${name}, which has engine fields`,
+    );
   }
   return [
     `Vector<Wire::${name}> elements;`,
@@ -197,9 +225,11 @@ function parseWireField(field: Field): string[] {
   const kind = field.kind;
   const target = `wire.${field.name}`;
   const engine = `engineFields.${field.name}`;
-  if (kind.tag === "Span") return guarded(field.name, [...parseWireSpan(field, kind.element, engine), `${target} = span;`]);
+  if (kind.tag === "Span")
+    return guarded(field.name, [...parseWireSpan(field, kind.element, engine), `${target} = span;`]);
   if (isNested(kind)) return guarded(field.name, [nestedCall(kind, target, engine)]);
-  if (kind.tag === "Scalar" && kind.scalar === "Int64") return guarded(field.name, [`${target} = parser.parseInt64();`]);
+  if (kind.tag === "Scalar" && kind.scalar === "Int64")
+    return guarded(field.name, [`${target} = parser.parseInt64();`]);
   return guarded(field.name, [`${target} = ${parsedBits(kind) ?? parsedWord(kind)};`]);
 }
 
@@ -207,33 +237,57 @@ function parseEngineField(field: Field, base: string, inAbi: boolean): string[] 
   const kind = field.kind;
   const target = `${base}.${field.name}`;
   if (isNested(kind)) return guarded(field.name, [engineNestedCall(kind, target)]);
-  if (kind.tag !== "Span" && kind.tag !== "List") return guarded(field.name, [`${target} = ${parsedValue(kind, inAbi)};`]);
+  if (kind.tag !== "Span" && kind.tag !== "List")
+    return guarded(field.name, [`${target} = ${parsedValue(kind, inAbi)};`]);
   const element = kind.element;
   if (!isNested(element)) return guarded(field.name, parsedList([`${target}.append(${parsedValue(element)});`]));
   return guarded(
     field.name,
-    parsedList([`${engineTypeOf(element)} element;`, engineNestedCall(element, "element"), `${target}.append(WTF::move(element));`]),
+    parsedList([
+      `${engineTypeOf(element)} element;`,
+      engineNestedCall(element, "element"),
+      `${target}.append(WTF::move(element));`,
+    ]),
   );
 }
 
 function cppFunction(signature: string, body: Lines, parametersIfEmpty: Lines = []): string[] {
-  return [signature, "{", ...indent(body.length > 0 ? body : parametersIfEmpty.map(parameter => `UNUSED_PARAM(${parameter});`)), "}"];
+  return [
+    signature,
+    "{",
+    ...indent(body.length > 0 ? body : parametersIfEmpty.map(parameter => `UNUSED_PARAM(${parameter});`)),
+    "}",
+  ];
 }
 
 function wireRecordFunction(record: SchemaRecord): string[] {
-  const body = engineFieldsOf(record).flatMap(field => (field.isEngine ? parseEngineField(field, "engineFields", false) : parseWireField(field)));
+  const body = engineFieldsOf(record).flatMap(field =>
+    field.isEngine ? parseEngineField(field, "engineFields", false) : parseWireField(field),
+  );
   const engineParameter = record.hasEngineFields ? `, ${engineRecordNameOf(record)}& engineFields` : "";
-  return cppFunction(`void parseFields(TextParser& parser, Wire::${record.name}& wire${engineParameter})`, body, ["parser", "wire"]);
+  return cppFunction(`void parseFields(TextParser& parser, Wire::${record.name}& wire${engineParameter})`, body, [
+    "parser",
+    "wire",
+  ]);
 }
 
 function wireCaseField(field: Field, word: number): string[] {
   const kind = field.kind;
   const low = `wire.words[${word}]`;
   const high = `wire.words[${word + 1}]`;
-  if (kind.tag === "Span") return guarded(field.name, [...parseWireSpan(field, kind.element, null), `${low} = span.start;`, `${high} = span.count;`]);
+  if (kind.tag === "Span")
+    return guarded(field.name, [
+      ...parseWireSpan(field, kind.element, null),
+      `${low} = span.start;`,
+      `${high} = span.count;`,
+    ]);
   const bits = parsedBits(kind);
   if (bits === null) return guarded(field.name, [`${low} = ${parsedWord(kind)};`]);
-  return guarded(field.name, [`uint64_t bits = ${bits};`, `${low} = static_cast<uint32_t>(bits);`, `${high} = static_cast<uint32_t>(bits >> 32);`]);
+  return guarded(field.name, [
+    `uint64_t bits = ${bits};`,
+    `${low} = static_cast<uint32_t>(bits);`,
+    `${high} = static_cast<uint32_t>(bits >> 32);`,
+  ]);
 }
 
 function acceptedCase(name: string, body: Lines): string[] {
@@ -255,7 +309,10 @@ function wireVariantFunction(schema: Schema, variant: Variant): string[] {
 
 function engineRecordFunction(record: SchemaRecord): string[] {
   const body = engineFieldsOf(record).flatMap(field => parseEngineField(field, "record", record.form === "abi"));
-  return cppFunction(`void parseFields(TextParser& parser, ${engineRecordNameOf(record)}& record)`, body, ["parser", "record"]);
+  return cppFunction(`void parseFields(TextParser& parser, ${engineRecordNameOf(record)}& record)`, body, [
+    "parser",
+    "record",
+  ]);
 }
 
 function engineVariantFunction(variant: Variant): string[] {
@@ -288,8 +345,11 @@ function assignEngineField(kind: Kind, source: string, target: string): string[]
   if (translator !== undefined) return [`${target} = context.${translator}(${source}.index());`];
   const assignment = `${target} = ${source};`;
   if (!namesTypes(kind)) return [assignment];
-  if (kind.tag !== "Span" && kind.tag !== "List") return [assignment, `forEachReference(${target}, TypeTranslator { context });`];
-  const translation = isNested(kind.element) ? "forEachReference(element, TypeTranslator { context });" : "TypeTranslator { context }(element);";
+  if (kind.tag !== "Span" && kind.tag !== "List")
+    return [assignment, `forEachReference(${target}, TypeTranslator { context });`];
+  const translation = isNested(kind.element)
+    ? "forEachReference(element, TypeTranslator { context });"
+    : "TypeTranslator { context }(element);";
   return [assignment, `for (auto& element : ${target})`, indentation + translation];
 }
 
@@ -303,18 +363,30 @@ function applyFunction(schema: Schema, record: SchemaRecord): string[] {
     if (field.isEngine) {
       const isNullable = field.isOptional || isId(kind);
       usesContext ||= namesTypes(kind);
-      body.push(...conditional(presenceTest(schema, kind, isNullable, source, false, true), assignEngineField(kind, source, target)));
+      body.push(
+        ...conditional(
+          presenceTest(schema, kind, isNullable, source, false, true),
+          assignEngineField(kind, source, target),
+        ),
+      );
       continue;
     }
     const inner = innermostKindOf(kind);
     if (inner.tag !== "Record" || !inner.record.hasEngineFields || inner.record.isCustomEngine) continue;
     usesContext = true;
     if (kind.tag !== "Span") body.push(`applyEngineFields(context, ${source}, ${target});`);
-    else body.push(`for (size_t i = 0; i < ${source}.size(); ++i)`, `${indentation}applyEngineFields(context, ${source}[i], ${target}[i]);`);
+    else
+      body.push(
+        `for (size_t i = 0; i < ${source}.size(); ++i)`,
+        `${indentation}applyEngineFields(context, ${source}[i], ${target}[i]);`,
+      );
   }
   if (!usesContext) body.unshift("UNUSED_PARAM(context);");
   const name = engineRecordNameOf(record);
-  return cppFunction(`void applyEngineFields(const PatchContext& context, const ${name}& parsed, ${name}& target)`, body);
+  return cppFunction(
+    `void applyEngineFields(const PatchContext& context, const ${name}& parsed, ${name}& target)`,
+    body,
+  );
 }
 
 const typeTranslator = `struct TypeTranslator {
@@ -327,13 +399,19 @@ const typeTranslator = `struct TypeTranslator {
 function recordParserSource(schema: Schema): string[] {
   const wire = parsedWireTypes(schema);
   const wireRecords = recordsIn(wire);
-  const engineFieldKinds = wireRecords.flatMap(record => engineFieldsOf(record).filter(field => field.isEngine)).map(field => field.kind);
+  const engineFieldKinds = wireRecords
+    .flatMap(record => engineFieldsOf(record).filter(field => field.isEngine))
+    .map(field => field.kind);
   const zeroTested = closureOfZeroTests(schema, new Set(engineFieldKinds.filter(isNested).map(kind => nameOf(kind))));
   const body = blocks(
     typeTranslator,
     ...zeroFunctions(schema, zeroTested),
-    ...wire.map(type => (type.tag === "Record" ? wireRecordFunction(type.record) : wireVariantFunction(schema, type.variant))),
-    ...parsedEngineTypes(schema).map(type => (type.tag === "Record" ? engineRecordFunction(type.record) : engineVariantFunction(type.variant))),
+    ...wire.map(type =>
+      type.tag === "Record" ? wireRecordFunction(type.record) : wireVariantFunction(schema, type.variant),
+    ),
+    ...parsedEngineTypes(schema).map(type =>
+      type.tag === "Record" ? engineRecordFunction(type.record) : engineVariantFunction(type.variant),
+    ),
     ...wireRecords.filter(record => record.hasEngineFields).map(record => applyFunction(schema, record)),
   );
   return cppSource(['"AOTIRParserInternal.h"', '"AOTSchemaWalkers.h"', "<bit>"], inNamespace("Typed", body));
@@ -488,11 +566,19 @@ function patchedKind(kind: Kind): string {
 
 function parseListElements(element: Kind, target: string): string[] {
   if (isNested(element)) {
-    return [`${engineTypeOf(element)} element;`, engineNestedCall(element, "element"), `appendPayloadRecord(${target}, element);`];
+    return [
+      `${engineTypeOf(element)} element;`,
+      engineNestedCall(element, "element"),
+      `appendPayloadRecord(${target}, element);`,
+    ];
   }
   const bits = parsedBits(element);
   if (bits === null) return [`${target}.append(${parsedWord(element)});`];
-  return [`uint64_t bits = ${bits};`, `${target}.append(static_cast<uint32_t>(bits));`, `${target}.append(static_cast<uint32_t>(bits >> 32));`];
+  return [
+    `uint64_t bits = ${bits};`,
+    `${target}.append(static_cast<uint32_t>(bits));`,
+    `${target}.append(static_cast<uint32_t>(bits >> 32));`,
+  ];
 }
 
 function parseStreamList(entry: Entry, parameter: PayloadField, element: Kind): string[] {
@@ -522,7 +608,9 @@ function parseStreamList(entry: Entry, parameter: PayloadField, element: Kind): 
     ...(hasEngine ? [`Vector<${engineType}> engineElements;`] : []),
     ...guarded(parameter.name, parsedList(elementStatements)),
     "parser.code()[countPosition] = count;",
-    ...(hasEngine ? [`patchEngineFieldsOfList<${engineType}>(parser, target, ${listFirstWord(entry)}, WTF::move(engineElements));`] : []),
+    ...(hasEngine
+      ? [`patchEngineFieldsOfList<${engineType}>(parser, target, ${listFirstWord(entry)}, WTF::move(engineElements));`]
+      : []),
   ]);
 }
 
@@ -578,17 +666,24 @@ function parseEntry(entry: Entry): string[] {
   let position = 0;
   for (const parameter of entry.parameters) {
     if (parameter.tag === "Payload") {
-      statements.push(...(parameter.isEngine ? parseEnginePayload(entry, parameter) : parseStreamPayload(entry, parameter)));
+      statements.push(
+        ...(parameter.isEngine ? parseEnginePayload(entry, parameter) : parseStreamPayload(entry, parameter)),
+      );
     } else if (parameter.isEngine) {
-      statements.push(...guarded(parameter.name, [`patchOperand(parser, target, ${parameter.index}, parser.parseValueUseWord());`]));
+      statements.push(
+        ...guarded(parameter.name, [`patchOperand(parser, target, ${parameter.index}, parser.parseValueUseWord());`]),
+      );
     } else if (parameter.isVariadic) {
       statements.push(`appendVariadicOperands(parser, operands, ${position});`);
     } else {
-      statements.push(`${parameter.isOptional ? "appendOptionalOperand" : "appendOperand"}(parser, operands, ${position});`);
+      statements.push(
+        `${parameter.isOptional ? "appendOptionalOperand" : "appendOperand"}(parser, operands, ${position});`,
+      );
       position += 1;
     }
   }
-  if (entry.variadicOperand === null) statements.push(...conditional(`operands.size() > ${position}`, ["parser.fail();"]));
+  if (entry.variadicOperand === null)
+    statements.push(...conditional(`operands.size() > ${position}`, ["parser.fail();"]));
   return [...statements, "break;"];
 }
 

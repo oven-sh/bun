@@ -419,13 +419,11 @@ function declareOwnProperties({ holder, isOpen, properties }: OwnPropertyLine): 
         isCreatedInSomeRuns: property.isCreatedInSomeRuns,
       })),
     },
-    ...properties.filter(isFixedProperty).map(
-      ({ name }): Declaration => ({
-        declares: "Extension",
-        path: memberPathOf(holder, name),
-        columns: { mutability: "AlwaysLocked" },
-      }),
-    ),
+    ...properties.filter(isFixedProperty).map(({ name }): Declaration => ({
+      declares: "Extension",
+      path: memberPathOf(holder, name),
+      columns: { mutability: "AlwaysLocked" },
+    })),
   ];
 }
 

@@ -48,7 +48,9 @@ pub(super) fn compute_stability(input: &mut RuntimeInput<'_, '_>) {
     let stability = &mut input.bound.runtime.stability;
     stability.stabilities = stabilities;
     stability.initializers = initializers;
-    let has_mapped_argument = stability.stabilities.contains(&BindingStability::MappedArgument);
+    let has_mapped_argument = stability
+        .stabilities
+        .contains(&BindingStability::MappedArgument);
     input.bound.runtime.depends_on_sloppy_mode |= has_mapped_argument;
 }
 

@@ -6,7 +6,9 @@ import { built } from "./run-programs";
 import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "main.ts": `
     interface Order { id: number; items: string[] }
     const server = Bun.serve({
@@ -42,8 +44,12 @@ test("an async handler of Bun.serve parses the body of each request into the dec
     const path = join(cwd, "counts" + rounds);
     const env = { ...bunEnv, BUN_JSC_aotCountsPath: path };
     expect(await run([executable, String(rounds)], cwd, env)).toEqual({ stdout, stderr: "", exitCode: 0 });
-    const entries = readFileSync(path, "utf8").split("\n").map(line => line.split("\t"));
-    return entries.filter(([, name]) => name === "operation:operationAOTJSONSourceOpen").map(([count]) => Number(count));
+    const entries = readFileSync(path, "utf8")
+      .split("\n")
+      .map(line => line.split("\t"));
+    return entries
+      .filter(([, name]) => name === "operation:operationAOTJSONSourceOpen")
+      .map(([count]) => Number(count));
   };
 
   expect(await typedParses(2, "2 3\n")).toEqual([2]);

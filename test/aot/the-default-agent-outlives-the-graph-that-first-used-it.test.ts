@@ -71,7 +71,9 @@ describe("a request through the default agent is answered after the graph that s
   test("compiled", async () => {
     using dir = tempDir("default-agent-of-graphs", { "main.mjs": main });
     const outfile = isWindows ? "app.exe" : "app";
-    expect(await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", outfile], String(dir))).toMatchObject({ errors: [], exitCode: 0 });
+    expect(
+      await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", outfile], String(dir)),
+    ).toMatchObject({ errors: [], exitCode: 0 });
     expect(await run([join(String(dir), outfile)], String(dir))).toEqual({ stdout: expected, errors: [], exitCode: 0 });
   });
 });

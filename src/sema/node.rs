@@ -2801,7 +2801,9 @@ impl File<'_> {
                     positions[from..leading_here.end].partition_point(|&position| position < start)
                 };
                 let mut from = match children.first() {
-                    Some(&(start, _)) => leading_here.start + count_before(leading_here.start, start),
+                    Some(&(start, _)) => {
+                        leading_here.start + count_before(leading_here.start, start)
+                    }
                     None => leading_here.end,
                 };
                 for (index, &(_, child)) in children.iter().enumerate() {

@@ -43,18 +43,29 @@ const emptyOnLoadCallback = `() => ({ contents: "", loader: "ts" })`;
 
 async function compileAndRun(folder: string) {
   const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
-  const build = await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], folder, bunEnv);
+  const build = await spawned(
+    [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+    folder,
+    bunEnv,
+  );
   built(build);
   return spawned([executable], folder, bunEnv);
 }
 
 async function runTests(folder: string) {
-  const { stdout, stderr, exitCode } = await spawned([bunExe(), "test", "--debug-aot", "./main.test.ts"], folder, bunEnv);
+  const { stdout, stderr, exitCode } = await spawned(
+    [bunExe(), "test", "--debug-aot", "./main.test.ts"],
+    folder,
+    bunEnv,
+  );
   return { output: stdout + stderr, exitCode };
 }
 
 const loadError = (path: string) =>
-  new RegExp(`^Error: A runtime plugin can't load ".*${path}" because it was already compiled into this executable$`, "m");
+  new RegExp(
+    `^Error: A runtime plugin can't load ".*${path}" because it was already compiled into this executable$`,
+    "m",
+  );
 
 const rejected: Record<string, { register: string; message: RegExp }> = {
   "onLoad of a TypeScript module": {
@@ -78,7 +89,8 @@ const rejected: Record<string, { register: string; message: RegExp }> = {
   },
   "onResolve of the entry point": {
     register: String.raw`build => build.onResolve({ filter: /main/ }, () => undefined)`,
-    message: /^Error: A runtime plugin can't resolve the entry point ".*main.*" because it was already compiled into this executable$/m,
+    message:
+      /^Error: A runtime plugin can't resolve the entry point ".*main.*" because it was already compiled into this executable$/m,
   },
 };
 
@@ -151,7 +163,9 @@ describe.concurrent("mock.module under bun test --debug-aot", () => {
           `,
         });
         const { output, exitCode } = await runTests(String(dir));
-        expect(output).toContain(`TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time: "node:fs"`);
+        expect(output).toContain(
+          `TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time: "node:fs"`,
+        );
         expect(output).not.toContain("mocked");
         expect(exitCode).toBe(0);
       }),

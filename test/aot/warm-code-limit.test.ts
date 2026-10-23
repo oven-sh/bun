@@ -26,7 +26,17 @@ async function build(folder: string, name: string, flags: string[]) {
   const executable = join(folder, isWindows ? name + ".exe" : name);
   built(
     await spawned(
-      [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, ...flags, "./main.mjs", "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-report=" + report,
+        ...flags,
+        "./main.mjs",
+        "--outfile",
+        executable,
+      ],
       folder,
       bunEnv,
     ),
@@ -36,13 +46,17 @@ async function build(folder: string, name: string, flags: string[]) {
 }
 
 // TODO: a build in which everything is cold shares no machine code, so there is nothing to hold the limited build against.
-test.todo("no machine code is shared out of code that is cold by the limit alone", async () => {
-  using dir = tempDir("aot-warm-code-limit", { "main.mjs": program });
-  const folder = String(dir);
-  const usual = await build(folder, "usual", []);
-  const limited = await build(folder, "limited", ["--aot-limit=MaxWarmCodeValues:1"]);
-  const cold = await build(folder, "cold", ["--aot-heat=EverythingIsCold"]);
-  expect(limited).toMatchObject({ stdout: usual.stdout, exitCode: 0 });
-  expect(cold).toMatchObject({ stdout: usual.stdout, exitCode: 0 });
-  expect(limited.bytesShared).toBeLessThan(cold.bytesShared);
-}, 240_000);
+test.todo(
+  "no machine code is shared out of code that is cold by the limit alone",
+  async () => {
+    using dir = tempDir("aot-warm-code-limit", { "main.mjs": program });
+    const folder = String(dir);
+    const usual = await build(folder, "usual", []);
+    const limited = await build(folder, "limited", ["--aot-limit=MaxWarmCodeValues:1"]);
+    const cold = await build(folder, "cold", ["--aot-heat=EverythingIsCold"]);
+    expect(limited).toMatchObject({ stdout: usual.stdout, exitCode: 0 });
+    expect(cold).toMatchObject({ stdout: usual.stdout, exitCode: 0 });
+    expect(limited.bytesShared).toBeLessThan(cold.bytesShared);
+  },
+  240_000,
+);

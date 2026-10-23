@@ -3,7 +3,7 @@ use super::json::JsonWriter;
 use super::losses::loss_reasons;
 use crate::builtins::id::Feature;
 use crate::engine::{is_optional_pass, operation_names};
-use crate::ir::generated::{FlowResultKind, PassId, RuntimeCounterId, Sabotage, SCHEMA_HASH};
+use crate::ir::generated::{FlowResultKind, PassId, RuntimeCounterId, SCHEMA_HASH, Sabotage};
 use crate::statistics::{LimitId, LimitValues, StatisticId};
 
 pub fn write() -> Vec<u8> {
@@ -20,13 +20,19 @@ pub fn write() -> Vec<u8> {
     json.string("schemaHash", format!("{SCHEMA_HASH:016x}").as_bytes());
     write_limits(&mut json, &LimitValues::for_host());
     write_names(&mut json, "statistics", statistics.map(StatisticId::name));
-    write_names(&mut json, "runtimeCounters", runtime_counters.map(RuntimeCounterId::name));
+    write_names(
+        &mut json,
+        "runtimeCounters",
+        runtime_counters.map(RuntimeCounterId::name),
+    );
     write_names(&mut json, "flowResults", FlowResultKind::NAMES.into_iter());
     write_passes(&mut json);
     json.strings("lossReasons", reason_codes.iter().map(Vec::as_slice));
     json.strings("operations", operation_names().into_iter());
     write_names(&mut json, "features", features);
-    let sabotages = Sabotage::ALL.into_iter().filter(|&sabotage| sabotage != Sabotage::None);
+    let sabotages = Sabotage::ALL
+        .into_iter()
+        .filter(|&sabotage| sabotage != Sabotage::None);
     write_names(&mut json, "sabotages", sabotages.map(Sabotage::name));
     let mut document = json.finish();
     document.push(b'\n');

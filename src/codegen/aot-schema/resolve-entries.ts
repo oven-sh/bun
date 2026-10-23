@@ -396,7 +396,8 @@ function resolvePayloadField(scope: Scope, syntax: PayloadSyntax, entry: EntryHe
     name: name.text,
     kind,
     payloadKind: resolvePayloadKind(scope, kind, syntax.kind),
-    elementPayloadKind: kind.tag === "List" && writtenElement !== null ? resolvePayloadKind(scope, kind.element, writtenElement) : null,
+    elementPayloadKind:
+      kind.tag === "List" && writtenElement !== null ? resolvePayloadKind(scope, kind.element, writtenElement) : null,
     isOptional: syntax.isOptional,
     isEngine: syntax.isEngine,
     firstForm: (firstForm === null ? null : findForm(scope, firstForm)) ?? "AsRead",

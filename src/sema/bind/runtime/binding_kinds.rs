@@ -24,7 +24,8 @@ pub(super) fn variable_binding_kind(
     bound: &BoundBuilder,
     pat: PatId,
 ) -> BindingKind {
-    match variable_declaration(bound, pat).map(|declaration| bound.variable_kind(hir, declaration)) {
+    match variable_declaration(bound, pat).map(|declaration| bound.variable_kind(hir, declaration))
+    {
         None => BindingKind::NoBinding,
         Some(VarKind::Var) => BindingKind::Var,
         Some(VarKind::Let) => BindingKind::Let,

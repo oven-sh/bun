@@ -2,4 +2,10 @@
 // A program that fails here and passes with GenerateAllCodeDirectly alone shows a fault of that generator.
 import { variant } from "./run-programs";
 
-variant("direct-code-by-linear-scan", ["--aot-testing=GenerateAllCodeDirectly", "--aot-testing=GenerateDirectCodeByLinearScan"], {}, 1, 3);
+variant(
+  "direct-code-by-linear-scan",
+  ["--aot-testing=GenerateAllCodeDirectly", "--aot-testing=GenerateDirectCodeByLinearScan"],
+  {},
+  1,
+  3,
+);

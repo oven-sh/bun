@@ -9,10 +9,18 @@ import type {
   ModelParameter,
   ModelType,
 } from "../../../src/codegen/builtins/model.ts";
-import { realmParameter, type DirectEntrySpec, type DirectParameterSpec } from "../../../src/codegen/builtins/vocabulary.ts";
+import {
+  realmParameter,
+  type DirectEntrySpec,
+  type DirectParameterSpec,
+} from "../../../src/codegen/builtins/vocabulary.ts";
 
 const hostCall: ModelImplementation = { how: "HostCall", callee: "HostFunction", function: null, customGetter: null };
-const codeOfFunction = { symbol: "Bun::Bindgen::Generated::NodeOs::jsSetPriority", length: 2, header: "GeneratedNodeOs.h" };
+const codeOfFunction = {
+  symbol: "Bun::Bindgen::Generated::NodeOs::jsSetPriority",
+  length: 2,
+  header: "GeneratedNodeOs.h",
+};
 
 const nothing = {
   isAnything: false,
@@ -63,7 +71,14 @@ interface Columns extends Partial<Omit<ModelOverload, "builtin" | "code">> {
 function problemsOf({ builtin, code, ...columns }: Columns): readonly string[] {
   const overload = {
     indexInBuiltin: 0,
-    builtin: { text: "f", kind: "Function", origin: "Host", scope: "Module", attachments: { nativeFunction: codeOfFunction }, ...builtin },
+    builtin: {
+      text: "f",
+      kind: "Function",
+      origin: "Host",
+      scope: "Module",
+      attachments: { nativeFunction: codeOfFunction },
+      ...builtin,
+    },
     source: { file: "x.bind.ts", line: null },
     mode: "Call",
     receiver: null,
@@ -83,19 +98,35 @@ const problemsOfOperands = (direct: readonly DirectParameterSpec[], parameters: 
 test("a call of native code of the host may have a direct entry", () => {
   expect(problemsOf({})).toEqual([]);
   expect(
-    problemsOfOperands([value, asBoolean, asInt32, asDouble], [taking(anything), taking(boolean), taking(int32), taking(number)]),
+    problemsOfOperands(
+      [value, asBoolean, asInt32, asDouble],
+      [taking(anything), taking(boolean), taking(int32), taking(number)],
+    ),
   ).toEqual([]);
   expect(problemsOfOperands([asDouble, rest], [taking(int32), taking(anything, { mode: "Rest" })])).toEqual([]);
 });
 
 test("an overload without a direct entry is not looked at, nor one of a native binding", () => {
-  expect(problemsOf({ mode: "Get", builtin: { origin: "Engine" }, code: { directEntry: null, implementation: { how: "Generic" } } })).toEqual([]);
+  expect(
+    problemsOf({
+      mode: "Get",
+      builtin: { origin: "Engine" },
+      code: { directEntry: null, implementation: { how: "Generic" } },
+    }),
+  ).toEqual([]);
   expect(problemsOf({ builtin: { kind: "NativeBinding", origin: "Engine" } })).toEqual([]);
 });
 
 test("a parameter is of a kind that the engine knows, and of a C++ type of that kind", () => {
-  expect(problemsOfOperands([{ value: "String", cppType: "WTF::StringImpl*" } as unknown as DirectParameterSpec], [taking(anything)])).toEqual([
-    problem("String is not one of Realm, NativeObjectOfReceiver, Receiver, Value, ValueOrEmpty, RestOfValues, FrameOfValues, Boolean, Int32, Double"),
+  expect(
+    problemsOfOperands(
+      [{ value: "String", cppType: "WTF::StringImpl*" } as unknown as DirectParameterSpec],
+      [taking(anything)],
+    ),
+  ).toEqual([
+    problem(
+      "String is not one of Realm, NativeObjectOfReceiver, Receiver, Value, ValueOrEmpty, RestOfValues, FrameOfValues, Boolean, Int32, Double",
+    ),
   ]);
   expect(problemsOfOperands([{ value: "Int32", cppType: "uint32_t" }], [taking(int32)])).toEqual([
     problem("uint32_t is not handed over as Int32"),
@@ -106,7 +137,9 @@ test("where the function declares a pointer to a cell nothing but such a cell co
   const isNoString = problem("operand can be something that Value does not hand over");
   expect(problemsOfOperands([stringCell], [taking(string)])).toEqual([]);
   expect(problemsOfOperands([stringCell], [taking(anything)])).toEqual([isNoString]);
-  expect(problemsOfOperands([stringCell], [taking({ ...string, primitives: ["String", "Undefined"] })])).toEqual([isNoString]);
+  expect(problemsOfOperands([stringCell], [taking({ ...string, primitives: ["String", "Undefined"] })])).toEqual([
+    isNoString,
+  ]);
   expect(problemsOfOperands([stringCell], [taking({ ...string, parts: instance.parts })])).toEqual([isNoString]);
   expect(problemsOfOperands([{ value: "Value", cppType: "JSC::JSObject*" }], [taking(instance)])).toEqual([]);
   expect(problemsOfOperands([{ value: "Value", cppType: "JSC::JSObject*" }], [taking(string)])).toEqual([isNoString]);
@@ -119,42 +152,76 @@ test("an operand that can be left out is handed over as it is or as nothing", ()
   expect(problemsOfOperands([stringCellOrNothing], [taking(string)])).toEqual([isForOptional]);
   expect(problemsOfOperands([stringCell], [taking(leftOut, { mode: "Optional" })])).toEqual([isForOptional]);
   expect(
-    problemsOfOperands([stringCellOrNothing], [taking({ ...leftOut, primitives: ["String", "Undefined", "NotPassed"] }, { mode: "Optional" })]),
+    problemsOfOperands(
+      [stringCellOrNothing],
+      [taking({ ...leftOut, primitives: ["String", "Undefined", "NotPassed"] }, { mode: "Optional" })],
+    ),
   ).toEqual([problem("operand can be something that ValueOrEmpty does not hand over")]);
-  expect(problemsOfOperands([{ value: "ValueOrEmpty", cppType: "JSC::EncodedJSValue" }], [taking(anything, { mode: "Optional" })])).toEqual([]);
-  expect(problemsOfOperands([{ value: "ValueOrEmpty", cppType: "JSC::EncodedJSValue" }], [taking(anything)])).toEqual([isForOptional]);
+  expect(
+    problemsOfOperands(
+      [{ value: "ValueOrEmpty", cppType: "JSC::EncodedJSValue" }],
+      [taking(anything, { mode: "Optional" })],
+    ),
+  ).toEqual([]);
+  expect(problemsOfOperands([{ value: "ValueOrEmpty", cppType: "JSC::EncodedJSValue" }], [taking(anything)])).toEqual([
+    isForOptional,
+  ]);
 });
 
 test("the parameters fit the registers", () => {
   const six = Array.from({ length: 6 }, () => value);
-  expect(problemsOfOperands(six, six.map(() => taking(anything)))).toEqual([
+  expect(
+    problemsOfOperands(
+      six,
+      six.map(() => taking(anything)),
+    ),
+  ).toEqual([
     problem("Bun__thunk has more than 6 parameters"),
     problem("Bun__thunk takes more than fits the 6 general argument registers"),
   ]);
-  expect(problemsOfOperands([value, value, value, value, rest], [...six.slice(0, 4).map(() => taking(anything)), taking(anything, { mode: "Rest" })])).toEqual([
-    problem("Bun__thunk takes more than fits the 6 general argument registers"),
-  ]);
-  expect(problemsOfOperands([value, value, value, value, asDouble], [...six.slice(0, 4).map(() => taking(anything)), taking(number)])).toEqual([]);
+  expect(
+    problemsOfOperands(
+      [value, value, value, value, rest],
+      [...six.slice(0, 4).map(() => taking(anything)), taking(anything, { mode: "Rest" })],
+    ),
+  ).toEqual([problem("Bun__thunk takes more than fits the 6 general argument registers")]);
+  expect(
+    problemsOfOperands(
+      [value, value, value, value, asDouble],
+      [...six.slice(0, 4).map(() => taking(anything)), taking(number)],
+    ),
+  ).toEqual([]);
 });
 
 test("the function takes each operand of the overload", () => {
   expect(problemsOfOperands([value], [])).toEqual([problem("Bun__thunk takes 1 arguments, and the overload has 0")]);
-  expect(problemsOfOperands([], [taking(anything)])).toEqual([problem("Bun__thunk takes 0 arguments, and the overload has 1")]);
+  expect(problemsOfOperands([], [taking(anything)])).toEqual([
+    problem("Bun__thunk takes 0 arguments, and the overload has 1"),
+  ]);
 });
 
 test("an operand is all that the overload says and needs no conversion", () => {
   expect(problemsOfOperands([asBoolean], [taking(boolean, { conversion: "ToBoolean" })])).toEqual([
     problem("operand is converted, and the function takes its operands as they are"),
   ]);
-  expect(problemsOfOperands([asBoolean], [taking({ ...boolean, primitives: ["Boolean", "Undefined"] }, { mode: "Optional" })])).toEqual([
+  expect(
+    problemsOfOperands(
+      [asBoolean],
+      [taking({ ...boolean, primitives: ["Boolean", "Undefined"] }, { mode: "Optional" })],
+    ),
+  ).toEqual([
     problem("operand: ValueOrEmpty is for an operand that can be left out, and for nothing else"),
     problem("operand can be something that Boolean does not hand over"),
   ]);
-  expect(problemsOfOperands([asInt32], [taking(number)])).toEqual([problem("operand can be something that Int32 does not hand over")]);
+  expect(problemsOfOperands([asInt32], [taking(number)])).toEqual([
+    problem("operand can be something that Int32 does not hand over"),
+  ]);
   expect(problemsOfOperands([asInt32], [taking(integersIn(0, 2 ** 32 - 1))])).toEqual([
     problem("operand can be something that Int32 does not hand over"),
   ]);
-  expect(problemsOfOperands([asDouble], [taking(anything)])).toEqual([problem("operand can be something that Double does not hand over")]);
+  expect(problemsOfOperands([asDouble], [taking(anything)])).toEqual([
+    problem("operand can be something that Double does not hand over"),
+  ]);
 });
 
 test("the operands that are left go together, and last", () => {
@@ -172,7 +239,9 @@ test("the symbol is the name of a C function", () => {
 test("the entry of a function that each module makes anew says which native code the function object has", () => {
   const attachments = { nativeFunction: null } as ModelBuiltin["attachments"];
   expect(problemsOf({ builtin: { attachments } })).toEqual([
-    problem("compiled code knows the function that Bun__thunk stands in for by its native code, so the entry has functionObjectCode"),
+    problem(
+      "compiled code knows the function that Bun__thunk stands in for by its native code, so the entry has functionObjectCode",
+    ),
   ]);
   expect(problemsOf({ builtin: { attachments, scope: "Realm" } })).toEqual([]);
 });
@@ -196,17 +265,28 @@ test("without a parameter for it there is no receiver", () => {
 });
 
 test("what the receiver wraps is taken out of an instance of a class", () => {
-  const directEntry = { ...entryTaking(), parameters: [wrapped, realmParameter], offsetOfNativeObject: "WebCore::JSX::offsetOfWrapped()" };
+  const directEntry = {
+    ...entryTaking(),
+    parameters: [wrapped, realmParameter],
+    offsetOfNativeObject: "WebCore::JSX::offsetOfWrapped()",
+  };
   expect(problemsOf({ mode: "Get", receiver: taking(instance), code: { directEntry } })).toEqual([]);
   expect(problemsOf({ mode: "Get", receiver: taking(anything), code: { directEntry } })).toEqual([
     problem("Bun__thunk takes what the receiver wraps, so the receiver is an instance of a class"),
   ]);
-  expect(problemsOf({ mode: "Get", receiver: taking(instance), code: { directEntry: { ...directEntry, offsetOfNativeObject: undefined } } })).toEqual([
-    problem("Bun__thunk: offsetOfNativeObject goes with a parameter that is NativeObjectOfReceiver"),
-  ]);
+  expect(
+    problemsOf({
+      mode: "Get",
+      receiver: taking(instance),
+      code: { directEntry: { ...directEntry, offsetOfNativeObject: undefined } },
+    }),
+  ).toEqual([problem("Bun__thunk: offsetOfNativeObject goes with a parameter that is NativeObjectOfReceiver")]);
   const withReceiver = { ...directEntry, parameters: [wrapped, receiverItself, realmParameter] };
   expect(problemsOf({ mode: "Get", receiver: taking(instance), code: { directEntry: withReceiver } })).toEqual([]);
-  expect(problemsOf({ mode: "Get", code: { directEntry: { ...entryTaking(), parameters: [receiverItself, realmParameter] } } })).toEqual([
-    problem("Bun__thunk takes the receiver, and the overload has none"),
-  ]);
+  expect(
+    problemsOf({
+      mode: "Get",
+      code: { directEntry: { ...entryTaking(), parameters: [receiverItself, realmParameter] } },
+    }),
+  ).toEqual([problem("Bun__thunk takes the receiver, and the overload has none")]);
 });

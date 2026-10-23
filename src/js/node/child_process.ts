@@ -11,7 +11,6 @@ const {
   validateOneOf,
 } = require("internal/validators");
 
-
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
 var BufferConcat = Buffer.concat;

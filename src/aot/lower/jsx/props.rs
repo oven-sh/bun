@@ -53,7 +53,10 @@ fn find_props_type(
     file: &mut FileLowering<'_, '_, '_, '_>,
     element: Element,
 ) -> Option<CheckerTypeId> {
-    file.queries.jsx_attributes_type(element.expression).ok().flatten()
+    file.queries
+        .jsx_attributes_type(element.expression)
+        .ok()
+        .flatten()
 }
 
 fn find_props_layout(
@@ -78,7 +81,10 @@ fn find_props_layout(
         }
     }
     if has_children {
-        members.push((member::name_key(file, known::children), ObjectMemberKind::Field));
+        members.push((
+            member::name_key(file, known::children),
+            ObjectMemberKind::Field,
+        ));
     }
     layouts::untyped_layout(file, &members)
 }

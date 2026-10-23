@@ -192,7 +192,9 @@ export function referenceKind(kind: Kind): string {
   if (kind.tag === "External") return `ReferenceKind::${kind.external.name}`;
   if (kind.tag !== "Id") throw new Error(`${kind.tag} is not a reference`);
   const name = kind.id.name;
-  return kind.role === null ? `ReferenceKind::${name}` : `ReferenceKind::${name}(${name}ReferenceKind::${kind.role.name})`;
+  return kind.role === null
+    ? `ReferenceKind::${name}`
+    : `ReferenceKind::${name}(${name}ReferenceKind::${kind.role.name})`;
 }
 
 export function toWords(kind: Kind, value: string, isOptional = false, isByReference = false): string[] {

@@ -68,7 +68,8 @@ impl KnownHelpers {
             .collect();
         let held_early = OnceLock::new();
         for_each_mut(&mut found, in_parallel, &|(file, helpers)| {
-            let is_held_early = || held_early.get_or_init(|| find_files_held_early(files))[file.idx()];
+            let is_held_early =
+                || held_early.get_or_init(|| find_files_held_early(files))[file.idx()];
             *helpers = find::find_in_file(files, *file, &is_held_early);
         });
         let file_count = files.modules.len();
@@ -77,7 +78,9 @@ impl KnownHelpers {
         let mut has_private_state = false;
         for (file, helpers) in found {
             let bound = files.bound(file);
-            let names = helpers.bindings().map(|(symbol, _)| bound.symbol(symbol).name);
+            let names = helpers
+                .bindings()
+                .map(|(symbol, _)| bound.symbol(symbol).name);
             known.binding_names.extend(names);
             has_private_state |= helpers
                 .functions()
@@ -103,7 +106,8 @@ impl KnownHelpers {
     }
 
     pub fn has_functions(&self, file: FileId) -> bool {
-        self.file(file).is_some_and(|helpers| helpers.functions().len() != 0)
+        self.file(file)
+            .is_some_and(|helpers| helpers.functions().len() != 0)
     }
 
     pub fn function(&self, file: FileId, function: FnId) -> Option<&KnownFunction> {
@@ -150,7 +154,10 @@ impl KnownHelpers {
             right,
         } = hir[callee].kind
         {
-            if !matches!(hir[hir.skip_type_assertions(left)].kind, ExprKind::Number(_)) {
+            if !matches!(
+                hir[hir.skip_type_assertions(left)].kind,
+                ExprKind::Number(_)
+            ) {
                 return None;
             }
             callee = hir.skip_type_assertions(right);

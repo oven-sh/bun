@@ -1,8 +1,8 @@
 use super::entries::{
-    BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, Dependencies, HostRead, HostReadContext, HostReadUse,
-    ModuleData, ModuleFlags, ModuleLoad, Mutability, ObjectDemand, OperandDemand, OperandKinds,
-    OperandShape, Origin, Platforms, Prototype, RemovableCall, RuntimeFunctionData,
-    RuntimeFunctionRole, Scope, StartupLoad, TypeName,
+    BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, Dependencies, HostRead,
+    HostReadContext, HostReadUse, ModuleData, ModuleFlags, ModuleLoad, Mutability, ObjectDemand,
+    OperandDemand, OperandKinds, OperandShape, Origin, Platforms, Prototype, RemovableCall,
+    RuntimeFunctionData, RuntimeFunctionRole, Scope, StartupLoad, TypeName,
 };
 use super::ids::{BuiltinClass, BuiltinId, BuiltinName, RuntimeFunction, RuntimeModule};
 use crate::ir::{ContentsSlot, WellKnownSymbol};
@@ -77,7 +77,9 @@ pub fn object_replacing_namespace(module: RuntimeModule) -> Option<BuiltinId> {
 
 /// A module of Bun's whose source is an ES module, as "bun:wrap" is.
 pub fn is_es_module(module: RuntimeModule) -> bool {
-    module_data(module).flags.contains(ModuleFlags::IS_ES_MODULE)
+    module_data(module)
+        .flags
+        .contains(ModuleFlags::IS_ES_MODULE)
 }
 
 pub fn members(holder: BuiltinId) -> &'static [BuiltinId] {
@@ -108,8 +110,14 @@ pub fn find_export(module_object: BuiltinId, name: BuiltinName) -> ExportLookup 
     let Some(member) = own_member(canonical_id(module_object), name) else {
         return ExportLookup::Unlisted;
     };
-    let is_module_object = entry(member).flags.contains(BuiltinFlags::IS_DEFAULT_EXPORT);
-    ExportLookup::Found(if is_module_object { module_object } else { member })
+    let is_module_object = entry(member)
+        .flags
+        .contains(BuiltinFlags::IS_DEFAULT_EXPORT);
+    ExportLookup::Found(if is_module_object {
+        module_object
+    } else {
+        member
+    })
 }
 
 pub fn global(name: BuiltinName) -> Option<BuiltinId> {
@@ -167,7 +175,8 @@ pub fn exists_on(id: BuiltinId, platform: Platforms) -> bool {
 }
 
 fn push_component(text: &mut String, name: BuiltinName) {
-    let component = core::str::from_utf8(text_of_name(name)).expect("the names of the table are ASCII");
+    let component =
+        core::str::from_utf8(text_of_name(name)).expect("the names of the table are ASCII");
     if name.0 as usize >= FIRST_REGISTERED_SYMBOL_NAME {
         text.extend(["[Symbol.for(\"", component, "\")]"]);
     } else if is_symbol_name(name) {
@@ -182,7 +191,10 @@ fn push_component(text: &mut String, name: BuiltinName) {
 
 fn push_text_of(text: &mut String, id: BuiltinId) {
     let entry = entry(id);
-    if let Some(holder) = entry.holder.filter(|&holder| holder != BuiltinId::GlobalThis) {
+    if let Some(holder) = entry
+        .holder
+        .filter(|&holder| holder != BuiltinId::GlobalThis)
+    {
         push_text_of(text, holder);
     }
     push_component(text, entry.name);
@@ -225,7 +237,8 @@ pub fn text_of_name(name: BuiltinName) -> &'static [u8] {
     let Some(index) = index.checked_sub(TEXT_NAME_COUNT) else {
         return text_of_text_name(index);
     };
-    &SYMBOL_NAME_TEXT_BYTES[SYMBOL_NAME_TEXT_STARTS[index] as usize..SYMBOL_NAME_TEXT_STARTS[index + 1] as usize]
+    &SYMBOL_NAME_TEXT_BYTES
+        [SYMBOL_NAME_TEXT_STARTS[index] as usize..SYMBOL_NAME_TEXT_STARTS[index + 1] as usize]
 }
 
 pub fn is_symbol_name(name: BuiltinName) -> bool {
@@ -313,7 +326,9 @@ pub fn runtime_function(function: RuntimeFunction) -> Option<&'static RuntimeFun
 }
 
 pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static HostRead> {
-    HOST_READS.iter().filter(move |read| read.context == context)
+    HOST_READS
+        .iter()
+        .filter(move |read| read.context == context)
 }
 
 /// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.

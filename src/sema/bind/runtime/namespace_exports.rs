@@ -98,10 +98,16 @@ impl ExportedBlockBindings {
                 }
             }
         }
-        bindings.functions.shared_sort_unstable_by_key(|entry| entry.0);
-        bindings.classes.shared_sort_unstable_by_key(|entry| entry.0);
+        bindings
+            .functions
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        bindings
+            .classes
+            .shared_sort_unstable_by_key(|entry| entry.0);
         bindings.enums.shared_sort_unstable_by_key(|entry| entry.0);
-        bindings.modules.shared_sort_unstable_by_key(|entry| entry.0);
+        bindings
+            .modules
+            .shared_sort_unstable_by_key(|entry| entry.0);
         bindings
     }
 
@@ -125,7 +131,9 @@ impl ExportedBlockBindings {
 
     pub(super) fn record(self, declarations: &mut RuntimeDeclarationsIn<Growable>) {
         declarations.function_symbols.extend(self.functions);
-        declarations.function_symbols.shared_sort_by_key(|entry| entry.0);
+        declarations
+            .function_symbols
+            .shared_sort_by_key(|entry| entry.0);
         declarations.class_symbols = self.classes;
         declarations.enum_symbols = self.enums;
         declarations.module_symbols = self.modules;

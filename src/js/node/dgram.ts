@@ -196,7 +196,6 @@ function lookup6(lookup: LookupFunction, address: string | null | undefined, cal
   return lookup(address || "::1", 6, callback);
 }
 
-
 type LookupCallback = (err: Error | null, ip: string) => void;
 // `dns.lookup`, or the `lookup` option.
 type LookupFunction = (hostname: string, family: number, callback: LookupCallback) => void;

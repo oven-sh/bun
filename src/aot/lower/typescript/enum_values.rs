@@ -197,7 +197,9 @@ fn find_known_primitive(
             | UnOp::PostDec => KnownPrimitive::Other,
         },
         ExprKind::Binary { op, left, right } => find_binary_primitive(file, op, left, right),
-        ExprKind::Assign { op: None, value, .. } => find_known_primitive(file, value),
+        ExprKind::Assign {
+            op: None, value, ..
+        } => find_known_primitive(file, value),
         ExprKind::Cond { branches, .. } => {
             let branches = file.hir.branches(branches);
             find_either_primitive(file, branches.yes, branches.no)
@@ -290,7 +292,10 @@ fn find_either_primitive(
     second: ExprId,
 ) -> KnownPrimitive {
     let decisions = file.decisions();
-    match (decisions.is_dead_expr(first), decisions.is_dead_expr(second)) {
+    match (
+        decisions.is_dead_expr(first),
+        decisions.is_dead_expr(second),
+    ) {
         (true, _) => find_known_primitive(file, second),
         (false, true) => find_known_primitive(file, first),
         (false, false) => {
@@ -305,7 +310,11 @@ fn find_inlined_enum_member(
     reference: ExprId,
 ) -> Option<TranspilerConstant> {
     if !matches!(file.hir[reference].kind, ExprKind::Ident(_)) {
-        let member = file.queries.accessed_enum_member(reference).ok().flatten()?;
+        let member = file
+            .queries
+            .accessed_enum_member(reference)
+            .ok()
+            .flatten()?;
         return find_transpiler_constant(file, member);
     }
     let bound = file.bound;

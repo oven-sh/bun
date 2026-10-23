@@ -100,7 +100,10 @@ fn check_entry_points(graph: &ModuleGraph, input: &BindInput<'_, '_>) {
             | SourceKind::TypesOnly => None,
         };
         assert_eq!(graph.runtime_module(file), module);
-        assert_eq!(graph.kind(file) == ModuleKind::RuntimeSource, module.is_some());
+        assert_eq!(
+            graph.kind(file) == ModuleKind::RuntimeSource,
+            module.is_some()
+        );
     }
 }
 
@@ -174,14 +177,20 @@ fn task_order_does_not_change_graph() {
             );
         }
         assert!(!graph.errors().is_empty());
-        assert_eq!(failure_keys(reversed_graph.errors()), failure_keys(graph.errors()));
+        assert_eq!(
+            failure_keys(reversed_graph.errors()),
+            failure_keys(graph.errors())
+        );
         assert!(!graph.failures().is_empty());
         assert_eq!(
             failure_keys(reversed_graph.failures()),
             failure_keys(graph.failures())
         );
         assert!(!graph.synthetic_exports().is_empty());
-        assert_eq!(reversed_graph.synthetic_exports(), graph.synthetic_exports());
+        assert_eq!(
+            reversed_graph.synthetic_exports(),
+            graph.synthetic_exports()
+        );
         assert_eq!(reversed_graph.record_files(), graph.record_files());
         assert_eq!(reversed_graph.other_modules(), graph.other_modules());
     });
@@ -204,7 +213,12 @@ fn failed_statements_are_errors_and_failed_calls_are_failures() {
                 Some(exporter),
                 atom("missing"),
             ),
-            (main, ImportSiteKind::Import(ImportId(5)), None, atom("./nope")),
+            (
+                main,
+                ImportSiteKind::Import(ImportId(5)),
+                None,
+                atom("./nope"),
+            ),
         ];
         assert_eq!(error_names, expected);
         for error in graph.errors() {
@@ -230,10 +244,19 @@ fn failed_statements_are_errors_and_failed_calls_are_failures() {
 #[test]
 fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
     let files = [
-        ("main.js", "import('./above.js').catch(() => {}); import('./fine.js');"),
-        ("above.js", "import './sibling.js'; import './broken.js'; console.log(1);"),
+        (
+            "main.js",
+            "import('./above.js').catch(() => {}); import('./fine.js');",
+        ),
+        (
+            "above.js",
+            "import './sibling.js'; import './broken.js'; console.log(1);",
+        ),
         ("sibling.js", "console.log(2);"),
-        ("broken.js", "import './fine.js'; import x from './gone.js'; console.log(x);"),
+        (
+            "broken.js",
+            "import './fine.js'; import x from './gone.js'; console.log(x);",
+        ),
         ("fine.js", "export {};"),
     ];
     with_graph(&files, |graph, input| {
@@ -242,7 +265,10 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
         let [failure] = graph.failures() else {
             panic!("the failures are {:?}", graph.failures());
         };
-        assert!(matches!(failure.kind, ModuleFailureKind::UnresolvedAtLoad { .. }));
+        assert!(matches!(
+            failure.kind,
+            ModuleFailureKind::UnresolvedAtLoad { .. }
+        ));
         assert_eq!(failure.effect(), FailureEffect::ThrowsAtSite);
         assert_eq!(failure.importer, file("broken.js"));
         let names = ["main.js", "above.js", "sibling.js", "broken.js", "fine.js"];
@@ -250,13 +276,21 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
         let load_failures = names.map(|name| graph.load_failure(file(name)));
         assert_eq!(load_failures, [None, thrown, None, thrown, None]);
         let targets = |name: &str| -> Vec<ModuleRef> {
-            graph.requests(file(name)).iter().map(|request| request.target).collect()
+            graph
+                .requests(file(name))
+                .iter()
+                .map(|request| request.target)
+                .collect()
         };
         assert_eq!(targets("above.js"), [ModuleRef::File(file("broken.js"))]);
         assert!(targets("broken.js").is_empty());
         for name in ["above.js", "broken.js"] {
             let hir = input.files.hir(file(name));
-            assert!(hir.ids(hir.body).all(|statement| graph.erased(file(name), statement)), "{name}");
+            assert!(
+                hir.ids(hir.body)
+                    .all(|statement| graph.erased(file(name), statement)),
+                "{name}"
+            );
         }
     });
 }
@@ -264,7 +298,10 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
 #[test]
 fn import_that_names_nothing_stops_the_build_where_an_entry_point_reaches_it() {
     let files = [
-        ("main.js", "import './above.js'; import('./broken.js').catch(() => {});"),
+        (
+            "main.js",
+            "import './above.js'; import('./broken.js').catch(() => {});",
+        ),
         ("above.js", "import './broken.js';"),
         ("broken.js", "import x from './gone.js'; console.log(x);"),
     ];
@@ -282,7 +319,10 @@ fn import_that_names_nothing_stops_the_build_where_an_entry_point_reaches_it() {
 #[test]
 fn import_that_names_nothing_stops_the_build_though_late_modules_reach_it_too() {
     let files = [
-        ("main.js", "import './broken.js'; import('./above.js').catch(() => {});"),
+        (
+            "main.js",
+            "import './broken.js'; import('./above.js').catch(() => {});",
+        ),
         ("above.js", "import './late.js';"),
         ("late.js", "import './broken.js';"),
         ("broken.js", "import x from './gone.js'; console.log(x);"),
@@ -301,16 +341,28 @@ fn import_that_names_nothing_stops_the_build_though_late_modules_reach_it_too() 
 #[test]
 fn name_that_a_module_lacks_is_no_error_in_a_module_whose_load_fails() {
     let files = [
-        ("main.js", "import('./broken.js').catch(() => {}); import('./whole.js').catch(() => {});"),
-        ("broken.js", "import { absent } from './fine.js'; import './gone.js'; console.log(absent);"),
-        ("whole.js", "import { absent } from './fine.js'; console.log(absent);"),
+        (
+            "main.js",
+            "import('./broken.js').catch(() => {}); import('./whole.js').catch(() => {});",
+        ),
+        (
+            "broken.js",
+            "import { absent } from './fine.js'; import './gone.js'; console.log(absent);",
+        ),
+        (
+            "whole.js",
+            "import { absent } from './fine.js'; console.log(absent);",
+        ),
         ("fine.js", "export {};"),
     ];
     with_graph(&files, |graph, input| {
         let [error] = graph.errors() else {
             panic!("the errors are {:?}", graph.errors());
         };
-        assert!(matches!(error.kind, ModuleFailureKind::ExportNotFound { .. }));
+        assert!(matches!(
+            error.kind,
+            ModuleFailureKind::ExportNotFound { .. }
+        ));
         assert_eq!(error.importer, file_named(input, "whole.js"));
     });
 }
@@ -364,7 +416,10 @@ fn entry_point_kind_and_source_kind_reach_graph() {
         assert!(has_kind(EntryPointKind::Library));
         assert!(has_kind(EntryPointKind::ImportedModule));
         let path_source = file_named(input, "/$bun/js/node/path.ts");
-        assert_eq!(graph.runtime_module(path_source), Some(RuntimeModule::NodePath));
+        assert_eq!(
+            graph.runtime_module(path_source),
+            Some(RuntimeModule::NodePath)
+        );
     });
 }
 
@@ -405,7 +460,10 @@ fn external_package_no_site_names_has_a_module() {
             specifier: input.files.atoms.intern(b"outside"),
         };
         assert_eq!(graph.other_modules(), [outside]);
-        assert_eq!(graph.external_kind(outside), Some(ExternalKind::UncompiledCode));
+        assert_eq!(
+            graph.external_kind(outside),
+            Some(ExternalKind::UncompiledCode)
+        );
     });
 }
 
@@ -414,11 +472,13 @@ fn site_over_candidate_limit_is_a_loss() {
     let limit = LimitValues::for_host().get(LimitId::MaxComputedSpecifierCandidates);
     let specifier = "`./pages/${name}.js`";
     let main = format!("export const load = (name) => import({specifier});\n");
-    let page_names: Vec<String> = (0..=limit)
-        .map(|page| format!("pages/{page}.js"))
-        .collect();
+    let page_names: Vec<String> = (0..=limit).map(|page| format!("pages/{page}.js")).collect();
     let mut files = vec![("main.js", main.as_str())];
-    files.extend(page_names.iter().map(|name| (name.as_str(), "export {};\n")));
+    files.extend(
+        page_names
+            .iter()
+            .map(|name| (name.as_str(), "export {};\n")),
+    );
     with_graph(&files, |graph, input| {
         let main = file_named(input, "main.js");
         let counters = bind_modules(input).counters;
@@ -450,21 +510,60 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             "rest.js",
             "import { promises, WriteStream, readFileSync } from \"node:fs\";\nconsole.log(promises, WriteStream, readFileSync);\n",
         ),
-        ("barrel.js", "export { ReadStream, statSync } from \"node:fs\";\n"),
-        ("through.js", "import { ReadStream } from \"./barrel.js\";\nconsole.log(ReadStream);\n"),
+        (
+            "barrel.js",
+            "export { ReadStream, statSync } from \"node:fs\";\n",
+        ),
+        (
+            "through.js",
+            "import { ReadStream } from \"./barrel.js\";\nconsole.log(ReadStream);\n",
+        ),
         // The object answers, at the read.
-        ("members.js", "import * as fs from \"node:fs\";\nconsole.log(fs.WriteStream, fs.statSync);\n"),
-        ("required.cjs", "const { WriteStream } = require(\"node:fs\");\nconsole.log(WriteStream);\n"),
+        (
+            "members.js",
+            "import * as fs from \"node:fs\";\nconsole.log(fs.WriteStream, fs.statSync);\n",
+        ),
+        (
+            "required.cjs",
+            "const { WriteStream } = require(\"node:fs\");\nconsole.log(WriteStream);\n",
+        ),
         // `Object.defineProperty(assert, "AssertionError", { get() { .. } })`
-        ("defined.js", "import { AssertionError, ok } from \"node:assert\";\nconsole.log(AssertionError, ok);\n"),
+        (
+            "defined.js",
+            "import { AssertionError, ok } from \"node:assert\";\nconsole.log(AssertionError, ok);\n",
+        ),
     ];
     with_graph(&program, |graph, input| {
-        assert!(input.deferred_exports.contains(RuntimeModule::NodeFs, b"promises"));
-        assert!(input.deferred_exports.contains(RuntimeModule::NodeFs, b"WriteStream"));
-        assert!(!input.deferred_exports.contains(RuntimeModule::NodeFs, b"existsSync"));
-        assert!(!input.deferred_exports.contains(RuntimeModule::NodePath, b"promises"));
-        assert!(input.deferred_exports.contains(RuntimeModule::NodeAssert, b"AssertionError"));
-        assert!(!input.deferred_exports.contains(RuntimeModule::NodeAssert, b"ok"));
+        assert!(
+            input
+                .deferred_exports
+                .contains(RuntimeModule::NodeFs, b"promises")
+        );
+        assert!(
+            input
+                .deferred_exports
+                .contains(RuntimeModule::NodeFs, b"WriteStream")
+        );
+        assert!(
+            !input
+                .deferred_exports
+                .contains(RuntimeModule::NodeFs, b"existsSync")
+        );
+        assert!(
+            !input
+                .deferred_exports
+                .contains(RuntimeModule::NodePath, b"promises")
+        );
+        assert!(
+            input
+                .deferred_exports
+                .contains(RuntimeModule::NodeAssert, b"AssertionError")
+        );
+        assert!(
+            !input
+                .deferred_exports
+                .contains(RuntimeModule::NodeAssert, b"ok")
+        );
         let names_bound_by = |file: &str| -> Vec<String> {
             let required_names = graph.required_names(file_named(input, file)).iter();
             let mut names: Vec<String> = required_names
@@ -493,8 +592,13 @@ fn every_export_of_a_native_module_that_mirrors_an_object_may_be_deferred() {
     let (_, list) = list
         .split_once("#define BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(macro)")
         .expect("the host lists its lazy native modules");
-    let entries = list.lines().skip(1).map_while(|line| line.trim().strip_prefix("macro(\""));
-    let specifiers: Vec<&str> = entries.filter_map(|entry| Some(entry.split_once('"')?.0)).collect();
+    let entries = list
+        .lines()
+        .skip(1)
+        .map_while(|line| line.trim().strip_prefix("macro(\""));
+    let specifiers: Vec<&str> = entries
+        .filter_map(|entry| Some(entry.split_once('"')?.0))
+        .collect();
     assert_eq!(specifiers, ["node:module", "node:process", "bun"]);
     let deferred_exports = DeferredExports::default();
     for specifier in specifiers {
@@ -508,14 +612,23 @@ fn every_export_of_a_native_module_that_mirrors_an_object_may_be_deferred() {
 #[test]
 fn a_module_says_which_exports_of_the_process_object_it_binds() {
     let program = [
-        ("main.js", "import process, { platform } from \"node:process\";\nconsole.log(process, platform);\nimport(\"./rest.js\");\n"),
-        ("rest.js", "import { stdout, stderr } from \"process\";\nconsole.log(stdout, stderr);\n"),
+        (
+            "main.js",
+            "import process, { platform } from \"node:process\";\nconsole.log(process, platform);\nimport(\"./rest.js\");\n",
+        ),
+        (
+            "rest.js",
+            "import { stdout, stderr } from \"process\";\nconsole.log(stdout, stderr);\n",
+        ),
     ];
     with_graph(&program, |graph, input| {
         let required_names = graph.required_names(file_named(input, "rest.js")).iter();
         let mut names: Vec<String> = required_names
             .map(|required| {
-                assert_eq!(required.module, ModuleRef::Runtime(RuntimeModule::NodeProcess));
+                assert_eq!(
+                    required.module,
+                    ModuleRef::Runtime(RuntimeModule::NodeProcess)
+                );
                 BStr::new(input.files.atoms.bytes(required.name)).to_string()
             })
             .collect();

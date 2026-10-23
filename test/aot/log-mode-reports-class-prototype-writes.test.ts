@@ -1,7 +1,7 @@
 // The prototype of a class of the program can be changed under --aot as without it, whether the compiler sees the change in the program's text or not.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const program = `
 class Store {
@@ -49,7 +49,9 @@ for (const [name, attempt] of attempts) {
 `;
 const files = {
   "program.ts": program,
-  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", types: [] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", types: [] },
+  }),
 };
 
 async function run(cwd: string, args: string[]) {

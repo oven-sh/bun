@@ -42,8 +42,16 @@ const entry = (id: number, uses: BuiltinEntry["uses"], more: Partial<BuiltinEntr
 const sample: BuiltinUses = {
   entries: [
     entry(0, [always("A")]),
-    entry(812, [always("A"), sometimes("C")], { path: "process.on", kind: "Method", nativeSymbols: ["Process_functionOn", "Bun::on"] }),
-    entry(builtinIdLimit - 1, [sometimes("B")], { path: "%Hidden%.prototype.next", kind: "Method", hasHiddenRoot: true }),
+    entry(812, [always("A"), sometimes("C")], {
+      path: "process.on",
+      kind: "Method",
+      nativeSymbols: ["Process_functionOn", "Bun::on"],
+    }),
+    entry(builtinIdLimit - 1, [sometimes("B")], {
+      path: "%Hidden%.prototype.next",
+      kind: "Method",
+      hasHiddenRoot: true,
+    }),
     ...builtinKinds.map((kind, index) => entry(builtinIdLimit + index - 100, [always("B")], { kind })),
   ].sort((a, b) => a.id - b.id),
 };
@@ -72,12 +80,17 @@ describe("the JSON form", () => {
         },
       ],
     });
-    expect(JSON.parse(serializeBuiltinUses({ entries: [entry(1, [always("A")], { hasHiddenRoot: true })] })).entries[0].hasHiddenRoot).toBe(true);
+    expect(
+      JSON.parse(serializeBuiltinUses({ entries: [entry(1, [always("A")], { hasHiddenRoot: true })] })).entries[0]
+        .hasHiddenRoot,
+    ).toBe(true);
   });
 
   test("what is absent is false or empty", () => {
     const json = { version: 1, entries: [{ id: 1, path: "Bun.one", kind: "Function", uses: [{ feature: "A" }] }] };
-    expect(parseBuiltinUses(json, "builtin-uses.json")).toEqual({ entries: [entry(1, [always("A")], { path: "Bun.one" })] });
+    expect(parseBuiltinUses(json, "builtin-uses.json")).toEqual({
+      entries: [entry(1, [always("A")], { path: "Bun.one" })],
+    });
   });
 
   test("a list without entries is read", () => {
@@ -111,7 +124,10 @@ describe("the JSON form", () => {
     ["entries[0].hasHiddenRoot is not a boolean", { version: 1, entries: [{ ...valid, hasHiddenRoot: 1 }] }],
     ["Bun.one has a use that is not an object", { version: 1, entries: [{ ...valid, uses: ["A"] }] }],
     ["Bun.one has a use without a feature", { version: 1, entries: [{ ...valid, uses: [{}] }] }],
-    ["Bun.one uses A with an isConditional that is not a boolean", { version: 1, entries: [{ ...valid, uses: [{ feature: "A", isConditional: 1 }] }] }],
+    [
+      "Bun.one uses A with an isConditional that is not a boolean",
+      { version: 1, entries: [{ ...valid, uses: [{ feature: "A", isConditional: 1 }] }] },
+    ],
   ])("rejects: %s", (message, json) => {
     const error = buildErrorOf(() => parseBuiltinUses(json, "codegen/builtin-uses.json"));
     expect(error.message).toBe(message);
@@ -139,7 +155,8 @@ describe("readBuiltinUses", () => {
 });
 
 describe("checkBuiltinUses", () => {
-  const rejected = (entries: BuiltinEntry[]) => buildErrorOf(() => checkBuiltinUses({ entries }, abc, "builtin-uses.json"));
+  const rejected = (entries: BuiltinEntry[]) =>
+    buildErrorOf(() => checkBuiltinUses({ entries }, abc, "builtin-uses.json"));
 
   test("accepts ascending ids and declared features, each once for an entry", () => {
     expect(() => checkBuiltinUses(sample, abc, "builtin-uses.json")).not.toThrow();
@@ -147,8 +164,12 @@ describe("checkBuiltinUses", () => {
   });
 
   test("rejects an id that does not ascend", () => {
-    expect(rejected([entry(2, [always("A")]), entry(1, [always("A")])]).message).toBe("the id of Bun.builtin1 does not ascend");
-    expect(rejected([entry(2, [always("A")]), entry(2, [always("A")], { path: "Bun.again" })]).message).toBe("the id of Bun.again does not ascend");
+    expect(rejected([entry(2, [always("A")]), entry(1, [always("A")])]).message).toBe(
+      "the id of Bun.builtin1 does not ascend",
+    );
+    expect(rejected([entry(2, [always("A")]), entry(2, [always("A")], { path: "Bun.again" })]).message).toBe(
+      "the id of Bun.again does not ascend",
+    );
   });
 
   test("rejects a feature that no file declares", () => {
@@ -158,16 +179,28 @@ describe("checkBuiltinUses", () => {
   });
 
   test("rejects a feature that only the command line enters, and the JIT, also with a condition", () => {
-    const withC = (change: object) => ({ ...abc, features: abc.features.map(feature => (feature.name === "C" ? { ...feature, ...change } : feature)) });
+    const withC = (change: object) => ({
+      ...abc,
+      features: abc.features.map(feature => (feature.name === "C" ? { ...feature, ...change } : feature)),
+    });
     const uses = (more: Partial<BuiltinEntry> = {}) => ({ entries: [entry(1, [always("A"), sometimes("C")], more)] });
     const commandLine = withC({ enteredFrom: "command-line" });
-    expect(buildErrorOf(() => checkBuiltinUses(uses(), commandLine, "builtin-uses.json")).message).toBe("Bun.builtin1 uses C, which no executable compiled ahead of time has");
-    for (const more of [{ hasHiddenRoot: true }, { kind: "NativeBinding" }, { kind: "Module" }, { kind: "InternalModule" }] as const) {
+    expect(buildErrorOf(() => checkBuiltinUses(uses(), commandLine, "builtin-uses.json")).message).toBe(
+      "Bun.builtin1 uses C, which no executable compiled ahead of time has",
+    );
+    for (const more of [
+      { hasHiddenRoot: true },
+      { kind: "NativeBinding" },
+      { kind: "Module" },
+      { kind: "InternalModule" },
+    ] as const) {
       expect(() => checkBuiltinUses(uses(more), commandLine, "builtin-uses.json")).not.toThrow();
     }
     expect(() => checkBuiltinUses(uses(), withC({ enteredFrom: "startup" }), "builtin-uses.json")).not.toThrow();
     const jit = { ...abc, features: [...abc.features, { ...abc.features[0]!, name: "JIT", index: 500 }] };
-    expect(buildErrorOf(() => checkBuiltinUses({ entries: [entry(1, [always("JIT")])] }, jit, "builtin-uses.json")).message).toBe("Bun.builtin1 uses JIT, which no executable compiled ahead of time has");
+    expect(
+      buildErrorOf(() => checkBuiltinUses({ entries: [entry(1, [always("JIT")])] }, jit, "builtin-uses.json")).message,
+    ).toBe("Bun.builtin1 uses JIT, which no executable compiled ahead of time has");
   });
 
   test("rejects a feature that an entry uses twice, also once with a condition", () => {

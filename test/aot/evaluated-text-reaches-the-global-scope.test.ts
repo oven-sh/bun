@@ -16,7 +16,14 @@ import { built, slot, spawned } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true },
+  compilerOptions: {
+    target: "esnext",
+    module: "preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  },
 });
 
 // The build can't fold a text that depends on the arguments of the process.
@@ -157,9 +164,19 @@ async function compileAndRun(text: string): Promise<{ report: BuildReport; stdou
   const folder = String(dir);
   const executable = join(folder, isWindows ? "program.exe" : "program");
   const reportPath = join(folder, "report.json");
-  built(await spawned([bunExe(), ...compileCommand, ...withReport(reportPath, "summary"), "main.ts", "--outfile", executable], folder, bunEnv));
+  built(
+    await spawned(
+      [bunExe(), ...compileCommand, ...withReport(reportPath, "summary"), "main.ts", "--outfile", executable],
+      folder,
+      bunEnv,
+    ),
+  );
   const ran = await spawned([executable], folder, bunEnv);
-  expect({ signal: ran.signal, exitCode: ran.exitCode, stderr: ran.stderr }).toEqual({ signal: null, exitCode: 0, stderr: "" });
+  expect({ signal: ran.signal, exitCode: ran.exitCode, stderr: ran.stderr }).toEqual({
+    signal: null,
+    exitCode: 0,
+    stderr: "",
+  });
   return { report: readBuildReport(reportPath), stdout: ran.stdout };
 }
 
@@ -182,7 +199,9 @@ describe.concurrent("compile/aot/evaluated text reaches the global scope", () =>
         slot(async () => {
           const { report, stdout } = await compileAndRun(text);
           expect(stdout).toBe(output);
-          expect(report.unseenCode).toContainEqual(expect.objectContaining({ cause: "EvaluatesText", builtin: evaluator }));
+          expect(report.unseenCode).toContainEqual(
+            expect.objectContaining({ cause: "EvaluatesText", builtin: evaluator }),
+          );
           expect(report.summary.functions).toBeLessThanOrEqual(Math.ceil(functionsWithoutEvaluator * 1.25));
         }),
       600_000,

@@ -2871,11 +2871,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Without `strictNullChecks`, `getWidenedType` turns `null` and `undefined` into `any`, and `[]` into `any[]`.
-    fn implicit_any_in_non_strict_file(
-        &mut self,
-        file: FileId,
-        widened: TypeId,
-    ) -> Option<TypeId> {
+    fn implicit_any_in_non_strict_file(&mut self, file: FileId, widened: TypeId) -> Option<TypeId> {
         if self.hir(file).is_js || !self.is_non_strict_file_in_strict_program(file) {
             None
         } else if matches!(widened, TypeId::NULL | TypeId::UNDEFINED) {

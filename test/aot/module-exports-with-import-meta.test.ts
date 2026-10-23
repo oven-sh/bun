@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { describe, test } from "./supported";
 
 // `import.meta` says nothing about what kind of module a file is: without `import` and `export` it is CommonJS by the same signs as any
 // other file, and has `module` and `exports`.
@@ -26,7 +26,14 @@ console.log(typeof module, typeof exports, import.meta.main);
 };
 
 // The programs that say nothing of paths, which an executable has others of.
-const inExecutables = ["typeof.ts", "module-exports.ts", "the-idiom.ts", "typeof.js", "only-import-meta.js", "beside-an-export.mjs"];
+const inExecutables = [
+  "typeof.ts",
+  "module-exports.ts",
+  "the-idiom.ts",
+  "typeof.js",
+  "only-import-meta.js",
+  "beside-an-export.mjs",
+];
 
 const files = {
   "lib/named.js": `exports.isMain = import.meta.main;

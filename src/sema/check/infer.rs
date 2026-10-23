@@ -2022,8 +2022,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Once a bivariant signature has been crossed, everything nested in it is bivariant.
             let saved_bivariant = n.bivariant;
             n.bivariant |= is_method;
-            let strict =
-                is_under_strict_function_types || n.priority & PRIORITY_ALWAYS_STRICT != 0;
+            let strict = is_under_strict_function_types || n.priority & PRIORITY_ALWAYS_STRICT != 0;
             for (s, t) in self.parameter_type_pairs(source, target) {
                 if strict {
                     self.infer_from_contravariant_types(n, s, t)

@@ -42,7 +42,10 @@ take({ a: 1 });
     with_program(&[("main.ts", text)], &["./main.ts"], 1, |program| {
         let build = check_only(program);
         assert_eq!(build.codes(), [2345, 2578]);
-        let shown = build.diagnostics().find(|it| it.diagnostic.code == 2345).unwrap();
+        let shown = build
+            .diagnostics()
+            .find(|it| it.diagnostic.code == 2345)
+            .unwrap();
         let expected = "Argument of type '{ a: string; }' is not assignable to parameter of type '{ a: number; }'.
   Types of property 'a' are incompatible.
     Type 'string' is not assignable to type 'number'.";
@@ -83,7 +86,10 @@ import "./two.js";
     let files = [
         ("main.js", main_text),
         ("none.js", "export const load = () => import();\n"),
-        ("three.js", "export const load = (a, b, c) => import(a, b, c);\n"),
+        (
+            "three.js",
+            "export const load = (a, b, c) => import(a, b, c);\n",
+        ),
         ("spread.js", "export const load = (a) => import(...a);\n"),
         ("two.js", "export const load = (a, b) => import(a, b);\n"),
     ];
@@ -91,7 +97,11 @@ import "./two.js";
         let build = check_only(program);
         let early_error = [(DiagnosticClass::EarlyError, Effect::StopsBuild)];
         assert_eq!(build.reported(program.file("none.js"), 1450), early_error);
-        assert!(build.diagnostics().all(|it| log_message(&it.diagnostic).is_some()));
+        assert!(
+            build
+                .diagnostics()
+                .all(|it| log_message(&it.diagnostic).is_some())
+        );
         assert_eq!(build.reported(program.file("three.js"), 1450), early_error);
         assert_eq!(build.reported(program.file("spread.js"), 1325), early_error);
         assert!(!build.has_diagnostics(program.file("two.js")));
@@ -138,9 +148,13 @@ const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 13] = [
 
 #[test]
 fn function_directive_is_read_as_bun_run_reads_it() {
-    let cases = REFUSED_AFTER_FUNCTION_DIRECTIVE.iter().chain(&ACCEPTED_WITH_FUNCTION_DIRECTIVE);
+    let cases = REFUSED_AFTER_FUNCTION_DIRECTIVE
+        .iter()
+        .chain(&ACCEPTED_WITH_FUNCTION_DIRECTIVE);
     let case_count = cases.clone().count();
-    let names: Vec<String> = (0..case_count).map(|index| format!("{index}.cjs")).collect();
+    let names: Vec<String> = (0..case_count)
+        .map(|index| format!("{index}.cjs"))
+        .collect();
     let require = |name: &String| format!("require(\"./{name}\");\n");
     let main_text = names.iter().map(require).collect::<String>();
     let mut files = vec![("main.cjs", main_text.as_str())];
@@ -152,7 +166,11 @@ fn function_directive_is_read_as_bun_run_reads_it() {
             let is_refused = build.diagnostics().any(|it| {
                 it.diagnostic.file == file && it.diagnostic.class == DiagnosticClass::EarlyError
             });
-            assert_eq!(is_refused, index < REFUSED_AFTER_FUNCTION_DIRECTIVE.len(), "{text}");
+            assert_eq!(
+                is_refused,
+                index < REFUSED_AFTER_FUNCTION_DIRECTIVE.len(),
+                "{text}"
+            );
         }
     });
 }
@@ -170,14 +188,24 @@ fn errors_in_code_that_is_never_reached_are_dropped() {
         }"#;
     let reached = never_reached.replace("if (true)", "if (here)");
     let lib = ("lib.ts", "export const here = 1;");
-    with_program(&[("main.ts", never_reached), lib], &["./main.ts"], 1, |program| {
-        assert_eq!(check_only(program).codes(), []);
-    });
-    with_program(&[("main.ts", reached.as_str()), lib], &["./main.ts"], 1, |program| {
-        let mut found = check_only(program).codes();
-        found.sort_unstable();
-        assert_eq!(found, [1192, 2304, 2305, 2322]);
-    });
+    with_program(
+        &[("main.ts", never_reached), lib],
+        &["./main.ts"],
+        1,
+        |program| {
+            assert_eq!(check_only(program).codes(), []);
+        },
+    );
+    with_program(
+        &[("main.ts", reached.as_str()), lib],
+        &["./main.ts"],
+        1,
+        |program| {
+            let mut found = check_only(program).codes();
+            found.sort_unstable();
+            assert_eq!(found, [1192, 2304, 2305, 2322]);
+        },
+    );
 }
 
 #[test]
@@ -191,21 +219,37 @@ fn file_loaded_for_its_types_alone_reports_nothing() {
                 (require("./tool.ts") as typeof import("./tool.ts")).run();
             }"#,
         ),
-        ("shapes.ts", "export interface Shape { sides: number }\nconst wrong: number = 'text';"),
-        ("tool.ts", "export function run() { const wrong: number = 'text'; return wrong; }"),
+        (
+            "shapes.ts",
+            "export interface Shape { sides: number }\nconst wrong: number = 'text';",
+        ),
+        (
+            "tool.ts",
+            "export function run() { const wrong: number = 'text'; return wrong; }",
+        ),
     ];
-    with_defines(&files, &["./main.ts"], &[("process.env.X", "b")], |program| {
-        for name in ["shapes.ts", "tool.ts"] {
-            assert!(!program.files().is_compiled(program.file(name)), "{name}");
-        }
-        assert_eq!(check_only(program).codes(), []);
-    });
-    with_defines(&files, &["./main.ts"], &[("process.env.X", "a")], |program| {
-        let build = check_only(program);
-        let error = [(DiagnosticClass::Semantic, Effect::StopsBuild)];
-        assert_eq!(build.reported(program.file("tool.ts"), 2322), error);
-        assert_eq!(build.reported(program.file("shapes.ts"), 2322), []);
-    });
+    with_defines(
+        &files,
+        &["./main.ts"],
+        &[("process.env.X", "b")],
+        |program| {
+            for name in ["shapes.ts", "tool.ts"] {
+                assert!(!program.files().is_compiled(program.file(name)), "{name}");
+            }
+            assert_eq!(check_only(program).codes(), []);
+        },
+    );
+    with_defines(
+        &files,
+        &["./main.ts"],
+        &[("process.env.X", "a")],
+        |program| {
+            let build = check_only(program);
+            let error = [(DiagnosticClass::Semantic, Effect::StopsBuild)];
+            assert_eq!(build.reported(program.file("tool.ts"), 2322), error);
+            assert_eq!(build.reported(program.file("shapes.ts"), 2322), []);
+        },
+    );
 }
 
 #[test]
@@ -244,7 +288,11 @@ export type D = C;
 fn is_first_entry_point_held(text: &str) -> (bool, bool) {
     let sources = [("main.ts", text), ("other.ts", "export const b = 2;\n")];
     with_program(&sources, &["./main.ts", "./other.ts"], 1, |program| {
-        let (files, main, other) = (program.files(), program.file("main.ts"), program.file("other.ts"));
+        let (files, main, other) = (
+            program.files(),
+            program.file("main.ts"),
+            program.file("other.ts"),
+        );
         assert!(files.module(main).is_leaf && files.module(other).is_leaf);
         let has_tree = || !files.hir(main).stmts.is_empty();
         let had_tree = AtomicBool::new(false);
@@ -279,14 +327,19 @@ fn progress_counts_both_passes() {
         let files_to_lower = program.files().compiled_files();
         let (loaded, host) = (program.loaded, program.host);
         let roles = decide_roles(loaded, host, &request, files_to_lower);
-        let checked = check_and_lower(loaded, host, &request, &roles, files_to_lower, &|_, _| Some(()));
+        let checked = check_and_lower(loaded, host, &request, &roles, files_to_lower, &|_, _| {
+            Some(())
+        });
         assert_eq!(roles.checked.len(), 1);
         assert_eq!(checked.lowered.len(), 2);
         let count = |counter: &AtomicUsize| counter.load(Ordering::Relaxed);
         assert_eq!(count(&progress.to_check), 1 + 2);
         assert_eq!(count(&progress.checked), count(&progress.to_check));
         assert_ne!(count(&progress.bytes_to_check), 0);
-        assert_eq!(count(&progress.bytes_checked), count(&progress.bytes_to_check));
+        assert_eq!(
+            count(&progress.bytes_checked),
+            count(&progress.bytes_to_check)
+        );
     });
 }
 
@@ -306,17 +359,21 @@ fn type_error_in_runtime_project_withdraws_trust() {
 
 #[test]
 fn syntax_error_in_runtime_project_is_internal() {
-    with_runtime_project(&[("a.ts", "export const value = ;\n")], &["a.ts"], |program| {
-        let build = check_only(program);
-        let reported: Vec<(DiagnosticClass, Effect)> = build
-            .diagnostics()
-            .map(|it| (it.diagnostic.class, it.effect))
-            .collect();
-        let internal_error = (DiagnosticClass::EarlyError, Effect::InternalError);
-        assert!(!reported.is_empty());
-        assert!(reported.iter().all(|it| *it == internal_error));
-        assert!(build.has_diagnostics(program.file("a.ts")));
-    });
+    with_runtime_project(
+        &[("a.ts", "export const value = ;\n")],
+        &["a.ts"],
+        |program| {
+            let build = check_only(program);
+            let reported: Vec<(DiagnosticClass, Effect)> = build
+                .diagnostics()
+                .map(|it| (it.diagnostic.class, it.effect))
+                .collect();
+            let internal_error = (DiagnosticClass::EarlyError, Effect::InternalError);
+            assert!(!reported.is_empty());
+            assert!(reported.iter().all(|it| *it == internal_error));
+            assert!(build.has_diagnostics(program.file("a.ts")));
+        },
+    );
 }
 
 #[test]
@@ -340,7 +397,13 @@ export type Copy = Shape;
         ];
         with_program(&files, &["./main.ts"], 1, |program| {
             let shape = program.file("shape.d.ts");
-            assert!(program.files().module(program.file("main.ts")).edges.contains(&shape));
+            assert!(
+                program
+                    .files()
+                    .module(program.file("main.ts"))
+                    .edges
+                    .contains(&shape)
+            );
             let build = check_only(program);
             assert_eq!(build.has_diagnostics(shape), !skips_lib_check);
             let lowered: Vec<FileId> = build.program.lowered.iter().map(|it| it.0).collect();
@@ -411,7 +474,8 @@ export const copy = value;
     });
 }
 
-const GLOBAL_TYPES_WITHOUT_REGEXP: &str = "interface Array<T> { length: number; [index: number]: T }
+const GLOBAL_TYPES_WITHOUT_REGEXP: &str =
+    "interface Array<T> { length: number; [index: number]: T }
 interface Boolean {}
 interface CallableFunction {}
 interface Function {}
@@ -428,7 +492,10 @@ fn each_diagnostic_is_reported_once() {
         ("globals.d.ts", GLOBAL_TYPES_WITHOUT_REGEXP),
         ("main.ts", IMPORTS_DEPENDENCY),
         ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
-        ("node_modules/dep/index.ts", "const wrong: string = 1;\nexport const value = ;\n"),
+        (
+            "node_modules/dep/index.ts",
+            "const wrong: string = 1;\nexport const value = ;\n",
+        ),
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let dep = program.file("node_modules/dep/index.ts");
@@ -442,7 +509,11 @@ fn each_diagnostic_is_reported_once() {
         assert!(codes(&build.roles.diagnostics).contains(&2318));
         assert!(!codes(&build.program.diagnostics).contains(&2318));
         let is_in_dependency = |it: &BuildDiagnostic| it.diagnostic.file == Some(dep);
-        let with_roles = build.roles.diagnostics.iter().filter(|it| is_in_dependency(it));
+        let with_roles = build
+            .roles
+            .diagnostics
+            .iter()
+            .filter(|it| is_in_dependency(it));
         let mut classes = with_roles.map(|it| it.diagnostic.class);
         assert!(classes.any(|class| class == DiagnosticClass::EarlyError));
         assert!(!build.program.diagnostics.iter().any(is_in_dependency));
@@ -490,7 +561,10 @@ fn generated_text(index: usize) -> String {
     let Some(before) = index.checked_sub(1) else {
         return "let twice;\nlet twice;\nexport const value0 = 0;\n".to_owned();
     };
-    let import = format!("import {{ value{before} }} from \"./{}\";\n", generated_name(before));
+    let import = format!(
+        "import {{ value{before} }} from \"./{}\";\n",
+        generated_name(before)
+    );
     let rest = match index % 4 {
         0 => format!("let twice;\nlet twice;\nexport const value{index} = value{before};\n"),
         1 => format!("export const value{index}: number = {index};\nvalue{before};\n"),
@@ -511,7 +585,11 @@ fn check_generated_program(threads: usize) -> BuildSummary<usize> {
         assert_eq!(build.program.lowered.len(), GENERATED_FILE_COUNT);
         let second = program.file(&generated_name(2));
         assert_eq!(build.reported(second, 2322), [STOPS_BUILD]);
-        assert!(!build.reported(program.file(&generated_name(4)), 2451).is_empty());
+        assert!(
+            !build
+                .reported(program.file(&generated_name(4)), 2451)
+                .is_empty()
+        );
         build.into_summary()
     })
 }
@@ -520,7 +598,11 @@ fn check_generated_program(threads: usize) -> BuildSummary<usize> {
 fn diagnostics_do_not_depend_on_threads() {
     let on_one_thread = check_generated_program(1);
     for threads in [2, 8] {
-        assert_eq!(check_generated_program(threads), on_one_thread, "{threads} threads");
+        assert_eq!(
+            check_generated_program(threads),
+            on_one_thread,
+            "{threads} threads"
+        );
     }
 }
 
@@ -536,15 +618,30 @@ fn count_export_collisions(files: &[(&str, &str)], threads: usize) -> Vec<usize>
 fn module_reached_twice_exports_nothing_the_second_time() {
     let files = [
         ("main.ts", "import \"./top\";\n"),
-        ("top.ts", "export * from \"./first\";\nexport * from \"./second\";\n"),
-        ("first.ts", "export * from \"./shared\";\nexport const a = 1;\n"),
-        ("second.ts", "export * from \"./inner\";\nexport * from \"./other\";\n"),
-        ("inner.ts", "export * from \"./shared\";\nexport const b = 1;\n"),
+        (
+            "top.ts",
+            "export * from \"./first\";\nexport * from \"./second\";\n",
+        ),
+        (
+            "first.ts",
+            "export * from \"./shared\";\nexport const a = 1;\n",
+        ),
+        (
+            "second.ts",
+            "export * from \"./inner\";\nexport * from \"./other\";\n",
+        ),
+        (
+            "inner.ts",
+            "export * from \"./shared\";\nexport const b = 1;\n",
+        ),
         ("shared.ts", "export const x = 1;\n"),
         ("other.ts", "export const x = \"\";\n"),
     ];
     for threads in [1, 4] {
-        assert_eq!(count_export_collisions(&files, threads), [0, 1, 0, 1, 0, 0, 0]);
+        assert_eq!(
+            count_export_collisions(&files, threads),
+            [0, 1, 0, 1, 0, 0, 0]
+        );
     }
 }
 
@@ -556,7 +653,8 @@ fn row_of_export_stars_exports_every_name() {
         let text = format!("export * from \"./m{below}\";\nexport const v{index} = {index};\n");
         row.push((format!("m{index}.ts"), text));
     }
-    let main = "import * as all from \"./m7\";\nexport const sum: number = all.v0 + all.v7;\nall.v8;\n";
+    let main =
+        "import * as all from \"./m7\";\nexport const sum: number = all.v0 + all.v7;\nall.v8;\n";
     let files = row.iter().map(|(path, text)| (&path[..], &text[..]));
     let files: Vec<(&str, &str)> = files.chain([("main.ts", main)]).collect();
     for threads in [1, 4] {
@@ -569,7 +667,10 @@ fn row_of_export_stars_exports_every_name() {
 #[test]
 fn export_stars_in_a_cycle_export_every_name() {
     let files = [
-        ("main.ts", "import * as a from \"./a\";\nimport * as b from \"./b\";\nimport * as above from \"./above\";\nexport const sum: number = a.a + a.b + b.a + b.b + above.a + above.b + above.c;\nabove.d;\n"),
+        (
+            "main.ts",
+            "import * as a from \"./a\";\nimport * as b from \"./b\";\nimport * as above from \"./above\";\nexport const sum: number = a.a + a.b + b.a + b.b + above.a + above.b + above.c;\nabove.d;\n",
+        ),
         ("above.ts", "export * from \"./a\";\nexport const c = 3;\n"),
         ("a.ts", "export * from \"./b\";\nexport const a = 1;\n"),
         ("b.ts", "export * from \"./a\";\nexport const b = 2;\n"),

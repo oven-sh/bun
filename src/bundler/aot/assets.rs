@@ -109,7 +109,9 @@ fn create_embedded_file(
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {
-        data: OptionsData::Buffer { data: file.contents.into() },
+        data: OptionsData::Buffer {
+            data: file.contents.into(),
+        },
         size: Some(file.contents.len()),
         output_path: dest_path.into_boxed_slice(),
         input_path: file.path.into(),
@@ -153,7 +155,11 @@ fn create_embedded_template(
     let pathname = Fs::PathName::init(&relative);
     template.placeholder.name = pathname.base.into();
     template.placeholder.dir = pathname.dir.into();
-    template.placeholder.ext = pathname.ext.strip_prefix(b".").unwrap_or(pathname.ext).into();
+    template.placeholder.ext = pathname
+        .ext
+        .strip_prefix(b".")
+        .unwrap_or(pathname.ext)
+        .into();
     if template.needs(PlaceholderField::Hash) {
         template.placeholder.hash = Some(template.content_hash(content_hash));
     }
@@ -189,7 +195,11 @@ fn compute_name_order(files: &[OutputFile]) -> Vec<u32> {
 
 fn same_name_order(file: &OutputFile) -> (bool, u8, &[u8]) {
     let loader = file.loader;
-    (!is_runtime_require_loader(loader), loader as u8, file.src_path.text)
+    (
+        !is_runtime_require_loader(loader),
+        loader as u8,
+        file.src_path.text,
+    )
 }
 
 fn is_runtime_require_loader(loader: Loader) -> bool {
@@ -260,7 +270,9 @@ fn finish_retained_files(
     retained
         .iter()
         .map(|&index| {
-            let mut file = files[index as usize].take().expect("an index is retained once");
+            let mut file = files[index as usize]
+                .take()
+                .expect("an index is retained once");
             if file.source_map_index != u32::MAX {
                 file.source_map_index = final_indices[file.source_map_index as usize];
             }
@@ -296,15 +308,22 @@ mod tests {
         files
             .iter()
             .map(|file| {
-                (file.dest_path.to_vec(), file.value.as_slice().to_vec(), file.source_map_index)
+                (
+                    file.dest_path.to_vec(),
+                    file.value.as_slice().to_vec(),
+                    file.source_map_index,
+                )
             })
             .collect()
     }
 
     fn name_with_options(configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<u8> {
         with_test_context(configure, |context| {
-            let file =
-                SourceFile { path: b"/p/img/a.png", contents: b"image", loader: Loader::File };
+            let file = SourceFile {
+                path: b"/p/img/a.png",
+                contents: b"image",
+                loader: Loader::File,
+            };
             embedded_name(context, &file, ContentHasher::run(file.contents))
         })
     }
@@ -329,7 +348,8 @@ mod tests {
     #[test]
     fn asset_path_ignores_contents_unless_template_has_hash() {
         let ignores_contents = |naming: &'static [u8]| {
-            let configure = |options: &mut BundleOptions<'_>| options.asset_naming = Box::from(naming);
+            let configure =
+                |options: &mut BundleOptions<'_>| options.asset_naming = Box::from(naming);
             with_test_context(configure, asset_paths_ignore_contents)
         };
         assert!(!ignores_contents(b""));
@@ -353,23 +373,36 @@ mod tests {
             let describe = |embedded: EmbeddedFiles| {
                 let files = embedded.into_output_files();
                 let describe_file = |file: &OutputFile| {
-                    (file.dest_path.to_vec(), file.value.as_slice().to_vec(), file.size, file.hash)
+                    (
+                        file.dest_path.to_vec(),
+                        file.value.as_slice().to_vec(),
+                        file.size,
+                        file.hash,
+                    )
                 };
                 files.iter().map(describe_file).collect::<Vec<_>>()
             };
             let mut log = Log::init();
             let eager = EmbeddedFiles::default();
             let eager_paths = [
-                eager.embed_file(context, &file(b"/p/a.bin", b"first"), &mut log).unwrap(),
-                eager.embed_file(context, &file(b"/p/b.bin", b"second"), &mut log).unwrap(),
+                eager
+                    .embed_file(context, &file(b"/p/a.bin", b"first"), &mut log)
+                    .unwrap(),
+                eager
+                    .embed_file(context, &file(b"/p/b.bin", b"second"), &mut log)
+                    .unwrap(),
             ];
             let lazy = EmbeddedFiles::default();
             let lazy_paths = [
-                lazy.embed_file(context, &file(b"/p/a.bin", b""), &mut log).unwrap(),
-                lazy.embed_file(context, &file(b"/p/b.bin", b""), &mut log).unwrap(),
+                lazy.embed_file(context, &file(b"/p/a.bin", b""), &mut log)
+                    .unwrap(),
+                lazy.embed_file(context, &file(b"/p/b.bin", b""), &mut log)
+                    .unwrap(),
             ];
-            lazy.set_contents(context, &file(b"/p/b.bin", b"second"), &mut log).unwrap();
-            lazy.set_contents(context, &file(b"/p/a.bin", b"first"), &mut log).unwrap();
+            lazy.set_contents(context, &file(b"/p/b.bin", b"second"), &mut log)
+                .unwrap();
+            lazy.set_contents(context, &file(b"/p/a.bin", b"first"), &mut log)
+                .unwrap();
             assert_eq!(eager_paths, lazy_paths);
             assert_eq!(describe(eager), describe(lazy));
             assert_eq!(log.errors, 0);
@@ -385,8 +418,14 @@ mod tests {
 
     #[test]
     fn embedded_path_removes_leading_dot_slash() {
-        assert_eq!(embedded_path(b"/$bunfs/root/", b"./a.png"), b"/$bunfs/root/a.png");
-        assert_eq!(embedded_path(b"/$bunfs/root/", b"img/a.png"), b"/$bunfs/root/img/a.png");
+        assert_eq!(
+            embedded_path(b"/$bunfs/root/", b"./a.png"),
+            b"/$bunfs/root/a.png"
+        );
+        assert_eq!(
+            embedded_path(b"/$bunfs/root/", b"img/a.png"),
+            b"/$bunfs/root/img/a.png"
+        );
     }
 
     #[test]
@@ -436,8 +475,11 @@ mod tests {
             |context| {
                 let embedded = EmbeddedFiles::default();
                 let mut log = Log::init();
-                let image =
-                    SourceFile { path: b"/project/m.png", contents: b"m", loader: Loader::File };
+                let image = SourceFile {
+                    path: b"/project/m.png",
+                    contents: b"m",
+                    loader: Loader::File,
+                };
                 assert!(embedded.embed_file(context, &image, &mut log).is_ok());
                 embedded.embed_page_outputs(vec![
                     create_output(b"z.js", b"/z.ts", b"z", 2),
@@ -523,8 +565,11 @@ mod tests {
                 let paths = loaders
                     .iter()
                     .map(|&loader| {
-                        let file =
-                            SourceFile { path: b"/project/x.db", contents: b"bytes", loader };
+                        let file = SourceFile {
+                            path: b"/project/x.db",
+                            contents: b"bytes",
+                            loader,
+                        };
                         let path = embedded.embed_file(context, &file, &mut Log::init());
                         path.expect("the path fits")
                     })
@@ -539,7 +584,10 @@ mod tests {
     fn embedded_file_is_retained_as_asset() {
         let (paths, files) = embed_under_loaders(&[Loader::File]);
         assert_eq!(files.len(), 1);
-        assert_eq!(paths, [embedded_path(b"/$bunfs/root/", &files[0].dest_path)]);
+        assert_eq!(
+            paths,
+            [embedded_path(b"/$bunfs/root/", &files[0].dest_path)]
+        );
         assert!(files[0].dest_path.starts_with(b"./x-"));
         assert!(files[0].dest_path.ends_with(b".db"));
         assert_eq!(files[0].value.as_slice(), b"bytes");
@@ -555,12 +603,21 @@ mod tests {
             |options| options.root_dir = Box::from(&b"/project"[..]),
             |context| {
                 let path = [&b"/project/"[..], &[b'a'; bun_paths::MAX_PATH_BYTES]].concat();
-                let file = SourceFile { path: &path, contents: b"bytes", loader: Loader::File };
+                let file = SourceFile {
+                    path: &path,
+                    contents: b"bytes",
+                    loader: Loader::File,
+                };
                 let embedded = EmbeddedFiles::default();
                 let mut log = Log::init();
                 assert!(embedded.embed_file(context, &file, &mut log).is_err());
                 assert_eq!(log.errors, 1);
-                assert!(log.msgs[0].data.text.starts_with(b"the embedded file \"/project/aaa"));
+                assert!(
+                    log.msgs[0]
+                        .data
+                        .text
+                        .starts_with(b"the embedded file \"/project/aaa")
+                );
                 assert!(log.msgs[0].data.text.ends_with(b"\" is too long"));
                 assert!(embedded.check_names(&mut log).is_ok());
                 assert!(embedded.into_output_files().is_empty());
@@ -627,10 +684,26 @@ mod tests {
     #[test]
     fn push_order_does_not_change_list() {
         let mut sources = [
-            SourceFile { path: b"/project/b.png", contents: b"b", loader: Loader::File },
-            SourceFile { path: b"/project/a.wasm", contents: b"a", loader: Loader::Wasm },
-            SourceFile { path: b"/project/x.db", contents: b"x", loader: Loader::File },
-            SourceFile { path: b"/project/x.db", contents: b"x", loader: Loader::SqliteEmbedded },
+            SourceFile {
+                path: b"/project/b.png",
+                contents: b"b",
+                loader: Loader::File,
+            },
+            SourceFile {
+                path: b"/project/a.wasm",
+                contents: b"a",
+                loader: Loader::Wasm,
+            },
+            SourceFile {
+                path: b"/project/x.db",
+                contents: b"x",
+                loader: Loader::File,
+            },
+            SourceFile {
+                path: b"/project/x.db",
+                contents: b"x",
+                loader: Loader::SqliteEmbedded,
+            },
         ];
         let first = embed_files(&sources);
         sources.reverse();

@@ -423,29 +423,59 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"hot"), RuntimeCode),
         (Long(b"no-clear-screen"), Nothing),
         (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
-        (Long(b"aot"), RuntimeRequirement::Feature(Feature::AotCompiler)),
-        (Long(b"aot-log-type-mismatches"), RuntimeRequirement::Feature(Feature::AotCompiler)),
+        (
+            Long(b"aot"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (
+            Long(b"aot-log-type-mismatches"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
         (Long(b"smol"), Nothing),
         (Long(b"interactive"), Nothing),
         (Long(b"preload"), RuntimeCode),
         (Long(b"require"), RuntimeCode),
         (Long(b"import"), RuntimeCode),
-        (Long(b"inspect"), RuntimeRequirement::Feature(Feature::Inspector)),
-        (Long(b"inspect-wait"), RuntimeRequirement::Feature(Feature::Inspector)),
-        (Long(b"inspect-brk"), RuntimeRequirement::Feature(Feature::Inspector)),
-        (Long(b"cpu-prof"), RuntimeRequirement::Feature(Feature::Profilers)),
+        (
+            Long(b"inspect"),
+            RuntimeRequirement::Feature(Feature::Inspector),
+        ),
+        (
+            Long(b"inspect-wait"),
+            RuntimeRequirement::Feature(Feature::Inspector),
+        ),
+        (
+            Long(b"inspect-brk"),
+            RuntimeRequirement::Feature(Feature::Inspector),
+        ),
+        (
+            Long(b"cpu-prof"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
         (Long(b"cpu-prof-name"), Nothing),
         (Long(b"cpu-prof-dir"), Nothing),
-        (Long(b"cpu-prof-md"), RuntimeRequirement::Feature(Feature::Profilers)),
+        (
+            Long(b"cpu-prof-md"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
         (Long(b"cpu-prof-interval"), Nothing),
-        (Long(b"heap-prof"), RuntimeRequirement::Feature(Feature::Profilers)),
+        (
+            Long(b"heap-prof"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
         (Long(b"heap-prof-name"), Nothing),
         (Long(b"heap-prof-dir"), Nothing),
-        (Long(b"heap-prof-md"), RuntimeRequirement::Feature(Feature::Profilers)),
+        (
+            Long(b"heap-prof-md"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
         (Long(b"heap-prof-interval"), Nothing),
         (Long(b"if-present"), Nothing),
         (Long(b"no-install"), Nothing),
-        (Long(b"install"), RuntimeRequirement::Feature(Feature::Install)),
+        (
+            Long(b"install"),
+            RuntimeRequirement::Feature(Feature::Install),
+        ),
         (Short(b'i'), RuntimeRequirement::Feature(Feature::Install)),
         (Long(b"eval"), RuntimeCode),
         (Long(b"print"), RuntimeCode),
@@ -454,7 +484,10 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"port"), Nothing),
         (Long(b"origin"), Nothing),
         (Long(b"conditions"), Nothing),
-        (Long(b"fetch-preconnect"), RuntimeRequirement::Feature(Feature::Fetch)),
+        (
+            Long(b"fetch-preconnect"),
+            RuntimeRequirement::Feature(Feature::Fetch),
+        ),
         (Long(b"experimental-http2-fetch"), Nothing),
         (Long(b"experimental-http3-fetch"), Nothing),
         (Long(b"max-http-header-size"), Nothing),
@@ -481,8 +514,14 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"tls-min-v1.3"), Nothing),
         (Long(b"tls-max-v1.2"), Nothing),
         (Long(b"tls-max-v1.3"), Nothing),
-        (Long(b"redis-preconnect"), RuntimeRequirement::Feature(Feature::Valkey)),
-        (Long(b"sql-preconnect"), RuntimeRequirement::Feature(Feature::Sql)),
+        (
+            Long(b"redis-preconnect"),
+            RuntimeRequirement::Feature(Feature::Valkey),
+        ),
+        (
+            Long(b"sql-preconnect"),
+            RuntimeRequirement::Feature(Feature::Sql),
+        ),
         (Long(b"no-addons"), Nothing),
         (Long(b"no-ffi-cc"), Nothing),
         (Long(b"disallow-code-generation-from-strings"), Nothing),
@@ -498,9 +537,15 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"trace-env-js-stack"), WholeRuntime),
         (Long(b"trace-env-native-stack"), Nothing),
         (Long(b"trace-exit"), WholeRuntime),
-        (Long(b"expose-internals"), RuntimeRequirement::Feature(Feature::InternalForTesting)),
+        (
+            Long(b"expose-internals"),
+            RuntimeRequirement::Feature(Feature::InternalForTesting),
+        ),
         (Long(b"stack-trace-limit"), Nothing),
-        (Long(b"debug-aot"), RuntimeRequirement::Feature(Feature::AotCompiler)),
+        (
+            Long(b"debug-aot"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
         (Long(b"aot-huge-heap"), Nothing),
         (Long(b"aot-graph-fd"), Nothing),
         (Long(b"aot-checked"), Nothing),
@@ -526,7 +571,10 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"env-file"), Nothing),
         (Long(b"no-env-file"), Nothing),
         (Long(b"cwd"), Nothing),
-        (Long(b"config"), RuntimeRequirement::Feature(Feature::Bunfig)),
+        (
+            Long(b"config"),
+            RuntimeRequirement::Feature(Feature::Bunfig),
+        ),
         (Long(b"help"), RuntimeRequirement::Feature(Feature::Tools)),
         (Positional, Nothing),
     ]
@@ -2315,7 +2363,10 @@ fn parse_build_command_options(
             Global::exit(1);
         }
         if args.option(b"--outfile").is_some() {
-            Output::err_generic("--library writes a folder. Use --outdir instead of --outfile", ());
+            Output::err_generic(
+                "--library writes a folder. Use --outdir instead of --outfile",
+                (),
+            );
             Global::exit(1);
         }
         if args
@@ -2474,19 +2525,24 @@ fn parse_build_command_options(
                 }
             }
 
-            opts.target = Some(opts.target.filter(|_| !library).unwrap_or_else(|| match target {
-                b"browser" => api::Target::Browser,
-                b"node" => api::Target::Node,
-                b"macro" => {
-                    if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
-                        api::Target::BunMacro
-                    } else {
-                        api::Target::Bun
-                    }
-                }
-                b"bun" => api::Target::Bun,
-                _ => cli::invalid_target(diag, target),
-            }));
+            opts.target = Some(
+                opts.target
+                    .filter(|_| !library)
+                    .unwrap_or_else(|| match target {
+                        b"browser" => api::Target::Browser,
+                        b"node" => api::Target::Node,
+                        b"macro" => {
+                            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand)
+                            {
+                                api::Target::BunMacro
+                            } else {
+                                api::Target::Bun
+                            }
+                        }
+                        b"bun" => api::Target::Bun,
+                        _ => cli::invalid_target(diag, target),
+                    }),
+            );
 
             if opts.target.unwrap() == api::Target::Bun {
                 ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;

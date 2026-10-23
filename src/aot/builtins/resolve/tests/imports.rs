@@ -114,9 +114,17 @@ fn object_has_no_default_member() {
         (SCRIPT, "", "require(\"bun:jsc\").default"),
         (SCRIPT, "const j = require(\"bun:jsc\");", "j.default"),
         (PROGRAM, "import d from \"bun:jsc\";", "d.default"),
-        (PROGRAM, "import { default as d } from \"bun:jsc\";", "d.default"),
+        (
+            PROGRAM,
+            "import { default as d } from \"bun:jsc\";",
+            "d.default",
+        ),
         (PROGRAM, "import j = require(\"bun:jsc\");", "j.default"),
-        (PROGRAM, "import * as jsc from \"bun:jsc\";", "jsc.default.default"),
+        (
+            PROGRAM,
+            "import * as jsc from \"bun:jsc\";",
+            "jsc.default.default",
+        ),
         (PROGRAM, "import * as b from \"bun\";", "b.default"),
     ] {
         with_case(setup, &format!("{head} {member};"), |case| {
@@ -128,9 +136,21 @@ fn object_has_no_default_member() {
 #[test]
 fn module_namespace_has_default_member() {
     for (head, member, id) in [
-        ("import * as jsc from \"bun:jsc\";", "jsc.default", jsc_namespace()),
-        ("import * as jsc from \"bun:jsc\";", "(jsc as any).default", jsc_namespace()),
-        ("import * as p from \"node:process\";", "p.default", BuiltinId::Process),
+        (
+            "import * as jsc from \"bun:jsc\";",
+            "jsc.default",
+            jsc_namespace(),
+        ),
+        (
+            "import * as jsc from \"bun:jsc\";",
+            "(jsc as any).default",
+            jsc_namespace(),
+        ),
+        (
+            "import * as p from \"node:process\";",
+            "p.default",
+            BuiltinId::Process,
+        ),
     ] {
         with_case(PROGRAM, &format!("{head} {member};"), |case| {
             assert_builtin(case, member, id);
@@ -143,8 +163,14 @@ fn destructured_default() {
     for (setup, source) in [
         (SCRIPT, "const { default: x } = require(\"bun:jsc\"); x;"),
         (PROGRAM, "const { default: x } = process; x;"),
-        (PROGRAM, "import d from \"bun:jsc\"; const { default: x } = d; x;"),
-        (PROGRAM, "import * as jsc from \"bun:jsc\"; const { default: { default: x } } = jsc; x;"),
+        (
+            PROGRAM,
+            "import d from \"bun:jsc\"; const { default: x } = d; x;",
+        ),
+        (
+            PROGRAM,
+            "import * as jsc from \"bun:jsc\"; const { default: { default: x } } = jsc; x;",
+        ),
     ] {
         with_case(setup, source, |case| {
             assert_eq!(case.symbol("x"), None, "{source}");
@@ -173,15 +199,23 @@ fn require_call() {
         assert_builtin(case, "require(\"bun:jsc\")", jsc_namespace());
         assert_builtin(case, "require(\"bun:jsc\").heapStats", jsc_heap_stats());
     });
-    with_case(SCRIPT, "const { heapStats } = require(\"bun:jsc\");", |case| {
-        assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
-    });
-    with_case(SCRIPT, "require(\"node:fs\"); require(\"./b\"); require(name);", |case| {
-        assert_unresolved(case, "require(\"node:fs\")");
-        assert_unresolved(case, "require(\"./b\")");
-        assert_unresolved(case, "require(name)");
-        assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
-    });
+    with_case(
+        SCRIPT,
+        "const { heapStats } = require(\"bun:jsc\");",
+        |case| {
+            assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
+        },
+    );
+    with_case(
+        SCRIPT,
+        "require(\"node:fs\"); require(\"./b\"); require(name);",
+        |case| {
+            assert_unresolved(case, "require(\"node:fs\")");
+            assert_unresolved(case, "require(\"./b\")");
+            assert_unresolved(case, "require(name)");
+            assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
+        },
+    );
 }
 
 #[test]
@@ -193,9 +227,13 @@ fn get_builtin_module_call() {
         assert!(!case.exposes(jsc_namespace()));
         assert!(!case.exposes(BuiltinId::Process));
     });
-    with_case(PROGRAM, &format!("const {{ heapStats }} = {call};"), |case| {
-        assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
-    });
+    with_case(
+        PROGRAM,
+        &format!("const {{ heapStats }} = {call};"),
+        |case| {
+            assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
+        },
+    );
     with_case(PROGRAM, &format!("f({call});"), |case| {
         assert!(case.exposes(jsc_namespace()));
     });
@@ -203,10 +241,14 @@ fn get_builtin_module_call() {
         assert_unresolved(case, "process.getBuiltinModule(\"node:fs\")");
         assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
     });
-    with_case(PROGRAM, "process.getBuiltinModule(name).heapStats;", |case| {
-        assert_unresolved(case, "process.getBuiltinModule(name)");
-        assert!(!case.mentions(jsc_namespace()));
-    });
+    with_case(
+        PROGRAM,
+        "process.getBuiltinModule(name).heapStats;",
+        |case| {
+            assert_unresolved(case, "process.getBuiltinModule(name)");
+            assert!(!case.mentions(jsc_namespace()));
+        },
+    );
 }
 
 #[test]
@@ -223,18 +265,26 @@ fn namespace_object_exposes() {
             assert!(case.exposes(jsc_namespace()), "{source}");
         });
     }
-    with_case(PROGRAM, "import(\"node:fs\"); export * from \"node:fs\";", |case| {
-        assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
-        assert!(case.resolved.exposed().is_empty());
-    });
+    with_case(
+        PROGRAM,
+        "import(\"node:fs\"); export * from \"node:fs\";",
+        |case| {
+            assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
+            assert!(case.resolved.exposed().is_empty());
+        },
+    );
 }
 
 fn is_loaded(case: &Case<'_, '_>, module: RuntimeModule) -> bool {
-    case.resolved.loaded_modules().any(|loaded| loaded == module)
+    case.resolved
+        .loaded_modules()
+        .any(|loaded| loaded == module)
 }
 
 fn is_called(case: &Case<'_, '_>, function: RuntimeFunction) -> bool {
-    case.resolved.called_functions().any(|called| called == function)
+    case.resolved
+        .called_functions()
+        .any(|called| called == function)
 }
 
 #[test]
@@ -248,7 +298,10 @@ fn loads_and_calls() {
         "global.process.stdout;",
     ] {
         with_case(PROGRAM, source, |case| {
-            assert!(loads.iter().all(|load| is_loaded(case, load.module)), "{source}");
+            assert!(
+                loads.iter().all(|load| is_loaded(case, load.module)),
+                "{source}"
+            );
         });
     }
     with_case(PROGRAM, "process.pid;", |case| {
@@ -261,7 +314,10 @@ fn loads_and_calls() {
         data.platforms.contains(Platforms::LINUX)
     };
     with_case(PROGRAM, "process.stdout;", |case| {
-        let mut expected = calls.iter().copied().filter(|&called| exists_on_linux(called));
+        let mut expected = calls
+            .iter()
+            .copied()
+            .filter(|&called| exists_on_linux(called));
         assert!(expected.all(|called| is_called(case, called)));
     });
     with_case(PROGRAM, "1;", |case| {
@@ -275,19 +331,27 @@ fn import_mutability() {
     with_case(PROGRAM, "import d from \"bun:jsc\"; d;", |case| {
         assert_mutability(case, "d", Mutability::AlwaysLocked);
     });
-    with_case(PROGRAM, "import { heapStats } from \"bun:jsc\"; heapStats;", |case| {
-        let export = table::own_member(jsc_namespace(), find_name("heapStats")).unwrap();
-        assert_mutability(case, "heapStats", table::entry(export).mutability);
-    });
+    with_case(
+        PROGRAM,
+        "import { heapStats } from \"bun:jsc\"; heapStats;",
+        |case| {
+            let export = table::own_member(jsc_namespace(), find_name("heapStats")).unwrap();
+            assert_mutability(case, "heapStats", table::entry(export).mutability);
+        },
+    );
     with_case(SCRIPT, "require(\"bun:jsc\");", |case| {
         let predicted = Mutability::ConstantUnlessWritten;
         assert_mutability(case, "require(\"bun:jsc\")", predicted);
     });
-    with_case(PROGRAM, "import p from \"node:process\"; p; process;", |case| {
-        assert_builtin(case, "p", BuiltinId::Process);
-        assert_mutability(case, "p", Mutability::AlwaysLocked);
-        assert_mutability(case, "process", Mutability::ConstantUnlessWritten);
-    });
+    with_case(
+        PROGRAM,
+        "import p from \"node:process\"; p; process;",
+        |case| {
+            assert_builtin(case, "p", BuiltinId::Process);
+            assert_mutability(case, "p", Mutability::AlwaysLocked);
+            assert_mutability(case, "process", Mutability::ConstantUnlessWritten);
+        },
+    );
 }
 
 fn module_flags(module: RuntimeModule) -> ModuleFlags {
@@ -298,12 +362,23 @@ fn module_flags(module: RuntimeModule) -> ModuleFlags {
 fn module_exports() {
     with_case(PROGRAM, "1;", |case| {
         let find = |module, name: &str, platform| {
-            find_module_export(case.names, module, case.atoms.intern(name.as_bytes()), platform)
+            find_module_export(
+                case.names,
+                module,
+                case.atoms.intern(name.as_bytes()),
+                platform,
+            )
         };
         let linux = Platforms::LINUX;
         let jsc = RuntimeModule::BunJsc;
-        assert_eq!(find(jsc, "default", linux), ModuleExport::Found(jsc_namespace()));
-        assert_eq!(find(jsc, "heapStats", linux), ModuleExport::Found(jsc_heap_stats()));
+        assert_eq!(
+            find(jsc, "default", linux),
+            ModuleExport::Found(jsc_namespace())
+        );
+        assert_eq!(
+            find(jsc, "heapStats", linux),
+            ModuleExport::Found(jsc_heap_stats())
+        );
 
         assert!(module_flags(jsc).contains(ModuleFlags::LISTS_ALL_EXPORTS));
         assert_eq!(find(jsc, "nothing", linux), ModuleExport::Absent);
@@ -311,13 +386,22 @@ fn module_exports() {
 
         let bun = RuntimeModule::Bun;
         assert!(module_flags(bun).contains(ModuleFlags::HAS_OPEN_NAMESPACE));
-        assert_eq!(find(bun, "serve", linux), ModuleExport::Found(BuiltinId::BunServe));
+        assert_eq!(
+            find(bun, "serve", linux),
+            ModuleExport::Found(BuiltinId::BunServe)
+        );
         let open = ModuleExport::PropertyOfNamespace(BuiltinId::Bun);
         assert_eq!(find(bun, "nothing", linux), open);
 
         let process = RuntimeModule::NodeProcess;
-        assert!(!module_flags(process).intersects(ModuleFlags::LISTS_ALL_EXPORTS | ModuleFlags::HAS_OPEN_NAMESPACE));
-        assert_eq!(find(process, "pid", linux), ModuleExport::Found(BuiltinId::ProcessPid));
+        assert!(
+            !module_flags(process)
+                .intersects(ModuleFlags::LISTS_ALL_EXPORTS | ModuleFlags::HAS_OPEN_NAMESPACE)
+        );
+        assert_eq!(
+            find(process, "pid", linux),
+            ModuleExport::Found(BuiltinId::ProcessPid)
+        );
         assert_eq!(find(process, "nothing", linux), ModuleExport::Unknown);
     });
 }
@@ -333,10 +417,19 @@ fn default_export_of_module_with_source() {
         assert_eq!(find(fs, "default"), ModuleExport::Found(BuiltinId::NodeFs));
 
         let sqlite = RuntimeModule::BunSqlite;
-        assert_eq!(find(sqlite, "default"), ModuleExport::Found(BuiltinId::BunSqliteDefault));
-        assert_eq!(find(sqlite, "Database"), ModuleExport::Found(BuiltinId::BunSqliteDatabase));
+        assert_eq!(
+            find(sqlite, "default"),
+            ModuleExport::Found(BuiltinId::BunSqliteDefault)
+        );
+        assert_eq!(
+            find(sqlite, "Database"),
+            ModuleExport::Found(BuiltinId::BunSqliteDatabase)
+        );
 
-        assert_eq!(find(RuntimeModule::NodeFetch, "default"), ModuleExport::Unknown);
+        assert_eq!(
+            find(RuntimeModule::NodeFetch, "default"),
+            ModuleExport::Unknown
+        );
     });
 }
 
@@ -354,11 +447,18 @@ fn export_that_only_the_namespace_holds() {
         assert_eq!(find(abort_controller, "__esModule"), held);
         assert_eq!(find(abort_controller, "nothing"), ModuleExport::Absent);
         let module_object = table::namespace_of(abort_controller);
-        assert_eq!(find(abort_controller, "default"), ModuleExport::Found(module_object));
+        assert_eq!(
+            find(abort_controller, "default"),
+            ModuleExport::Found(module_object)
+        );
     });
-    with_case(PROGRAM, "import validate from \"utf-8-validate\"; validate;", |case| {
-        assert_eq!(case.symbol_id("validate"), None);
-    });
+    with_case(
+        PROGRAM,
+        "import validate from \"utf-8-validate\"; validate;",
+        |case| {
+            assert_eq!(case.symbol_id("validate"), None);
+        },
+    );
     let source = "import * as m from \"node:module\"; import { wrapper } from \"node:module\"; m.wrapper; m.createRequire;";
     with_case(PROGRAM, source, |case| {
         assert_eq!(case.symbol_id("wrapper"), None);
@@ -372,9 +472,8 @@ fn export_that_only_the_namespace_holds() {
 fn module_export_of_other_platform_is_not_found() {
     with_case(PROGRAM, "1;", |case| {
         let getuid = case.atoms.intern(b"getuid");
-        let find = |platform| {
-            find_module_export(case.names, RuntimeModule::NodeProcess, getuid, platform)
-        };
+        let find =
+            |platform| find_module_export(case.names, RuntimeModule::NodeProcess, getuid, platform);
         let found = ModuleExport::Found(BuiltinId::ProcessGetuid);
         assert_eq!(find(Platforms::LINUX), found);
         assert_eq!(find(Platforms::WINDOWS), ModuleExport::Unknown);
@@ -417,7 +516,12 @@ fn exports_agree_with_aliases() {
                 panic!("{} is {found:?}", export_name(export));
             };
             let alias = case.symbol_id(&format!("e{index}"));
-            assert_eq!(alias, Some(table::canonical_id(found)), "{}", export_name(export));
+            assert_eq!(
+                alias,
+                Some(table::canonical_id(found)),
+                "{}",
+                export_name(export)
+            );
         }
     });
 }

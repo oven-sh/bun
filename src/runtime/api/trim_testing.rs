@@ -97,7 +97,7 @@ fn parse_feature_names(global: &JSGlobalObject, names: &[u8]) -> JsResult<Vec<Fe
             Feature::from_name(name).ok_or_else(|| {
                 global.throw(format_args!(
                     "unknown feature \"{}\"",
-                    String::from_utf8_lossy(name)
+                    bstr::BStr::new(name)
                 ))
             })
         })
@@ -127,7 +127,7 @@ fn image_over(bytes: &[u8]) -> impl FnMut(usize, &mut [u8]) -> bool + '_ {
 fn throw_trim_error(global: &JSGlobalObject, error: &TrimError) -> JsError {
     let mut message = Vec::new();
     error.write_message(&mut message);
-    global.throw(format_args!("{}", String::from_utf8_lossy(&message)))
+    global.throw(format_args!("{}", bstr::BStr::new(&message)))
 }
 
 fn write_number(out: &mut Vec<u8>, number: u64) {
@@ -157,6 +157,7 @@ fn write_feature_index(out: &mut Vec<u8>, feature: Feature) {
     write_number(out, u64::from(feature.index()));
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // what `write_array` calls
 fn write_edge(out: &mut Vec<u8>, edge: &FeatureEdge) {
     out.extend_from_slice(b"{\"from\":");
     write_feature_index(out, edge.from);
@@ -209,6 +210,7 @@ fn write_icu_package(out: &mut Vec<u8>, package: &IcuPackage) {
     out.push(b'}');
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // what `write_array` calls
 fn write_icu_language(out: &mut Vec<u8>, language: &IcuLanguage) {
     out.extend_from_slice(b"{\"name\":");
     json_stringify(slice_to_nul(&language.name), out);

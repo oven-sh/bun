@@ -13,7 +13,15 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   const folder = String(tempDir("aot-react-compiler", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
-  test.concurrent.each(["stores-through-wider-type", "types-of-component-results", "getter-literal-exported-by-component-file", "component-file-without-cache", "component-file-loaded-by-require", "names-that-only-types-in-a-component-use", "outside-variables-that-a-component-only-assigns"])(
+  test.concurrent.each([
+    "stores-through-wider-type",
+    "types-of-component-results",
+    "getter-literal-exported-by-component-file",
+    "component-file-without-cache",
+    "component-file-loaded-by-require",
+    "names-that-only-types-in-a-component-use",
+    "outside-variables-that-a-component-only-assigns",
+  ])(
     "%s",
     name =>
       slot(async () => {
@@ -26,7 +34,9 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
         expect(compiled.stderr).toContain("[react-compiler] a cache of ");
         const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
         expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(told(plain));
+        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(
+          told(plain),
+        );
       }),
     600_000,
   );
@@ -37,14 +47,22 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
       slot(async () => {
         const main = join(programs, "component-files-with-slow-plugin", "main.ts");
         const executable = join(folder, "component-files-with-slow-plugin");
-        built(await spawned([bunExe(), "run", join(programs, "build-with-slow-plugin.ts"), main, executable], programs, bunEnv));
+        built(
+          await spawned(
+            [bunExe(), "run", join(programs, "build-with-slow-plugin.ts"), main, executable],
+            programs,
+            bunEnv,
+          ),
+        );
         const compiled = await spawned([executable], programs, bunEnv);
         expect(compiled.signal).toBeNull();
         // Each of the three components ran as the compiler's output.
         expect(compiled.stderr.match(/^\[react-compiler\] a cache of /gm)?.length).toBe(3);
         const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
         expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(told(plain));
+        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(
+          told(plain),
+        );
       }),
     600_000,
   );
@@ -54,7 +72,11 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     () =>
       slot(async () => {
         const main = join(programs, "type-error-in-component-file", "main.ts");
-        const build = await spawned([bunExe(), "run", join(programs, "build.ts"), main, join(folder, "type-error-in-component-file")], programs, bunEnv);
+        const build = await spawned(
+          [bunExe(), "run", join(programs, "build.ts"), main, join(folder, "type-error-in-component-file")],
+          programs,
+          bunEnv,
+        );
         expect({ errors: build.stderr.match(/\bTS\d+: .*/g), signal: build.signal, exitCode: build.exitCode }).toEqual({
           // The helper's error. The two inside the component are not reported: the React Compiler has replaced that function, and what is checked is no longer what was written.
           errors: ["TS2322: Type 'string' is not assignable to type 'number'."],

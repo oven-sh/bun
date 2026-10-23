@@ -100,15 +100,22 @@ impl<'a> ExecutableAdditions<'a> {
 impl InjectionAdditions<'_> {
     /// `payload` is what the executable gets, with the image as the compiler made it.
     pub(crate) fn name_executable(&mut self, payload: &[u8]) {
-        self.build_id = self.has_code.then(|| bun_exe_format::build_id::compute(payload));
+        self.build_id = self
+            .has_code
+            .then(|| bun_exe_format::build_id::compute(payload));
     }
 
     pub(crate) fn write_build_id(&mut self, template: &mut [u8]) {
-        self.build_id = self.build_id.filter(|id| bun_exe_format::build_id::write(template, id));
+        self.build_id = self
+            .build_id
+            .filter(|id| bun_exe_format::build_id::write(template, id));
     }
 
     /// False: the error has been printed.
-    pub(crate) fn edit_template(&mut self, template: &mut dyn bun_exe_format::image::ImageBytes) -> bool {
+    pub(crate) fn edit_template(
+        &mut self,
+        template: &mut dyn bun_exe_format::image::ImageBytes,
+    ) -> bool {
         self.write_build_id(template);
         let Some(plan) = self.trim else {
             return true;
@@ -128,9 +135,10 @@ impl InjectionAdditions<'_> {
     }
 
     pub(crate) fn add_macho_symbols(&mut self, file: &mut MachoFile) {
-        self.has_symbols = self
-            .symbols
-            .is_some_and(|symbols| file.add_symbols(symbols.table, symbols.image_offset).is_some());
+        self.has_symbols = self.symbols.is_some_and(|symbols| {
+            file.add_symbols(symbols.table, symbols.image_offset)
+                .is_some()
+        });
     }
 
     pub(crate) fn trims(&self) -> bool {

@@ -11,8 +11,8 @@ use smallvec::{SmallVec, smallvec};
 
 use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
-use crate::ir::{PropertyKeyId, ValueId};
 use crate::ir::generated::TypeSiteKind;
+use crate::ir::{PropertyKeyId, ValueId};
 use crate::lower::member::{self, PropertyName};
 use crate::lower::positions::{self, SiteOrigin};
 use crate::lower::{
@@ -58,8 +58,13 @@ fn has_only_written_names(hir: &File<'_>, literal: ExprId) -> bool {
     };
     properties.iter().all(|property| {
         let prop = hir[property];
-        let is_value = matches!(prop.kind, PropKind::Init | PropKind::Shorthand | PropKind::Method);
-        is_value && !is_proto_setter(&prop) && matches!(hir.runtime_property_key(property), PropKey::Name(_))
+        let is_value = matches!(
+            prop.kind,
+            PropKind::Init | PropKind::Shorthand | PropKind::Method
+        );
+        is_value
+            && !is_proto_setter(&prop)
+            && matches!(hir.runtime_property_key(property), PropKey::Name(_))
     })
 }
 
@@ -95,7 +100,10 @@ fn begin_under_dictionary_type(
     literal: ExprId,
 ) -> ObjectBuilder {
     let layout = layouts::literal_layout(lowering.file, literal);
-    lowering.file.fragment.note_literal_under_dictionary_type(layout);
+    lowering
+        .file
+        .fragment
+        .note_literal_under_dictionary_type(layout);
     let mut object = super::begin_object(lowering, layout);
     builder::open_head(lowering, &mut object);
     object
@@ -134,7 +142,11 @@ fn begins_as_copy(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> b
     if has_object_type {
         return false;
     }
-    if file.queries.is_written_under_type_variable(literal).unwrap_or(false) {
+    if file
+        .queries
+        .is_written_under_type_variable(literal)
+        .unwrap_or(false)
+    {
         return true;
     }
     let Ok(Some(written)) = file.queries.contextual_type(literal) else {
@@ -162,7 +174,12 @@ fn is_stored_as_prototype_object(file: &FileLowering<'_, '_, '_, '_>, literal: E
             child = parent;
             continue;
         }
-        let ExprKind::Assign { op: None, target, value } = hir[parent].kind else {
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[parent].kind
+        else {
             return false;
         };
         return value == child
@@ -175,7 +192,10 @@ pub(super) fn holds_dictionary_literal(
     file: &mut FileLowering<'_, '_, '_, '_>,
     root: ExprId,
 ) -> bool {
-    debug_assert!(file.decisions().is_data_literal(root), "a data literal was expected");
+    debug_assert!(
+        file.decisions().is_data_literal(root),
+        "a data literal was expected"
+    );
     if is_stored_as_prototype_object(file, root) {
         return true;
     }
@@ -243,7 +263,10 @@ fn find_key_kind(file: &mut FileLowering<'_, '_, '_, '_>, key: ExprId) -> Option
 }
 
 fn find_signature(signatures: &[IndexSignature], key: IndexKey) -> Option<IndexSignature> {
-    signatures.iter().copied().find(|signature| signature.key == key)
+    signatures
+        .iter()
+        .copied()
+        .find(|signature| signature.key == key)
 }
 
 // Which pattern a key matches depends on its text, so beside a pattern nothing is said about a key that has only a kind.
@@ -361,7 +384,10 @@ fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
     let prop = hir[props.at(0)];
     prop.kind == PropKind::Init
         && is_proto_setter(&prop)
-        && matches!(hir[hir.skip_type_assertions(prop.value)].kind, ExprKind::Null)
+        && matches!(
+            hir[hir.skip_type_assertions(prop.value)].kind,
+            ExprKind::Null
+        )
 }
 
 pub(super) fn lower_object_literal(
@@ -385,10 +411,16 @@ pub(super) fn lower_object_literal(
     }
     let is_prototype_object = is_stored_as_prototype_object(lowering.file, literal);
     let is_copy = !is_prototype_object && begins_as_copy(lowering.file, literal);
-    let dictionary = if is_copy { None } else { find_dictionary(lowering.file, literal) };
+    let dictionary = if is_copy {
+        None
+    } else {
+        find_dictionary(lowering.file, literal)
+    };
     let mut rest = props.iter();
     let mut object = match dictionary {
-        Some(_) if is_marked_literal(lowering.file, literal) => begin_under_dictionary_type(lowering, literal),
+        Some(_) if is_marked_literal(lowering.file, literal) => {
+            begin_under_dictionary_type(lowering, literal)
+        }
         Some(_) => super::begin_dictionary(lowering),
         None if is_prototype_object => super::begin_dictionary(lowering),
         None if is_copy => {
@@ -430,9 +462,11 @@ fn ends_in_literal_of_plain_members(file: &FileLowering<'_, '_, '_, '_>, source:
     let is_dead = |arm: ExprId| file.decisions().is_dead_expr(arm);
     match hir[source].kind {
         ExprKind::Object(_) => has_only_plain_members(hir, source),
-        ExprKind::Binary { op: BinOp::And, right, .. } => {
-            !is_dead(right) && ends_in_literal_of_plain_members(file, right)
-        }
+        ExprKind::Binary {
+            op: BinOp::And,
+            right,
+            ..
+        } => !is_dead(right) && ends_in_literal_of_plain_members(file, right),
         ExprKind::Cond { branches, .. } => {
             let Branches { yes, no } = hir.branches(branches);
             !is_dead(yes)

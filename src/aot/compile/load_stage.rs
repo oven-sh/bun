@@ -6,6 +6,7 @@ use crate::load::fold_inputs::{
     create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+use crate::load::named_loads::resolve_loads_through_imported_loaders;
 use crate::load::runtime_host::{RuntimeHost, RuntimeHostInput};
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::collect_runtime_roots;
@@ -152,8 +153,10 @@ impl<'a> Build<'a> {
         let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
         let messages = LoadMessages::default();
         let typed_packages = TypedPackages::new(&disk, &from_native(&options.load.project_root));
-        let provided = messages
-            .with_log(|log| self.provider.fold_options(application_session.arena(), &atoms, log));
+        let provided = messages.with_log(|log| {
+            self.provider
+                .fold_options(application_session.arena(), &atoms, log)
+        });
         let application_fold = create_application_fold_inputs(&ApplicationFoldRequest {
             provided,
             arena: application_session.arena(),
@@ -250,6 +253,7 @@ impl<'a> Build<'a> {
         })
     }
 
+    #[allow(clippy::needless_pass_by_value)] // taken apart
     fn load_projects_once<R>(
         &mut self,
         shared: &SharedLoadInputs<'_, '_>,
@@ -270,6 +274,7 @@ impl<'a> Build<'a> {
             read_assets(scope, host);
         }
         self.keep_import_graph(application.files());
+        resolve_loads_through_imported_loaders(application.files());
 
         let started = Instant::now();
         let roots =
@@ -309,7 +314,8 @@ impl<'a> Build<'a> {
             left_out_bodies: None,
         };
         let session = shared.sessions.runtime;
-        let runtime = self.load_project(session, &runtime_host, &runtime_request, shared.messages)?;
+        let runtime =
+            self.load_project(session, &runtime_host, &runtime_request, shared.messages)?;
         self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
         let programs = PerProject {
@@ -489,7 +495,9 @@ fn find_defined_string(
     atoms: &Interner<'_>,
     path: &[u8],
 ) -> Option<Vec<u8>> {
-    let define = defines.iter().rfind(|define| dotted_path(define.path, atoms) == path)?;
+    let define = defines
+        .iter()
+        .rfind(|define| dotted_path(define.path, atoms) == path)?;
     match define.value {
         DefineValue::Constant(Constant::String(text)) => Some(atoms.bytes(text).to_vec()),
         DefineValue::Constant(
@@ -572,7 +580,13 @@ mod tests {
                 &session,
                 &atoms,
             ),
-            define(global(b"MODE"), &[], string(b"test", &atoms), &session, &atoms),
+            define(
+                global(b"MODE"),
+                &[],
+                string(b"test", &atoms),
+                &session,
+                &atoms,
+            ),
             define(
                 DefineRoot::ImportMeta,
                 &[b"env", b"MODE"],
@@ -626,7 +640,11 @@ mod tests {
             DefineValue::GlobalPath(renamed),
         ] {
             let defines = [define(mode, &[], value, &session, &atoms)];
-            assert_eq!(find_defined_string(&defines, &atoms, b"MODE"), None, "{value:?}");
+            assert_eq!(
+                find_defined_string(&defines, &atoms, b"MODE"),
+                None,
+                "{value:?}"
+            );
         }
     }
 
@@ -634,7 +652,10 @@ mod tests {
         const NAME: &[u8] = b"CAN_LOAD_CODE_AT_RUN_TIME";
         let files = [
             ("a.ts", "import 'node:path';"),
-            ("/$bun/js/node/path.ts", "export default CAN_LOAD_CODE_AT_RUN_TIME;"),
+            (
+                "/$bun/js/node/path.ts",
+                "export default CAN_LOAD_CODE_AT_RUN_TIME;",
+            ),
         ];
         let mut project = TestProject::new(&files, &default_settings());
         project.aot.admits_inspector = admits_inspector;
@@ -646,7 +667,10 @@ mod tests {
         let decided = build.with_loaded_projects(|_, loaded| {
             let runtime = loaded.project(ProjectId::Runtime);
             let files = runtime.loaded.files();
-            let file = runtime.sources.runtime_module_file(RuntimeModule::NodePath).unwrap();
+            let file = runtime
+                .sources
+                .runtime_module_file(RuntimeModule::NodePath)
+                .unwrap();
             let mut exprs = files.hir(file).exprs.iter();
             let index = exprs.position(|expr| {
                 matches!(expr.kind, ExprKind::Ident(atom) if files.atoms.bytes(atom) == NAME)

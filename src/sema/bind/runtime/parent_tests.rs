@@ -49,8 +49,14 @@ fn with_and_directive_parents() {
         bound.parent_of_expr(program.directive_text),
         Parent::Stmt(program.directive)
     );
-    assert_eq!(bound.parent_of_expr(program.object), Parent::Stmt(program.with));
-    assert_eq!(bound.parent_of_stmt(program.body), Parent::Stmt(program.with));
+    assert_eq!(
+        bound.parent_of_expr(program.object),
+        Parent::Stmt(program.with)
+    );
+    assert_eq!(
+        bound.parent_of_stmt(program.body),
+        Parent::Stmt(program.with)
+    );
     assert_eq!(bound.parent_of_stmt(program.with), Parent::File);
     let count = |tag: StmtTag| bound.kind_counts[kind_counts::STMTS + tag as usize];
     assert_eq!(count(StmtTag::Block), 1);
@@ -64,7 +70,10 @@ fn unreferenced_expression_has_no_parent() {
     let mut bound = BoundBuilder::default();
     assert!(!fill_in::<Growable, true>(&program.file, &mut bound));
     assert_eq!(bound.parent_of_expr(unreferenced), Parent::None);
-    assert_eq!(bound.parent_of_expr(program.object), Parent::Stmt(program.with));
+    assert_eq!(
+        bound.parent_of_expr(program.object),
+        Parent::Stmt(program.with)
+    );
 }
 
 #[test]

@@ -215,7 +215,7 @@ impl Checker<'_, '_> {
             (None, Some(setter)) => (setter, 2502),
             // tsgo reports it on the set accessor, which may be nil.
             _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
-                match setter.or(auto_accessor.filter(|_| self.files.is_compile_build())) {
+                match setter.or_else(|| auto_accessor.filter(|_| self.files.is_compile_build())) {
                     Some(accessor) => (accessor, 2502),
                     None => {
                         let err = Reported::new(NOWHERE, 2502, held(vec![name]));

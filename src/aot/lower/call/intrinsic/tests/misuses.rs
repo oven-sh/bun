@@ -92,7 +92,9 @@ fn offset_of(source: &str, text: &str) -> u32 {
 
 fn collect_misuses(files: &[(&str, &str)]) -> Vec<(u32, BString)> {
     let lowered = lower_files(files);
-    let diagnostics = lowered.files().flat_map(|lowered| lowered.diagnostics.iter());
+    let diagnostics = lowered
+        .files()
+        .flat_map(|lowered| lowered.diagnostics.iter());
     let misuses = diagnostics.filter(|diagnostic| diagnostic.code == Code::InvalidRuntimeSource);
     let mut misuses: Vec<(u32, BString)> = misuses
         .map(|diagnostic| {

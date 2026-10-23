@@ -229,7 +229,10 @@ impl Writer<'_, '_> {
 
     fn identifier(&mut self, expression: ExprId, name: Atom) {
         let bound = self.input.bound;
-        if bound.dynamic_lookup_scope(NodeData::Expr(expression)).is_some() {
+        if bound
+            .dynamic_lookup_scope(NodeData::Expr(expression))
+            .is_some()
+        {
             self.is_unsupported = true;
             return;
         }

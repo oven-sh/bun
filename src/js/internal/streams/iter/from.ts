@@ -5,12 +5,7 @@
 // Creates normalized byte stream iterables from various input types.
 // Handles recursive flattening of nested iterables and protocol conversions.
 
-const {
-  isAnyArrayBuffer,
-  isPromise,
-  isTypedArray,
-  isUint8Array,
-} = require("node:util/types");
+const { isAnyArrayBuffer, isPromise, isTypedArray, isUint8Array } = require("node:util/types");
 
 const { kValidatedSource, toStreamable, toAsyncStreamable } = require("internal/streams/iter/types");
 // A symbol that a pattern takes out of `require(..)` is a plain `symbol` for the type checker: `x[key as Keys["key"]]` says which.

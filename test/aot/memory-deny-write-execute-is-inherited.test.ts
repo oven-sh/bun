@@ -1,13 +1,14 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { expect } from "bun:test";
-import { built, spawned } from "./run-programs";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { built, spawned } from "./run-programs";
+import { describe, test } from "./supported";
 
 const libc = JSON.stringify(isLinux ? libcPathForDlopen() : "");
-const prctl = "prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 }";
+const prctl =
+  "prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 }";
 
 const launcher = `import { dlopen, FFIType, ptr } from "bun:ffi";
 const libc = dlopen(${libc}, { ${prctl}, execv: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } });
@@ -74,7 +75,9 @@ const sharedNames = readdirSync(shared)
 function whyItCannotBeShown() {
   const getMDWE = 66;
   try {
-    const { symbols } = dlopen(libcPathForDlopen(), { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } });
+    const { symbols } = dlopen(libcPathForDlopen(), {
+      prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+    });
     return symbols.prctl(getMDWE, 0, 0, 0, 0) < 0 ? "this kernel has no PR_SET_MDWE, which came with Linux 6.3" : "";
   } catch (error) {
     return String(error);
@@ -83,48 +86,81 @@ function whyItCannotBeShown() {
 const obstacle = isLinux ? whyItCannotBeShown() : "it is a request to Linux";
 if (isLinux && obstacle) console.error(`SKIPPED: test/aot/memory-deny-write-execute-is-inherited.test.ts: ${obstacle}`);
 
-const tsconfigWithTypesOfBun = JSON.stringify({ compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] } });
+const tsconfigWithTypesOfBun = JSON.stringify({
+  compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] },
+});
 
 async function build(directory: string, name: string) {
   const executable = join(directory, name);
-  built(await spawned([bunExe(), "build", "--compile", "--aot", join(directory, name + ".ts"), "--outfile", executable], directory, bunEnv));
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", join(directory, name + ".ts"), "--outfile", executable],
+      directory,
+      bunEnv,
+    ),
+  );
   return executable;
 }
 
 const free = (cmd: string[], directory: string) => spawned(cmd, directory, bunEnv);
-const inherited = (cmd: string[], directory: string) => spawned([bunExe(), join(directory, "launcher.ts"), ...cmd], directory, bunEnv);
-const restricted = { stdout: JSON.stringify({ bits: 1, isGranted: false, compiler: "ERR_FFI_CC_DISABLED" }) + "\n", stderr: "", exitCode: 0, signal: null };
+const inherited = (cmd: string[], directory: string) =>
+  spawned([bunExe(), join(directory, "launcher.ts"), ...cmd], directory, bunEnv);
+const restricted = {
+  stdout: JSON.stringify({ bits: 1, isGranted: false, compiler: "ERR_FFI_CC_DISABLED" }) + "\n",
+  stderr: "",
+  exitCode: 0,
+  signal: null,
+};
 
 describe.skipIf(!!obstacle)("an executable that is started with memory-deny-write-execute already on", () => {
   test("leaves the request as the launcher made it", async () => {
-    using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "state.ts": state, "twice.c": "int twice(int x) { return 2 * x; }\n" });
+    using dir = tempDir("aot-mdwe-inherited", {
+      "launcher.ts": launcher,
+      "state.ts": state,
+      "twice.c": "int twice(int x) { return 2 * x; }\n",
+    });
     const directory = String(dir);
-    expect(await inherited([await build(directory, "state"), join(directory, "twice.c")], directory)).toEqual(restricted);
+    expect(await inherited([await build(directory, "state"), join(directory, "twice.c")], directory)).toEqual(
+      restricted,
+    );
   }, 120_000);
 
   test("hands it on to an executable that it starts", async () => {
-    using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "state.ts": state, "starts-another-executable.ts": own["starts-another-executable"], "twice.c": "int twice(int x) { return 2 * x; }\n" });
+    using dir = tempDir("aot-mdwe-inherited", {
+      "launcher.ts": launcher,
+      "state.ts": state,
+      "starts-another-executable.ts": own["starts-another-executable"],
+      "twice.c": "int twice(int x) { return 2 * x; }\n",
+    });
     const directory = String(dir);
     const [parent, child] = [await build(directory, "starts-another-executable"), await build(directory, "state")];
     expect(await inherited([parent, child, join(directory, "twice.c")], directory)).toEqual(restricted);
   }, 120_000);
 
-  test.each(["hello", "a-worker"])("%s", async name => {
-    using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, [name + ".ts"]: own[name] });
-    const directory = String(dir);
-    const executable = await build(directory, name);
-    const expected = await free([executable], directory);
-    expect(expected).toEqual({ stdout: expect.stringMatching(/./), stderr: "", exitCode: 0, signal: null });
-    expect(await inherited([executable], directory)).toEqual(expected);
-  }, 120_000);
+  test.each(["hello", "a-worker"])(
+    "%s",
+    async name => {
+      using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, [name + ".ts"]: own[name] });
+      const directory = String(dir);
+      const executable = await build(directory, name);
+      const expected = await free([executable], directory);
+      expect(expected).toEqual({ stdout: expect.stringMatching(/./), stderr: "", exitCode: 0, signal: null });
+      expect(await inherited([executable], directory)).toEqual(expected);
+    },
+    120_000,
+  );
 
-  test.each(sharedNames)("%s", async name => {
-    using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "tsconfig.json": tsconfigWithTypesOfBun });
-    const directory = String(dir);
-    await Bun.write(join(directory, name + ".ts"), Bun.file(join(shared, name + ".ts")));
-    const executable = await build(directory, name);
-    const expected = await free([executable], directory);
-    expect(expected).toEqual({ stdout: expect.stringMatching(/./), stderr: "", exitCode: 0, signal: null });
-    expect(await inherited([executable], directory)).toEqual(expected);
-  }, 120_000);
+  test.each(sharedNames)(
+    "%s",
+    async name => {
+      using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "tsconfig.json": tsconfigWithTypesOfBun });
+      const directory = String(dir);
+      await Bun.write(join(directory, name + ".ts"), Bun.file(join(shared, name + ".ts")));
+      const executable = await build(directory, name);
+      const expected = await free([executable], directory);
+      expect(expected).toEqual({ stdout: expect.stringMatching(/./), stderr: "", exitCode: 0, signal: null });
+      expect(await inherited([executable], directory)).toEqual(expected);
+    },
+    120_000,
+  );
 });

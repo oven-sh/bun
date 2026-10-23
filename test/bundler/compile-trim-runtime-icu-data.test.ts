@@ -129,7 +129,15 @@ const files = {
   `,
 };
 
-const features = ["IntlSegmenter", "IntlDisplayNames", "IntlOther", "IntlCollation", "IntlUnits", "IntlDateTimeFormat", "IntlNumberFormat"];
+const features = [
+  "IntlSegmenter",
+  "IntlDisplayNames",
+  "IntlOther",
+  "IntlCollation",
+  "IntlUnits",
+  "IntlDateTimeFormat",
+  "IntlNumberFormat",
+];
 const without = (...kept: string[]) => features.filter(feature => !kept.includes(feature));
 
 describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's data", () => {
@@ -169,14 +177,21 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's dat
     expect(kept - forcedOut).toBeGreaterThan(8_000_000);
   });
 
-  test.skipIf(!isLinux && !isWindows)("a program that doesn't use Intl has no rules and dictionaries for breaking text", async () => {
-    using dir = tempDir("compile-trim-runtime-icu-data", files);
-    const folder = String(dir);
-    const named = await build(folder, "names-Intl.ts", "named", []);
-    const notNamed = await build(folder, "hello.ts", "not-named", []);
-    expect(named - notNamed).toBeGreaterThan(2_500_000);
-    expect(await run([join(folder, "not-named")], folder)).toMatchObject({ stdout: "hello world\n", stderr: "", exitCode: 0 });
-  });
+  test.skipIf(!isLinux && !isWindows)(
+    "a program that doesn't use Intl has no rules and dictionaries for breaking text",
+    async () => {
+      using dir = tempDir("compile-trim-runtime-icu-data", files);
+      const folder = String(dir);
+      const named = await build(folder, "names-Intl.ts", "named", []);
+      const notNamed = await build(folder, "hello.ts", "not-named", []);
+      expect(named - notNamed).toBeGreaterThan(2_500_000);
+      expect(await run([join(folder, "not-named")], folder)).toMatchObject({
+        stdout: "hello world\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test("dates, URLs, normalization and case do not need it", async () => {
     await runsLikeUntrimmed("names-none.ts", without());
@@ -212,21 +227,27 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's dat
       const folder = String(dir);
       await build(folder, `uses-${feature}.ts`, "forced-out", [feature]);
       const failed = await run([join(folder, "forced-out")], folder);
-      expect({ stderr: failed.stderr, saysSo: saysFeatureWasRemoved(failed.stderr, featureNamed(feature)) }).toEqual({ stderr: failed.stderr, saysSo: true });
+      expect({ stderr: failed.stderr, saysSo: saysFeatureWasRemoved(failed.stderr, featureNamed(feature)) }).toEqual({
+        stderr: failed.stderr,
+        saysSo: true,
+      });
       expect(failed).toMatchObject({ stdout: "", signalCode: null });
       expect([70, 1]).toContain(failed.exitCode);
     });
   }
 
-  test.skipIf(!isLinux && !isWindows)("units: with them forced out, formatting with a unit throws a TypeError", async () => {
-    using dir = tempDir("compile-trim-runtime-icu-data", files);
-    const folder = String(dir);
-    await build(folder, "uses-IntlUnits.ts", "forced-out", ["IntlUnits"]);
-    expect(await run([join(folder, "forced-out")], folder)).toEqual({
-      stdout: `unit TypeError: Failed to initialize NumberFormat\nplain "3,5"\n`,
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
+  test.skipIf(!isLinux && !isWindows)(
+    "units: with them forced out, formatting with a unit throws a TypeError",
+    async () => {
+      using dir = tempDir("compile-trim-runtime-icu-data", files);
+      const folder = String(dir);
+      await build(folder, "uses-IntlUnits.ts", "forced-out", ["IntlUnits"]);
+      expect(await run([join(folder, "forced-out")], folder)).toEqual({
+        stdout: `unit TypeError: Failed to initialize NumberFormat\nplain "3,5"\n`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 });

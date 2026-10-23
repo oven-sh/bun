@@ -196,8 +196,14 @@ mod tests {
         (ExplainSet::RUNTIME_USE, "ExplainSet(RUNTIME_USE)"),
         (ExplainSet::DECLINES, "ExplainSet(DECLINES)"),
         (ExplainSet::ALLOCATIONS, "ExplainSet(ALLOCATIONS)"),
-        (ExplainSet::ONLY_UNKNOWN_CODE, "ExplainSet(ONLY_UNKNOWN_CODE)"),
-        (ExplainSet::ONLY_UNPROVEN_TYPE, "ExplainSet(ONLY_UNPROVEN_TYPE)"),
+        (
+            ExplainSet::ONLY_UNKNOWN_CODE,
+            "ExplainSet(ONLY_UNKNOWN_CODE)",
+        ),
+        (
+            ExplainSet::ONLY_UNPROVEN_TYPE,
+            "ExplainSet(ONLY_UNPROVEN_TYPE)",
+        ),
         (ExplainSet::ONLY_MUTATION, "ExplainSet(ONLY_MUTATION)"),
         (ExplainSet::STATISTICS, "ExplainSet(STATISTICS)"),
         (ExplainSet::ONLY_LIMIT, "ExplainSet(ONLY_LIMIT)"),

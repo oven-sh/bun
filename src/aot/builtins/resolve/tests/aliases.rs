@@ -157,10 +157,14 @@ fn entity_name_alias() {
         assert_builtin(case, "m.floor", BuiltinId::MathFloor);
         assert!(!case.exposes(BuiltinId::Math));
     });
-    with_case(PROGRAM, "import nothing = Math.notThere; nothing;", |case| {
-        assert_unresolved(case, "nothing");
-        assert!(case.mentions(BuiltinId::Math));
-    });
+    with_case(
+        PROGRAM,
+        "import nothing = Math.notThere; nothing;",
+        |case| {
+            assert_unresolved(case, "nothing");
+            assert!(case.mentions(BuiltinId::Math));
+        },
+    );
 }
 
 #[test]

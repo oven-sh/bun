@@ -131,7 +131,11 @@ fn compiled_files_order() {
         with_program(&IMPORT_CYCLE, &["./main.ts"], threads, |program| {
             let files = program.files();
             let compiled_files = names_of(files, files.compiled_files());
-            assert_eq!(compiled_files, ["b.ts", "a.ts", "main.ts"], "{threads} threads");
+            assert_eq!(
+                compiled_files,
+                ["b.ts", "a.ts", "main.ts"],
+                "{threads} threads"
+            );
 
             let code_edges = names_of(files, files.module(program.file("main.ts")).code_edges);
             assert_eq!(code_edges, ["a.ts", "b.ts", "declared.d.ts"]);
@@ -146,11 +150,16 @@ fn compiled_files_order() {
 
 #[test]
 fn compiled_files_follow_entry_point_order() {
-    with_program(&IMPORT_CYCLE, &["./prelude.ts", "./main.ts"], 1, |program| {
-        let files = program.files();
-        let compiled_files = names_of(files, files.compiled_files());
-        assert_eq!(compiled_files, ["prelude.ts", "b.ts", "a.ts", "main.ts"]);
-    });
+    with_program(
+        &IMPORT_CYCLE,
+        &["./prelude.ts", "./main.ts"],
+        1,
+        |program| {
+            let files = program.files();
+            let compiled_files = names_of(files, files.compiled_files());
+            assert_eq!(compiled_files, ["prelude.ts", "b.ts", "a.ts", "main.ts"]);
+        },
+    );
     with_program(&IMPORT_CYCLE, &["./b.ts", "./main.ts"], 1, |program| {
         let files = program.files();
         let compiled_files = names_of(files, files.compiled_files());

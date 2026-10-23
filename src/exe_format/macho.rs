@@ -11,8 +11,14 @@ use bun_core::env_var::feature_flag;
 
 const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-const _: () = assert!(is_padded_name(&SEGNAME_BUN, KnownSection::Payload.names().macho_segment));
-const _: () = assert!(is_padded_name(&SECTNAME, KnownSection::Payload.names().macho_section));
+const _: () = assert!(is_padded_name(
+    &SEGNAME_BUN,
+    KnownSection::Payload.names().macho_segment
+));
+const _: () = assert!(is_padded_name(
+    &SECTNAME,
+    KnownSection::Payload.names().macho_section
+));
 
 const fn is_padded_name(padded: &[u8; 16], name: &[u8]) -> bool {
     if name.len() >= padded.len() {
@@ -95,7 +101,8 @@ impl MachoFile {
         let header = read_macho_header(obj_file)?;
 
         let size_with_blob = obj_file.len() + blob_to_embed_length;
-        let signature_capacity = MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
+        let signature_capacity =
+            MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
         let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_capacity);
         // SAFETY: the capacity holds `obj_file.len()` bytes, all of which are written before the length says so.
         unsafe {
@@ -201,7 +208,11 @@ impl MachoFile {
                                         nreloc: 0,
                                         flags: macho::S_REGULAR
                                             | macho::S_ATTR_NO_DEAD_STRIP
-                                            | if has_code { macho::S_ATTR_SOME_INSTRUCTIONS } else { 0 },
+                                            | if has_code {
+                                                macho::S_ATTR_SOME_INSTRUCTIONS
+                                            } else {
+                                                0
+                                            },
                                         reserved1: 0,
                                         reserved2: 0,
                                         reserved3: 0,
@@ -789,13 +800,18 @@ impl MachoSigner {
         let hashes_start = self.data.len();
         self.data.resize(hashes_start + hashes_size, 0);
         let (hashed, hashes) = self.data.split_at_mut(hashes_start);
-        let pages_per_thread = total_pages.div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16)).max(1024);
+        let pages_per_thread = total_pages
+            .div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16))
+            .max(1024);
         std::thread::scope(|scope| {
             let page_runs = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
             for (pages, hashes) in page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
                 scope.spawn(move || {
                     // The last partial page is hashed unpadded, as codesign does.
-                    for (page, hash) in pages.chunks(PAGE_SIZE).zip(hashes.as_chunks_mut::<HASH_SIZE>().0) {
+                    for (page, hash) in pages
+                        .chunks(PAGE_SIZE)
+                        .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
+                    {
                         let mut digest = [0u8; HASH_SIZE];
                         sha256_hash(page, &mut digest);
                         hash.copy_from_slice(&digest);

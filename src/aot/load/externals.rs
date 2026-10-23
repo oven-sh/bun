@@ -138,7 +138,11 @@ mod tests {
             ..Externals::default()
         };
         assert_external(&externals, b"/q", &[b"/p/src/a.js", b"/p/src/c.js"]);
-        assert_not_external(&externals, b"/p/src", &[b"/p/src/b.js", b"/p/src", b"/a.js"]);
+        assert_not_external(
+            &externals,
+            b"/p/src",
+            &[b"/p/src/b.js", b"/p/src", b"/a.js"],
+        );
     }
 
     #[cfg(unix)]

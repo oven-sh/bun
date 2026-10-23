@@ -1892,274 +1892,171 @@ res.setMaxListeners(value), a symbol
     again
     the connection serves another request: true
 res.statusCode = value, 0
-    throws RangeError ERR_OUT_OF_RANGE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
+res.statusCode = value, writeHead(), 0
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     until the connection closed: ""
     after the response: res[destroyed closed statusCode=0 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, 1
-    throws RangeError ERR_OUT_OF_RANGE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
+res.statusCode = value, writeHead(), 1
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     until the connection closed: ""
     after the response: res[destroyed closed statusCode=1 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a numeric string
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode="5000" statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a numeric string
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode="5000" statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a status code string
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode="201" statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, an object with valueOf()
+    done
+    until the connection closed: "HTTP/1.1 201 Created\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=201 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
 res.statusCode = value, an empty string
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode="" statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), an empty string
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode="" statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, -1
-    throws RangeError ERR_OUT_OF_RANGE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
+res.statusCode = value, writeHead(), -1
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     until the connection closed: ""
     after the response: res[destroyed closed statusCode=-1 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, 1.5
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=1.5 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), 1.5
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=1.5 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, NaN
-    done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=NaN statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), NaN
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=NaN statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, Infinity
-    throws RangeError ERR_OUT_OF_RANGE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
+res.statusCode = value, writeHead(), Infinity
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
     until the connection closed: ""
     after the response: res[destroyed closed statusCode=Infinity statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, null
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=null statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), null
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=null statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, undefined
-    done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), undefined
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, true
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), true
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, false
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), false
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a bigint
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=10 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a bigint
+    throws TypeError
+    fallback: throws TypeError
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=10 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, an empty object
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=Object{} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), an empty object
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=Object{} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, an empty array
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=[] statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), an empty array
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=[] statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, an array of one string
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=["1"] statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), an array of one string
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=["1"] statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, an object with toString()
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=Object{toString:function toString} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-res.statusCode = value, an object with valueOf()
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=Object{valueOf:function valueOf} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), an object with toString()
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=Object{toString:function toString} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a String object
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={String} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a String object
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={String} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a Number object
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={Number} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a Number object
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={Number} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a Date
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={Date} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a Date
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={Date} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a Buffer
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={Buffer} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a Buffer
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={Buffer} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a Uint8Array
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={Uint8Array} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a Uint8Array
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={Uint8Array} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, an ArrayBuffer
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={ArrayBuffer} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), an ArrayBuffer
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={ArrayBuffer} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a DataView
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode={DataView} statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a DataView
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode={DataView} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a function
-    throws TypeError ERR_INVALID_ARG_TYPE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=function f statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+res.statusCode = value, writeHead(), a function
+    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    fallback: throws RangeError ERR_HTTP_INVALID_STATUS_CODE
+    until the connection closed: ""
+    after the response: res[destroyed closed statusCode=function f statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, a symbol
 res.statusCode = value, writeHead(), a symbol
     throws TypeError
     fallback: throws TypeError
     until the connection closed: ""
     after the response: res[destroyed closed statusCode=Symbol(s) statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), 0
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
-    until the connection closed: ""
-    after the response: res[destroyed closed statusCode=0 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), 1
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
-    until the connection closed: ""
-    after the response: res[destroyed closed statusCode=1 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a numeric string
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode="5000" statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusCode = value, writeHead(), a status code string
 res.statusCode = value, writeHead(), an object with valueOf()
     done
     until the connection closed: "HTTP/1.1 201 Created\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
     after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=201 statusMessage="Created" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-res.statusCode = value, writeHead(), an empty string
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode="" statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), -1
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
-    until the connection closed: ""
-    after the response: res[destroyed closed statusCode=-1 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), 1.5
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=1.5 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), NaN
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=NaN statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-res.statusCode = value, writeHead(), Infinity
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws RangeError ERR_OUT_OF_RANGE
-    until the connection closed: ""
-    after the response: res[destroyed closed statusCode=Infinity statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), null
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=null statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), undefined
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: done
-    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\nthrew"
-    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=undefined statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
-res.statusCode = value, writeHead(), true
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), false
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a bigint
-    throws TypeError
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=10 statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), an empty object
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=Object{} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), an empty array
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=[] statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), an array of one string
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=["1"] statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), an object with toString()
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=Object{toString:function toString} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a String object
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={String} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a Number object
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={Number} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a Date
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={Date} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a Buffer
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={Buffer} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a Uint8Array
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={Uint8Array} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), an ArrayBuffer
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={ArrayBuffer} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a DataView
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode={DataView} statusMessage=undefined shouldKeepAlive] req[complete destroyed]
-res.statusCode = value, writeHead(), a function
-    throws RangeError ERR_HTTP_INVALID_STATUS_CODE
-    fallback: throws TypeError ERR_INVALID_ARG_TYPE
-    until the connection closed: ""
-    after the response: res[headersSent destroyed closed statusCode=function f statusMessage=undefined shouldKeepAlive] req[complete destroyed]
 res.statusMessage = value, 0
     done
     response: "HTTP/1.1 200 0\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"

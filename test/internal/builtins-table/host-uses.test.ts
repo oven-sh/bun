@@ -43,7 +43,11 @@ const callWith = (columns: Partial<ModelHostCall>): ModelHostCall => ({
   result: [],
   ...columns,
 });
-const called = (columns: Partial<ModelHostCall>): ModelHostUse => ({ path: [], read: "Called", call: callWith(columns) });
+const called = (columns: Partial<ModelHostCall>): ModelHostUse => ({
+  path: [],
+  read: "Called",
+  call: callWith(columns),
+});
 const kept = (cell: string): ModelHostUse => ({ path: [], read: "Kept", cell: nameOf(cell) });
 
 const overloadTaking = (argumentCount: number, calledMembers: readonly string[] = []) =>
@@ -58,14 +62,28 @@ const overloadTaking = (argumentCount: number, calledMembers: readonly string[] 
     flow: { transfers: [], callbacks: [], propertyActions: [], handlerCalls: [] },
   }) as unknown as ModelOverload;
 
-const entry = (text: string, kind: ModelBuiltin["kind"], columns: Partial<ModelBuiltin["attachments"]> = {}, overloads: ModelOverload[] = []) =>
-  ({ text, kind, overloads, attachments: { moduleLoads: [], calledFunctions: [], ...columns } }) as unknown as ModelBuiltin;
+const entry = (
+  text: string,
+  kind: ModelBuiltin["kind"],
+  columns: Partial<ModelBuiltin["attachments"]> = {},
+  overloads: ModelOverload[] = [],
+) =>
+  ({
+    text,
+    kind,
+    overloads,
+    attachments: { moduleLoads: [], calledFunctions: [], ...columns },
+  }) as unknown as ModelBuiltin;
 
 const calling = (uses: ModelCalledFunction["uses"]): ModelCalledFunction =>
   ({ function: { file: "builtins/Streams", name: "makeStream" }, condition: null, uses }) as ModelCalledFunction;
 
 const reading = (uses: ModelHostUse[] | null): ModelModuleLoad =>
-  ({ module: { specifier: "internal/printer" }, exports: [{ name: nameOf("print"), uses }], condition: null }) as ModelModuleLoad;
+  ({
+    module: { specifier: "internal/printer" },
+    exports: [{ name: nameOf("print"), uses }],
+    condition: null,
+  }) as ModelModuleLoad;
 
 const hostObject = (cell: string, columns: Partial<ModelHostObject> = {}): ModelHostObject => ({
   cell: nameOf(cell),
@@ -82,7 +100,13 @@ function problemsOf(columns: Partial<CheckedModel>): readonly string[] {
   const model: CheckedModel = {
     builtins,
     overloads: builtins.flatMap(builtin => builtin.overloads),
-    startup: { modules: [], loads: [], functionsCalledWithLoads: [], namesOfMethodsCallingLoads: [], moduleLoaderFunctions: [] },
+    startup: {
+      modules: [],
+      loads: [],
+      functionsCalledWithLoads: [],
+      namesOfMethodsCallingLoads: [],
+      moduleLoaderFunctions: [],
+    },
     hostObjects: [],
     namedMemberCalls: [],
     hostMethodCalls: [],
@@ -126,25 +150,39 @@ test("a row says what native code does with an export, a function and a result",
 test("a call without a list of arguments or of uses leaves them open, and b.dropped closes the result", () => {
   const open = b.calledByHost({ times: "Later" });
   expect(open).toMatchObject({ read: "Called", call: { arguments: undefined, result: undefined } });
-  expect(b.calledByHost({ times: "Later", args: [], result: b.dropped })).toMatchObject({ call: { arguments: [], result: [] } });
+  expect(b.calledByHost({ times: "Later", args: [], result: b.dropped })).toMatchObject({
+    call: { arguments: [], result: [] },
+  });
 });
 
 test("where no call of a built-in is under way there is no operand to name", () => {
-  expect(() => b.calledByHost({ times: "Once", args: [b.operand("options")] })).toThrow("Operand: where no call of a built-in is under way");
+  expect(() => b.calledByHost({ times: "Once", args: [b.operand("options")] })).toThrow(
+    "Operand: where no call of a built-in is under way",
+  );
   expect(() => b.calledByHost({ times: "Once", this: b.result })).toThrow("Result: where no call");
-  expect(() => b.hostObject("Realm.options", { fields: { depth: b.ownValues("options") } })).toThrow("OwnValues: where no call");
+  expect(() => b.hostObject("Realm.options", { fields: { depth: b.ownValues("options") } })).toThrow(
+    "OwnValues: where no call",
+  );
   expect(() => b.namedMemberCall("print", [b.slot("this", "element")])).toThrow("Slot: where no call");
 });
 
 test("a field of a host object lists everything that may be put there", () => {
-  expect(b.hostObject("Realm.options", { fields: { stylize: [b.nativeCell("A"), b.nativeCell("B")], depth: b.f64 } })).toEqual([
+  expect(
+    b.hostObject("Realm.options", { fields: { stylize: [b.nativeCell("A"), b.nativeCell("B")], depth: b.f64 } }),
+  ).toEqual([
     {
       declares: "HostObject",
       cell: "Realm.options",
       function: null,
       prototype: "Object.prototype",
       fields: [
-        { name: "stylize", values: [{ place: "NativeCell", cell: "A" }, { place: "NativeCell", cell: "B" }] },
+        {
+          name: "stylize",
+          values: [
+            { place: "NativeCell", cell: "A" },
+            { place: "NativeCell", cell: "B" },
+          ],
+        },
         { name: "depth", values: [{ place: "NewValue", value: { type: "Primitive", primitive: "Number" } }] },
       ],
       internalFields: [],
@@ -155,7 +193,11 @@ test("a field of a host object lists everything that may be put there", () => {
 
 test("a host object says what lies under the names that it does not list, and that it keeps strings of what is stored", () => {
   expect(
-    b.hostObject("Realm.variables", { fields: { count: b.f64 }, otherNames: b.string, keepsStringsOfStoredValues: true }),
+    b.hostObject("Realm.variables", {
+      fields: { count: b.f64 },
+      otherNames: b.string,
+      keepsStringsOfStoredValues: true,
+    }),
   ).toEqual([
     {
       declares: "HostObject",
@@ -205,7 +247,10 @@ test("rows that name what is there are taken", () => {
         called({
           thisValue: newString,
           arguments: [inCell("Realm.print"), inCell("Realm.options")],
-          result: [{ path: [nameOf("0")], read: "IsValueOf", builtin: stream }, called({ arguments: null, result: null })],
+          result: [
+            { path: [nameOf("0")], read: "IsValueOf", builtin: stream },
+            called({ arguments: null, result: null }),
+          ],
         }),
       ]),
       calling(null),
@@ -225,31 +270,45 @@ test("a native cell that is read is written by something", () => {
   const nothingPuts = (cell: string) =>
     `nothing puts a value into the native cell ${cell}: no b.keptIn, no b.hostObject and no operand of an overload`;
   const user = (uses: ModelHostUse[]) => entry("process.stdout", "DataProperty", { calledFunctions: [calling(uses)] });
-  expect(problemsOf({ builtins: [user([called({ arguments: [inCell("Realm.lost")] })])] })).toEqual([`${row}: ${nothingPuts("Realm.lost")}`]);
-  expect(problemsOf({ builtins: [user([called({ thisValue: inCell("Realm.lost") })])] })).toEqual([`${row}: ${nothingPuts("Realm.lost")}`]);
-  expect(problemsOf({ builtins: [user([called({ result: [called({ arguments: [inCell("Realm.lost")] })] })])] })).toEqual([
+  expect(problemsOf({ builtins: [user([called({ arguments: [inCell("Realm.lost")] })])] })).toEqual([
     `${row}: ${nothingPuts("Realm.lost")}`,
   ]);
-  expect(problemsOf({ builtins: [user([called({ arguments: [inCell("Realm.kept")], result: [kept("Realm.kept")] })])] })).toEqual([]);
-  expect(problemsOf({ hostObjects: [hostObject("Realm.options", { fields: [{ name: nameOf("print"), value: inCell("Realm.lost") }] })] })).toEqual([
-    `the field print of the host object Realm.options: ${nothingPuts("Realm.lost")}`,
+  expect(problemsOf({ builtins: [user([called({ thisValue: inCell("Realm.lost") })])] })).toEqual([
+    `${row}: ${nothingPuts("Realm.lost")}`,
   ]);
+  expect(
+    problemsOf({ builtins: [user([called({ result: [called({ arguments: [inCell("Realm.lost")] })] })])] }),
+  ).toEqual([`${row}: ${nothingPuts("Realm.lost")}`]);
+  expect(
+    problemsOf({ builtins: [user([called({ arguments: [inCell("Realm.kept")], result: [kept("Realm.kept")] })])] }),
+  ).toEqual([]);
+  expect(
+    problemsOf({
+      hostObjects: [hostObject("Realm.options", { fields: [{ name: nameOf("print"), value: inCell("Realm.lost") }] })],
+    }),
+  ).toEqual([`the field print of the host object Realm.options: ${nothingPuts("Realm.lost")}`]);
 });
 
 test("a value is passed to an argument that the built-in has", () => {
   const serve = entry("Bun.serve", "Function", {}, [overloadTaking(1)]);
   const user = (argument: number) =>
-    entry("Bun.plugin", "Function", { moduleLoads: [reading([{ path: [], read: "PassedTo", builtin: serve, argument }])] });
+    entry("Bun.plugin", "Function", {
+      moduleLoads: [reading([{ path: [], read: "PassedTo", builtin: serve, argument }])],
+    });
   expect(problemsOf({ builtins: [user(0)] })).toEqual([]);
   expect(problemsOf({ builtins: [user(1)] })).toEqual([
     "Bun.plugin reads print of internal/printer: it is passed to Bun.serve, and no Call overload has argument 1",
   ]);
-  expect(problemsOf({ builtins: [user(-1)] })).toEqual(["Bun.plugin reads print of internal/printer: -1 is no index of an argument"]);
+  expect(problemsOf({ builtins: [user(-1)] })).toEqual([
+    "Bun.plugin reads print of internal/printer: -1 is no index of an argument",
+  ]);
 });
 
 test("only an entry that holds a value takes one", () => {
   const user = (builtin: ModelBuiltin) =>
-    entry("process.stdout", "DataProperty", { calledFunctions: [calling([called({ result: [{ path: [], read: "IsValueOf", builtin }] })])] });
+    entry("process.stdout", "DataProperty", {
+      calledFunctions: [calling([called({ result: [{ path: [], read: "IsValueOf", builtin }] })])],
+    });
   for (const kind of ["Constructor", "Function", "Method", "Accessor", "DataProperty"] as const) {
     expect(problemsOf({ builtins: [user(entry("process.member", kind))] })).toEqual([]);
   }
@@ -259,7 +318,8 @@ test("only an entry that holds a value takes one", () => {
 });
 
 test("further arguments follow a list, and every value that is passed has a type", () => {
-  const user = (call: Partial<ModelHostCall>) => entry("process.stdout", "DataProperty", { calledFunctions: [calling([called(call)])] });
+  const user = (call: Partial<ModelHostCall>) =>
+    entry("process.stdout", "DataProperty", { calledFunctions: [calling([called(call)])] });
   const row = "process.stdout uses makeStream of builtins/Streams";
   expect(problemsOf({ builtins: [user({ arguments: null, otherArguments: newString })] })).toEqual([
     `${row}: otherArgs follows a list of arguments, and the call has none`,
@@ -287,11 +347,24 @@ test("a host object has a cell and internal fields of its own", () => {
   expect(problemsOf({ hostObjects: [hostObject("Realm.queue"), hostObject("Realm.queue")] })).toEqual([
     "rows.builtins.ts: two host objects lie in the native cell Realm.queue",
   ]);
-  const fields = (...indexes: number[]) => hostObject("Realm.queue", { internalFields: indexes.map(index => ({ index, uses: [] })) });
+  const fields = (...indexes: number[]) =>
+    hostObject("Realm.queue", { internalFields: indexes.map(index => ({ index, uses: [] })) });
   expect(problemsOf({ hostObjects: [fields(0, 2)] })).toEqual([]);
-  expect(problemsOf({ hostObjects: [fields(2, 2)] })).toEqual(["rows.builtins.ts: the host object Realm.queue lists internal field 2 twice"]);
-  expect(problemsOf({ hostObjects: [fields(256)] })).toEqual(["rows.builtins.ts: the host object Realm.queue: 256 is no index of an internal field"]);
-  expect(problemsOf({ hostObjects: [hostObject("Realm.queue", { internalFields: [{ index: 2, uses: [called({ arguments: [inCell("Realm.lost")] })] }] })] })[0]).toStartWith(
+  expect(problemsOf({ hostObjects: [fields(2, 2)] })).toEqual([
+    "rows.builtins.ts: the host object Realm.queue lists internal field 2 twice",
+  ]);
+  expect(problemsOf({ hostObjects: [fields(256)] })).toEqual([
+    "rows.builtins.ts: the host object Realm.queue: 256 is no index of an internal field",
+  ]);
+  expect(
+    problemsOf({
+      hostObjects: [
+        hostObject("Realm.queue", {
+          internalFields: [{ index: 2, uses: [called({ arguments: [inCell("Realm.lost")] })] }],
+        }),
+      ],
+    })[0],
+  ).toStartWith(
     "internal field 2 of the host object Realm.queue: nothing puts a value into the native cell Realm.lost",
   );
 });
@@ -327,7 +400,12 @@ test("a host method that calls what is kept goes by a name that start-up lists",
     namesOfMethodsCallingLoads: listed.map(nameOf),
     moduleLoaderFunctions: [],
   });
-  const method = (cell: string) => ({ name: nameOf("print"), cell: nameOf(cell), call: callWith({ arguments: [newString] }), source });
+  const method = (cell: string) => ({
+    name: nameOf("print"),
+    cell: nameOf(cell),
+    call: callWith({ arguments: [newString] }),
+    source,
+  });
   expect(problemsOf({ startup: startup("print"), hostMethodCalls: [method("Realm.print")] })).toEqual([]);
   expect(problemsOf({ startup: startup(), hostMethodCalls: [method("Realm.print")] })).toEqual([
     "rows.builtins.ts: print is not among namesOfMethodsCallingLoads of b.startup, so nothing says that the host has methods of that name",

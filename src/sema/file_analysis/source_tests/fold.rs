@@ -155,7 +155,12 @@ const RETAINED_CALLS: &[(&str, &str)] = &[
     ("a.cjs", "with (o) { console.log(f()); }"),
 ];
 
-type DeadCalls = (&'static str, &'static str, &'static [&'static str], &'static [&'static str]);
+type DeadCalls = (
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+);
 
 const DEAD_BRANCHES: &[DeadCalls] = &[
     ("a.mjs", "if (false) a(); else b();", &["a"], &["b"]),
@@ -198,7 +203,12 @@ const SWITCH_CLAUSES: &[DeadCalls] = &[
         &["a", "c"],
         &["b"],
     ),
-    ("a.mjs", "switch (2) { case 0: a(); default: b(); case 1: c(); }", &["a"], &["b", "c"]),
+    (
+        "a.mjs",
+        "switch (2) { case 0: a(); default: b(); case 1: c(); }",
+        &["a"],
+        &["b", "c"],
+    ),
     (
         "a.mjs",
         "switch (1) { case x: a(); break; case 1: b(); break; case y: c(); break; default: d(); }",
@@ -211,10 +221,30 @@ const SWITCH_CLAUSES: &[DeadCalls] = &[
         &["a"],
         &["b", "c"],
     ),
-    ("a.mjs", r#"switch ("1") { case 1: a(); break; case "1": b(); }"#, &["a"], &["b"]),
-    ("a.mjs", "const K = 1; switch (K) { case 0: a(); break; case 1: b(); }", &["a"], &["b"]),
-    ("a.mjs", "switch (1) { case 0: function g() { a(); } case 1: g(); }", &[], &["a", "g"]),
-    ("a.mjs", "switch (x) { case 0: a(); break; default: b(); }", &[], &["a", "b"]),
+    (
+        "a.mjs",
+        r#"switch ("1") { case 1: a(); break; case "1": b(); }"#,
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "const K = 1; switch (K) { case 0: a(); break; case 1: b(); }",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "switch (1) { case 0: function g() { a(); } case 1: g(); }",
+        &[],
+        &["a", "g"],
+    ),
+    (
+        "a.mjs",
+        "switch (x) { case 0: a(); break; default: b(); }",
+        &[],
+        &["a", "b"],
+    ),
 ];
 
 const CONDITIONS_OF_UNKNOWN_VALUES: &[DeadCalls] = &[
@@ -225,18 +255,38 @@ const CONDITIONS_OF_UNKNOWN_VALUES: &[DeadCalls] = &[
     ("a.mjs", "if (!(x && 0)) a(); else b();", &["b"], &["a"]),
     ("a.mjs", "if ((f(), x && null)) a();", &["a"], &["f"]),
     ("a.mjs", "while (x && false) a();", &["a"], &[]),
-    ("a.mjs", "function g() { if (x || 1) return; a(); }", &["a"], &[]),
+    (
+        "a.mjs",
+        "function g() { if (x || 1) return; a(); }",
+        &["a"],
+        &[],
+    ),
     ("a.mjs", "({ k: f() }) ? a() : b();", &["b"], &["f", "a"]),
     ("a.mjs", "[] || a();", &["a"], &[]),
     ("a.mjs", "(() => 1) ?? a();", &["a"], &[]),
     ("a.mjs", "/r/ && a();", &[], &["a"]),
-    ("a.mjs", "const O = { k: 1 }; O ? a() : b();", &["b"], &["a"]),
-    ("a.mjs", "const O = true ? { k: 1 } : undefined; if (O) a(); else b();", &["b"], &["a"]),
+    (
+        "a.mjs",
+        "const O = { k: 1 }; O ? a() : b();",
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        "const O = true ? { k: 1 } : undefined; if (O) a(); else b();",
+        &["b"],
+        &["a"],
+    ),
     ("a.ts", "if ({} as any) a(); else b();", &["b"], &["a"]),
     ("a.mjs", "x && true && a();", &[], &["a"]),
     ("a.mjs", "x || false || a();", &[], &["a"]),
     ("a.mjs", "(x ?? false) ? a() : b();", &[], &["a", "b"]),
-    ("a.mjs", "let O = { k: 1 }; O ? a() : b();", &[], &["a", "b"]),
+    (
+        "a.mjs",
+        "let O = { k: 1 }; O ? a() : b();",
+        &[],
+        &["a", "b"],
+    ),
 ];
 
 const SHORT_CIRCUITED_CHAINS: &[&str] = &[
@@ -254,39 +304,124 @@ const EVALUATED_CHAINS: &[&str] = &["x?.a.b;", "0?.a;", "(null?.a).b;", "null.a;
 
 const AFTER_EXITS: &[DeadCalls] = &[
     ("a.mjs", "function f() { return; a(); }", &["a"], &[]),
-    ("a.mjs", "function f() { b(); throw 1; a(); }", &["a"], &["b"]),
-    ("a.mjs", "function f() { if (true) { return b(); } a(); }", &["a"], &["b"]),
-    ("a.mjs", "function f() { if (false) c(); else return b(); a(); }", &["a", "c"], &["b"]),
-    ("a.mjs", "function f() { if (x) return b(); else throw c(); a(); }", &["a"], &["b", "c"]),
+    (
+        "a.mjs",
+        "function f() { b(); throw 1; a(); }",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "function f() { if (true) { return b(); } a(); }",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "function f() { if (false) c(); else return b(); a(); }",
+        &["a", "c"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "function f() { if (x) return b(); else throw c(); a(); }",
+        &["a"],
+        &["b", "c"],
+    ),
     (
         "a.mjs",
         "function f() { if (x) return; else if (y) return; else { return; } a(); }",
         &["a"],
         &[],
     ),
-    ("a.mjs", "function f() { { { return; } b(); } a(); }", &["a", "b"], &[]),
+    (
+        "a.mjs",
+        "function f() { { { return; } b(); } a(); }",
+        &["a", "b"],
+        &[],
+    ),
     ("a.mjs", "const f = () => { return; a(); };", &["a"], &[]),
-    ("a.mjs", "for (;;) { if (true) break; a(); } b();", &["a"], &["b"]),
+    (
+        "a.mjs",
+        "for (;;) { if (true) break; a(); } b();",
+        &["a"],
+        &["b"],
+    ),
     ("a.mjs", "for (;;) { continue; a(); }", &["a"], &[]),
     ("a.mjs", "l: { break l; a(); } b();", &["a"], &["b"]),
-    ("a.mjs", "switch (x) { case 1: break; a(); case 2: b(); }", &["a"], &["b"]),
+    (
+        "a.mjs",
+        "switch (x) { case 1: break; a(); case 2: b(); }",
+        &["a"],
+        &["b"],
+    ),
     (
         "a.mjs",
         "function f() { return; var v = a(); let w = b(); class C { static s = c(); } }",
         &["a", "b", "c"],
         &[],
     ),
-    ("a.mjs", "function f() { return g(); function g() { a(); } }", &[], &["a", "g"]),
-    ("a.cjs", "function f() { return g(); l: function g() { a(); } }", &[], &["a", "g"]),
-    ("a.mjs", "function f() { return; { function g() { a(); } } }", &["a"], &[]),
+    (
+        "a.mjs",
+        "function f() { return g(); function g() { a(); } }",
+        &[],
+        &["a", "g"],
+    ),
+    (
+        "a.cjs",
+        "function f() { return g(); l: function g() { a(); } }",
+        &[],
+        &["a", "g"],
+    ),
+    (
+        "a.mjs",
+        "function f() { return; { function g() { a(); } } }",
+        &["a"],
+        &[],
+    ),
     ("a.mjs", "function f() { if (x) return; a(); }", &[], &["a"]),
-    ("a.mjs", "function f() { if (false) return; a(); }", &[], &["a"]),
-    ("a.mjs", "function f() { if (true) b(); a(); }", &[], &["a", "b"]),
-    ("a.mjs", "function f() { if (x) return; else b(); a(); }", &[], &["a", "b"]),
-    ("a.mjs", "function f() { while (x) { return; } a(); }", &[], &["a"]),
-    ("a.mjs", "function f() { try { return; } finally { b(); } a(); }", &[], &["a", "b"]),
-    ("a.mjs", "function f() { l: { if (x) break l; return; } a(); }", &[], &["a"]),
-    ("a.mjs", "function f() { switch (x) { default: return; } a(); }", &[], &["a"]),
+    (
+        "a.mjs",
+        "function f() { if (false) return; a(); }",
+        &[],
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        "function f() { if (true) b(); a(); }",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "function f() { if (x) return; else b(); a(); }",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "function f() { while (x) { return; } a(); }",
+        &[],
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        "function f() { try { return; } finally { b(); } a(); }",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "function f() { l: { if (x) break l; return; } a(); }",
+        &[],
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        "function f() { switch (x) { default: return; } a(); }",
+        &[],
+        &["a"],
+    ),
     ("a.mjs", "throw 1; a();", &[], &["a"]),
     ("a.cjs", "return; a();", &[], &["a"]),
 ];
@@ -295,12 +430,37 @@ const CONSTANT_TESTS: &[DeadCalls] = &[
     ("a.mjs", "const A = false; if (A) a();", &["a"], &[]),
     ("a.mjs", "if (B) a(); const B = false;", &[], &["a"]),
     ("a.mjs", "let C = false; if (C) a();", &[], &["a"]),
-    ("a.mjs", "const E = false; E = true; if (E) a();", &["a"], &[]),
-    ("a.mjs", "const G = false; function g() { if (G) a(); }", &["a"], &[]),
-    ("a.mjs", "const { H } = { H: false }; if (H) a();", &[], &["a"]),
-    ("a.cjs", "const I = false; with (o) { if (I) a(); }", &[], &["a"]),
+    (
+        "a.mjs",
+        "const E = false; E = true; if (E) a();",
+        &["a"],
+        &[],
+    ),
+    (
+        "a.mjs",
+        "const G = false; function g() { if (G) a(); }",
+        &["a"],
+        &[],
+    ),
+    (
+        "a.mjs",
+        "const { H } = { H: false }; if (H) a();",
+        &[],
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        "const I = false; with (o) { if (I) a(); }",
+        &[],
+        &["a"],
+    ),
     ("a.ts", "declare const F: false; if (F) a();", &[], &["a"]),
-    ("a.ts", "namespace N { export const A = false; if (A) a(); }", &[], &["a"]),
+    (
+        "a.ts",
+        "namespace N { export const A = false; if (A) a(); }",
+        &[],
+        &["a"],
+    ),
 ];
 
 const EFFECTS: &[DeadCalls] = &[
@@ -321,23 +481,63 @@ const TYPEOF_REQUIRE: &[DeadCalls] = &[
         &[],
         &["a", "b"],
     ),
-    ("a.cjs", r#"eval(s); typeof require === "function" ? a() : b();"#, &["b"], &["a"]),
-    ("a.cjs", r#"with (o) typeof require === "function" ? a() : b();"#, &[], &["a", "b"]),
+    (
+        "a.cjs",
+        r#"eval(s); typeof require === "function" ? a() : b();"#,
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"with (o) typeof require === "function" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
 ];
 
 const LOADER_VALUES: &[DeadCalls] = &[
-    ("a.js", r#"if (typeof module === "object") a(); else b();"#, &["b"], &["a"]),
-    ("a.js", r#"if (typeof exports === "object") a(); else b();"#, &["b"], &["a"]),
+    (
+        "a.js",
+        r#"if (typeof module === "object") a(); else b();"#,
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.js",
+        r#"if (typeof exports === "object") a(); else b();"#,
+        &["b"],
+        &["a"],
+    ),
     (
         "a.js",
         r#"typeof exports === "object" && typeof module !== "undefined" ? a() : b();"#,
         &["b"],
         &["a"],
     ),
-    ("a.cjs", r#"typeof __filename === "string" ? a() : b();"#, &["b"], &["a"]),
-    ("a.mjs", r#"typeof __dirname === "string" ? a() : b(); export {};"#, &["b"], &["a"]),
-    ("a.js", r#"typeof this === "object" ? a() : b();"#, &["b"], &["a"]),
-    ("a.js", r#"(() => typeof this === "object" ? a() : b())();"#, &["b"], &["a"]),
+    (
+        "a.cjs",
+        r#"typeof __filename === "string" ? a() : b();"#,
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"typeof __dirname === "string" ? a() : b(); export {};"#,
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.js",
+        r#"typeof this === "object" ? a() : b();"#,
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.js",
+        r#"(() => typeof this === "object" ? a() : b())();"#,
+        &["b"],
+        &["a"],
+    ),
     ("a.cjs", "if (module) a(); else b();", &["b"], &["a"]),
     ("a.cjs", "if (!module) a(); else b();", &["a"], &["b"]),
     ("a.cjs", "exports || a();", &["a"], &[]),
@@ -351,26 +551,96 @@ const LOADER_VALUES: &[DeadCalls] = &[
 
 const UNDECIDED_LOADER_VALUES: &[DeadCalls] = &[
     // The fold knows no value for a free name, `undefined` among them.
-    ("a.cjs", "exports !== undefined ? a() : b();", &[], &["a", "b"]),
-    ("a.js", r#"typeof module === "object" ? a() : b(); export {};"#, &[], &["a", "b"]),
-    ("a.js", r#"typeof exports === "object" ? a() : b(); await 0;"#, &[], &["a", "b"]),
-    ("a.js", r#"typeof this === "object" ? a() : b(); export {};"#, &[], &["a", "b"]),
-    ("a.js", r#"typeof this === "object" ? a() : b(); import.meta;"#, &[], &["a", "b"]),
-    ("a.cjs", r#"function g() { typeof this === "object" ? a() : b(); }"#, &[], &["a", "b"]),
-    ("a.cjs", r#"class C { p = typeof this === "object" ? a() : b(); }"#, &[], &["a", "b"]),
-    ("a.ts", r#"namespace N { typeof this === "object" ? a() : b(); }"#, &[], &["a", "b"]),
-    ("a.cjs", r#"module = 1; typeof module === "object" ? a() : b();"#, &[], &["a", "b"]),
-    ("a.cjs", r#"[exports] = x; typeof exports === "object" ? a() : b();"#, &[], &["a", "b"]),
-    ("a.cjs", r#"eval(s); typeof module === "object" ? a() : b();"#, &[], &["a", "b"]),
-    ("a.cjs", r#"arguments[2] = 1; typeof module === "object" ? a() : b();"#, &[], &["a", "b"]),
-    ("a.cjs", r#"with (o) typeof module === "object" ? a() : b();"#, &[], &["a", "b"]),
+    (
+        "a.cjs",
+        "exports !== undefined ? a() : b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.js",
+        r#"typeof module === "object" ? a() : b(); export {};"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.js",
+        r#"typeof exports === "object" ? a() : b(); await 0;"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.js",
+        r#"typeof this === "object" ? a() : b(); export {};"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.js",
+        r#"typeof this === "object" ? a() : b(); import.meta;"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"function g() { typeof this === "object" ? a() : b(); }"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"class C { p = typeof this === "object" ? a() : b(); }"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.ts",
+        r#"namespace N { typeof this === "object" ? a() : b(); }"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"module = 1; typeof module === "object" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"[exports] = x; typeof exports === "object" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"eval(s); typeof module === "object" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"arguments[2] = 1; typeof module === "object" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"with (o) typeof module === "object" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
     (
         "a.cjs",
         r#"function g(module) { typeof module === "object" ? a() : b(); }"#,
         &[],
         &["a", "b"],
     ),
-    ("a.cjs", r#"var exports = x; typeof exports === "object" ? a() : b();"#, &[], &["a", "b"]),
+    (
+        "a.cjs",
+        r#"var exports = x; typeof exports === "object" ? a() : b();"#,
+        &[],
+        &["a", "b"],
+    ),
     ("a.cjs", "module.exports ? a() : b();", &[], &["a", "b"]),
 ];
 
@@ -397,17 +667,37 @@ const RUNTIME_VALUES: Fold<'static> = Fold {
 };
 
 const TESTS_OF_RUNTIME_VALUES: &[DeadCalls] = &[
-    ("a.mjs", "if (!Holder.method) a(); else b();", &["a"], &["b"]),
+    (
+        "a.mjs",
+        "if (!Holder.method) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
     ("a.mjs", "if (Holder.method) a(); else b();", &["b"], &["a"]),
-    ("a.mjs", r#"if (!Holder["method"]) a(); else b();"#, &["a"], &["b"]),
-    ("a.ts", "if (!(Holder as any).method) a(); else b();", &["a"], &["b"]),
+    (
+        "a.mjs",
+        r#"if (!Holder["method"]) a(); else b();"#,
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.ts",
+        "if (!(Holder as any).method) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
     (
         "a.mjs",
         r#"if (typeof Holder.method !== "function") a(); else b();"#,
         &["a"],
         &["b"],
     ),
-    ("a.mjs", r#"typeof Space === "object" ? a() : b();"#, &["b"], &["a"]),
+    (
+        "a.mjs",
+        r#"typeof Space === "object" ? a() : b();"#,
+        &["b"],
+        &["a"],
+    ),
     (
         "a.mjs",
         r#"typeof Holder === "function" && typeof Holder.key === "symbol" ? a() : b();"#,
@@ -417,27 +707,87 @@ const TESTS_OF_RUNTIME_VALUES: &[DeadCalls] = &[
     ("a.mjs", "const m = Holder.method || a();", &["a"], &[]),
     ("a.mjs", "const m = Holder.method ?? a();", &["a"], &[]),
     ("a.mjs", "const m = Holder.method && a();", &[], &["a"]),
-    ("a.mjs", "Holder.method = Holder.method || a();", &["a"], &[]),
-    ("a.mjs", "if (Holder.method == null) a(); else b();", &["a"], &["b"]),
-    ("a.mjs", "if (void 0 !== Holder.method) a(); else b();", &["b"], &["a"]),
-    ("a.mjs", "const m = Holder.method; if (!m) a(); else b();", &["a"], &["b"]),
+    (
+        "a.mjs",
+        "Holder.method = Holder.method || a();",
+        &["a"],
+        &[],
+    ),
+    (
+        "a.mjs",
+        "if (Holder.method == null) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "if (void 0 !== Holder.method) a(); else b();",
+        &["b"],
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        "const m = Holder.method; if (!m) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
 ];
 
 const UNDECIDED_TESTS_OF_RUNTIME_VALUES: &[DeadCalls] = &[
-    ("a.mjs", "if (!Holder.other) a(); else b();", &[], &["a", "b"]),
-    ("a.mjs", "if (!Holder.method.length) a(); else b();", &[], &["a", "b"]),
-    ("a.mjs", "if (!Holder?.method) a(); else b();", &[], &["a", "b"]),
-    ("a.mjs", "if (!mine.Holder.method) a(); else b();", &[], &["a", "b"]),
-    ("a.mjs", "if (Holder.method == 0) a(); else b();", &[], &["a", "b"]),
-    ("a.mjs", "if (Holder.method === Holder.method) a(); else b();", &[], &["a", "b"]),
+    (
+        "a.mjs",
+        "if (!Holder.other) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if (!Holder.method.length) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if (!Holder?.method) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if (!mine.Holder.method) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if (Holder.method == 0) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if (Holder.method === Holder.method) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
     (
         "a.mjs",
         "function f(Holder) { if (!Holder.method) a(); else b(); }",
         &[],
         &["a", "b"],
     ),
-    ("a.mjs", "let Holder = g(); if (!Holder.method) a(); else b();", &[], &["a", "b"]),
-    ("a.cjs", "with (o) { if (!Holder.method) a(); else b(); }", &[], &["a", "b"]),
+    (
+        "a.mjs",
+        "let Holder = g(); if (!Holder.method) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        "with (o) { if (!Holder.method) a(); else b(); }",
+        &[],
+        &["a", "b"],
+    ),
     (
         "a.cjs",
         "function f() { eval(s); if (!Holder.method) a(); else b(); }",
@@ -567,7 +917,10 @@ const UNKNOWN_MACRO_ARGUMENTS: &[&str] = &[
 const MACRO_OBJECTS: &[(&str, &str)] = &[
     ("m({ a: 1, b: 2, a: 3 });", r#"{"a":3,"b":2}"#),
     (r#"m({ ["__proto__"]: 1 });"#, r#"{"__proto__":1}"#),
-    ("const A = 1; function g() { return A; } m({ a: A });", r#"{"a":1}"#),
+    (
+        "const A = 1; function g() { return A; } m({ a: A });",
+        r#"{"a":1}"#,
+    ),
 ];
 
 const NOT_PENDING_MACROS: &[&str] = &[
@@ -596,9 +949,12 @@ fn table_rows() -> Vec<Row> {
             continue;
         }
         let mut columns = bun_core::strings::split(line, b"\t");
-        let (Some(kind), Some(value), Some(expression), None) =
-            (columns.next(), columns.next(), columns.next(), columns.next())
-        else {
+        let (Some(kind), Some(value), Some(expression), None) = (
+            columns.next(),
+            columns.next(),
+            columns.next(),
+            columns.next(),
+        ) else {
             panic!("line {} does not have three columns", index + 1);
         };
         rows.push(Row {
@@ -634,12 +990,7 @@ fn is_row_value(s: &Analyzed<'_>, row: &Row, found: FoldedValue) -> bool {
     }
 }
 
-fn folded(
-    path: &str,
-    text: &str,
-    fold: Fold<'_>,
-    test: impl for<'s> FnOnce(&Analyzed<'s>) + Send,
-) {
+fn folded(path: &str, text: &str, fold: Fold<'_>, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
     with_workspace(|w| {
         let inputs = w.fold_inputs(&fold);
         test(&w.analyze(&Source::new(path, text), &inputs));
@@ -707,7 +1058,10 @@ fn call_of(s: &Analyzed<'_>, name: &str) -> ExprId {
 }
 
 fn statements_of_expr(s: &Analyzed<'_>, e: ExprId) -> Vec<StmtId> {
-    find_stmts(&s.hir, |kind| matches!(*kind, StmtKind::Expr(expr) if expr == e))
+    find_stmts(
+        &s.hir,
+        |kind| matches!(*kind, StmtKind::Expr(expr) if expr == e),
+    )
 }
 
 #[track_caller]
@@ -870,7 +1224,12 @@ fn constant_expressions() {
         for (row, &call) in rows.iter().zip(&calls) {
             let argument = only_argument(s, call);
             let found = constant(s, argument);
-            assert_eq!(decision(s, argument), Decision::Unknown, "{}", row.expression);
+            assert_eq!(
+                decision(s, argument),
+                Decision::Unknown,
+                "{}",
+                row.expression
+            );
             if !is_row_value(s, row, found) {
                 wrong.push(format!("{}: {}: {found:?}", row.line, row.expression));
             }
@@ -950,7 +1309,11 @@ fn kinds_of_define_values() {
             let Decision::GlobalPath(names) = found else {
                 panic!("{text}: {found:?}");
             };
-            assert_eq!(names, [s.workspace.atom("a"), s.workspace.atom("b")], "{text}");
+            assert_eq!(
+                names,
+                [s.workspace.atom("a"), s.workspace.atom("b")],
+                "{text}"
+            );
         });
     }
     folded("a.mjs", "CONFIG.a;", CONFIG, |s| {
@@ -1051,7 +1414,10 @@ fn optional_chains_on_null_and_undefined() {
     for text in SHORT_CIRCUITED_CHAINS {
         analyzed("a.mjs", text, |s| {
             let chain = last_statement_expression(s);
-            assert!(s.analysis.decisions.is_short_circuited_link(chain), "{text}");
+            assert!(
+                s.analysis.decisions.is_short_circuited_link(chain),
+                "{text}"
+            );
             let found = constant(s, chain);
             let is_undefined = found == FoldedValue::Constant(Constant::Undefined)
                 || found == FoldedValue::ConstantOutsideDeadZone(Constant::Undefined);
@@ -1062,7 +1428,10 @@ fn optional_chains_on_null_and_undefined() {
     for text in EVALUATED_CHAINS {
         analyzed("a.mjs", text, |s| {
             let chain = last_statement_expression(s);
-            assert!(!s.analysis.decisions.is_short_circuited_link(chain), "{text}");
+            assert!(
+                !s.analysis.decisions.is_short_circuited_link(chain),
+                "{text}"
+            );
             assert_eq!(constant(s, chain), FoldedValue::Unknown, "{text}");
         });
     }
@@ -1128,7 +1497,10 @@ fn tests_of_loader_values() {
         let type_test = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Unary { .. }));
         let object = Constant::String(s.workspace.atom("object"));
         assert_eq!(constant(s, type_test[0]), FoldedValue::Constant(object));
-        assert_eq!(constant(s, type_test[1]), FoldedValue::Constant(Constant::Boolean(false)));
+        assert_eq!(
+            constant(s, type_test[1]),
+            FoldedValue::Constant(Constant::Boolean(false))
+        );
         assert_eq!(s.analysis.module_format, ModuleFormat::CommonJs);
         for name in find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Ident(_))) {
             assert!(!s.analysis.decisions.is_dead_expr(name));
@@ -1142,16 +1514,23 @@ fn tests_of_loader_values() {
 fn tests_of_runtime_values() {
     for rows in [TESTS_OF_RUNTIME_VALUES, UNDECIDED_TESTS_OF_RUNTIME_VALUES] {
         for &(path, text, dead, alive) in rows {
-            folded(path, text, RUNTIME_VALUES, |s| assert_dead_calls(s, text, dead, alive));
+            folded(path, text, RUNTIME_VALUES, |s| {
+                assert_dead_calls(s, text, dead, alive)
+            });
         }
     }
-    folded("a.mjs", "typeof Holder.method; Holder.method;", RUNTIME_VALUES, |s| {
-        let type_test = last_expr(s, |kind| matches!(kind, ExprKind::Unary { .. }));
-        let function = Constant::String(s.workspace.atom("function"));
-        assert_eq!(constant(s, type_test), FoldedValue::Constant(function));
-        assert_eq!(decision(s, last_member(s)), Decision::Unknown);
-        assert_eq!(constant(s, last_member(s)), FoldedValue::Unknown);
-    });
+    folded(
+        "a.mjs",
+        "typeof Holder.method; Holder.method;",
+        RUNTIME_VALUES,
+        |s| {
+            let type_test = last_expr(s, |kind| matches!(kind, ExprKind::Unary { .. }));
+            let function = Constant::String(s.workspace.atom("function"));
+            assert_eq!(constant(s, type_test), FoldedValue::Constant(function));
+            assert_eq!(decision(s, last_member(s)), Decision::Unknown);
+            assert_eq!(constant(s, last_member(s)), FoldedValue::Unknown);
+        },
+    );
 }
 
 #[test]
@@ -1211,7 +1590,11 @@ fn feature_errors() {
                 ErrorNode::Argument => only_argument(s, call),
             };
             assert_eq!(kinds(s), [kind], "{test}");
-            assert_eq!(s.analysis.errors[0].node, NodeData::Expr(expected), "{test}");
+            assert_eq!(
+                s.analysis.errors[0].node,
+                NodeData::Expr(expected),
+                "{test}"
+            );
         });
     }
 }
@@ -1224,16 +1607,26 @@ fn feature_import_errors() {
         let expected = NodeData::ImportSpec(ImportSpecId(1));
         assert_eq!(s.analysis.errors[0].node, expected);
     });
-    folded("a.ts", r#"import { nope } from "bun:bundle";"#, FEATURES, |s| {
-        let expected = FoldErrorKind::UnknownBundleExport(s.workspace.atom("nope"));
-        assert_eq!(kinds(s), [expected]);
-        let expected = NodeData::ImportSpec(ImportSpecId(0));
-        assert_eq!(s.analysis.errors[0].node, expected);
-    });
-    folded("a.ts", r#"import { validate } from "bun:bundle";"#, Fold::NONE, |s| {
-        let expected = FoldErrorKind::UnknownBundleExport(s.workspace.atom("validate"));
-        assert_eq!(kinds(s), [expected]);
-    });
+    folded(
+        "a.ts",
+        r#"import { nope } from "bun:bundle";"#,
+        FEATURES,
+        |s| {
+            let expected = FoldErrorKind::UnknownBundleExport(s.workspace.atom("nope"));
+            assert_eq!(kinds(s), [expected]);
+            let expected = NodeData::ImportSpec(ImportSpecId(0));
+            assert_eq!(s.analysis.errors[0].node, expected);
+        },
+    );
+    folded(
+        "a.ts",
+        r#"import { validate } from "bun:bundle";"#,
+        Fold::NONE,
+        |s| {
+            let expected = FoldErrorKind::UnknownBundleExport(s.workspace.atom("validate"));
+            assert_eq!(kinds(s), [expected]);
+        },
+    );
 }
 
 #[test]
@@ -1243,9 +1636,14 @@ fn feature_without_errors() {
             assert!(kinds(s).is_empty(), "{test}");
         });
     }
-    folded("a.ts", r#"import { validate } from "bun:bundle";"#, FEATURES, |s| {
-        assert!(kinds(s).is_empty());
-    });
+    folded(
+        "a.ts",
+        r#"import { validate } from "bun:bundle";"#,
+        FEATURES,
+        |s| {
+            assert!(kinds(s).is_empty());
+        },
+    );
 }
 
 #[test]
@@ -1294,7 +1692,10 @@ fn macro_results() {
         let object = w.host_data(&Data::Object(&[("n", Data::Number(1.0))]));
         let (_, analysis) = w.analyze_tree(&mut s.hir, &source, &fold, &[(call, object)]);
         assert!(analysis.pending_macro_calls.is_empty());
-        assert_eq!(data_text(&s, analysis.decisions.decision(call)), r#"{"n":1}"#);
+        assert_eq!(
+            data_text(&s, analysis.decisions.decision(call)),
+            r#"{"n":1}"#
+        );
         for argument in call_arguments {
             assert!(analysis.decisions.is_dead_expr(argument), "{argument:?}");
         }

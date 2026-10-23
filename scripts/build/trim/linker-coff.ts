@@ -35,7 +35,8 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
 
 export function coff(linker: Linker): LinkerFormat {
   const { work, output, command } = linker;
-  const getFlagValues = (flag: string) => command.filter(argument => argument.toLowerCase().startsWith(flag)).map(argument => argument.slice(flag.length));
+  const getFlagValues = (flag: string) =>
+    command.filter(argument => argument.toLowerCase().startsWith(flag)).map(argument => argument.slice(flag.length));
   const findFlag = (flag: string) => command.findIndex(argument => argument.toLowerCase().startsWith(flag));
   const [orderAt, symbolMapAt] = [findFlag(orderFlag), findFlag(symbolMapFlag)];
   if (symbolMapAt < 0) throw new BuildError("the link command names no /map");
@@ -57,7 +58,10 @@ export function coff(linker: Linker): LinkerFormat {
     ...getFlagValues("/libpath:"),
     ...getFlagValues("/winsysroot:").flatMap(root => [
       ...listFolder(join(root, "VC", "Tools", "MSVC")).map(version => join(version, "lib", architecture)),
-      ...listFolder(join(root, "Windows Kits", "10", "Lib")).flatMap(version => [join(version, "ucrt", architecture), join(version, "um", architecture)]),
+      ...listFolder(join(root, "Windows Kits", "10", "Lib")).flatMap(version => [
+        join(version, "ucrt", architecture),
+        join(version, "um", architecture),
+      ]),
     ]),
   ];
   const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))]);
@@ -75,7 +79,9 @@ export function coff(linker: Linker): LinkerFormat {
     isMovable,
     canBeFilled: output => isMovable(output) || output === ".data",
     isCode: output => output === ".text",
-    supportObjects: room => [linker.assemble("room.s", `.section ${trimTableSection},"dr"\n.p2align 3\n.zero ${room}\n`)],
+    supportObjects: room => [
+      linker.assemble("room.s", `.section ${trimTableSection},"dr"\n.p2align 3\n.zero ${room}\n`),
+    ],
     prepareInput: path => path,
     prepareCompiledObjects: () => false,
     compiledObjects,

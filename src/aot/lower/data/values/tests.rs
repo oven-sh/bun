@@ -98,10 +98,7 @@ impl SourceProvider for DefinedData {
 }
 
 fn create_undefined_and_bigint<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> DataValue<'s> {
-    let items = [
-        DataValue::Undefined,
-        DataValue::BigInt(atoms.intern(b"12")),
-    ];
+    let items = [DataValue::Undefined, DataValue::BigInt(atoms.intern(b"12"))];
     DataValue::Array(arena.alloc_slice_copy(&items))
 }
 
@@ -133,7 +130,10 @@ fn data_of(json: &str) -> (Fragment, Data) {
     fragments.retain(|fragment| fragment.module.data.is_some());
     assert_eq!(fragments.len(), 1, "one module of the program is data");
     let mut fragment = fragments.remove(0);
-    let id = fragment.module.data.expect("the other fragments were removed");
+    let id = fragment
+        .module
+        .data
+        .expect("the other fragments were removed");
     let data = core::mem::take(&mut fragment.data[id.index()]);
     (fragment, data)
 }
@@ -349,7 +349,9 @@ fn primitive_module_has_no_record() {
 #[test]
 fn record_names_module() {
     let (fragment, data) = data_of("[1]");
-    let module = data.module.expect("a record names the module that creates it");
+    let module = data
+        .module
+        .expect("a record names the module that creates it");
     assert_eq!(
         fragment.module_keys[module.index()],
         ModuleRef::File(fragment.file)

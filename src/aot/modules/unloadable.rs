@@ -25,7 +25,10 @@ fn find_unresolved_import(scans: &Scans, file: FileId) -> Option<FailureOrder> {
     if scan.interop.kind != ModuleKind::SourceText {
         return None;
     }
-    let first = scan.failures.iter().find(|pending| is_unresolved_import(pending));
+    let first = scan
+        .failures
+        .iter()
+        .find(|pending| is_unresolved_import(pending));
     first.map(|pending| pending.order)
 }
 
@@ -97,7 +100,9 @@ pub(super) fn find_unloadable_modules(
     let is_late = |file: FileId| !is_loaded_at_start[file.idx()];
     found.retain(|module| is_late(module.file) && is_late(module.importer));
     for module in &found {
-        let scan = scans.find_mut(module.file).expect("an unloadable module was scanned");
+        let scan = scans
+            .find_mut(module.file)
+            .expect("an unloadable module was scanned");
         let mut is_first = true;
         scan.requests.retain(|request| {
             let leads_to_failure = module.through.map(ModuleRef::File) == Some(request.target);
@@ -106,7 +111,11 @@ pub(super) fn find_unloadable_modules(
         scan.candidates.clear();
         scan.spellings.clear();
         scan.sites.fill(ScannedSite::Erased);
-        for pending in scan.failures.iter_mut().filter(|pending| is_unresolved_import(pending)) {
+        for pending in scan
+            .failures
+            .iter_mut()
+            .filter(|pending| is_unresolved_import(pending))
+        {
             if let ModuleFailureKind::Unresolved { specifier, reason } = pending.failure.kind {
                 pending.failure.kind = ModuleFailureKind::UnresolvedAtLoad { specifier, reason };
             }
@@ -122,7 +131,10 @@ pub(super) fn drop_errors_of_unloadable_modules(
     unloadable: &[UnloadableModule],
 ) {
     for (importer, failures) in pending {
-        if unloadable.binary_search_by_key(importer, |module| module.file).is_ok() {
+        if unloadable
+            .binary_search_by_key(importer, |module| module.file)
+            .is_ok()
+        {
             failures.retain(|pending| pending.failure.effect() != FailureEffect::StopsBuild);
         }
     }

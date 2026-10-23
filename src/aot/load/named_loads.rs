@@ -1,13 +1,19 @@
-use bun_sema::atom::Atom;
-use bun_sema::bind::Parent;
+use bun_sema::atom::{Atom, known};
+use bun_sema::bind::{Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{Branches, ExprId, ExprKind};
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema::resolve::FinishedFile;
 use bun_sema::util::SharedSort;
+use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
+use crate::load::loader_aliases::{
+    LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
+};
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
+use crate::load::sources::parsed_source;
 
 // `module` is what `name` stands for, and `name` is one of the values of `argument`, the first argument of a load.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -23,10 +29,17 @@ pub(crate) fn modules_named_in(named: &[NamedModule], argument: ExprId) -> &[Nam
     &named[first..first + count]
 }
 
+#[derive(Default)]
+pub(crate) struct NamedLoads {
+    pub modules: Vec<NamedModule>,
+    pub passed_to_imports: Vec<(SymbolId, NamedModule)>,
+}
+
 struct Scan<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
     runtime_modules: &'a RuntimeModules,
     named: Vec<NamedModule>,
+    passed_to_imports: Vec<(SymbolId, NamedModule)>,
 }
 
 // The library modules that the arms of `require(flag ? "node:vm" : "node:v8")` name.
@@ -34,17 +47,95 @@ pub(crate) fn find_library_modules_named_in_choices(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
     runtime_modules: &RuntimeModules,
-) -> Vec<NamedModule> {
+) -> NamedLoads {
     let mut scan = Scan {
         request,
         runtime_modules,
         named: Vec::new(),
+        passed_to_imports: Vec::new(),
     };
     scan.visit_import_sites();
     scan.visit_calls_of_other_loaders(builtins);
-    scan.named.shared_sort_unstable_by_key(|it| (it.argument, it.name.0));
-    scan.named.dedup();
-    scan.named
+    sort_named_modules(&mut scan.named);
+    NamedLoads {
+        modules: scan.named,
+        passed_to_imports: scan.passed_to_imports,
+    }
+}
+
+fn sort_named_modules(named: &mut Vec<NamedModule>) {
+    named.shared_sort_unstable_by_key(|it| (it.argument, it.name.0));
+    named.dedup();
+}
+
+const MAX_REEXPORTS: usize = 8;
+
+fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> bool {
+    for _ in 0..MAX_REEXPORTS {
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let import = bound
+            .symbol(symbol)
+            .decls
+            .iter()
+            .find_map(|&declaration| match declaration {
+                Decl::ImportSpec(specifier) => {
+                    let specifier = hir[specifier];
+                    (!specifier.type_only).then_some((specifier.import, specifier.imported))
+                }
+                Decl::ImportDefault(import) => Some((import, known::default)),
+                _ => None,
+            });
+        let Some((import, export_name)) = import else {
+            return false;
+        };
+        let site = files
+            .analysis(file)
+            .import_site_index(ImportSiteKind::Import(import));
+        let answer = site.and_then(|site| files.compiled(file)?.code_answers.get(site));
+        let Some(&CodeAnswer::File(exporter)) = answer else {
+            return false;
+        };
+        if files.compiled(exporter).is_none() {
+            return false;
+        }
+        let decisions = &files.analysis(exporter).decisions;
+        let (hir, bound) = (files.hir(exporter), files.bound(exporter));
+        match resolve_exported_loader_alias(hir, bound, decisions, export_name) {
+            Some(LoaderAlias::Local) => return true,
+            Some(LoaderAlias::Import(next)) => (file, symbol) = (exporter, next),
+            None => return false,
+        }
+    }
+    false
+}
+
+// esbuild exports `__require` from a shared chunk, so whether `__require("node:fs")` loads a module is only known once the exporting file is loaded.
+pub(crate) fn resolve_loads_through_imported_loaders(application: &Files<'_>) {
+    for &file in application.compiled_files() {
+        let Some(source) = parsed_source(application, file) else {
+            continue;
+        };
+        let mut loaders: Vec<(SymbolId, bool)> = Vec::new();
+        let mut named = Vec::new();
+        for &(callee, module) in &source.library_names_passed_to_imports {
+            let is_loader = match loaders.iter().find(|known| known.0 == callee) {
+                Some(known) => known.1,
+                None => {
+                    let is_loader = imports_loader(application, file, callee);
+                    loaders.push((callee, is_loader));
+                    is_loader
+                }
+            };
+            if is_loader {
+                named.push(module);
+            }
+        }
+        if !named.is_empty() {
+            named.extend_from_slice(&source.modules_named_in_choices);
+            sort_named_modules(&mut named);
+            source.set_named_modules(named);
+        }
+    }
 }
 
 impl Scan<'_, '_> {
@@ -92,20 +183,30 @@ impl Scan<'_, '_> {
             if !is_evaluated || analysis.import_site_of_call(expression).is_some() {
                 continue;
             }
-            let is_loader = builtins.builtin_of_expression(callee) == Some(BuiltinId::ProcessGetBuiltinModule)
-                || is_made_require(hir, bound, callee);
-            if !is_loader {
+            let Some(argument) = hir.ids(hir[call].args).next() else {
+                continue;
+            };
+            if builtins.builtin_of_expression(callee) == Some(BuiltinId::ProcessGetBuiltinModule) {
+                self.add_names_in(argument);
                 continue;
             }
-            if let Some(argument) = hir.ids(hir[call].args).next() {
-                self.add_names_in(argument);
+            match resolve_loader_alias(hir, bound, &analysis.decisions, callee) {
+                Some(LoaderAlias::Local) => self.add_names_in(argument),
+                Some(LoaderAlias::Import(symbol)) => {
+                    let first_new = self.named.len();
+                    self.add_names_in(argument);
+                    let named = self.named.drain(first_new..);
+                    self.passed_to_imports
+                        .extend(named.map(|module| (symbol, module)));
+                }
+                None => {}
             }
         }
     }
 
     fn add_names_in(&mut self, argument: ExprId) {
         let (hir, decisions) = (self.request.hir, &self.request.analysis.decisions);
-        let mut pending = vec![argument];
+        let mut pending: SmallVec<[ExprId; 4]> = smallvec![argument];
         while let Some(expression) = pending.pop() {
             let expression = hir.skip_type_assertions(expression);
             if decisions.is_dead_expr(expression) {
@@ -150,22 +251,133 @@ mod tests {
     use crate::load::runtime_modules::RuntimeModules;
     use crate::load::runtime_roots::collect_runtime_roots;
 
-    fn host_loaded_modules(source: &str) -> Vec<RuntimeModule> {
+    fn host_loaded_modules(files: &[(&str, &str)]) -> Vec<RuntimeModule> {
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
-        with_bind_input(&[("main.ts", source)], &default_settings(), |input| {
+        with_bind_input(files, &default_settings(), |input| {
             collect_runtime_roots(input.files, &runtime_modules, input.platform).host_loaded_modules
         })
     }
 
     #[track_caller]
-    fn assert_keeps(source: &str, kept: &[RuntimeModule], dropped: &[RuntimeModule]) {
-        let modules = host_loaded_modules(source);
+    fn assert_files_keep(
+        files: &[(&str, &str)],
+        kept: &[RuntimeModule],
+        dropped: &[RuntimeModule],
+    ) {
+        let modules = host_loaded_modules(files);
         for module in kept {
-            assert!(modules.contains(module), "{module:?} is missing: {source}");
+            assert!(modules.contains(module), "{module:?} is missing: {files:?}");
         }
         for module in dropped {
-            assert!(!modules.contains(module), "{module:?} is kept: {source}");
+            assert!(!modules.contains(module), "{module:?} is kept: {files:?}");
         }
+    }
+
+    #[track_caller]
+    fn assert_keeps(source: &str, kept: &[RuntimeModule], dropped: &[RuntimeModule]) {
+        assert_files_keep(&[("main.ts", source)], kept, dropped);
+    }
+
+    const ESBUILD_REQUIRE: &str = r#"((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+})"#;
+
+    #[test]
+    fn esbuild_require_shim_keeps_named_modules() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeZlib};
+        let source = format!(
+            "var __require = {ESBUILD_REQUIRE};\n__require('zlib'); __require('node:dgram');"
+        );
+        assert_files_keep(
+            &[("main.mjs", &source)],
+            &[NodeZlib, NodeDgram],
+            &[NodeRepl],
+        );
+        let minified = "var t=(a=>typeof require<\"u\"?require:typeof Proxy<\"u\"?new Proxy(a,{get:(b,c)=>(typeof require<\"u\"?require:b)[c]}):a)(function(a){if(typeof require<\"u\")return require.apply(this,arguments);throw Error('no '+a)});t('zlib');";
+        assert_files_keep(&[("main.mjs", minified)], &[NodeZlib], &[NodeDgram]);
+    }
+
+    #[test]
+    fn iife_that_returns_a_loader_keeps_named_modules() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        let source = "import { createRequire } from 'node:module';
+const a = (() => require)();
+const b = (function () { return import.meta.require; })();
+const c = (() => createRequire('/elsewhere/'))();
+const d = a;
+a('zlib'); b('dgram'); c('vm'); d('v8');";
+        assert_files_keep(
+            &[("main.mjs", source)],
+            &[NodeZlib, NodeDgram, NodeVm, NodeV8],
+            &[NodeRepl],
+        );
+    }
+
+    #[test]
+    fn callee_that_may_not_be_a_loader_keeps_nothing() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        let source = format!(
+            "{FLAG}let reassigned = (() => require)(); reassigned = String;
+const chosen = flag ? require : String;
+const parameter = ((load: unknown) => load)(require) as (name: string) => unknown;
+const asynchronous = (async () => require)() as unknown as (name: string) => unknown;
+const longer = (() => {{ if (flag) return String; return require; }})();
+reassigned('zlib'); chosen('dgram'); parameter('vm'); asynchronous('v8'); longer('repl');"
+        );
+        assert_keeps(
+            &source,
+            &[],
+            &[NodeZlib, NodeDgram, NodeVm, NodeV8, NodeRepl],
+        );
+    }
+
+    #[test]
+    fn loader_imported_from_another_file_keeps_named_modules() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        let chunk = format!(
+            "import {{ createRequire }} from 'node:module';
+var __require = {ESBUILD_REQUIRE};
+export var made = createRequire(import.meta.url);
+export {{ __require as a }};"
+        );
+        let files = [
+            (
+                "main.mjs",
+                "import { a as load, made } from './chunk.mjs';
+import { again } from './barrel.mjs';
+load('zlib'); made('node:dgram'); again(globalThis.flag ? 'vm' : 'v8');",
+            ),
+            ("chunk.mjs", &chunk),
+            (
+                "barrel.mjs",
+                "import { a } from './chunk.mjs';\nexport { a as again };",
+            ),
+        ];
+        assert_files_keep(&files, &[NodeZlib, NodeDgram, NodeVm, NodeV8], &[NodeRepl]);
+    }
+
+    #[test]
+    fn imported_function_that_is_no_loader_keeps_nothing() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeZlib};
+        let files = [
+            (
+                "main.mjs",
+                "import { log, swapped } from './log.mjs';
+import other from './log.mjs';
+log('zlib'); swapped('dgram'); other('repl');",
+            ),
+            (
+                "log.mjs",
+                "export function log(text) { console.log(text); }
+export let swapped = require;
+export function swap() { swapped = log; }
+export default log;",
+            ),
+        ];
+        assert_files_keep(&files, &[], &[NodeZlib, NodeDgram, NodeRepl]);
     }
 
     const FLAG: &str = "declare const flag: boolean; declare const name: string;\n";
@@ -173,11 +385,19 @@ mod tests {
     #[test]
     fn each_arm_of_a_choice_is_kept() {
         use RuntimeModule::{NodeDgram, NodeHttp2, NodeRepl, NodeV8, NodeVm, NodeZlib};
-        for load in ["require", "import", "import.meta.require", "process.getBuiltinModule"] {
-            let source = format!("{FLAG}export const loaded = {load}(flag ? 'node:vm' : 'node:v8');");
+        for load in [
+            "require",
+            "import",
+            "import.meta.require",
+            "process.getBuiltinModule",
+        ] {
+            let source =
+                format!("{FLAG}export const loaded = {load}(flag ? 'node:vm' : 'node:v8');");
             assert_keeps(&source, &[NodeVm, NodeV8], &[NodeDgram]);
         }
-        let nested = format!("{FLAG}require(flag ? 'node:dgram' : name ? 'zlib' : ('node:http2' as string));");
+        let nested = format!(
+            "{FLAG}require(flag ? 'node:dgram' : name ? 'zlib' : ('node:http2' as string));"
+        );
         assert_keeps(&nested, &[NodeDgram, NodeZlib, NodeHttp2], &[NodeRepl]);
     }
 
@@ -188,7 +408,11 @@ mod tests {
 const load = createRequire(import.meta.url);
 load(flag ? 'node:vm' : 'node:v8');"
         );
-        assert_keeps(&source, &[RuntimeModule::NodeVm, RuntimeModule::NodeV8], &[RuntimeModule::NodeDgram]);
+        assert_keeps(
+            &source,
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+            &[RuntimeModule::NodeDgram],
+        );
     }
 
     #[test]
@@ -197,7 +421,11 @@ load(flag ? 'node:vm' : 'node:v8');"
 var require = createRequire('/');
 export const tty = require('tty');
 export const os = createRequire('/elsewhere/')('node:os');";
-        assert_keeps(source, &[RuntimeModule::NodeTty, RuntimeModule::NodeOs], &[RuntimeModule::NodeDgram]);
+        assert_keeps(
+            source,
+            &[RuntimeModule::NodeTty, RuntimeModule::NodeOs],
+            &[RuntimeModule::NodeDgram],
+        );
     }
 
     #[test]
@@ -208,19 +436,32 @@ export const os = createRequire('/elsewhere/')('node:os');";
 
     #[test]
     fn name_with_constant_start_keeps_nothing() {
-        let source = format!("{FLAG}require('node:v' + name); require(`node:${{name}}`); require(name);");
-        assert_keeps(&source, &[], &[RuntimeModule::NodeVm, RuntimeModule::NodeV8]);
+        let source =
+            format!("{FLAG}require('node:v' + name); require(`node:${{name}}`); require(name);");
+        assert_keeps(
+            &source,
+            &[],
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+        );
     }
 
     #[test]
     fn choice_that_only_names_a_module_keeps_nothing() {
         let source = format!("{FLAG}require.resolve(flag ? 'node:vm' : 'node:v8');");
-        assert_keeps(&source, &[], &[RuntimeModule::NodeVm, RuntimeModule::NodeV8]);
+        assert_keeps(
+            &source,
+            &[],
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+        );
     }
 
     #[test]
     fn choice_in_dead_code_keeps_nothing() {
         let source = format!("{FLAG}if (false) require(flag ? 'node:vm' : 'node:v8');");
-        assert_keeps(&source, &[], &[RuntimeModule::NodeVm, RuntimeModule::NodeV8]);
+        assert_keeps(
+            &source,
+            &[],
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+        );
     }
 }

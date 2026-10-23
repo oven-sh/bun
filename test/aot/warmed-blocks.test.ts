@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, isASAN, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { describe, test } from "./supported";
 
 // While a heap grows under plain Bun, a helper thread named JSCWarmUp touches the pages of fresh blocks so that the program's own
 // thread does not take the page faults. An ahead-of-time compiled program has no such helper: the blocks that it held ready cost
@@ -60,12 +60,19 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
 }
 
 async function build(cwd: string, ...more: string[]) {
-  const built = await run([bunExe(), "build", "--compile", "--aot", "program.ts", ...more, "--outfile", "program"], cwd);
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "program.ts", ...more, "--outfile", "program"],
+    cwd,
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   return join(cwd, "program");
 }
 
-if (isASAN) console.error("SKIPPED: warmed-blocks.test.ts: a Bun built with AddressSanitizer has no helper that warms blocks");
+if (isASAN)
+  console.error("SKIPPED: warmed-blocks.test.ts: a Bun built with AddressSanitizer has no helper that warms blocks");
 
 describe.skipIf(!isLinux || isASAN).concurrent("no blocks are warmed for a compiled program", () => {
   test("a heap that grows has a helper under plain Bun and none in a compiled program", async () => {

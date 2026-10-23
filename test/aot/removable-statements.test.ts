@@ -41,7 +41,11 @@ function sources(): Record<string, string> {
 
 async function answers(syntax: boolean): Promise<string[]> {
   using directory = tempDir("removable-statements", sources());
-  const result = await Bun.build({ entrypoints: [join(String(directory), "entry.ts")], target: "bun", minify: { syntax } });
+  const result = await Bun.build({
+    entrypoints: [join(String(directory), "entry.ts")],
+    target: "bun",
+    minify: { syntax },
+  });
   expect(result.logs.filter(log => log.level === "error")).toEqual([]);
   const output = await result.outputs[0].text();
   return rows.map(row => `${row.line} ${output.includes(row.mark) ? "-" : "+"} ${row.source}`);

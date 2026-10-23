@@ -13,8 +13,20 @@ enum Before {
 fn is_keyword_before_an_expression(name: &[u8]) -> bool {
     matches!(
         name,
-        b"return" | b"typeof" | b"instanceof" | b"in" | b"of" | b"new" | b"delete" | b"void" | b"throw" | b"case" | b"do"
-            | b"else" | b"yield" | b"await"
+        b"return"
+            | b"typeof"
+            | b"instanceof"
+            | b"in"
+            | b"of"
+            | b"new"
+            | b"delete"
+            | b"void"
+            | b"throw"
+            | b"case"
+            | b"do"
+            | b"else"
+            | b"yield"
+            | b"await"
     )
 }
 
@@ -38,7 +50,10 @@ fn find_what_stands_before(code: &[u8]) -> Before {
         b'+' | b'-' if last > 0 && code[last - 1] == code[last] => Before::Either,
         b']' | b'\'' | b'"' | b'`' => Before::Operand,
         byte if is_name_byte(byte) => {
-            let start = code.iter().rposition(|&byte| !is_name_byte(byte)).map_or(0, |at| at + 1);
+            let start = code
+                .iter()
+                .rposition(|&byte| !is_name_byte(byte))
+                .map_or(0, |at| at + 1);
             let is_member = start > 0 && matches!(code[start - 1], b'.' | b'#');
             match !is_member && is_keyword_before_an_expression(&code[start..]) {
                 true => Before::Operator,
@@ -55,7 +70,8 @@ fn names_what_loads_modules(block: &[u8]) -> bool {
         let mut from = 0;
         while let Some(found) = strings::index_of(&block[from..], word) {
             let (start, end) = (from + found, from + found + word.len());
-            let begins_a_name = start == 0 || !(is_name_byte(block[start - 1]) || matches!(block[start - 1], b'.' | b'#'));
+            let begins_a_name = start == 0
+                || !(is_name_byte(block[start - 1]) || matches!(block[start - 1], b'.' | b'#'));
             if begins_a_name && !block.get(end).copied().is_some_and(is_name_byte) {
                 return true;
             }
@@ -183,7 +199,10 @@ mod tests {
     #[test]
     fn braces_are_counted() {
         assert_eq!(block("{} rest }"), Some("{}"));
-        assert_eq!(block("{ if (a) { b(); } else { c = { d: {} }; } } }"), Some("{ if (a) { b(); } else { c = { d: {} }; } }"));
+        assert_eq!(
+            block("{ if (a) { b(); } else { c = { d: {} }; } } }"),
+            Some("{ if (a) { b(); } else { c = { d: {} }; } }")
+        );
         assert_eq!(block("{ a; "), None);
         assert_eq!(block("{ { }"), None);
     }
@@ -251,7 +270,11 @@ mod tests {
         assert_eq!(block("{ return require('./a'); }"), None);
         assert_eq!(block("{ return import.meta.url; }"), None);
         assert_eq!(block("{ a = 'import(x)'; }"), None);
-        for text in ["{ a.import(); }", "{ a.require('b'); }", "{ imports(); required = 1; reimport(); }"] {
+        for text in [
+            "{ a.import(); }",
+            "{ a.require('b'); }",
+            "{ imports(); required = 1; reimport(); }",
+        ] {
             assert!(block(text).is_some(), "{text}");
         }
     }

@@ -373,7 +373,8 @@ static void appendInspectedProperty(JSC::JSGlobalObject* globalObject, MessageBu
 {
     if (slot.isAccessor()) {
         auto* accessor = slot.getterSetter();
-        builder.append(accessor->isSetterNull() ? "[Getter]"_s : accessor->isGetterNull() ? "[Setter]"_s : "[Getter/Setter]"_s);
+        builder.append(accessor->isSetterNull() ? "[Getter]"_s : accessor->isGetterNull() ? "[Setter]"_s
+                                                                                          : "[Getter/Setter]"_s);
         return;
     }
     if (!slot.isValue()) {

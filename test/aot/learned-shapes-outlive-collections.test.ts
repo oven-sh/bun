@@ -55,8 +55,18 @@ async function measure() {
   built(await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], cwd, bunEnv));
   const run = async (collections: number) => {
     const path = join(cwd, "counts-" + collections);
-    const ran = await spawned([executable, String(collections)], cwd, { ...bunEnv, ...withoutCollections, [runtimeEnvironment.countsPath]: path });
-    const counts = new Map(readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => line.split("\t")).map(([count, name]) => [name, Number(count)] as const));
+    const ran = await spawned([executable, String(collections)], cwd, {
+      ...bunEnv,
+      ...withoutCollections,
+      [runtimeEnvironment.countsPath]: path,
+    });
+    const counts = new Map(
+      readFileSync(path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map(line => line.split("\t"))
+        .map(([count, name]) => [name, Number(count)] as const),
+    );
     return { stdout: ran.stdout, exitCode: ran.exitCode, of: (name: string) => counts.get(name) ?? 0 };
   };
   return { none: await run(0), many: await run(collections) };
@@ -69,17 +79,21 @@ describe("compile/aot/learned-shapes-outlive-collections", () => {
   }, 240_000);
 
   test("collections do not change the answer", () => {
-    expect({ stdout: runs.many.stdout, exitCode: runs.many.exitCode }).toEqual({ stdout: runs.none.stdout, exitCode: 0 });
+    expect({ stdout: runs.many.stdout, exitCode: runs.many.exitCode }).toEqual({
+      stdout: runs.none.stdout,
+      exitCode: 0,
+    });
   });
 
   // The shape of the messages, the places of what is read from them, and the strings of small numbers.
-  test.each(["counter:CompiledStructuresMade", "operation:operationAOTGetByIdAndCache", "operation:operationAOTToString"])(
-    "%s is the same with twenty full collections as with none",
-    name => {
-      expect(runs.none.of(name)).toBeGreaterThan(0);
-      expect({ name, count: runs.many.of(name) }).toEqual({ name, count: runs.none.of(name) });
-    },
-  );
+  test.each([
+    "counter:CompiledStructuresMade",
+    "operation:operationAOTGetByIdAndCache",
+    "operation:operationAOTToString",
+  ])("%s is the same with twenty full collections as with none", name => {
+    expect(runs.none.of(name)).toBeGreaterThan(0);
+    expect({ name, count: runs.many.of(name) }).toEqual({ name, count: runs.none.of(name) });
+  });
 
   test("at most one store goes the long way behind a collection", () => {
     const name = "operation:operationAOTPutByIdAndCache";

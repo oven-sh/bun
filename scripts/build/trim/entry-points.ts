@@ -19,15 +19,21 @@ const featureOffset = 16;
 const stubOffset = 18;
 const originOffset = 19;
 const builtinOffset = 20;
+const largestFunctionThatOnlyReturns = 32;
 
 export type EntryPointFailure =
-  | GraphFailure
-  | { kind: "GuardWithoutReference"; guard: number; entry: undefined; feature: number; target: string };
+  GraphFailure | { kind: "GuardWithoutReference"; guard: number; entry: undefined; feature: number; target: string };
 
 export interface EntryPointReading {
   entryPoints: EntryPoint[];
   failures: EntryPointFailure[];
-  statistics: { records: number; deadGuards: number; guardsInsideEntryPoint: number; definitions: number };
+  statistics: {
+    records: number;
+    deadGuards: number;
+    guardsInsideEntryPoint: number;
+    definitions: number;
+    guardsOfEmptyEntryPoints: number;
+  };
 }
 
 type GuardWithoutReference = Extract<EntryPointFailure, { kind: "GuardWithoutReference" }>;
@@ -65,6 +71,13 @@ function compareGuardsWithoutReference(a: GuardWithoutReference, b: GuardWithout
 export function sortedUnique<T>(items: T[], compare: (a: T, b: T) => number): T[] {
   const sorted = [...items].sort(compare);
   return sorted.filter((item, index) => index === 0 || compare(sorted[index - 1]!, item) !== 0);
+}
+
+// The optimizer removes a call of a function that does nothing, also one it may not inline, and the function with it.
+function onlyReturns(graph: SectionGraph, node: number): boolean {
+  return (
+    graph.size[node]! <= largestFunctionThatOnlyReturns && graph.successorStart[node] === graph.successorStart[node + 1]
+  );
 }
 
 function decodeRecordSection(
@@ -125,6 +138,8 @@ function decodeRecordSection(
         builtin: builtin === 0 ? undefined : builtin,
         entrySection: entry.section,
       });
+    } else if (entry === undefined && onlyReturns(reading.graph, guard.node)) {
+      statistics.guardsOfEmptyEntryPoints++;
     } else if (entry === undefined) {
       const target = references.get(at + entryOffset) ?? "";
       decoded.guardsWithoutReference.push({
@@ -152,7 +167,10 @@ function decodeRecordSection(
 
 function guardEveryReference(graph: SectionGraph, definitions: EntryPointDefinition[]): EntryPoint[] {
   if (definitions.length === 0) return [];
-  const { successorStart: referrerStart, successors: referrers } = reverseEdges(graph, new Uint8Array(graph.successors.length));
+  const { successorStart: referrerStart, successors: referrers } = reverseEdges(
+    graph,
+    new Uint8Array(graph.successors.length),
+  );
   const namedSections = new Map<number, Set<string>>();
   for (const { entry, entrySection } of definitions) {
     const sections = namedSections.get(entry);
@@ -163,7 +181,10 @@ function guardEveryReference(graph: SectionGraph, definitions: EntryPointDefinit
     const { entry } = definition;
     const guards = referrers.subarray(referrerStart[entry]!, referrerStart[entry + 1]!);
     const isFoldedWithOtherCode = namedSections.get(entry)!.size < 1 + (graph.aliases.get(entry)?.length ?? 0);
-    return Array.from(isFoldedWithOtherCode ? guards.subarray(0, 1) : guards, (guard): EntryPoint => ({ guard, ...definition }));
+    return Array.from(isFoldedWithOtherCode ? guards.subarray(0, 1) : guards, (guard): EntryPoint => ({
+      guard,
+      ...definition,
+    }));
   });
 }
 
@@ -174,7 +195,7 @@ export function readEntryPoints(reading: GraphReading, model: FeatureModel): Ent
     definitions: [],
     unreadInputs: [],
     guardsWithoutReference: [],
-    statistics: { records: 0, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0 },
+    statistics: { records: 0, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0, guardsOfEmptyEntryPoints: 0 },
   };
   for (const section of reading.recordSections) decodeRecordSection(section, reading, modelFeatures, decoded);
   return {
@@ -316,7 +337,12 @@ export interface CxxFunctionEntryPoints {
   unmatched: string[];
 }
 
-export function findCxxFunctionEntryPoints({ reading: { graph }, model, isCode, demangle }: CxxFunctionInput): CxxFunctionEntryPoints {
+export function findCxxFunctionEntryPoints({
+  reading: { graph },
+  model,
+  isCode,
+  demangle,
+}: CxxFunctionInput): CxxFunctionEntryPoints {
   const patterns = model.features.flatMap(({ index, cxxFunctions = [] }) =>
     cxxFunctions.map(({ hint, pattern }) => ({ feature: index, hint, text: pattern, pattern: new RegExp(pattern) })),
   );

@@ -92,7 +92,13 @@ pub(in crate::lower) fn lists_int32(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> bool {
-    find_fact(file, ty, KeptFact::ListsInt32, |types| &mut types.lists_int32, shape_table::lists_int32)
+    find_fact(
+        file,
+        ty,
+        KeptFact::ListsInt32,
+        |types| &mut types.lists_int32,
+        shape_table::lists_int32,
+    )
 }
 
 // A fact that follows from answers that hold in every file lies with them. Any other holds for this file.
@@ -152,7 +158,8 @@ fn find_tuple_contents(
     position: u32,
 ) -> Option<TypeId> {
     let container = file.queries.without_nullish(container).ok()?;
-    let elements: SmallVec<[TupleElement; 4]> = match file.queries.type_shape(container).ok()?.kind {
+    let elements: SmallVec<[TupleElement; 4]> = match file.queries.type_shape(container).ok()?.kind
+    {
         ShapeKind::Tuple { elements, .. } => SmallVec::from_slice(elements),
         ShapeKind::Constrained { base, .. } => return find_tuple_contents(file, base, position),
         _ => return None,

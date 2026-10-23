@@ -29,13 +29,28 @@ pub struct ModuleFailure {
 
 #[derive(Copy, Clone, Debug)]
 pub enum ModuleFailureKind {
-    Unresolved { specifier: Atom, reason: CodeFailure },
+    Unresolved {
+        specifier: Atom,
+        reason: CodeFailure,
+    },
     /// What an `import` or `export .. from` names, in a module that only a site which can catch the failure loads.
-    UnresolvedAtLoad { specifier: Atom, reason: CodeFailure },
-    ExportNotFound { exporter: ModuleRef, name: Atom },
-    ExportAmbiguous { exporter: ModuleRef, name: Atom },
+    UnresolvedAtLoad {
+        specifier: Atom,
+        reason: CodeFailure,
+    },
+    ExportNotFound {
+        exporter: ModuleRef,
+        name: Atom,
+    },
+    ExportAmbiguous {
+        exporter: ModuleRef,
+        name: Atom,
+    },
     /// A name that an ES module imports of a CommonJS module whose body may end without it. Only the run knows.
-    ExportMayBeAbsent { exporter: ModuleRef, name: Atom },
+    ExportMayBeAbsent {
+        exporter: ModuleRef,
+        name: Atom,
+    },
 }
 
 impl ModuleFailure {

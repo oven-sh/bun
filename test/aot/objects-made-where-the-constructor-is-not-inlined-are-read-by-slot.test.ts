@@ -62,7 +62,9 @@ function failuresByTest(map: string, counts: string) {
     const [count, name] = line.split("\tbranch:");
     if (name !== undefined) executions.set(Number(name), Number(count));
   }
-  const result: Record<string, { passed: number; failed: number }> = Object.fromEntries(testsOfTheCell.map(name => [name, { passed: 0, failed: 0 }]));
+  const result: Record<string, { passed: number; failed: number }> = Object.fromEntries(
+    testsOfTheCell.map(name => [name, { passed: 0, failed: 0 }]),
+  );
   let sides: [number, number] | undefined;
   for (const line of readFileSync(map, "utf8").split("\n")) {
     const [letter, ...fields] = line.split("\t");
@@ -75,17 +77,35 @@ function failuresByTest(map: string, counts: string) {
   return result;
 }
 
-test("an object whose constructor was called and not inlined passes the tests of its cell", () =>
-  slot(async () => {
-    using dir = tempDir("aot-constructor-not-inlined", files);
-    const folder = String(dir);
-    const executable = join(folder, isWindows ? "app.exe" : "app");
-    const map = join(folder, "app.map");
-    const counts = join(folder, "counts");
-    built(await spawned([bunExe(), "build", "--compile", "--aot", "--aot-count-branches", "app.ts", "--outfile", executable], folder, { ...env, BUN_JSC_aotMapFilePath: map }));
-    expect(await spawned([executable, "1000"], folder, { ...env, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: counts })).toMatchObject({ stdout: "1 e1 true 1,2 o1\n", exitCode: 0 });
-    const failures = failuresByTest(map, counts);
-    // A renamed test would count nothing.
-    expect(testsOfTheCell.some(name => failures[name].passed + failures[name].failed > 0)).toBe(true);
-    expect(Object.fromEntries(testsOfTheCell.map(name => [name, failures[name].failed]))).toEqual(Object.fromEntries(testsOfTheCell.map(name => [name, 0])));
-  }), 300_000);
+test(
+  "an object whose constructor was called and not inlined passes the tests of its cell",
+  () =>
+    slot(async () => {
+      using dir = tempDir("aot-constructor-not-inlined", files);
+      const folder = String(dir);
+      const executable = join(folder, isWindows ? "app.exe" : "app");
+      const map = join(folder, "app.map");
+      const counts = join(folder, "counts");
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", "--aot-count-branches", "app.ts", "--outfile", executable],
+          folder,
+          { ...env, BUN_JSC_aotMapFilePath: map },
+        ),
+      );
+      expect(
+        await spawned([executable, "1000"], folder, {
+          ...env,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          BUN_JSC_aotCountsPath: counts,
+        }),
+      ).toMatchObject({ stdout: "1 e1 true 1,2 o1\n", exitCode: 0 });
+      const failures = failuresByTest(map, counts);
+      // A renamed test would count nothing.
+      expect(testsOfTheCell.some(name => failures[name].passed + failures[name].failed > 0)).toBe(true);
+      expect(Object.fromEntries(testsOfTheCell.map(name => [name, failures[name].failed]))).toEqual(
+        Object.fromEntries(testsOfTheCell.map(name => [name, 0])),
+      );
+    }),
+  300_000,
+);

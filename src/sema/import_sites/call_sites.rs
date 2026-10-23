@@ -3,7 +3,9 @@ use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
 use crate::fold::Decisions;
-use crate::hir::{ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind};
+use crate::hir::{
+    ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind,
+};
 use crate::util::SharedSort;
 
 pub(crate) fn call_site_kind(
@@ -134,7 +136,10 @@ pub fn find_require_call(
             return None;
         };
         let is_hole_or_spread = |element| {
-            matches!(expr_kind(hir, element), None | Some(ExprKind::Missing | ExprKind::Spread(_)))
+            matches!(
+                expr_kind(hir, element),
+                None | Some(ExprKind::Missing | ExprKind::Spread(_))
+            )
         };
         let is_list_of_values = !elements.is_empty() && !hir.ids(elements).any(is_hole_or_spread);
         return is_list_of_values.then_some(RequireCall {
@@ -190,7 +195,9 @@ fn find_call_site(
         }
         let is_module = is_free_common_js(hir, bound, object, CommonJsVariable::Module);
         // The transpiler writes `require` in place of `module.require` and never reads `module`. It leaves `module?.require` as it is.
-        let is_rewritten = !hir.expr_flags(callee).contains(ExprFlags::OPTIONAL_CHAIN_LINK);
+        let is_rewritten = !hir
+            .expr_flags(callee)
+            .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
         return is_module.then_some(CallSite {
             kind: ImportSiteKind::Require(call),
             args,
@@ -355,7 +362,11 @@ fn call_specifier(hir: &File<'_>, decisions: &Decisions<'_>, argument: ExprId) -
 fn call_attributes(hir: &File<'_>, kind: ImportSiteKind, options: ExprId) -> ExprId {
     match kind {
         ImportSiteKind::ImportCall(_) => import_call_attributes(hir, options),
-        ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) if is_object(hir, options) => options,
+        ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
+            if is_object(hir, options) =>
+        {
+            options
+        }
         ImportSiteKind::ImportMetaRequire(_)
         | ImportSiteKind::JsxRuntime
         | ImportSiteKind::JsxPackage
@@ -379,9 +390,8 @@ fn import_call_attributes(hir: &File<'_>, options: ExprId) -> ExprId {
         return ExprId::NONE;
     };
     let mut all = props.iter().map(|prop| &hir[prop]);
-    let with = all.find(|prop| {
-        prop.kind == PropKind::Init && prop.key == PropKey::Name(known::with)
-    });
+    let with =
+        all.find(|prop| prop.kind == PropKind::Init && prop.key == PropKey::Name(known::with));
     match with {
         Some(prop) if is_object(hir, prop.value) => prop.value,
         Some(_) | None => ExprId::NONE,

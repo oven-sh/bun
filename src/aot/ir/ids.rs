@@ -132,7 +132,10 @@ mod tests {
         assert_eq!(FunctionId::from_word(7), FunctionId::new(7));
         assert_eq!(FunctionId::new(7).to_word(), 7);
         assert_eq!(FunctionId::new(7).index(), 7);
-        assert_eq!(ValueId::new(ABSENT_WORD as usize - 1).to_word(), ABSENT_WORD - 1);
+        assert_eq!(
+            ValueId::new(ABSENT_WORD as usize - 1).to_word(),
+            ABSENT_WORD - 1
+        );
     }
 
     #[test]

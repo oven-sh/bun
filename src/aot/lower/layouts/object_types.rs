@@ -13,16 +13,16 @@ use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 
 use super::{
-    DefinedObjectType, HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,
-    ObjectTypeKey, OwnFields,
+    DefinedObjectType, HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE,
+    NamesOfObjectType, ObjectTypeKey, OwnFields,
 };
+use crate::builtins::resolve::SourceDialect;
 use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
-use crate::builtins::resolve::SourceDialect;
 use crate::ir::{
-    DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId,
-    WellKnownSymbol, classify_name,
+    DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId, WellKnownSymbol,
+    classify_name,
 };
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind, convert, member, positions, types};
 use crate::modules::ModuleRef;
@@ -76,13 +76,20 @@ pub(super) struct ListedFields {
 }
 
 impl ListedFields {
-    pub(super) fn find(&self, file: &FileLowering<'_, '_, '_, '_>, key: PropertyKeyId) -> Option<u32> {
+    pub(super) fn find(
+        &self,
+        file: &FileLowering<'_, '_, '_, '_>,
+        key: PropertyKeyId,
+    ) -> Option<u32> {
         let found = match describe_key(file, key) {
             Some(description) => self
                 .fields
                 .binary_search_by(|field| compare_name(file, field.name, &description))
                 .ok(),
-            None => self.fields.iter().position(|field| field.name == FieldName::Key(key)),
+            None => self
+                .fields
+                .iter()
+                .position(|field| field.name == FieldName::Key(key)),
         };
         found.map(|found| found as u32)
     }
@@ -92,13 +99,25 @@ impl ListedFields {
     }
 
     fn add_type(&self, fields_of_type: Vec<ListedField>) {
-        debug_assert_eq!(self.fields.len(), fields_of_type.len(), "types with one layout have the same names");
+        debug_assert_eq!(
+            self.fields.len(),
+            fields_of_type.len(),
+            "types with one layout have the same names"
+        );
         for (field, field_of_type) in self.fields.iter().zip(fields_of_type) {
-            debug_assert_eq!(field.name, field_of_type.name, "types with one layout have the same names");
+            debug_assert_eq!(
+                field.name, field_of_type.name,
+                "types with one layout have the same names"
+            );
             if !field_of_type.flags.get().contains(FieldFlags::IS_REQUIRED) {
-                field.flags.set(field.flags.get().without(FieldFlags::IS_REQUIRED));
+                field
+                    .flags
+                    .set(field.flags.get().without(FieldFlags::IS_REQUIRED));
             }
-            field.members.borrow_mut().extend(field_of_type.members.into_inner());
+            field
+                .members
+                .borrow_mut()
+                .extend(field_of_type.members.into_inner());
         }
     }
 }
@@ -186,7 +205,11 @@ pub(super) fn can_be_field(file: &FileLowering<'_, '_, '_, '_>, key: PropertyKey
 
 fn describe_flags(flags: impl Iterator<Item = FieldFlags>) -> TypeIdentity {
     let flags: Vec<[u8; 4]> = flags.map(|flags| flags.0.to_le_bytes()).collect();
-    TypeIdentity::of_untyped_members(flags.iter().map(|flags| (flags.as_slice(), ObjectMemberKind::Field)))
+    TypeIdentity::of_untyped_members(
+        flags
+            .iter()
+            .map(|flags| (flags.as_slice(), ObjectMemberKind::Field)),
+    )
 }
 
 fn describe_names(
@@ -197,9 +220,16 @@ fn describe_names(
     let fields = sort_listed_fields(file, ty, members);
     let descriptions: Vec<(KeyDescription, ObjectMemberKind)> = fields
         .iter()
-        .filter_map(|field| Some((describe_name(file, field.name)?, field.members.borrow()[0].1.kind)))
+        .filter_map(|field| {
+            Some((
+                describe_name(file, field.name)?,
+                field.members.borrow()[0].1.kind,
+            ))
+        })
         .collect();
-    let names = descriptions.iter().map(|(name, kind)| (name.as_slice(), *kind));
+    let names = descriptions
+        .iter()
+        .map(|(name, kind)| (name.as_slice(), *kind));
     NamesOfObjectType {
         identity: TypeIdentity::of_untyped_members(names),
         is_empty: descriptions.is_empty(),
@@ -256,7 +286,11 @@ fn declare_object_type(
 // Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
 fn grows_without_end(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
     const LONGEST_PATH: usize = 64;
-    let Some(holder) = file.layouts.holder_in_progress.filter(|&holder| holder != ty) else {
+    let Some(holder) = file
+        .layouts
+        .holder_in_progress
+        .filter(|&holder| holder != ty)
+    else {
         return false;
     };
     file.layouts.holders.insert(ty, holder);
@@ -294,7 +328,11 @@ fn add_edges_to_extended_types(
     let ObjectOrigin::Symbol(interface) = file.queries.object_origin(ty) else {
         return;
     };
-    for base in file.queries.declared_base_types(interface).unwrap_or_default() {
+    for base in file
+        .queries
+        .declared_base_types(interface)
+        .unwrap_or_default()
+    {
         if let Some(extended) = object_type_layout(file, base)
             && extended != layout
         {
@@ -313,7 +351,9 @@ fn add_edge_from_library_class(
         return;
     }
     for declaration in file.queries.library_declarations_of_type(ty) {
-        let made = file.fragment.declare_layout(LayoutKey::Library(declaration));
+        let made = file
+            .fragment
+            .declare_layout(LayoutKey::Library(declaration));
         super::add_conversion(file, made, layout);
     }
 }
@@ -451,12 +491,18 @@ fn sort_listed_fields(
     members: &[ListedMember],
 ) -> Vec<ListedField> {
     if let Some(sorted) = file.layouts.sorted_members.get(&ty) {
-        return sorted.iter().map(|&(name, member)| ListedField::new(name, ty, member)).collect();
+        return sorted
+            .iter()
+            .map(|&(name, member)| ListedField::new(name, ty, member))
+            .collect();
     }
     let mut fields = collect_listed_fields(file, ty, members);
     fields.sort_by_cached_key(|field| describe_name(file, field.name));
     fields.truncate(file.inputs.limits.get(LimitId::FieldsInKeyOrder) as usize);
-    let sorted = fields.iter().map(|field| (field.name, field.members.borrow()[0].1)).collect();
+    let sorted = fields
+        .iter()
+        .map(|field| (field.name, field.members.borrow()[0].1))
+        .collect();
     file.layouts.sorted_members.insert(ty, sorted);
     fields
 }
@@ -465,8 +511,12 @@ fn compute_listed_fields(
     file: &mut FileLowering<'_, '_, '_, '_>,
     layout: LayoutId,
 ) -> ListedFields {
-    let types: SmallVec<[CheckerTypeId; 4]> = SmallVec::from_slice(file.layouts.source_types(layout));
-    debug_assert!(!types.is_empty(), "object type layout without a source type");
+    let types: SmallVec<[CheckerTypeId; 4]> =
+        SmallVec::from_slice(file.layouts.source_types(layout));
+    debug_assert!(
+        !types.is_empty(),
+        "object type layout without a source type"
+    );
     let mut listed = ListedFields::default();
     for (index, &ty) in types.iter().enumerate() {
         let Ok(members) = file.queries.listed_members(ty) else {
@@ -512,7 +562,7 @@ fn unite_positions(
     let in_either = left.flags | right.flags;
     let mut flags = PositionFlags(left.flags.0 & right.flags.0);
     if in_either.contains(PositionFlags::IS_EXPECTED) {
-        flags = flags | PositionFlags::IS_EXPECTED;
+        flags |= PositionFlags::IS_EXPECTED;
     }
     DeclaredType {
         ty: file.fragment.types.union(left.ty, right.ty),
@@ -633,7 +683,10 @@ fn compute_fields_of_type(
         let types = file.queries.listed_member_types(ty, member);
         name_the_same_in_every_file &=
             types.checked.is_ok() && !matches!(types.written, WrittenType::GaveUp(_));
-        for named in [types.written.written(), types.checked.ok()].into_iter().flatten() {
+        for named in [types.written.written(), types.checked.ok()]
+            .into_iter()
+            .flatten()
+        {
             name_the_same_in_every_file =
                 name_the_same_in_every_file && types::is_mapped_alike_in_every_file(file, named);
         }
@@ -740,14 +793,19 @@ fn define_names_of_type(
             ..Field::default()
         })
         .collect();
-    let key = create_key_of_names(describe_flags(fields.iter().map(|field| field.flags)), has_place);
+    let key = create_key_of_names(
+        describe_flags(fields.iter().map(|field| field.flags)),
+        has_place,
+    );
     if known.is_none() && !claim_names(file, layout, key) {
         return;
     }
     let is_shown = can_be_shown(file, layout, has_place);
-    let definition = create_layout_of_type(file, ty, fields, find_declared_order(&listed), is_shown);
+    let definition =
+        create_layout_of_type(file, ty, fields, find_declared_order(&listed), is_shown);
     let level = LAST_DEFINITION_LEVEL | flag_place(file, layout, has_place);
-    file.fragment.define_object_type(layout, definition, Some((key, level)));
+    file.fragment
+        .define_object_type(layout, definition, Some((key, level)));
 }
 
 // One definition for each type, which says what that type declares: the link unites them.
@@ -794,7 +852,12 @@ pub(super) fn define_object_type_layout(
             };
             let has_place = !has_home && find_place(file, ty).is_some();
             let is_shown = can_be_shown(file, layout, has_place);
-            let key = key.map(|key| (key, level | names_the_same | flag_place(file, layout, has_place)));
+            let key = key.map(|key| {
+                (
+                    key,
+                    level | names_the_same | flag_place(file, layout, has_place),
+                )
+            });
             let definition =
                 create_layout_of_type(file, ty, computed.fields, computed.declared_order, is_shown);
             file.fragment.define_object_type(layout, definition, key);
@@ -813,8 +876,7 @@ fn create_layout_of_type(
     let declaration = find_declaration(file, ty, is_shown);
     let (module, position) = match declaration.site {
         Some((home, position))
-            if file.queries.files().is_compiled(home)
-                && !file.inputs.is_left_out(home) =>
+            if file.queries.files().is_compiled(home) && !file.inputs.is_left_out(home) =>
         {
             let module = file.fragment.declare_module(ModuleRef::File(home));
             (Some(module), position)
@@ -852,7 +914,9 @@ fn compare_name(
     match name {
         FieldName::Text(text) => {
             let kind = [PropertyKeyKind::Text.to_wire() as u8];
-            kind.iter().chain(file.queries.atom_bytes(text)).cmp(description)
+            kind.iter()
+                .chain(file.queries.atom_bytes(text))
+                .cmp(description)
         }
         FieldName::Key(key) => match describe_key(file, key) {
             Some(described) => described.as_slice().cmp(description),
@@ -1046,7 +1110,10 @@ fn find_checked_layout(
         file: file.file,
         expression: literal,
     };
-    let has_names = file.queries.listed_members(ty).is_ok_and(|members| !members.is_empty());
+    let has_names = file
+        .queries
+        .listed_members(ty)
+        .is_ok_and(|members| !members.is_empty());
     if has_names
         && file.queries.object_origin(ty) != origin
         && let Some(layout) = object_type_layout(file, ty)
@@ -1079,10 +1146,7 @@ fn compute_literal_layout(file: &mut FileLowering<'_, '_, '_, '_>, literal: Expr
     untyped_layout_at(file, &members, position)
 }
 
-pub(super) fn literal_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-) -> LayoutId {
+pub(super) fn literal_layout(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> LayoutId {
     if let Some(&layout) = file.layouts.literals.get(&literal) {
         return layout;
     }

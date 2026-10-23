@@ -55,8 +55,11 @@ pub(super) fn collect_inner_module_parameters(
     bound: &Bound<'_>,
     callbacks: &[FnId],
 ) -> Vec<SymbolId> {
-    let parameters = callbacks.iter().flat_map(|&callback| hir[callback].params.iter());
-    let symbols = parameters.map(|parameter| bound.declared_symbol(Decl::Param(hir[parameter].pat)));
+    let parameters = callbacks
+        .iter()
+        .flat_map(|&callback| hir[callback].params.iter());
+    let symbols =
+        parameters.map(|parameter| bound.declared_symbol(Decl::Param(hir[parameter].pat)));
     let mut symbols: Vec<SymbolId> = symbols.filter(|symbol| symbol.is_some()).collect();
     sort_unique(&mut symbols);
     symbols
@@ -98,7 +101,10 @@ pub(super) fn collect_implicit_uses(
             | NodeData::Paren(_)
             | NodeData::Part(..) => None,
         };
-        debug_assert!(class.is_some(), "decorator metadata belongs to a class member or parameter");
+        debug_assert!(
+            class.is_some(),
+            "decorator metadata belongs to a class member or parameter"
+        );
         metadata_uses.extend(class.map(|class| (class, binding)));
     }
     jsx_uses.sort_by_key(|entry| entry.0);

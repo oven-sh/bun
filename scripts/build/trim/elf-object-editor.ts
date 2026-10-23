@@ -18,7 +18,12 @@ interface SectionSplit {
   tables: { index: number; data: Buffer }[];
 }
 
-function findPieceStarts(fd: number, sections: SectionHeader[], headers: Buffer, isSplit: boolean[]): Map<number, number[]> {
+function findPieceStarts(
+  fd: number,
+  sections: SectionHeader[],
+  headers: Buffer,
+  isSplit: boolean[],
+): Map<number, number[]> {
   const startsOf = new Map<number, number[]>();
   sections.forEach((section, index) => {
     if (!isSplit[index]) return;
@@ -81,8 +86,10 @@ function writeSplitSections(elf: ElfFile, split: SectionSplit, prefix: string): 
   };
   const isOneTable = namesIndex === stringsIndex;
   const firstNewName = sections[namesIndex]!.size + (isOneTable ? moreStrings.length : 0);
-  for (let number = 0; number < pieces.length; number++) moreHeaders.writeUInt32LE(firstNewName + moreHeaders.readUInt32LE(number * 64), number * 64);
-  const grown = (index: number, more: string) => Buffer.concat([readAt(fd, sections[index]!.offset, sections[index]!.size), Buffer.from(more, "latin1")]);
+  for (let number = 0; number < pieces.length; number++)
+    moreHeaders.writeUInt32LE(firstNewName + moreHeaders.readUInt32LE(number * 64), number * 64);
+  const grown = (index: number, more: string) =>
+    Buffer.concat([readAt(fd, sections[index]!.offset, sections[index]!.size), Buffer.from(more, "latin1")]);
   replace(symbolsIndex, Buffer.concat([symbols, moreSymbols]));
   replace(stringsIndex, grown(stringsIndex, isOneTable ? moreStrings + moreNames : moreStrings));
   if (!isOneTable) replace(namesIndex, grown(namesIndex, moreNames));
@@ -103,8 +110,17 @@ export function splitMergeableSections(path: string, prefix: string): void {
   const machine = readAt(fd, 18, 2).readUInt16LE(0);
   const symbolsIndex = sections.findIndex(section => section.type === 2);
   const headers = readAt(fd, sectionHeadersOffset, sections.length * 64);
-  const hasReferences = new Set(sections.filter(section => section.type === 4 || section.type === 9).map(section => section.info));
-  const isSplit = sections.map((section, index) => section.type === 1 && (section.flags & 0x12) === 0x12 && (section.flags & 0x200) === 0 && section.size > 0 && !hasReferences.has(index));
+  const hasReferences = new Set(
+    sections.filter(section => section.type === 4 || section.type === 9).map(section => section.info),
+  );
+  const isSplit = sections.map(
+    (section, index) =>
+      section.type === 1 &&
+      (section.flags & 0x12) === 0x12 &&
+      (section.flags & 0x200) === 0 &&
+      section.size > 0 &&
+      !hasReferences.has(index),
+  );
   if (symbolsIndex < 0 || !isSplit.includes(true) || sections.some(section => section.type === 18)) return done();
   const startsOf = findPieceStarts(fd, sections, headers, isSplit);
   const pieceAt = (section: number, offset: number) => {
@@ -121,7 +137,11 @@ export function splitMergeableSections(path: string, prefix: string): void {
   const symbols = readAt(fd, sections[symbolsIndex]!.offset, sections[symbolsIndex]!.size);
   const count = symbols.length / 24;
   const isPcRelative = (type: number) => (machine === 62 ? ![1, 10, 11].includes(type) : machine !== 183);
-  const tables = sections.flatMap((section, index) => (section.type === 4 && (sections[section.info]!.flags & 2) !== 0 ? [{ index, data: readAt(fd, section.offset, section.size) }] : []));
+  const tables = sections.flatMap((section, index) =>
+    section.type === 4 && (sections[section.info]!.flags & 2) !== 0
+      ? [{ index, data: readAt(fd, section.offset, section.size) }]
+      : [],
+  );
   const sectionOfSectionSymbol = (symbol: number) => {
     const section = symbols.readUInt16LE(symbol * 24 + 6);
     return (symbols[symbol * 24 + 4]! & 15) === 3 && isSplit[section] ? section : -1;
@@ -130,7 +150,8 @@ export function splitMergeableSections(path: string, prefix: string): void {
     for (let at = 0; at < data.length; at += 24) {
       const section = sectionOfSectionSymbol(data.readUInt32LE(at + 12));
       const addend = Number(data.readBigInt64LE(at + 16));
-      if (section >= 0 && (isPcRelative(data.readUInt32LE(at + 8)) || addend < 0 || addend >= sections[section]!.size)) isSplit[section] = false;
+      if (section >= 0 && (isPcRelative(data.readUInt32LE(at + 8)) || addend < 0 || addend >= sections[section]!.size))
+        isSplit[section] = false;
     }
   }
   const numberOf = new Map<string, number>();

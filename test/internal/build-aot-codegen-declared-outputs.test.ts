@@ -179,7 +179,10 @@ function engineAt(javaScriptCore: string | undefined): EngineSources {
     schema: "/fake/engine/aot/schema/AOTSchema.def",
     schemaInputs: ["/fake/engine/aot/schema/AOTSchema.def", "/fake/engine/aot/schema/limits.def"],
     schemaGeneratedDirectory: "/fake/engine/aot/schema/generated",
-    schemaOutputs: ["/fake/engine/aot/schema/generated/AOTSchemaOperations.h", "/fake/engine/aot/schema/generated/AOTSchemaFiles.cmake"],
+    schemaOutputs: [
+      "/fake/engine/aot/schema/generated/AOTSchemaOperations.h",
+      "/fake/engine/aot/schema/generated/AOTSchemaFiles.cmake",
+    ],
     schemaUsers: ["/fake/engine/aot/ir/AOTProgram.cpp"],
     builtinsGeneratedDirectory: "/fake/engine/aot/builtins/generated",
     builtinTableInputs: ["/fake/engine/aot/builtins/array.def"],
@@ -261,7 +264,9 @@ describe("emitAotSchema", () => {
     expect(rust.length).toBeGreaterThan(0);
     const edge = edgeOf(n, rust[0]);
     expect(edge.rule).toBe("codegen_bun");
-    expect(normalized(edge.outputs.map(p => resolve(n.buildDir, p)))).toEqual(expect.arrayContaining(normalized([...checkout.schemaOutputs, ...rust])));
+    expect(normalized(edge.outputs.map(p => resolve(n.buildDir, p)))).toEqual(
+      expect.arrayContaining(normalized([...checkout.schemaOutputs, ...rust])),
+    );
     expect(normalized(o.all)).toEqual(normalized([...checkout.schemaOutputs, ...rust]));
     expect(normalized(o.rustInputs)).toEqual(normalized(rust));
     expect(edgeInputs(n, rust[0])).toEqual(expect.arrayContaining(checkout.schemaInputs.map(p => n.rel(p))));
@@ -296,8 +301,15 @@ describe("emitAotSchemaUseCheck", () => {
     ] as const) {
       const { cfg, n, o, dirStamp } = configure(String(dir));
       emitAotSchemaUseCheck({ n, cfg: { ...cfg, ci }, sources: noSources(), o, dirStamp, engine });
-      expect({ ci, engine: engine.javaScriptCore, all: o.all }).toEqual({ ci, engine: engine.javaScriptCore, all: isThere ? [schemaUseCheckStamp(cfg)] : [] });
-      if (isThere) expect(edgeInputs(n, schemaUseCheckStamp(cfg))).toEqual(expect.arrayContaining([...checkout.schemaUsers, ...checkout.schemaOutputs].map(p => n.rel(p))));
+      expect({ ci, engine: engine.javaScriptCore, all: o.all }).toEqual({
+        ci,
+        engine: engine.javaScriptCore,
+        all: isThere ? [schemaUseCheckStamp(cfg)] : [],
+      });
+      if (isThere)
+        expect(edgeInputs(n, schemaUseCheckStamp(cfg))).toEqual(
+          expect.arrayContaining([...checkout.schemaUsers, ...checkout.schemaOutputs].map(p => n.rel(p))),
+        );
     }
   });
 });
@@ -320,18 +332,38 @@ describe("emitBuiltinsTable", () => {
     const script = resolve(cfg.cwd, "src", "codegen", "builtins", "index.ts");
     const prelude = resolve(cfg.cwd, "src", "aot", "prelude", "map-set.ts");
 
-    emitBuiltinsTable({ n, cfg, sources: noSources({ builtinsTableCodegen: [script], aotPrelude: [prelude] }), o, dirStamp, engine: checkout });
+    emitBuiltinsTable({
+      n,
+      cfg,
+      sources: noSources({ builtinsTableCodegen: [script], aotPrelude: [prelude] }),
+      o,
+      dirStamp,
+      engine: checkout,
+    });
 
     const inDir = namesInCodegenDir.map(name => resolve(cfg.codegenDir, name));
     const cpp = resolve(cfg.codegenDir, "BunAOTHostBindings.cpp");
-    expect([builtinTableRust(cfg), builtinUsesJson(cfg), engineFunctionsJson(cfg)].filter(p => !inDir.includes(p))).toEqual([]);
-    expect(normalized(edgeOf(n, cpp).outputs.map(p => resolve(n.buildDir, p)))).toEqual(expect.arrayContaining(normalized([...inDir, ...checkout.builtinTableOutputs])));
+    expect(
+      [builtinTableRust(cfg), builtinUsesJson(cfg), engineFunctionsJson(cfg)].filter(p => !inDir.includes(p)),
+    ).toEqual([]);
+    expect(normalized(edgeOf(n, cpp).outputs.map(p => resolve(n.buildDir, p)))).toEqual(
+      expect.arrayContaining(normalized([...inDir, ...checkout.builtinTableOutputs])),
+    );
     expect(normalized(o.all)).toEqual(normalized([...inDir, ...checkout.builtinTableOutputs]));
     expect(normalized(o.rustInputs)).toEqual(normalized(inDir.filter(p => p.endsWith(".rs"))));
     expect(o.cppSources).toEqual([cpp]);
 
     const inputs = edgeInputs(n, cpp);
-    expect(inputs).toEqual(expect.arrayContaining([prelude, ...checkout.schemaInputs, ...checkout.builtinTableInputs, resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt")].map(p => n.rel(p))));
+    expect(inputs).toEqual(
+      expect.arrayContaining(
+        [
+          prelude,
+          ...checkout.schemaInputs,
+          ...checkout.builtinTableInputs,
+          resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt"),
+        ].map(p => n.rel(p)),
+      ),
+    );
     expect(inputs.filter(input => input === n.rel(script))).toHaveLength(1);
     expect(edgeArgs(n, cpp)).toContain(`--javascriptcore=${checkout.javaScriptCore}`);
     expect(edgeArgs(n, cpp)).not.toContain("--prebuilt-generated");
@@ -342,7 +374,14 @@ describe("emitBuiltinsTable", () => {
     using dir = tempDir("build-aot-builtins-table-prebuilt", {});
     const { cfg, n, o, dirStamp } = configure(String(dir));
 
-    emitBuiltinsTable({ n, cfg, sources: noSources(), o, dirStamp, engine: { ...prebuilt, requiresVerifiedOverloads: true } });
+    emitBuiltinsTable({
+      n,
+      cfg,
+      sources: noSources(),
+      o,
+      dirStamp,
+      engine: { ...prebuilt, requiresVerifiedOverloads: true },
+    });
 
     const args = edgeArgs(n, builtinTableRust(cfg));
     expect(args).toContain(`--prebuilt-generated=${prebuilt.builtinsGeneratedDirectory}`);
@@ -376,7 +415,13 @@ describe("emitAotCodegen", () => {
 
     emitAotCodegen({ n, cfg, sources: noSources(), o, dirStamp });
 
-    expect(normalized(o.all)).toEqual(normalized(["removable_features.rs", "BunRemovableFeatures.h", "removable-features.json"].map(name => resolve(cfg.codegenDir, name))));
+    expect(normalized(o.all)).toEqual(
+      normalized(
+        ["removable_features.rs", "BunRemovableFeatures.h", "removable-features.json"].map(name =>
+          resolve(cfg.codegenDir, name),
+        ),
+      ),
+    );
   });
 
   test("with an engine the removable features come first, and no file is declared twice", () => {
@@ -388,7 +433,12 @@ describe("emitAotCodegen", () => {
     const steps = readManifest(n.toString()).edges.filter(edge => /^(codegen_bun|aot_check)$/.test(edge.rule));
     expect(steps[0].outputs).toContain(n.rel(removableFeaturesJson(cfg)));
     expect(o.all.filter((path, index) => o.all.indexOf(path) !== index)).toEqual([]);
-    for (const path of [builtinTableRust(cfg), resolve(cfg.codegenDir, "builtin_sources.bin"), ...checkout.schemaOutputs]) expect(o.all).toContain(path);
+    for (const path of [
+      builtinTableRust(cfg),
+      resolve(cfg.codegenDir, "builtin_sources.bin"),
+      ...checkout.schemaOutputs,
+    ])
+      expect(o.all).toContain(path);
   });
 
   test.each([

@@ -2,9 +2,9 @@ use super::{DataModule, DataModuleTree, DataValue, HostValue};
 use crate::atom::{Atom, Interner, known};
 use crate::fold::slice_in;
 use crate::hir::{
-    Call, CallId, Chain, Export, ExportId, ExportSpec, ExprFlags, ExprId, ExprKind, FileBuilder, FileKind,
-    Flags, ListAt, NameKind, PatKind, Prop, PropKey, PropKind, ResolutionMode, Span, StmtId,
-    StmtKind, TextRange, TypeNodeId, UnOp, VarDecl, VarKind,
+    Call, CallId, Chain, Export, ExportId, ExportSpec, ExprFlags, ExprId, ExprKind, FileBuilder,
+    FileKind, Flags, ListAt, NameKind, PatKind, Prop, PropKey, PropKind, ResolutionMode, Span,
+    StmtId, StmtKind, TextRange, TypeNodeId, UnOp, VarDecl, VarKind,
 };
 use crate::session::Arena;
 use crate::util::FxHashSet;
@@ -321,7 +321,9 @@ impl<'s> Builder<'_, 's> {
         let module_name = self.local_names(&[], 1)[0];
         let no_props = self.file.add_props(&[]);
         let exports = self.expr(ExprKind::Object(no_props));
-        let props = self.file.add_props(&[property(known::exports, NameKind::Identifier, exports)]);
+        let props = self
+            .file
+            .add_props(&[property(known::exports, NameKind::Identifier, exports)]);
         let module = self.expr(ExprKind::Object(props));
         let declaration = self.constants(&[(module_name, module)]);
 

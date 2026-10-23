@@ -122,7 +122,10 @@ fn repeated_import_keeps_first_position() {
 #[test]
 fn deferred_import_is_separate_request() {
     let files = [
-        ("main.js", "import defer * as n from './a.js'; import './a.js';"),
+        (
+            "main.js",
+            "import defer * as n from './a.js'; import './a.js';",
+        ),
         ("a.js", "export const x = 1;"),
     ];
     with_program(&files, |program| {
@@ -147,7 +150,10 @@ fn star_export_of_runtime_names_is_dynamic() {
         ("main.js", main),
         ("alias.js", "export * as n from './a.cjs';"),
         ("star.js", "export * from './a.cjs';"),
-        ("both.js", "export * as n from './a.cjs'; export * from './a.cjs';"),
+        (
+            "both.js",
+            "export * as n from './a.cjs'; export * from './a.cjs';",
+        ),
         ("outer.js", "export * from './star.js';"),
         ("static.js", "export * from './es.js';"),
         ("a.cjs", "exports.x = 1;"),
@@ -184,7 +190,10 @@ fn only_a_call_that_evaluates_adds_a_request() {
     with_program(&files, |program| {
         let main = program.file("main.js");
         assert_eq!(program.graph.kind(main), ModuleKind::SourceText);
-        assert_eq!(program.request_lines("main.js"), ["request required.js require"]);
+        assert_eq!(
+            program.request_lines("main.js"),
+            ["request required.js require"]
+        );
         let answers = program.site_answers("main.js");
         let targets: Vec<SiteAnswer<'_>> = answers.iter().map(|&(_, answer)| answer).collect();
         let expected = ["required.js", "imported.js", "only-resolved.js"]
@@ -204,7 +213,10 @@ fn data_modules_have_no_requests() {
     with_program(&files, |program| {
         let expected = ["request legacy.cjs", "request data.json"];
         assert_eq!(program.request_lines("main.js"), expected);
-        assert_eq!(program.request_lines("legacy.cjs"), ["request other.cjs require"]);
+        assert_eq!(
+            program.request_lines("legacy.cjs"),
+            ["request other.cjs require"]
+        );
         for name in ["other.cjs", "data.json"] {
             assert!(program.request_lines(name).is_empty(), "{name}");
         }
@@ -241,7 +253,11 @@ fn unresolved_calls_fail_in_site_order() {
         let code_answers = program.input.files.code_answers(main);
         let cases = answers.iter().zip(code_answers).zip(specifiers).zip(0..);
         for (((&(site, answer), &code_answer), expected_specifier), number) in cases {
-            assert_eq!(answer, SiteAnswer::Failed(ModuleFailureId(number)), "{site:?}");
+            assert_eq!(
+                answer,
+                SiteAnswer::Failed(ModuleFailureId(number)),
+                "{site:?}"
+            );
             let failure = program.graph.failure(ModuleFailureId(number));
             let ModuleFailureKind::Unresolved { specifier, reason } = failure.kind else {
                 panic!("the failure is {:?}", failure.kind);
@@ -391,18 +407,21 @@ fn get_builtin_module_binds_only_runtime_modules() {
 
 #[test]
 fn get_builtin_module_of_unknown_host_module_is_erased() {
-    with_scanner("process.getBuiltinModule('node:buffer');", |scanner, sites| {
-        let [site] = sites else {
-            panic!("the import sites are {sites:?}");
-        };
-        let unknown_module = CodeAnswer::HostModule(HostModuleId(u32::MAX));
-        let not_found = CodeAnswer::NotFound(CodeFailure::ModuleNotFound);
-        for answer in [unknown_module, not_found] {
-            let scanned = scanner.scan_site(0, site, answer);
-            assert_eq!(scanned, ScannedSite::Erased, "{answer:?}");
-        }
-        assert!(scanner.failures.is_empty());
-    });
+    with_scanner(
+        "process.getBuiltinModule('node:buffer');",
+        |scanner, sites| {
+            let [site] = sites else {
+                panic!("the import sites are {sites:?}");
+            };
+            let unknown_module = CodeAnswer::HostModule(HostModuleId(u32::MAX));
+            let not_found = CodeAnswer::NotFound(CodeFailure::ModuleNotFound);
+            for answer in [unknown_module, not_found] {
+                let scanned = scanner.scan_site(0, site, answer);
+                assert_eq!(scanned, ScannedSite::Erased, "{answer:?}");
+            }
+            assert!(scanner.failures.is_empty());
+        },
+    );
 }
 
 #[test]
@@ -411,7 +430,10 @@ fn stars_to_compared_external_bindings_are_dynamic() {
     let files = [
         ("main.js", "import './outer.js'; import './single.js';"),
         ("outer.js", "export * from './index.js';"),
-        ("index.js", "export * from './middle.js'; export * from './b.js';"),
+        (
+            "index.js",
+            "export * from './middle.js'; export * from './b.js';",
+        ),
         ("middle.js", "export * from './a.js';"),
         ("a.js", re_export.as_str()),
         ("b.js", re_export.as_str()),
@@ -422,7 +444,10 @@ fn stars_to_compared_external_bindings_are_dynamic() {
             ("outer.js", &["request index.js dynamic-star"]),
             (
                 "index.js",
-                &["request middle.js dynamic-star", "request b.js dynamic-star"],
+                &[
+                    "request middle.js dynamic-star",
+                    "request b.js dynamic-star",
+                ],
             ),
             ("middle.js", &["request a.js dynamic-star"]),
             ("single.js", &["request a.js"]),
@@ -516,8 +541,14 @@ fn candidates_of_each_site_are_a_range() {
             host_modules: &[],
             spellings: &[(Atom(1), ComputedTarget::File(FileId(5)))],
         });
-        assert_eq!(scanner.scan_site(0, site, first), ScannedSite::Candidates(0..2));
-        assert_eq!(scanner.scan_site(1, site, second), ScannedSite::Candidates(2..3));
+        assert_eq!(
+            scanner.scan_site(0, site, first),
+            ScannedSite::Candidates(0..2)
+        );
+        assert_eq!(
+            scanner.scan_site(1, site, second),
+            ScannedSite::Candidates(2..3)
+        );
         let expected = [
             ModuleRef::File(FileId(5)),
             ModuleRef::File(FileId(7)),
@@ -566,7 +597,10 @@ fn site_over_candidate_limit_is_recorded() {
         assert!(scanner.sites_over_candidate_limit.is_empty());
 
         let over_limit = unknown_for(ComputedUnknown::TooManyCandidates);
-        assert_eq!(scanner.scan_site(0, site, over_limit), ScannedSite::AllModules);
+        assert_eq!(
+            scanner.scan_site(0, site, over_limit),
+            ScannedSite::AllModules
+        );
         let [span] = scanner.sites_over_candidate_limit[..] else {
             panic!("the sites are {:?}", scanner.sites_over_candidate_limit);
         };
@@ -584,7 +618,10 @@ fn external_kind_is_recorded() {
     with_program(&[("main.js", main.as_str())], |program| {
         let importer = program.file("main.js");
         let expected = [
-            (program.atom(UNCOMPILED_MODULE), ExternalKind::UncompiledCode),
+            (
+                program.atom(UNCOMPILED_MODULE),
+                ExternalKind::UncompiledCode,
+            ),
             (program.atom(HOST_VALUE_MODULE), ExternalKind::HostValue),
         ];
         assert_eq!(scan_files(program.input).of(importer).externals, expected);
@@ -693,8 +730,14 @@ fn runtime_module_is_listed_once() {
     ];
     with_program(&files, |program| {
         let module = ModuleRef::Runtime(RuntimeModule::NodeBuffer);
-        assert_eq!(program.site_answers("main.js")[0].1, SiteAnswer::Module(module));
-        assert_eq!(program.site_answers("a.js")[0].1, SiteAnswer::Module(module));
+        assert_eq!(
+            program.site_answers("main.js")[0].1,
+            SiteAnswer::Module(module)
+        );
+        assert_eq!(
+            program.site_answers("a.js")[0].1,
+            SiteAnswer::Module(module)
+        );
         let other_modules = program.graph.other_modules();
         let atoms = &program.input.files.atoms;
         let is_less = |a: &ModuleRef, b: &ModuleRef| compare_modules(*a, *b, atoms).is_lt();

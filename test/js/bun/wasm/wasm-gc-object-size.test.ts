@@ -48,7 +48,10 @@ const module = new WebAssembly.Module(
       ]),
     ),
     ...section(3, vector([[makePairType], [makeWordsType], [makeBytesType]])),
-    ...section(7, vector([exportedFunction("makePair", 0), exportedFunction("makeWords", 1), exportedFunction("makeBytes", 2)])),
+    ...section(
+      7,
+      vector([exportedFunction("makePair", 0), exportedFunction("makeWords", 1), exportedFunction("makeBytes", 2)]),
+    ),
     ...section(
       10,
       vector([

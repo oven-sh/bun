@@ -315,8 +315,10 @@ interface AgentConnectOptions extends HttpAgentOptions {
   proxy?: string | URL;
 }
 
-interface ClientOptions
-  extends Omit<HttpsRequestOptions, "agent" | "createConnection" | "headers" | "host" | "path" | "port"> {
+interface ClientOptions extends Omit<
+  HttpsRequestOptions,
+  "agent" | "createConnection" | "headers" | "host" | "path" | "port"
+> {
   secureContext?: import("node:tls").SecureContext;
   createConnection?(
     options: import("node:http").ClientRequestArgs,
@@ -2114,8 +2116,7 @@ Object.defineProperty(ClientSocket, "name", { value: "Socket" });
 // client only reports that the name check failed.
 function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeTlsOptions {
   const checkServerIdentity = getIgnoringObjectPrototype(tls, "checkServerIdentity") as
-    | ((hostname: string, cert: unknown) => Error | undefined)
-    | undefined;
+    ((hostname: string, cert: unknown) => Error | undefined) | undefined;
   if (!$isCallable(checkServerIdentity)) return tls;
 
   // If the verdict isn't enforced the connection goes on, and a later failure must not report this one.

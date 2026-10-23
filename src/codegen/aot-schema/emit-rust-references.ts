@@ -17,7 +17,9 @@ function referenceValue(kind: Kind, value: string): string {
   if (kind.tag === "External") return `Reference::${kind.external.name}(${value})`;
   if (kind.tag !== "Id") throw new Error(`${kind.tag} is not a reference`);
   const name = kind.id.name;
-  return kind.role === null ? `Reference::${name}(${value})` : `Reference::${name}(${value}, ${name}ReferenceKind::${kind.role.name})`;
+  return kind.role === null
+    ? `Reference::${name}(${value})`
+    : `Reference::${name}(${value}, ${name}ReferenceKind::${kind.role.name})`;
 }
 
 function visitField(field: Field, value: string, isByReference: boolean): string[] {
@@ -59,7 +61,8 @@ function remapField(field: Field, value: string, isByReference: boolean): string
   if (!isRemapped(kind)) return [];
   if (kind.tag === "Span" || kind.tag === "List") {
     const element = kind.element;
-    if (element.tag === "Id") return [`for id in ${value}.iter_mut() { remap(id, ${mapField(element)}); }`, ...sortStatement(field, value)];
+    if (element.tag === "Id")
+      return [`for id in ${value}.iter_mut() { remap(id, ${mapField(element)}); }`, ...sortStatement(field, value)];
     return [`for element in ${value}.iter_mut() { element.remap_ids(map); }`, ...sortStatement(field, value)];
   }
   if (kind.tag === "Record" || kind.tag === "Variant") return [`${value}.remap_ids(map);`];
@@ -98,7 +101,8 @@ function referencesImpl(type: SchemaType): string[] {
 }
 
 function recordReferencesRs(schema: Schema): string[] {
-  const holdsCodeWords = (type: SchemaType): boolean => wireFieldsOf(type).some(field => isCodeWord(innermostKindOf(field.kind)));
+  const holdsCodeWords = (type: SchemaType): boolean =>
+    wireFieldsOf(type).some(field => isCodeWord(innermostKindOf(field.kind)));
   const types = listedTypesOf(schema).filter(type => !holdsCodeWords(type));
   return [
     rustMarker,
@@ -231,7 +235,8 @@ function entryStatements(entry: Entry): string[] {
     const kind = parameter.kind;
     if (kind.tag === "List") add(listStatement(kind.element));
     else if (!holdsReferences(kind)) skipped += wireWordsOf(kind);
-    else if (kind.tag === "Record" || kind.tag === "Variant") add(`at = ${rustTypeOf(kind)}::visit_words(words, at, visit)?;`);
+    else if (kind.tag === "Record" || kind.tag === "Variant")
+      add(`at = ${rustTypeOf(kind)}::visit_words(words, at, visit)?;`);
     else add(`${parameter.isOptional ? "optional" : "present"}(words, &mut at, ${fieldWord(kind)}, visit)?;`);
   }
   flush();
@@ -240,7 +245,8 @@ function entryStatements(entry: Entry): string[] {
 
 function skippedListStatement(element: Kind): string {
   if (isReference(element)) return "counted_words(words, &mut at, 1)?;";
-  if (holdsReferences(element)) return `counted_records(words, &mut at, &mut |_, _| {}, ${rustTypeOf(element)}::visit_words)?;`;
+  if (holdsReferences(element))
+    return `counted_records(words, &mut at, &mut |_, _| {}, ${rustTypeOf(element)}::visit_words)?;`;
   return `counted_words(words, &mut at, ${wireWordsOf(element)})?;`;
 }
 
@@ -266,7 +272,8 @@ function operandStatements(entry: Entry): string[] {
     const kind = parameter.kind;
     if (kind.tag === "List") add(skippedListStatement(kind.element));
     else if (!holdsReferences(kind)) skipped += wireWordsOf(kind);
-    else if (kind.tag === "Record" || kind.tag === "Variant") add(`at = ${rustTypeOf(kind)}::visit_words(words, at, &mut |_, _| {})?;`);
+    else if (kind.tag === "Record" || kind.tag === "Variant")
+      add(`at = ${rustTypeOf(kind)}::visit_words(words, at, &mut |_, _| {})?;`);
     else if (referenceKind(kind) === "ReferenceKind::PropertyKey") addVisit("key(words, &mut at, visit)?;");
     else skipped += 1;
   }

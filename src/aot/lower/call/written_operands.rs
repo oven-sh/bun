@@ -17,8 +17,14 @@ struct Entry {
     value: ValueId,
 }
 
-pub(super) fn find_locked_builtin(file: &FileLowering<'_, '_, '_, '_>, callee: ExprId) -> Option<BuiltinId> {
-    match file.builtins.of_expr(expression::skip_type_syntax(file, callee)) {
+pub(super) fn find_locked_builtin(
+    file: &FileLowering<'_, '_, '_, '_>,
+    callee: ExprId,
+) -> Option<BuiltinId> {
+    match file
+        .builtins
+        .of_expr(expression::skip_type_syntax(file, callee))
+    {
         Some(Resolved::Builtin(path)) => path.locked_builtin().map(table::canonical_id),
         Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
     }
@@ -31,7 +37,9 @@ fn find_array_literal(file: &FileLowering<'_, '_, '_, '_>, list: ExprId) -> Opti
     loop {
         match hir[current].kind {
             ExprKind::Array(_) => return Some(current),
-            ExprKind::Satisfies { expr: operand, .. } | ExprKind::AsConst(operand) | ExprKind::NonNull(operand) => {
+            ExprKind::Satisfies { expr: operand, .. }
+            | ExprKind::AsConst(operand)
+            | ExprKind::NonNull(operand) => {
                 current = operand;
             }
             _ => return None,
@@ -49,7 +57,8 @@ fn find_written_list(
         return None;
     };
     let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
-    let is_value = |&element: &ExprId| !matches!(hir[element].kind, ExprKind::Missing | ExprKind::Spread(_));
+    let is_value =
+        |&element: &ExprId| !matches!(hir[element].kind, ExprKind::Missing | ExprKind::Spread(_));
     elements.iter().all(is_value).then_some(elements)
 }
 
@@ -92,7 +101,10 @@ fn find_written_pairs(
     Some(pairs)
 }
 
-pub(super) fn find_only_argument(file: &FileLowering<'_, '_, '_, '_>, site: Call) -> Option<ExprId> {
+pub(super) fn find_only_argument(
+    file: &FileLowering<'_, '_, '_, '_>,
+    site: Call,
+) -> Option<ExprId> {
     let mut arguments = file.hir.ids(site.args);
     let argument = arguments.next()?;
     let is_spread = matches!(file.hir[argument].kind, ExprKind::Spread(_));
@@ -168,7 +180,8 @@ fn lower_definition_by_descriptors(
     };
     let description = hir[description];
     if !matches!(description.chain, Chain::No)
-        || find_locked_builtin(lowering.file, description.callee) != Some(BuiltinId::ObjectGetOwnPropertyDescriptors)
+        || find_locked_builtin(lowering.file, description.callee)
+            != Some(BuiltinId::ObjectGetOwnPropertyDescriptors)
     {
         return None;
     }
@@ -176,8 +189,12 @@ fn lower_definition_by_descriptors(
 
     let target = lower_expression(lowering, target);
     let source = lower_expression(lowering, source);
-    lowering.set_position(callee::last_mapped_position(lowering.file, description.callee));
-    let describe = expression::emit_locked_builtin(lowering, BuiltinId::CompilerHelpersDescribeUnlessOrdinary);
+    lowering.set_position(callee::last_mapped_position(
+        lowering.file,
+        description.callee,
+    ));
+    let describe =
+        expression::emit_locked_builtin(lowering, BuiltinId::CompilerHelpersDescribeUnlessOrdinary);
     let arguments = Arguments::Values(SmallVec::from_slice(&[source]));
     let described = emit_call(lowering, describe, None, arguments, CallSite::default());
 
@@ -185,7 +202,8 @@ fn lower_definition_by_descriptors(
     convert::convert_arguments(lowering, call, &mut written);
     let [target, described] = written;
     lowering.set_position(callee::last_mapped_position(lowering.file, site.callee));
-    let define = expression::emit_locked_builtin(lowering, BuiltinId::CompilerHelpersDefinePropertiesFrom);
+    let define =
+        expression::emit_locked_builtin(lowering, BuiltinId::CompilerHelpersDefinePropertiesFrom);
     let define_site = CallSite {
         callee_name: callee::find_callee_name(lowering.file, site.callee),
         ..CallSite::default()
@@ -206,7 +224,9 @@ pub(super) fn try_lower_call(
     }
     match find_locked_builtin(lowering.file, site.callee) {
         Some(BuiltinId::ObjectFromEntries) => lower_object_from_entries(lowering, call, site),
-        Some(BuiltinId::ObjectDefineProperties) => lower_definition_by_descriptors(lowering, call, site),
+        Some(BuiltinId::ObjectDefineProperties) => {
+            lower_definition_by_descriptors(lowering, call, site)
+        }
         Some(BuiltinId::ArrayFrom) => array_makers::lower_array_from(lowering, call, site),
         Some(_) => None,
         None => array_makers::try_lower_method_call(lowering, call, site),
@@ -225,7 +245,13 @@ fn emit_empty_collection(
         callee_name: callee::find_callee_name(lowering.file, site.callee),
         ..CallSite::default()
     };
-    emit_construct(lowering, function, None, Arguments::Values(SmallVec::new()), construct_site)
+    emit_construct(
+        lowering,
+        function,
+        None,
+        Arguments::Values(SmallVec::new()),
+        construct_site,
+    )
 }
 
 fn emit_insertion(
@@ -236,7 +262,13 @@ fn emit_insertion(
 ) {
     let method = expression::emit_locked_builtin(lowering, method);
     let arguments = Arguments::Values(SmallVec::from_slice(operands));
-    emit_call(lowering, method, Some(collection), arguments, CallSite::default());
+    emit_call(
+        lowering,
+        method,
+        Some(collection),
+        arguments,
+        CallSite::default(),
+    );
 }
 
 // `new Map([[key, value], ..])`. A list of constants stays: the whole map is laid into the image.
@@ -277,8 +309,10 @@ fn lower_set_of_values(
         return None;
     }
     let elements = find_written_list(lowering.file, list)?;
-    let values: SmallVec<[ValueId; 8]> =
-        elements.iter().map(|&element| lower_expression(lowering, element)).collect();
+    let values: SmallVec<[ValueId; 8]> = elements
+        .iter()
+        .map(|&element| lower_expression(lowering, element))
+        .collect();
     record_flow_into_argument(lowering, expression, list, false);
     let set = emit_empty_collection(lowering, expression, site, BuiltinId::Set);
     for &value in &values {

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
-import { chmodSync, symlinkSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { chmodSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.ts": "const answer: number = 40 + 2;\nconsole.log(answer);\n",

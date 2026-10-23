@@ -104,7 +104,9 @@ const checkedNumberAssertions = [
 ].join("\n");
 
 // A symbol of `$newCppFunction` is written for GeneratedJS2Native.h, which looks names up in these.
-const namespacesOfHostFunctions = ["Bun", "Bun::Bindgen::Generated", "JSC", "WebCore"].map(namespace => `using namespace ${namespace};`).join("\n");
+const namespacesOfHostFunctions = ["Bun", "Bun::Bindgen::Generated", "JSC", "WebCore"]
+  .map(namespace => `using namespace ${namespace};`)
+  .join("\n");
 
 // The declaration of a thunk spells the types of its parameters with these.
 const headersOfDirectFunctions = ["Bindgen/ExternTraits.h", "Bindgen/IDLConvert.h"];
@@ -196,13 +198,17 @@ function formatHostEntryPointRecord(
 ): string[] {
   if (symbol === null) return [];
   const guard = builtin.attachments.featureUses.find(use => use.isGuard);
-  if (guard !== undefined) return [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, guard.feature, stub, symbol, builtin.id)];
+  if (guard !== undefined)
+    return [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, guard.feature, stub, symbol, builtin.id)];
   const feature = findFeatureOfHolders(builtin);
-  return feature === undefined ? [] : [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
+  return feature === undefined
+    ? []
+    : [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
 }
 
 // What stands in for a function of a removed feature throws in the realm that it takes first.
-const stubOfDirectFunction = ({ parameters }: DirectEntrySpec) => (parameters[0]?.value === "Realm" ? "Throw" : "Abort");
+const stubOfDirectFunction = ({ parameters }: DirectEntrySpec) =>
+  parameters[0]?.value === "Realm" ? "Throw" : "Abort";
 
 function formatAppendFunctionBinding(builtin: ModelBuiltin): string[] {
   const { hostAppendSymbol } = builtin.attachments;
@@ -321,9 +327,10 @@ export function emitEngineBindings(model: TableModel): string {
     emitSwitchFunction(
       "LinkTimeConstant toLinkTimeConstant(LinkTimeConstantID constant)",
       "constant",
-      linkTimeConstants.map(
-        (constant): SwitchCase => [`LinkTimeConstantID::${capitalize(constant)}`, `LinkTimeConstant::${constant}`],
-      ),
+      linkTimeConstants.map((constant): SwitchCase => [
+        `LinkTimeConstantID::${capitalize(constant)}`,
+        `LinkTimeConstant::${constant}`,
+      ]),
     ),
     codeIndexAssertions,
     checkedNumberAssertions,
@@ -349,9 +356,7 @@ function emitHostIncludes(
     "#include <JavaScriptCore/AOTBuiltinTableBindings.h>",
     "#include <JavaScriptCore/StructureInlines.h>",
     ...(appendSymbols.length > 0 ? ["#include <JavaScriptCore/AOTStringBuilderStorage.h>"] : []),
-    ...sortUnique(["ZigGlobalObject.h", ...classHeaders, ...functionHeaders]).map(
-      header => `#include "${header}"`,
-    ),
+    ...sortUnique(["ZigGlobalObject.h", ...classHeaders, ...functionHeaders]).map(header => `#include "${header}"`),
     "#include <type_traits>",
   ].join("\n");
 }
@@ -365,10 +370,13 @@ function splitQualifiedName(qualified: string): { namespace: string; name: strin
 function emitHostFunctionDeclarations(qualifiedNames: readonly string[]): string {
   const functions = sortUnique(qualifiedNames).map(splitQualifiedName);
   return joinBlocks(
-    Array.from(Map.groupBy(functions, ({ namespace }) => namespace), ([namespace, members]) => {
-      const declarations = members.map(({ name }) => `JSC_DECLARE_HOST_FUNCTION(${name});`).join("\n");
-      return namespace === "" ? declarations : `namespace ${namespace} {\n${declarations}\n}`;
-    }),
+    Array.from(
+      Map.groupBy(functions, ({ namespace }) => namespace),
+      ([namespace, members]) => {
+        const declarations = members.map(({ name }) => `JSC_DECLARE_HOST_FUNCTION(${name});`).join("\n");
+        return namespace === "" ? declarations : `namespace ${namespace} {\n${declarations}\n}`;
+      },
+    ),
   );
 }
 
@@ -418,17 +426,15 @@ function formatHostNumberBinding(builtin: ModelBuiltin): string[] {
   ];
 }
 
-export function emitHostBindings(
-  model: TableModel,
-  features: FeatureModel,
-  nativeCallListStamp: string,
-): string {
+export function emitHostBindings(model: TableModel, features: FeatureModel, nativeCallListStamp: string): string {
   const classes = findClassesWithBindings(model, "Host");
   const nativeFunctions = findNativeFunctions(model, "Host");
   const appendSymbols = sortUnique(model.builtins.flatMap(builtin => builtin.attachments.hostAppendSymbol ?? []));
   const directFunctions = findDirectFunctions(model);
   const customGetters = sortUnique(model.overloads.flatMap(overload => customGetterOf(overload) ?? []));
-  const symbolsWithoutHeader = collectNativeFunctionSymbols(nativeFunctions.filter(({ nativeFunction }) => nativeFunction.header === null));
+  const symbolsWithoutHeader = collectNativeFunctionSymbols(
+    nativeFunctions.filter(({ nativeFunction }) => nativeFunction.header === null),
+  );
   const isInNamespace = (symbol: string) => symbol.includes("::");
   const records = [
     ...model.builtins.flatMap(builtin =>
@@ -436,7 +442,13 @@ export function emitHostBindings(
     ),
     ...new Set(
       directFunctions.flatMap(({ overload, directEntry }) =>
-        formatHostEntryPointRecord("directFunctions", overload.builtin, directEntry.symbol, features, stubOfDirectFunction(directEntry)),
+        formatHostEntryPointRecord(
+          "directFunctions",
+          overload.builtin,
+          directEntry.symbol,
+          features,
+          stubOfDirectFunction(directEntry),
+        ),
       ),
     ),
     ...nativeFunctions.flatMap(({ builtin, nativeFunction }) =>
@@ -451,7 +463,12 @@ export function emitHostBindings(
     `${fileHeader}#include "root.h"`,
     "#if ENABLE(AOT)",
     emitHostIncludes(classes, appendSymbols, directFunctions, nativeFunctions),
-    emitExternDeclarations(appendSymbols, directFunctions, symbolsWithoutHeader.filter(symbol => !isInNamespace(symbol)), nativeCallListStamp),
+    emitExternDeclarations(
+      appendSymbols,
+      directFunctions,
+      symbolsWithoutHeader.filter(symbol => !isInNamespace(symbol)),
+      nativeCallListStamp,
+    ),
     emitHostFunctionDeclarations(symbolsWithoutHeader.filter(isInNamespace)),
     customGetters.map(symbol => `JSC_DECLARE_CUSTOM_GETTER(${symbol});`).join("\n"),
     "namespace Bun::AOTHostBindings {",

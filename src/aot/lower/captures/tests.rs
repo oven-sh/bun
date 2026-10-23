@@ -167,7 +167,8 @@ impl Fixture {
     }
 
     fn solve(mut self, max_captures: usize) -> CapturePlan {
-        self.bindings.sort_unstable_by_key(|captured| captured.binding);
+        self.bindings
+            .sort_unstable_by_key(|captured| captured.binding);
         self.uses.sort_unstable();
         self.references.sort_unstable();
         self.entry_captures.sort_unstable();
@@ -211,7 +212,10 @@ fn owner_captures_nothing() {
 #[test]
 fn later_function_copies() {
     let plan = solve_single_use(5, |fixture| fixture.add_root_constant(3));
-    assert_eq!(captures_of(&plan, SINGLE_USER), [Capture::Value(FIRST_SYMBOL)]);
+    assert_eq!(
+        captures_of(&plan, SINGLE_USER),
+        [Capture::Value(FIRST_SYMBOL)]
+    );
     assert!(captures_of(&plan, ROOT).is_empty());
     assert!(plan.fields.is_empty());
 }
@@ -219,7 +223,10 @@ fn later_function_copies() {
 #[test]
 fn earlier_function_takes_environment() {
     let plan = solve_single_use(5, |fixture| fixture.add_root_constant(7));
-    assert_eq!(captures_of(&plan, SINGLE_USER), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, SINGLE_USER),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert!(captures_of(&plan, ROOT).is_empty());
     assert_eq!(plan.fields, [FIRST_SYMBOL]);
 }
@@ -227,7 +234,10 @@ fn earlier_function_takes_environment() {
 #[test]
 fn equal_time_is_not_later() {
     let plan = solve_single_use(5, |fixture| fixture.add_root_constant(5));
-    assert_eq!(captures_of(&plan, SINGLE_USER), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, SINGLE_USER),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(plan.fields, [FIRST_SYMBOL]);
 }
 
@@ -237,22 +247,36 @@ fn function_without_creation_time_takes_environment() {
     let add_entry_binding =
         |fixture: &mut Fixture| fixture.add_symbol(ROOT, ROOT_SCOPE, true, at_entry);
     let unmarked = solve_single_use(0, add_entry_binding);
-    assert_eq!(captures_of(&unmarked, SINGLE_USER), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&unmarked, SINGLE_USER),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     let marked = solve_single_use(1, add_entry_binding);
-    assert_eq!(captures_of(&marked, SINGLE_USER), [Capture::Value(FIRST_SYMBOL)]);
+    assert_eq!(
+        captures_of(&marked, SINGLE_USER),
+        [Capture::Value(FIRST_SYMBOL)]
+    );
 }
 
 #[test]
 fn mutable_binding_is_never_copied() {
     let plan = solve_single_use(5, |fixture| fixture.add_root_variable(3));
-    assert_eq!(captures_of(&plan, SINGLE_USER), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, SINGLE_USER),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(plan.fields, [FIRST_SYMBOL]);
 }
 
 #[test]
 fn unknown_initialization_is_never_copied() {
-    let plan = solve_single_use(5, |fixture| fixture.add_symbol(ROOT, ROOT_SCOPE, true, None));
-    assert_eq!(captures_of(&plan, SINGLE_USER), [Capture::Environment(ROOT_SCOPE)]);
+    let plan = solve_single_use(5, |fixture| {
+        fixture.add_symbol(ROOT, ROOT_SCOPE, true, None)
+    });
+    assert_eq!(
+        captures_of(&plan, SINGLE_USER),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(plan.fields, [FIRST_SYMBOL]);
 }
 
@@ -265,7 +289,10 @@ fn decision_is_per_function() {
     fixture.add_use(early, binding);
     fixture.add_use(late, binding);
     let plan = fixture.solve(NO_LIMIT);
-    assert_eq!(captures_of(&plan, early), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, early),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(captures_of(&plan, late), [Capture::Value(binding)]);
     assert_eq!(plan.fields, [binding]);
 }
@@ -301,7 +328,10 @@ fn environment_travels_through_a_creator_that_copies() {
     fixture.add_use(creator, binding);
     fixture.add_use(created, binding);
     let plan = fixture.solve(NO_LIMIT);
-    assert_eq!(captures_of(&plan, created), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, created),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(
         captures_of(&plan, creator),
         [Capture::Environment(ROOT_SCOPE), Capture::Value(binding)]
@@ -318,8 +348,14 @@ fn hoisted_function_and_what_it_creates_take_environment() {
     fixture.add_use(hoisted, binding);
     fixture.add_use(created, binding);
     let plan = fixture.solve(NO_LIMIT);
-    assert_eq!(captures_of(&plan, hoisted), [Capture::Environment(ROOT_SCOPE)]);
-    assert_eq!(captures_of(&plan, created), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, hoisted),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
+    assert_eq!(
+        captures_of(&plan, created),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(plan.fields, [binding]);
 }
 
@@ -330,7 +366,10 @@ fn hoisted_function_takes_environment_of_another_scope_of_its_creator() {
     let hoisted = fixture.add_hoisted_function(ROOT, 6, ScopeId(1));
     fixture.add_use(hoisted, binding);
     let plan = fixture.solve(NO_LIMIT);
-    assert_eq!(captures_of(&plan, hoisted), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, hoisted),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(plan.fields, [binding]);
 }
 
@@ -374,7 +413,10 @@ fn hoisted_function_reads_its_sibling_from_environment() {
     fixture.add_use(hoisted, sibling);
     fixture.add_use(closure, sibling);
     let plan = fixture.solve(NO_LIMIT);
-    assert_eq!(captures_of(&plan, hoisted), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, hoisted),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(captures_of(&plan, closure), [Capture::Value(sibling)]);
     assert_eq!(plan.fields, [sibling]);
 }
@@ -387,8 +429,14 @@ fn every_function_on_the_chain_is_tested() {
     let inner = fixture.add_function(creator, 9);
     fixture.add_use(inner, binding);
     let plan = fixture.solve(NO_LIMIT);
-    assert_eq!(captures_of(&plan, inner), [Capture::Environment(ROOT_SCOPE)]);
-    assert_eq!(captures_of(&plan, creator), [Capture::Environment(ROOT_SCOPE)]);
+    assert_eq!(
+        captures_of(&plan, inner),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
+    assert_eq!(
+        captures_of(&plan, creator),
+        [Capture::Environment(ROOT_SCOPE)]
+    );
     assert_eq!(plan.fields, [binding]);
 }
 
@@ -626,8 +674,14 @@ fn nest_functions(
 fn lower_nested_functions(source: &str) -> (usize, usize) {
     let lowered = lower_program_with_limits(&[("main.js", source)], LimitValues::for_host());
     let fragment = &lowered[0].1.fragment;
-    let captures = fragment.functions.iter().map(|(_, function)| function.captures.len());
-    let environments = fragment.layouts.iter().filter(|(_, layout)| layout.kind == LayoutKind::Environment);
+    let captures = fragment
+        .functions
+        .iter()
+        .map(|(_, function)| function.captures.len());
+    let environments = fragment
+        .layouts
+        .iter()
+        .filter(|(_, layout)| layout.kind == LayoutKind::Environment);
     let fields = environments.map(|(_, layout)| layout.fields.len());
     (captures.max().unwrap_or(0), fields.max().unwrap_or(0))
 }
@@ -635,17 +689,31 @@ fn lower_nested_functions(source: &str) -> (usize, usize) {
 #[test]
 fn function_that_reaches_too_many_scopes_gets_its_captures_in_one_object() {
     let stored = |depth| {
-        nest_functions(depth, |level| format!("let v{level} = {level};"), |level| format!("v{level}++;"))
+        nest_functions(
+            depth,
+            |level| format!("let v{level} = {level};"),
+            |level| format!("v{level}++;"),
+        )
     };
     // The innermost function has a variable of its own and captures an environment for each level around it.
-    assert_eq!(lower_nested_functions(&stored(max_captures() + 1)), (max_captures(), 1));
-    assert_eq!(lower_nested_functions(&stored(max_captures() + 3)), (max_captures(), max_captures() + 2));
+    assert_eq!(
+        lower_nested_functions(&stored(max_captures() + 1)),
+        (max_captures(), 1)
+    );
+    assert_eq!(
+        lower_nested_functions(&stored(max_captures() + 3)),
+        (max_captures(), max_captures() + 2)
+    );
 }
 
 #[test]
 fn copies_of_too_many_scopes_come_in_one_object_too() {
     let read = |depth| {
-        nest_functions(depth, |level| format!("const c{level} = Math.random();"), |level| format!("c{level};"))
+        nest_functions(
+            depth,
+            |level| format!("const c{level} = Math.random();"),
+            |level| format!("c{level};"),
+        )
     };
     let (captures, fields) = lower_nested_functions(&read(max_captures() + 3));
     assert_eq!(captures, max_captures());

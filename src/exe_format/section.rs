@@ -92,8 +92,7 @@ fn find_macho(file: &mut Image<'_>, names: SectionNames) -> Result<SectionLocati
                     return Err(SectionError::Invalid);
                 }
                 let sect: macho::section_64 = file.struct_at(sect_offset)?;
-                if sect.sect_name() == names.macho_section
-                    && sect.seg_name() == names.macho_segment
+                if sect.sect_name() == names.macho_section && sect.seg_name() == names.macho_segment
                 {
                     file.range(sect.offset as usize, to_usize(sect.size)?)?;
                     return Ok(SectionLocation {
@@ -412,7 +411,10 @@ mod tests {
         for file in build_each_format(&[BUILTIN_MODULES, FEATURE_STATE]) {
             assert_eq!(find(&file, KnownSection::TrimTable), missing);
             assert_eq!(find(&file, KnownSection::Payload), missing);
-            assert_eq!(find(&file, FEATURE_STATE.section), Ok(FEATURE_STATE.location));
+            assert_eq!(
+                find(&file, FEATURE_STATE.section),
+                Ok(FEATURE_STATE.location)
+            );
         }
         for file in build_each_format(&[]) {
             for toy in TOY_SECTIONS {
@@ -425,7 +427,10 @@ mod tests {
             ehdr.e_shnum = 0;
             ehdr.e_shstrndx = 0;
         });
-        assert_eq!(find(&without_section_headers, KnownSection::TrimTable), missing);
+        assert_eq!(
+            find(&without_section_headers, KnownSection::TrimTable),
+            missing
+        );
     }
 
     #[test]
@@ -439,7 +444,10 @@ mod tests {
             ..TRIM_TABLE
         };
         for file in build_each_format(&[BUILTIN_MODULES, TRIM_TABLE, FEATURE_STATE, later_piece]) {
-            assert_eq!(find(&file, KnownSection::TrimTable), Ok(TRIM_TABLE.location));
+            assert_eq!(
+                find(&file, KnownSection::TrimTable),
+                Ok(TRIM_TABLE.location)
+            );
         }
     }
 
@@ -491,7 +499,10 @@ mod tests {
         for file in build_each_format(&[BUILTIN_MODULES, at_file_offset(last_valid_offset + 1)]) {
             let result = find(&file, KnownSection::TrimTable);
             assert_eq!(result, Err(SectionError::Invalid));
-            assert_eq!(find(&file, BUILTIN_MODULES.section), Ok(BUILTIN_MODULES.location));
+            assert_eq!(
+                find(&file, BUILTIN_MODULES.section),
+                Ok(BUILTIN_MODULES.location)
+            );
         }
     }
 
@@ -540,7 +551,10 @@ mod tests {
         });
         let result = find(&file, KnownSection::TrimTable);
         assert_eq!(result, Err(SectionError::Invalid));
-        assert_eq!(find(&file, BUILTIN_MODULES.section), Ok(BUILTIN_MODULES.location));
+        assert_eq!(
+            find(&file, BUILTIN_MODULES.section),
+            Ok(BUILTIN_MODULES.location)
+        );
     }
 
     #[test]
@@ -551,9 +565,13 @@ mod tests {
         });
         let mut names_past_end = build_elf(&TOY_SECTIONS);
         let string_table_offset = elf_section_header_offset(TOY_SECTIONS.len() + 1);
-        edit_struct(&mut names_past_end, string_table_offset, |header: &mut Elf64_Shdr| {
-            header.sh_size = FILE_SIZE as u64;
-        });
+        edit_struct(
+            &mut names_past_end,
+            string_table_offset,
+            |header: &mut Elf64_Shdr| {
+                header.sh_size = FILE_SIZE as u64;
+            },
+        );
         for file in [headers_past_end, names_past_end] {
             let result = find(&file, KnownSection::TrimTable);
             assert_eq!(result, Err(SectionError::Invalid));
@@ -561,12 +579,19 @@ mod tests {
 
         let mut name_outside_table = build_elf(&TOY_SECTIONS);
         let offset = elf_section_header_offset(1);
-        edit_struct(&mut name_outside_table, offset, |header: &mut Elf64_Shdr| {
-            header.sh_name = u32::MAX;
-        });
+        edit_struct(
+            &mut name_outside_table,
+            offset,
+            |header: &mut Elf64_Shdr| {
+                header.sh_name = u32::MAX;
+            },
+        );
         let result = find(&name_outside_table, BUILTIN_MODULES.section);
         assert_eq!(result, Err(SectionError::MissingSection));
-        assert_eq!(find(&name_outside_table, TRIM_TABLE.section), Ok(TRIM_TABLE.location));
+        assert_eq!(
+            find(&name_outside_table, TRIM_TABLE.section),
+            Ok(TRIM_TABLE.location)
+        );
     }
 
     #[test]
@@ -580,9 +605,13 @@ mod tests {
             |command: &mut macho::segment_command_64| command.nsects = 2,
         );
         let mut commands_past_table = build_macho(&[BUILTIN_MODULES]);
-        edit_struct(&mut commands_past_table, 0, |header: &mut macho::mach_header_64| {
-            header.ncmds += 1;
-        });
+        edit_struct(
+            &mut commands_past_table,
+            0,
+            |header: &mut macho::mach_header_64| {
+                header.ncmds += 1;
+            },
+        );
         for file in [short_command, sections_past_command, commands_past_table] {
             let result = find(&file, KnownSection::TrimTable);
             assert_eq!(result, Err(SectionError::Invalid));
@@ -594,9 +623,13 @@ mod tests {
         let raw_size = align_up(TRIM_TABLE.location.size, PE_FILE_ALIGNMENT);
         for virtual_size in [0, raw_size as u32 + 0x1000] {
             let mut file = build_pe(&[TRIM_TABLE]);
-            edit_struct(&mut file, PE_SECTION_TABLE_OFFSET, |header: &mut SectionHeader| {
-                header.virtual_size = virtual_size;
-            });
+            edit_struct(
+                &mut file,
+                PE_SECTION_TABLE_OFFSET,
+                |header: &mut SectionHeader| {
+                    header.virtual_size = virtual_size;
+                },
+            );
             let expected = SectionLocation {
                 size: raw_size,
                 ..TRIM_TABLE.location

@@ -97,7 +97,9 @@ function checkSize(file: OutputFile): void {
   if (!isInterfaceOutput(file.name)) return;
   const bytes = Buffer.byteLength(toText(file.lines));
   if (file.lines.length > maxInterfaceLines || bytes > maxInterfaceBytes) {
-    throw new Error(`${file.name} has ${file.lines.length} lines and ${bytes} bytes: people read it, so its emitter has to split it`);
+    throw new Error(
+      `${file.name} has ${file.lines.length} lines and ${bytes} bytes: people read it, so its emitter has to split it`,
+    );
   }
 }
 
@@ -112,10 +114,14 @@ export function runEmitters(emitters: readonly Emitter[], context: EmitContext):
 
 export function inputsHash(loaded: LoadedSchema): string {
   const digests = loaded.inputs.map(input => {
-    const digest = createHash("sha256").update(fs.readFileSync(path.join(loaded.directory, input))).digest("hex");
+    const digest = createHash("sha256")
+      .update(fs.readFileSync(path.join(loaded.directory, input)))
+      .digest("hex");
     return `${digest} aot/ir/${input}`;
   });
-  return createHash("sha256").update(`${digests.sort().join("\n")}\n`).digest("hex");
+  return createHash("sha256")
+    .update(`${digests.sort().join("\n")}\n`)
+    .digest("hex");
 }
 
 function cmakeList(name: string, entries: readonly string[]): string[] {
@@ -124,7 +130,9 @@ function cmakeList(name: string, entries: readonly string[]): string[] {
 
 function fileList(loaded: LoadedSchema, files: readonly OutputFile[]): OutputFile {
   const inFolder = (suffixes: readonly string[]) =>
-    files.filter(file => suffixes.some(suffix => file.name.endsWith(suffix))).map(file => `aot/ir/generated/${file.name}`);
+    files
+      .filter(file => suffixes.some(suffix => file.name.endsWith(suffix)))
+      .map(file => `aot/ir/generated/${file.name}`);
   return {
     name: fileListName,
     lines: [
@@ -164,10 +172,14 @@ function rustModuleDeclaration(module: string): string[] {
 
 function rustModuleFile(context: EmitContext, files: readonly OutputFile[]): OutputFile {
   const modules = files.map(file => file.name.slice(0, -".rs".length));
-  const isReexported = (module: string) => module !== "checks" && !module.startsWith("builder_") && !module.startsWith("record_");
+  const isReexported = (module: string) =>
+    module !== "checks" && !module.startsWith("builder_") && !module.startsWith("record_");
   const constants = context.schema.constants.map(constant => {
     const isWord = constant.value >= 0n && constant.value <= 0xffffffffn;
-    const value = isWord && constant.value > 0xffffn ? `0x${constant.value.toString(16).padStart(8, "0")}` : constant.value.toString();
+    const value =
+      isWord && constant.value > 0xffffn
+        ? `0x${constant.value.toString(16).padStart(8, "0")}`
+        : constant.value.toString();
     return `pub const ${screamingCase(constant.name)}: ${isWord ? "u32" : "i64"} = ${value};`;
   });
   return {
@@ -177,6 +189,7 @@ function rustModuleFile(context: EmitContext, files: readonly OutputFile[]): Out
       "",
       "#![allow(dead_code, unreachable_pub, unused_imports, unused_variables)]",
       "#![allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools, clippy::identity_op, clippy::cast_ptr_alignment)]",
+      "#![allow(clippy::trivially_copy_pass_by_ref, clippy::chunks_exact_to_as_chunks)]",
       "",
       ...modules.filter(module => module !== "checks").flatMap(rustModuleDeclaration),
       "#[cfg(test)]",
@@ -199,7 +212,12 @@ export function rustOutputs(loaded: LoadedSchema): OutputFile[] {
 }
 
 function hashHeader(hash: bigint): OutputFile {
-  const lines = [rustMarker, "#pragma once", "", `#define BUN_AOT_SCHEMA_HASH 0x${hash.toString(16).padStart(16, "0")}ull`];
+  const lines = [
+    rustMarker,
+    "#pragma once",
+    "",
+    `#define BUN_AOT_SCHEMA_HASH 0x${hash.toString(16).padStart(16, "0")}ull`,
+  ];
   return { name: hashHeaderName, lines };
 }
 

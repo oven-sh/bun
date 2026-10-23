@@ -15,14 +15,25 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 async function build(dir: string, name: string, flags: string[]) {
   const executable = join(dir, name + (isWindows ? ".exe" : ""));
   const map = join(dir, name + ".map");
-  const built = await run([bunExe(), "build", "--compile", "--aot", ...flags, "main.mjs", "--outfile", executable], dir, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "main.mjs", "--outfile", executable],
+    dir,
+    { ...bunEnv, BUN_JSC_aotMapFilePath: map },
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const hints = readFileSync(map, "utf8")
     .split("\n")
     .filter(line => line.startsWith("W\t"))
     .map(line => line.split("\t").slice(1));
   expect(hints.filter(fields => fields.length !== 4)).toEqual([]);
-  expect(hints.filter(([path, position, targetIndex]) => path === "" || !/^\d+$/.test(position) || !/^\d+$/.test(targetIndex))).toEqual([]);
+  expect(
+    hints.filter(
+      ([path, position, targetIndex]) => path === "" || !/^\d+$/.test(position) || !/^\d+$/.test(targetIndex),
+    ),
+  ).toEqual([]);
   return { executable, frequencies: [...new Set(hints.map(([, , , frequency]) => frequency))].sort() };
 }
 

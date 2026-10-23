@@ -26,7 +26,8 @@ const files = {
 // Each constant name puts its file into the executable.
 const named = `require("./lib.cjs"); require("./typed.ts"); require("./nested/index.cjs"); require("./nested/inner.cjs"); require("../shared/util.cjs");`;
 
-const refusal = "this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point.";
+const refusal =
+  "this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point.";
 const answerOf = `const answerOf = async load => {
   try {
     return (await load()).name;
@@ -130,16 +131,28 @@ describe.concurrent("compile/aot/compiled modules by name", () => {
           using dir = tempDir("aot-compiled-modules-by-name", { ...files, [`src/app/${name}`]: source + "\n" });
           const folder = String(dir);
           const executable = join(folder, "away", "program" + (isWindows ? ".exe" : ""));
-          const build = await spawned([bunExe(), "build", "--compile", "--aot", name, "--outfile", executable], join(folder, "src", "app"), bunEnv);
-          expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-          renameSync(join(folder, "src"), join(folder, "moved"));
-          const run = await spawned([executable], join(folder, "away"), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-          expect({ stdout: run.stdout.trim(), stderr: run.stderr, exitCode: run.exitCode, signal: run.signal }).toEqual({
-            stdout: JSON.stringify(prints),
+          const build = await spawned(
+            [bunExe(), "build", "--compile", "--aot", name, "--outfile", executable],
+            join(folder, "src", "app"),
+            bunEnv,
+          );
+          expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
             stderr: expect.any(String),
             exitCode: 0,
-            signal: null,
           });
+          renameSync(join(folder, "src"), join(folder, "moved"));
+          const run = await spawned([executable], join(folder, "away"), {
+            ...bunEnv,
+            BUN_JSC_crashIfInterpreterIsUsed: "1",
+          });
+          expect({ stdout: run.stdout.trim(), stderr: run.stderr, exitCode: run.exitCode, signal: run.signal }).toEqual(
+            {
+              stdout: JSON.stringify(prints),
+              stderr: expect.any(String),
+              exitCode: 0,
+              signal: null,
+            },
+          );
         }),
       600_000,
     );

@@ -1,6 +1,6 @@
 use super::answers::{
-    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassRef, ClassShape, EnumConstant, FunctionRef,
-    GaveUp, IndexSignature, ListedMember, MemberLookup, ObjectMember, PositionTypes,
+    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassRef, ClassShape, EnumConstant,
+    FunctionRef, GaveUp, IndexSignature, ListedMember, MemberLookup, ObjectMember, PositionTypes,
     QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
@@ -115,7 +115,9 @@ impl<'p, 's> Checker<'p, 's> {
         inputs: QueryInputs<'_>,
         then: impl FnOnce(&mut Queries<'_, 'p, 's>) -> R,
     ) -> R {
-        debug_assert!(self.is_type_checked && self.task.file == Some(file) && self.stack.is_empty());
+        debug_assert!(
+            self.is_type_checked && self.task.file == Some(file) && self.stack.is_empty()
+        );
         if self.bound(file).has_types_that_depend_on_order() && !self.has_checked_source_file(file)
         {
             self.check_source_file_silently(file);
@@ -390,7 +392,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     /// `unstable_answers`: their number before the fact was worked out. It is kept if it follows from answers that hold in every file.
-    pub fn keep_fact(&mut self, ty: TypeId, fact: KeptFact, holds: bool, unstable_answers: u64) -> bool {
+    pub fn keep_fact(
+        &mut self,
+        ty: TypeId,
+        fact: KeptFact,
+        holds: bool,
+        unstable_answers: u64,
+    ) -> bool {
         if self.unstable_answers != unstable_answers {
             return false;
         }
@@ -452,7 +460,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn statistics(&self) -> QueryStatistics {
         QueryStatistics {
-            closed_cycles: self.c.closed_cycle_count().wrapping_sub(self.closed_cycles_before),
+            closed_cycles: self
+                .c
+                .closed_cycle_count()
+                .wrapping_sub(self.closed_cycles_before),
             ..self.statistics
         }
     }
@@ -468,8 +479,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 return self.files().sym(file, own);
             }
         }
-        self.files()
-            .sym(file, bound.export_symbol_of_value_symbol_if_exported(symbol))
+        self.files().sym(
+            file,
+            bound.export_symbol_of_value_symbol_if_exported(symbol),
+        )
     }
 
     pub fn class_of_binding(&self, symbol: Sym) -> Option<ClassRef> {
@@ -670,11 +683,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return self.resolved(found.ret).map(|_| None);
         };
         let properties_name = match self.c.jsx_reference_kind(file, tag) {
-            JsxReferenceKind::Component => self.c.jsx_name_from_container(
-                file,
-                location,
-                known::ElementAttributesProperty,
-            ),
+            JsxReferenceKind::Component => {
+                self.c
+                    .jsx_name_from_container(file, location, known::ElementAttributesProperty)
+            }
             JsxReferenceKind::Function | JsxReferenceKind::Mixed => JsxName::Missing,
         };
         Ok(match properties_name {
@@ -699,7 +711,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let checker = &mut *queries.c;
             let limits_hit = checker.count_limits_hit();
             checker.relation_entries_for_query = Some(MAX_RELATION_ENTRIES);
-            let answer = checker.try_is_type_related_to(source, target, Relation::Assignable, false);
+            let answer =
+                checker.try_is_type_related_to(source, target, Relation::Assignable, false);
             checker.relation_entries_for_query = None;
             // At a limit the checker goes on with the error type, to which everything is related.
             if checker.count_limits_hit() != limits_hit {
@@ -752,10 +765,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    pub fn accessed_enum_member(
-        &mut self,
-        access: ExprId,
-    ) -> Result<Option<EnumMemberId>, GaveUp> {
+    pub fn accessed_enum_member(&mut self, access: ExprId) -> Result<Option<EnumMemberId>, GaveUp> {
         self.ask_expression(access, |queries| {
             Ok(queries.compute_accessed_enum_member(access))
         })
@@ -797,9 +807,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn find_template_literal_part(&self, ty: TypeId) -> Option<TypeId> {
         match self.c.data(ty) {
             TypeData::Template { .. } => Some(ty),
-            TypeData::Intersection(parts) => {
-                parts.iter().find_map(|&part| self.find_template_literal_part(part))
-            }
+            TypeData::Intersection(parts) => parts
+                .iter()
+                .find_map(|&part| self.find_template_literal_part(part)),
             _ => None,
         }
     }
@@ -919,7 +929,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     ) -> SignatureShape<'c> {
         let file = self.file;
         let holds_everywhere_else = |shape: &SignatureShape<'c>| {
-            shape.declaration.is_none_or(|function| function.file != file)
+            shape
+                .declaration
+                .is_none_or(|function| function.file != file)
         };
         if let Some(&known) = kept(&mut self.kept).get(&key)
             && holds_everywhere_else(&known)
@@ -1001,10 +1013,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     /// The built-in classes whose instances can be of `object_type` with members that a cast has given them: the class behind a view that the type extends, and an array with a `pos` and an `end` for `{ pos: number; end: number }`, where an interface of the program extends an array type and declares both.
-    pub fn accepted_builtins(
-        &mut self,
-        object_type: TypeId,
-    ) -> Result<&'c [BuiltinShape], GaveUp> {
+    pub fn accepted_builtins(&mut self, object_type: TypeId) -> Result<&'c [BuiltinShape], GaveUp> {
         self.kept_about_object_type(
             object_type,
             TypeQuestion::AcceptedBuiltins,
@@ -1069,7 +1078,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.unstable_answers == unstable_answers {
             match computed {
                 Ok((known, false)) => self.kept.object_at(row).checked_members = Some(known),
-                Ok((_, true)) | Err(_) => drop(self.memo.checked_members.insert(object_type, answer)),
+                Ok((_, true)) | Err(_) => {
+                    self.memo.checked_members.insert(object_type, answer);
+                }
             }
         }
         answer
@@ -1130,7 +1141,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let row = self.kept.object_row(object_type);
         if !self.kept.has_room_for_member_types(row) {
             let declared = self.declared_type_of_this(object_type);
-            let count = self.c.members(declared).map_or(0, |members| members.shape().props.len());
+            let count = self
+                .c
+                .members(declared)
+                .map_or(0, |members| members.shape().props.len());
             self.kept.make_room_for_member_types(row, count as u32);
         }
         self.kept.keep_member_types(row, index, types);
@@ -1188,11 +1202,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let is_instantiation =
             |&on_path: &TypeId| self.c.recursion_identity_of_family(on_path) == identity;
         let family: Vec<TypeId> = path.iter().copied().filter(is_instantiation).collect();
-        let Some(last) = family.len().checked_sub(MAX_DEPTH).map(|start| &family[start..]) else {
+        let Some(last) = family
+            .len()
+            .checked_sub(MAX_DEPTH)
+            .map(|start| &family[start..])
+        else {
             return false;
         };
         let types = self.c.types();
-        last.windows(2).all(|pair| types.nesting_order(pair[1], pair[0]).is_gt())
+        let mut neighbors = last.iter().zip(last.iter().skip(1));
+        neighbors.all(|(&outer, &inner)| types.nesting_order(inner, outer).is_gt())
     }
 
     // A long text is cut at a byte, which may stand in the middle of a character.

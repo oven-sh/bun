@@ -52,17 +52,24 @@ texts.forEach((text, index) => { const value = read(text); console.log(describe(
 };
 
 describe.skipIf(!!unsupported)("compile/aot/record-type-order", () => {
-  test.each(["alone.ts", "beside-an-unrelated-file.ts"])("%s prints what bun run prints", program =>
-    slot(async () => {
-      using dir = tempDir("aot-record-type-order", { ...sources, "tsconfig.json": tsconfig });
-      const folder = String(dir);
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--outfile", "app", program], folder, bunEnv));
-      const compiled = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled.signal).toBeNull();
-      const plain = await spawned([bunExe(), "run", program], folder, bunEnv);
-      expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-      expect(told(compiled)).toEqual(told(plain));
-    }), 600_000);
+  test.each(["alone.ts", "beside-an-unrelated-file.ts"])(
+    "%s prints what bun run prints",
+    program =>
+      slot(async () => {
+        using dir = tempDir("aot-record-type-order", { ...sources, "tsconfig.json": tsconfig });
+        const folder = String(dir);
+        built(await spawned([bunExe(), "build", "--compile", "--aot", "--outfile", "app", program], folder, bunEnv));
+        const compiled = await spawned([join(folder, "app")], folder, {
+          ...bunEnv,
+          BUN_JSC_crashIfInterpreterIsUsed: "1",
+        });
+        expect(compiled.signal).toBeNull();
+        const plain = await spawned([bunExe(), "run", program], folder, bunEnv);
+        expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
+        expect(told(compiled)).toEqual(told(plain));
+      }),
+    600_000,
+  );
 
   // No report names the members of a union that parsed data flows into, so their order can't be read.
   test.todo("a file that has nothing to do with a union does not change the order of its members");

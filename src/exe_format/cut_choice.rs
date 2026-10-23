@@ -233,7 +233,11 @@ mod tests {
 
     fn count_cut_bytes(range: AddressRange, cuts: &[AddressRange]) -> u64 {
         cuts.iter()
-            .map(|cut| cut.end.min(range.end).saturating_sub(cut.start.max(range.start)))
+            .map(|cut| {
+                cut.end
+                    .min(range.end)
+                    .saturating_sub(cut.start.max(range.start))
+            })
             .sum()
     }
 
@@ -273,7 +277,10 @@ mod tests {
         ];
         let plan = choose(&removable, LIMITS);
         assert_eq!(plan.cuts, [range(4096, 28672)]);
-        assert_eq!(plan.fills, [fill(100, 4096, true), fill(28672, 30000, true)]);
+        assert_eq!(
+            plan.fills,
+            [fill(100, 4096, true), fill(28672, 30000, true)]
+        );
         assert_eq!(plan.uncut, None);
     }
 
@@ -282,7 +289,10 @@ mod tests {
         let removable = [cuttable(100, 5000, false), cuttable(5000, 30000, true)];
         let plan = choose(&removable, LIMITS);
         assert_eq!(plan.cuts, [range(4096, 28672)]);
-        assert_eq!(plan.fills, [fill(100, 4096, false), fill(28672, 30000, true)]);
+        assert_eq!(
+            plan.fills,
+            [fill(100, 4096, false), fill(28672, 30000, true)]
+        );
     }
 
     #[test]
@@ -290,7 +300,10 @@ mod tests {
         let removable = [cuttable(0, 16384, true), cuttable(16385, 32769, true)];
         let plan = choose(&removable, LIMITS);
         assert_eq!(plan.cuts, [range(0, 16384), range(20480, 32768)]);
-        assert_eq!(plan.fills, [fill(16385, 20480, true), fill(32768, 32769, true)]);
+        assert_eq!(
+            plan.fills,
+            [fill(16385, 20480, true), fill(32768, 32769, true)]
+        );
     }
 
     #[test]
@@ -319,14 +332,20 @@ mod tests {
             max_cuts: 2,
         };
         let plan = choose(&removable, limits);
-        assert_eq!(plan.cuts, [range(10 * PAGE, 16 * PAGE), range(30 * PAGE, 35 * PAGE)]);
+        assert_eq!(
+            plan.cuts,
+            [range(10 * PAGE, 16 * PAGE), range(30 * PAGE, 35 * PAGE)]
+        );
         assert_eq!(plan.fills.len(), 3);
         assert_tiles_input(&removable, &plan);
     }
 
     #[test]
     fn lower_candidate_wins_tie() {
-        let removable = [cuttable(0, 4 * PAGE, true), cuttable(10 * PAGE, 14 * PAGE, true)];
+        let removable = [
+            cuttable(0, 4 * PAGE, true),
+            cuttable(10 * PAGE, 14 * PAGE, true),
+        ];
         let limits = Limits {
             alignment: PAGE,
             max_cuts: 1,
@@ -370,7 +389,10 @@ mod tests {
 
     #[test]
     fn run_shorter_than_aligned_unit_is_only_filled() {
-        for removable in [[cuttable(0, PAGE - 1, true)], [cuttable(1, 2 * PAGE - 1, true)]] {
+        for removable in [
+            [cuttable(0, PAGE - 1, true)],
+            [cuttable(1, 2 * PAGE - 1, true)],
+        ] {
             let plan = choose(&removable, LIMITS);
             assert!(plan.cuts.is_empty());
             assert_eq!(plan.fills, one_fill_per_element(&removable));
@@ -427,7 +449,10 @@ mod tests {
 
     #[test]
     fn no_cuts_allowed_fills_every_element() {
-        let removable = [cuttable(0, 16 * PAGE, true), fill_only(16 * PAGE, 17 * PAGE)];
+        let removable = [
+            cuttable(0, 16 * PAGE, true),
+            fill_only(16 * PAGE, 17 * PAGE),
+        ];
         let limits = Limits {
             alignment: PAGE,
             max_cuts: 0,
@@ -435,12 +460,18 @@ mod tests {
         let plan = choose(&removable, limits);
         assert!(plan.cuts.is_empty());
         assert_eq!(plan.fills, one_fill_per_element(&removable));
-        assert_eq!(plan.uncut, no_cuts(NoCutReason::HeaderRoomExhausted, 16 * PAGE));
+        assert_eq!(
+            plan.uncut,
+            no_cuts(NoCutReason::HeaderRoomExhausted, 16 * PAGE)
+        );
     }
 
     #[test]
     fn no_cuts_allowed_without_candidate_reports_nothing() {
-        let removable = [cuttable(1, 2 * PAGE - 1, true), fill_only(4 * PAGE, 8 * PAGE)];
+        let removable = [
+            cuttable(1, 2 * PAGE - 1, true),
+            fill_only(4 * PAGE, 8 * PAGE),
+        ];
         let limits = Limits {
             alignment: PAGE,
             max_cuts: 0,
@@ -461,7 +492,10 @@ mod tests {
             let plan = choose(&removable, limits);
             assert!(plan.cuts.is_empty());
             assert_eq!(plan.fills, one_fill_per_element(&removable));
-            assert_eq!(plan.uncut, no_cuts(NoCutReason::HeadersUnreadable, 16 * PAGE - 100));
+            assert_eq!(
+                plan.uncut,
+                no_cuts(NoCutReason::HeadersUnreadable, 16 * PAGE - 100)
+            );
         }
     }
 
@@ -493,12 +527,18 @@ mod tests {
         let plan = choose(&removable, limits);
         assert!(plan.cuts.is_empty());
         assert_eq!(plan.fills, [fill(16 * PAGE, 17 * PAGE, false)]);
-        assert_eq!(plan.uncut, no_cuts(NoCutReason::HeaderRoomExhausted, 16 * PAGE));
+        assert_eq!(
+            plan.uncut,
+            no_cuts(NoCutReason::HeaderRoomExhausted, 16 * PAGE)
+        );
     }
 
     #[test]
     fn span_boundary_splits_run() {
-        let removable = [cuttable(0, 4 * PAGE, true), cuttable(4 * PAGE, 8 * PAGE, true)];
+        let removable = [
+            cuttable(0, 4 * PAGE, true),
+            cuttable(4 * PAGE, 8 * PAGE, true),
+        ];
         let spans = vec![range(0, 4 * PAGE), range(4 * PAGE, 8 * PAGE)];
         let plan = choose_in_spans(&removable, LIMITS, spans);
         assert_eq!(plan.cuts, [range(0, 4 * PAGE), range(4 * PAGE, 8 * PAGE)]);
@@ -510,7 +550,10 @@ mod tests {
         let removable = [cuttable(6 * PAGE, 12 * PAGE, true)];
         let plan = choose_in_spans(&removable, LIMITS, vec![range(8 * PAGE, 10 * PAGE)]);
         assert_eq!(plan.cuts, [range(8 * PAGE, 10 * PAGE)]);
-        let expected_fills = [fill(6 * PAGE, 8 * PAGE, true), fill(10 * PAGE, 12 * PAGE, true)];
+        let expected_fills = [
+            fill(6 * PAGE, 8 * PAGE, true),
+            fill(10 * PAGE, 12 * PAGE, true),
+        ];
         assert_eq!(plan.fills, expected_fills);
     }
 
@@ -523,8 +566,14 @@ mod tests {
             cuttable(40 * PAGE, 44 * PAGE, true),
         ];
         let plan = choose_in_spans(&removable, LIMITS, vec![range(8 * PAGE, 32 * PAGE)]);
-        assert_eq!(plan.cuts, [range(10 * PAGE, 14 * PAGE), range(20 * PAGE, 24 * PAGE)]);
-        assert_eq!(plan.fills, [fill(0, 4 * PAGE, true), fill(40 * PAGE, 44 * PAGE, true)]);
+        assert_eq!(
+            plan.cuts,
+            [range(10 * PAGE, 14 * PAGE), range(20 * PAGE, 24 * PAGE)]
+        );
+        assert_eq!(
+            plan.fills,
+            [fill(0, 4 * PAGE, true), fill(40 * PAGE, 44 * PAGE, true)]
+        );
         assert_eq!(plan.uncut, None);
     }
 

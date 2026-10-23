@@ -98,7 +98,7 @@ fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
         hir: files.hir(file),
         compiled: compiled.expect("the loader analyzes every compiled file"),
         named_in_choices: parsed_source(files, file)
-            .map_or(&[][..], |source| &source.modules_named_in_choices),
+            .map_or(&[][..], |source| source.named_modules()),
         candidates: Vec::new(),
         spellings: Vec::new(),
         externals: Vec::new(),
@@ -106,7 +106,10 @@ fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
         sites_over_candidate_limit: Vec::new(),
     };
     let sites = scanner.scan_sites();
-    let named_modules = scanner.named_in_choices.iter().map(|it| ModuleRef::Runtime(it.module));
+    let named_modules = scanner
+        .named_in_choices
+        .iter()
+        .map(|it| ModuleRef::Runtime(it.module));
     scanner.candidates.extend(named_modules);
     let interop = file_interop(files, sources, file);
     let mut requests = match interop.kind {
@@ -412,9 +415,10 @@ fn create_request_draft(
         ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage => (ImportPhase::Evaluation, false),
         ImportSiteKind::Import(import) => (import_phase(hir, import), false),
         ImportSiteKind::ExportFrom(_) => (ImportPhase::Evaluation, false),
-        ImportSiteKind::ExportStar(statement) => {
-            (ImportPhase::Evaluation, is_star_export_entry(hir, statement))
-        }
+        ImportSiteKind::ExportStar(statement) => (
+            ImportPhase::Evaluation,
+            is_star_export_entry(hir, statement),
+        ),
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::ImportCall(_)
         | ImportSiteKind::Require(_)

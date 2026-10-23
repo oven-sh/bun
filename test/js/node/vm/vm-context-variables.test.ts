@@ -45,13 +45,23 @@ var made = seed; delete this.made: undefined | seed | seed
 `;
 
 async function run(text: string, env: Record<string, string>) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", text], env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", text],
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
 test("every store to a variable of a context shows on the sandbox object, without the JIT", async () => {
-  expect(await run(program, { BUN_JSC_useJIT: "0" })).toEqual({ stdout: answers, stderr: "", exitCode: 0, signalCode: null });
+  expect(await run(program, { BUN_JSC_useJIT: "0" })).toEqual({
+    stdout: answers,
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 // The decoded code was handed to the baseline JIT whatever the options said.
@@ -63,5 +73,10 @@ test("a script made from cached data runs without the JIT", async () => {
     const script = new vm.Script(source, { cachedData });
     console.log(script.cachedDataRejected, script.runInThisContext());
   `;
-  expect(await run(text, { BUN_JSC_useJIT: "0" })).toEqual({ stdout: "false 3\n", stderr: "", exitCode: 0, signalCode: null });
+  expect(await run(text, { BUN_JSC_useJIT: "0" })).toEqual({
+    stdout: "false 3\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

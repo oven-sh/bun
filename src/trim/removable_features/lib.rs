@@ -241,14 +241,21 @@ mod tests {
         assert_eq!(Feature::Jit.entered_from(), EnteredFrom::Startup);
         assert_eq!(Feature::CliOptions.entered_from(), EnteredFrom::Startup);
         assert_eq!(Feature::Tools.entered_from(), EnteredFrom::CommandLine);
-        assert_eq!(Feature::ImageCompiler.entered_from(), EnteredFrom::CommandLine);
+        assert_eq!(
+            Feature::ImageCompiler.entered_from(),
+            EnteredFrom::CommandLine
+        );
         assert_eq!(Feature::Interpreter.entered_from(), EnteredFrom::Program);
         assert_eq!(Feature::Sql.entered_from(), EnteredFrom::Program);
     }
 
     #[test]
     fn origins_partition_features() {
-        let origins = [EnteredFrom::Program, EnteredFrom::Startup, EnteredFrom::CommandLine];
+        let origins = [
+            EnteredFrom::Program,
+            EnteredFrom::Startup,
+            EnteredFrom::CommandLine,
+        ];
         let counts = origins.map(|origin| Feature::all_entered_from(origin).len());
         assert_eq!(counts.iter().sum::<usize>(), Feature::ALL.len());
         assert!(counts.iter().all(|count| *count > 0));
@@ -281,7 +288,11 @@ mod tests {
     fn count_is_above_every_index() {
         let highest = Feature::ALL[Feature::ALL.len() - 1];
         assert_eq!(Feature::COUNT, highest as u32 + 1);
-        assert!(Feature::ALL.iter().all(|&feature| (feature as u32) < Feature::COUNT));
+        assert!(
+            Feature::ALL
+                .iter()
+                .all(|&feature| (feature as u32) < Feature::COUNT)
+        );
         assert!(Feature::COUNT as usize <= Feature::INDEX_LIMIT);
     }
 

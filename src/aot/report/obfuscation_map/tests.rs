@@ -200,8 +200,8 @@ fn mappings_decode_to_sites() {
 #[test]
 fn names_and_sources_are_listed_in_order_of_first_use() {
     let mut names: ArrayHashMap<&[u8], ()> = ArrayHashMap::default();
-    let indexes = [&b"render"[..], b"main", b"render", b"add", b"main"]
-        .map(|name| intern(&mut names, name));
+    let indexes =
+        [&b"render"[..], b"main", b"render", b"add", b"main"].map(|name| intern(&mut names, name));
     assert_eq!(indexes, [0, 1, 0, 2, 1]);
     assert_eq!(names.keys(), [&b"render"[..], b"main", b"add"]);
 
@@ -244,7 +244,11 @@ fn located_lines_and_columns_start_at_zero() {
     let module = ModuleId::from_word(0);
     assert_eq!(
         found,
-        [Some((module, 1, 2)), Some((module, 0, 0)), Some((module, 1, 0))]
+        [
+            Some((module, 1, 2)),
+            Some((module, 0, 0)),
+            Some((module, 1, 0))
+        ]
     );
 }
 

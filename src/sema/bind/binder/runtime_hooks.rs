@@ -94,11 +94,13 @@ impl Binder<'_, '_> {
         };
         let environments = self.runtime_hooks.private_environments.iter();
         let class = environments.rev().find(declares).copied();
-        self.runtime_hooks.private_references.push(PrivateReference {
-            reference,
-            name,
-            class,
-        });
+        self.runtime_hooks
+            .private_references
+            .push(PrivateReference {
+                reference,
+                name,
+                class,
+            });
     }
 
     pub(super) fn finish_runtime_bindings(&mut self) {

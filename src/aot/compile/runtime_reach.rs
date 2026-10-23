@@ -2,15 +2,12 @@ use core::mem::{replace, take};
 use core::ops::Range;
 
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, SymbolId,
-};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{
     self, CallId, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, MemberKind,
-    ModifierKind,
-    PatId, PatKind, PropKey, PropKind, StmtKind, UnOp, VarDeclId,
+    ModifierKind, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::evaluates_own_this;
@@ -19,10 +16,10 @@ use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
+use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{
     self, MODULE_LOADER_FUNCTIONS, RuntimeFunctionRole, STARTUP_FUNCTIONS, STARTUP_LOADS,
 };
-use crate::builtins::id::BuiltinId;
 use crate::builtins::{
     BuiltinNames, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved, RuntimeFunction,
     RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
@@ -167,7 +164,9 @@ impl<'a, 's> FileScan<'a, 's> {
                 MemberKind::Method
                 | MemberKind::Getter
                 | MemberKind::Setter
-                | MemberKind::Constructor => !member.func.is_none() && hir::has_body(&hir[member.func]),
+                | MemberKind::Constructor => {
+                    !member.func.is_none() && hir::has_body(&hir[member.func])
+                }
                 MemberKind::Property
                 | MemberKind::CallSignature
                 | MemberKind::ConstructSignature
@@ -175,9 +174,10 @@ impl<'a, 's> FileScan<'a, 's> {
                 | MemberKind::StaticBlock => false,
             };
             let has_plain_key = !matches!(member.key, PropKey::Computed(_));
-            let is_decorated = member.modifiers.iter().any(|modifier| {
-                matches!(hir[modifier].kind, ModifierKind::Decorator(_))
-            });
+            let is_decorated = member
+                .modifiers
+                .iter()
+                .any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
             if has_function && has_plain_key && !is_decorated {
                 functions.push(member.func);
                 let written_at = member.loc.pos..member.loc.end;
@@ -200,7 +200,8 @@ impl<'a, 's> FileScan<'a, 's> {
             return;
         };
         let hir = self.hir;
-        for (function, written_at) in collect_library_functions(files, self.file, &source.builtins) {
+        for (function, written_at) in collect_library_functions(files, self.file, &source.builtins)
+        {
             let func = &hir[function];
             let is_named_export = func.flags.contains(Flags::EXPORT) && !func.name.is_none();
             let export_name = is_named_export.then(|| files.atoms.bytes(func.name));
@@ -232,7 +233,9 @@ impl<'a, 's> FileScan<'a, 's> {
                 StmtKind::Fn(function) => {
                     let func = &hir[function];
                     let is_plain_declaration = hir::has_body(func)
-                        && !func.flags.intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT);
+                        && !func
+                            .flags
+                            .intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT);
                     let symbol = bound.declared_symbol(Decl::Fn(function));
                     let is_stable = !symbol.is_none() && bound.is_stable_binding(symbol);
                     if is_plain_declaration && is_stable {
@@ -289,7 +292,8 @@ impl<'a, 's> FileScan<'a, 's> {
         functions: &mut SmallVec<[FnId; 4]>,
     ) -> bool {
         let hir = self.hir;
-        let is_name = |it: ExprId| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::Ident(_));
+        let is_name =
+            |it: ExprId| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::Ident(_));
         let expression = hir.skip_type_assertions(expression);
         match hir[expression].kind {
             ExprKind::Fn(function) => {
@@ -426,10 +430,12 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn find_export_object(&self) -> Option<ExportObject> {
         let hir = self.hir;
-        let mut exported = hir.ids(hir.body).filter_map(|statement| match hir[statement].kind {
-            StmtKind::ExportDefault(exported) => Some(hir.skip_type_assertions(exported)),
-            _ => None,
-        });
+        let mut exported = hir
+            .ids(hir.body)
+            .filter_map(|statement| match hir[statement].kind {
+                StmtKind::ExportDefault(exported) => Some(hir.skip_type_assertions(exported)),
+                _ => None,
+            });
         let exported = exported.next()?;
         if matches!(hir[exported].kind, ExprKind::Object(_)) {
             return Some(ExportObject {
@@ -443,7 +449,8 @@ impl<'a, 's> FileScan<'a, 's> {
         if !self.bound.is_stable_binding(symbol) {
             return None;
         }
-        let BindingInitializer::Expression(initializer) = self.bound.binding_initializer(hir, symbol)
+        let BindingInitializer::Expression(initializer) =
+            self.bound.binding_initializer(hir, symbol)
         else {
             return None;
         };
@@ -468,14 +475,17 @@ impl<'a, 's> FileScan<'a, 's> {
             }
             let value = hir.skip_type_assertions(property.value);
             if let (PropKey::Name(name), ExprKind::Fn(function)) = (property.key, hir[value].kind) {
-                self.exported_functions.push((name, self.units.len() as u32));
+                self.exported_functions
+                    .push((name, self.units.len() as u32));
                 self.add_unit(function, hir[value].pos..hir[value].end, None);
             }
         }
     }
 
     fn region_of(&self, position: u32) -> u32 {
-        let following = self.pieces.partition_point(|piece| piece.written_at.start <= position);
+        let following = self
+            .pieces
+            .partition_point(|piece| piece.written_at.start <= position);
         match following.checked_sub(1).map(|index| &self.pieces[index]) {
             Some(piece) if position < piece.written_at.end => piece.unit + 1,
             Some(_) | None => TOP_LEVEL,
@@ -489,7 +499,9 @@ impl<'a, 's> FileScan<'a, 's> {
             ImportSiteKind::GetBuiltinModule(call),
         ];
         let graph = self.input.graph;
-        let mut answers = sites.into_iter().filter_map(|site| graph.find_site_answer(self.file, site));
+        let mut answers = sites
+            .into_iter()
+            .filter_map(|site| graph.find_site_answer(self.file, site));
         match answers.next()? {
             SiteAnswer::Module(
                 ModuleRef::File(target)
@@ -515,7 +527,10 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn compute_symbol_class(&self, symbol: SymbolId) -> SymbolClass {
         let hir = self.hir;
-        if self.export_object.is_some_and(|it| it.binding.is_some_and(|it| it.0 == symbol)) {
+        if self
+            .export_object
+            .is_some_and(|it| it.binding.is_some_and(|it| it.0 == symbol))
+        {
             return SymbolClass::ExportObject(self.file);
         }
         if !self.bound.is_stable_binding(symbol) {
@@ -648,8 +663,12 @@ impl<'a, 's> FileScan<'a, 's> {
         let BindingInitializer::Function(function) = bound.binding_initializer(hir, called) else {
             return false;
         };
-        let uses_arguments = bound.function_flags(function).contains(FunctionFlags::USES_ARGUMENTS);
-        let has_spread = hir.ids(hir[call].args).any(|it| matches!(hir[it].kind, ExprKind::Spread(_)));
+        let uses_arguments = bound
+            .function_flags(function)
+            .contains(FunctionFlags::USES_ARGUMENTS);
+        let has_spread = hir
+            .ids(hir[call].args)
+            .any(|it| matches!(hir[it].kind, ExprKind::Spread(_)));
         if !bound.is_stable_binding(called) || uses_arguments || has_spread {
             return false;
         }
@@ -661,11 +680,13 @@ impl<'a, 's> FileScan<'a, 's> {
         };
         let parameter = &hir[parameter];
         let symbol = bound.declared_symbol(Decl::Param(parameter.pat));
-        if !matches!(hir[parameter.pat].kind, PatKind::Ident(_)) || !bound.is_stable_binding(symbol) {
+        if !matches!(hir[parameter.pat].kind, PatKind::Ident(_)) || !bound.is_stable_binding(symbol)
+        {
             return false;
         }
         let mut reads = (0..hir.exprs.len() as u32).map(ExprId).filter(|&it| {
-            matches!(hir[it].kind, ExprKind::Ident(_)) && bound.binding(it) == Binding::Symbol(symbol)
+            matches!(hir[it].kind, ExprKind::Ident(_))
+                && bound.binding(it) == Binding::Symbol(symbol)
         });
         reads.all(|read| match bound.parent_of_expr(read) {
             Parent::Expr(parent) => {
@@ -750,7 +771,8 @@ impl<'a, 's> FileScan<'a, 's> {
     fn find_names_of_exported_bindings(&self) -> FxHashMap<ExprId, Atom> {
         let hir = self.hir;
         let mut names = FxHashMap::default();
-        if let Some(ExprKind::Object(properties)) = self.export_object.map(|it| hir[it.literal].kind)
+        if let Some(ExprKind::Object(properties)) =
+            self.export_object.map(|it| hir[it.literal].kind)
         {
             for property in properties.iter() {
                 let property = &hir[property];
@@ -827,7 +849,8 @@ impl<'a, 's> FileScan<'a, 's> {
                 };
             }
         };
-        self.pieces.shared_sort_unstable_by_key(|piece| piece.written_at.start);
+        self.pieces
+            .shared_sort_unstable_by_key(|piece| piece.written_at.start);
         let region_count = self.units.len() + 1;
         let mut interests: Vec<Vec<Interest>> = vec![Vec::new(); region_count];
         let mut sites: Vec<Vec<ImportSiteKind>> = vec![Vec::new(); region_count];
@@ -1005,15 +1028,18 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-
     // A load under a name that is put together at run time finds every module that the program holds, whole.
     fn loads_modules_by_computed_names(&self) -> bool {
         let (application, graph) = (self.input.application, self.input.application_graph);
         application.compiled_files().iter().any(|&file| {
             !graph.has_record(file)
-                || parsed_source(application, file).is_none_or(|it| it.builtins.loads_unknown_modules())
+                || parsed_source(application, file)
+                    .is_none_or(|it| it.builtins.loads_unknown_modules())
                 || application.analysis(file).import_sites.iter().any(|site| {
-                    matches!(graph.find_site_answer(file, site.kind), Some(SiteAnswer::Computed(_)))
+                    matches!(
+                        graph.find_site_answer(file, site.kind),
+                        Some(SiteAnswer::Computed(_))
+                    )
                 })
         })
     }
@@ -1040,8 +1066,10 @@ impl<'a, 's> Walk<'a, 's> {
                         && hir[import].named.iter().any(|it| !hir[it].type_only) =>
                 {
                     let read = hir[import].named.iter().filter(|&it| !hir[it].type_only);
-                    read.map(|it| core::str::from_utf8(application.atoms.bytes(hir[it].imported)).ok())
-                        .collect()
+                    read.map(|it| {
+                        core::str::from_utf8(application.atoms.bytes(hir[it].imported)).ok()
+                    })
+                    .collect()
                 }
                 _ => None,
             };
@@ -1075,7 +1103,9 @@ impl<'a, 's> Walk<'a, 's> {
         }
         for &file in application.compiled_files() {
             let read_by_name = self.reach_named_imports(file);
-            let answers = application.compiled(file).map_or(&[][..], |it| it.code_answers);
+            let answers = application
+                .compiled(file)
+                .map_or(&[][..], |it| it.code_answers);
             for answer in answers {
                 if let CodeAnswer::HostModule(id) = *answer
                     && let Some(module) = RuntimeModule::from_registry_id(id.0)
@@ -1086,7 +1116,7 @@ impl<'a, 's> Walk<'a, 's> {
             }
             if let Some(source) = parsed_source(application, file) {
                 self.reach_uses(source.builtins.uses());
-                for named in &source.modules_named_in_choices {
+                for named in source.named_modules() {
                     self.reach_every_export(ModuleRef::Runtime(named.module));
                 }
             }
@@ -1120,6 +1150,15 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    fn is_public_module(&self, file: FileId) -> bool {
+        let module = self.input.graph.runtime_module(file);
+        module.is_some_and(|it| {
+            table::module_data(it)
+                .flags
+                .contains(table::ModuleFlags::IS_PUBLIC)
+        })
+    }
+
     fn reach_region(&mut self, file: FileId, region: u32) -> bool {
         let units = self.units_of(file);
         if replace(&mut units.is_region_reached[region as usize], true) {
@@ -1127,6 +1166,10 @@ impl<'a, 's> Walk<'a, 's> {
         }
         self.pending.push((file, region));
         let is_first_of_file = !replace(&mut self.is_file_reached[file.idx()], true);
+        // `require(name)` finds every public module in the executable, also one that only Bun's own modules import.
+        if region == TOP_LEVEL && !self.reads_imports_by_name && self.is_public_module(file) {
+            self.reach_every_export(ModuleRef::File(file));
+        }
         // Code that the build does not see finds the modules of the image under their names, and may use all that they hold.
         if is_first_of_file && self.input.can_load_code_at_run_time {
             for unit in 0..self.units_of(file).units.len() as u32 {
@@ -1206,7 +1249,11 @@ impl<'a, 's> Walk<'a, 's> {
         };
         let input = self.input;
         let atoms = &input.runtime.atoms;
-        let is_read = |name: Atom| names.iter().any(|read| atoms.bytes(name) == read.as_bytes());
+        let is_read = |name: Atom| {
+            names
+                .iter()
+                .any(|read| atoms.bytes(name) == read.as_bytes())
+        };
         let mut read_exports: SmallVec<[Atom; 2]> = SmallVec::new();
         for &(name, _) in &self.units_of(file).named_exports {
             if is_read(name) && !read_exports.contains(&name) {

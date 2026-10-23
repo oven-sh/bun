@@ -36,8 +36,7 @@ declare module "bun:bundle" {
 }
 "#;
 
-pub(in crate::lower::validate) const HEADER: &str =
-    "/// <reference path=\"./bun-declarations.d.ts\" />\n\
+pub(in crate::lower::validate) const HEADER: &str = "/// <reference path=\"./bun-declarations.d.ts\" />\n\
     import { JSON, type Schema, type int32 } from \"bun\";\n\
     import { validate } from \"bun:bundle\";\n";
 
@@ -118,7 +117,10 @@ fn misuse_is_reported() {
         ("validate(v);", Code::ValidateNeedsTypeArgument),
         ("validate<ProbePoint>();", Code::ValidateArgumentCount),
         ("validate<ProbePoint>(v, v);", Code::ValidateArgumentCount),
-        ("validate<ProbePoint>(...list);", Code::ValidateArgumentCount),
+        (
+            "validate<ProbePoint>(...list);",
+            Code::ValidateArgumentCount,
+        ),
         ("validate?.<ProbePoint>(v);", Code::ValidateOptionalCall),
         ("const f = validate;", Code::ValidateIsNotAValue),
         ("probeUse(validate);", Code::ValidateIsNotAValue),

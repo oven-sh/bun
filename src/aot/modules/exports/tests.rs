@@ -142,7 +142,10 @@ fn exports_follow_resolve_export() {
         ("collide.js", &["a = a.js#a star", "b = b.js#b star"]),
         ("local.js", &["a = a.js#a star", "both = local.js#both"]),
         ("same.js", &["one = a.js#a star"]),
-        ("deep.js", &["d1 = deep1.js#d1 star", "d2 = deep2.js#d2 star"]),
+        (
+            "deep.js",
+            &["d1 = deep1.js#d1 star", "d2 = deep2.js#d2 star"],
+        ),
         ("loop1.js", &["x1 = loop1.js#x1", "x2 = loop2.js#x2 star"]),
         ("loop2.js", &["x1 = loop1.js#x1 star", "x2 = loop2.js#x2"]),
         (
@@ -184,7 +187,10 @@ fn exports_follow_resolve_export() {
 #[test]
 fn exports_ascend_by_code_units() {
     let files = [
-        ("main.js", "export * from './more.js'; export const b = 1, _ = 2, Z = 3;"),
+        (
+            "main.js",
+            "export * from './more.js'; export const b = 1, _ = 2, Z = 3;",
+        ),
         ("more.js", "export const a = 1, $ = 2, aa = 3;"),
     ];
     with_graph(&files, |graph, input| {
@@ -366,7 +372,10 @@ fn name_of_uncompiled_code_is_live() {
         for name in [input.files.atoms.intern(b"x"), known::default] {
             let resolved = tables.resolve_in(modules, module, name);
             assert_eq!(resolved.resolution, Resolution::LiveName { module, name });
-            assert_eq!(resolved.required_name, Some(RequiredName::new(module, name)));
+            assert_eq!(
+                resolved.required_name,
+                Some(RequiredName::new(module, name))
+            );
             assert!(!resolved.can_be_ambiguous());
         }
     });
@@ -375,12 +384,21 @@ fn name_of_uncompiled_code_is_live() {
 #[test]
 fn star_over_uncompiled_code_is_dynamic() {
     let barrel = format!("export * from '{UNCOMPILED_MODULE}'; export const own = 1");
-    let files = [("main.js", "import './barrel.js'"), ("barrel.js", barrel.as_str())];
+    let files = [
+        ("main.js", "import './barrel.js'"),
+        ("barrel.js", barrel.as_str()),
+    ];
     with_graph(&files, |graph, input| {
         let description = describe_module(graph, input, "barrel.js");
         let requests = lines_after("request ", &description);
-        assert_eq!(requests, [format!("external:{UNCOMPILED_MODULE} dynamic-star")]);
-        assert_eq!(lines_after("export ", &description), ["own = barrel.js#own"]);
+        assert_eq!(
+            requests,
+            [format!("external:{UNCOMPILED_MODULE} dynamic-star")]
+        );
+        assert_eq!(
+            lines_after("export ", &description),
+            ["own = barrel.js#own"]
+        );
         let atoms = &input.files.atoms;
         let barrel = file_named(input, "barrel.js");
         assert!(graph.has_dynamic_names(barrel));
@@ -393,14 +411,20 @@ fn star_over_uncompiled_code_is_dynamic() {
         let module = external_of(input, "barrel.js", UNCOMPILED_MODULE);
         let name = input.files.atoms.intern(b"x");
         let resolved = tables.resolve(modules, file_named(input, "barrel.js"), name);
-        assert_eq!(resolved, ResolvedName::new(Resolution::LiveName { module, name }));
+        assert_eq!(
+            resolved,
+            ResolvedName::new(Resolution::LiveName { module, name })
+        );
     });
 }
 
 #[test]
 fn named_re_export_of_uncompiled_code_is_indirect() {
     let barrel = format!("export {{ x as y }} from '{UNCOMPILED_MODULE}'");
-    let files = [("main.js", "import './barrel.js'"), ("barrel.js", barrel.as_str())];
+    let files = [
+        ("main.js", "import './barrel.js'"),
+        ("barrel.js", barrel.as_str()),
+    ];
     with_graph(&files, |graph, input| {
         let module = external_of(input, "barrel.js", UNCOMPILED_MODULE);
         let [x, y] = [b"x", b"y"].map(|name| input.files.atoms.intern(name));
@@ -423,11 +447,17 @@ fn named_re_export_of_uncompiled_code_is_indirect() {
 #[test]
 fn host_value_names_are_synthetic() {
     let barrel = format!("export {{ x }} from '{HOST_VALUE_MODULE}'");
-    let files = [("main.js", "import './barrel.js'"), ("barrel.js", barrel.as_str())];
+    let files = [
+        ("main.js", "import './barrel.js'"),
+        ("barrel.js", barrel.as_str()),
+    ];
     with_graph(&files, |graph, input| {
         let description = describe_module(graph, input, "barrel.js");
         let exports = lines_after("export ", &description);
-        assert_eq!(exports, [format!("x = synthetic external:{HOST_VALUE_MODULE} x")]);
+        assert_eq!(
+            exports,
+            [format!("x = synthetic external:{HOST_VALUE_MODULE} x")]
+        );
         assert!(lines_after("required ", &description).is_empty());
     });
     with_export_tables(&files, |tables, modules, input| {
@@ -502,7 +532,11 @@ fn live_name_beside_other_binding_is_compared_at_run_time() {
         let joined = join(first, other);
         assert!(joined.has_unresolved_identity, "{other:?}");
         assert_eq!(joined.resolve(), required(first, key), "{other:?}");
-        assert_eq!(join(other, first).resolve(), required(other, key), "{other:?}");
+        assert_eq!(
+            join(other, first).resolve(),
+            required(other, key),
+            "{other:?}"
+        );
     }
 
     let ambiguous = ResolvedName::new(Resolution::Ambiguous);
@@ -518,7 +552,10 @@ fn existence_check_is_not_ambiguity() {
     };
     let key = (FileId(0), name);
     for binding in [live_name, variable(1)] {
-        assert!(!ResolvedName::new(binding).can_be_ambiguous(), "{binding:?}");
+        assert!(
+            !ResolvedName::new(binding).can_be_ambiguous(),
+            "{binding:?}"
+        );
         assert!(required(binding, key).can_be_ambiguous(), "{binding:?}");
     }
 }
@@ -601,7 +638,10 @@ fn provider_equal_to_binding_adds_no_end() {
 fn star_name_stands_for_cycle_through_indirect_export() {
     let star = "export * from './indirect.js'; export * from './es.js'; export * from './c.cjs'";
     let files = [
-        ("main.js", "import { x } from './indirect.js'; console.log(x)"),
+        (
+            "main.js",
+            "import { x } from './indirect.js'; console.log(x)",
+        ),
         ("indirect.js", "export { x } from './star.js'"),
         ("star.js", star),
         ("es.js", "export const x = 1"),
@@ -719,7 +759,10 @@ fn ambiguous_binding_follows_every_star_only_beside_provider() {
     });
     let key = (FileId(4), name);
     let ambiguous = first.join(second, key);
-    assert_eq!(ambiguous.resolve(), ResolvedName::new(Resolution::Ambiguous));
+    assert_eq!(
+        ambiguous.resolve(),
+        ResolvedName::new(Resolution::Ambiguous)
+    );
     assert!(!ambiguous.should_follow_every_star());
     assert!(!first.join(provider, key).should_follow_every_star());
     for joined in [ambiguous.join(provider, key), provider.join(ambiguous, key)] {

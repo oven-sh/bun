@@ -371,11 +371,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "headers", {
     let dst = this[kHeaders];
     if (dst === null || !dst) {
       const addHeaderLine = this._addHeaderLine;
-      if (
-        this[kRawHeaders] === null &&
-        addHeaderLine === _addHeaderLine &&
-        readsRawHeadersThroughAccessor(this)
-      ) {
+      if (this[kRawHeaders] === null && addHeaderLine === _addHeaderLine && readsRawHeadersThroughAccessor(this)) {
         const source = this[kHeaderSource];
         if (source != null) {
           const built = source.headersObject();
@@ -497,14 +493,14 @@ function resumeConnection(req: $Node.IncomingMessage) {
 
 function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket) {
   if (req.upgrade || socket[kHandoffResponse] !== undefined) {
-    "unlikely";
+    ("unlikely");
     // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
   } else if (!socket._paused) {
     const resumeUnlessFlowing = socket[kResumeUnlessFlowing];
     if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket);
     else {
-      "unlikely";
+      ("unlikely");
       socket.resume();
     }
   }
@@ -515,7 +511,7 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
     const state = this._readableState;
     if (isReadableState(state)) removeFlags(state, kReadingMore);
     else {
-      "unlikely";
+      ("unlikely");
       this._readableState.readingMore = false;
     }
     this._consuming = true;
@@ -523,7 +519,7 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
 
   const handle = this[kHandle];
   if (!handle) {
-    "unlikely";
+    ("unlikely");
     // We actually do almost nothing here, because the parserOnBody
     // function fills up our internal buffer directly.  However, we
     // do need to unpause the underlying socket so that it flows.
@@ -933,7 +929,6 @@ const dump = function _dump(this: $Node.IncomingMessage) {
 };
 IncomingMessage.prototype._dump = dump;
 
-
 function isUnheard(req: $Node.IncomingMessage, name: string) {
   if (req.emit !== emit) return false;
   // A stream whose `_events` are preallocated has no `_eventsCount` of its own until a listener is added, so the count is not what is asked first.
@@ -963,7 +958,7 @@ function resumeUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState)
     !isUnheard(req, "resume") ||
     !advanceFlags(state, kFlagsResumed, kFlagsReading)
   ) {
-    "unlikely";
+    ("unlikely");
     return resumeOnNextTick(req, state);
   }
   req._consuming = true;
@@ -981,7 +976,7 @@ function endUnwatched(req: $Node.IncomingMessage) {
     !isUnheard(req, "readable") ||
     !advanceFlags(state, kFlagsReading, kFlagsEnded)
   ) {
-    "unlikely";
+    ("unlikely");
     return emitEOFIncomingMessageOuter(req);
   }
   req.complete = true;
@@ -1016,7 +1011,7 @@ function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableStat
     !isUnheard(req, "end") ||
     !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
   ) {
-    "unlikely";
+    ("unlikely");
     return endOnNextTick(state, req);
   }
   req[kAutoDestroyed] = true;
@@ -1044,14 +1039,14 @@ function beginDump(req: $Node.IncomingMessage): void {
 
 function closeUnwatched(req: $Node.IncomingMessage) {
   if (req.listenerCount !== listenerCount) {
-    "unlikely";
+    ("unlikely");
     req.listenerCount("error");
   }
   req._readableState[kState] |= kClosed;
   if (ring.read === ring.write && ticksAreUnseen()) emitCloseUnwatched(req);
   else if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseUnwatched, req);
   else {
-    "unlikely";
+    ("unlikely");
     ProcessNextTick(emitCloseUnwatched, req);
   }
 }
@@ -1099,7 +1094,7 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
     req._readableState !== state ||
     !isUnheard(req, "resume")
   ) {
-    "unlikely";
+    ("unlikely");
     return false;
   }
   const asked = (flags & kDecoding) | kBodyAsked;
@@ -1109,11 +1104,11 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
     resumeConnection(req);
     const bodyReadState = handle.hasBody;
     if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
-      "unlikely";
+      ("unlikely");
       emitEOFIncomingMessage(req);
     }
     if (!handle.ondata) {
-      "unlikely";
+      ("unlikely");
       handle.ondata = onBodyData.bind(req);
     }
   } catch (err) {
@@ -1122,7 +1117,7 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
   if (state[kState] === asked && state.length === 0) {
     state[kState] = (flags & kDecoding) | kBodyReading;
   } else {
-    "unlikely";
+    ("unlikely");
     finishReadOfNothing(state);
     finishResume(req, state);
   }
@@ -1155,7 +1150,7 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
     req._read !== incomingMessageRead ||
     !ticksAreUnseen()
   ) {
-    "unlikely";
+    ("unlikely");
     return onDataIncomingMessage.$call(req, chunk, isLast, aborted);
   }
 
@@ -1183,7 +1178,7 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
     req[eofInProgress] = true;
     queueTick2(finishBody, req, state);
   } else {
-    "unlikely";
+    ("unlikely");
     readMoreLater(req, state);
     if ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) {
       const finSent = socket?.[kHandle]?.finSent === true;
@@ -1200,7 +1195,7 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
     const resumeUnlessFlowing = socket[kResumeUnlessFlowing];
     if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket);
     else {
-      "unlikely";
+      ("unlikely");
       socket.resume();
     }
   }
@@ -1225,7 +1220,7 @@ function finishBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
     req.read !== read ||
     req._read !== incomingMessageRead
   ) {
-    "unlikely";
+    ("unlikely");
     return readMoreThenEnd(req, state);
   }
   const asked = flags | kReading | kSync;
@@ -1238,7 +1233,7 @@ function finishBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   }
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (state[kState] !== asked || state.length !== 0) {
-    "unlikely";
+    ("unlikely");
     finishReadOfNothing(state);
     if (state.length !== 0) return readMoreThenEnd(req, state);
     state[kState] &= ~kReadingMore;
@@ -1259,7 +1254,7 @@ function finishBufferedBody(req: $Node.IncomingMessage, state: $Node.ReadableSta
     req.read !== read ||
     req._read !== incomingMessageRead
   ) {
-    "unlikely";
+    ("unlikely");
     return readMoreThenEnd(req, state);
   }
   const asked = flags | kReading | kSync;
@@ -1272,7 +1267,7 @@ function finishBufferedBody(req: $Node.IncomingMessage, state: $Node.ReadableSta
   }
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (state[kState] !== asked || state.length !== length) {
-    "unlikely";
+    ("unlikely");
     finishReadOfNothing(state);
     if (state.length !== length) return readMoreThenEnd(req, state);
     state[kState] &= ~kReadingMore;
@@ -1295,13 +1290,13 @@ function releaseParserOnNextTick(req: $Node.IncomingMessage) {
 function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   const handle = req[kHandle];
   if (handle === undefined || req.push !== push || req.read !== read) {
-    "unlikely";
+    ("unlikely");
     return emitEOFIncomingMessageOuter(req);
   }
   req.complete = true;
   const rawTrailers = takeRequestTrailers(req, handle);
   if (rawTrailers !== undefined) {
-    "unlikely";
+    ("unlikely");
     req._addHeaderLines(rawTrailers, rawTrailers.length);
     req.push(null);
     return releaseParserOnNextTick(req);
@@ -1310,7 +1305,7 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   if ((flags & kDecoder) !== 0) {
     const rest = state[kDecoderValue]!.end();
     if (rest?.length) {
-      "unlikely";
+      ("unlikely");
       state.buffer.push(rest);
       state.length += rest.length as number;
     }
@@ -1337,7 +1332,8 @@ function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
 }
 
 function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
-  if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || stream._destroy !== incomingMessageDestroy) return false;
+  if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || stream._destroy !== incomingMessageDestroy)
+    return false;
   const req: $Node.IncomingMessage = stream as any;
   const handle = req[kHandle];
   if (
@@ -1349,7 +1345,7 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     req._readableState !== state ||
     !ticksAreUnseen()
   ) {
-    "unlikely";
+    ("unlikely");
     return false;
   }
   req[kAutoDestroyed] = true;

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, renameSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // What a program loads by names that it computes is no part of it unless the build is told: the files are given as further entry
 // points. The executable then finds each of them by the path it had when it was built: by `__dirname`, and from the file that asks.
@@ -56,7 +56,18 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 }
 
 for (const [how, further] of [
-  ["named one by one", ["plugins/a.cjs", "plugins/b.cjs", "plugins/es.mjs", "plugins/only-resolved.cjs", "lib/near/x.cjs", "lib/near/es.mjs", "worker.cjs"]],
+  [
+    "named one by one",
+    [
+      "plugins/a.cjs",
+      "plugins/b.cjs",
+      "plugins/es.mjs",
+      "plugins/only-resolved.cjs",
+      "lib/near/x.cjs",
+      "lib/near/es.mjs",
+      "worker.cjs",
+    ],
+  ],
   ["given by patterns", ["plugins/*", "lib/near/**/*.{cjs,mjs}", "worker.cjs"]],
 ] as const) {
   test(`further entry points ${how} are found by their paths`, async () => {
@@ -65,11 +76,18 @@ for (const [how, further] of [
     mkdirSync(join(String(dir), "elsewhere"));
     const plain = await run([bunExe(), "run", "main.cjs"], app, bunEnv);
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", ...further, "--outfile", "../elsewhere/program"], app, bunEnv);
+    const build = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.cjs", ...further, "--outfile", "../elsewhere/program"],
+      app,
+      bunEnv,
+    );
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
     const program = join(String(dir), "elsewhere", "program");
     const whereItWasBuilt = await run([program], app, compiledOnly);
-    expect({ stdout: whereItWasBuilt.stdout, exitCode: whereItWasBuilt.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+    expect({ stdout: whereItWasBuilt.stdout, exitCode: whereItWasBuilt.exitCode }).toEqual({
+      stdout: plain.stdout,
+      exitCode: 0,
+    });
     renameSync(app, join(String(dir), "hidden"));
     const alone = await run([program], join(String(dir), "elsewhere"), compiledOnly);
     expect({ stdout: alone.stdout, exitCode: alone.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
@@ -95,11 +113,33 @@ orm.imports("both").then(ns => console.log(ns.default, orm.connect("both")));
   });
   const app = join(String(dir), "app");
   const plain = await run([bunExe(), "run", "main.cjs"], app, bunEnv);
-  expect({ stdout: plain.stdout, stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stdout: "driver scoped extra\nimported required\n", stderr: "", exitCode: 0 });
-  const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "node_modules/driver/lib/*.js", "node_modules/@scope/driver/main.cjs", "node_modules/both/*.{mjs,cjs}", "--outfile", "../program"], app, bunEnv);
+  expect({ stdout: plain.stdout, stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({
+    stdout: "driver scoped extra\nimported required\n",
+    stderr: "",
+    exitCode: 0,
+  });
+  const build = await run(
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "main.cjs",
+      "node_modules/driver/lib/*.js",
+      "node_modules/@scope/driver/main.cjs",
+      "node_modules/both/*.{mjs,cjs}",
+      "--outfile",
+      "../program",
+    ],
+    app,
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const whereItWasBuilt = await run([join(String(dir), "program")], app, compiledOnly);
-  expect({ stdout: whereItWasBuilt.stdout, exitCode: whereItWasBuilt.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  expect({ stdout: whereItWasBuilt.stdout, exitCode: whereItWasBuilt.exitCode }).toEqual({
+    stdout: plain.stdout,
+    exitCode: 0,
+  });
   renameSync(app, join(String(dir), "hidden"));
   const alone = await run([join(String(dir), "program")], String(dir), compiledOnly);
   expect({ stdout: alone.stdout, exitCode: alone.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
@@ -107,10 +147,12 @@ orm.imports("both").then(ns => console.log(ns.default, orm.connect("both")));
 
 // As pnpm and `bun install --linker isolated` lay packages out: each package sees what it depends on through a link, and the files
 // of the executable have the paths behind the links. A package with `exports` has the names that it exports and no other.
-test.skipIf(isWindows)("a computed name of a package is found as the file that asks sees it", async () => {
-  const store = "app/node_modules/.store";
-  using dir = tempDir("entry-points-by-package-name-linked", {
-    "app/main.cjs": `const orm = require("orm");
+test.skipIf(isWindows)(
+  "a computed name of a package is found as the file that asks sees it",
+  async () => {
+    const store = "app/node_modules/.store";
+    using dir = tempDir("entry-points-by-package-name-linked", {
+      "app/main.cjs": `const orm = require("orm");
 const say = (what, make) => { try { console.log(what, String(make())); } catch (e) { console.log(what, "THROWS", e.code ?? e.name); } };
 say("the package", () => orm.connect("driver"));
 say("a name that it exports", () => orm.connect("driver/extra"));
@@ -120,19 +162,21 @@ say("resolve", () => orm.where("driver").split("node_modules/").pop());
 say("a package that is no entry point", () => orm.connect("left-out"));
 orm.imports("driver/extra").then(ns => console.log("imported", ns.name));
 `,
-    [store + "/orm@1/node_modules/orm/package.json"]: `{ "name": "orm", "main": "lib/index.js" }`,
-    [store + "/orm@1/node_modules/orm/lib/index.js"]: `exports.connect = name => require(name).name;\nexports.imports = name => import(name);\nexports.where = name => require.resolve(name);\n`,
-    [store + "/driver@1/node_modules/driver/package.json"]: `{ "name": "driver", "exports": { ".": "./lib/entry.js", "./extra": { "require": "./lib/required.cjs", "default": "./lib/imported.mjs" } } }`,
-    [store + "/driver@1/node_modules/driver/lib/entry.js"]: `exports.name = "driver";\n`,
-    [store + "/driver@1/node_modules/driver/lib/required.cjs"]: `exports.name = "required";\n`,
-    [store + "/driver@1/node_modules/driver/lib/imported.mjs"]: `export const name = "imported";\n`,
-  });
-  const app = join(String(dir), "app");
-  symlinkSync("../../driver@1/node_modules/driver", join(String(dir), store, "orm@1/node_modules/driver"));
-  symlinkSync(".store/orm@1/node_modules/orm", join(app, "node_modules/orm"));
-  const plain = await run([bunExe(), "run", "main.cjs"], app, bunEnv);
-  expect({ stdout: plain.stdout, stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({
-    stdout: `the package driver
+      [store + "/orm@1/node_modules/orm/package.json"]: `{ "name": "orm", "main": "lib/index.js" }`,
+      [store + "/orm@1/node_modules/orm/lib/index.js"]:
+        `exports.connect = name => require(name).name;\nexports.imports = name => import(name);\nexports.where = name => require.resolve(name);\n`,
+      [store + "/driver@1/node_modules/driver/package.json"]:
+        `{ "name": "driver", "exports": { ".": "./lib/entry.js", "./extra": { "require": "./lib/required.cjs", "default": "./lib/imported.mjs" } } }`,
+      [store + "/driver@1/node_modules/driver/lib/entry.js"]: `exports.name = "driver";\n`,
+      [store + "/driver@1/node_modules/driver/lib/required.cjs"]: `exports.name = "required";\n`,
+      [store + "/driver@1/node_modules/driver/lib/imported.mjs"]: `export const name = "imported";\n`,
+    });
+    const app = join(String(dir), "app");
+    symlinkSync("../../driver@1/node_modules/driver", join(String(dir), store, "orm@1/node_modules/driver"));
+    symlinkSync(".store/orm@1/node_modules/orm", join(app, "node_modules/orm"));
+    const plain = await run([bunExe(), "run", "main.cjs"], app, bunEnv);
+    expect({ stdout: plain.stdout, stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({
+      stdout: `the package driver
 a name that it exports required
 a path that it does not export THROWS MODULE_NOT_FOUND
 from a file that does not see the package THROWS MODULE_NOT_FOUND
@@ -140,15 +184,30 @@ resolve driver/lib/entry.js
 a package that is no entry point THROWS MODULE_NOT_FOUND
 imported imported
 `,
-    stderr: "",
-    exitCode: 0,
-  });
-  const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "node_modules/.store/driver@1/node_modules/driver/lib/*", "--outfile", "../program"], app, bunEnv);
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  renameSync(app, join(String(dir), "hidden"));
-  const alone = await run([join(String(dir), "program")], String(dir), compiledOnly);
-  expect({ stdout: alone.stdout, exitCode: alone.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-}, 120_000);
+      stderr: "",
+      exitCode: 0,
+    });
+    const build = await run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "main.cjs",
+        "node_modules/.store/driver@1/node_modules/driver/lib/*",
+        "--outfile",
+        "../program",
+      ],
+      app,
+      bunEnv,
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    renameSync(app, join(String(dir), "hidden"));
+    const alone = await run([join(String(dir), "program")], String(dir), compiledOnly);
+    expect({ stdout: alone.stdout, exitCode: alone.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  },
+  120_000,
+);
 
 test("a package with exports is found by the names that it exports alone", async () => {
   using dir = tempDir("entry-points-by-exported-name", {
@@ -202,7 +261,27 @@ imported, a package with main and module main
     stderr: "",
     exitCode: 0,
   });
-  const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "node_modules/closed/lib/*.js", "node_modules/open/lib/*.js", "node_modules/patterns/features/one.js", "node_modules/patterns/dist/tools/two.js", "node_modules/patterns/es/three.mjs", "node_modules/patterns/common/three.cjs", "node_modules/two-fields/by-main.js", "node_modules/two-fields/by-module.mjs", "--outfile", "../program"], app, bunEnv);
+  const build = await run(
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "main.cjs",
+      "node_modules/closed/lib/*.js",
+      "node_modules/open/lib/*.js",
+      "node_modules/patterns/features/one.js",
+      "node_modules/patterns/dist/tools/two.js",
+      "node_modules/patterns/es/three.mjs",
+      "node_modules/patterns/common/three.cjs",
+      "node_modules/two-fields/by-main.js",
+      "node_modules/two-fields/by-module.mjs",
+      "--outfile",
+      "../program",
+    ],
+    app,
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   renameSync(app, join(String(dir), "hidden"));
   const alone = await run([join(String(dir), "program")], String(dir), compiledOnly);
@@ -218,7 +297,11 @@ test("a further entry point is still found by the name it has in the executable"
     "app/plugins/a.cjs": `exports.name = "a";\n`,
   });
   const app = join(String(dir), "app");
-  const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "plugins/a.cjs", "--outfile", "../program"], app, bunEnv);
+  const build = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.cjs", "plugins/a.cjs", "--outfile", "../program"],
+    app,
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   renameSync(app, join(String(dir), "hidden"));
   const ran = await run([join(String(dir), "program")], String(dir), compiledOnly);
@@ -226,8 +309,14 @@ test("a further entry point is still found by the name it has in the executable"
 }, 120_000);
 
 test("a program with one entry point holds no path", async () => {
-  using dir = tempDir("entry-points-by-path-one", { "main.cjs": `console.log(require(["node:", "path"].join("")).sep);\n` });
-  const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", "program"], String(dir), bunEnv);
+  using dir = tempDir("entry-points-by-path-one", {
+    "main.cjs": `console.log(require(["node:", "path"].join("")).sep);\n`,
+  });
+  const build = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", "program"],
+    String(dir),
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const bytes = await Bun.file(join(String(dir), isWindows ? "program.exe" : "program")).bytes();
   expect(Buffer.from(bytes).includes(join(String(dir), "main.cjs") + "\0")).toBe(false);

@@ -14,7 +14,8 @@ import { built, slot, spawned, unsupported } from "./run-programs";
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "native-addons");
 
-if (!systemCC) console.error("SKIPPED: test/aot/native-addons.test.ts: there is no C compiler: not in $CC, no cc, gcc or clang");
+if (!systemCC)
+  console.error("SKIPPED: test/aot/native-addons.test.ts: there is no C compiler: not in $CC, no cc, gcc or clang");
 
 describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
   const folder = String(tempDir("aot-native-addons", {}));
@@ -46,7 +47,10 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
       programs,
       bunEnv,
     );
-    expect({ stderr: compile.stderr, exitCode: compile.exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+    expect({ stderr: compile.stderr, exitCode: compile.exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
   });
 
   test.concurrent.each([
@@ -66,11 +70,25 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
       slot(async () => {
         const env = { ...bunEnv, ADDON: addon };
         const executable = join(folder, name.replace(/\.\w+$/, isWindows ? ".exe" : ""));
-        built(await spawned([bunExe(), "build", "--compile", "--aot", join(programs, name), "--outfile", executable], programs, bunEnv));
+        built(
+          await spawned(
+            [bunExe(), "build", "--compile", "--aot", join(programs, name), "--outfile", executable],
+            programs,
+            bunEnv,
+          ),
+        );
         const compiled = await spawned([executable], programs, env);
         const plain = await spawned([bunExe(), "run", join(programs, name)], programs, env);
-        expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr }).toEqual({ signal: null, exitCode: 0, stderr: "" });
-        expect({ signal: compiled.signal, exitCode: compiled.exitCode, stderr: compiled.stderr }).toEqual({ signal: null, exitCode: 0, stderr: "" });
+        expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr }).toEqual({
+          signal: null,
+          exitCode: 0,
+          stderr: "",
+        });
+        expect({ signal: compiled.signal, exitCode: compiled.exitCode, stderr: compiled.stderr }).toEqual({
+          signal: null,
+          exitCode: 0,
+          stderr: "",
+        });
 
         const lines = (stdout: string) => stdout.split("\n");
         const isLocked = (line: string) => /^ *\d+ LOCKED /.test(line);

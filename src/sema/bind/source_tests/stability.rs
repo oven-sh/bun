@@ -47,8 +47,16 @@ const VARIABLES: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", "for (var v = 0; ; ) {}", Stable),
     ("a.cjs", "for (var v in {}) {}", NotInitializedOnce),
     ("a.cjs", "for (var v of []) {}", NotInitializedOnce),
-    ("a.cjs", "for (const a of []) { var v = 1; }", NotInitializedOnce),
-    ("a.cjs", "while (a) { (function () { var v = 1; }); }", Stable),
+    (
+        "a.cjs",
+        "for (const a of []) { var v = 1; }",
+        NotInitializedOnce,
+    ),
+    (
+        "a.cjs",
+        "while (a) { (function () { var v = 1; }); }",
+        Stable,
+    ),
     ("a.cjs", "var v = 1; function v() {}", NotInitializedOnce),
     ("a.cjs", r#"const v = require("m");"#, Stable),
     ("a.cjs", r#"{ const v = require("m"); }"#, Stable),
@@ -56,9 +64,17 @@ const VARIABLES: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", r#"var v = 1; eval("");"#, VisibleToEval),
     ("a.cjs", r#"const v = 1; eval("");"#, Stable),
     ("a.cjs", r#"let v = 1; (0, eval)("");"#, Stable),
-    ("a.cjs", r#"function f() { eval(""); } { let v = 1; }"#, Stable),
+    (
+        "a.cjs",
+        r#"function f() { eval(""); } { let v = 1; }"#,
+        Stable,
+    ),
     ("a.ts", "declare const v: number;", NoBinding),
-    ("a.ts", "namespace N { export const v = 1; }", ContainerMember),
+    (
+        "a.ts",
+        "namespace N { export const v = 1; }",
+        ContainerMember,
+    ),
     ("a.ts", "namespace N { const v = 1; }", Stable),
 ];
 
@@ -70,10 +86,26 @@ const PARAMETERS: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", "function f(...p) {}", Stable),
     ("a.cjs", "function f(p, p) {}", NotInitializedOnce),
     ("a.cjs", "function f(p) { arguments; }", MappedArgument),
-    ("a.cjs", "function f(p) { () => arguments; }", MappedArgument),
-    ("a.cjs", "function f(p) { function g() { arguments; } }", Stable),
-    ("a.cjs", r#"function f(p) { "use strict"; arguments; }"#, MappedArgument),
-    ("a.cjs", r#""use strict"; function f(p) { arguments; }"#, Stable),
+    (
+        "a.cjs",
+        "function f(p) { () => arguments; }",
+        MappedArgument,
+    ),
+    (
+        "a.cjs",
+        "function f(p) { function g() { arguments; } }",
+        Stable,
+    ),
+    (
+        "a.cjs",
+        r#"function f(p) { "use strict"; arguments; }"#,
+        MappedArgument,
+    ),
+    (
+        "a.cjs",
+        r#""use strict"; function f(p) { arguments; }"#,
+        Stable,
+    ),
     ("a.cjs", "class C { m(p) { arguments; } }", Stable),
     ("a.mjs", "function f(p) { arguments; }", Stable),
     ("a.cjs", "function f(p = 1) { arguments; }", Stable),
@@ -90,18 +122,34 @@ const WRAPPER_PARAMETERS: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", "var exports;", Stable),
     ("a.cjs", "var exports; function f() { arguments; }", Stable),
     ("a.cjs", r#""use strict"; var exports; arguments;"#, Stable),
-    ("a.cjs", "var other; var exports; arguments;", MappedArgument),
+    (
+        "a.cjs",
+        "var other; var exports; arguments;",
+        MappedArgument,
+    ),
 ];
 
 const FUNCTIONS: &[(&str, &str, BindingStability)] = &[
     ("a.mjs", "function f() {}", Stable),
     ("a.mjs", "function f() {} f = 1;", Stored),
-    ("a.cjs", "function f() {} function f() {}", NotInitializedOnce),
+    (
+        "a.cjs",
+        "function f() {} function f() {}",
+        NotInitializedOnce,
+    ),
     ("a.mjs", "{ function f() {} }", Stable),
     ("a.mjs", "(function f() { f = 1; });", Stable),
     ("a.mjs", "export default function f() {}", Stable),
-    ("a.ts", "function f(a: number): void; function f(a: any) {}", Stable),
-    ("a.ts", "function f() {} namespace f { export const a = 1; }", Stable),
+    (
+        "a.ts",
+        "function f(a: number): void; function f(a: any) {}",
+        Stable,
+    ),
+    (
+        "a.ts",
+        "function f() {} namespace f { export const a = 1; }",
+        Stable,
+    ),
     ("a.cjs", r#"function f() {} eval("");"#, VisibleToEval),
     ("a.cjs", r#"(function f() { eval(""); });"#, Stable),
 ];
@@ -111,34 +159,48 @@ const CLASSES: &[(&str, &str, BindingStability)] = &[
     ("a.mjs", "class C {} C = 1;", Stored),
     ("a.mjs", "export class C {}", Stable),
     ("a.mjs", "export default class C {}", Stable),
-    ("a.ts", "class C {} namespace C { export const a = 1; }", Stable),
+    (
+        "a.ts",
+        "class C {} namespace C { export const a = 1; }",
+        Stable,
+    ),
     ("a.ts", "declare class C {}", NoBinding),
     ("a.cjs", r#"class C {} eval("");"#, VisibleToEval),
 ];
 
 fn assert_stability(s: &Analyzed<'_>, symbol: SymbolId, expected: BindingStability, text: &str) {
     assert_eq!(s.bound.binding_stability(symbol), expected, "{text}");
-    assert_eq!(s.bound.is_stable_binding(symbol), expected == Stable, "{text}");
+    assert_eq!(
+        s.bound.is_stable_binding(symbol),
+        expected == Stable,
+        "{text}"
+    );
 }
 
 #[test]
 fn variables() {
     for &(path, text, expected) in VARIABLES {
-        analyzed(path, text, |s| assert_stability(s, s.variable("v", 0), expected, text));
+        analyzed(path, text, |s| {
+            assert_stability(s, s.variable("v", 0), expected, text)
+        });
     }
 }
 
 #[test]
 fn parameters() {
     for &(path, text, expected) in PARAMETERS {
-        analyzed(path, text, |s| assert_stability(s, s.parameter("p", 0), expected, text));
+        analyzed(path, text, |s| {
+            assert_stability(s, s.parameter("p", 0), expected, text)
+        });
     }
 }
 
 #[test]
 fn redeclared_wrapper_parameters() {
     for &(path, text, expected) in WRAPPER_PARAMETERS {
-        analyzed(path, text, |s| assert_stability(s, s.variable("exports", 0), expected, text));
+        analyzed(path, text, |s| {
+            assert_stability(s, s.variable("exports", 0), expected, text)
+        });
     }
     analyzed("a.cjs", "var other; arguments;", |s| {
         assert_stability(s, s.variable("other", 0), Stable, "other");
@@ -148,14 +210,18 @@ fn redeclared_wrapper_parameters() {
 #[test]
 fn functions() {
     for &(path, text, expected) in FUNCTIONS {
-        analyzed(path, text, |s| assert_stability(s, s.function_symbol("f"), expected, text));
+        analyzed(path, text, |s| {
+            assert_stability(s, s.function_symbol("f"), expected, text)
+        });
     }
 }
 
 #[test]
 fn classes() {
     for &(path, text, expected) in CLASSES {
-        analyzed(path, text, |s| assert_stability(s, s.class_symbol("C"), expected, text));
+        analyzed(path, text, |s| {
+            assert_stability(s, s.class_symbol("C"), expected, text)
+        });
     }
 }
 
@@ -181,7 +247,10 @@ fn imports_are_linked() {
         for decl in declarations {
             let symbol = s.bound.declared_symbol(decl);
             assert_stability(s, symbol, Linked, text);
-            assert_eq!(s.bound.binding_initializer(&s.hir, symbol), BindingInitializer::Import);
+            assert_eq!(
+                s.bound.binding_initializer(&s.hir, symbol),
+                BindingInitializer::Import
+            );
         }
     });
 }
@@ -194,8 +263,14 @@ fn annex_b_variable() {
         };
         assert_stability(s, hoisted.var_symbol, Stable, "var");
         assert_stability(s, hoisted.block_symbol, Stable, "block");
-        assert_eq!(s.bound.initial_state(hoisted.var_symbol), InitialState::Undefined);
-        assert_eq!(s.bound.initial_state(hoisted.block_symbol), InitialState::Initialized);
+        assert_eq!(
+            s.bound.initial_state(hoisted.var_symbol),
+            InitialState::Undefined
+        );
+        assert_eq!(
+            s.bound.initial_state(hoisted.block_symbol),
+            InitialState::Initialized
+        );
     });
     analyzed("a.cjs", "while (a) { function f() {} }", |s| {
         let [hoisted] = s.bound.runtime.annex_b_functions()[..] else {
@@ -216,7 +291,8 @@ fn dead_stores_can_be_ignored() {
         assert!(s.bound.is_store_target(store.target));
         assert_eq!(s.bound.binding_stability(symbol), Stored);
         let ignoring = |ignored: ExprId| {
-            s.bound.binding_stability_ignoring(symbol, &|target| target == ignored)
+            s.bound
+                .binding_stability_ignoring(symbol, &|target| target == ignored)
         };
         assert_eq!(ignoring(store.target), Stable);
         assert_eq!(ignoring(ExprId::NONE), Stored);
@@ -230,27 +306,51 @@ fn initial_states() {
         ("a.cjs", "let v = 1;", InitialState::Uninitialized),
         ("a.cjs", "const v = 1;", InitialState::Uninitialized),
         ("a.cjs", "try {} catch (v) {}", InitialState::Initialized),
-        ("a.cjs", "try {} catch ({ v }) {}", InitialState::Uninitialized),
+        (
+            "a.cjs",
+            "try {} catch ({ v }) {}",
+            InitialState::Uninitialized,
+        ),
     ];
     for &(path, text, expected) in STATES {
         analyzed(path, text, |s| {
-            assert_eq!(s.bound.initial_state(s.variable("v", 0)), expected, "{text}");
+            assert_eq!(
+                s.bound.initial_state(s.variable("v", 0)),
+                expected,
+                "{text}"
+            );
         });
     }
     analyzed("a.cjs", "function f(p) {} class C {}", |s| {
-        assert_eq!(s.bound.initial_state(s.parameter("p", 0)), InitialState::Initialized);
-        assert_eq!(s.bound.initial_state(s.function_symbol("f")), InitialState::Initialized);
-        assert_eq!(s.bound.initial_state(s.class_symbol("C")), InitialState::Uninitialized);
+        assert_eq!(
+            s.bound.initial_state(s.parameter("p", 0)),
+            InitialState::Initialized
+        );
+        assert_eq!(
+            s.bound.initial_state(s.function_symbol("f")),
+            InitialState::Initialized
+        );
+        assert_eq!(
+            s.bound.initial_state(s.class_symbol("C")),
+            InitialState::Uninitialized
+        );
     });
     analyzed("a.cjs", "function f(p, q = p) {}", |s| {
-        assert_eq!(s.bound.initial_state(s.parameter("p", 0)), InitialState::Uninitialized);
+        assert_eq!(
+            s.bound.initial_state(s.parameter("p", 0)),
+            InitialState::Uninitialized
+        );
     });
-    analyzed("a.ts", "enum E {} namespace N { export const a = 1; }", |s| {
-        let container = s.bound.declared_symbol(Decl::Enum(EnumId(0)));
-        assert_eq!(s.bound.initial_state(container), InitialState::Undefined);
-        let container = s.bound.declared_symbol(Decl::Module(ModuleId(0)));
-        assert_eq!(s.bound.initial_state(container), InitialState::Undefined);
-    });
+    analyzed(
+        "a.ts",
+        "enum E {} namespace N { export const a = 1; }",
+        |s| {
+            let container = s.bound.declared_symbol(Decl::Enum(EnumId(0)));
+            assert_eq!(s.bound.initial_state(container), InitialState::Undefined);
+            let container = s.bound.declared_symbol(Decl::Module(ModuleId(0)));
+            assert_eq!(s.bound.initial_state(container), InitialState::Undefined);
+        },
+    );
 }
 
 #[test]
@@ -286,15 +386,19 @@ fn initializers() {
             assert_eq!(initializer, BindingInitializer::Opaque, "{text}");
         });
     }
-    analyzed("a.mjs", "function f(p) {} class C {} export default 1;", |s| {
-        let initializer = |symbol| s.bound.binding_initializer(&s.hir, symbol);
-        let function = BindingInitializer::Function(s.function("f"));
-        assert_eq!(initializer(s.function_symbol("f")), function);
-        let class = BindingInitializer::Class(s.class("C"));
-        assert_eq!(initializer(s.class_symbol("C")), class);
-        assert_eq!(initializer(s.bound.inner_class_symbol(s.class("C"))), class);
-        assert_eq!(initializer(s.parameter("p", 0)), BindingInitializer::Opaque);
-    });
+    analyzed(
+        "a.mjs",
+        "function f(p) {} class C {} export default 1;",
+        |s| {
+            let initializer = |symbol| s.bound.binding_initializer(&s.hir, symbol);
+            let function = BindingInitializer::Function(s.function("f"));
+            assert_eq!(initializer(s.function_symbol("f")), function);
+            let class = BindingInitializer::Class(s.class("C"));
+            assert_eq!(initializer(s.class_symbol("C")), class);
+            assert_eq!(initializer(s.bound.inner_class_symbol(s.class("C"))), class);
+            assert_eq!(initializer(s.parameter("p", 0)), BindingInitializer::Opaque);
+        },
+    );
 }
 
 #[test]

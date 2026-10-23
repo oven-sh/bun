@@ -1,6 +1,8 @@
 use super::mention_use::MentionUse;
 use super::resolver::{ExprState, ResolvedValue, Resolver};
-use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic};
+use crate::builtins::table::{
+    self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
+};
 use bun_sema::atom::Atom;
 use bun_sema::bind::decorator_metadata::{MetadataReference, entity_names};
 use bun_sema::bind::{Binding, ImplicitReference, ImplicitReferenceKind, SymbolId};
@@ -111,7 +113,10 @@ impl Resolver<'_, '_> {
     }
 
     fn find_exposed_object(id: BuiltinId) -> Option<BuiltinId> {
-        if table::entry(id).flags.contains(BuiltinFlags::IS_GLOBAL_OBJECT) {
+        if table::entry(id)
+            .flags
+            .contains(BuiltinFlags::IS_GLOBAL_OBJECT)
+        {
             Some(BuiltinId::GlobalThis)
         } else {
             exposes_members(id).then_some(id)
@@ -147,8 +152,8 @@ impl Resolver<'_, '_> {
                 continue;
             };
             // A variable, an assignment and `Object.getPrototypeOf` hand on an object that is there already.
-            let makes_value = !matches!(state, ExprState::Held(_))
-                || self.input.hir.member_key(expr).is_some();
+            let makes_value =
+                !matches!(state, ExprState::Held(_)) || self.input.hir.member_key(expr).is_some();
             if makes_value && self.is_called_with_other_texts(expr, id) {
                 self.output.called_with_other_texts.push(id);
             } else if makes_value {
@@ -164,13 +169,13 @@ impl Resolver<'_, '_> {
                 }
                 MentionUse::Inspected | MentionUse::Holder | MentionUse::Aliased => {}
                 MentionUse::StoredInto(symbol) if self.holds(symbol, id) => {}
-                MentionUse::ReadByComputedKey
-                | MentionUse::StoredInto(_)
-                | MentionUse::Exposed => self.expose(id),
+                MentionUse::ReadByComputedKey | MentionUse::StoredInto(_) | MentionUse::Exposed => {
+                    self.expose(id)
+                }
                 MentionUse::SearchedFor(key) => self.search_for(expr, id, key),
                 MentionUse::SearchedForKeysOf(keyed) => self.search_for_keys_of(expr, id, keyed),
                 MentionUse::Destructured(pattern) => {
-                    match self.value_of(expr).or(self.held_value_of(expr)) {
+                    match self.value_of(expr).or_else(|| self.held_value_of(expr)) {
                         Some(value) => self.destructure(value, pattern),
                         None => self.expose(id),
                     }
@@ -189,8 +194,14 @@ impl Resolver<'_, '_> {
         let Some(operand) = hir.ids(hir[call].args).nth(position) else {
             return false;
         };
-        let is_other = |&text: &Atom| self.input.names.get(text).is_none_or(|text| !listed.texts.contains(&text));
-        self.find_texts_of(operand).is_some_and(|texts| texts.iter().all(is_other))
+        let is_other = |&text: &Atom| {
+            self.input
+                .names
+                .get(text)
+                .is_none_or(|text| !listed.texts.contains(&text))
+        };
+        self.find_texts_of(operand)
+            .is_some_and(|texts| texts.iter().all(is_other))
     }
 
     // `process.on("exit", listener);`: the call itself says that the entry does not call what it calls for some texts alone.
@@ -205,9 +216,12 @@ impl Resolver<'_, '_> {
         let ExprKind::Call(operands) = self.input.hir[call].kind else {
             return false;
         };
-        let is_answer_dropped =
-            matches!(self.classify_use(call), MentionUse::Inspected) || self.is_dropped_by_for_each(call);
-        is_answer_dropped && lists.iter().all(|listed| self.writes_other_text(operands, listed))
+        let is_answer_dropped = matches!(self.classify_use(call), MentionUse::Inspected)
+            || self.is_dropped_by_for_each(call);
+        is_answer_dropped
+            && lists
+                .iter()
+                .all(|listed| self.writes_other_text(operands, listed))
     }
 
     // The host makes a member when it is first looked for, so `"name" in object` needs what makes the member of that name.
@@ -239,7 +253,7 @@ impl Resolver<'_, '_> {
     }
 
     fn mention_member(&mut self, object: ExprId, name: Atom) {
-        let holder = self.value_of(object).or(self.held_value_of(object));
+        let holder = self.value_of(object).or_else(|| self.held_value_of(object));
         if let Some(member) = holder.and_then(|holder| self.find_named_member(holder, name)) {
             self.output.mentioned.push(member.id);
         }
@@ -281,7 +295,9 @@ impl Resolver<'_, '_> {
             ImportSiteKind::ImportMetaRequire(call),
             ImportSiteKind::GetBuiltinModule(call),
         ];
-        sites.into_iter().any(|site| self.input.targets.has_site(site))
+        sites
+            .into_iter()
+            .any(|site| self.input.targets.has_site(site))
     }
 
     fn destructure(&mut self, holder: ResolvedValue, pattern: PatId) {

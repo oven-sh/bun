@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, test } from "./supported";
 
 // An early error of the language stops bun run before the first statement runs. Bun's parser reports some. These are reported by JavaScriptCore's, when it is
 // handed the transpiled module. A compiled program is never handed to it, so the build reports them: the type checker finds them in every file, typed or
@@ -19,7 +19,11 @@ async function expectEarlyError(file: string, source: string, line: number, ...b
   using dir = tempDir("aot-early-errors", { [file]: source });
   const cwd = String(dir);
   const plain = await run(cwd, "run", `./${file}`);
-  expect({ error: syntaxErrorOf(plain.stderr), stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ error: expect.any(String), stdout: "", exitCode: 1 });
+  expect({ error: syntaxErrorOf(plain.stderr), stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({
+    error: expect.any(String),
+    stdout: "",
+    exitCode: 1,
+  });
   const location = new RegExp(`${file.replace(".", "\\.")}:${line}:\\d+$`);
   const said: string[][] = [];
   for (const args of [
@@ -32,7 +36,11 @@ async function expectEarlyError(file: string, source: string, line: number, ...b
     expect(errors.filter(error => !/^error: TS\d+: \S/.test(error))).toEqual([]);
     const locations = stderr.match(/^\s+at .*$/gm) ?? [];
     expect(locations.filter(printed => !location.test(printed))).toEqual([]);
-    expect({ args, errors: errors.length > 0, locations: locations.length > 0 }).toEqual({ args, errors: true, locations: true });
+    expect({ args, errors: errors.length > 0, locations: locations.length > 0 }).toEqual({
+      args,
+      errors: true,
+      locations: true,
+    });
     said.push(errors);
   }
   expect(said[1]).toEqual(said[0]);
@@ -66,7 +74,11 @@ const programs: Record<string, string> = {
 describe.concurrent("an early error that only JavaScriptCore reports stops the build at the line of the source", () => {
   for (const [name, statement] of Object.entries(programs)) {
     test(name, async () => {
-      await expectEarlyError("main.js", `// The error is on the third line.\nconsole.log("never printed");\n${statement}\nconsole.log("never printed");\n`, 3);
+      await expectEarlyError(
+        "main.js",
+        `// The error is on the third line.\nconsole.log("never printed");\n${statement}\nconsole.log("never printed");\n`,
+        3,
+      );
     });
   }
 
@@ -76,11 +88,21 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
   });
 
   test("the line is that of the source under --minify", async () => {
-    await expectEarlyError("main.js", `console.log("never printed");\n\n\nfunction unused() {\n  return /[b-a]/;\n}\nconsole.log(unused);\n`, 5, "--minify");
+    await expectEarlyError(
+      "main.js",
+      `console.log("never printed");\n\n\nfunction unused() {\n  return /[b-a]/;\n}\nconsole.log(unused);\n`,
+      5,
+      "--minify",
+    );
   });
 
   test("the name is that of the source under --minify-identifiers", async () => {
-    const errors = await expectEarlyError("main.js", `console.log("never printed");\nvar both; function both() {} both;\nconsole.log("never printed");\n`, 2, "--minify-identifiers");
+    const errors = await expectEarlyError(
+      "main.js",
+      `console.log("never printed");\nvar both; function both() {} both;\nconsole.log("never printed");\n`,
+      2,
+      "--minify-identifiers",
+    );
     expect(errors[0]).toContain("'both'");
   });
 
@@ -97,13 +119,21 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
       ["build", "--compile", "--aot", "./main.ts", "--outfile", "app"],
     ]) {
       const { stderr, exitCode } = await run(cwd, ...args);
-      expect({ args, errors: (stderr.match(/^error\b.*/gm) ?? []).length > 0, exitCode }).toEqual({ args, errors: true, exitCode: 1 });
+      expect({ args, errors: (stderr.match(/^error\b.*/gm) ?? []).length > 0, exitCode }).toEqual({
+        args,
+        errors: true,
+        exitCode: 1,
+      });
       expect(stderr).toMatch(/imported\.ts:3:\d+/);
     }
   });
 
   test("in a CommonJS module", async () => {
-    await expectEarlyError("main.cjs", `module.exports = 1;\nconsole.log("never printed");\nfunction unused() { return /(?<n>a)(?<n>b)/; } console.log(unused);\n`, 3);
+    await expectEarlyError(
+      "main.cjs",
+      `module.exports = 1;\nconsole.log("never printed");\nfunction unused() { return /(?<n>a)(?<n>b)/; } console.log(unused);\n`,
+      3,
+    );
   });
 });
 
@@ -151,21 +181,33 @@ test("what is valid in a CommonJS module and not in a module still builds and ru
 describe.concurrent("a name that --minify-identifiers hands out may be a name of the source", () => {
   const letters = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$_"];
   const programs: Record<string, [source: string, output: string]> = {
-    "two declarations": [`const first = exports.first = []\nconst s = exports.second = {}\nconsole.log(Object.keys(exports).join(), first.length, typeof s);\n`, "first,second 0 object\n"],
+    "two declarations": [
+      `const first = exports.first = []\nconst s = exports.second = {}\nconsole.log(Object.keys(exports).join(), first.length, typeof s);\n`,
+      "first,second 0 object\n",
+    ],
     "every name of one letter": [
       `const first = exports.first = [];\nlet count = 0;\nconst add = (name, value) => { count++; first.push(name); return value; };\n` +
-        letters.map((letter, index) => `const ${letter} = exports.member${index} = add("${letter}", ${index});\n`).join("") +
+        letters
+          .map((letter, index) => `const ${letter} = exports.member${index} = add("${letter}", ${index});\n`)
+          .join("") +
         `console.log(count, first.join(""), ${letters.join(" + ")});\n`,
       `54 ${letters.join("")} 1431\n`,
     ],
   };
   for (const [name, [source, output]] of Object.entries(programs)) {
-    for (const flags of [["--minify-identifiers"], ["--minify"], ["--minify-identifiers", "--no-compile-function-source"]]) {
+    for (const flags of [
+      ["--minify-identifiers"],
+      ["--minify"],
+      ["--minify-identifiers", "--no-compile-function-source"],
+    ]) {
       test(`${name}, ${flags.join(" ")}`, async () => {
         using dir = tempDir("aot-early-errors", { "main.cjs": source });
         const cwd = String(dir);
         const build = await run(cwd, "build", "--compile", "--aot", ...flags, "./main.cjs", "--outfile", "app");
-        expect({ errors: build.stderr.match(/^error\b.*/gm), exitCode: build.exitCode }).toEqual({ errors: null, exitCode: 0 });
+        expect({ errors: build.stderr.match(/^error\b.*/gm), exitCode: build.exitCode }).toEqual({
+          errors: null,
+          exitCode: 0,
+        });
         await using proc = Bun.spawn({ cmd: [`${cwd}/app`], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
         const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
         expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });

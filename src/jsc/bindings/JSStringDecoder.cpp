@@ -22,7 +22,6 @@ namespace WebCore {
 
 using namespace JSC;
 
-
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastChar);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);

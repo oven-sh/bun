@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { describe, test } from "./supported";
 
 // `import defer * as ns from "./a.mjs"` (https://tc39.es/proposal-defer-import-eval/). The module is loaded with its importer and
 // evaluated, after what it imports, the first time a property is asked of `ns` by a string other than "then". `bun run` follows
@@ -164,7 +164,11 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
-  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler", "allowJs": true, "types": [] } }` };
+  const tree = {
+    ...files,
+    [entry]: programs[entry],
+    "tsconfig.json": `{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler", "allowJs": true, "types": [] } }`,
+  };
 
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("import-defer", tree);

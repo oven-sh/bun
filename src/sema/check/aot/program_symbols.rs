@@ -92,7 +92,9 @@ impl ProgramSymbols {
             return symbols;
         };
         symbols.int32 = find_type_alias(files, bun_module, b"int32", declared_in);
-        symbols.int32_tag = symbols.int32.and_then(|int32| find_tag_literal(files, int32));
+        symbols.int32_tag = symbols
+            .int32
+            .and_then(|int32| find_tag_literal(files, int32));
         let schema = find_export(files, bun_module, b"Schema", declared_in)
             .filter(|&schema| files.flags(schema).intersects(SymFlags::NAMESPACE));
         if let Some(schema) = schema {
@@ -174,7 +176,10 @@ fn find_tag_literal(files: &Files<'_>, int32: Sym) -> Option<(FileId, TypeNodeId
 
 impl Checker<'_, '_> {
     // What the compiler declares for its own operations, like `JSON.parse<T>`, comes on top of the types that the program is checked with.
-    pub(in crate::check) fn remove_compiler_signatures(&self, signatures: &mut SmallVec<[SigId; 4]>) {
+    pub(in crate::check) fn remove_compiler_signatures(
+        &self,
+        signatures: &mut SmallVec<[SigId; 4]>,
+    ) {
         let Some(compiler_declarations) = self.p.aot_symbols().compiler_declarations else {
             return;
         };

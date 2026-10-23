@@ -107,7 +107,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             ),
             _ => false,
         };
-        is_own_apparent_type && self.c.members(ty).is_some_and(|members| !members.has_signatures())
+        is_own_apparent_type
+            && self
+                .c
+                .members(ty)
+                .is_some_and(|members| !members.has_signatures())
     }
 
     pub(super) fn shape_of_object_type(&mut self, ty: TypeId) -> TypeShape<'c> {

@@ -20,10 +20,14 @@ function locationStatements(verb: "reads" | "writes", reference: HeapReference, 
     payloadIndexes.length === 1 ? findIndexFieldOfElements(payloadIndexes[0].kind, reference.heap.indexKinds[0]) : null;
   if (indexOfElements !== null) {
     const location = `MemoryLocation::at(${heap}, locationIndexOf(element.${indexOfElements.name}))`;
-    return [`for (const auto& element : ${subject}.${payloadIndexes[0].name}())`, `${indentation}sink.${verb}(${location});`];
+    return [
+      `for (const auto& element : ${subject}.${payloadIndexes[0].name}())`,
+      `${indentation}sink.${verb}(${location});`,
+    ];
   }
   const indexes = reference.indexes.map(index => {
-    const value = index.tag === "Member" ? `${index.type.name}::${index.member.name}` : `${subject}.${index.field.name}()`;
+    const value =
+      index.tag === "Member" ? `${index.type.name}::${index.member.name}` : `${subject}.${index.field.name}()`;
     return `locationIndexOf(${value})`;
   });
   const exactLocation = `sink.${verb}(MemoryLocation::at(${heap}, ${indexes.join(", ")}));`;
@@ -58,7 +62,10 @@ function effectFunction(
     `${indentation}switch (${selector}) {`,
     ...groupedCases(
       enumName,
-      declarations.map(({ name, effects }) => ({ label: name, body: [...effectStatements(effects, subject), "return;"] })),
+      declarations.map(({ name, effects }) => ({
+        label: name,
+        body: [...effectStatements(effects, subject), "return;"],
+      })),
     ),
     `${indentation}}`,
     `${indentation}RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();`,
@@ -77,7 +84,13 @@ function effectsHeaders(schema: Schema): OutputFile[] {
       "AOTSchemaValueEffects.h",
       ['"AOTBlock.h"', '"AOTMemoryLocation.h"'],
       effectFunction("const Value& value", "value.opcode", "Opcode", schema.operations, "value"),
-      effectFunction("const Terminator& terminator", "terminator.kind", "TerminatorKind", schema.terminators, "terminator"),
+      effectFunction(
+        "const Terminator& terminator",
+        "terminator.kind",
+        "TerminatorKind",
+        schema.terminators,
+        "terminator",
+      ),
     ),
     header(
       "AOTSchemaEntryEffects.h",

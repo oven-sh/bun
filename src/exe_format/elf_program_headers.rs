@@ -39,14 +39,19 @@ pub fn find_reserved_segment(elf: &[u8]) -> Option<ReservedSegment> {
     let ehdr = read_header(elf).ok()?;
     let headers: Vec<Elf64_Phdr> =
         bytes_at(elf, ehdr.e_phoff, table_size(usize::from(ehdr.e_phnum)))?
-            .chunks_exact(PROGRAM_HEADER_SIZE)
-            .map(read_struct::<Elf64_Phdr>)
+            .as_chunks::<PROGRAM_HEADER_SIZE>()
+            .0
+            .iter()
+            .map(|bytes| read_struct::<Elf64_Phdr>(bytes))
             .collect();
     let is_reserved = |header: &Elf64_Phdr| header.p_type == PT_BUN_RESERVED;
     let header_index = headers.iter().position(is_reserved)?;
     Some(ReservedSegment {
         header_index,
-        header_count: headers[header_index..].iter().take_while(|header| is_reserved(header)).count(),
+        header_count: headers[header_index..]
+            .iter()
+            .take_while(|header| is_reserved(header))
+            .count(),
         address: headers[header_index].p_vaddr,
     })
 }
@@ -218,8 +223,10 @@ impl ProgramHeaderTable {
         };
         let headers: Vec<Elf64_Phdr> = bytes_at(elf, current.offset, current.size)
             .ok_or(ImageError::MalformedHeaders)?
-            .chunks_exact(PROGRAM_HEADER_SIZE)
-            .map(read_struct)
+            .as_chunks::<PROGRAM_HEADER_SIZE>()
+            .0
+            .iter()
+            .map(|bytes| read_struct(bytes))
             .collect();
         let location = find_room(elf, &headers)
             .filter(|room| room.capacity >= count)
@@ -268,8 +275,8 @@ impl ProgramHeaderTable {
         let ehdr_bytes = bytes_at(elf, 0, size_of::<Elf64_Ehdr>() as u64);
         let mut ehdr: Elf64_Ehdr = read_struct(ehdr_bytes.ok_or(ImageError::MalformedHeaders)?);
         ehdr.e_phoff = self.file_offset;
-        ehdr.e_phnum = u16::try_from(self.headers.len())
-            .map_err(|_| ImageError::HeaderRoomExhausted)?;
+        ehdr.e_phnum =
+            u16::try_from(self.headers.len()).map_err(|_| ImageError::HeaderRoomExhausted)?;
 
         let previous_size = table_size(self.previous_count);
         bytes_at_mut(elf, self.previous_file_offset, previous_size)
@@ -278,7 +285,7 @@ impl ProgramHeaderTable {
         let table = bytes_at_mut(elf, self.file_offset, table_size(self.capacity))
             .ok_or(ImageError::MalformedHeaders)?;
         table.fill(0);
-        let entries = table.chunks_exact_mut(PROGRAM_HEADER_SIZE);
+        let entries = table.as_chunks_mut::<PROGRAM_HEADER_SIZE>().0.iter_mut();
         for (entry, header) in entries.zip(&self.headers) {
             write_struct(entry, &self.resolve_table_segment(*header));
         }
@@ -437,11 +444,17 @@ pub(crate) mod tests {
             let e_shoff = align_up(self.bytes.len() as u64, 8);
             let file_size = e_shoff as usize + self.sections.len() * SHDR_SIZE;
             self.bytes.resize(file_size, 0);
-            let entries = self.bytes[e_shoff as usize..].chunks_exact_mut(SHDR_SIZE);
+            let entries = self.bytes[e_shoff as usize..]
+                .as_chunks_mut::<SHDR_SIZE>()
+                .0
+                .iter_mut();
             for (entry, section) in entries.zip(&self.sections) {
                 write_struct(entry, section);
             }
-            let entries = self.bytes[EHDR_SIZE as usize..].chunks_exact_mut(PROGRAM_HEADER_SIZE);
+            let entries = self.bytes[EHDR_SIZE as usize..]
+                .as_chunks_mut::<PROGRAM_HEADER_SIZE>()
+                .0
+                .iter_mut();
             for (entry, segment) in entries.zip(segments) {
                 write_struct(entry, segment);
             }
@@ -639,9 +652,8 @@ pub(crate) mod tests {
     #[test]
     fn unusable_room_is_ignored() {
         let toy = toy();
-        let with_note = |header: [u8; 16]| {
-            edited(&toy, |elf| write_bytes(elf, NOTES_OFFSET, &header))
-        };
+        let with_note =
+            |header: [u8; 16]| edited(&toy, |elf| write_bytes(elf, NOTES_OFFSET, &header));
         let with_segment = |index: usize, edit: fn(&mut Elf64_Phdr)| {
             edited(&toy, |elf| edit_segment(elf, index, edit))
         };
@@ -686,7 +698,9 @@ pub(crate) mod tests {
         let mut elf = toy();
         let header = create_room_note_header(room_size as u32);
         write_bytes(&mut elf, NOTES_OFFSET, &header);
-        edit_segment(&mut elf, NOTE_INDEX, |segment| segment.p_filesz = notes_size);
+        edit_segment(&mut elf, NOTE_INDEX, |segment| {
+            segment.p_filesz = notes_size
+        });
 
         let table = read_table(&elf);
         assert_eq!(table.capacity(), ROOM_CAPACITY);
@@ -701,7 +715,11 @@ pub(crate) mod tests {
         let other_type = NT_BUN_PROGRAM_HEADER_ROOM + 1;
         let other_note = create_note_header(ROOM_NOTE_NAME, other_type, 8);
         write_bytes(&mut elf, NOTES_OFFSET, &other_note);
-        write_bytes(&mut elf, room_note_offset, &create_room_note_header(room_size));
+        write_bytes(
+            &mut elf,
+            room_note_offset,
+            &create_room_note_header(room_size),
+        );
 
         let table = read_table(&elf);
         assert_eq!(table.capacity(), ROOM_CAPACITY - 1);
@@ -724,7 +742,9 @@ pub(crate) mod tests {
         table.insert_by_address(reserve(0x1000));
         assert_eq!(table.headers[READ_ONLY_INDEX].p_vaddr, 0x1000);
 
-        table.headers.retain(|header| header.p_type != PT_BUN_RESERVED);
+        table
+            .headers
+            .retain(|header| header.p_type != PT_BUN_RESERVED);
         table.insert_by_address(reserve(0x1000));
         assert_eq!(table.headers.last().unwrap().p_type, PT_BUN_RESERVED);
     }

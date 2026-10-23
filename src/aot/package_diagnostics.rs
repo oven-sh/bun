@@ -223,11 +223,7 @@ fn rejected_version_diagnostic(
     )
 }
 
-fn erasure_mismatch_sentence(
-    kind: ErasureMismatchKind,
-    typed: &[u8],
-    installed: &[u8],
-) -> Vec<u8> {
+fn erasure_mismatch_sentence(kind: ErasureMismatchKind, typed: &[u8], installed: &[u8]) -> Vec<u8> {
     match kind {
         ErasureMismatchKind::EmitsCode => format_sentence(
             "in {0}, TypeScript syntax that emits code can't be erased",

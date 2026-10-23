@@ -48,7 +48,12 @@ fn write_closed_families(levels: usize) -> String {
     let mut text = write_families(levels, "number");
     for name in ['A', 'B'] {
         for index in 0..levels {
-            writeln!(text, "interface {name}{}_{index} {{ back: {name}0_0; }}", levels - 1).unwrap();
+            writeln!(
+                text,
+                "interface {name}{}_{index} {{ back: {name}0_0; }}",
+                levels - 1
+            )
+            .unwrap();
         }
     }
     text
@@ -58,7 +63,12 @@ fn write_chains(levels: usize) -> String {
     let mut text = String::new();
     for name in ['A', 'B'] {
         for level in 0..levels {
-            writeln!(text, "interface {name}{level}_0 {{ next: {name}{}_0; }}", level + 1).unwrap();
+            writeln!(
+                text,
+                "interface {name}{level}_0 {{ next: {name}{}_0; }}",
+                level + 1
+            )
+            .unwrap();
         }
         writeln!(text, "interface {name}{levels}_0 {{ end: number; }}").unwrap();
     }
@@ -103,7 +113,9 @@ fn list_files<'a>(families: &'a str, main: &'a str) -> [(&'a str, &'a str); 4] {
 
 fn check_only_codes(families: &str) -> Vec<u32> {
     let files = list_files(families, ASSIGNS_ONLY);
-    with_program(&files, &["./main.ts"], 1, |program| check_only(program).codes())
+    with_program(&files, &["./main.ts"], 1, |program| {
+        check_only(program).codes()
+    })
 }
 
 // The lowering of asks.ts asks whether A0_0 is assignable to B0_0.
@@ -111,8 +123,9 @@ fn ask(families: &str, main: &str) -> Asked {
     let files = list_files(families, main);
     with_program(&files, &["./main.ts"], 1, |program| {
         let all = program.files();
-        let roles: Vec<FileRole> =
-            (0..all.modules.len() as u32).map(|file| all.role(FileId(file))).collect();
+        let roles: Vec<FileRole> = (0..all.modules.len() as u32)
+            .map(|file| all.role(FileId(file)))
+            .collect();
         let inputs = QueryInputs {
             roles: &roles,
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], &[]),
@@ -136,7 +149,11 @@ fn ask(families: &str, main: &str) -> Asked {
         });
         assert!(build.program.incomplete.is_empty());
         let codes = build.codes();
-        let kept = build.program.lowered.into_iter().find_map(|(_, asked)| asked);
+        let kept = build
+            .program
+            .lowered
+            .into_iter()
+            .find_map(|(_, asked)| asked);
         Asked {
             answers: answers.into_inner().unwrap(),
             statistics: kept.expect("asks.ts is lowered"),
@@ -170,7 +187,10 @@ fn assert_answered(asked: &Asked, answer: bool) {
 #[test]
 fn question_over_budget_gives_up_and_reports_nothing() {
     for last_leaf_of_b in ["number", "string"] {
-        let asked = ask(&write_families(LEVELS_OVER_BUDGET, last_leaf_of_b), ASKS_ONLY);
+        let asked = ask(
+            &write_families(LEVELS_OVER_BUDGET, last_leaf_of_b),
+            ASKS_ONLY,
+        );
         assert_gave_up(&asked);
         assert_eq!(asked.codes, [0; 0]);
     }
@@ -179,7 +199,10 @@ fn question_over_budget_gives_up_and_reports_nothing() {
 #[test]
 fn question_under_budget_is_answered() {
     for (last_leaf_of_b, answer) in [("number", true), ("string", false)] {
-        let asked = ask(&write_families(LEVELS_UNDER_BUDGET, last_leaf_of_b), ASKS_ONLY);
+        let asked = ask(
+            &write_families(LEVELS_UNDER_BUDGET, last_leaf_of_b),
+            ASKS_ONLY,
+        );
         assert_answered(&asked, answer);
         assert_eq!(asked.codes, [0; 0]);
     }
@@ -198,11 +221,17 @@ fn results_that_wait_for_outermost_comparison_count() {
 #[test]
 fn check_after_question_over_budget_gets_the_true_answer() {
     for (last_leaf_of_b, codes) in [("number", &[][..]), ("string", &[2322][..])] {
-        let asked = ask(&write_families(LEVELS_OVER_BUDGET, last_leaf_of_b), ASKS_THEN_ASSIGNS);
+        let asked = ask(
+            &write_families(LEVELS_OVER_BUDGET, last_leaf_of_b),
+            ASKS_THEN_ASSIGNS,
+        );
         assert_gave_up(&asked);
         assert_eq!(asked.codes, codes);
     }
-    let asked = ask(&write_closed_families(LEVELS_OVER_BUDGET), ASKS_THEN_ASSIGNS);
+    let asked = ask(
+        &write_closed_families(LEVELS_OVER_BUDGET),
+        ASKS_THEN_ASSIGNS,
+    );
     assert_gave_up(&asked);
     assert_eq!(asked.codes, [0; 0]);
 }
@@ -211,11 +240,17 @@ fn check_after_question_over_budget_gets_the_true_answer() {
 #[test]
 fn answer_does_not_depend_on_what_is_settled() {
     for (last_leaf_of_b, codes) in [("number", &[][..]), ("string", &[2322][..])] {
-        let asked = ask(&write_families(LEVELS_OVER_BUDGET, last_leaf_of_b), ASSIGNS_THEN_ASKS);
+        let asked = ask(
+            &write_families(LEVELS_OVER_BUDGET, last_leaf_of_b),
+            ASSIGNS_THEN_ASKS,
+        );
         assert_gave_up(&asked);
         assert_eq!(asked.codes, codes);
     }
-    let asked = ask(&write_closed_families(LEVELS_OVER_BUDGET), ASSIGNS_THEN_ASKS);
+    let asked = ask(
+        &write_closed_families(LEVELS_OVER_BUDGET),
+        ASSIGNS_THEN_ASKS,
+    );
     assert_gave_up(&asked);
     let asked = ask(&write_chains(120), ASSIGNS_THEN_ASKS);
     assert_gave_up(&asked);
@@ -233,10 +268,20 @@ fn write_member_past_instantiation_limit(length: usize) -> String {
 
 #[test]
 fn question_that_hits_instantiation_limit_gives_up() {
-    assert_answered(&ask(&write_member_past_instantiation_limit(10), ASKS_ONLY), false);
+    assert_answered(
+        &ask(&write_member_past_instantiation_limit(10), ASKS_ONLY),
+        false,
+    );
     let asked = ask(&write_member_past_instantiation_limit(200), ASKS_ONLY);
     assert!(!asked.answers.is_empty());
-    assert!(asked.answers.iter().all(|&answer| answer == Err(GaveUp::ErrorType)), "{:?}", asked.answers);
+    assert!(
+        asked
+            .answers
+            .iter()
+            .all(|&answer| answer == Err(GaveUp::ErrorType)),
+        "{:?}",
+        asked.answers
+    );
     assert_eq!(asked.codes, [0; 0]);
 }
 

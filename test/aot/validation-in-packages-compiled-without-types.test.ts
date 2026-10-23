@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const main = `
 import { check, load, loadAndSum } from "loose";
@@ -53,9 +53,21 @@ async function run(cmd: string[], cwd: string) {
 
 const packages: Record<string, { files: Record<string, string>; warns: boolean }> = {
   "without type errors": { files: { "index.ts": index }, warns: false },
-  "with a type error in the file that validates": { files: { "index.ts": index + `export const wrong: number = "not a number";\n` }, warns: true },
-  "with a type error in another file": { files: { "index.ts": index + `export * from "./other";\n`, "other.ts": `export const wrong: number = "not a number";\n` }, warns: true },
-  "whose file begins with @ts-nocheck": { files: { "index.ts": "// @ts-nocheck" + index + `export const wrong: number = "not a number";\n` }, warns: false },
+  "with a type error in the file that validates": {
+    files: { "index.ts": index + `export const wrong: number = "not a number";\n` },
+    warns: true,
+  },
+  "with a type error in another file": {
+    files: {
+      "index.ts": index + `export * from "./other";\n`,
+      "other.ts": `export const wrong: number = "not a number";\n`,
+    },
+    warns: true,
+  },
+  "whose file begins with @ts-nocheck": {
+    files: { "index.ts": "// @ts-nocheck" + index + `export const wrong: number = "not a number";\n` },
+    warns: false,
+  },
 };
 for (const [name, { files, warns }] of Object.entries(packages)) {
   test(`JSON.parse<T> and validate<T> validate in a TypeScript package ${name}`, async () => {

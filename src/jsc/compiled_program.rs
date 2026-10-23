@@ -1,19 +1,27 @@
 use core::sync::atomic::Ordering;
 use std::collections::BTreeSet;
-use std::sync::{Mutex, PoisonError};
 
 use bun_aot::ir::generated::{AdmittedCode, ImageVerdict};
 use bun_core::{Fd, ZBox};
-use bun_exe_format::identity::{IdentityError, find_process_identity};
+use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
 use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
 use bun_sys::O;
 
-use crate::{JSGlobalObject, JSValue};
 use crate::virtual_machine::standalone_module_graph;
+use crate::{JSGlobalObject, JSValue};
 
 const NO_LOG_DESCRIPTOR: isize = -1;
+
+#[used]
+#[cfg_attr(target_vendor = "apple", unsafe(link_section = "__TEXT,__bun_aot"))]
+#[cfg_attr(windows, unsafe(link_section = ".bunaot"))]
+#[cfg_attr(
+    not(any(target_vendor = "apple", windows)),
+    unsafe(link_section = ".bun_aot")
+)]
+static HOST_DESCRIPTION: HostDescription = HostDescription::new(bun_core::env::GIT_SHA);
 
 #[repr(C)]
 struct Bytes {
@@ -94,7 +102,9 @@ pub fn can_load_unused_library_modules() -> bool {
     if !bun_removable_features::RuntimeRequirement::WholeRuntime.is_available() {
         return false;
     }
-    let Some((program, admitted)) = compiled_program().and_then(|program| Some((program, admitted_code_of(program)?))) else {
+    let Some((program, admitted)) =
+        compiled_program().and_then(|program| Some((program, admitted_code_of(program)?)))
+    else {
         return true;
     };
     admitted.contains(AdmittedCode::INSPECTOR) && !omits_function_source(program)
@@ -146,11 +156,12 @@ pub fn is_compiled_module(path: &[u8]) -> bool {
 
 /// The resolver keeps what it answers for as long as the process lives, so each path is copied once.
 fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
-    static PATHS: Mutex<BTreeSet<&'static [u8]>> = Mutex::new(BTreeSet::new());
+    static PATHS: bun_threading::Guarded<BTreeSet<&'static [u8]>> =
+        bun_threading::Guarded::new(BTreeSet::new());
     if !Bun__isCompiledProgramFile(&bun_core::String::from_bytes(path)) {
         return None;
     }
-    let mut paths = PATHS.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut paths = PATHS.lock();
     if let Some(&kept) = paths.get(path) {
         return Some(kept);
     }
@@ -207,14 +218,21 @@ mod write_execute {
 
     #[cfg(bun_hardened)]
     fn executable_segments() -> Vec<core::ops::Range<u64>> {
-        unsafe extern "C" fn collect(info: *mut libc::dl_phdr_info, _size: libc::size_t, found: *mut libc::c_void) -> libc::c_int {
+        unsafe extern "C" fn collect(
+            info: *mut libc::dl_phdr_info,
+            _size: libc::size_t,
+            found: *mut libc::c_void,
+        ) -> libc::c_int {
             // SAFETY: the loader hands over a valid record, and `found` is the vector below.
-            let (info, found) = unsafe { (&*info, &mut *found.cast::<Vec<core::ops::Range<u64>>>()) };
+            let (info, found) =
+                unsafe { (&*info, &mut *found.cast::<Vec<core::ops::Range<u64>>>()) };
             if info.dlpi_phdr.is_null() {
                 return 0;
             }
             // SAFETY: the record says how many program headers lie there.
-            let headers = unsafe { core::slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum)) };
+            let headers = unsafe {
+                core::slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum))
+            };
             for header in headers {
                 if header.p_type == libc::PT_LOAD && header.p_flags & libc::PF_X != 0 {
                     let start = info.dlpi_addr.wrapping_add(header.p_vaddr);
@@ -239,8 +257,19 @@ mod write_execute {
         };
         // SAFETY: the kernel copies the program, which has the layout of `sock_filter`, before the call returns.
         unsafe {
-            libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1 as libc::c_ulong, UNUSED, UNUSED, UNUSED) == 0
-                && libc::syscall(libc::SYS_seccomp, SET_MODE_FILTER, ALL_THREADS, &raw const filter) == 0
+            libc::prctl(
+                libc::PR_SET_NO_NEW_PRIVS,
+                1 as libc::c_ulong,
+                UNUSED,
+                UNUSED,
+                UNUSED,
+            ) == 0
+                && libc::syscall(
+                    libc::SYS_seccomp,
+                    SET_MODE_FILTER,
+                    ALL_THREADS,
+                    &raw const filter,
+                ) == 0
         }
     }
 
@@ -248,7 +277,14 @@ mod write_execute {
     pub(super) fn refuse_new_executable_memory(image_code: core::ops::Range<u64>) {
         use bun_exe_format::executable_memory_filter::{Libraries, program};
         use bun_removable_features::{Feature, is_removed};
-        let libraries = match [Feature::Ffi, Feature::NativeAddons, Feature::SqliteExtensions].into_iter().all(is_removed) {
+        let libraries = match [
+            Feature::Ffi,
+            Feature::NativeAddons,
+            Feature::SqliteExtensions,
+        ]
+        .into_iter()
+        .all(is_removed)
+        {
             true => Libraries::AreNeverLoaded,
             false => Libraries::MayBeLoaded,
         };
@@ -291,6 +327,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         return;
     };
     ONCE.call_once(|| {
+        // Keeps the linker from dropping it.
+        core::hint::black_box(&raw const HOST_DESCRIPTION);
         bun_resolve_builtins::seal_internals();
         set_mismatch_log();
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
@@ -317,10 +355,16 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             exit_with(sentence);
         }
         write_execute::deny();
-        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), bun_hardened))]
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64"),
+            bun_hardened
+        ))]
         {
             let code = Bun__AOT__imageCode();
-            write_execute::refuse_new_executable_memory(code.ptr as u64..code.ptr as u64 + code.len as u64);
+            write_execute::refuse_new_executable_memory(
+                code.ptr as u64..code.ptr as u64 + code.len as u64,
+            );
         }
         program.set_module_lookup(find_module_path);
         bun_crash_handler::report_aborts();
@@ -527,8 +571,14 @@ mod tests {
     #[test]
     fn unknown_path_is_unchanged() {
         for graph in [graph_with_entry_point(false), graph_with_entry_point(true)] {
-            assert_eq!(entry_module_key_in(graph, UNKNOWN_GRAPH_NAME), UNKNOWN_GRAPH_NAME);
-            assert_eq!(entry_module_key_in(graph, b"/project/other.ts"), b"/project/other.ts");
+            assert_eq!(
+                entry_module_key_in(graph, UNKNOWN_GRAPH_NAME),
+                UNKNOWN_GRAPH_NAME
+            );
+            assert_eq!(
+                entry_module_key_in(graph, b"/project/other.ts"),
+                b"/project/other.ts"
+            );
         }
     }
 

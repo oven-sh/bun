@@ -13,8 +13,15 @@ const typed = "export function add(a: number, b: number): number {\n  return a +
 function project(main: string, typedFile = typed) {
   return tempDirWithBunTypes("aot-typed-version-strict", {
     "main.ts": main,
-    "tsconfig.json": JSON.stringify({ compilerOptions: { module: "preserve", moduleResolution: "bundler", strict: true, noEmit: true } }),
-    "node_modules/adder/package.json": JSON.stringify({ name: "adder", version: "1.0.0", type: "module", main: "index.js" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { module: "preserve", moduleResolution: "bundler", strict: true, noEmit: true },
+    }),
+    "node_modules/adder/package.json": JSON.stringify({
+      name: "adder",
+      version: "1.0.0",
+      type: "module",
+      main: "index.js",
+    }),
     "node_modules/adder/index.js": installed,
     ".sound/adder/sound.json": JSON.stringify({
       sound: 2,
@@ -42,7 +49,11 @@ describe("a typed version of a package without declarations, in a strict project
       slot(async () => {
         using dir = project(`import { add } from "adder";\nconsole.log(add(1, 2));\n`);
         expect(await build(String(dir))).toEqual({ errors: [], exitCode: 0, signal: null });
-        const { stdout, exitCode } = await spawned([join(String(dir), isWindows ? "app.exe" : "app")], String(dir), bunEnv);
+        const { stdout, exitCode } = await spawned(
+          [join(String(dir), isWindows ? "app.exe" : "app")],
+          String(dir),
+          bunEnv,
+        );
         expect({ stdout, exitCode }).toEqual({ stdout: "3\n", exitCode: 0 });
       }),
     buildTimeout,

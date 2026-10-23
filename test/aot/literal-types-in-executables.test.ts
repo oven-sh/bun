@@ -49,7 +49,12 @@ export function mark(options: Options): void {
 }
 `,
 };
-const hidden = ["modeThatOnlyATypeLists", "stateThatOnlyATypeLists", "kindThatOnlyATypeLists", "modeMadeInAModuleThatIsCut"];
+const hidden = [
+  "modeThatOnlyATypeLists",
+  "stateThatOnlyATypeLists",
+  "kindThatOnlyATypeLists",
+  "modeMadeInAModuleThatIsCut",
+];
 
 describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () => {
   const folder = String(tempDir("aot-literal-types", sources));
@@ -57,22 +62,47 @@ describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () =>
 
   async function build(name: string, flags: string[]) {
     const executable = join(folder, isWindows ? `${name}.exe` : name);
-    built(await spawned([bunExe(), "build", "--compile", "--minify", "--no-compile-function-source", "--define", 'process.env.BUILD_KIND="external"', ...flags, "./entry.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--minify",
+          "--no-compile-function-source",
+          "--define",
+          'process.env.BUILD_KIND="external"',
+          ...flags,
+          "./entry.ts",
+          "--outfile",
+          executable,
+        ],
+        folder,
+        bunEnv,
+      ),
+    );
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable);
     rmSync(executable);
     expect(run.exitCode).toBe(0);
-    return { printed: run.stdout, holds: (text: string) => bytes.includes(text, 0, "latin1") || bytes.includes(text, 0, "utf16le") };
+    return {
+      printed: run.stdout,
+      holds: (text: string) => bytes.includes(text, 0, "latin1") || bytes.includes(text, 0, "utf16le"),
+    };
   }
 
   // TODO: three of the four texts are in the executable built with --aot.
-  test.todo("a text that only a type lists is in neither executable", async () => {
-    await slot(async () => {
-      const plain = await build("plain", []);
-      const compiled = await build("compiled", ["--aot"]);
-      expect(compiled.printed).toBe(plain.printed);
-      expect(hidden.filter(plain.holds)).toEqual([]);
-      expect(hidden.filter(compiled.holds)).toEqual([]);
-    });
-  }, 600_000);
+  test.todo(
+    "a text that only a type lists is in neither executable",
+    async () => {
+      await slot(async () => {
+        const plain = await build("plain", []);
+        const compiled = await build("compiled", ["--aot"]);
+        expect(compiled.printed).toBe(plain.printed);
+        expect(hidden.filter(plain.holds)).toEqual([]);
+        expect(hidden.filter(compiled.holds)).toEqual([]);
+      });
+    },
+    600_000,
+  );
 });

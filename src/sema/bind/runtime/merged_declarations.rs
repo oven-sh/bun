@@ -29,7 +29,11 @@ struct NameDeclarations {
 impl NameDeclarations {
     fn add(&mut self, binding: SymbolId, declaration: Declaration) {
         self.binding.get_or_insert(binding);
-        if !self.first_by_kind.iter().any(|first| first.kind == declaration.kind) {
+        if !self
+            .first_by_kind
+            .iter()
+            .any(|first| first.kind == declaration.kind)
+        {
             self.first_by_kind.push(declaration);
         }
     }
@@ -127,7 +131,9 @@ impl Declarations<'_, '_> {
         let symbol = self.append_binding(scope, name, flags, kind, declaration);
         let declarations = &mut self.bound.runtime.declarations;
         match declaration.decl {
-            Decl::ImportDefault(import) => declarations.import_default_symbols[import.idx()] = symbol,
+            Decl::ImportDefault(import) => {
+                declarations.import_default_symbols[import.idx()] = symbol
+            }
             Decl::ImportNamespace(import) => {
                 declarations.import_namespace_symbols[import.idx()] = symbol;
             }
@@ -163,7 +169,8 @@ impl Declarations<'_, '_> {
         let (decl, scope) = (declaration.decl, pattern_scope(self.bound, pat));
         if let Some((_, earlier)) = self.visible_binding(scope, name) {
             let (earlier, later) = (earlier.decl, decl);
-            self.redeclarations.push(EarlyRedeclaration { earlier, later });
+            self.redeclarations
+                .push(EarlyRedeclaration { earlier, later });
             return;
         }
         let kind = DeclarationKind::Lexical;
@@ -171,7 +178,11 @@ impl Declarations<'_, '_> {
         let binding_kind = variable_binding_kind(self.hir, self.bound, pat);
         let declaration = Declaration { decl, kind };
         let symbol = self.append_binding(scope, name, flags, binding_kind, declaration);
-        self.bound.runtime.declarations.pattern_symbols.push((pat, symbol));
+        self.bound
+            .runtime
+            .declarations
+            .pattern_symbols
+            .push((pat, symbol));
     }
 
     fn record_hoisted_require(&mut self, declaration: Declaration) {
@@ -196,7 +207,8 @@ impl Declarations<'_, '_> {
             }
             self.body_variable(scope, binding, later.decl)
         } else {
-            self.bound.export_symbol_of_value_symbol_if_exported(binding)
+            self.bound
+                .export_symbol_of_value_symbol_if_exported(binding)
         };
         let declarations = &mut self.bound.runtime.declarations;
         match column {
@@ -240,8 +252,14 @@ impl Declarations<'_, '_> {
             return variable;
         }
         let name = self.bound.symbols[parameter.idx()].name;
-        let first_var = self.var_declarations(parameter).first().map(|entry| entry.0);
-        let (flags, decl) = (SymFlags::FUNCTION_SCOPED_VARIABLE, first_var.unwrap_or(decl));
+        let first_var = self
+            .var_declarations(parameter)
+            .first()
+            .map(|entry| entry.0);
+        let (flags, decl) = (
+            SymFlags::FUNCTION_SCOPED_VARIABLE,
+            first_var.unwrap_or(decl),
+        );
         let variable = append_symbol(self.bound, name, flags, BindingKind::Var, decl, scope);
         self.body_variable_symbols.insert(parameter, variable);
         variable
@@ -327,7 +345,8 @@ impl Declarations<'_, '_> {
                 && earlier.kind != DeclarationKind::SimpleCatchParameter
             {
                 let earlier = earlier.decl;
-                self.redeclarations.push(EarlyRedeclaration { earlier, later });
+                self.redeclarations
+                    .push(EarlyRedeclaration { earlier, later });
                 return;
             }
             scope = self.bound.scopes[scope.idx()].parent;
@@ -355,7 +374,8 @@ impl Declarations<'_, '_> {
                     && let Some((_, later)) = self.visible_binding(handler_scope, name)
                 {
                     let (earlier, later) = (earlier.decl, later.decl);
-                    self.redeclarations.push(EarlyRedeclaration { earlier, later });
+                    self.redeclarations
+                        .push(EarlyRedeclaration { earlier, later });
                 }
             }
         }
@@ -370,7 +390,10 @@ impl Declarations<'_, '_> {
             let table = self.bound.scopes[scope.idx()].locals;
             for position in 0..self.bound.table(table).len() {
                 let symbol = self.bound.table(table)[position].1;
-                if self.bound.symbols[symbol.idx()].flags.contains(SymFlags::PARAMETER) {
+                if self.bound.symbols[symbol.idx()]
+                    .flags
+                    .contains(SymFlags::PARAMETER)
+                {
                     self.create_body_variable(FnId(index as u32), scope, symbol);
                 }
             }

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const rounds = 600;
 
@@ -65,14 +65,24 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("field stores of a class with private fields stay off the slow path after any number of full collections", async () => {
   using dir = tempDir("aot-private-fields-across-full-collections", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const counted = async (objectsPerRound: number) => {
     const path = join(String(dir), "counts" + objectsPerRound);
     const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotCountsPath: path };
     const total = rounds * objectsPerRound * "/json".length;
-    expect(await run([executable, String(objectsPerRound)], String(dir), env)).toEqual({ stdout: total + "\n", stderr: "", exitCode: 0 });
-    const counts: Record<string, number> = Object.fromEntries(["operationAOTNewClassToken", ...storeOperations].map(name => [name, 0]));
+    expect(await run([executable, String(objectsPerRound)], String(dir), env)).toEqual({
+      stdout: total + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const counts: Record<string, number> = Object.fromEntries(
+      ["operationAOTNewClassToken", ...storeOperations].map(name => [name, 0]),
+    );
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, name] = line.split("\toperation:");
       if (name !== undefined && name in counts) counts[name] = Number(count);
@@ -84,6 +94,8 @@ test("field stores of a class with private fields stay off the slow path after a
   expect(few.operationAOTNewClassToken).toBeGreaterThan(0);
   expect(few.operationAOTTryPutProperties).toBeLessThan(1300);
   expect(few.operationAOTPrivateDefine).toBeLessThan(100);
-  const growth = Object.fromEntries(storeOperations.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]));
+  const growth = Object.fromEntries(
+    storeOperations.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]),
+  );
   expect(growth).toEqual(Object.fromEntries(storeOperations.map(name => [name, "level"])));
 }, 240_000);

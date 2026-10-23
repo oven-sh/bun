@@ -132,9 +132,8 @@ fn compute_class_transform(
             ClassOwner::Stmt(_) | ClassOwner::Expr(_) => ClassTransform::None,
         };
     }
-    let has_standard_syntax = |node: Member| {
-        node.flags.contains(Flags::ACCESSOR) || has_decorators(hir, node.modifiers)
-    };
+    let has_standard_syntax =
+        |node: Member| node.flags.contains(Flags::ACCESSOR) || has_decorators(hir, node.modifiers);
     let is_standard = has_decorators(hir, hir[class].modifiers)
         || runtime_members(hir, class).any(|member| has_standard_syntax(hir[member]));
     if is_standard {

@@ -1,6 +1,4 @@
-use super::support::{
-    TestProgram, check_only, disk, load_with_tsconfig_override, with_program,
-};
+use super::support::{TestProgram, check_only, disk, load_with_tsconfig_override, with_program};
 use crate::{Diagnostic, host};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -78,7 +76,10 @@ const SOLUTION: [TestFile; 7] = [
         "tsconfig.app.json",
         r#"{ "compilerOptions": { "noImplicitAny": false }, "include": ["main.ts", "lib"] }"#,
     ),
-    ("tools/tsconfig.json", r#"{ "files": [], "references": [{ "path": "../tsconfig.test.json" }] }"#),
+    (
+        "tools/tsconfig.json",
+        r#"{ "files": [], "references": [{ "path": "../tsconfig.test.json" }] }"#,
+    ),
     (
         "tsconfig.test.json",
         r#"{ "compilerOptions": { "noUnusedLocals": true }, "include": ["test"] }"#,
@@ -112,13 +113,22 @@ fn referenced_project_that_has_a_file_governs_it_under_references_alone() {
 fn types_of_governing_project_are_declared() {
     let files: [TestFile; 6] = [
         (CONFIG, r#"{ "compilerOptions": { "types": [] } }"#),
-        ("main.ts", "import { known } from './lib/a.ts'; export const main = known;"),
-        ("lib/tsconfig.json", r#"{ "compilerOptions": { "types": ["widget"] } }"#),
+        (
+            "main.ts",
+            "import { known } from './lib/a.ts'; export const main = known;",
+        ),
+        (
+            "lib/tsconfig.json",
+            r#"{ "compilerOptions": { "types": ["widget"] } }"#,
+        ),
         (
             "lib/a.ts",
             "import type { Size } from 'widget-kit'; export const known: Size = WIDGET_VERSION;",
         ),
-        ("node_modules/@types/widget/package.json", r#"{ "name": "@types/widget", "types": "index.d.ts" }"#),
+        (
+            "node_modules/@types/widget/package.json",
+            r#"{ "name": "@types/widget", "types": "index.d.ts" }"#,
+        ),
         (
             "node_modules/@types/widget/index.d.ts",
             "declare const WIDGET_VERSION: number; declare module 'widget-kit' { export type Size = number; }",
@@ -247,10 +257,15 @@ fn declaration_files_are_not_governed() {
 import type { Size } from './lib/size';
 export type Copy = Size;";
     let size = ("lib/size.d.ts", "export type Size = number;");
-    with_program(&[("main.ts", main_text), A, size, LIB_CONFIG], ENTRY_POINTS, 1, |program| {
-        assert!(governing_options(program, "lib/a.ts").is_some());
-        assert!(governing_options(program, "lib/size.d.ts").is_none());
-    });
+    with_program(
+        &[("main.ts", main_text), A, size, LIB_CONFIG],
+        ENTRY_POINTS,
+        1,
+        |program| {
+            assert!(governing_options(program, "lib/a.ts").is_some());
+            assert!(governing_options(program, "lib/size.d.ts").is_none());
+        },
+    );
 }
 
 const PACKAGE_WITHOUT_CONFIGURATION: [TestFile; 6] = [
@@ -290,7 +305,10 @@ fn package_without_configuration() {
         };
         let of_dep = options_of("node_modules/dep/index.ts");
         assert_lenient(of_dep, program.files().options, "node_modules/dep");
-        assert!(std::ptr::eq(of_dep, options_of("node_modules/dep/inner.ts")));
+        assert!(std::ptr::eq(
+            of_dep,
+            options_of("node_modules/dep/inner.ts")
+        ));
         let of_other = options_of("node_modules/other/index.ts");
         assert_lenient(of_other, program.files().options, "node_modules/other");
     });
@@ -300,7 +318,10 @@ fn package_without_configuration() {
     with_program(&with_configuration, ENTRY_POINTS, 1, |program| {
         let governing = governing_options(program, "node_modules/dep/index.ts");
         let governing = governing.expect("the package has a configuration file");
-        assert_eq!(governing.config_path, project_path("node_modules/dep/tsconfig.json"));
+        assert_eq!(
+            governing.config_path,
+            project_path("node_modules/dep/tsconfig.json")
+        );
     });
 }
 
@@ -343,7 +364,10 @@ const TYPES_OF_X: &str = "lib/types/x/index.d.ts";
 
 const TYPE_REFERENCE: [TestFile; 4] = [
     MAIN,
-    ("lib/a.ts", "/// <reference types=\"x\" />\nexport const a = 1;"),
+    (
+        "lib/a.ts",
+        "/// <reference types=\"x\" />\nexport const a = 1;",
+    ),
     (TYPES_OF_X, "declare const x: number;"),
     (
         CONFIG,
@@ -371,10 +395,14 @@ fn type_reference_uses_governing_type_roots() {
 
 fn include_reasons(program: &TestProgram<'_, '_>, path: &str) -> Vec<Vec<u8>> {
     let to_file_name = |name: &[u8]| name.to_vec();
-    let lines = program.files().explain_files(program.host, false, &to_file_name);
+    let lines = program
+        .files()
+        .explain_files(program.host, false, &to_file_name);
     let name = project_path(path);
     let below_name = lines.into_iter().skip_while(|line| *line != name).skip(1);
-    below_name.take_while(|line| line.starts_with(b"   ")).collect()
+    below_name
+        .take_while(|line| line.starts_with(b"   "))
+        .collect()
 }
 
 #[test]
@@ -383,7 +411,9 @@ fn include_reason_uses_governing_options() {
     governed.push(LIB_CONFIG_WITH_TYPE_ROOTS);
     with_program(&governed, ENTRY_POINTS, 1, |program| {
         let reasons = include_reasons(program, TYPES_OF_X);
-        let names_reference = reasons.iter().any(|line| strings::contains(line, b"lib/a.ts"));
+        let names_reference = reasons
+            .iter()
+            .any(|line| strings::contains(line, b"lib/a.ts"));
         assert!(names_reference, "{:?}", reasons.concat().as_bstr());
     });
 }
@@ -540,7 +570,10 @@ fn emitted_files_are_no_root_files() {
     let written = r#"{ "compilerOptions": {
         "declaration": true, "outDir": "dist", "declarationDir": "${configDir}/types"
     } }"#;
-    assert_eq!(root_files(written), ["out/src/a.d.ts", "src/a.ts"].map(project_path));
+    assert_eq!(
+        root_files(written),
+        ["out/src/a.d.ts", "src/a.ts"].map(project_path)
+    );
     let with_own_exclude = r#"{ "compilerOptions": { "outDir": "dist" }, "exclude": ["out"] }"#;
     let expected = ["dist/src/a.d.ts", "src/a.ts", "types/src/a.d.ts"];
     assert_eq!(root_files(with_own_exclude), expected.map(project_path));
@@ -574,7 +607,12 @@ fn load_options_fails_on_unreadable_files() {
     let disk = disk_of(&[(CONFIG, r#"{ "files": [] }"#)]);
     let without_files = load_options(&disk, CONFIG).expect("the file can be read");
     assert!(without_files.errors.iter().all(|error| error.code != 18002));
-    assert!(load_project(&disk).errors.iter().any(|error| error.code == 18002));
+    assert!(
+        load_project(&disk)
+            .errors
+            .iter()
+            .any(|error| error.code == 18002)
+    );
 }
 
 fn error_codes(project: &Project, is_counted: impl Fn(&ConfigError) -> bool) -> Vec<u32> {
@@ -588,7 +626,10 @@ fn load_options_accepts_option_errors() {
     let project = load_options(&disk, CONFIG).expect("only the options have an error");
     assert_eq!(project.options.errors, [5053]);
     assert_eq!(project.options.paths.len(), 1);
-    assert_eq!(error_codes(&project, |error| error.is_about_options), [5053]);
+    assert_eq!(
+        error_codes(&project, |error| error.is_about_options),
+        [5053]
+    );
     assert_eq!(error_codes(&project, |error| error.is_unreadable), [0; 0]);
 }
 
@@ -653,7 +694,10 @@ fn load_options_accepts_invalid_values() {
         let project = load_options(&disk, CONFIG).expect("the file can be read");
         assert_eq!(project.options.paths.len(), 1);
         assert_eq!(project.options.module, defaults.module);
-        assert_eq!(project.options.strict_null_checks, defaults.strict_null_checks);
+        assert_eq!(
+            project.options.strict_null_checks,
+            defaults.strict_null_checks
+        );
         let invalid_values = error_codes(&project, |error| !error.is_about_options);
         assert_eq!(invalid_values, [6046, 5023, 5024]);
         assert_eq!(error_codes(&project, |error| error.is_unreadable), [0; 0]);

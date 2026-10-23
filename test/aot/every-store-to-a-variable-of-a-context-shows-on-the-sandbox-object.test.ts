@@ -57,8 +57,16 @@ test("every store to a variable of a context shows on the sandbox object", async
     stderr: "pipe",
   });
   const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-  expect({ buildErrors: buildExitCode ? buildErrors : "", buildExitCode }).toEqual({ buildErrors: "", buildExitCode: 0 });
+  expect({ buildErrors: buildExitCode ? buildErrors : "", buildExitCode }).toEqual({
+    buildErrors: "",
+    buildExitCode: 0,
+  });
   await using proc = Bun.spawn({ cmd: [join(String(dir), "program")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: answers, stderr: "", exitCode: 0, signalCode: null });
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: answers,
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

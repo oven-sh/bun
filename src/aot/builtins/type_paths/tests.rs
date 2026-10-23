@@ -66,7 +66,10 @@ fn map_and_view() {
 fn nested_global_path_is_not_split() {
     let paths = paths_of_class(BuiltinClass::Glob);
     assert_eq!(paths.len(), 1);
-    assert_eq!((paths[0].module, paths[0].names), (None, &["Bun", "Glob"][..]));
+    assert_eq!(
+        (paths[0].module, paths[0].names),
+        (None, &["Bun", "Glob"][..])
+    );
 }
 
 #[test]
@@ -78,7 +81,12 @@ fn class_without_test_is_view() {
         let data = table::class_data(class);
         let is_view = data.type_names[path.type_name as usize].is_view;
         let is_exact = data.has_instance_test && !is_view;
-        assert_eq!(path.denotation == Denotation::Exact, is_exact, "{:?}", path.names);
+        assert_eq!(
+            path.denotation == Denotation::Exact,
+            is_exact,
+            "{:?}",
+            path.names
+        );
     }
 }
 
@@ -94,7 +102,10 @@ fn module_path_is_split() {
     assert_eq!(split_module(no_names), (None, no_names));
     for path in builtin_type_paths() {
         if let Some(module) = path.module {
-            assert!(table::module_by_specifier(module.as_bytes()).is_some(), "{module}");
+            assert!(
+                table::module_by_specifier(module.as_bytes()).is_some(),
+                "{module}"
+            );
         }
     }
 }
@@ -102,12 +113,18 @@ fn module_path_is_split() {
 #[test]
 fn indexes_round_trip() {
     for class in BuiltinClass::ALL {
-        assert_eq!(builtin_class_of(BuiltinClassIndex(class.to_wire())), Some(class));
+        assert_eq!(
+            builtin_class_of(BuiltinClassIndex(class.to_wire())),
+            Some(class)
+        );
     }
     for id in BuiltinId::ALL {
         assert_eq!(builtin_value_of(BuiltinValueIndex(id.to_wire())), Some(id));
     }
-    assert_eq!(builtin_class_of(BuiltinClassIndex(BuiltinClass::COUNT)), None);
+    assert_eq!(
+        builtin_class_of(BuiltinClassIndex(BuiltinClass::COUNT)),
+        None
+    );
     assert_eq!(builtin_class_of(BuiltinClassIndex(u32::MAX)), None);
     assert_eq!(builtin_value_of(BuiltinValueIndex(BuiltinId::COUNT)), None);
     assert_eq!(builtin_value_of(BuiltinValueIndex(u32::MAX)), None);
@@ -143,7 +160,12 @@ fn value_paths() {
         (heap_stats.unwrap(), (Some("bun:jsc"), &["heapStats"][..])),
     ];
     for (id, path) in expected {
-        assert_eq!(find_value_path(&paths, id), Some(path), "{}", table::text_of(id));
+        assert_eq!(
+            find_value_path(&paths, id),
+            Some(path),
+            "{}",
+            table::text_of(id)
+        );
     }
     assert!(paths.is_sorted_by(|left, right| left.value <= right.value));
 }
@@ -155,8 +177,10 @@ fn member_of_object_with_second_name_has_both_paths() {
     let parse = BuiltinValueIndex(BuiltinId::JSONParse.to_wire());
     let of_parse = paths.iter().filter(|path| path.value == parse);
     let of_parse: Vec<PathParts<'_>> = of_parse.map(|path| (path.module, path.names)).collect();
-    let expected: [PathParts<'_>; 2] =
-        [(None, &["JSON", "parse"]), (None, &["Bun", "JSON", "parse"])];
+    let expected: [PathParts<'_>; 2] = [
+        (None, &["JSON", "parse"]),
+        (None, &["Bun", "JSON", "parse"]),
+    ];
     assert_eq!(of_parse, expected);
 }
 
@@ -181,7 +205,11 @@ fn excluded_values() {
     for path in &paths {
         let id = builtin_value_of(path.value).unwrap();
         let entry = table::entry(id);
-        assert!(can_have_call_signatures(entry.kind), "{}", table::text_of(id));
+        assert!(
+            can_have_call_signatures(entry.kind),
+            "{}",
+            table::text_of(id)
+        );
         assert!(!table::is_symbol_name(entry.name), "{}", table::text_of(id));
         assert!(!path.names.is_empty(), "{}", table::text_of(id));
     }
@@ -198,6 +226,9 @@ fn symbol_named_value_has_no_path() {
 #[test]
 fn value_of_other_platform_has_no_path() {
     assert!(has_value_path(Platforms::LINUX, BuiltinId::ProcessGetuid));
-    assert!(!has_value_path(Platforms::WINDOWS, BuiltinId::ProcessGetuid));
+    assert!(!has_value_path(
+        Platforms::WINDOWS,
+        BuiltinId::ProcessGetuid
+    ));
     assert!(has_value_path(Platforms::WINDOWS, BuiltinId::ProcessCwd));
 }

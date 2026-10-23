@@ -222,8 +222,13 @@ fn reads_this_of_file(text: &ModuleText<'_, '_>, this: ExprId) -> bool {
 
 fn is_called_where_written(text: &ModuleText<'_, '_>, function: FnId) -> bool {
     let hir = text.hir;
-    !hir[function].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-        && text.bound.get_immediately_invoked_function_expression(hir, function).is_some()
+    !hir[function]
+        .flags
+        .intersects(Flags::ASYNC | Flags::GENERATOR)
+        && text
+            .bound
+            .get_immediately_invoked_function_expression(hir, function)
+            .is_some()
 }
 
 fn runs_in_text_order(text: &ModuleText<'_, '_>, node: ExprId) -> bool {
@@ -364,16 +369,14 @@ fn create_creation(
     }
 }
 
-fn find_definition(
-    text: &ModuleText<'_, '_>,
-    expression: ExprId,
-    call: &Call,
-) -> Option<Creation> {
+fn find_definition(text: &ModuleText<'_, '_>, expression: ExprId, call: &Call) -> Option<Creation> {
     let hir = text.hir;
     if call.args.len() != 3 {
         return None;
     }
-    let callee = text.builtins.builtin_of_expression(hir.skip_type_assertions(call.callee))?;
+    let callee = text
+        .builtins
+        .builtin_of_expression(hir.skip_type_assertions(call.callee))?;
     let defines_property = matches!(
         callee,
         BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty
@@ -438,8 +441,8 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         }
         let assignment = find_assignment(text, expression);
         if names_exports_object(text, expression) {
-            let keeps_object = assignment
-                .is_some_and(|it| it.is_plain && is_exports_object(text, it.value));
+            let keeps_object =
+                assignment.is_some_and(|it| it.is_plain && is_exports_object(text, it.value));
             if !keeps_object {
                 return None;
             }
@@ -453,7 +456,12 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         };
         // The value is evaluated before the store.
         let node = assignment.map_or(expression, |it| it.node);
-        creations.push(create_creation(text, name, Some(FieldForm::default()), node));
+        creations.push(create_creation(
+            text,
+            name,
+            Some(FieldForm::default()),
+            node,
+        ));
     }
     Some(creations)
 }
@@ -532,7 +540,8 @@ fn runs_behind_its_position(text: &ModuleText<'_, '_>, mention: ExprId) -> bool 
         outermost = Some(function);
         unit = find_enclosing_unit(text, function);
     }
-    unit == CodeUnit::File && outermost.is_none_or(|function| text.hir[function].kind != FnKind::Decl)
+    unit == CodeUnit::File
+        && outermost.is_none_or(|function| text.hir[function].kind != FnKind::Decl)
 }
 
 fn is_evaluated_behind(
@@ -593,9 +602,9 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
         let names_replaced_value = match variable {
             CommonJsVariable::Exports => replacement.exports_name.is_some(),
             _ => match bound.parent_of_expr(mention) {
-                Parent::Expr(access) => {
-                    hir.member_key(access).is_some_and(|(object, _)| object == mention)
-                }
+                Parent::Expr(access) => hir
+                    .member_key(access)
+                    .is_some_and(|(object, _)| object == mention),
                 _ => false,
             },
         };
@@ -723,7 +732,10 @@ pub(super) fn define_container_layout(
     layout: LayoutId,
     symbol: Sym,
 ) {
-    debug_assert!(symbol.file == file.file, "a container is defined by its file");
+    debug_assert!(
+        symbol.file == file.file,
+        "a container is defined by its file"
+    );
     let name = file.bound.symbol(symbol.id).name;
     // The exports of a module are an ordinary object to every pass that looks at the kind.
     let is_module_exports = is_file_symbol(file, symbol);

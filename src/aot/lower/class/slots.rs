@@ -50,7 +50,10 @@ pub(in crate::lower) fn create_private_state_variable(
             (DeclaredType::untyped(), VariableInitialization::Undefined)
         }
         PrivateStatePart::Token => {
-            let token = file.fragment.types.intern(Type::opaque(OpaqueKind::ClassToken));
+            let token = file
+                .fragment
+                .types
+                .intern(Type::opaque(OpaqueKind::ClassToken));
             let declared = DeclaredType::from_compiler(token);
             (declared, VariableInitialization::Uninitialized)
         }

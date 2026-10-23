@@ -180,7 +180,11 @@ pub fn print_function(
     out: &mut String,
 ) {
     let keyword = ProgramList::Functions.keyword();
-    let _ = write!(out, "{} {id}", keyword.expect("functions print on their own"));
+    let _ = write!(
+        out,
+        "{} {id}",
+        keyword.expect("functions print on their own")
+    );
     debug_assert_eq!(ProgramList::Functions.prefix(), Some(FunctionId::PREFIX));
     function.print_fields(&mut Printer::new(names, out));
     out.push('\n');

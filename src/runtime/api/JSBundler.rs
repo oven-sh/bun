@@ -295,6 +295,7 @@ pub(crate) mod js_bundler {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)] // the end of the error
     fn throw_option_error(global_this: &JSGlobalObject, error: OptionError<'_>) -> JsError {
         let mut message = Vec::new();
         error.write_message(RequestOrigin::BuildApi, &mut message);

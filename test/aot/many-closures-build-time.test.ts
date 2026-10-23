@@ -9,7 +9,10 @@ const timeout = isDebug || isASAN ? 240_000 : 20_000;
 test.todo(
   "build time is linear in the number of closures that capture different variables of one function",
   async () => {
-    const lines = Array.from({ length: closureCount }, (_, index) => `  const v${index} = ${index}; all.push(() => v${index});`);
+    const lines = Array.from(
+      { length: closureCount },
+      (_, index) => `  const v${index} = ${index}; all.push(() => v${index});`,
+    );
     using dir = tempDir("aot-many-closures", {
       "main.ts": `export function main(): (() => number)[] {\n  const all: (() => number)[] = [];\n${lines.join("\n")}\n  return all;\n}\n`,
     });
@@ -20,7 +23,11 @@ test.todo(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      checked.stdout.text(),
+      checked.stderr.text(),
+      checked.exited,
+    ]);
     expect({ output: exitCode ? stdout + stderr : "", exitCode }).toEqual({ output: "", exitCode: 0 });
   },
   timeout,

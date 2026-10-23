@@ -25,7 +25,8 @@ impl LeftOutDeclarations {
     pub fn leave_out_statement(&mut self, file: FileId, hir: &hir::File<'_>, statement: StmtId) {
         match hir[statement].kind {
             StmtKind::Var(declarators) => {
-                self.declarators.extend(declarators.iter().map(|declarator| (file, declarator)));
+                self.declarators
+                    .extend(declarators.iter().map(|declarator| (file, declarator)));
             }
             StmtKind::Class(class) => self.leave_out_class(file, class),
             _ => {

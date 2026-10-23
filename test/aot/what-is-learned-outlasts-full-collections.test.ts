@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { beforeAll, test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { beforeAll, test } from "./supported";
 
 // A program that draws, waits and draws again makes the same short-lived objects in every turn, and none of them is alive when a full
 // collection comes in between. What the run time has learned about their layouts (the Structure of each, the record of each allocation
@@ -81,7 +81,11 @@ async function count(turns: number) {
   const path = join(String(directory), "counts" + turns);
   const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
   expect(await run([executable, String(turns)], env)).toEqual({ stdout: "number\n", stderr: "", exitCode: 0 });
-  const counts = new Map(readFileSync(path, "utf8").split("\n").map(line => line.split("\t").reverse() as [string, string]));
+  const counts = new Map(
+    readFileSync(path, "utf8")
+      .split("\n")
+      .map(line => line.split("\t").reverse() as [string, string]),
+  );
   return Object.fromEntries(counters.map(counter => [counter, Number(counts.get(counter) ?? 0)]));
 }
 
@@ -94,5 +98,7 @@ beforeAll(async () => {
 
 test("twenty more turns with a full collection after each make nothing again", async () => {
   const [few, many] = await Promise.all([count(10), count(30)]);
-  expect(Object.fromEntries(counters.map(counter => [counter, many[counter]! - few[counter]!]))).toEqual(Object.fromEntries(counters.map(counter => [counter, 0])));
+  expect(Object.fromEntries(counters.map(counter => [counter, many[counter]! - few[counter]!]))).toEqual(
+    Object.fromEntries(counters.map(counter => [counter, 0])),
+  );
 }, 120_000);

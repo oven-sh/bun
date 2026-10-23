@@ -21,8 +21,13 @@ const droppedLocal = define(\"droppedLocal\", function initializeDroppedLocal() 
 export function readsLocals() { return [droppedLocal, keptLocal]; }
 ";
 
-const KEPT: [&str; 5] =
-    ["define", "initializeKept", "initializeKeptBeside", "methodOfKeptClass", "readsLocals"];
+const KEPT: [&str; 5] = [
+    "define",
+    "initializeKept",
+    "initializeKeptBeside",
+    "methodOfKeptClass",
+    "readsLocals",
+];
 
 const DROPPED: [&str; 8] = [
     "initializeDropped",
@@ -67,15 +72,23 @@ fn names_of_lowered_functions(choose: fn(&Files<'_>) -> LeftOutDeclarations) -> 
     let lowered = lower_program_without(&[("a.ts", PROGRAM)], choose);
     assert_eq!(lowered.len(), 1);
     let fragment = &lowered[0].1.fragment;
-    let names = fragment.functions.iter().filter_map(|(_, function)| function.name);
-    names.map(|name| String::from_utf8_lossy(fragment.strings.get(name)).into_owned()).collect()
+    let names = fragment
+        .functions
+        .iter()
+        .filter_map(|(_, function)| function.name);
+    names
+        .map(|name| String::from_utf8_lossy(fragment.strings.get(name)).into_owned())
+        .collect()
 }
 
 #[test]
 fn whole_program_has_every_function() {
     let names = names_of_lowered_functions(|_| LeftOutDeclarations::default());
     for name in KEPT.iter().chain(&DROPPED) {
-        assert!(names.iter().any(|it| it == name), "{name} is missing from {names:?}");
+        assert!(
+            names.iter().any(|it| it == name),
+            "{name} is missing from {names:?}"
+        );
     }
 }
 
@@ -83,7 +96,10 @@ fn whole_program_has_every_function() {
 fn what_is_left_out_is_not_evaluated() {
     let names = names_of_lowered_functions(leave_out_what_is_called_dropped);
     for name in KEPT {
-        assert!(names.iter().any(|it| it == name), "{name} is missing from {names:?}");
+        assert!(
+            names.iter().any(|it| it == name),
+            "{name} is missing from {names:?}"
+        );
     }
     for name in DROPPED {
         assert!(names.iter().all(|it| it != name), "{name} is in {names:?}");

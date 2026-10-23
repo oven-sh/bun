@@ -240,7 +240,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "RestCopiesAllOwnSymbols",
     firstPublishedIn: "tslib@1.2.0",
     publishedName: "__rest",
-    behavior: "As RestThrowsOnNullSource, with `s != null &&` before the symbols: a null source gives `{}`. Symbols that are not enumerable are copied too.",
+    behavior:
+      "As RestThrowsOnNullSource, with `s != null &&` before the symbols: a null source gives `{}`. Symbols that are not enumerable are copied too.",
   },
   {
     helper: "Rest",
@@ -263,7 +264,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "ExtendsCopiesStatics",
     firstPublishedIn: "typescript@1.6.2",
     publishedName: "__extends",
-    behavior: "As ExtendsCopiesStaticsWithoutNullBase, but `b === null` gives `d.prototype = Object.create(null)` (and no `constructor`).",
+    behavior:
+      "As ExtendsCopiesStaticsWithoutNullBase, but `b === null` gives `d.prototype = Object.create(null)` (and no `constructor`).",
   },
   {
     helper: "Extends",
@@ -293,21 +295,24 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "ExtendsFactoryPicksExtendStaticsOnFirstCall",
     firstPublishedIn: "typescript@3.0.3",
     publishedName: "__extends",
-    behavior: "As ExtendsFactoryPicksExtendStaticsAtOnce, but the choice is made by a local function that replaces itself at its first call.",
+    behavior:
+      "As ExtendsFactoryPicksExtendStaticsAtOnce, but the choice is made by a local function that replaces itself at its first call.",
   },
   {
     helper: "Extends",
     shape: "ExtendsFactoryAsksObjectPrototype",
     firstPublishedIn: "typescript@4.0.8",
     publishedName: "__extends",
-    behavior: "As ExtendsFactoryPicksExtendStaticsOnFirstCall; the last fallback asks `Object.prototype.hasOwnProperty.call(b, p)`.",
+    behavior:
+      "As ExtendsFactoryPicksExtendStaticsOnFirstCall; the last fallback asks `Object.prototype.hasOwnProperty.call(b, p)`.",
   },
   {
     helper: "Extends",
     shape: "ExtendsFactoryChecksBase",
     firstPublishedIn: "typescript@4.2.4",
     publishedName: "__extends",
-    behavior: "As ExtendsFactoryAsksObjectPrototype; the returned function first throws the TypeError of ExtendsThroughExtendStaticsChecksBase.",
+    behavior:
+      "As ExtendsFactoryAsksObjectPrototype; the returned function first throws the TypeError of ExtendsThroughExtendStaticsChecksBase.",
   },
   {
     helper: "ExtendStatics",
@@ -410,7 +415,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "GeneratorIsIterable",
     firstPublishedIn: "tslib@1.6.0",
     publishedName: "__generator",
-    behavior: 'As GeneratorWithoutIterator, and where `typeof Symbol === "function"` the result has `[Symbol.iterator]` returning itself.',
+    behavior:
+      'As GeneratorWithoutIterator, and where `typeof Symbol === "function"` the result has `[Symbol.iterator]` returning itself.',
   },
   {
     helper: "Generator",
@@ -433,7 +439,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "GeneratorInheritsIteratorPrototype",
     firstPublishedIn: "tslib@2.7.0",
     publishedName: "__generator",
-    behavior: 'As GeneratorStopsWhenClosedBeforeStart, but the result is `Object.create((typeof Iterator === "function" ? Iterator : Object).prototype)`: iterator helpers work on it.',
+    behavior:
+      'As GeneratorStopsWhenClosedBeforeStart, but the result is `Object.create((typeof Iterator === "function" ? Iterator : Object).prototype)`: iterator helpers work on it.',
   },
   {
     helper: "Values",
@@ -464,21 +471,24 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "SpreadConcatenatesReads",
     firstPublishedIn: "tslib@1.6.0",
     publishedName: "__spread",
-    behavior: "(...iterables): `ar = ar.concat(Read(arguments[i]))` for each: a new array each round; `concat` spreads what Read returns.",
+    behavior:
+      "(...iterables): `ar = ar.concat(Read(arguments[i]))` for each: a new array each round; `concat` spreads what Read returns.",
   },
   {
     helper: "SpreadArrays",
     shape: "SpreadArraysCopiesByIndex",
     firstPublishedIn: "tslib@1.10.0",
     publishedName: "__spreadArrays",
-    behavior: "(...arrays): sums the `length`s, `Array(s)`, copies by index. No iterator is used; holes become `undefined` values.",
+    behavior:
+      "(...arrays): sums the `length`s, `Array(s)`, copies by index. No iterator is used; holes become `undefined` values.",
   },
   {
     helper: "SpreadArray",
     shape: "SpreadArrayAppendsInPlace",
     firstPublishedIn: "tslib@2.1.0",
     publishedName: "__spreadArray",
-    behavior: "(to, from): writes `from[i]` at `to[to.length + i]`: CHANGES and returns `to`. Holes become `undefined` values.",
+    behavior:
+      "(to, from): writes `from[i]` at `to[to.length + i]`: CHANGES and returns `to`. Holes become `undefined` values.",
   },
   {
     helper: "SpreadArray",
@@ -493,7 +503,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "SpreadArrayConcatenatesCopy",
     firstPublishedIn: "tslib@2.3.1",
     publishedName: "__spreadArray",
-    behavior: "As SpreadArrayConcatenatesSource, but returns `to.concat(ar || Array.prototype.slice.call(from))`: any array-like is spread.",
+    behavior:
+      "As SpreadArrayConcatenatesSource, but returns `to.concat(ar || Array.prototype.slice.call(from))`: any array-like is spread.",
   },
   {
     helper: "Decorate",
@@ -516,7 +527,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "MetadataAsksReflect",
     firstPublishedIn: "typescript@1.5.3",
     publishedName: "__metadata",
-    behavior: "(k, v): `Reflect.metadata(k, v)` when `Reflect` is an object and `Reflect.metadata` a function; otherwise undefined, which Decorate passes over.",
+    behavior:
+      "(k, v): `Reflect.metadata(k, v)` when `Reflect` is an object and `Reflect.metadata` a function; otherwise undefined, which Decorate passes over.",
   },
   {
     helper: "Param",
@@ -530,21 +542,24 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "EsDecorateAppendsInitializers",
     firstPublishedIn: "tslib@2.5.0",
     publishedName: "__esDecorate",
-    behavior: "Standard decorators, right to left. Initializers that field and accessor decorators return are PUSHED: they run in the reverse of the order of the proposal.",
+    behavior:
+      "Standard decorators, right to left. Initializers that field and accessor decorators return are PUSHED: they run in the reverse of the order of the proposal.",
   },
   {
     helper: "EsDecorate",
     shape: "EsDecoratePrependsInitializers",
     firstPublishedIn: "tslib@2.5.1",
     publishedName: "__esDecorate",
-    behavior: "As EsDecorateAppendsInitializers, with `initializers.unshift`: they run in the order the decorators are written.",
+    behavior:
+      "As EsDecorateAppendsInitializers, with `initializers.unshift`: they run in the order the decorators are written.",
   },
   {
     helper: "RunInitializers",
     shape: "RunInitializersThreadsValue",
     firstPublishedIn: "tslib@2.5.0",
     publishedName: "__runInitializers",
-    behavior: "(thisArg, initializers, value): with a third argument each initializer gets the last value and gives the next; returns it. Without one: called for effect, returns undefined.",
+    behavior:
+      "(thisArg, initializers, value): with a third argument each initializer gets the last value and gives the next; returns it. Without one: called for effect, returns undefined.",
   },
   {
     helper: "PropKey",
@@ -566,7 +581,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "MakeTemplateObjectDefinesRaw",
     firstPublishedIn: "tslib@1.8.0",
     publishedName: "__makeTemplateObject",
-    behavior: '(cooked, raw): `Object.defineProperty(cooked, "raw", { value: raw })` (or an assignment without `Object.defineProperty`); returns cooked. Neither array is frozen, unlike the language\'s.',
+    behavior:
+      '(cooked, raw): `Object.defineProperty(cooked, "raw", { value: raw })` (or an assignment without `Object.defineProperty`); returns cooked. Neither array is frozen, unlike the language\'s.',
   },
   {
     helper: "AsyncValues",
@@ -582,14 +598,16 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "typescript@2.3.4",
     publishedName: "__asyncValues",
     where: "async-generators --target ES2015 --module CommonJS",
-    behavior: 'The same text in a file that does not define `__values`: `typeof __values === "function"` asks for a GLOBAL of that name; without one: `o[Symbol.iterator]()`.',
+    behavior:
+      'The same text in a file that does not define `__values`: `typeof __values === "function"` asks for a GLOBAL of that name; without one: `o[Symbol.iterator]()`.',
   },
   {
     helper: "AsyncValues",
     shape: "AsyncValuesWrapsSyncIteratorThroughValues",
     firstPublishedIn: "tslib@1.9.1",
     publishedName: "__asyncValues",
-    behavior: "As AsyncValuesReturnsSyncIteratorThroughValues, but the sync iterator is wrapped: `next`, `throw`, `return` (those it has) return promises that await the value; the wrapper has `[Symbol.asyncIterator]`.",
+    behavior:
+      "As AsyncValuesReturnsSyncIteratorThroughValues, but the sync iterator is wrapped: `next`, `throw`, `return` (those it has) return promises that await the value; the wrapper has `[Symbol.asyncIterator]`.",
   },
   {
     helper: "AsyncValues",
@@ -597,14 +615,16 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "typescript@2.9.2",
     publishedName: "__asyncValues",
     where: "async-generators --target ES2015 --module CommonJS",
-    behavior: "The text of AsyncValuesWrapsSyncIteratorThroughValues in a file that does not define `__values`: a global of that name is asked for.",
+    behavior:
+      "The text of AsyncValuesWrapsSyncIteratorThroughValues in a file that does not define `__values`: a global of that name is asked for.",
   },
   {
     helper: "AsyncGenerator",
     shape: "AsyncGeneratorReadsTaggedPairsWithDelegate",
     firstPublishedIn: "tslib@1.6.0",
     publishedName: "__asyncGenerator",
-    behavior: '(thisArg, _arguments, generator). The generator yields `["yield" | "await" | "delegate", value]`. A yielded value is NOT awaited.',
+    behavior:
+      '(thisArg, _arguments, generator). The generator yields `["yield" | "await" | "delegate", value]`. A yielded value is NOT awaited.',
   },
   {
     helper: "AsyncGenerator",
@@ -618,7 +638,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "AsyncGeneratorReadsAwaitObjects",
     firstPublishedIn: "tslib@1.7.0",
     publishedName: "__asyncGenerator",
-    behavior: "An await is a yielded `instanceof Await`; anything else is delivered. Requests queue in q. The result is a plain object with the methods the generator has and `[Symbol.asyncIterator]`. `return(v)` does not await v.",
+    behavior:
+      "An await is a yielded `instanceof Await`; anything else is delivered. Requests queue in q. The result is a plain object with the methods the generator has and `[Symbol.asyncIterator]`. `return(v)` does not await v.",
   },
   {
     helper: "AsyncGenerator",
@@ -632,7 +653,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "AsyncGeneratorInheritsAsyncIteratorPrototype",
     firstPublishedIn: "tslib@2.7.0",
     publishedName: "__asyncGenerator",
-    behavior: 'As AsyncGeneratorAwaitsReturnValue, but the result is `Object.create((typeof AsyncIterator === "function" ? AsyncIterator : Object).prototype)`.',
+    behavior:
+      'As AsyncGeneratorAwaitsReturnValue, but the result is `Object.create((typeof AsyncIterator === "function" ? AsyncIterator : Object).prototype)`.',
   },
   {
     helper: "AsyncDelegator",
@@ -653,7 +675,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "AsyncDelegatorSkipsMissingMethods",
     firstPublishedIn: "tslib@1.7.0",
     publishedName: "__asyncDelegator",
-    behavior: "Goes with Await objects. Only the methods the inner iterator has are defined. Every second call passes the awaited result through.",
+    behavior:
+      "Goes with Await objects. Only the methods the inner iterator has are defined. Every second call passes the awaited result through.",
   },
   {
     helper: "AsyncDelegator",
@@ -667,7 +690,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "AsyncDelegatorKeepsThrowWithoutMethod",
     firstPublishedIn: "tslib@1.9.1",
     publishedName: "__asyncDelegator",
-    behavior: "As AsyncDelegatorRethrows, but a method the inner iterator lacks is defined as the fallback (`throw` rethrows; `next` and `return` are undefined).",
+    behavior:
+      "As AsyncDelegatorRethrows, but a method the inner iterator lacks is defined as the fallback (`throw` rethrows; `next` and `return` are undefined).",
   },
   {
     helper: "AsyncDelegator",
@@ -682,7 +706,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "tslib@1.7.0",
     publishedName: "__await",
     where: "tslib.js",
-    behavior: "(v): called or constructed, gives an instance of itself with `v`. AsyncGenerator tests `instanceof` against the same variable.",
+    behavior:
+      "(v): called or constructed, gives an instance of itself with `v`. AsyncGenerator tests `instanceof` against the same variable.",
   },
   {
     helper: "Await",
@@ -697,7 +722,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "AddDisposableResourceRefusesFunctions",
     firstPublishedIn: "tslib@2.6.0",
     publishedName: "__addDisposableResource",
-    behavior: '(env, value, async). null and undefined are accepted (an async one still pushes `{ async: true }`). A value that is not an object throws `TypeError("Object expected.")`: a FUNCTION too.',
+    behavior:
+      '(env, value, async). null and undefined are accepted (an async one still pushes `{ async: true }`). A value that is not an object throws `TypeError("Object expected.")`: a FUNCTION too.',
   },
   {
     helper: "AddDisposableResource",
@@ -711,28 +737,32 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "AddDisposableResourceGuardsSyncDisposeWhenAsync",
     firstPublishedIn: "tslib@2.6.3",
     publishedName: "__addDisposableResource",
-    behavior: "As AddDisposableResourceAcceptsFunctions, but under `await using` a `Symbol.dispose` method is wrapped: its result is dropped and its throw becomes a rejected promise.",
+    behavior:
+      "As AddDisposableResourceAcceptsFunctions, but under `await using` a `Symbol.dispose` method is wrapped: its result is dropped and its throw becomes a rejected promise.",
   },
   {
     helper: "DisposeResources",
     shape: "DisposeResourcesAwaitsEveryAsyncEntry",
     firstPublishedIn: "tslib@2.6.0",
     publishedName: "__disposeResources",
-    behavior: "(env): pops the stack; an async entry returns a promise and goes on in `then`. Errors chain through SuppressedError. Throws `env.error` at the end when there was one.",
+    behavior:
+      "(env): pops the stack; an async entry returns a promise and goes on in `then`. Errors chain through SuppressedError. Throws `env.error` at the end when there was one.",
   },
   {
     helper: "DisposeResources",
     shape: "DisposeResourcesAwaitsOnceForEmptyAsyncEntries",
     firstPublishedIn: "tslib@2.7.0",
     publishedName: "__disposeResources",
-    behavior: "As DisposeResourcesAwaitsEveryAsyncEntry, but an `await using` of null or undefined costs one await in all, taken before the next sync entry or at the end (the state s).",
+    behavior:
+      "As DisposeResourcesAwaitsEveryAsyncEntry, but an `await using` of null or undefined costs one await in all, taken before the next sync entry or at the end (the state s).",
   },
   {
     helper: "DisposeResources",
     shape: "DisposeResourcesFactoryAwaitsEveryAsyncEntry",
     firstPublishedIn: "typescript@5.2.2",
     publishedName: "__disposeResources",
-    behavior: 'The function that is called at once with `typeof SuppressedError === "function" ? SuppressedError : <SuppressedErrorBuildsPlainError>` as its argument; returns DisposeResourcesAwaitsEveryAsyncEntry over that parameter.',
+    behavior:
+      'The function that is called at once with `typeof SuppressedError === "function" ? SuppressedError : <SuppressedErrorBuildsPlainError>` as its argument; returns DisposeResourcesAwaitsEveryAsyncEntry over that parameter.',
   },
   {
     helper: "DisposeResources",
@@ -746,14 +776,16 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "SuppressedErrorBuildsPlainError",
     firstPublishedIn: "tslib@2.6.0",
     publishedName: "_SuppressedError",
-    behavior: 'The fallback behind `typeof SuppressedError === "function" ? SuppressedError :`. (error, suppressed, message): a plain `Error` with `name`, `error` and `suppressed` assigned.',
+    behavior:
+      'The fallback behind `typeof SuppressedError === "function" ? SuppressedError :`. (error, suppressed, message): a plain `Error` with `name`, `error` and `suppressed` assigned.',
   },
   {
     helper: "RewriteRelativeImportExtension",
     shape: "RewriteRelativeImportExtensionMapsTsToJs",
     firstPublishedIn: "tslib@2.8.0",
     publishedName: "__rewriteRelativeImportExtension",
-    behavior: "(path, preserveJsx): only a string that starts with `./` or `../`: `.ts`, `.mts`, `.cts` to `.js`, `.mjs`, `.cjs`; `.tsx` to `.js` or `.jsx`; `.d.ts` left alone.",
+    behavior:
+      "(path, preserveJsx): only a string that starts with `./` or `../`: `.ts`, `.mts`, `.cts` to `.js`, `.mjs`, `.cjs`; `.tsx` to `.js` or `.jsx`; `.d.ts` left alone.",
   },
   {
     helper: "ThrowTypeError",
@@ -778,7 +810,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.21.5",
     publishedName: "__accessCheck",
     where: "--loader=ts --format=cjs --target=es2015",
-    behavior: 'As AccessCheckThrows, written `member.has(obj) || ThrowTypeError("Cannot " + msg)`: returns what `has` returned.',
+    behavior:
+      'As AccessCheckThrows, written `member.has(obj) || ThrowTypeError("Cannot " + msg)`: returns what `has` returned.',
   },
   {
     helper: "PrivateGet",
@@ -829,7 +862,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.21.5",
     publishedName: "__privateAdd",
     where: "--loader=ts --format=cjs --target=es2015",
-    behavior: "As PrivateAddRefusesSecondAdd, as one expression that throws through ThrowTypeError: returns the collection, which `add` and `set` return.",
+    behavior:
+      "As PrivateAddRefusesSecondAdd, as one expression that throws through ThrowTypeError: returns the collection, which `add` and `set` return.",
   },
   {
     helper: "PrivateMethod",
@@ -940,7 +974,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.18.20",
     publishedName: "__publicField",
     where: "class-fields-and-names --loader=ts --format=cjs --target=es2015",
-    behavior: '(obj, key, value): DefineNormalProperty(obj, key, value) with a key that is not a symbol turned into a string by `key + ""`. Returns value.',
+    behavior:
+      '(obj, key, value): DefineNormalProperty(obj, key, value) with a key that is not a symbol turned into a string by `key + ""`. Returns value.',
   },
   {
     helper: "PublicField",
@@ -956,7 +991,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.21.5",
     publishedName: "__publicField",
     where: "--loader=ts --format=cjs --target=es2015",
-    behavior: "As PublicFieldDefinesAndReturnsValue, but returns what DefineNormalProperty returns: obj where the key was there, else value.",
+    behavior:
+      "As PublicFieldDefinesAndReturnsValue, but returns what DefineNormalProperty returns: obj where the key was there, else value.",
   },
   {
     helper: "KeepName",
@@ -973,7 +1009,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.8.57",
     publishedName: "__markAsModule",
     where: "--loader=ts --format=cjs --target=es2015",
-    behavior: '(target): `Object.defineProperty(target, "__esModule", { value: true })`: not enumerable, not writable, not configurable. Returns target.',
+    behavior:
+      '(target): `Object.defineProperty(target, "__esModule", { value: true })`: not enumerable, not writable, not configurable. Returns target.',
   },
   {
     helper: "Export",
@@ -1016,7 +1053,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "bun@1.3.10",
     publishedName: "__exportSetter",
     where: "--target=node --external",
-    behavior: "(name, newValue), with the object of getters as `this`: `this[name] = ReturnValue.bind(null, newValue)`. Returns nothing.",
+    behavior:
+      "(name, newValue), with the object of getters as `this`: `this[name] = ReturnValue.bind(null, newValue)`. Returns nothing.",
   },
   {
     helper: "ReturnValue",
@@ -1032,7 +1070,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "bun@1.3.10",
     publishedName: "__accessProp",
     where: "--target=node --external",
-    behavior: "(key): `this[key]`. `AccessProperty.bind(module, key)` is the getter of a live binding: a bound function in place of a closure.",
+    behavior:
+      "(key): `this[key]`. `AccessProperty.bind(module, key)` is the getter of a live binding: a bound function in place of a closure.",
   },
   {
     helper: "ExportAll",
@@ -1049,7 +1088,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "rolldown@1.0.0-rc.7",
     publishedName: "__exportAll",
     where: 'exports: "named")',
-    behavior: "(all, no_symbols): as ExportAllTagsModuleWhenAsked with the second parameter turned around: `Symbol.toStringTag` is defined unless it is truthy.",
+    behavior:
+      "(all, no_symbols): as ExportAllTagsModuleWhenAsked with the second parameter turned around: `Symbol.toStringTag` is defined unless it is truthy.",
   },
   {
     helper: "CopyProperties",
@@ -1074,7 +1114,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "rolldown@1.0.0-beta.35",
     publishedName: "__copyProps",
     where: 'exports: "named")',
-    behavior: "As CopyPropertiesDefinesGetters, but the names are walked by index (no iterator runs) and each getter is a bound function, `(k => from[k]).bind(null, key)`.",
+    behavior:
+      "As CopyPropertiesDefinesGetters, but the names are walked by index (no iterator runs) and each getter is a bound function, `(k => from[k]).bind(null, key)`.",
   },
   {
     helper: "ReExport",
@@ -1126,7 +1167,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "bun@1.3.10",
     publishedName: "__reExport",
     where: "--target=node --external",
-    behavior: "As ReExportDefinesEnumerableGetters, but the names are read once for both targets and each getter is `AccessProperty.bind(mod, key)`.",
+    behavior:
+      "As ReExportDefinesEnumerableGetters, but the names are read once for both targets and each getter is `AccessProperty.bind(mod, key)`.",
   },
   {
     helper: "ReExport",
@@ -1134,7 +1176,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "bun@1.4.0",
     publishedName: "__reExport",
     where: "--target=node --external",
-    behavior: "As ReExportDefinesBoundGetters, but a mod that is neither an object that is not null nor a function has no names: nothing throws.",
+    behavior:
+      "As ReExportDefinesBoundGetters, but a mod that is neither an object that is not null nor a function has no names: nothing throws.",
   },
   {
     helper: "ToModule",
@@ -1160,7 +1203,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "rolldown@1.2.14",
     publishedName: "__toESM",
     where: 'exports: "named")',
-    behavior: 'As ToEsmThroughCopyProperties, but `default` is also defined as mod when mod does not own a `default` (`Object.prototype.hasOwnProperty.call(mod, "default")`), whatever `mod.__esModule` says.',
+    behavior:
+      'As ToEsmThroughCopyProperties, but `default` is also defined as mod when mod does not own a `default` (`Object.prototype.hasOwnProperty.call(mod, "default")`), whatever `mod.__esModule` says.',
   },
   {
     helper: "ToEsm",
@@ -1177,7 +1221,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.14.54",
     publishedName: "__toCommonJS",
     where: "--loader=ts --format=cjs --target=es2015",
-    behavior: '(mod): CopyProperties(`Object.defineProperty({}, "__esModule", { value: true })`, mod): an `__esModule` of mod is passed over. A new object at every call.',
+    behavior:
+      '(mod): CopyProperties(`Object.defineProperty({}, "__esModule", { value: true })`, mod): an `__esModule` of mod is passed over. A new object at every call.',
   },
   {
     helper: "ToCommonJs",
@@ -1185,7 +1230,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "rolldown@1.0.0-beta.51",
     publishedName: "__toCommonJS",
     where: 'exports: "named")',
-    behavior: 'Returns `mod["module.exports"]` when mod owns a property of that name (`export { x as "module.exports" }`); otherwise as ToCommonJsThroughCopyProperties. A mod that is null or undefined throws.',
+    behavior:
+      'Returns `mod["module.exports"]` when mod owns a property of that name (`export { x as "module.exports" }`); otherwise as ToCommonJsThroughCopyProperties. A mod that is null or undefined throws.',
   },
   {
     helper: "ToCommonJs",
@@ -1226,7 +1272,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "CommonJsRunsCallbackOnceThenDropsIt",
     firstPublishedIn: "rolldown@1.0.0-rc.18",
     publishedName: "__commonJSMin",
-    behavior: "As CommonJsRunsCallbackOnce; when the callback has returned, `cb = null` lets go of it. A callback that threw is kept and still not run again.",
+    behavior:
+      "As CommonJsRunsCallbackOnce; when the callback has returned, `cb = null` lets go of it. A callback that threw is kept and still not run again.",
   },
   {
     helper: "CommonJs",
@@ -1251,7 +1298,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.14.54",
     publishedName: "__commonJS",
     where: "commonjs-and-modules --bundle --format=cjs --target=es2015",
-    behavior: "As CommonJsRunsFirstKeyOnce, with `Object.getOwnPropertyNames`, read once when the file starts, in place of `Object.keys`.",
+    behavior:
+      "As CommonJsRunsFirstKeyOnce, with `Object.getOwnPropertyNames`, read once when the file starts, in place of `Object.keys`.",
   },
   {
     helper: "CommonJs",
@@ -1266,7 +1314,8 @@ export const namedShapes: readonly NamedShape[] = [
     shape: "CommonJsRunsFirstOwnNameOnceThenDropsIt",
     firstPublishedIn: "rolldown@1.0.0-rc.18",
     publishedName: "__commonJS",
-    behavior: "As CommonJsRunsFirstOwnNameOnce without a name; when the method has returned, `cb = null` lets go of the object. A method that threw is kept and still not run again.",
+    behavior:
+      "As CommonJsRunsFirstOwnNameOnce without a name; when the method has returned, `cb = null` lets go of the object. A method that threw is kept and still not run again.",
   },
   {
     helper: "CommonJs",
@@ -1274,7 +1323,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.28.2",
     publishedName: "__commonJS",
     where: "commonjs-and-modules --bundle --format=cjs --target=es2015",
-    behavior: "As CommonJsRunsFirstOwnNameOnce, but what the method throws is caught, `mod = 0`, and thrown on: the next call makes a new module and runs the method again.",
+    behavior:
+      "As CommonJsRunsFirstOwnNameOnce, but what the method throws is caught, `mod = 0`, and thrown on: the next call makes a new module and runs the method again.",
   },
   {
     helper: "CommonJs",
@@ -1299,7 +1349,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "bun@1.4.3",
     publishedName: "__esm",
     where: "--target=node --external",
-    behavior: "(fn, res, err): as EsmRunsFunctionOnce, but what fn throws is kept (`err = [e]`) and thrown by that call and by every later one.",
+    behavior:
+      "(fn, res, err): as EsmRunsFunctionOnce, but what fn throws is kept (`err = [e]`) and thrown by that call and by every later one.",
   },
   {
     helper: "Esm",
@@ -1331,7 +1382,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.14.54",
     publishedName: "__esm",
     where: "commonjs-and-modules --bundle --format=cjs --target=es2015",
-    behavior: "As EsmRunsFirstKeyOnce, with `Object.getOwnPropertyNames`, read once when the file starts, in place of `Object.keys`.",
+    behavior:
+      "As EsmRunsFirstKeyOnce, with `Object.getOwnPropertyNames`, read once when the file starts, in place of `Object.keys`.",
   },
   {
     helper: "Esm",
@@ -1347,7 +1399,8 @@ export const namedShapes: readonly NamedShape[] = [
     firstPublishedIn: "esbuild@0.28.2",
     publishedName: "__esm",
     where: "commonjs-and-modules --bundle --format=cjs --target=es2015",
-    behavior: "(fn, res, err): as EsmRunsFirstOwnNameOnce, but what the method throws is kept (`err = [e]`) and thrown by that call and by every later one.",
+    behavior:
+      "(fn, res, err): as EsmRunsFirstOwnNameOnce, but what the method throws is kept (`err = [e]`) and thrown by that call and by every later one.",
   },
   {
     helper: "Esm",
@@ -1478,7 +1531,15 @@ export const passedOver: readonly PassedOver[] = [
     ],
   },
   { tool: "bun", what: "`using`", publishedNames: ["__using", "__callDispose"] },
-  { tool: "bun", what: "default properties of JSX", publishedNames: ["__merge", "__hasAnyProps", "__mergeDefaultProps", "hasAnyProps", "mergeDefaultProps"] },
+  {
+    tool: "bun",
+    what: "default properties of JSX",
+    publishedNames: ["__merge", "__hasAnyProps", "__mergeDefaultProps", "hasAnyProps", "mergeDefaultProps"],
+  },
   { tool: "bun", what: "calls of built-ins under a shorter name", publishedNames: ["__jsonParse", "__promiseAll"] },
-  { tool: "rolldown", what: "binary files and `import()` of CommonJS", publishedNames: ["__toBinary", "__toBinaryNode", "__toDynamicImportESM"] },
+  {
+    tool: "rolldown",
+    what: "binary files and `import()` of CommonJS",
+    publishedNames: ["__toBinary", "__toBinaryNode", "__toDynamicImportESM"],
+  },
 ];

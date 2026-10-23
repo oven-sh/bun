@@ -51,7 +51,12 @@ const mode = process.env.AOT_BUDGETS;
 const budgetsPath = join(import.meta.dir, "budgets.linux-x64.json");
 const budgets: Record<string, Budget> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
 const holdsBudgets = isLinux && process.arch === "x64" && factor === 1;
-const skipped = isDebug || isASAN ? "a debug or ASAN build counts other instructions and bytes" : isWindows ? "it counts with perf_event_open or /usr/bin/time -l" : undefined;
+const skipped =
+  isDebug || isASAN
+    ? "a debug or ASAN build counts other instructions and bytes"
+    : isWindows
+      ? "it counts with perf_event_open or /usr/bin/time -l"
+      : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/build-scaling: ${skipped}`);
 
 async function measure(shape: Shape, size: number, carrier: string[]): Promise<Cost> {
@@ -65,7 +70,11 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
   }
   const executable = join(cwd, "program");
   try {
-    return await measureCommand(cwd, [bunExe(), "build", "--compile", "--aot", withThreads(1), ...carrier, entry, "--outfile", executable], 900_000);
+    return await measureCommand(
+      cwd,
+      [bunExe(), "build", "--compile", "--aot", withThreads(1), ...carrier, entry, "--outfile", executable],
+      900_000,
+    );
   } finally {
     rmSync(executable, { force: true });
   }
@@ -73,12 +82,21 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
 
 const inMillions = (count: number) => Math.round(count / 1e6);
 const rounded = (times: number) => Math.round(times * 100) / 100;
-const lower = (a: number | undefined, b: number | undefined) => (a === undefined || b === undefined ? b : Math.min(a, b));
+const lower = (a: number | undefined, b: number | undefined) =>
+  a === undefined || b === undefined ? b : Math.min(a, b);
 
 describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
   const carrier = skipped ? [] : withoutDebugInformation();
   afterAll(() => {
-    if (mode && holdsBudgets) writeFileSync(budgetsPath, JSON.stringify(Object.fromEntries(shapes.flatMap(({ name }) => (budgets[name] ? [[name, budgets[name]]] : []))), null, 2) + "\n");
+    if (mode && holdsBudgets)
+      writeFileSync(
+        budgetsPath,
+        JSON.stringify(
+          Object.fromEntries(shapes.flatMap(({ name }) => (budgets[name] ? [[name, budgets[name]]] : []))),
+          null,
+          2,
+        ) + "\n",
+      );
   });
   for (const shape of shapes) {
     if (!shape.name.includes(wanted)) continue;
@@ -86,20 +104,27 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
       shape.name,
       async () => {
         const size = shape.size * factor;
-        const [none, once, twice] = await Promise.all([0, size, 2 * size].map(size => slot(() => measure(shape, size, carrier))));
+        const [none, once, twice] = await Promise.all(
+          [0, size, 2 * size].map(size => slot(() => measure(shape, size, carrier))),
+        );
         const grown = (name: keyof Cost, least: number) => {
           if (none[name] === undefined || once[name] === undefined || twice[name] === undefined) return undefined;
           const [added, addedByTwice] = [once[name] - none[name], twice[name] - none[name]];
           // What the smaller size adds may be next to nothing: then the quotient says little more than "much".
           return addedByTwice < least ? undefined : addedByTwice / Math.max(added, least / 8);
         };
-        const growth = { instructions: grown("instructions", leastInstructionsJudged), peakBytes: grown("peakBytes", leastBytesJudged) };
-        const row = (cost: Cost) => `${cost.instructions === undefined ? "?" : inMillions(cost.instructions)} M instructions, ${inMillions(cost.peakBytes)} MB`;
+        const growth = {
+          instructions: grown("instructions", leastInstructionsJudged),
+          peakBytes: grown("peakBytes", leastBytesJudged),
+        };
+        const row = (cost: Cost) =>
+          `${cost.instructions === undefined ? "?" : inMillions(cost.instructions)} M instructions, ${inMillions(cost.peakBytes)} MB`;
         console.error(
           `SCALING ${shape.name}: 0: ${row(none)} | ${size} ${shape.counted}: ${row(once)} | ${2 * size}: ${row(twice)} | grows ${growth.instructions?.toFixed(2) ?? "-"} times in instructions, ${growth.peakBytes?.toFixed(2) ?? "-"} times in memory`,
         );
 
-        const overTheBound = (times: number | undefined) => (times !== undefined && times > mostGrowth ? rounded(times) : undefined);
+        const overTheBound = (times: number | undefined) =>
+          times !== undefined && times > mostGrowth ? rounded(times) : undefined;
         const fast = { instructions: overTheBound(growth.instructions), peakBytes: overTheBound(growth.peakBytes) };
         const now: Budget = {
           millionInstructions: twice.instructions === undefined ? undefined : inMillions(twice.instructions),
@@ -113,7 +138,10 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
           return;
         }
         if (budget && mode === "lower") {
-          const least = { instructions: fast.instructions && lower(budget.growth?.instructions, fast.instructions), peakBytes: fast.peakBytes && lower(budget.growth?.peakBytes, fast.peakBytes) };
+          const least = {
+            instructions: fast.instructions && lower(budget.growth?.instructions, fast.instructions),
+            peakBytes: fast.peakBytes && lower(budget.growth?.peakBytes, fast.peakBytes),
+          };
           budgets[shape.name] = {
             millionInstructions: lower(budget.millionInstructions, now.millionInstructions),
             megabytes: Math.min(budget.megabytes, now.megabytes),
@@ -124,11 +152,23 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
         const worse: string[] = [];
         for (const what of ["instructions", "peakBytes"] as const) {
           const allowed = Math.max(mostGrowth, (budget?.growth?.[what] ?? 0) * slackOfGrowth);
-          if (growth[what] !== undefined && growth[what] > allowed) worse.push(`twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${rounded(allowed)}`);
+          if (growth[what] !== undefined && growth[what] > allowed)
+            worse.push(
+              `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${rounded(allowed)}`,
+            );
         }
-        if (budget?.millionInstructions !== undefined && now.millionInstructions !== undefined && now.millionInstructions > budget.millionInstructions * slack)
-          worse.push(`${2 * size} ${shape.counted} cost ${now.millionInstructions} M instructions; the budget is ${budget.millionInstructions} and a fifth`);
-        if (budget && now.megabytes > budget.megabytes * slack) worse.push(`${2 * size} ${shape.counted} take ${now.megabytes} MB; the budget is ${budget.megabytes} and a fifth`);
+        if (
+          budget?.millionInstructions !== undefined &&
+          now.millionInstructions !== undefined &&
+          now.millionInstructions > budget.millionInstructions * slack
+        )
+          worse.push(
+            `${2 * size} ${shape.counted} cost ${now.millionInstructions} M instructions; the budget is ${budget.millionInstructions} and a fifth`,
+          );
+        if (budget && now.megabytes > budget.megabytes * slack)
+          worse.push(
+            `${2 * size} ${shape.counted} take ${now.megabytes} MB; the budget is ${budget.megabytes} and a fifth`,
+          );
         expect(worse).toEqual([]);
       },
       1_800_000,

@@ -42,21 +42,49 @@ describe.skipIf(!!unsupported)("compile/aot/member-names-in-executables", () => 
 
   async function build(name: string, flags: string[]) {
     const executable = join(folder, isWindows ? `${name}.exe` : name);
-    built(await spawned([bunExe(), "build", "--compile", "--minify", "--no-compile-function-source", ...flags, "./entry.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--minify",
+          "--no-compile-function-source",
+          ...flags,
+          "./entry.ts",
+          "--outfile",
+          executable,
+        ],
+        folder,
+        bunEnv,
+      ),
+    );
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable);
     rmSync(executable);
     expect(run.exitCode).toBe(0);
-    return { printed: run.stdout, holdsTheName: bytes.includes("memberThatNothingTouches", 0, "latin1") || bytes.includes("memberThatNothingTouches", 0, "utf16le") };
+    return {
+      printed: run.stdout,
+      holdsTheName:
+        bytes.includes("memberThatNothingTouches", 0, "latin1") ||
+        bytes.includes("memberThatNothingTouches", 0, "utf16le"),
+    };
   }
 
   // TODO: the name is in the executable built with --aot.
-  test.todo("the name of a member that nothing touches is in neither executable", async () => {
-    await slot(async () => {
-      const plain = await build("plain", []);
-      const compiled = await build("compiled", ["--aot"]);
-      expect(compiled.printed).toBe(plain.printed);
-      expect({ plain: plain.holdsTheName, compiled: compiled.holdsTheName }).toEqual({ plain: false, compiled: false });
-    });
-  }, 600_000);
+  test.todo(
+    "the name of a member that nothing touches is in neither executable",
+    async () => {
+      await slot(async () => {
+        const plain = await build("plain", []);
+        const compiled = await build("compiled", ["--aot"]);
+        expect(compiled.printed).toBe(plain.printed);
+        expect({ plain: plain.holdsTheName, compiled: compiled.holdsTheName }).toEqual({
+          plain: false,
+          compiled: false,
+        });
+      });
+    },
+    600_000,
+  );
 });

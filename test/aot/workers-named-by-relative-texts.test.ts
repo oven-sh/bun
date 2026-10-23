@@ -47,7 +47,21 @@ describe("compile/aot/workers named by relative texts", () => {
     const reference = await spawned([bunExe(), "run", "main.ts"], sources, bunEnv);
     expect({ exitCode: reference.exitCode, signal: reference.signal }).toEqual({ exitCode: 0, signal: null });
     plain = reference.stdout;
-    built(await spawned([bunExe(), ...compileCommand, ...withoutDebugInformation(), "./main.ts", "./lib/other.ts", "--outfile", executable], sources, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          ...compileCommand,
+          ...withoutDebugInformation(),
+          "./main.ts",
+          "./lib/other.ts",
+          "--outfile",
+          executable,
+        ],
+        sources,
+        bunEnv,
+      ),
+    );
   }, 300_000);
 
   test.each([
@@ -55,6 +69,10 @@ describe("compile/aot/workers named by relative texts", () => {
     ["elsewhere", elsewhere],
   ])("%s", async (_, folder) => {
     const run = await spawned([executable], folder, bunEnv);
-    expect({ stdout: run.stdout, exitCode: run.exitCode, signal: run.signal }).toEqual({ stdout: plain, exitCode: 0, signal: null });
+    expect({ stdout: run.stdout, exitCode: run.exitCode, signal: run.signal }).toEqual({
+      stdout: plain,
+      exitCode: 0,
+      signal: null,
+    });
   });
 });

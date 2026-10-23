@@ -39,7 +39,8 @@ function push(parameter: Parameter): string[] {
     return [pushCount, `for element in ${name} { element.append_to(&mut words); }`];
   }
   const elementWords = toWords(kind.element, "element", false, false);
-  if (elementWords.length === 1 && elementWords[0] === "element") return [pushCount, `words.extend_from_slice(${name});`];
+  if (elementWords.length === 1 && elementWords[0] === "element")
+    return [pushCount, `words.extend_from_slice(${name});`];
   return [pushCount, `for &element in ${name} { ${elementWords.map(word => `words.push(${word});`).join(" ")} }`];
 }
 
@@ -68,7 +69,11 @@ function builderFunction(entry: Entry): string[] {
     ...entry.targets.map(target => `${rustIdentifier(target.name)}: ${target.isVariadic ? "&[Edge<'_>]" : "Edge<'_>"}`),
   ];
   const flagsWord = flags
-    .map(flag => (flag.bit === 0 ? `u32::from(${rustIdentifier(flag.name)})` : `u32::from(${rustIdentifier(flag.name)}) << ${flag.bit}`))
+    .map(flag =>
+      flag.bit === 0
+        ? `u32::from(${rustIdentifier(flag.name)})`
+        : `u32::from(${rustIdentifier(flag.name)}) << ${flag.bit}`,
+    )
     .join(" | ");
   const call = (words: string) =>
     entry.isTerminator

@@ -3,8 +3,8 @@ use super::resolver::{ExprState, Resolver};
 use crate::builtins::table::{self, BuiltinId, Intrinsic};
 use bun_sema::bind::{Binding, BindingInitializer, Decl, FunctionFlags, Parent, SymbolId};
 use bun_sema::hir::{
-    self, BinOp, CallId, ExprId, ExprKind, Flags, FnId, MemberKey, PatId, PatKind, StmtId, StmtKind,
-    UnOp, VarDeclId,
+    self, BinOp, CallId, ExprId, ExprKind, Flags, FnId, MemberKey, PatId, PatKind, StmtId,
+    StmtKind, UnOp, VarDeclId,
 };
 use std::ops::ControlFlow;
 
@@ -152,7 +152,10 @@ impl Resolver<'_, '_> {
 
     fn classify_store(&self, target: ExprId) -> MentionUse {
         let target = self.input.hir.skip_type_assertions(target);
-        match (self.input.hir[target].kind, self.input.bound.binding(target)) {
+        match (
+            self.input.hir[target].kind,
+            self.input.bound.binding(target),
+        ) {
             (ExprKind::Ident(_), Binding::Symbol(symbol)) => self.classify_holder(symbol),
             _ => MentionUse::Exposed,
         }
@@ -183,7 +186,10 @@ impl Resolver<'_, '_> {
     fn find_parameter(&self, call: CallId, operand: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let function = self.find_called_function(hir.skip_type_assertions(hir[call].callee))?;
-        if bound.function_flags(function).contains(FunctionFlags::USES_ARGUMENTS) {
+        if bound
+            .function_flags(function)
+            .contains(FunctionFlags::USES_ARGUMENTS)
+        {
             return None;
         }
         let mut operands = hir.ids(hir[call].args);
@@ -200,7 +206,13 @@ impl Resolver<'_, '_> {
     }
 
     // Native code may walk over every member of what it is handed. A function of this file finds it in a parameter.
-    fn classify_operand(&self, e: ExprId, parent: ExprId, call: CallId, operand: ExprId) -> MentionUse {
+    fn classify_operand(
+        &self,
+        e: ExprId,
+        parent: ExprId,
+        call: CallId,
+        operand: ExprId,
+    ) -> MentionUse {
         let hir = self.input.hir;
         if let Some(parameter) = self.find_parameter(call, operand) {
             return self.classify_holder(parameter);
@@ -227,12 +239,10 @@ impl Resolver<'_, '_> {
                     None => MentionUse::Inspected,
                 }
             }
-            BuiltinId::ObjectDefineProperties if is_first => {
-                match hir.ids(hir[call].args).nth(1) {
-                    Some(descriptors) => MentionUse::SearchedForKeysOf(descriptors),
-                    None => MentionUse::Inspected,
-                }
-            }
+            BuiltinId::ObjectDefineProperties if is_first => match hir.ids(hir[call].args).nth(1) {
+                Some(descriptors) => MentionUse::SearchedForKeysOf(descriptors),
+                None => MentionUse::Inspected,
+            },
             builtin if is_first && looks_at_first_operand(builtin) => MentionUse::Inspected,
             _ => MentionUse::Exposed,
         }
@@ -258,8 +268,10 @@ impl Resolver<'_, '_> {
         let Some(function) = mentioned_id(self.state(hir.skip_type_assertions(function))) else {
             return false;
         };
-        let holder = table::entry(table::canonical_id(function)).holder.map(table::canonical_id);
-        let object = self.value_of(e).or(self.held_value_of(e));
+        let holder = table::entry(table::canonical_id(function))
+            .holder
+            .map(table::canonical_id);
+        let object = self.value_of(e).or_else(|| self.held_value_of(e));
         object.is_some_and(|object| holder == Some(table::canonical_id(object.path.id)))
     }
 
@@ -376,9 +388,7 @@ impl Resolver<'_, '_> {
             {
                 MentionUse::Aliased
             }
-            PatKind::Object(_) if is_whole_initializer => {
-                MentionUse::Destructured(declaration.pat)
-            }
+            PatKind::Object(_) if is_whole_initializer => MentionUse::Destructured(declaration.pat),
             PatKind::Ident(_) => match self.input.bound.initialized_binding(declaration.pat) {
                 Binding::Symbol(symbol) => self.classify_holder(symbol),
                 Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => MentionUse::Exposed,

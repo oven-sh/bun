@@ -59,7 +59,14 @@ test.concurrent.each([
     await using proc = spawn({
       cmd: [bunExe(), "check", "--threads", String(threads)],
       cwd: String(dir),
-      env: { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, REPL_ID: undefined, GITHUB_ACTIONS: undefined, NO_COLOR: "1" },
+      env: {
+        ...bunEnv,
+        AGENT: "0",
+        CLAUDECODE: undefined,
+        REPL_ID: undefined,
+        GITHUB_ACTIONS: undefined,
+        NO_COLOR: "1",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

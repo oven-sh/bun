@@ -25,7 +25,15 @@ test("a program that imports eleven modules of node answers the same, with about
   using dir = tempDir("aot-flow-schedules-modules", {});
   const directory = String(dir);
   // As JavaScript: it has no type of its own, and the types of node are not beside it here.
-  cpSync(join(import.meta.dir, "programs", "builtin-modules", "eleven-node-modules-are-imported-and-every-pass-is-verified.ts"), join(directory, "modules.js"));
+  cpSync(
+    join(
+      import.meta.dir,
+      "programs",
+      "builtin-modules",
+      "eleven-node-modules-are-imported-and-every-pass-is-verified.ts",
+    ),
+    join(directory, "modules.js"),
+  );
   expect((await answersTheSameUnderEachSchedule("modules", directory, "modules.js")).exitCode).toBe(0);
 });
 
@@ -43,7 +51,11 @@ server.listen(0, async () => {
 });
 `,
   });
-  expect(await answersTheSameUnderEachSchedule("server", String(dir), "server.js")).toEqual({ stdout: "200 text/plain hello /a\n", errors: [], exitCode: 0 });
+  expect(await answersTheSameUnderEachSchedule("server", String(dir), "server.js")).toEqual({
+    stdout: "200 text/plain hello /a\n",
+    errors: [],
+    exitCode: 0,
+  });
 });
 
 // The loader is reached through a built-in whose meaning is code of the library, one body for all calls. There `process`, or the built-in `call` itself, stands beside a value nobody knows, and once it
@@ -53,8 +65,18 @@ for (const way of ["by-reflect-get", "by-call-of-call"]) {
     test(`${member}: process.getBuiltinModule ${way} loads the module under every schedule`, async () => {
       using dir = tempDir("aot-flow-schedules-loader", {});
       const directory = String(dir);
-      cpSync(join(import.meta.dir, "programs", "ways-into-library-modules", `${member}-through-get-builtin-module-${way}.js`), join(directory, "program.js"));
-      expect(await answersTheSameUnderEachSchedule("program", directory, "program.js")).toEqual(await run([bunExe(), "program.js"], directory));
+      cpSync(
+        join(
+          import.meta.dir,
+          "programs",
+          "ways-into-library-modules",
+          `${member}-through-get-builtin-module-${way}.js`,
+        ),
+        join(directory, "program.js"),
+      );
+      expect(await answersTheSameUnderEachSchedule("program", directory, "program.js")).toEqual(
+        await run([bunExe(), "program.js"], directory),
+      );
     });
   }
 }

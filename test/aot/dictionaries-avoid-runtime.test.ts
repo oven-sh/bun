@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   // A new dictionary each round, filled under computed keys and walked: what a server does with the headers of a response.
@@ -73,12 +73,23 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 async function countOperations(program: string, output: string, operations: string[]) {
   using dir = tempDir("aot-dictionaries-avoid-runtime", files);
   const executable = join(String(dir), program + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", program + ".js", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", program + ".js", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   const counted = async (rounds: number) => {
     const path = join(String(dir), "counts" + rounds);
     const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
-    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: output, stderr: "", exitCode: 0 });
+    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({
+      stdout: output,
+      stderr: "",
+      exitCode: 0,
+    });
     let sum = 0;
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, name] = line.split("\toperation:");
@@ -93,8 +104,12 @@ async function countOperations(program: string, output: string, operations: stri
 const callsAfterCollections = 200;
 
 test("a walk over dictionaries with the same keys stops asking the run time", async () => {
-  const output = "Content-Type: 0\nContent-Length: 1\nETag: 2\nX-Powered-By: 3\n\ncontent-type,content-length,x-powered-by\n";
-  const { few, many } = await countOperations("walk", output, ["operationAOTGetPropertyEnumerator", "operationAOTEnumeratorNext"]);
+  const output =
+    "Content-Type: 0\nContent-Length: 1\nETag: 2\nX-Powered-By: 3\n\ncontent-type,content-length,x-powered-by\n";
+  const { few, many } = await countOperations("walk", output, [
+    "operationAOTGetPropertyEnumerator",
+    "operationAOTEnumeratorNext",
+  ]);
   expect(many - few).toBeLessThan(callsAfterCollections);
 }, 240_000);
 

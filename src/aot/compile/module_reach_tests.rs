@@ -19,12 +19,14 @@ fn describe_project(loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> V
         let declarations = &bound.left_out.declarations;
         let is_left_out = |statement: StmtId| match hir[statement].kind {
             StmtKind::Class(class) => declarations.is_class_left_out(file, class),
-            StmtKind::Var(declarators) => {
-                declarators.iter().all(|it| declarations.is_declarator_left_out(file, it))
-            }
+            StmtKind::Var(declarators) => declarators
+                .iter()
+                .all(|it| declarations.is_declarator_left_out(file, it)),
             _ => declarations.is_statement_left_out(file, statement),
         };
-        let left_out = hir.ids(hir.body).filter(|&statement| is_left_out(statement));
+        let left_out = hir
+            .ids(hir.body)
+            .filter(|&statement| is_left_out(statement));
         let texts: Vec<String> = left_out
             .map(|statement| {
                 let written_at = hir[statement].loc;
@@ -40,7 +42,11 @@ fn describe_project(loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> V
         };
         Some(format!("{name}: {shape} [{}]", texts.join(" | ")))
     };
-    files.compiled_files().iter().filter_map(|&file| describe_file(file)).collect()
+    files
+        .compiled_files()
+        .iter()
+        .filter_map(|&file| describe_file(file))
+        .collect()
 }
 
 // In the order in which the test lists the files.
@@ -51,7 +57,11 @@ fn describe(files: &[(&str, &str)]) -> Vec<String> {
         };
         describe_project(loaded, &bound.projects.application)
     });
-    lines.sort_by_key(|line| files.iter().position(|(name, _)| line.starts_with(&format!("{name}:"))));
+    lines.sort_by_key(|line| {
+        files
+            .iter()
+            .position(|(name, _)| line.starts_with(&format!("{name}:")))
+    });
     lines
 }
 
@@ -63,7 +73,10 @@ const LIBRARY: &str = "class K { get() { return 1; } }\n\
 #[test]
 fn store_under_a_name_that_nobody_reads_goes_with_what_it_alone_names() {
     let files = [
-        ("main.cjs", "const a = require('./a.cjs'); console.log(a.c);"),
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(a.c);",
+        ),
         ("a.cjs", LIBRARY),
     ];
     assert_eq!(
@@ -78,25 +91,43 @@ fn store_under_a_name_that_nobody_reads_goes_with_what_it_alone_names() {
 #[test]
 fn name_that_a_pattern_reads_stays() {
     let files = [
-        ("main.cjs", "const { K, f: g = null } = require('./a.cjs'); console.log(K, g);"),
+        (
+            "main.cjs",
+            "const { K, f: g = null } = require('./a.cjs'); console.log(K, g);",
+        ),
         ("a.cjs", LIBRARY),
     ];
-    assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: names [exports.c = 1;]"]);
+    assert_eq!(
+        describe(&files),
+        ["main.cjs: value []", "a.cjs: names [exports.c = 1;]"]
+    );
 }
 
 #[test]
 fn name_that_the_module_itself_reads_stays() {
     let files = [
-        ("main.cjs", "const a = require('./a.cjs'); console.log(a.f());"),
-        ("a.cjs", "exports.c = 1;\nexports.d = 2;\nexports.f = function () { return exports.c; };"),
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(a.f());",
+        ),
+        (
+            "a.cjs",
+            "exports.c = 1;\nexports.d = 2;\nexports.f = function () { return exports.c; };",
+        ),
     ];
-    assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: names [exports.d = 2;]"]);
+    assert_eq!(
+        describe(&files),
+        ["main.cjs: value []", "a.cjs: names [exports.d = 2;]"]
+    );
 }
 
 #[test]
 fn name_that_an_es_module_imports_stays() {
     let files = [
-        ("main.mjs", "import { f } from './a.cjs'; console.log(f(1));"),
+        (
+            "main.mjs",
+            "import { f } from './a.cjs'; console.log(f(1));",
+        ),
         ("a.cjs", LIBRARY),
     ];
     assert_eq!(
@@ -114,13 +145,19 @@ fn store_whose_value_does_something_stays() {
         ("main.cjs", "require('./a.cjs');"),
         ("a.cjs", "exports.c = console.log(1);\nexports.d = 2;"),
     ];
-    assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: names [exports.d = 2;]"]);
+    assert_eq!(
+        describe(&files),
+        ["main.cjs: value []", "a.cjs: names [exports.d = 2;]"]
+    );
 }
 
 #[test]
 fn object_that_somebody_looks_at_keeps_every_name() {
     let files = [
-        ("main.cjs", "const a = require('./a.cjs'); console.log(Object.keys(a));"),
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(Object.keys(a));",
+        ),
         ("a.cjs", LIBRARY),
     ];
     assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: value []"]);
@@ -129,8 +166,14 @@ fn object_that_somebody_looks_at_keeps_every_name() {
 #[test]
 fn function_that_may_read_this_makes_the_object_a_value() {
     let files = [
-        ("main.cjs", "const a = require('./a.cjs'); console.log(a.f());"),
-        ("a.cjs", "exports.c = 1;\nexports.f = function () { return this.c; };"),
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(a.f());",
+        ),
+        (
+            "a.cjs",
+            "exports.c = 1;\nexports.f = function () { return this.c; };",
+        ),
     ];
     assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: value []"]);
 }
@@ -138,7 +181,10 @@ fn function_that_may_read_this_makes_the_object_a_value() {
 #[test]
 fn file_that_only_a_function_requires_that_nothing_calls_is_left_out() {
     let files = [
-        ("main.cjs", "function unused() { return require('./a.cjs'); }\nconsole.log(1);"),
+        (
+            "main.cjs",
+            "function unused() { return require('./a.cjs'); }\nconsole.log(1);",
+        ),
         ("a.cjs", LIBRARY),
     ];
     assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: left out"]);
@@ -149,11 +195,18 @@ fn module_that_takes_names_from_a_module_with_an_object_has_one_too() {
     let barrel = "const a_1 = require('./a.cjs');\n\
         Object.defineProperty(exports, 'c', { enumerable: true, get: function () { return a_1.c; } });";
     let reads_names = "const b = require('./barrel.cjs'); console.log(b.c);";
-    let looks = "const b = require('./barrel.cjs'); console.log(b.c, Object.keys(require('./a.cjs')));";
+    let looks =
+        "const b = require('./barrel.cjs'); console.log(b.c, Object.keys(require('./a.cjs')));";
     let shapes_with = |main: &str| {
-        let files = [("main.cjs", main), ("barrel.cjs", barrel), ("a.cjs", "exports.c = 1;")];
+        let files = [
+            ("main.cjs", main),
+            ("barrel.cjs", barrel),
+            ("a.cjs", "exports.c = 1;"),
+        ];
         let lines = describe(&files);
-        let shapes = lines.iter().map(|line| line.split(' ').nth(1).unwrap_or_default().to_owned());
+        let shapes = lines
+            .iter()
+            .map(|line| line.split(' ').nth(1).unwrap_or_default().to_owned());
         shapes.collect::<Vec<String>>()
     };
     assert_eq!(shapes_with(reads_names), ["value", "names", "names"]);
@@ -163,18 +216,30 @@ fn module_that_takes_names_from_a_module_with_an_object_has_one_too() {
 #[test]
 fn children_of_a_module_have_objects() {
     let files = [
-        ("main.cjs", "require('./a.cjs'); console.log(module.children[0].exports);"),
+        (
+            "main.cjs",
+            "require('./a.cjs'); console.log(module.children[0].exports);",
+        ),
         ("a.cjs", "require('./b.cjs');\nexports.c = 1;"),
         ("b.cjs", "exports.d = 2;"),
     ];
-    assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: value []", "b.cjs: value []"]);
+    assert_eq!(
+        describe(&files),
+        ["main.cjs: value []", "a.cjs: value []", "b.cjs: value []"]
+    );
 }
 
 #[test]
 fn test_of_the_main_module_costs_nothing() {
     let files = [
-        ("main.cjs", "const a = require('./a.cjs'); console.log(a.c);"),
-        ("a.cjs", "exports.c = 1;\nif (require.main === module) console.log(2);"),
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(a.c);",
+        ),
+        (
+            "a.cjs",
+            "exports.c = 1;\nif (require.main === module) console.log(2);",
+        ),
     ];
     assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: names []"]);
 }

@@ -15,7 +15,10 @@ fn with_statement() {
     assert_eq!((file.stmts.len(), file.with_bodies.len()), (2, 1));
     assert!(classes_of(text, typescript(), 1101).is_empty());
     let (file, _) = parsed("{ a; b }", typescript());
-    assert!(matches!(file[file.id_at(file.body, 0)].kind, StmtKind::Block(_)));
+    assert!(matches!(
+        file[file.id_at(file.body, 0)].kind,
+        StmtKind::Block(_)
+    ));
     assert!(file.with_bodies.is_empty());
 }
 
@@ -57,7 +60,11 @@ fn directives() {
 #[test]
 fn directives_of_file() {
     for (text, raws, is_strict) in [
-        (r#""use strict"; "b"; c; "d";"#, &["use strict", "b"][..], true),
+        (
+            r#""use strict"; "b"; c; "d";"#,
+            &["use strict", "b"][..],
+            true,
+        ),
         (r#""a"; 'use strict';"#, &["a", "use strict"][..], true),
         (r"'use\x20strict';", &[r"use\x20strict"][..], false),
         (r#"("use strict");"#, &[][..], false),
@@ -170,7 +177,10 @@ fn attributes() {
     assert_eq!(file.statement_import_attributes(export_star), third);
     assert!(file.imports[1].attributes.is_none() && file.exports[1].attributes.is_none());
     let plain_export_star = file.id_at(file.body, 5);
-    assert!(file.statement_import_attributes(plain_export_star).is_none());
+    assert!(
+        file.statement_import_attributes(plain_export_star)
+            .is_none()
+    );
 
     let text = r#"import a from "m" assert { type: "json" }"#;
     let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
@@ -193,7 +203,11 @@ fn diagnostic_classes() {
         (r#"export { "a" as b }"#, 1003, EarlyError),
         ("class A<> {}", 1098, TypeScriptGrammar),
         ("type A = [a: ...B[]];", 5087, TypeScriptGrammar),
-        ("interface A { [a: string, b: string]: C }", 1096, TypeScriptGrammar),
+        (
+            "interface A { [a: string, b: string]: C }",
+            1096,
+            TypeScriptGrammar,
+        ),
         ("interface A { get a() {} }", 1183, TypeScriptGrammar),
         ("type A = import(B);", 1141, Semantic),
     ] {
@@ -217,7 +231,12 @@ fn type_annotation_in_javascript() {
     assert_eq!(error.kind, DiagnosticKind::Js);
     assert_eq!(error.code, 8010);
     assert_eq!(error.class, EarlyError);
-    assert!(parsed("let a: number;", typescript()).0.diagnostics.is_empty());
+    assert!(
+        parsed("let a: number;", typescript())
+            .0
+            .diagnostics
+            .is_empty()
+    );
 }
 
 fn count_of_oxc(file: &FileBuilder, code: u32) -> usize {

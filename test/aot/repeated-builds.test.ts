@@ -59,11 +59,31 @@ describe("compile/aot/repeated builds", () => {
         let next = 0;
         const lane = async (number: number) => {
           // An executable holds its own name, so all have one name, each in a folder of its lane.
-          const executable = join(root, program.replaceAll(/[^a-z]+/g, "-"), String(number), isWindows ? "program.exe" : "program");
+          const executable = join(
+            root,
+            program.replaceAll(/[^a-z]+/g, "-"),
+            String(number),
+            isWindows ? "program.exe" : "program",
+          );
           mkdirSync(dirname(executable), { recursive: true });
           for (let build = next++; build < builds; build = next++) {
             const threads = threadCounts[build % threadCounts.length];
-            const built = await spawned([bunExe(), "build", "--compile", "--aot", withThreads(threads), ...carrier, ...flags, path, "--outfile", executable], dirname(path), bunEnv);
+            const built = await spawned(
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                "--aot",
+                withThreads(threads),
+                ...carrier,
+                ...flags,
+                path,
+                "--outfile",
+                executable,
+              ],
+              dirname(path),
+              bunEnv,
+            );
             const outcome =
               built.exitCode === 0 && !built.signal
                 ? new Bun.CryptoHasher("sha256").update(await Bun.file(executable).bytes()).digest("hex")
@@ -73,7 +93,10 @@ describe("compile/aot/repeated builds", () => {
           }
         };
         await Promise.all(Array.from({ length: atOnce }, (_, number) => lane(number)));
-        const outcomes = [...found].map(([outcome, threads]) => ({ outcome: /^[0-9a-f]{64}$/.test(outcome) ? "built" : outcome, builds: threads.length }));
+        const outcomes = [...found].map(([outcome, threads]) => ({
+          outcome: /^[0-9a-f]{64}$/.test(outcome) ? "built" : outcome,
+          builds: threads.length,
+        }));
         expect(outcomes).toEqual([{ outcome: "built", builds }]);
       },
       builds * 60_000,

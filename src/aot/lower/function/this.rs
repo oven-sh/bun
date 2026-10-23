@@ -46,7 +46,10 @@ fn find_lexical_owner(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> Lexica
         | ScopeKind::With(_)
         | ScopeKind::ClassDecorators(_)
         | ScopeKind::ImplicitBlock(_) => {
-            debug_assert!(false, "a lexical owner is a file, function or field initializer");
+            debug_assert!(
+                false,
+                "a lexical owner is a file, function or field initializer"
+            );
             LexicalOwner::Generated
         }
     }
@@ -123,7 +126,9 @@ fn get_derived_constructor_this(
 ) -> ValueId {
     let value = scope::get_slot(lowering, owner, ScopeSlot::This);
     let split = condition::split_on_type(lowering, value, TypeTable::ABSENT);
-    lowering.builder.set_frequency(split.taken, BlockFrequency::Unlikely);
+    lowering
+        .builder
+        .set_frequency(split.taken, BlockFrequency::Unlikely);
     lowering.builder.switch_to(split.taken);
     exception::emit_throw_runtime_error(lowering, RuntimeErrorKind::UninitializedThis, None);
     lowering.builder.switch_to(split.not_taken);
@@ -154,7 +159,9 @@ pub(super) fn bind_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, val
     };
     let old = scope::get_slot(lowering, owner, ScopeSlot::This);
     let split = condition::split_on_type(lowering, old, TypeTable::ABSENT);
-    lowering.builder.set_frequency(split.not_taken, BlockFrequency::Unlikely);
+    lowering
+        .builder
+        .set_frequency(split.not_taken, BlockFrequency::Unlikely);
     lowering.builder.switch_to(split.not_taken);
     exception::emit_throw_runtime_error(lowering, RuntimeErrorKind::ThisAlreadyBound, None);
     lowering.builder.switch_to(split.taken);
@@ -163,25 +170,23 @@ pub(super) fn bind_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, val
 
 pub(super) fn get_new_target(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
     match find_lexical_owner(lowering) {
-        LexicalOwner::Function(scope, function) => match lowering
-            .file
-            .hir
-            .runtime_function_kind(function)
-        {
-            FnKind::Decl | FnKind::Expr | FnKind::Constructor => {
-                scope::get_slot(lowering, scope, ScopeSlot::NewTarget)
+        LexicalOwner::Function(scope, function) => {
+            match lowering.file.hir.runtime_function_kind(function) {
+                FnKind::Decl | FnKind::Expr | FnKind::Constructor => {
+                    scope::get_slot(lowering, scope, ScopeSlot::NewTarget)
+                }
+                FnKind::Arrow
+                | FnKind::Method
+                | FnKind::Getter
+                | FnKind::Setter
+                | FnKind::StaticBlock
+                | FnKind::CallSignature
+                | FnKind::ConstructSignature
+                | FnKind::FunctionType
+                | FnKind::ConstructorType
+                | FnKind::IndexSignature => lowering.builder.undefined(),
             }
-            FnKind::Arrow
-            | FnKind::Method
-            | FnKind::Getter
-            | FnKind::Setter
-            | FnKind::StaticBlock
-            | FnKind::CallSignature
-            | FnKind::ConstructSignature
-            | FnKind::FunctionType
-            | FnKind::ConstructorType
-            | FnKind::IndexSignature => lowering.builder.undefined(),
-        },
+        }
         LexicalOwner::Generated | LexicalOwner::File(_) | LexicalOwner::FieldInitializer(_) => {
             lowering.builder.undefined()
         }

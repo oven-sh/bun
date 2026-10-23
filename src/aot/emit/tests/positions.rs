@@ -90,7 +90,10 @@ fn column_formula() {
         let preceding = adjustments.partition_point(|it| it.offset as usize <= position);
         let adjustment = preceding.checked_sub(1).map(|last| &adjustments[last]);
         let found = match adjustment.filter(|it| it.offset as usize > line_start) {
-            Some(it) => (it.line as usize, it.column as usize + position - it.offset as usize),
+            Some(it) => (
+                it.line as usize,
+                it.column as usize + position - it.offset as usize,
+            ),
             None => (line, position - line_start),
         };
         let expected_column = text[line_start..position].encode_utf16().count();

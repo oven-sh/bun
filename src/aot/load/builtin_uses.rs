@@ -50,7 +50,9 @@ pub(crate) fn finish_application_file(
         answers.push(HostResolution::Path(path));
     }
     if needs_react_declarations {
-        answers.push(HostResolution::Path(react_compiler::DECLARATIONS_PATH.to_vec()));
+        answers.push(HostResolution::Path(
+            react_compiler::DECLARATIONS_PATH.to_vec(),
+        ));
     }
     source.builtins = resolved;
     answers

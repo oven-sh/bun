@@ -32,7 +32,13 @@ describe("test globals beside an import that TypeScript erases", () => {
         `bun test ${mode.join(" ")} ${file}`.replace("  ", " "),
         async () => {
           using dir = tempDir("aot-test-globals", files);
-          await using proc = Bun.spawn({ cmd: [bunExe(), "test", ...mode, "./" + file], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", ...mode, "./" + file],
+            cwd: String(dir),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stdout + stderr).not.toContain("is not defined");
           expect(stdout + stderr).toContain(" 1 pass");

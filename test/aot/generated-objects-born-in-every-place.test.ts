@@ -11,9 +11,21 @@ const kinds = [
 const programs: Generated[] = [];
 for (const [way, flags] of Object.entries(ways)) {
   for (const { kind, isOpened } of kinds) {
-    programs.push({ name: `a sample, ${way}${kind}`, isAlwaysRun: true, isOnlyCompiled: true, flags, make: () => program((sampled ??= sample(casesInOneProgram)), isOpened) });
+    programs.push({
+      name: `a sample, ${way}${kind}`,
+      isAlwaysRun: true,
+      isOnlyCompiled: true,
+      flags,
+      make: () => program((sampled ??= sample(casesInOneProgram)), isOpened),
+    });
     for (let first = 0; first < everyCase.length; first += casesInOneProgram)
-      programs.push({ name: `from ${first}, ${way}${kind}`, isAlwaysRun: false, isOnlyCompiled: true, flags, make: () => program(everyCase.slice(first, first + casesInOneProgram), isOpened) });
+      programs.push({
+        name: `from ${first}, ${way}${kind}`,
+        isAlwaysRun: false,
+        isOnlyCompiled: true,
+        flags,
+        make: () => program(everyCase.slice(first, first + casesInOneProgram), isOpened),
+      });
   }
 }
 

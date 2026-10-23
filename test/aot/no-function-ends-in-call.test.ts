@@ -21,7 +21,8 @@ function codeOf(executable: Buffer) {
     const size = Number(executable.readBigUInt64LE(at + 32));
     const codeOffset = Number(executable.readBigUInt64LE(at + 40));
     const codeSize = Number(executable.readBigUInt64LE(at + 48));
-    if (codeSize > 0 && codeOffset + codeSize <= size && at + size <= executable.length) return executable.subarray(at + codeOffset, at + codeOffset + codeSize);
+    if (codeSize > 0 && codeOffset + codeSize <= size && at + size <= executable.length)
+      return executable.subarray(at + codeOffset, at + codeOffset + codeSize);
   }
   throw new Error("the executable holds no image of compiled code");
 }
@@ -34,8 +35,16 @@ test.skipIf(!!unsupported)(
       const folder = String(dir);
       const executable = join(folder, isWindows ? "entry.exe" : "entry");
       const mapPath = join(folder, "entry.map");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", program, "--outfile", executable], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath }));
-      const [plain, compiled] = await Promise.all([spawned([bunExe(), "run", program], folder, bunEnv), spawned([executable], folder, bunEnv)]);
+      built(
+        await spawned([bunExe(), "build", "--compile", "--aot", program, "--outfile", executable], folder, {
+          ...bunEnv,
+          BUN_JSC_aotMapFilePath: mapPath,
+        }),
+      );
+      const [plain, compiled] = await Promise.all([
+        spawned([bunExe(), "run", program], folder, bunEnv),
+        spawned([executable], folder, bunEnv),
+      ]);
       expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 
       const code = codeOf(readFileSync(executable));
@@ -57,7 +66,8 @@ test.skipIf(!!unsupported)(
       // The bytes are taken for a call only where they lead to the start of a function, a stub or an outlined body.
       const endsInCall =
         process.arch === "x64"
-          ? ({ start, end }: { start: number; end: number }) => end - 5 >= start && code[end - 5] === 0xe8 && entries.has(end + code.readInt32LE(end - 4))
+          ? ({ start, end }: { start: number; end: number }) =>
+              end - 5 >= start && code[end - 5] === 0xe8 && entries.has(end + code.readInt32LE(end - 4))
           : ({ start, end }: { start: number; end: number }) => {
               if (end - 4 < start) return false;
               const word = code.readUInt32LE(end - 4);

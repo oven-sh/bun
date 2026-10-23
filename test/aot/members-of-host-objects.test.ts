@@ -33,7 +33,12 @@ test("each class of events that the global object has takes its type first", () 
 test("native code dispatches on the global object only in a worker: message, messageerror, error", () => {
   const bindings = join(import.meta.dir, "../../src/jsc/bindings");
   const places = [...new Bun.Glob("**/*.{cpp,h}").scanSync(bindings)]
-    .flatMap(file => readFileSync(join(bindings, file), "utf8").split("\n").filter(line => /globalEventScope(->|\.)dispatchEvent|eventTarget\(\)\.dispatchEvent/.test(line)).map(line => file.replaceAll("\\", "/") + ": " + line.trim()))
+    .flatMap(file =>
+      readFileSync(join(bindings, file), "utf8")
+        .split("\n")
+        .filter(line => /globalEventScope(->|\.)dispatchEvent|eventTarget\(\)\.dispatchEvent/.test(line))
+        .map(line => file.replaceAll("\\", "/") + ": " + line.trim()),
+    )
     .sort();
   expect(places).toEqual([
     "webcore/Worker.cpp: globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));",

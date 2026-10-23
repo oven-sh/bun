@@ -19,7 +19,10 @@ pub(super) fn collect_modules(
     let mut add_named_module = |module: ProgramModule| match module {
         ProgramModule::File(file) => {
             let has_record = projects.get(file.project).graph.has_record(file.file);
-            assert!(has_record, "a file without a module record is named as a module");
+            assert!(
+                has_record,
+                "a file without a module record is named as a module"
+            );
         }
         ProgramModule::Inner { .. }
         | ProgramModule::Face(_)
@@ -338,7 +341,10 @@ mod tests {
             let table = collect(projects, &units);
             assert_eq!(count_of(&table, external), 1);
             assert_eq!(count_of(&table, runtime), 1);
-            assert_eq!(table.unit_by_module[table.index_of(external) as usize], None);
+            assert_eq!(
+                table.unit_by_module[table.index_of(external) as usize],
+                None
+            );
         });
     }
 
@@ -366,22 +372,35 @@ mod tests {
             let table = collect(projects, &units);
 
             let records_of_index = [ModuleRef::File(index), ModuleRef::Check(index)];
-            let records_of_legacy =
-                [ModuleRef::File(legacy), inner(2), inner(4), ModuleRef::Face(legacy)];
+            let records_of_legacy = [
+                ModuleRef::File(legacy),
+                inner(2),
+                inner(4),
+                ModuleRef::Face(legacy),
+            ];
             for records in [&records_of_index[..], &records_of_legacy[..]] {
-                let records = records.iter().map(|&module| application_module(projects, module));
+                let records = records
+                    .iter()
+                    .map(|&module| application_module(projects, module));
                 let records: Vec<ProgramModule> = records.collect();
                 let first = table.index_of(records[0]) as usize;
                 assert_eq!(table.modules[first..first + records.len()], records);
                 let units_of_records = &table.unit_by_module[first..first + records.len()];
-                assert!(units_of_records.iter().all(|&unit| unit == units_of_records[0]));
+                assert!(
+                    units_of_records
+                        .iter()
+                        .all(|&unit| unit == units_of_records[0])
+                );
                 assert!(units_of_records[0].is_some());
             }
 
             let origins =
                 collect_module_origins(projects, &table, &number_modules(&table, |_| true));
             let face = application_module(projects, ModuleRef::Face(legacy));
-            assert_eq!(origins[table.index_of(face) as usize], ModuleOrigin::Program);
+            assert_eq!(
+                origins[table.index_of(face) as usize],
+                ModuleOrigin::Program
+            );
         });
     }
 
@@ -405,20 +424,39 @@ mod tests {
             let dependency = application_file(projects, "node_modules/dep/index.js");
             let expected_origins = [
                 (entry_point, ModuleOrigin::Program),
-                (application_file(projects, "types.d.ts"), ModuleOrigin::Program),
+                (
+                    application_file(projects, "types.d.ts"),
+                    ModuleOrigin::Program,
+                ),
                 (dependency, ModuleOrigin::Dependency),
-                (runtime_source(projects, RuntimeModule::NodePath), ModuleOrigin::Runtime),
-                (ProgramModule::Runtime(RuntimeModule::NodeBuffer), ModuleOrigin::Runtime),
-                (application_module(projects, external), ModuleOrigin::Dependency),
+                (
+                    runtime_source(projects, RuntimeModule::NodePath),
+                    ModuleOrigin::Runtime,
+                ),
+                (
+                    ProgramModule::Runtime(RuntimeModule::NodeBuffer),
+                    ModuleOrigin::Runtime,
+                ),
+                (
+                    application_module(projects, external),
+                    ModuleOrigin::Dependency,
+                ),
             ];
             for (module, origin) in expected_origins {
-                assert_eq!(origins[table.index_of(module) as usize], origin, "{module:?}");
+                assert_eq!(
+                    origins[table.index_of(module) as usize],
+                    origin,
+                    "{module:?}"
+                );
             }
 
             let numbering = number_modules(&table, |module| module != dependency);
             let mut kept_origins = origins;
             kept_origins.remove(table.index_of(dependency) as usize);
-            assert_eq!(collect_module_origins(projects, &table, &numbering), kept_origins);
+            assert_eq!(
+                collect_module_origins(projects, &table, &numbering),
+                kept_origins
+            );
         });
     }
 }

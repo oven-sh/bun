@@ -14,11 +14,11 @@ mod services;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
 use crate::{EventLoop, OutputFile, Transpiler};
-use bun_aot::{BuildFailed, Compilation};
 use bun_aot::engine::{EngineResult, ExecutableIdentity};
 use bun_aot::link::ProgramNames;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
+use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
 use bun_resolver::package_names::{BuildPaths, PackageName};
@@ -119,7 +119,11 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         return Err(failure_before_pipeline(false));
     };
     transpiler.options.root_dir = Box::from(&options.paths.root_directory[..]);
-    transpiler.resolver.opts.root_dir.clone_from(&transpiler.options.root_dir);
+    transpiler
+        .resolver
+        .opts
+        .root_dir
+        .clone_from(&transpiler.options.root_dir);
 
     let started = BundleV2::init_without_starting_threads(
         transpiler,
@@ -161,11 +165,17 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 public_path,
             };
             let entry_points = summary.entry_points.iter();
-            let entry_points: Vec<BuildPaths<'_>> =
-                entry_points.map(|it| paths(&it.source_path, &it.public_path)).collect();
+            let entry_points: Vec<BuildPaths<'_>> = entry_points
+                .map(|it| paths(&it.source_path, &it.public_path))
+                .collect();
             let folders = summary.folders.iter();
-            let folders: Vec<BuildPaths<'_>> = folders.map(|it| paths(&it.source_path, &it.public_path)).collect();
-            bundle.transpiler.resolver.find_package_names(&entry_points, &folders)
+            let folders: Vec<BuildPaths<'_>> = folders
+                .map(|it| paths(&it.source_path, &it.public_path))
+                .collect();
+            bundle
+                .transpiler
+                .resolver
+                .find_package_names(&entry_points, &folders)
         }
         Ok(_) | Err(_) => Vec::new(),
     };

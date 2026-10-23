@@ -49,31 +49,37 @@ async function spawned(cmd: string[], cwd: string) {
 }
 
 async function buildAndRun(cwd: string, name: string, flags: string[]) {
-  const built = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "program.ts", "--outfile", name], cwd);
+  const built = await spawned(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "program.ts", "--outfile", name],
+    cwd,
+  );
   expect(built.stderr).not.toContain("error:");
   expect(built.exitCode).toBe(0);
   return spawned(withoutCoreDump([join(cwd, name)]), cwd);
 }
 
-describe.concurrent.each(Object.entries(programs))("%s where another type is declared", (_, { text, printed, stop }) => {
-  test("is answered as in plain Bun by a build that checks its proofs", async () => {
-    using folder = tempDir("aot-proofs-checked", { "program.ts": text });
-    const { stdout, stderr, exitCode } = await buildAndRun(String(folder), "checked", [checked]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
-  }, 120_000);
+describe.concurrent.each(Object.entries(programs))(
+  "%s where another type is declared",
+  (_, { text, printed, stop }) => {
+    test("is answered as in plain Bun by a build that checks its proofs", async () => {
+      using folder = tempDir("aot-proofs-checked", { "program.ts": text });
+      const { stdout, stderr, exitCode } = await buildAndRun(String(folder), "checked", [checked]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+    }, 120_000);
 
-  test("is a named stop once the declared types are taken for proven", async () => {
-    using folder = tempDir("aot-proofs-checked", { "program.ts": text });
-    const { stdout, stderr, exitCode } = await buildAndRun(String(folder), "planted", [checked, planted]);
-    expect(stderr).toMatch(stop);
-    expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
-  }, 120_000);
+    test("is a named stop once the declared types are taken for proven", async () => {
+      using folder = tempDir("aot-proofs-checked", { "program.ts": text });
+      const { stdout, stderr, exitCode } = await buildAndRun(String(folder), "planted", [checked, planted]);
+      expect(stderr).toMatch(stop);
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    }, 120_000);
 
-  test("is no named stop without the checks: the false proof is there", async () => {
-    using folder = tempDir("aot-proofs-checked", { "program.ts": text });
-    const { stdout, stderr } = await buildAndRun(String(folder), "unchecked", [planted]);
-    expect(stderr).not.toContain("AOT validation:");
-    expect(stdout).not.toBe(printed);
-  }, 120_000);
-});
+    test("is no named stop without the checks: the false proof is there", async () => {
+      using folder = tempDir("aot-proofs-checked", { "program.ts": text });
+      const { stdout, stderr } = await buildAndRun(String(folder), "unchecked", [planted]);
+      expect(stderr).not.toContain("AOT validation:");
+      expect(stdout).not.toBe(printed);
+    }, 120_000);
+  },
+);

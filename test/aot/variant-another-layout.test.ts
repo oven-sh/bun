@@ -3,4 +3,11 @@
 import { variant } from "./run-programs";
 
 for (let seed = 1; seed <= 16; seed++)
-  variant(`another-layout/${seed}`, [`--aot-layout-seed=${seed}`], {}, seed, 48, "calls-fast-paths/roads-that-cross-from-one-stub-into-the-next");
+  variant(
+    `another-layout/${seed}`,
+    [`--aot-layout-seed=${seed}`],
+    {},
+    seed,
+    48,
+    "calls-fast-paths/roads-that-cross-from-one-stub-into-the-next",
+  );

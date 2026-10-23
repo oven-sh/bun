@@ -26,7 +26,16 @@ if (compiler && !isWindows) {
   const addon = join(String(tempDir("aot-external-code-addon", {})), "addon.node");
   const flags = process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : [];
   const headers = resolve(import.meta.dir, "../../src/runtime/napi");
-  const built = Bun.spawnSync([compiler, "-shared", "-fPIC", ...flags, "-I" + headers, join(import.meta.dir, "napi-addon", "addon.c"), "-o", addon]);
+  const built = Bun.spawnSync([
+    compiler,
+    "-shared",
+    "-fPIC",
+    ...flags,
+    "-I" + headers,
+    join(import.meta.dir, "napi-addon", "addon.c"),
+    "-o",
+    addon,
+  ]);
   if (built.exitCode !== 0) throw new Error("the addon does not compile: " + built.stderr);
   cases["it requires a native addon"] = {
     files: { "main.cjs": main, "outside.cjs": `module.exports = Object.keys(require(process.env.ADDON)).length > 0;` },

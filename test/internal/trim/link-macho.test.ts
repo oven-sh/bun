@@ -72,7 +72,13 @@ compileFeatureCodeOnce();
 describeEachMachine("Mach-O $name", machine => {
   describe("a trimmable link", () => {
     const removableNames = ["feature_code", "feature_code_0", `feature_code_${count - 1}`, "feature_numbers"];
-    const retainedNames = ["main", "retained", "Bun__abortForRemovedFeature", "Bun__removableFeatureState", "retained_table"];
+    const retainedNames = [
+      "main",
+      "retained",
+      "Bun__abortForRemovedFeature",
+      "Bun__removableFeatureState",
+      "retained_table",
+    ];
 
     test("removes the code and constants that only the entry point reaches, and nothing else", async () => {
       using dir = tempDir("trim-macho", sources);
@@ -85,10 +91,17 @@ describeEachMachine("Mach-O $name", machine => {
       expect(summary.removed).not.toContain(Other);
       expect(summary.removedBytes).toBeGreaterThan(32768);
       expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(16384);
-      expect(statSync(join(folder, "program")).size - statSync(join(folder, "trimmed")).size).toBe(summary.fileBytesSaved);
+      expect(statSync(join(folder, "program")).size - statSync(join(folder, "trimmed")).size).toBe(
+        summary.fileBytesSaved,
+      );
       expectCleanRuns({ programResult, trimmedResult });
       if (machine.canRun) expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
-      expect(reviewFiles(folder, "program")).toEqual(["entry-points.txt", "groups.txt", "requires.txt", "retained-by.txt"]);
+      expect(reviewFiles(folder, "program")).toEqual([
+        "entry-points.txt",
+        "groups.txt",
+        "requires.txt",
+        "retained-by.txt",
+      ]);
       await expectTrimmedImage(machine, folder);
     });
 
@@ -104,7 +117,9 @@ describeEachMachine("Mach-O $name", machine => {
       const ownOrder = "_main\n_retained\n";
       using dir = tempDir("trim-macho", { ...sources, "own-order.txt": ownOrder });
       const folder = String(dir);
-      const { addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, folder, { linkFlags: ["-Wl,-order_file,own-order.txt"] });
+      const { addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        linkFlags: ["-Wl,-order_file,own-order.txt"],
+      });
       expect(readFileSync(join(folder, "work/order.txt"), "latin1")).toEndWith(`\n${ownOrder}`);
       expect(["feature_code_0", "main", "retained"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
       expect(addressOf(`feature_code_${count - 1}`)).toBeLessThan(addressOf("main"));
@@ -124,9 +139,14 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const linkResult = await wrapped(machine, folder, { objects: ["feature_code", "entry", "embedder", "main"], minimums: { [Extra]: 1_000_000 } });
+      const linkResult = await wrapped(machine, folder, {
+        objects: ["feature_code", "entry", "embedder", "main"],
+        minimums: { [Extra]: 1_000_000 },
+      });
       expectLinkFailure(folder, "program", linkResult, ["FeatureBelowMinimum"]);
-      expect(linkResult.stderr).toMatch(/feature_code_5 \(feature_code-\w+\.o, \d+ bytes\)\n\s+<- main \(main\.o, \d+ bytes\)/);
+      expect(linkResult.stderr).toMatch(
+        /feature_code_5 \(feature_code-\w+\.o, \d+ bytes\)\n\s+<- main \(main\.o, \d+ bytes\)/,
+      );
     });
 
     test("on two archive members of one name", async () => {
@@ -142,7 +162,10 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const linkResult = await wrapped(machine, folder, { objects: ["feature_code", "entry", "one/member", "two/member", "embedder", "main"], archived: ["one/member", "two/member"] });
+      const linkResult = await wrapped(machine, folder, {
+        objects: ["feature_code", "entry", "one/member", "two/member", "embedder", "main"],
+        archived: ["one/member", "two/member"],
+      });
       expectLinkFailure(folder, "program", linkResult, ["UnreadInput", "AmbiguousArchiveMember", "lib.a(member.o)"]);
     });
 
@@ -157,7 +180,12 @@ describeEachMachine("Mach-O $name", machine => {
       });
       const folder = String(dir);
       const linkResult = await wrapped(machine, folder, { objects: ["feature_code", "entry", "embedder", "main"] });
-      expectLinkFailure(folder, "program", linkResult, ["EntryPointReferencedByRetainedCode", "calls_directly", "entered", "main"]);
+      expectLinkFailure(folder, "program", linkResult, [
+        "EntryPointReferencedByRetainedCode",
+        "calls_directly",
+        "entered",
+        "main",
+      ]);
     });
 
     test("on an entry point that runs before main", async () => {
@@ -182,7 +210,9 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const linkResult = await wrapped(machine, folder, { objects: ["feature_code", "entry", "more", "embedder", "main"] });
+      const linkResult = await wrapped(machine, folder, {
+        objects: ["feature_code", "entry", "more", "embedder", "main"],
+      });
       expectLinkFailure(folder, "program", linkResult, ["EntryPointReferencedByRetainedCode", "early"]);
     });
 
@@ -217,14 +247,18 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const linkResult = await wrapped(machine, folder, { objects: ["feature_code", "entry", "record", "embedder", "main"] });
+      const linkResult = await wrapped(machine, folder, {
+        objects: ["feature_code", "entry", "record", "embedder", "main"],
+      });
       expectLinkFailure(folder, "program", linkResult, ["UnreadInput", "UnsupportedRelocations", "record.o"]);
     });
   });
 
   describe("an entry point", () => {
-    const foldedEntries = (folder: string) => entryPointsText(folder, "program").split(foldedEntryPointsHeading)[1] ?? "";
-    const loopingFunction = (name: string, calls: string) => `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return ${calls}(x) & 0xffff; }`;
+    const foldedEntries = (folder: string) =>
+      entryPointsText(folder, "program").split(foldedEntryPointsHeading)[1] ?? "";
+    const loopingFunction = (name: string, calls: string) =>
+      `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return ${calls}(x) & 0xffff; }`;
     const folded = {
       ...sources,
       "deeper.c": mixingFunction("folded_entry_callee", 5),
@@ -238,13 +272,23 @@ describeEachMachine("Mach-O $name", machine => {
       `,
     };
 
-    for (const objects of [["feature_code", "entry", "deeper", "embedder", "more", "main"], ["feature_code", "entry", "deeper", "embedder", "main", "more"]]) {
+    for (const objects of [
+      ["feature_code", "entry", "deeper", "embedder", "more", "main"],
+      ["feature_code", "entry", "deeper", "embedder", "main", "more"],
+    ]) {
       test(`folded with a function no record names is retained, whichever copy the linker selects: ${objects.slice(4).join(", ")}`, async () => {
         using dir = tempDir("trim-macho-entry", folded);
         const folder = String(dir);
-        const { addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, folder, { objects, linkFlags: foldsEntryPoints });
+        const { addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+          objects,
+          linkFlags: foldsEntryPoints,
+        });
         expect(addressOf("folded_entry")).toBe(addressOf("equal_to_entry"));
-        expect(["folded_entry", "folded_entry_callee", "feature_code_0"].map(featuresOf)).toEqual([undefined, undefined, [Extra]]);
+        expect(["folded_entry", "folded_entry_callee", "feature_code_0"].map(featuresOf)).toEqual([
+          undefined,
+          undefined,
+          [Extra],
+        ]);
         expect(foldedEntries(folder)).toContain("folded_entry");
         expectCleanRuns({ programResult, trimmedResult });
       });
@@ -265,8 +309,14 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, { objects: ["feature_code", "entry", "more", "embedder", "main"] });
-      expect(["shared_entry", "shared_entry_callee", "feature_code_0"].map(featuresOf)).toEqual([undefined, undefined, [Extra]]);
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "entry", "more", "embedder", "main"],
+      });
+      expect(["shared_entry", "shared_entry_callee", "feature_code_0"].map(featuresOf)).toEqual([
+        undefined,
+        undefined,
+        [Extra],
+      ]);
       expect(foldedEntries(folder)).toContain("shared_entry");
       expectCleanRuns({ programResult, trimmedResult });
     });
@@ -285,7 +335,9 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const linkResult = await wrapped(machine, folder, { objects: ["feature_code", "entry", "more", "piece", "embedder", "main"] });
+      const linkResult = await wrapped(machine, folder, {
+        objects: ["feature_code", "entry", "more", "piece", "embedder", "main"],
+      });
       expectLinkFailure(folder, "program", linkResult, ["EntryPointReferencedByRetainedCode", "alternative", "piece"]);
     });
 
@@ -303,7 +355,9 @@ describeEachMachine("Mach-O $name", machine => {
         "main.c": `int call_entries(int); int main(int argc, char **argv) { return argc > 5 ? call_entries(argc) & 63 : 0; }`,
       });
       const folder = String(dir);
-      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, { objects: ["feature_code", "external", "guards", "embedder", "main"] });
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "external", "guards", "embedder", "main"],
+      });
       expect(recordRelocationKinds(readFileSync(join(folder, "guards.o")))).toEqual(["section", "symbol"]);
       expect(["static_entry", "external_entry", "call_entries"].map(featuresOf)).toEqual([[Extra], [Extra], undefined]);
       expectCleanRuns({ programResult, trimmedResult });
@@ -313,10 +367,14 @@ describeEachMachine("Mach-O $name", machine => {
     test("compiled with ThinLTO is found, and the second link reuses the first link's native objects", async () => {
       using dir = tempDir("trim-macho-entry", sources);
       const folder = String(dir);
-      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, { compileFlags: { entry: ["-flto=thin"], main: ["-flto=thin"] } });
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        compileFlags: { entry: ["-flto=thin"], main: ["-flto=thin"] },
+      });
       expect(featuresOf("entered")).toEqual([Extra]);
       expectCleanRuns({ programResult, trimmedResult });
-      expect(readdirSync(join(folder, "work/compiled")).filter(name => name.endsWith(".lto.o")).length).toBeGreaterThan(0);
+      expect(readdirSync(join(folder, "work/compiled")).filter(name => name.endsWith(".lto.o")).length).toBeGreaterThan(
+        0,
+      );
       expect(readdirSync(join(folder, "work/unused"))).toEqual([]);
     });
 
@@ -387,7 +445,9 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const objects = ["feature_code", "entry", "end_label", "embedder", "main"];
-      const { linkOutput, addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), { objects });
+      const { linkOutput, addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects,
+      });
       expect(addressOf("table_end") - addressOf("table")).toBe(17);
       expect(statisticOf(linkOutput, "symbolsOutsideGraph")).toBeGreaterThanOrEqual(1);
       expect(["table", "entered"].map(featuresOf)).toEqual([undefined, [Extra]]);
@@ -397,7 +457,8 @@ describeEachMachine("Mach-O $name", machine => {
 
   describe("the graph reader", () => {
     test("follows a pointer that only the fixups show into a single unit of the interpreter's assembly", async () => {
-      const cellHolding = (value: string) => `.section __DATA,__const\n.globl _retained_cell\n.p2align 3\n_retained_cell: .quad ${value}\n.subsections_via_symbols\n`;
+      const cellHolding = (value: string) =>
+        `.section __DATA,__const\n.globl _retained_cell\n.p2align 3\n_retained_cell: .quad ${value}\n.subsections_via_symbols\n`;
       using dir = tempDir("trim-macho-reader", {
         ...sources,
         "entry.c": entryCalling("more"),
@@ -416,7 +477,14 @@ describeEachMachine("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const { executable, map, exportedSymbols } = await linkByHand(machine, folder, ["feature_code", "entry", "more", "cell", "embedder", "main"]);
+      const { executable, map, exportedSymbols } = await linkByHand(machine, folder, [
+        "feature_code",
+        "entry",
+        "more",
+        "cell",
+        "embedder",
+        "main",
+      ]);
       const read = () => readMachOGraph(executable, map, [], exportedSymbols);
       const withObjectReference = read();
       expect(withObjectReference.failures).toEqual([]);
@@ -425,8 +493,14 @@ describeEachMachine("Mach-O $name", machine => {
       const { graph, failures, statistics } = read();
       expect(failures).toEqual([]);
       expect(statistics.pointersOnlyInFixups).toBe(withObjectReference.statistics.pointersOnlyInFixups! + 1);
-      const [cell, unitFirst, unitSecond] = ["_retained_cell", "_unit_first", "_unit_second"].map(name => graph.names.findIndex(names => names.includes(name)));
-      expect([cell, unitFirst, unitSecond].map(node => graph.output[node!])).toEqual(["__DATA_CONST,__const", "__TEXT,__jsc_wasm", "__TEXT,__jsc_wasm"]);
+      const [cell, unitFirst, unitSecond] = ["_retained_cell", "_unit_first", "_unit_second"].map(name =>
+        graph.names.findIndex(names => names.includes(name)),
+      );
+      expect([cell, unitFirst, unitSecond].map(node => graph.output[node!])).toEqual([
+        "__DATA_CONST,__const",
+        "__TEXT,__jsc_wasm",
+        "__TEXT,__jsc_wasm",
+      ]);
       const reached = reach(graph, [cell!]);
       expect([reached[unitFirst!], reached[unitSecond!]]).toEqual([1, 1]);
     });
@@ -448,7 +522,11 @@ describeEachMachine("Mach-O $name", machine => {
         "main.c": `${start} int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : 0; }`,
       });
       const objects = ["feature_code", "entry", "library", "embedder", "main"];
-      const { table, featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), { objects, archived: ["library"], libraries: [library] });
+      const { table, featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects,
+        archived: ["library"],
+        libraries: [library],
+      });
       expect(featuresOf("library_function")).toEqual([Extra]);
       if (hasRetainedBytes) expect(featuresOf("library_used")).toBeUndefined();
       const set = table.sets.findIndex(members => members.join() === String(indexOf(Extra)));
@@ -480,12 +558,18 @@ describeEachMachine("Mach-O $name", machine => {
     test("with equal entry points fold into one body, which is removed only with both", async () => {
       using dir = tempDir("trim-macho-two", equalEntries);
       const folder = String(dir);
-      const { addressOf, featuresOf, trim } = await linked(machine, folder, { objects: ["feature_code", "entry", "table", "more", "embedder", "main"], linkFlags: foldsEntryPoints });
+      const { addressOf, featuresOf, trim } = await linked(machine, folder, {
+        objects: ["feature_code", "entry", "table", "more", "embedder", "main"],
+        linkFlags: foldsEntryPoints,
+      });
       expect(addressOf("entry_of_extra")).toBe(addressOf("entry_of_other"));
       expect(featuresOf("entry_of_extra")).toEqual(sortedByIndex(Extra, Other));
       trim("without-both", [Extra, Other]);
       if (!machine.canRun) return;
-      const codes = async (name: string) => [await exitCodeOf(folder, name, ["a"]), await exitCodeOf(folder, name, ["a", "b"])];
+      const codes = async (name: string) => [
+        await exitCodeOf(folder, name, ["a"]),
+        await exitCodeOf(folder, name, ["a", "b"]),
+      ];
       const whole = await codes("whole");
       expect(whole[0]).not.toBe(70);
       expect(await codes("trimmed")).toEqual([70, whole[1]!]);
@@ -511,8 +595,12 @@ describeEachMachine("Mach-O $name", machine => {
       using dir = tempDir("trim-macho-two", requiring(entryCalling("entry_of_other")));
       const folder = String(dir);
       const { table, featuresOf, programResult, trimmedResult } = await linked(machine, folder, { objects });
-      expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true }]);
-      expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toStartWith(`${Extra} requires ${Other}: 1 references`);
+      expect(table.edges).toEqual([
+        { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
+      ]);
+      expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toStartWith(
+        `${Extra} requires ${Other}: 1 references`,
+      );
       expect(["entered", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
       expectCleanRuns({ programResult, trimmedResult });
     });
@@ -521,20 +609,29 @@ describeEachMachine("Mach-O $name", machine => {
       using dir = tempDir("trim-macho-two", requiring(entryGuarding("Other", "entry_of_other")));
       const folder = String(dir);
       const { table, programResult, trimmedResult } = await linked(machine, folder, { objects, removed: [Other] });
-      expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true }]);
-      expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toBe(`${Extra} enters ${Other}: aborting guard\n`);
+      expect(table.edges).toEqual([
+        { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true },
+      ]);
+      expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toBe(
+        `${Extra} enters ${Other}: aborting guard\n`,
+      );
       expectCleanRuns({ programResult, trimmedResult });
       if (machine.canRun) expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
     });
 
     describe("of which JavaScript enters the first as a built-in, whose code enters the second", () => {
-      const files = { ...requiring(entryGuarding("Other", "entry_of_other")), "main.c": mainEnteringBuiltin(spelledBuiltin) };
+      const files = {
+        ...requiring(entryGuarding("Other", "entry_of_other")),
+        "main.c": mainEnteringBuiltin(spelledBuiltin),
+      };
 
       test("link when the built-in declares both uses, and the table answers for the edge", async () => {
         using dir = tempDir("trim-macho-two", files);
         const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
         const { table, featuresOf } = await linked(machine, String(dir), { objects, builtins });
-        expect(table.edges).toEqual([{ from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false }]);
+        expect(table.edges).toEqual([
+          { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
+        ]);
         expect(["entered", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
       });
 
@@ -566,8 +663,15 @@ describeEachMachine("Mach-O $name", machine => {
         `,
         "exported.txt": "_main\n_for_loaded_code\n_entry_of_other\n",
       });
-      const { featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), { objects: ["feature_code", "entry", "more", "embedder", "main"] });
-      expect(["for_loaded_code", "only_for_loaded_code", "entry_of_other", "feature_code_0"].map(featuresOf)).toEqual([exportFeatures, exportFeatures, sortedByIndex(Other, ...exportFeatures), [Extra]]);
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: ["feature_code", "entry", "more", "embedder", "main"],
+      });
+      expect(["for_loaded_code", "only_for_loaded_code", "entry_of_other", "feature_code_0"].map(featuresOf)).toEqual([
+        exportFeatures,
+        exportFeatures,
+        sortedByIndex(Other, ...exportFeatures),
+        [Extra],
+      ]);
       expectCleanRuns({ programResult, trimmedResult });
     });
   });
@@ -578,14 +682,24 @@ describeEachMachine("Mach-O $name", machine => {
     const headerCompiles = async (folder: string) => {
       if (guardHeader === undefined) return false;
       writeFileSync(join(folder, "probe.cpp"), `#include "toy.h"\n`);
-      return (await run([tools.clang!, `--target=${machine.target}`, ...cxxFlags, "-fsyntax-only", "probe.cpp"], folder)).exitCode === 0;
+      return (
+        (await run([tools.clang!, `--target=${machine.target}`, ...cxxFlags, "-fsyntax-only", "probe.cpp"], folder))
+          .exitCode === 0
+      );
     };
 
     test("of the engine's header does what its kind says", async () => {
       using dir = tempDir("trim-macho-stubs", { ...sources, "toy.h": toyHeader, "spellings.cpp": spellingsSource });
       const folder = String(dir);
-      if (!(await headerCompiles(folder))) return skipNotice(testFile, guardHeaderSkipReason ?? `the engine's header does not compile for ${machine.target}`);
-      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, { objects: ["feature_code", "embedder", "spellings"], linkFlags });
+      if (!(await headerCompiles(folder)))
+        return skipNotice(
+          testFile,
+          guardHeaderSkipReason ?? `the engine's header does not compile for ${machine.target}`,
+        );
+      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "embedder", "spellings"],
+        linkFlags,
+      });
       expect(entryAddresses.size).toBeGreaterThan(0);
       expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
       expectCleanRuns({ programResult, trimmedResult });
@@ -617,14 +731,20 @@ describeEachMachine("Mach-O $name", machine => {
       const crate = rustc === null ? undefined : await buildGuardCrate(folder, rustc, rustTarget);
       if (crate === undefined) return skipNotice(testFile, `rustc cannot build for ${rustTarget}`);
       const archive = await compileRust(folder, rustc!, crate, "toy.rs", { target: rustTarget });
-      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, { objects: ["feature_code", "embedder", "main"], inputs: [archive], linkFlags });
+      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "embedder", "main"],
+        inputs: [archive],
+        linkFlags,
+      });
       expect(entryAddresses.size).toBeGreaterThan(0);
       expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
       expectCleanRuns({ programResult, trimmedResult });
       if (programResult === undefined || trimmedResult === undefined) return;
       expect(programResult.stdout).toMatch(/^-?\d*[13579] -?\d*[13579],7 -?\d*[13579] false\n$/);
       expect(trimmedResult.stdout).toBe("0 0,0 -2 true\n");
-      expect([await exitCodeOf(folder, "trimmed", ["a"]), await exitCodeOf(folder, "trimmed", ["a", "b"])]).toEqual([70, 70]);
+      expect([await exitCodeOf(folder, "trimmed", ["a"]), await exitCodeOf(folder, "trimmed", ["a", "b"])]).toEqual([
+        70, 70,
+      ]);
     });
   });
 });

@@ -92,10 +92,7 @@ fn regex() {
     assert_eq!(flags, known::empty);
 }
 
-fn part_texts<'a>(
-    file: &FileBuilder,
-    atoms: &'a FileAtoms<'_>,
-) -> Vec<(Option<&'a str>, &'a str)> {
+fn part_texts<'a>(file: &FileBuilder, atoms: &'a FileAtoms<'_>) -> Vec<(Option<&'a str>, &'a str)> {
     let text = |atom| atom_text(atoms, atom);
     let parts = file.template_parts.iter();
     parts

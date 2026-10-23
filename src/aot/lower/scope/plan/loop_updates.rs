@@ -77,8 +77,7 @@ pub(super) fn is_stored_only_by_own_loop_update(
     let Some(targets) = collect_store_targets(context, update) else {
         return false;
     };
-    let is_ignored_store = |target: ExprId| {
-        context.decisions.is_dead_expr(target) || targets.contains(&target)
-    };
+    let is_ignored_store =
+        |target: ExprId| context.decisions.is_dead_expr(target) || targets.contains(&target);
     bound.binding_stability_ignoring(symbol, &is_ignored_store) == BindingStability::Stable
 }

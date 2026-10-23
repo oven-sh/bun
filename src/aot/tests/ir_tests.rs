@@ -115,7 +115,11 @@ fn find_tests(folder: &Path, display_folder: &str, found: &mut Vec<FoundTest>) {
 
 fn find_area_tests(area: &str) -> Vec<FoundTest> {
     let mut tests = Vec::new();
-    find_tests(&test_root().join(area), &display_folder_of(area), &mut tests);
+    find_tests(
+        &test_root().join(area),
+        &display_folder_of(area),
+        &mut tests,
+    );
     tests
 }
 
@@ -254,10 +258,12 @@ fn run_test_text(path: &Path, text: String) -> TestOutcome {
     let file = parse_test_file(text);
     let mut outcome = TestOutcome::default();
     if !file.errors.is_empty() {
-        outcome.failures.extend(file.errors.into_iter().map(|error| TestFailure {
-            line: error.line,
-            message: error.message,
-        }));
+        outcome
+            .failures
+            .extend(file.errors.into_iter().map(|error| TestFailure {
+                line: error.line,
+                message: error.message,
+            }));
         return outcome;
     }
     let words = match parse_option_words(&file.option_words) {
@@ -302,7 +308,10 @@ fn describe_command_outcome(outcome: &CommandOutcome) -> String {
     };
     let mut text = result.output.clone();
     for (name, message) in &result.diagnostics {
-        text.push_str(&format!("DIAGNOSTIC: {} ({message})\n", diagnostic_text(*name)));
+        text.push_str(&format!(
+            "DIAGNOSTIC: {} ({message})\n",
+            diagnostic_text(*name)
+        ));
     }
     for (statistic, value) in &result.statistics {
         text.push_str(&format!("STATISTIC: {} = {value}\n", statistic.name()));
@@ -310,14 +319,13 @@ fn describe_command_outcome(outcome: &CommandOutcome) -> String {
     text
 }
 
-fn write_command_outcome(
-    folder: &Path,
-    test: &Path,
-    run: &RunDirective,
-    outcome: &CommandOutcome,
-) {
+fn write_command_outcome(folder: &Path, test: &Path, run: &RunDirective, outcome: &CommandOutcome) {
     let root = test_root();
-    let mut name = test.strip_prefix(&root).unwrap_or(test).as_os_str().to_owned();
+    let mut name = test
+        .strip_prefix(&root)
+        .unwrap_or(test)
+        .as_os_str()
+        .to_owned();
     name.push(format!(".{}.txt", run.prefix));
     let target = folder.join(name);
     let written = std::fs::create_dir_all(target.parent().unwrap_or(folder))
@@ -348,7 +356,9 @@ fn record_command_outcome(
             }
         }
         CommandOutcome::Failed(why) => {
-            outcome.failures.push(create_failure(command, run.line, why));
+            outcome
+                .failures
+                .push(create_failure(command, run.line, why));
         }
     }
 }
@@ -412,7 +422,10 @@ impl FinishedRun<'_> {
                 .count();
             let why = if count == 0 {
                 format!("{name} was not reported")
-            } else if expected.count.is_some_and(|listed_count| listed_count as usize != count) {
+            } else if expected
+                .count
+                .is_some_and(|listed_count| listed_count as usize != count)
+            {
                 format!("{name} was reported {count} times")
             } else {
                 continue;
@@ -481,7 +494,10 @@ mod tests {
         let output = "module m0 path=\"a\" functionText=\"// CHECK-NOT: Call\\x0af(\\x22x\\x22);\"\n  v0 = Call\nmodule m1 functionText=\"\" kind=Data\n";
         let hidden = "module m0 path=\"a\" functionText=\"\"\n  v0 = Call\nmodule m1 functionText=\"\" kind=Data\n";
         assert_eq!(hide_function_texts(output), hidden);
-        assert_eq!(hide_function_texts("function f0 {\n}\n"), "function f0 {\n}\n");
+        assert_eq!(
+            hide_function_texts("function f0 {\n}\n"),
+            "function f0 {\n}\n"
+        );
     }
 
     fn failure_lines(failures: &[TestFailure]) -> Vec<u32> {
@@ -506,7 +522,9 @@ mod tests {
         let path = test_root().join("commands").join(PROGRAM_WITH_IMPORT);
         let outcome = OnceLock::new();
         for_each_parallel(1, 1, |_| {
-            let is_first_run = outcome.set(run_test_text(&path, directives.to_owned())).is_ok();
+            let is_first_run = outcome
+                .set(run_test_text(&path, directives.to_owned()))
+                .is_ok();
             assert!(is_first_run);
         });
         let outcome: TestOutcome = outcome.into_inner().expect("the run has finished");
@@ -562,7 +580,10 @@ mod tests {
                 let mut folders = path.split('/');
                 let name = folders.next_back().expect("a path has a name");
                 assert!(is_test_file_name(name), "{path}");
-                assert!(!folders.any(|folder| FOLDERS_WITHOUT_TESTS.contains(&folder)), "{path}");
+                assert!(
+                    !folders.any(|folder| FOLDERS_WITHOUT_TESTS.contains(&folder)),
+                    "{path}"
+                );
             }
         }
     }
@@ -689,7 +710,10 @@ mod tests {
             ..CommandResult::default()
         };
         assert_eq!(finished_run_failures(listed, &without_engine), [3]);
-        assert_eq!(finished_run_failures(listed, &CommandResult::default()), [2, 3]);
+        assert_eq!(
+            finished_run_failures(listed, &CommandResult::default()),
+            [2, 3]
+        );
     }
 
     #[test]

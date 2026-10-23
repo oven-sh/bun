@@ -21,7 +21,14 @@ type Case = {
 };
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { strict: true, module: "preserve", moduleResolution: "bundler", resolveJsonModule: true, allowJs: true, types: [] },
+  compilerOptions: {
+    strict: true,
+    module: "preserve",
+    moduleResolution: "bundler",
+    resolveJsonModule: true,
+    allowJs: true,
+    types: [],
+  },
   exclude: ["plugin.ts", "register.ts"],
 });
 
@@ -121,7 +128,15 @@ const cases: Record<string, Case> = {
   "--tsconfig-override": {
     files: {
       "main.ts": `import { a } from "@lib/a"; console.log(a);`,
-      "other.json": JSON.stringify({ compilerOptions: { strict: true, module: "preserve", moduleResolution: "bundler", types: [], paths: { "@lib/*": ["./other/*"] } } }),
+      "other.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "preserve",
+          moduleResolution: "bundler",
+          types: [],
+          paths: { "@lib/*": ["./other/*"] },
+        },
+      }),
       "other/a.ts": `export const a = "other";`,
     },
     flags: ["--tsconfig-override", "./other.json"],
@@ -156,17 +171,51 @@ describe.concurrent("compile/aot/plugins and flags of bun build on the command l
             rmSync(told, { force: true });
             const env = { ...bunEnv, ...it.env, TOLD: told };
             const executable = join(folder, how + (isWindows ? ".exe" : ""));
-            const command = [bunExe(), "build", "--compile", ...(how === "aot" ? ["--aot"] : []), ...(it.flags ?? []), "./main.ts", "--outfile", executable];
+            const command = [
+              bunExe(),
+              "build",
+              "--compile",
+              ...(how === "aot" ? ["--aot"] : []),
+              ...(it.flags ?? []),
+              "./main.ts",
+              "--outfile",
+              executable,
+            ];
             const build = await spawned(command, folder, env);
-            expect({ how, stderr: build.stderr, exitCode: build.exitCode }).toEqual({ how, stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+            expect({ how, stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+              how,
+              stderr: expect.not.stringMatching(/^error\b/m),
+              exitCode: 0,
+            });
             const lines = existsSync(told) ? readFileSync(told, "utf8").split("\n").filter(Boolean).sort() : [];
-            const ran = await spawned([executable], folder, { ...env, ...it.runEnv, ...(how === "aot" && !it.interprets ? { BUN_JSC_crashIfInterpreterIsUsed: "1" } : {}) });
-            results.push({ told: lines, stdout: ran.stdout, stderr: ran.exitCode === 0 ? "" : ran.stderr, exitCode: ran.exitCode, signal: ran.signal });
+            const ran = await spawned([executable], folder, {
+              ...env,
+              ...it.runEnv,
+              ...(how === "aot" && !it.interprets ? { BUN_JSC_crashIfInterpreterIsUsed: "1" } : {}),
+            });
+            results.push({
+              told: lines,
+              stdout: ran.stdout,
+              stderr: ran.exitCode === 0 ? "" : ran.stderr,
+              exitCode: ran.exitCode,
+              signal: ran.signal,
+            });
           }
           const [plain, aot] = results;
-          expect(plain).toMatchObject({ exitCode: 0, signal: null, ...(it.prints === undefined ? {} : { stdout: it.prints }) });
+          expect(plain).toMatchObject({
+            exitCode: 0,
+            signal: null,
+            ...(it.prints === undefined ? {} : { stdout: it.prints }),
+          });
           if (it.refusedAtStart === undefined) expect(aot).toEqual(plain);
-          else expect(aot).toEqual({ told: plain.told, stdout: "", stderr: expect.stringContaining(it.refusedAtStart), exitCode: 1, signal: null });
+          else
+            expect(aot).toEqual({
+              told: plain.told,
+              stdout: "",
+              stderr: expect.stringContaining(it.refusedAtStart),
+              exitCode: 1,
+              signal: null,
+            });
         }),
       600_000,
     );

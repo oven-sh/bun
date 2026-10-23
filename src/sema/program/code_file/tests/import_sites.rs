@@ -113,7 +113,13 @@ fn jsx_runtime_is_followed_like_import() {
         let parsed = load(context, "/p/a.tsx");
         let sites = parsed.code.analyzed.analysis.import_sites;
         let kinds: Vec<ImportSiteKind> = sites.iter().map(|site| site.kind).collect();
-        assert_eq!(kinds, [ImportSiteKind::JsxRuntime, ImportSiteKind::Import(ImportId(0))]);
+        assert_eq!(
+            kinds,
+            [
+                ImportSiteKind::JsxRuntime,
+                ImportSiteKind::Import(ImportId(0))
+            ]
+        );
         let runtime = "/p/node_modules/react/jsx-dev-runtime.js";
         assert_eq!(parsed.code.resolutions, [file(runtime), file("/p/b.ts")]);
         let runtime = Target {
@@ -129,7 +135,10 @@ fn file_candidates_of_pattern_are_targets() {
     let host = StatementsHost {
         runtime_modules: node_modules(),
         ..host_of(&[
-            ("/p/a.ts", "import(\"./plugins/\" + name)\nrequire(\"node:\" + name)"),
+            (
+                "/p/a.ts",
+                "import(\"./plugins/\" + name)\nrequire(\"node:\" + name)",
+            ),
             ("/p/plugins/x.ts", ""),
             ("/p/plugins/y.ts", ""),
             ("/p/other.ts", ""),
@@ -154,16 +163,18 @@ fn file_candidates_of_pattern_are_targets() {
             spelling("./plugins/y.jsx", 1),
             spelling("./plugins/y.ts", 1),
         ];
-        let expected = [(&files, &spellings[..]), (&host_modules, &[][..])].map(
-            |(candidates, spellings)| {
+        let expected =
+            [(&files, &spellings[..]), (&host_modules, &[][..])].map(|(candidates, spellings)| {
                 SiteResolution::Computed(ComputedResolution::Candidates {
                     candidates,
                     spellings,
                 })
-            },
-        );
+            });
         assert_eq!(parsed.code.resolutions, expected);
-        assert_eq!(targets_of(&parsed), [target("/p/plugins/x.ts"), target("/p/plugins/y.ts")]);
+        assert_eq!(
+            targets_of(&parsed),
+            [target("/p/plugins/x.ts"), target("/p/plugins/y.ts")]
+        );
         assert!(parsed.code.targets_by_specifier.is_empty());
     });
 }
@@ -239,7 +250,10 @@ fn macro_import_statement_is_erased() {
         assert_eq!(targets_of(&parsed), [target("/p/m.ts")]);
     });
     let requests = host.loader_requests();
-    assert_eq!(requests, [loader_request("/p/m.ts", CodeImportKind::Import)]);
+    assert_eq!(
+        requests,
+        [loader_request("/p/m.ts", CodeImportKind::Import)]
+    );
 }
 
 #[test]
@@ -319,7 +333,10 @@ fn entry_point_loader_is_requested_as_entry_point() {
         assert_eq!(context.entry_points.len(), 1);
     });
     let requests = host.loader_requests();
-    assert_eq!(requests, [loader_request("/p/a.ts", CodeImportKind::EntryPoint)]);
+    assert_eq!(
+        requests,
+        [loader_request("/p/a.ts", CodeImportKind::EntryPoint)]
+    );
 }
 
 #[test]
@@ -351,7 +368,10 @@ fn get_builtin_module_loads_host_modules_only() {
             ..code_file("/bun/os.ts")
         };
         let source = SiteResolution::Constant(CodeResolution::File(source));
-        assert_eq!(parsed.code.resolutions, [host_module(3), source, ERASED, ERASED]);
+        assert_eq!(
+            parsed.code.resolutions,
+            [host_module(3), source, ERASED, ERASED]
+        );
         let expected = Target {
             host_module: Some(HostModuleId(7)),
             increases_depth: true,
@@ -441,7 +461,10 @@ fn implied_imports_follow_site_targets() {
             host_module: Some(HostModuleId(7)),
             ..target("/bun/y.ts")
         };
-        assert_eq!(targets_of(&parsed), [target("/p/b.ts"), target("/p/x.ts"), source]);
+        assert_eq!(
+            targets_of(&parsed),
+            [target("/p/b.ts"), target("/p/x.ts"), source]
+        );
 
         assert!(load(context, "/p/b.ts").code.implied.is_empty());
     });
@@ -450,14 +473,20 @@ fn implied_imports_follow_site_targets() {
 #[test]
 fn first_target_of_specifier_and_kind_is_recorded() {
     let host = host_of(&[
-        ("/p/a.js", "import \"./b.js\"\nimport \"./c.js\"\nimport \"./b.js\"\nrequire(\"./b.js\")"),
+        (
+            "/p/a.js",
+            "import \"./b.js\"\nimport \"./c.js\"\nimport \"./b.js\"\nrequire(\"./b.js\")",
+        ),
         ("/p/b.js", ""),
         ("/p/c.js", ""),
     ]);
     with_context(&host, |context| {
         let parsed = load(context, "/p/a.js");
         assert_eq!(parsed.code.targets.len(), 4);
-        let (b, c) = (context.atoms.intern(b"./b.js"), context.atoms.intern(b"./c.js"));
+        let (b, c) = (
+            context.atoms.intern(b"./b.js"),
+            context.atoms.intern(b"./c.js"),
+        );
         let mut recorded: Vec<((Atom, CodeImportKind), u32)> = (parsed.code.targets_by_specifier)
             .iter()
             .map(|(&key, &target)| (key, target))

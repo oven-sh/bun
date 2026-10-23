@@ -18,7 +18,10 @@ export async function delayed<T>(answer: T): Promise<T> {
 }
 `;
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, types: [] }, include: ["*.ts"] });
+const tsconfig = JSON.stringify({
+  compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, types: [] },
+  include: ["*.ts"],
+});
 
 type Timing = { PLUGIN_DELAY_MS: string; PLUGIN_ORDER?: string; GOMAXPROCS?: string };
 
@@ -30,14 +33,30 @@ async function buildWith(folder: string, timing: Timing) {
 }
 
 async function expectSameExecutable(files: Record<string, string>, timings: Timing[], prints: string) {
-  using dir = tempDir("aot-plugin-timing", { "build.ts": build, "delayed.ts": delayed, "tsconfig.json": tsconfig, ...files });
+  using dir = tempDir("aot-plugin-timing", {
+    "build.ts": build,
+    "delayed.ts": delayed,
+    "tsconfig.json": tsconfig,
+    ...files,
+  });
   const folder = String(dir);
   const hashes: string[] = [];
   for (const timing of timings) {
     const { executable, built, hash } = await buildWith(folder, timing);
-    expect({ timing, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ timing, stdout: expect.any(String), stderr: expect.any(String), exitCode: 0 });
+    expect({ timing, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+      timing,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
     const ran = await spawned([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect({ timing, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ timing, stdout: prints, stderr: expect.any(String), exitCode: 0, signal: null });
+    expect({ timing, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      timing,
+      stdout: prints,
+      stderr: expect.any(String),
+      exitCode: 0,
+      signal: null,
+    });
     hashes.push(hash);
   }
   expect(hashes).toEqual(hashes.map(() => hashes[0]));
@@ -287,7 +306,11 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
     600_000,
   );
   for (const [name, { files, prints }] of Object.entries(cases)) {
-    test(name, () => slot(() => expectSameExecutable(files, [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "400" }], prints)), 600_000);
+    test(
+      name,
+      () => slot(() => expectSameExecutable(files, [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "400" }], prints)),
+      600_000,
+    );
   }
   test(
     "a plugin that fails late fails the build",
@@ -304,7 +327,11 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
         });
         for (const PLUGIN_DELAY_MS of ["0", "400"]) {
           const { built } = await buildWith(String(dir), { PLUGIN_DELAY_MS });
-          expect({ PLUGIN_DELAY_MS, stdout: built.stdout, exitCode: built.exitCode }).toEqual({ PLUGIN_DELAY_MS, stdout: expect.stringContaining("the plugin gave up"), exitCode: 1 });
+          expect({ PLUGIN_DELAY_MS, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
+            PLUGIN_DELAY_MS,
+            stdout: expect.stringContaining("the plugin gave up"),
+            exitCode: 1,
+          });
         }
       }),
     600_000,

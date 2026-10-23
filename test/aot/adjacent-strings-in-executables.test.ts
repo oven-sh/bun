@@ -24,16 +24,36 @@ describe.skipIf(!!unsupported)("compile/aot/adjacent-strings-in-executables", ()
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   // TODO: the pool of texts puts nothing between one text and the next.
-  test.todo("two texts do not read as one word", async () => {
-    await slot(async () => {
-      const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--minify", "--no-compile-function-source", "./entry.ts", "--outfile", executable], folder, bunEnv));
-      const run = await spawned([executable], folder, bunEnv);
-      const bytes = readFileSync(executable);
-      rmSync(executable);
-      expect(run.stdout).toBe("firstConstantOfTwo secondConstantOfTwo [ undefined, undefined ]\n");
-      expect(bytes.includes("firstConstantOfTwo", 0, "latin1")).toBe(true);
-      expect(spelledByNeighbors.filter(text => bytes.includes(text, 0, "latin1"))).toEqual([]);
-    });
-  }, 600_000);
+  test.todo(
+    "two texts do not read as one word",
+    async () => {
+      await slot(async () => {
+        const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
+        built(
+          await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              "--minify",
+              "--no-compile-function-source",
+              "./entry.ts",
+              "--outfile",
+              executable,
+            ],
+            folder,
+            bunEnv,
+          ),
+        );
+        const run = await spawned([executable], folder, bunEnv);
+        const bytes = readFileSync(executable);
+        rmSync(executable);
+        expect(run.stdout).toBe("firstConstantOfTwo secondConstantOfTwo [ undefined, undefined ]\n");
+        expect(bytes.includes("firstConstantOfTwo", 0, "latin1")).toBe(true);
+        expect(spelledByNeighbors.filter(text => bytes.includes(text, 0, "latin1"))).toEqual([]);
+      });
+    },
+    600_000,
+  );
 });

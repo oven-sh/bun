@@ -19,7 +19,15 @@ pub fn check_and_lower<'s, T: Send>(
     lower: &(dyn Fn(&mut Checker<'_, 's>, FileId) -> Option<T> + Sync),
 ) -> CheckedProgram<T> {
     let note_commit = &|_: FileId, _: &T| {};
-    check_and_lower_noting_commits(loaded, host, request, roles, files_to_lower, lower, note_commit)
+    check_and_lower_noting_commits(
+        loaded,
+        host,
+        request,
+        roles,
+        files_to_lower,
+        lower,
+        note_commit,
+    )
 }
 
 pub fn check_and_lower_noting_commits<'s, T: Send>(
@@ -43,8 +51,11 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let is_read_by_every_task = |&file: &FileId| {
         files.module(file).is_leaf && BuiltinTypeSymbols::can_list_declarations_of(files, file)
     };
-    let mut read_by_every_task: Vec<FileId> =
-        to_check.iter().copied().filter(is_read_by_every_task).collect();
+    let mut read_by_every_task: Vec<FileId> = to_check
+        .iter()
+        .copied()
+        .filter(is_read_by_every_task)
+        .collect();
     read_by_every_task.shared_sort_unstable();
     let report = run_queue(QueuePass {
         loaded,
@@ -100,8 +111,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
 fn is_reported_with_roles(roles: &RoleDecision, diagnostic: &Diagnostic) -> bool {
     match diagnostic.file {
         Some(file) => roles.is_checked(file),
-        None => (roles.diagnostics.iter())
-            .any(|known| equal_diagnostics(&known.diagnostic, diagnostic)),
+        None => {
+            (roles.diagnostics.iter()).any(|known| equal_diagnostics(&known.diagnostic, diagnostic))
+        }
     }
 }
 
@@ -133,7 +145,9 @@ fn files_to_check(
             && !loaded.origin(file).can_lose_trust()
             && requested(file) != Requested::Types
             && is_checked_by_kind(files, file)
-            && !request.left_out_bodies.is_some_and(|left_out| left_out.contains_file(file))
+            && !request
+                .left_out_bodies
+                .is_some_and(|left_out| left_out.contains_file(file))
     };
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
     let mut to_check: Vec<FileId> = file_ids

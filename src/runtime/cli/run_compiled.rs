@@ -54,6 +54,7 @@ pub(crate) fn reject(ctx: &ContextData, target: NonFileTarget<'_>) {
 
 #[cold]
 #[inline(never)]
+#[allow(clippy::needless_pass_by_value)] // the last thing the process does
 fn exit_non_file_target(target: NonFileTarget<'_>) -> ! {
     match target {
         NonFileTarget::PackageScript(name) => Output::err_generic(

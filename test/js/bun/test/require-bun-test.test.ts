@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import * as imported from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import Module, { createRequire } from "node:module";
 import { join } from "node:path";

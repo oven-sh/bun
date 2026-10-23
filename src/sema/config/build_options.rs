@@ -123,13 +123,18 @@ fn load_referenced_projects(
     let is_case_sensitive = host.is_case_sensitive();
     let paths_of = |project: &Project| -> Vec<Vec<u8>> {
         let references = project.references.iter().rev();
-        references.map(|it| resolve_config_file_name_of_project_reference(&it.path)).collect()
+        references
+            .map(|it| resolve_config_file_name_of_project_reference(&it.path))
+            .collect()
     };
     let mut seen = vec![project.config_path.clone()];
     let mut pending = paths_of(project);
     let mut projects = Vec::new();
     while let Some(path) = pending.pop() {
-        if seen.iter().any(|it| is_same_path(it, &path, is_case_sensitive)) {
+        if seen
+            .iter()
+            .any(|it| is_same_path(it, &path, is_case_sensitive))
+        {
             continue;
         }
         seen.push(path.clone());
@@ -143,21 +148,35 @@ fn load_referenced_projects(
 
 // Each with its root files.
 pub fn load_referenced_projects_for_build(host: &dyn Host, solution: &Project) -> Vec<Project> {
-    load_referenced_projects(host, solution, |path| load_for_build(host, &Session::new(), path).ok())
+    load_referenced_projects(host, solution, |path| {
+        load_for_build(host, &Session::new(), path).ok()
+    })
 }
 
 // The sources of a referenced project stand in for the declaration files that it would write, so nothing has to be built first: for each that writes into a directory of its own, that directory and the directory of sources that it mirrors.
-fn find_outputs_of_referenced_projects(host: &dyn Host, project: &Project) -> Vec<(Vec<u8>, Vec<u8>)> {
+fn find_outputs_of_referenced_projects(
+    host: &dyn Host,
+    project: &Project,
+) -> Vec<(Vec<u8>, Vec<u8>)> {
     let referenced = load_referenced_projects(host, project, |path| {
         let (session, mut errors) = (Session::new(), Vec::new());
         let mut raw = parse_config(host, &session, path, &mut errors)?;
         skip_root_files(&mut raw);
-        Some(project_from_raw(host, &session, path, dirname::<Posix>(path), raw, errors))
+        Some(project_from_raw(
+            host,
+            &session,
+            path,
+            dirname::<Posix>(path),
+            raw,
+            errors,
+        ))
     });
     let outputs = referenced.iter().filter_map(|referenced| {
         let options = &referenced.options;
         let written = [&options.declaration_dir, &options.out_dir];
-        let output_directory = written.into_iter().find(|directory| !directory.is_empty())?;
+        let output_directory = written
+            .into_iter()
+            .find(|directory| !directory.is_empty())?;
         let root_directory = match options.root_dir.is_empty() {
             true => dirname::<Posix>(&referenced.config_path),
             false => &options.root_dir[..],
@@ -196,10 +215,15 @@ fn load(
     let base = dirname::<Posix>(path);
     merge_compiler_options(&mut raw.compiler, compile_build_overrides(), &[]);
     exclude_output_directories(&mut raw, base);
-    raw.compiler.retain(|option| !OUTPUT_OPTIONS.contains(&&option.0[..]));
-    raw.compiler.retain(|option| !is_removed_and_means_nothing(option));
+    raw.compiler
+        .retain(|option| !OUTPUT_OPTIONS.contains(&&option.0[..]));
+    raw.compiler
+        .retain(|option| !is_removed_and_means_nothing(option));
     let names_output_option = |error: &ConfigError| {
-        error.args.first().is_some_and(|option| OUTPUT_OPTIONS.contains(&&option[..]))
+        error
+            .args
+            .first()
+            .is_some_and(|option| OUTPUT_OPTIONS.contains(&&option[..]))
     };
     errors.retain(|error| error.code != UNKNOWN_OPTION_CODE || !names_output_option(error));
     let base_url = take_base_url(&mut raw.compiler, base);

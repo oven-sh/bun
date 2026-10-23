@@ -254,10 +254,17 @@ mod tests {
         assert_eq!(resolve(&sources, "./Foo.ts", Import), "/p/foo.ts");
         assert_eq!(resolve(&sources, "./foo.ts", Import), "/p/foo.ts");
         assert_eq!(resolve(&sources, "./Common.cjs", Require), "/p/common.cjs");
-        assert_eq!(resolve(&sources, "./Lib/INNER.mjs", Import), "/p/Lib/inner.mjs");
+        assert_eq!(
+            resolve(&sources, "./Lib/INNER.mjs", Import),
+            "/p/Lib/inner.mjs"
+        );
         let not_found = resolve(&sources, "./absent.ts", Import);
         for specifier in ["./FOO", "./Foo", "./lib/inner.mjs", "./lib/Inner.mjs"] {
-            assert_eq!(resolve(&sources, specifier, Import), not_found, "{specifier}");
+            assert_eq!(
+                resolve(&sources, specifier, Import),
+                not_found,
+                "{specifier}"
+            );
         }
 
         let both = empty_files(&["/p/foo.ts", "/p/Foo.ts"]);
@@ -420,7 +427,10 @@ mod tests {
 
     #[test]
     fn main_directory_loads_index() {
-        let host = package(r#"{"main": "./lib"}"#, &["/p/x/lib/index.js", "/p/x/index.js"]);
+        let host = package(
+            r#"{"main": "./lib"}"#,
+            &["/p/x/lib/index.js", "/p/x/index.js"],
+        );
         assert_eq!(resolve_package(&host, Import), "/p/x/lib/index.js");
     }
 
@@ -429,7 +439,11 @@ mod tests {
         let files = &["/p/x/lib.js", "/p/x/lib/index.js"];
         for field in ["main", "module", "jsnext:main"] {
             let directory = package(&format!(r#"{{"{field}": "./lib/"}}"#), files);
-            assert_eq!(resolve_package(&directory, Import), "/p/x/lib/index.js", "{field}");
+            assert_eq!(
+                resolve_package(&directory, Import),
+                "/p/x/lib/index.js",
+                "{field}"
+            );
 
             let file = package(&format!(r#"{{"{field}": "./lib"}}"#), files);
             assert_eq!(resolve_package(&file, Import), "/p/x/lib.js", "{field}");

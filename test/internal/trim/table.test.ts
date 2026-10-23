@@ -99,13 +99,18 @@ function large(): TrimTable {
   while (edges.size < 40) {
     const [from, to] = [anyFeature(), anyFeature()];
     const strength = edgeStrengths[below(edgeStrengths.length)]!;
-    if (from !== to) edges.set(`${from},${to}`, { from, to, strength, isFollowed: strength === "Reference" || below(2) === 0 });
+    if (from !== to)
+      edges.set(`${from},${to}`, { from, to, strength, isFollowed: strength === "Reference" || below(2) === 0 });
   }
 
   const letter = () => String.fromCharCode(97 + below(26));
-  const languageNames = new Set(Array.from({ length: 60 }, () => letter() + letter() + (below(3) === 0 ? letter() : "")));
+  const languageNames = new Set(
+    Array.from({ length: 60 }, () => letter() + letter() + (below(3) === 0 ? letter() : "")),
+  );
   const groupCount = 25;
-  const icuLanguages = [...languageNames].sort().map((name, index) => ({ name, group: index < groupCount ? index : below(groupCount) }));
+  const icuLanguages = [...languageNames]
+    .sort()
+    .map((name, index) => ({ name, group: index < groupCount ? index : below(groupCount) }));
 
   let end = 0x200000;
   const ranges = Array.from({ length: 3000 }, () => {
@@ -340,7 +345,10 @@ describe("encodeTable and decodeTable", () => {
     ["feature index 511", { ...small, sets: [[0], [0, 511], [1]] }],
     ["an edge to feature index 511", { ...small, edges: [{ ...small.edges[0]!, to: 511 }] }],
     ["locale group 65,534", { ...small, icuLanguages: [...small.icuLanguages, { name: "sv", group: 65534 }] }],
-    ["a language whose group no run has", { ...small, icuLanguages: [...small.icuLanguages, { name: "sv", group: 2 }] }],
+    [
+      "a language whose group no run has",
+      { ...small, icuLanguages: [...small.icuLanguages, { name: "sv", group: 2 }] },
+    ],
     ["two languages in one group", { ...small, icuLanguages: [...small.icuLanguages, { name: "sv", group: 1 }] }],
   ])("encodeTable accepts %s", (_name, table) => {
     expect(decodeTable(encodeTable(table))).toEqual(table);

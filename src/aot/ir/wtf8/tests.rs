@@ -117,11 +117,23 @@ fn search_for_pair_starts_at_offset() {
 
 #[test]
 fn pair_decodes_only_from_high_then_low() {
-    assert_eq!(decode_surrogate_pair(SURROGATE_PAIR), Some(JOINED_CODE_POINT));
+    assert_eq!(
+        decode_surrogate_pair(SURROGATE_PAIR),
+        Some(JOINED_CODE_POINT)
+    );
     assert_eq!(decode_surrogate_pair(HIGH_SURROGATE), None);
-    assert_eq!(decode_surrogate_pair(&[LOW_SURROGATE, HIGH_SURROGATE].concat()), None);
-    assert_eq!(decode_surrogate_pair(&[HIGH_SURROGATE, b"a"].concat()), None);
-    assert_eq!(decode_surrogate_pair(&[JOINED_PAIR, LOW_SURROGATE].concat()), None);
+    assert_eq!(
+        decode_surrogate_pair(&[LOW_SURROGATE, HIGH_SURROGATE].concat()),
+        None
+    );
+    assert_eq!(
+        decode_surrogate_pair(&[HIGH_SURROGATE, b"a"].concat()),
+        None
+    );
+    assert_eq!(
+        decode_surrogate_pair(&[JOINED_PAIR, LOW_SURROGATE].concat()),
+        None
+    );
     assert_eq!(decode_surrogate_pair(b""), None);
 }
 
@@ -155,7 +167,11 @@ fn surrogates_decode_as_three_bytes() {
         (b"\xED\xBF\xBF", 0xDFFF),
     ];
     for (bytes, code_point) in decoded {
-        assert_eq!(decode_wtf8_code_point(bytes), Some((code_point, 3)), "{bytes:x?}");
+        assert_eq!(
+            decode_wtf8_code_point(bytes),
+            Some((code_point, 3)),
+            "{bytes:x?}"
+        );
     }
     assert_eq!(decode_wtf8_code_point(SURROGATE_PAIR), Some((0xD83D, 3)));
 }

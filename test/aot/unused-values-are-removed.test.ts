@@ -50,17 +50,38 @@ const removed = {
 
 // Each stays today, and why.
 const stillThere = {
-  "a read of a literal under a key nobody knows": [`const u = { a: 1 }; u[process.argv[9]];`, "the read of process.argv is unknown code"],
-  "an object rest pattern": [`const { a, ...rest } = { a: 1, b: 2 };`, "CopyDataProperties is unknown code whatever it copies"],
-  "for-of over a literal": [`for (const x of [1, 2, 3]) { x + 1; }`, "a loop without effects whose bound is visible stays"],
-  "map with a callback without effects": [`const u = [1, 2, 3].map((x) => x * 2);`, "a loop without effects whose bound is visible stays"],
+  "a read of a literal under a key nobody knows": [
+    `const u = { a: 1 }; u[process.argv[9]];`,
+    "the read of process.argv is unknown code",
+  ],
+  "an object rest pattern": [
+    `const { a, ...rest } = { a: 1, b: 2 };`,
+    "CopyDataProperties is unknown code whatever it copies",
+  ],
+  "for-of over a literal": [
+    `for (const x of [1, 2, 3]) { x + 1; }`,
+    "a loop without effects whose bound is visible stays",
+  ],
+  "map with a callback without effects": [
+    `const u = [1, 2, 3].map((x) => x * 2);`,
+    "a loop without effects whose bound is visible stays",
+  ],
   "filter and reduce with callbacks without effects": [
     `const u = [1, 2, 3].filter((x) => x > 1).reduce((s, x) => s + x, 0);`,
     "the summaries of the library functions do not know their operands",
   ],
-  "Object.assign onto a fresh literal": [`const u = Object.assign({}, { a: 1 });`, "a store by a built-in into a literal is unknown code"],
-  "Object.freeze of a fresh literal": [`const u = Object.freeze({ a: 1 });`, "a terminator that writes its fresh operand stays"],
-  "Array.from an array-like literal": [`const u = Array.from({ length: 3 });`, "the summary of the library function does not know its operand"],
+  "Object.assign onto a fresh literal": [
+    `const u = Object.assign({}, { a: 1 });`,
+    "a store by a built-in into a literal is unknown code",
+  ],
+  "Object.freeze of a fresh literal": [
+    `const u = Object.freeze({ a: 1 });`,
+    "a terminator that writes its fresh operand stays",
+  ],
+  "Array.from an array-like literal": [
+    `const u = Array.from({ length: 3 });`,
+    "the summary of the library function does not know its operand",
+  ],
   "JSON.parse of a constant": [`const u = JSON.parse("{\\"a\\":1}");`, "nothing parses the text at build time"],
   "an instance of a class of the program": [`class U { n = 1; } const u = new U();`, "NewClass stays without a use"],
   "Promise.resolve of a number": [`const u = Promise.resolve(1);`, "the store into the fresh promise stays"],

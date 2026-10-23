@@ -5,8 +5,8 @@ use crate::ir::{FunctionKey, PropertyKeyId};
 use crate::link::program_keys::{InProject, ProgramModule};
 use crate::link::testing::{
     Prepared, Projects, SHARED_NAME_IMPORTERS, application_file, define_test_function, find_file,
-    find_synthetic_export, in_application, prepare, reverse, test_class_key, test_function_key,
-    link_sources_without_bun_modules, test_object_type_key, test_variable_key, unit_in,
+    find_synthetic_export, in_application, link_sources_without_bun_modules, prepare, reverse,
+    test_class_key, test_function_key, test_object_type_key, test_variable_key, unit_in,
     with_projects, with_projects_without_bun_modules, with_test_files,
 };
 use crate::lower::{Fragment, FragmentBuilder, ModuleFragment};
@@ -48,10 +48,7 @@ fn layout_site(prepared: &Prepared, key: ProgramLayoutKey) -> Option<DefinitionS
     prepared.definitions.layouts[merged.expect("no unit declares the layout") as usize]
 }
 
-fn variable_definition(
-    prepared: &Prepared,
-    key: ProgramVariableKey,
-) -> Option<VariableDefinition> {
+fn variable_definition(prepared: &Prepared, key: ProgramVariableKey) -> Option<VariableDefinition> {
     let merged = prepared.variables.find(&key);
     prepared.definitions.variables[merged.expect("nothing declares the variable") as usize]
 }
@@ -98,7 +95,10 @@ fn variable_fragment(file: FileId, key: VariableKey) -> Fragment {
 }
 
 fn path_source_index(projects: &Projects<'_, '_>, modules: &ModuleTable) -> u32 {
-    let file = projects.runtime.sources.runtime_module_file(RuntimeModule::NodePath);
+    let file = projects
+        .runtime
+        .sources
+        .runtime_module_file(RuntimeModule::NodePath);
     modules.index_of(ProgramModule::File(ProgramFile {
         project: ProjectId::Runtime,
         file: file.expect("the runtime project has no source of node:path"),
@@ -165,7 +165,10 @@ fn second_definition_in_one_file_conflicts() {
         let conflict = (ProgramKey::Function(in_application(key)), files);
         assert_eq!(definition_conflicts(&prepared.errors), [conflict]);
         let first_site = DefinitionSite { unit: 0, index: 0 };
-        assert_eq!(function_site(&prepared, in_application(key)), Some(first_site));
+        assert_eq!(
+            function_site(&prepared, in_application(key)),
+            Some(first_site)
+        );
     });
 }
 
@@ -251,7 +254,10 @@ fn what_is_said_again_of_a_type_is_dropped() {
         );
 
         let site = |unit, index| DefinitionSite { unit, index };
-        assert_eq!(layout_site(&prepared, in_application(key)), Some(site(0, 0)));
+        assert_eq!(
+            layout_site(&prepared, in_application(key)),
+            Some(site(0, 0))
+        );
         let merged = prepared.layouts.find(&in_application(key)).unwrap();
         let others = prepared.definitions.other_definitions_of(merged).iter();
         let others: Vec<DefinitionSite> = others.map(|&(_, site)| site).collect();
@@ -266,18 +272,28 @@ fn literals_written_alike_in_two_files_are_two_types() {
     let types = "export interface Context { n: number }\nexport interface Module { call: (done: () => void, context: Context) => Promise<number> }\nexport interface Command { name: string; load: () => Promise<Module> }\n";
     let command = "import type { Command } from './types';\nexport const command: Command = {\n  name: 'x',\n  load: () => Promise.resolve({ async call(done, context) { done(); return context.n + 1; } }),\n};\n";
     let main = "import { command as one } from './one';\nimport { command as two } from './two';\nexport const commands = [one, two];\n";
-    let files = [("main.ts", main), ("one.ts", command), ("two.ts", command), ("types.ts", types)];
+    let files = [
+        ("main.ts", main),
+        ("one.ts", command),
+        ("two.ts", command),
+        ("types.ts", types),
+    ];
     let linked = link_sources_without_bun_modules(&files).expect("the program links");
     let program = &linked.program;
     let is_call = |key: PropertyKeyId| {
         let text = program.property_keys.get(key).text;
         text.is_some_and(|text| program.strings.get(text) == b"call")
     };
-    let methods = program.layouts.iter().flat_map(|layout| &layout.fields).filter(|field| {
-        field.key.is_some_and(is_call) && field.flags.contains(FieldFlags::IS_METHOD)
-    });
-    let function_counts: Vec<usize> =
-        methods.map(|field| program.types.get(field.declared.ty).functions.len()).collect();
+    let methods = program
+        .layouts
+        .iter()
+        .flat_map(|layout| &layout.fields)
+        .filter(|field| {
+            field.key.is_some_and(is_call) && field.flags.contains(FieldFlags::IS_METHOD)
+        });
+    let function_counts: Vec<usize> = methods
+        .map(|field| program.types.get(field.declared.ty).functions.len())
+        .collect();
     assert_eq!(function_counts, [2]);
 }
 
@@ -354,7 +370,10 @@ fn only_link_defines_synthetic_exports() {
         let prepared = prepare_fragments(projects, [fragment]);
 
         let defined_key = synthetic_key(projects, ProjectId::Application, b"a");
-        let conflict = (ProgramKey::Variable(defined_key), [application_file(main); 2]);
+        let conflict = (
+            ProgramKey::Variable(defined_key),
+            [application_file(main); 2],
+        );
         assert_eq!(definition_conflicts(&prepared.errors), [conflict]);
 
         let exporter = ProgramModule::File(application_file(find_file(projects, "legacy.cjs")));
@@ -375,7 +394,10 @@ fn only_link_defines_synthetic_exports() {
 #[test]
 fn copy_is_defined_where_the_file_has_a_face() {
     let files = [
-        ("main.js", "import { a } from './legacy.cjs';\nconsole.log(a);\n"),
+        (
+            "main.js",
+            "import { a } from './legacy.cjs';\nconsole.log(a);\n",
+        ),
         ("legacy.cjs", "exports.a = 1;\n"),
     ];
     with_projects_without_bun_modules(&files, |projects| {
@@ -394,7 +416,11 @@ fn copy_is_defined_where_the_file_has_a_face() {
             }
             prepare_fragments(projects, [finish(fragment)])
         };
-        let has_face = projects.application.graph.face(ModuleRef::File(legacy)).is_some();
+        let has_face = projects
+            .application
+            .graph
+            .face(ModuleRef::File(legacy))
+            .is_some();
         if !has_face {
             assert_eq!(variable_definition(&declare(None), copy), None);
         }
@@ -435,7 +461,10 @@ fn synthetic_export_of_two_projects_is_one_variable() {
         let prepared = prepare(Vec::new(), projects);
         assert!(prepared.errors.is_empty(), "{:?}", prepared.errors);
         let shared = synthetic_key(projects, ProjectId::Application, b"shared");
-        assert_eq!(synthetic_key(projects, ProjectId::Runtime, b"shared"), shared);
+        assert_eq!(
+            synthetic_key(projects, ProjectId::Runtime, b"shared"),
+            shared
+        );
 
         let name = projects.application.loaded.files().atoms.intern(b"shared");
         let definition = VariableDefinition::SyntheticExport {
@@ -446,7 +475,12 @@ fn synthetic_export_of_two_projects_is_one_variable() {
         };
         assert_eq!(variable_definition(&prepared, shared), Some(definition));
         let definitions = prepared.definitions.variables.iter();
-        assert_eq!(definitions.filter(|&&other| other == Some(definition)).count(), 1);
+        assert_eq!(
+            definitions
+                .filter(|&&other| other == Some(definition))
+                .count(),
+            1
+        );
     });
 }
 
@@ -462,7 +496,11 @@ fn name_required_by_one_project_is_tested_at_run_time() {
     with_projects(&files, |projects| {
         let is_known_in = |project, name: &[u8]| {
             let id = find_synthetic_export(projects, project, name);
-            projects.get(project).graph.synthetic_export(id).is_known_member
+            projects
+                .get(project)
+                .graph
+                .synthetic_export(id)
+                .is_known_member
         };
         assert!(!is_known_in(ProjectId::Application, b"shared"));
         assert!(is_known_in(ProjectId::Runtime, b"shared"));
@@ -612,7 +650,10 @@ fn empty_layout_has_kind_of_its_key() {
         (untyped_literal, LayoutKind::Record),
         (LayoutKey::Container(symbol), LayoutKind::Container),
         (test_class_key(1, 0), LayoutKind::Instance),
-        (LayoutKey::ConstructorFunction(function), LayoutKind::Instance),
+        (
+            LayoutKey::ConstructorFunction(function),
+            LayoutKind::Instance,
+        ),
         (environment, LayoutKind::Environment),
     ];
     for (key, kind) in kinds {
@@ -646,7 +687,10 @@ fn synthetic_export_variable_is_untyped_and_uninitialized() {
         };
         let variable = synthetic_export_variable(name, module, writer);
         assert_eq!(variable, expected, "{writer:?}");
-        assert_eq!(variable.initialization, VariableInitialization::Uninitialized);
+        assert_eq!(
+            variable.initialization,
+            VariableInitialization::Uninitialized
+        );
     }
 }
 
@@ -660,5 +704,8 @@ fn name_that_a_body_stores_reads_undefined_until_then() {
         initialization: VariableInitialization::Undefined,
         ..Variable::default()
     };
-    assert_eq!(synthetic_export_variable(name, module, ExportWriter::Body), expected);
+    assert_eq!(
+        synthetic_export_variable(name, module, ExportWriter::Body),
+        expected
+    );
 }

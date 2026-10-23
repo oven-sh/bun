@@ -98,13 +98,17 @@ pub(in crate::lower) fn private_state_fields(
 ) -> SmallVec<[Field; 4]> {
     let inputs = file.inputs;
     let files = file.queries.files();
-    let states = inputs.known_helpers.private_states(files, inputs.modules, class.file);
+    let states = inputs
+        .known_helpers
+        .private_states(files, inputs.modules, class.file);
     let Some(states) = states else {
         return SmallVec::new();
     };
     let bound = files.bound(class.file);
     let states = states.states_of_class(class.class).iter();
-    let names: SmallVec<[Atom; 4]> = states.map(|state| bound.symbol(state.symbol).name).collect();
+    let names: SmallVec<[Atom; 4]> = states
+        .map(|state| bound.symbol(state.symbol).name)
+        .collect();
     let fields = names.into_iter().map(|name| Field {
         key: Some(layouts::private_key(file, layout, name)),
         declared: DeclaredType::untyped(),

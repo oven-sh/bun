@@ -35,7 +35,8 @@ impl ModuleSource {
             StoredText::Plain(text) => text,
             StoredText::Compressed { bytes, text } => text.get_or_init(|| {
                 let text = bun_zstd::decompress_alloc(bytes);
-                text.expect("the bytes come from `compress_append`").into_boxed_slice()
+                text.expect("the bytes come from `compress_append`")
+                    .into_boxed_slice()
             }),
         }
     }
@@ -152,9 +153,8 @@ mod tests {
     use bstr::BString;
 
     fn texts() -> SourceTexts {
-        let source = |path: &str, text: &str| {
-            Some(ModuleSource::new(path.as_bytes(), text.as_bytes()))
-        };
+        let source =
+            |path: &str, text: &str| Some(ModuleSource::new(path.as_bytes(), text.as_bytes()));
         SourceTexts::new(vec![
             source("/p/a.ts", "let a;\nconst \u{e9} = call();\n"),
             None,
@@ -188,7 +188,9 @@ mod tests {
         let texts = texts();
         let mut locator = ModuleLocator::new(&texts);
         let path_at = |locator: &mut ModuleLocator<'_>, position| {
-            locator.position_of(position).map(|found| BString::from(found.path))
+            locator
+                .position_of(position)
+                .map(|found| BString::from(found.path))
         };
         let first = path_at(&mut locator, at(0, 0));
         let second = path_at(&mut locator, at(2, 0));

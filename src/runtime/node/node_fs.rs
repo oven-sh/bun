@@ -192,7 +192,9 @@ const LARGE_FILE_BYTES: usize = 64 << 20;
 #[cfg(unix)]
 fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
-    let threads = usize::from(bun_core::get_thread_count()).min(buf.len() / MIN_BYTES_PER_THREAD).clamp(1, 8);
+    let threads = usize::from(bun_core::get_thread_count())
+        .min(buf.len() / MIN_BYTES_PER_THREAD)
+        .clamp(1, 8);
     let part_len = buf.len().div_ceil(threads).next_multiple_of(1 << 16);
     let read_part = |part: &mut [u8], position: u64| -> Maybe<usize> {
         let mut count = 0;
@@ -208,10 +210,14 @@ fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
         let mut parts = buf.chunks_mut(part_len).enumerate();
         let first = parts.next();
         let others: Vec<_> = parts
-            .map(|(index, part)| scope.spawn(move || read_part(part, position + (index * part_len) as u64)))
+            .map(|(index, part)| {
+                scope.spawn(move || read_part(part, position + (index * part_len) as u64))
+            })
             .collect();
         let first = first.map(|(_, part)| read_part(part, position));
-        let others = others.into_iter().map(|thread| thread.join().expect("a reader thread panicked"));
+        let others = others
+            .into_iter()
+            .map(|thread| thread.join().expect("a reader thread panicked"));
         first.into_iter().chain(others).collect()
     });
     let mut total = 0;
@@ -373,16 +379,26 @@ fn graph_behind_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph
 /// The executable holds read-only data.
 fn change_in_executable(path: &[u8], syscall: sys::Tag) -> Option<sys::Error> {
     let graph = graph_in_front_of_disk(path)?;
-    let errno = if graph.contains_file(path) || graph.find_dir(path) { E::EROFS } else { E::ENOENT };
+    let errno = if graph.contains_file(path) || graph.find_dir(path) {
+        E::EROFS
+    } else {
+        E::ENOENT
+    };
     Some(sys::Error::from_code(errno, syscall).with_path(path))
 }
 
 /// The same for what would make `path`: `if_there` if it is there already, ENOENT if the folder for it is not.
-pub(crate) fn creation_in_executable(path: &[u8], syscall: sys::Tag, if_there: E) -> Option<sys::Error> {
+pub(crate) fn creation_in_executable(
+    path: &[u8],
+    syscall: sys::Tag,
+    if_there: E,
+) -> Option<sys::Error> {
     let graph = graph_in_front_of_disk(path)?;
     let errno = if graph.contains_file(path) || graph.find_dir(path) {
         if_there
-    } else if graph.find_dir(bun_paths::dirname(strings::without_trailing_slash(path)).unwrap_or(b"/")) {
+    } else if graph
+        .find_dir(bun_paths::dirname(strings::without_trailing_slash(path)).unwrap_or(b"/"))
+    {
         E::EROFS
     } else {
         E::ENOENT
@@ -400,6 +416,7 @@ fn graph_may_answer_for(path: &[u8]) -> bool {
 }
 
 /// The disk has failed `stat` or `lstat` with `err`; `path` is what the system call was given.
+#[allow(clippy::needless_pass_by_value)] // handed on as the answer
 fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOrNotFound> {
     let written = args.path.slice();
     if graph_may_answer_for(path) || (written != path && graph_may_answer_for(written)) {
@@ -429,7 +446,9 @@ fn access_in_graph(
         return None;
     }
     if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
-        return Some(Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(path)));
+        return Some(Err(
+            sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(path)
+        ));
     }
     Some(Ok(Null))
 }
@@ -500,9 +519,20 @@ fn create_unnamed_file() -> Maybe<FD> {
         return Ok(fd);
     }
     let mut name_buffer = [0u8; 64];
-    let name = paths::fs::FileSystem::tmpname(b"bun-embedded-file", &mut name_buffer, bun_core::fast_random())
-        .expect("64 bytes hold a temporary name");
-    let path = bun_core::ZBox::from_vec([bun_resolver::fs::RealFS::tmpdir_path(), paths::SEP_STR.as_bytes(), name.as_bytes()].concat());
+    let name = paths::fs::FileSystem::tmpname(
+        b"bun-embedded-file",
+        &mut name_buffer,
+        bun_core::fast_random(),
+    )
+    .expect("64 bytes hold a temporary name");
+    let path = bun_core::ZBox::from_vec(
+        [
+            bun_resolver::fs::RealFS::tmpdir_path(),
+            paths::SEP_STR.as_bytes(),
+            name.as_bytes(),
+        ]
+        .concat(),
+    );
     let fd = sys::open(&path, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600)?;
     let _ = sys::unlink(&path);
     Ok(fd)
@@ -514,7 +544,9 @@ fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
         return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
     }
     let fd = create_unnamed_file().map_err(|err| err.with_path(path))?;
-    let written = sys::File::borrow(&fd).write_all(contents).and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
+    let written = sys::File::borrow(&fd)
+        .write_all(contents)
+        .and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
     if let Err(err) = written {
         fd.close();
         return Err(err.with_path(path));
@@ -986,7 +1018,11 @@ mod _async_tasks {
                         unsafe {
                             core::ptr::write(
                                 &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice()),
+                                open_embedded_file(
+                                    file.utf8_contents(),
+                                    args.flags.as_int(),
+                                    args.path.slice(),
+                                ),
                             )
                         };
                         let task_ptr: *mut Self = task;
@@ -4998,7 +5034,10 @@ impl NodeFS {
                 {
                     return result;
                 }
-                if err.get_errno() == E::ENOENT && (mode & sys::posix::W_OK) == 0 && is_source_path(p) {
+                if err.get_errno() == E::ENOENT
+                    && (mode & sys::posix::W_OK) == 0
+                    && is_source_path(p)
+                {
                     return Ok(Null);
                 }
                 Err(err.with_path(p))
@@ -5227,12 +5266,16 @@ impl NodeFS {
     }
 
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
-        if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS) {
+        if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
+        {
             return Err(error);
         }
         match self.copy_file_inner(args) {
             Ok(_) => Ok(()),
-            Err(err) if err.get_errno() == E::ENOENT && embedded_file_of_compiled_program(args.src.slice()).is_some() => {
+            Err(err)
+                if err.get_errno() == E::ENOENT
+                    && embedded_file_of_compiled_program(args.src.slice()).is_some() =>
+            {
                 Self::copy_embedded_file(args)
             }
             Err(err) => Err(sys::Error {
@@ -5247,10 +5290,19 @@ impl NodeFS {
 
     fn copy_embedded_file(args: &args::CopyFile) -> Maybe<ret::CopyFile> {
         let copied = (|| {
-            let file = embedded_file_of_compiled_program(args.src.slice()).ok_or_else(|| sys::Error::from_code(E::ENOENT, sys::Tag::copyfile))?;
+            let file = embedded_file_of_compiled_program(args.src.slice())
+                .ok_or_else(|| sys::Error::from_code(E::ENOENT, sys::Tag::copyfile))?;
             let mut dest_buf = bun_paths::path_buffer_pool::get();
-            let overwrite_flag = if args.mode.shouldnt_overwrite() { sys::O::EXCL } else { sys::O::TRUNC };
-            let fd = Syscall::open(args.dest.slice_z(&mut dest_buf), sys::O::WRONLY | sys::O::CREAT | overwrite_flag, 0o644)?;
+            let overwrite_flag = if args.mode.shouldnt_overwrite() {
+                sys::O::EXCL
+            } else {
+                sys::O::TRUNC
+            };
+            let fd = Syscall::open(
+                args.dest.slice_z(&mut dest_buf),
+                sys::O::WRONLY | sys::O::CREAT | overwrite_flag,
+                0o644,
+            )?;
             let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
             fd.close();
             written
@@ -5723,13 +5775,16 @@ impl NodeFS {
             match path.os_path_kernel32(&mut self.sync_error_buf) {
                 Ok(p) => p,
                 // Over PATH_MAX_WIDE — such a path can't exist on disk.
-                Err(NameTooLong) => return Ok(graph_behind_disk(path.slice()).is_some_and(holds_path)),
+                Err(NameTooLong) => {
+                    return Ok(graph_behind_disk(path.slice()).is_some_and(holds_path));
+                }
             }
         };
 
         Ok(sys::exists_os_path(slice, false)
             || (graph_may_answer_for(path.slice())
-                && (graph_behind_disk(path.slice()).is_some_and(holds_path) || is_source_path(path.slice()))))
+                && (graph_behind_disk(path.slice()).is_some_and(holds_path)
+                    || is_source_path(path.slice()))))
     }
 
     pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
@@ -5915,7 +5970,9 @@ impl NodeFS {
     }
 
     pub(crate) fn link(&mut self, args: &args::Link, _: Flavor) -> Maybe<ret::Link> {
-        if let Some(error) = creation_in_executable(args.new_path.slice(), sys::Tag::link, E::EEXIST) {
+        if let Some(error) =
+            creation_in_executable(args.new_path.slice(), sys::Tag::link, E::EEXIST)
+        {
             return Err(error);
         }
         let mut to_buf = bun_paths::path_buffer_pool::get();
@@ -5969,7 +6026,11 @@ impl NodeFS {
                 return Ok(StringOrUndefined::None);
             }
             // `mkdir -p` makes the folders above too, so the first one that is missing is what the system refuses.
-            let errno = if graph.contains_file(path) || graph.find_dir(path) { E::EEXIST } else { E::EROFS };
+            let errno = if graph.contains_file(path) || graph.find_dir(path) {
+                E::EEXIST
+            } else {
+                E::EROFS
+            };
             let error = match args.recursive {
                 true => Some(sys::Error::from_code(errno, sys::Tag::mkdir).with_path(path)),
                 false => creation_in_executable(path, sys::Tag::mkdir, E::EEXIST),
@@ -6277,7 +6338,9 @@ impl NodeFS {
     }
 
     pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
-        if let Some(error) = creation_in_executable(args.prefix.slice(), sys::Tag::mkdtemp, E::EROFS) {
+        if let Some(error) =
+            creation_in_executable(args.prefix.slice(), sys::Tag::mkdtemp, E::EROFS)
+        {
             return Err(error);
         }
         let prefix_buf = &mut self.sync_error_buf;
@@ -6345,7 +6408,9 @@ impl NodeFS {
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
-        if (args.flags.as_int() & (sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC | sys::O::APPEND)) != 0
+        if (args.flags.as_int()
+            & (sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC | sys::O::APPEND))
+            != 0
             && let Some(error) = creation_in_executable(args.path.slice(), sys::Tag::open, E::EROFS)
         {
             return Err(error);
@@ -6357,7 +6422,10 @@ impl NodeFS {
             args.path.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::open(path, args.flags.as_int(), args.mode) {
-            Err(err) if err.get_errno() == E::ENOENT && embedded_file_of_compiled_program(path.as_bytes()).is_some() => {
+            Err(err)
+                if err.get_errno() == E::ENOENT
+                    && embedded_file_of_compiled_program(path.as_bytes()).is_some() =>
+            {
                 let file = embedded_file_of_compiled_program(path.as_bytes()).expect("found above");
                 open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice())
             }
@@ -6667,7 +6735,8 @@ impl NodeFS {
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
         if flavor != Flavor::Sync && args.recursive {
             debug_assert!(
-                standalone_module_graph().is_some_and(|graph| graph.owns_directory(args.path.slice())),
+                standalone_module_graph()
+                    .is_some_and(|graph| graph.owns_directory(args.path.slice())),
                 "async recursive readdir must go through AsyncReaddirRecursiveTask"
             );
         }
@@ -7369,7 +7438,13 @@ impl NodeFS {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
                 let read_in = |graph: &bun_standalone_graph::Graph| {
-                    read_file_in_graph(graph, path.as_bytes(), p.slice(), args.encoding, string_type)
+                    read_file_in_graph(
+                        graph,
+                        path.as_bytes(),
+                        p.slice(),
+                        args.encoding,
+                        string_type,
+                    )
                 };
 
                 // A flag that creates the file would put on the disk what only the graph has.
@@ -7939,7 +8014,10 @@ impl NodeFS {
                 )
             };
             if let Some(err) = rc.to_error(sys::Tag::realpath) {
-                if err.get_errno() == E::ENOENT && (is_source_path(args.path.slice()) || is_embedded_in_compiled_program(args.path.slice())) {
+                if err.get_errno() == E::ENOENT
+                    && (is_source_path(args.path.slice())
+                        || is_embedded_in_compiled_program(args.path.slice()))
+                {
                     return Ok(encode_path_result(args.path.slice(), args.encoding));
                 }
                 return Err(err.with_path(args.path.slice()));
@@ -8000,7 +8078,11 @@ impl NodeFS {
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
-                Err(err) if err.get_errno() == E::ENOENT && (is_source_path(path.as_bytes()) || is_embedded_in_compiled_program(path.as_bytes())) => {
+                Err(err)
+                    if err.get_errno() == E::ENOENT
+                        && (is_source_path(path.as_bytes())
+                            || is_embedded_in_compiled_program(path.as_bytes())) =>
+                {
                     return Ok(encode_path_result(path.as_bytes(), args.encoding));
                 }
                 Err(err) => return Err(err.with_path(path)),
@@ -8177,7 +8259,9 @@ impl NodeFS {
     }
 
     pub(crate) fn symlink(&mut self, args: &args::Symlink, _: Flavor) -> Maybe<ret::Symlink> {
-        if let Some(error) = creation_in_executable(args.new_path.slice(), sys::Tag::symlink, E::EEXIST) {
+        if let Some(error) =
+            creation_in_executable(args.new_path.slice(), sys::Tag::symlink, E::EEXIST)
+        {
             return Err(error);
         }
         let mut to_buf = bun_paths::path_buffer_pool::get();
@@ -8488,7 +8572,8 @@ impl NodeFS {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub(crate) fn cp(&mut self, args: &args::Cp, _: Flavor) -> Maybe<ret::Cp> {
-        if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS) {
+        if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
+        {
             return Err(error);
         }
         let mut src_buf = bun_paths::os_path_buffer_pool::get();

@@ -30,9 +30,18 @@ test.skipIf(!!whySkipped)(
       const folder = String(dir);
       const executable = join(folder, isWindows ? "entry.exe" : "entry");
       const map = join(folder, "entry.map");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", program, "--outfile", executable], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: map }));
+      built(
+        await spawned([bunExe(), "build", "--compile", "--aot", program, "--outfile", executable], folder, {
+          ...bunEnv,
+          BUN_JSC_aotMapFilePath: map,
+        }),
+      );
 
-      const { stdout, stderr, exitCode } = await spawned([python!, script!, "--image", executable, "--map", map], folder, bunEnv);
+      const { stdout, stderr, exitCode } = await spawned(
+        [python!, script!, "--image", executable, "--map", map],
+        folder,
+        bunEnv,
+      );
       expect({ stdout, stderr, exitCode }).toEqual({
         stdout: expect.stringMatching(/^[1-9]\d* stubs in \d+ bytes, \d+ cop(y|ies): 0 unpaired returns\r?\n$/),
         stderr: "",

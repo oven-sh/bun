@@ -62,7 +62,10 @@ function compactFormsIn(shortened: Unit, named: Unit): FoundFunction[] {
   const shortNames = publishedNamesOf(compact);
   const verboseNames = publishedNamesOf(verbose);
   if (shortNames.length !== verboseNames.length) return compact;
-  return compact.map(one => ({ ...one, publishedName: nameInRuntimeOfCompactForm(verboseNames[shortNames.indexOf(one.publishedName)]) }));
+  return compact.map(one => ({
+    ...one,
+    publishedName: nameInRuntimeOfCompactForm(verboseNames[shortNames.indexOf(one.publishedName)]),
+  }));
 }
 
 export function readEsbuild(folder: string): FoundFunction[] {
@@ -71,7 +74,9 @@ export function readEsbuild(folder: string): FoundFunction[] {
   const found: FoundFunction[] = [];
   const seen = new Set<string>();
   const bundles = new Map<string, string | undefined>();
-  const entries = new Map(bundleProbes.map(probe => [probe, writeBundleProbe(probe, path.join(work, probe.name))] as const));
+  const entries = new Map(
+    bundleProbes.map(probe => [probe, writeBundleProbe(probe, path.join(work, probe.name))] as const),
+  );
 
   const read = ({ where, text }: Output) => {
     if (text === undefined || seen.has(text)) return;
@@ -93,15 +98,27 @@ export function readEsbuild(folder: string): FoundFunction[] {
   const transform = (probe: Probe, language: "ts" | "js", style: Style, target: string, format: string) => {
     const hasTwoKindsOfDecorators = language === "ts" && /decorat/.test(probe.name);
     for (const decorators of hasTwoKindsOfDecorators ? [[experimentalDecorators], []] : [[]]) {
-      const flags = [`--loader=${language}${probe.hasJsx ? "x" : ""}`, `--format=${format}`, `--target=${target}`, ...decorators];
+      const flags = [
+        `--loader=${language}${probe.hasJsx ? "x" : ""}`,
+        `--format=${format}`,
+        `--target=${target}`,
+        ...decorators,
+      ];
       read({ where: describe(probe.name, style, flags), text: run(binary, [...flags, ...style], probe.text, work) });
     }
   };
 
   const bundle = (probe: BundleProbe, style: Style, target: string, format: string, platform: string): Output => {
-    const flags = ["--bundle", `--format=${format}`, `--target=${target}`, `--platform=${platform}`, "--external:probe-external-*"];
+    const flags = [
+      "--bundle",
+      `--format=${format}`,
+      `--target=${target}`,
+      `--platform=${platform}`,
+      "--external:probe-external-*",
+    ];
     const where = describe(probe.name, style, flags);
-    if (!bundles.has(where)) bundles.set(where, run(binary, [entries.get(probe)!, ...flags, ...style], undefined, work));
+    if (!bundles.has(where))
+      bundles.set(where, run(binary, [entries.get(probe)!, ...flags, ...style], undefined, work));
     return { where, text: bundles.get(where) };
   };
 
@@ -118,7 +135,10 @@ export function readEsbuild(folder: string): FoundFunction[] {
     const styleThatKeepsNames = style.filter(flag => flag !== shortensNames);
     for (const probe of bundleProbes) {
       for (const platform of platforms) {
-        readCompactForms(bundle(probe, style, target, format, platform), bundle(probe, styleThatKeepsNames, target, format, platform));
+        readCompactForms(
+          bundle(probe, style, target, format, platform),
+          bundle(probe, styleThatKeepsNames, target, format, platform),
+        );
       }
     }
   });

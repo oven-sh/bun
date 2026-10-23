@@ -201,19 +201,23 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn handler_that_reads_nothing_has_no_parameter() {
-    assert_graph(&[TypeTable::ANYTHING], HANDLER_THAT_READS_NOTHING, |builder| {
-        let callee = builder.parameter(0);
-        let x = builder.create_variable(None);
-        write_integer(builder, x, 1);
-        let handler = create_catch_handler(builder);
-        enter_covered_block(builder, handler);
-        emit_call(builder, callee);
-        write_integer(builder, x, 2);
-        emit_call(builder, callee);
-        builder.return_value(None);
-        enter_landing_block(builder, handler);
-        builder.return_value(None);
-    });
+    assert_graph(
+        &[TypeTable::ANYTHING],
+        HANDLER_THAT_READS_NOTHING,
+        |builder| {
+            let callee = builder.parameter(0);
+            let x = builder.create_variable(None);
+            write_integer(builder, x, 1);
+            let handler = create_catch_handler(builder);
+            enter_covered_block(builder, handler);
+            emit_call(builder, callee);
+            write_integer(builder, x, 2);
+            emit_call(builder, callee);
+            builder.return_value(None);
+            enter_landing_block(builder, handler);
+            builder.return_value(None);
+        },
+    );
 }
 
 #[test]
@@ -344,7 +348,11 @@ fn fill_nested_handlers(builder: &mut FunctionBuilder) {
 
 #[test]
 fn nested_handlers() {
-    assert_graph(&[TypeTable::ANYTHING], NESTED_HANDLERS, fill_nested_handlers);
+    assert_graph(
+        &[TypeTable::ANYTHING],
+        NESTED_HANDLERS,
+        fill_nested_handlers,
+    );
 }
 
 const LOOP_INSIDE_TRY: &str = "\
@@ -457,10 +465,19 @@ fn fill_dead_covered_blocks(builder: &mut FunctionBuilder) {
 #[test]
 fn dead_covered_block_is_dropped() {
     let parameters = [TypeTable::ANYTHING];
-    assert_graph(&parameters, STORE_TO_VISIBLE_VARIABLE, fill_dead_covered_blocks);
+    assert_graph(
+        &parameters,
+        STORE_TO_VISIBLE_VARIABLE,
+        fill_dead_covered_blocks,
+    );
     let function = build_function(&parameters, fill_dead_covered_blocks);
     let values = function.body.blocks().flat_map(|block| block.values());
-    assert_eq!(values.filter(|value| value.opcode == Opcode::Undefined).count(), 0);
+    assert_eq!(
+        values
+            .filter(|value| value.opcode == Opcode::Undefined)
+            .count(),
+        0
+    );
 }
 
 const ENTRY_BLOCK_ALONE: &str = "\

@@ -38,8 +38,17 @@ test("Buffer accessor sites reached first by Buffer subclasses stay cached for p
     const underBunRun = await run([bunExe(), "main.mjs", String(rounds)], String(dir), bunEnv);
     expect({ stderr: underBunRun.stderr, exitCode: underBunRun.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const path = join(String(dir), "counts" + rounds);
-    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: undefined, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotCountsPath: path };
-    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: underBunRun.stdout, stderr: "", exitCode: 0 });
+    const env = {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: undefined,
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+      BUN_JSC_aotCountsPath: path,
+    };
+    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({
+      stdout: underBunRun.stdout,
+      stderr: "",
+      exitCode: 0,
+    });
     const counts = new Map<string, number>();
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [count, name] = line.split("\t");

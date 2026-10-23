@@ -139,7 +139,14 @@ fn remark_entry(
     let limit_value = input.engine.limit_value(record.limit);
 
     let mut text = Vec::new();
-    write_remark_line(&mut text, record, operation, location, forced_by, limit_value);
+    write_remark_line(
+        &mut text,
+        record,
+        operation,
+        location,
+        forced_by,
+        limit_value,
+    );
     ReportEntry {
         kind: ExplainSet::ALLOCATIONS,
         text,
@@ -162,8 +169,13 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
         .collect();
     let mut positions = Positions::new(input, PathStyle::Native);
     let resolved = resolve_ascending(&wanted, |position| positions.resolve(position));
-    for (record, shown) in records.iter().zip(resolved.chunks_exact(2)) {
-        out.push(remark_entry(input, record, shown[0].as_ref(), shown[1].as_ref()));
+    for (record, shown) in records.iter().zip(resolved.as_chunks::<2>().0) {
+        out.push(remark_entry(
+            input,
+            record,
+            shown[0].as_ref(),
+            shown[1].as_ref(),
+        ));
     }
 }
 
@@ -269,7 +281,10 @@ mod tests {
             (AllocationOutcome::Removed, "removed"),
             (AllocationOutcome::Heap, "heap"),
             (AllocationOutcome::Frame, "stack"),
-            (AllocationOutcome::FrameUntilMaterialized, "stack, moved to the heap if it escapes"),
+            (
+                AllocationOutcome::FrameUntilMaterialized,
+                "stack, moved to the heap if it escapes",
+            ),
             (AllocationOutcome::Slim, "closure without a function object"),
             (AllocationOutcome::Deferred, "created lazily"),
         ];
@@ -299,7 +314,11 @@ mod tests {
 
     #[test]
     fn removed_ignores_operation() {
-        let record = remark(AllocationOutcome::Removed, 1, AllocationEscapeReason::RETURNED);
+        let record = remark(
+            AllocationOutcome::Removed,
+            1,
+            AllocationEscapeReason::RETURNED,
+        );
         assert_eq!(outcome_text(&record, b"Call"), "removed");
     }
 
@@ -311,14 +330,21 @@ mod tests {
 
     #[test]
     fn uncovered_reason_prints_bit() {
-        assert_eq!(reasons_text(AllocationEscapeReason(1 << 31)), "reason bit 31");
+        assert_eq!(
+            reasons_text(AllocationEscapeReason(1 << 31)),
+            "reason bit 31"
+        );
     }
 
     #[test]
     fn remark_line_has_every_clause() {
         let record = AllocationRemarkRecord {
             kind: AllocationKind::IteratorResult,
-            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::RETAINED_BY_CALLEE)
+            ..remark(
+                AllocationOutcome::Heap,
+                1,
+                AllocationEscapeReason::RETAINED_BY_CALLEE,
+            )
         };
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), Some(&shown(9, 1))),
@@ -344,7 +370,11 @@ mod tests {
     fn cause_precedes_reasons() {
         let record = AllocationRemarkRecord {
             cause: AllocationHeapCause::Escapes,
-            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::RETAINED_BY_CALLEE)
+            ..remark(
+                AllocationOutcome::Heap,
+                1,
+                AllocationEscapeReason::RETAINED_BY_CALLEE,
+            )
         };
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), None),
@@ -384,20 +414,30 @@ mod tests {
         let limit = LimitId::MaxTypeNodes;
         let record = AllocationRemarkRecord {
             limit,
-            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::LIMIT_REACHED)
+            ..remark(
+                AllocationOutcome::Heap,
+                1,
+                AllocationEscapeReason::LIMIT_REACHED,
+            )
         };
         let expected = format!(
             "allocation: object at a.ts:3:5: heap: Call (escape analysis hit a limit), limit {} = 1,024 (limits {}), escapes at a.ts:9:1",
             limit.name(),
             limit.purpose(),
         );
-        assert_eq!(remark_line(&record, Some(&shown(3, 5)), Some(&shown(9, 1))), expected);
+        assert_eq!(
+            remark_line(&record, Some(&shown(3, 5)), Some(&shown(9, 1))),
+            expected
+        );
     }
 
     #[test]
     fn runtime_allocations_are_skipped() {
         let records = [remark_at(2, 4), remark_at(1, 4), remark_at(0, 4)];
-        assert_eq!(listed_remarks(&records, &names()), [&records[2], &records[1]]);
+        assert_eq!(
+            listed_remarks(&records, &names()),
+            [&records[2], &records[1]]
+        );
     }
 
     #[test]

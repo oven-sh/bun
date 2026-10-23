@@ -80,11 +80,22 @@ fn name_prefix_selects_files_and_directories() {
 
 #[test]
 fn every_spelling_reaches_file_once() {
-    let host = empty_files(&["/p/main.ts", "/p/mods/a.ts", "/p/mods/b.mts", "/p/mods/c.cts"]);
+    let host = empty_files(&[
+        "/p/main.ts",
+        "/p/mods/a.ts",
+        "/p/mods/b.mts",
+        "/p/mods/c.cts",
+    ]);
     let all = "/p/mods/a.ts, /p/mods/b.mts, /p/mods/c.cts";
     assert_eq!(import_pattern(&host, "./mods/", ""), all);
-    assert_eq!(import_pattern(&host, "./mods/", ".js"), "/p/mods/a.ts, /p/mods/b.mts");
-    assert_eq!(import_pattern(&host, "./mods/", ".jsx"), "/p/mods/a.ts, /p/mods/b.mts");
+    assert_eq!(
+        import_pattern(&host, "./mods/", ".js"),
+        "/p/mods/a.ts, /p/mods/b.mts"
+    );
+    assert_eq!(
+        import_pattern(&host, "./mods/", ".jsx"),
+        "/p/mods/a.ts, /p/mods/b.mts"
+    );
     assert_eq!(import_pattern(&host, "./mods/", ".mjs"), "/p/mods/b.mts");
     assert_eq!(import_pattern(&host, "./mods/", ".cjs"), "/p/mods/c.cts");
     assert_eq!(import_pattern(&host, "./mods/", ".json"), NO_CANDIDATE);
@@ -130,7 +141,11 @@ fn prefix_without_known_form_is_unknown() {
         ("data:", "", "All(ExternalCandidate)"),
     ];
     for (prefix, suffix, expected) in cases {
-        assert_eq!(import_pattern(&host, prefix, suffix), expected, "{prefix:?} {suffix:?}");
+        assert_eq!(
+            import_pattern(&host, prefix, suffix),
+            expected,
+            "{prefix:?} {suffix:?}"
+        );
     }
 }
 
@@ -138,8 +153,17 @@ fn prefix_without_known_form_is_unknown() {
 fn unresolvable_specifier_has_no_candidate() {
     let host = empty_files(&["/p/main.ts", "/p/a/b.ts"]);
     assert_eq!(import_pattern(&host, "./a/", ""), "/p/a/b.ts");
-    for (prefix, suffix) in [("./a/", "?x"), ("./a/?", ""), ("./a/\0", ""), ("./a/", "\0")] {
-        assert_eq!(import_pattern(&host, prefix, suffix), NO_CANDIDATE, "{prefix:?} {suffix:?}");
+    for (prefix, suffix) in [
+        ("./a/", "?x"),
+        ("./a/?", ""),
+        ("./a/\0", ""),
+        ("./a/", "\0"),
+    ] {
+        assert_eq!(
+            import_pattern(&host, prefix, suffix),
+            NO_CANDIDATE,
+            "{prefix:?} {suffix:?}"
+        );
     }
 }
 
@@ -197,9 +221,18 @@ fn unknown_answer_keeps_matching_host_modules() {
         .module("fs", 3)
         .module("node:fs", 3)
         .module("path", 5);
-    assert_eq!(import_pattern(&host, "f", ""), "All(IncompletePackageName), host:3");
-    assert_eq!(import_pattern(&host, "", "fs"), "All(NoConstantPrefix), host:3");
-    assert_eq!(import_pattern(&host, "", ""), "All(NoConstantPrefix), host:3, host:5");
+    assert_eq!(
+        import_pattern(&host, "f", ""),
+        "All(IncompletePackageName), host:3"
+    );
+    assert_eq!(
+        import_pattern(&host, "", "fs"),
+        "All(NoConstantPrefix), host:3"
+    );
+    assert_eq!(
+        import_pattern(&host, "", ""),
+        "All(NoConstantPrefix), host:3, host:5"
+    );
 }
 
 #[test]
@@ -212,8 +245,14 @@ fn package_without_exports_lists_files() {
     ]);
     let all = "/p/node_modules/pkg/a.js, /p/node_modules/pkg/lib/b.js";
     assert_eq!(import_pattern(&host, "pkg/", ""), all);
-    assert_eq!(import_pattern(&host, "pkg/lib/", ""), "/p/node_modules/pkg/lib/b.js");
-    assert_eq!(import_pattern(&host, "pkg/", "a.js"), "/p/node_modules/pkg/a.js");
+    assert_eq!(
+        import_pattern(&host, "pkg/lib/", ""),
+        "/p/node_modules/pkg/lib/b.js"
+    );
+    assert_eq!(
+        import_pattern(&host, "pkg/", "a.js"),
+        "/p/node_modules/pkg/a.js"
+    );
 }
 
 #[test]
@@ -247,7 +286,10 @@ fn package_with_exports_lists_exported_files_only() {
 fn exported_candidates_follow_request_conditions() {
     let manifest = r#"{"exports": {"./c": {"require": "./c.cjs", "import": "./c.mjs"}}}"#;
     let host = installed_package(manifest, &["c.cjs", "c.mjs"]);
-    assert_eq!(import_pattern(&host, "pkg/c", ""), "/p/node_modules/pkg/c.mjs");
+    assert_eq!(
+        import_pattern(&host, "pkg/c", ""),
+        "/p/node_modules/pkg/c.mjs"
+    );
     let required = resolve_computed_in(&host, "/p/main.ts", "pkg/c", "", Require);
     assert_eq!(required, "/p/node_modules/pkg/c.cjs");
 }
@@ -262,7 +304,10 @@ fn self_reference_lists_own_exports() {
         ("/p/y.ts", ""),
     ];
     let host = MemoryHost::new(&files);
-    assert_eq!(import_pattern(&host, "app/", ""), "/p/package.json, /p/x.ts");
+    assert_eq!(
+        import_pattern(&host, "app/", ""),
+        "/p/package.json, /p/x.ts"
+    );
 }
 
 #[test]
@@ -274,7 +319,10 @@ fn installed_copies_in_ancestor_directories_are_listed() {
         "/p/node_modules/pkg/b.js",
     ]);
     let found = resolve_computed_in(&host, "/p/src/main.ts", "pkg/", "", Import);
-    assert_eq!(found, "/p/node_modules/pkg/b.js, /p/src/node_modules/pkg/a.js");
+    assert_eq!(
+        found,
+        "/p/node_modules/pkg/b.js, /p/src/node_modules/pkg/a.js"
+    );
 }
 
 #[test]
@@ -296,7 +344,10 @@ fn matching_paths_key_makes_package_prefix_unknown() {
     assert_eq!(import_pattern(&base_url, "pkg/", ""), "All(ConfigPaths)");
 
     let other_key = configured_project(r#"{"paths": {"other/*": ["./src/*"]}}"#);
-    assert_eq!(import_pattern(&other_key, "pkg/", ""), "/p/node_modules/pkg/a.js");
+    assert_eq!(
+        import_pattern(&other_key, "pkg/", ""),
+        "/p/node_modules/pkg/a.js"
+    );
 }
 
 #[test]
@@ -314,12 +365,18 @@ fn uncompiled_candidate_makes_answer_unknown() {
     let files = ["/p/main.ts", "/p/plugins/a.ts", "/p/plugins/b.ts"];
     let uncompiled = external("./plugins/b.ts", ExternalKind::UncompiledCode);
     let host = empty_files(&files).claim("./plugins/b.ts", uncompiled);
-    assert_eq!(import_pattern(&host, "./plugins/", ""), "All(ExternalCandidate)");
+    assert_eq!(
+        import_pattern(&host, "./plugins/", ""),
+        "All(ExternalCandidate)"
+    );
     assert_eq!(import_pattern(&host, "./plugins/a", ""), "/p/plugins/a.ts");
 
     let host_value = external("./plugins/b.ts", ExternalKind::HostValue);
     let host = empty_files(&files).claim("./plugins/b.ts", host_value);
-    assert_eq!(import_pattern(&host, "./plugins/", ".ts"), "/p/plugins/a.ts");
+    assert_eq!(
+        import_pattern(&host, "./plugins/", ".ts"),
+        "/p/plugins/a.ts"
+    );
 }
 
 #[test]
@@ -328,7 +385,10 @@ fn uncompiled_host_module_makes_answer_unknown() {
     let host = empty_files(&["/p/main.ts"])
         .module("node:fs", 3)
         .runtime_module("node:omitted", uncompiled);
-    assert_eq!(import_pattern(&host, "node:", ""), "All(ExternalCandidate), host:3");
+    assert_eq!(
+        import_pattern(&host, "node:", ""),
+        "All(ExternalCandidate), host:3"
+    );
     assert_eq!(import_pattern(&host, "node:f", ""), "host:3");
 
     let host_value = external("node:omitted", ExternalKind::HostValue);
@@ -341,24 +401,42 @@ fn uncompiled_host_module_makes_answer_unknown() {
 #[test]
 fn one_file_over_limit_makes_answer_unknown() {
     let at_limit = empty_files(&["/p/main.ts", "/p/d/a.ts", "/p/d/b.ts"]);
-    assert_eq!(import_pattern_with_limit(&at_limit, 2, "./d/"), "/p/d/a.ts, /p/d/b.ts");
+    assert_eq!(
+        import_pattern_with_limit(&at_limit, 2, "./d/"),
+        "/p/d/a.ts, /p/d/b.ts"
+    );
     let over_limit = empty_files(&["/p/main.ts", "/p/d/a.ts", "/p/d/b.ts", "/p/d/c.ts"]);
-    assert_eq!(import_pattern_with_limit(&over_limit, 2, "./d/"), "All(TooManyCandidates)");
-    assert_eq!(import_pattern_with_limit(&over_limit, 1, "./d/a"), "/p/d/a.ts");
+    assert_eq!(
+        import_pattern_with_limit(&over_limit, 2, "./d/"),
+        "All(TooManyCandidates)"
+    );
+    assert_eq!(
+        import_pattern_with_limit(&over_limit, 1, "./d/a"),
+        "/p/d/a.ts"
+    );
 }
 
 #[test]
 fn one_directory_over_limit_makes_answer_unknown() {
     let host = empty_files(&["/p/main.ts", "/p/d/x/a.ts", "/p/d/y/b.ts"]);
-    assert_eq!(import_pattern_with_limit(&host, 3, "./d/"), "/p/d/x/a.ts, /p/d/y/b.ts");
-    assert_eq!(import_pattern_with_limit(&host, 2, "./d/"), "All(TooManyCandidates)");
+    assert_eq!(
+        import_pattern_with_limit(&host, 3, "./d/"),
+        "/p/d/x/a.ts, /p/d/y/b.ts"
+    );
+    assert_eq!(
+        import_pattern_with_limit(&host, 2, "./d/"),
+        "All(TooManyCandidates)"
+    );
 }
 
 #[test]
 fn linked_directory_is_listed_under_real_paths() {
     let files = ["/p/main.ts", "/store/lang/en.json"];
     let host = empty_files(&files).link("/p/locales", "/store/lang");
-    assert_eq!(import_pattern(&host, "./locales/", ".json"), "/store/lang/en.json");
+    assert_eq!(
+        import_pattern(&host, "./locales/", ".json"),
+        "/store/lang/en.json"
+    );
 }
 
 #[test]

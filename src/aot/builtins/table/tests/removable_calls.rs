@@ -44,10 +44,19 @@ fn a_number_alone_is_the_length_of_a_new_array() {
 #[test]
 fn collections_take_array_literals() {
     let demands = |builtin| -> Vec<ObjectDemand> {
-        calls(builtin, true).iter().map(|call| call.parameters[0].objects).collect()
+        calls(builtin, true)
+            .iter()
+            .map(|call| call.parameters[0].objects)
+            .collect()
     };
-    assert_eq!(demands(BuiltinId::Set), [ObjectDemand::None, ObjectDemand::ArrayLiteral]);
-    assert_eq!(demands(BuiltinId::Map), [ObjectDemand::None, ObjectDemand::ArrayLiteralOfLiterals]);
+    assert_eq!(
+        demands(BuiltinId::Set),
+        [ObjectDemand::None, ObjectDemand::ArrayLiteral]
+    );
+    assert_eq!(
+        demands(BuiltinId::Map),
+        [ObjectDemand::None, ObjectDemand::ArrayLiteralOfLiterals]
+    );
     assert_eq!(demands(BuiltinId::WeakMap), [ObjectDemand::None]);
 }
 
@@ -76,7 +85,10 @@ fn one_of_a_few_texts_is_not_compared() {
     let [form] = normalize.parameters else {
         panic!("normalize takes one operand");
     };
-    assert!(form.primitives.contains(OperandKinds::NOT_PASSED | OperandKinds::UNDEFINED));
+    assert!(
+        form.primitives
+            .contains(OperandKinds::NOT_PASSED | OperandKinds::UNDEFINED)
+    );
     assert!(!form.primitives.contains(OperandKinds::STRING));
 }
 
@@ -84,7 +96,9 @@ fn one_of_a_few_texts_is_not_compared() {
 fn receivers_are_never_nullish() {
     for builtin in BuiltinId::ALL {
         for call in calls(builtin, false) {
-            let Some(receiver) = call.receiver else { continue };
+            let Some(receiver) = call.receiver else {
+                continue;
+            };
             let nullish = OperandKinds::UNDEFINED | OperandKinds::NULL | OperandKinds::NOT_PASSED;
             assert!(!receiver.primitives.intersects(nullish), "{builtin:?}");
         }
@@ -93,8 +107,12 @@ fn receivers_are_never_nullish() {
 
 use OperandShape::{ArrayLiteral, Null, Number, Object, ObjectLiteral, Undefined};
 
-const ARRAY_OF_NUMBERS: OperandShape = ArrayLiteral { holds_only_literals: false };
-const ARRAY_OF_PAIRS: OperandShape = ArrayLiteral { holds_only_literals: true };
+const ARRAY_OF_NUMBERS: OperandShape = ArrayLiteral {
+    holds_only_literals: false,
+};
+const ARRAY_OF_PAIRS: OperandShape = ArrayLiteral {
+    holds_only_literals: true,
+};
 
 fn is_removable(builtin: BuiltinId, arguments: &[OperandShape]) -> bool {
     is_removable_call(builtin, false, None, arguments)
@@ -127,9 +145,18 @@ fn a_length_has_to_be_a_constant_in_the_range() {
     assert!(!length(Some((1u64 << 40) as f64)));
     assert!(!length(None));
     assert!(is_removable_construction(BuiltinId::Uint8Array, &[]));
-    assert!(!is_removable_construction(BuiltinId::Array, &[Number(Some(-1.0))]));
-    assert!(is_removable_construction(BuiltinId::Array, &[Number(Some(3.0))]));
-    assert!(is_removable_construction(BuiltinId::Array, &[OperandShape::String, Object]));
+    assert!(!is_removable_construction(
+        BuiltinId::Array,
+        &[Number(Some(-1.0))]
+    ));
+    assert!(is_removable_construction(
+        BuiltinId::Array,
+        &[Number(Some(3.0))]
+    ));
+    assert!(is_removable_construction(
+        BuiltinId::Array,
+        &[OperandShape::String, Object]
+    ));
 }
 
 #[test]
@@ -137,10 +164,19 @@ fn what_a_collection_is_made_of_is_written_out() {
     assert!(is_removable_construction(BuiltinId::Map, &[]));
     assert!(is_removable_construction(BuiltinId::Map, &[Null]));
     assert!(is_removable_construction(BuiltinId::Map, &[ARRAY_OF_PAIRS]));
-    assert!(!is_removable_construction(BuiltinId::Map, &[ARRAY_OF_NUMBERS]));
+    assert!(!is_removable_construction(
+        BuiltinId::Map,
+        &[ARRAY_OF_NUMBERS]
+    ));
     assert!(!is_removable_construction(BuiltinId::Map, &[Object]));
-    assert!(!is_removable_construction(BuiltinId::Map, &[OperandShape::String]));
-    assert!(is_removable_construction(BuiltinId::Set, &[ARRAY_OF_NUMBERS]));
+    assert!(!is_removable_construction(
+        BuiltinId::Map,
+        &[OperandShape::String]
+    ));
+    assert!(is_removable_construction(
+        BuiltinId::Set,
+        &[ARRAY_OF_NUMBERS]
+    ));
     assert!(!is_removable_construction(BuiltinId::Set, &[ObjectLiteral]));
     assert!(!is_removable(BuiltinId::Map, &[]));
 }
@@ -148,7 +184,12 @@ fn what_a_collection_is_made_of_is_written_out() {
 #[test]
 fn a_method_needs_a_receiver_that_is_known() {
     let slice = |receiver| {
-        is_removable_call(BuiltinId::StringPrototypeSlice, false, receiver, &[Number(None)])
+        is_removable_call(
+            BuiltinId::StringPrototypeSlice,
+            false,
+            receiver,
+            &[Number(None)],
+        )
     };
     assert!(slice(Some(OperandShape::String)));
     assert!(!slice(None));
@@ -158,9 +199,18 @@ fn a_method_needs_a_receiver_that_is_known() {
 
 #[test]
 fn more_arguments_than_parameters_are_not_covered() {
-    assert!(!is_removable(BuiltinId::ObjectKeys, &[ObjectLiteral, Undefined]));
+    assert!(!is_removable(
+        BuiltinId::ObjectKeys,
+        &[ObjectLiteral, Undefined]
+    ));
     assert!(is_removable(BuiltinId::MathMax, &[]));
-    assert!(is_removable(BuiltinId::MathMax, &[Number(None), Number(None), Number(None)]));
+    assert!(is_removable(
+        BuiltinId::MathMax,
+        &[Number(None), Number(None), Number(None)]
+    ));
     assert!(!is_removable(BuiltinId::MathMax, &[Number(None), Object]));
-    assert!(!is_removable(BuiltinId::MathMax, &[Number(None), OperandShape::Symbol]));
+    assert!(!is_removable(
+        BuiltinId::MathMax,
+        &[Number(None), OperandShape::Symbol]
+    ));
 }

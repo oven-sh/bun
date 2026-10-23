@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
@@ -18,7 +18,14 @@ try {
 }
 `,
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
   }),
 };
 const note = "note: --sourcemap has no effect with --aot";
@@ -50,15 +57,24 @@ test.each(["--sourcemap", "--sourcemap=inline", "--sourcemap=external", "--sourc
   },
 );
 
-test.each([[["--aot"]], [["--aot", "--sourcemap=none"]], [["--sourcemap=external"]]])("%p: prints no note", async flags => {
-  const { said } = await built(flags);
-  expect(said).not.toContain(note);
-});
+test.each([[["--aot"]], [["--aot", "--sourcemap=none"]], [["--sourcemap=external"]]])(
+  "%p: prints no note",
+  async flags => {
+    const { said } = await built(flags);
+    expect(said).not.toContain(note);
+  },
+);
 
 test("bun run --aot, which requests a source map itself: prints no note", async () => {
   using folder = tempDir("compile-aot-sourcemap", files);
   const dir = String(folder);
-  await using run = spawn({ cmd: [bunExe(), "run", "--debug-aot", "app.ts"], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using run = spawn({
+    cmd: [bunExe(), "run", "--debug-aot", "app.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(stderr).not.toContain(note);
   expect(stdout).toContain("Error: failed\n    at fail (");

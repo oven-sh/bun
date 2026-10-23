@@ -46,7 +46,8 @@ const decorators = "ES Decorators";
 const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
-const writtenAtRunTime = "it imports a module that it writes while it runs, and compiled code loads no code that was not compiled with it";
+const writtenAtRunTime =
+  "it imports a module that it writes while it runs, and compiled code loads no code that was not compiled with it";
 
 // path -> test name as `bun test` prints it -> the difference documented in docs/bundler/aot-compatibility.mdx.
 // But for the modules written at run time it is the same one everywhere: a type error stops the build.
@@ -54,9 +55,11 @@ const writtenAtRunTime = "it imports a module that it writes while it runs, and 
 const expectedFailures: Record<string, Record<string, string>> = {
   "test/bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
     [`${classFields} > false: computed literal keys use [[Set]] semantics`]: fieldOverridesAccessor,
-    [`${classFields} > false: computed non-literal key keeps the class native`]: "TS1166: the computed name of a field is no literal",
+    [`${classFields} > false: computed non-literal key keeps the class native`]:
+      "TS1166: the computed name of a field is no literal",
     [`${classFields} > false: matches tsc/esbuild ordering and [[Set]] semantics`]: fieldOverridesAccessor,
-    [`${classFields} > false: static method named 'constructor' is not treated as the constructor`]: "TS1089: a constructor cannot be static",
+    [`${classFields} > false: static method named 'constructor' is not treated as the constructor`]:
+      "TS1089: a constructor cannot be static",
     [`${classFields} > false: synthesizes constructor when none is declared`]: "TS2564: the field b has no initializer",
     [`${classFields} > true: keeps native class-field ([[Define]]) semantics`]: fieldOverridesAccessor,
     [`${classFields} > unset: keeps native class-field ([[Define]]) semantics`]: fieldOverridesAccessor,
@@ -66,7 +69,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "CJS exports the ESM wrapper cannot enumerate > ownKeys trap throws (__esModule: true)": writtenAtRunTime,
   },
   "test/bundler/transpiler/es-decorators.test.ts": {
-    [`${decorators} > accessor with TypeScript annotations > accessor with optional marker (?)`]: "TS2564: the accessor has no initializer",
+    [`${decorators} > accessor with TypeScript annotations > accessor with optional marker (?)`]:
+      "TS2564: the accessor has no initializer",
     [`${decoratorExpressions} > decorators on both sides of export are rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > export before decorator (.ts)`]: untypedParameters,
     [`${decoratorExpressions} > non-null assertion in decorator is rejected in JavaScript`]: checkerSpeaksFirst,
@@ -74,7 +78,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${decoratorExpressions} > private name in decorator member expression (.ts)`]: untypedParameters,
     [`${decoratorExpressions} > property access after call in decorator is rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > repeated export around a decorator is rejected`]: checkerSpeaksFirst,
-    [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]: "TS1477: a property access follows an instantiation expression",
+    [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]:
+      "TS1477: a property access follows an instantiation expression",
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedPackages,
@@ -107,7 +112,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
 // path -> how the names of a group of tests begin that all read the output of one program -> the difference.
 const expectedFailuresOfGroups: Record<string, Record<string, string>> = {
   "test/bundler/transpiler/es-decorators.test.ts": {
-    "ES decorators lowering matrix > .ts > ": "TS7005 and others: the generated program has variables and parameters without types",
+    "ES decorators lowering matrix > .ts > ":
+      "TS7005 and others: the generated program has variables and parameters without types",
   },
 };
 
@@ -200,7 +206,15 @@ async function check(path: string, mode: CompileMode) {
   const tail = lines.slice(-60).join("\n");
   const expected = Object.keys(expectedFailures[path] ?? {}).sort();
   const groups = Object.keys(expectedFailuresOfGroups[path] ?? {});
-  expect({ signal, failed: failed.filter(name => !groups.some(group => name.startsWith(group))), groups: groups.filter(group => failed.some(name => name.startsWith(group))), exitCode }, tail).toEqual({
+  expect(
+    {
+      signal,
+      failed: failed.filter(name => !groups.some(group => name.startsWith(group))),
+      groups: groups.filter(group => failed.some(name => name.startsWith(group))),
+      exitCode,
+    },
+    tail,
+  ).toEqual({
     signal: null,
     failed: expected,
     groups,
@@ -209,10 +223,17 @@ async function check(path: string, mode: CompileMode) {
   expect(passed).toBeGreaterThan(0);
   if (mode === "test file") {
     const modules = lines.filter(line => line.includes("[aot] module: "));
-    expect(modules.some(line => line.includes(basename(path))), tail).toBe(true);
+    expect(
+      modules.some(line => line.includes(basename(path))),
+      tail,
+    ).toBe(true);
   }
   if (mode === "child processes") expect(compiledRuns.length).toBeGreaterThan(0);
-  if (mode === "bundles") expect(lines.some(line => line.startsWith("[aot] bundle: ")), tail).toBe(true);
+  if (mode === "bundles")
+    expect(
+      lines.some(line => line.startsWith("[aot] bundle: ")),
+      tail,
+    ).toBe(true);
 }
 
 describe.concurrent("compile/aot/transpiler-parity", () => {

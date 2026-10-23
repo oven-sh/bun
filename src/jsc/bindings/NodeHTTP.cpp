@@ -682,7 +682,7 @@ static std::string_view autoConnectionHeaders(uint32_t autoHeaderBits, uint32_t 
     }
     if (autoHeaderBits & kAutoHeaderConnClose)
         return "Connection: close\r\n"sv;
-    return { };
+    return {};
 }
 
 static bool isStatusWithoutBody(std::string_view status, char first, char second, char third)

@@ -110,7 +110,10 @@ fn write_lines(
     option_words: &[Box<[u8]>],
     out: &mut Vec<u8>,
 ) {
-    let (program, dependencies) = (&totals.program.access_costs, &totals.dependencies.access_costs);
+    let (program, dependencies) = (
+        &totals.program.access_costs,
+        &totals.dependencies.access_costs,
+    );
     if !option_words.is_empty() {
         out.extend_from_slice(b"Built with developer options:");
         for word in option_words {
@@ -200,8 +203,12 @@ fn count_text(count: u64) -> Vec<u8> {
 }
 
 fn write_access_columns(out: &mut Vec<u8>, all: &CostCounts) {
-    let rows = AccessColumn::ALL
-        .map(|column| (count_text(all.in_column(column)), column_description(column)));
+    let rows = AccessColumn::ALL.map(|column| {
+        (
+            count_text(all.in_column(column)),
+            column_description(column),
+        )
+    });
     let width = rows.iter().map(|(count, _)| count.len()).max().unwrap_or(0);
     out.extend_from_slice(b"All property accesses, including dependencies:");
     for (count, description) in &rows {

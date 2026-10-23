@@ -44,7 +44,6 @@ pub trait CodeHost: Host {
         Vec::new()
     }
 
-
     fn typed_version(
         &self,
         _path: &[u8],

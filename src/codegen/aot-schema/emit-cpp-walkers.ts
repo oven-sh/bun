@@ -6,7 +6,16 @@ import {
   isEmbeddedInEngineRecords,
   listFirstWord,
 } from "./cpp-types.ts";
-import { blocks, cppHeader, groupedCases, inNamespace, indent, indentation, type CaseBody, type Lines } from "./lines.ts";
+import {
+  blocks,
+  cppHeader,
+  groupedCases,
+  inNamespace,
+  indent,
+  indentation,
+  type CaseBody,
+  type Lines,
+} from "./lines.ts";
 import type { Entry, Field, IdKind, Kind, Member, Schema, SchemaRecord, SchemaType, Variant } from "./model.ts";
 import { fieldsOf, functionLocalIdKinds, innermostKindOf, recordsOf, roleEnumNames } from "./model.ts";
 import { cppIdTypeName } from "./names.ts";
@@ -17,7 +26,9 @@ function walkedTypes(schema: Schema): SchemaType[] {
 }
 
 function embeddedAbiTypes(schema: Schema): SchemaRecord[] {
-  return recordsOf(schema).filter(record => record.form === "abi" && isEmbeddedInEngineRecords(schema, { tag: "Record", record }));
+  return recordsOf(schema).filter(
+    record => record.form === "abi" && isEmbeddedInEngineRecords(schema, { tag: "Record", record }),
+  );
 }
 
 function referenceKinds(schema: Schema): IdKind[] {
@@ -41,7 +52,8 @@ function walkersHeader(schema: Schema): string[] {
     walkedTypes(schema).flatMap(type => forEachReferenceDeclarations(engineStructNameOf(type))),
     [
       ...referenceKindsWithoutRoles(schema).map(
-        kind => `template<typename Subject, typename Functor> void forEach${kind.name}(const Subject&, const Functor&);`,
+        kind =>
+          `template<typename Subject, typename Functor> void forEach${kind.name}(const Subject&, const Functor&);`,
       ),
       "template<typename Subject, typename Functor> void forEachFunctionReference(const Subject&, const Functor&);",
       "template<typename Subject, typename Functor> void forEachModuleReference(const Subject&, const Functor&);",
@@ -115,19 +127,34 @@ function bothConstnesses(typeName: string, walkerName: string, isPublic = true):
 }
 
 function walker(name: string, parameter: string, indentedBody: Lines): string[] {
-  const body = indentedBody.length > 0 ? indentedBody : indent([`UNUSED_PARAM(${parameter});`, "UNUSED_PARAM(visitor);"]);
-  return ["template<typename Subject, typename Visitor>", `void ${name}(Subject& ${parameter}, Visitor& visitor)`, "{", ...body, "}"];
+  const body =
+    indentedBody.length > 0 ? indentedBody : indent([`UNUSED_PARAM(${parameter});`, "UNUSED_PARAM(visitor);"]);
+  return [
+    "template<typename Subject, typename Visitor>",
+    `void ${name}(Subject& ${parameter}, Visitor& visitor)`,
+    "{",
+    ...body,
+    "}",
+  ];
 }
 
 function exhaustiveSwitch(subject: string, enumName: string, cases: readonly CaseBody[]): string[] {
-  return [...indent([`switch (${subject}) {`]), ...groupedCases(enumName, cases), ...indent(["}", "RELEASE_ASSERT_NOT_REACHED();"])];
+  return [
+    ...indent([`switch (${subject}) {`]),
+    ...groupedCases(enumName, cases),
+    ...indent(["}", "RELEASE_ASSERT_NOT_REACHED();"]),
+  ];
 }
 
 function recordWalker(schema: Schema, record: SchemaRecord): string[] {
   const isAbi = record.form === "abi";
   const typeName = engineRecordNameOf(record);
   const body = record.fields.flatMap(field => walkField(schema, field, "record", isAbi));
-  return [...walker(`walk${typeName}`, "record", indent(body)), "", ...bothConstnesses(typeName, `walk${typeName}`, !isAbi)];
+  return [
+    ...walker(`walk${typeName}`, "record", indent(body)),
+    "",
+    ...bothConstnesses(typeName, `walk${typeName}`, !isAbi),
+  ];
 }
 
 function variantWalker(schema: Schema, variant: Variant): string[] {
@@ -139,7 +166,11 @@ function variantWalker(schema: Schema, variant: Variant): string[] {
   });
   const hasReferences = cases.some(caseBody => caseBody.body.length > 1);
   const body = hasReferences ? exhaustiveSwitch("variant.kind()", `${variant.name}::Kind`, cases) : [];
-  return [...walker(`walk${variant.name}`, "variant", body), "", ...bothConstnesses(variant.name, `walk${variant.name}`)];
+  return [
+    ...walker(`walk${variant.name}`, "variant", body),
+    "",
+    ...bothConstnesses(variant.name, `walk${variant.name}`),
+  ];
 }
 
 const helpers = `template<typename Reference, typename Visitor, typename... Role>
@@ -252,19 +283,29 @@ function walkEntry(schema: Schema, entry: Entry): string[] {
     const isList = field.kind.tag === "List";
     const kind = field.kind.tag === "List" ? field.kind.element : field.kind;
     const helper = `visitPayload${isReference(kind) ? "Reference" : "Record"}${isList ? "List" : ""}`;
-    return [`${helper}<${engineTypeOf(kind)}>(subject, ${isList ? listFirstWord(entry) : field.firstWord}, visitor${roleArgument(schema, kind)});`];
+    return [
+      `${helper}<${engineTypeOf(kind)}>(subject, ${isList ? listFirstWord(entry) : field.firstWord}, visitor${roleArgument(schema, kind)});`,
+    ];
   });
   return [...statements, "return;"];
 }
 
 function placedWordsOfEntry(entry: Entry): string[] {
   const statements = entry.payload.flatMap(field =>
-    field.kind.tag === "PlacedWord" ? [`visitPlacedWord<${field.kind.word}>(subject, ${field.firstWord}, visitor);`] : [],
+    field.kind.tag === "PlacedWord"
+      ? [`visitPlacedWord<${field.kind.word}>(subject, ${field.firstWord}, visitor);`]
+      : [],
   );
   return [...statements, "return;"];
 }
 
-function entryWalker(name: string, entries: readonly Entry[], tag: string, enumName: string, bodyOf: (entry: Entry) => Lines): string[] {
+function entryWalker(
+  name: string,
+  entries: readonly Entry[],
+  tag: string,
+  enumName: string,
+  bodyOf: (entry: Entry) => Lines,
+): string[] {
   const cases = entries.map(entry => ({ label: entry.name, body: bodyOf(entry) }));
   return walker(name, "subject", exhaustiveSwitch(`subject.${tag}`, enumName, cases));
 }
@@ -286,7 +327,9 @@ function walkersInlines(schema: Schema): string[] {
     ]),
     helpers,
     ...abiRecords.map(record => recordWalker(schema, record)),
-    ...walkedTypes(schema).map(type => (type.tag === "Record" ? recordWalker(schema, type.record) : variantWalker(schema, type.variant))),
+    ...walkedTypes(schema).map(type =>
+      type.tag === "Record" ? recordWalker(schema, type.record) : variantWalker(schema, type.variant),
+    ),
     entryWalker("walkValue", schema.operations, "opcode", "Opcode", referencesOf),
     bothConstnesses("Value", "walkValue"),
     entryWalker("walkTerminator", schema.terminators, "kind", "TerminatorKind", referencesOf),

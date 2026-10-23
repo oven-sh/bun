@@ -56,7 +56,8 @@ export const idLimits: {
   modules: shortIdCapacity,
 };
 
-const isKeyedProtocol = (protocol: Protocol): protocol is KeyedProtocol => protocol !== "Named" && protocol !== "CallsNamed";
+const isKeyedProtocol = (protocol: Protocol): protocol is KeyedProtocol =>
+  protocol !== "Named" && protocol !== "CallsNamed";
 const compareIds = (left: { id: number }, right: { id: number }): number => left.id - right.id;
 const compareTokens = (left: { token: string }, right: { token: string }): number =>
   compareBytes(left.token, right.token);
@@ -200,7 +201,7 @@ function isLockedOutsideLockedObject({ holder, mutability }: ModelBuiltin): bool
 
 function ancestorsOf(holder: ModelBuiltin): ModelBuiltin[] {
   const ancestors: ModelBuiltin[] = [];
-  for (let { prototype } = holder; prototype.link === "Builtin"; ) {
+  for (let { prototype } = holder; prototype.link === "Builtin";) {
     const ancestor = prototype.builtin.sameObjectAs ?? prototype.builtin;
     if (ancestors.includes(ancestor)) break;
     ancestors.push(ancestor);
@@ -260,10 +261,16 @@ const textsOfNamesOfCalls: readonly string[] = ["call", "apply", "bind"];
 function namesOfCallsClosedOn(holder: ModelBuiltin, names: readonly ModelName[]): ModelClosedKeys {
   const keys = names.filter(
     name =>
-      (name.kind === "Text" ? textsOfNamesOfCalls.includes(name.text) : name.kind === "WellKnownSymbol" && name.text === "hasInstance") &&
+      (name.kind === "Text"
+        ? textsOfNamesOfCalls.includes(name.text)
+        : name.kind === "WellKnownSymbol" && name.text === "hasInstance") &&
       !holder.members.some(member => member.name === name),
   );
-  return { holder, keys: Object.freeze([...keys].sort((left, right) => left.number - right.number)), openNames: Object.freeze([]) };
+  return {
+    holder,
+    keys: Object.freeze([...keys].sort((left, right) => left.number - right.number)),
+    openNames: Object.freeze([]),
+  };
 }
 
 export function numberModel(builder: ModelBuilder, types: TypeInterner): TableModel {
@@ -296,7 +303,9 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
         if (read === undefined) return [];
         const inNumberOrder = (unordered: readonly ModelName[]): readonly ModelName[] =>
           Object.freeze([...unordered].sort((left, right) => left.number - right.number));
-        return [{ holder, names: inNumberOrder(read.names), namesOnlyInspected: inNumberOrder(read.namesOnlyInspected) }];
+        return [
+          { holder, names: inNumberOrder(read.names), namesOnlyInspected: inNumberOrder(read.namesOnlyInspected) },
+        ];
       }),
     ),
     overloads: numberOverloads(builtins),

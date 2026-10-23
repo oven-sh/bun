@@ -189,7 +189,9 @@ export class TypeInterner {
 
   internAtoms(atoms: readonly Atom[]): ModelType {
     const parts = atoms.flatMap((atom): ModelTypePart[] =>
-      typeof atom === "object" ? [{ part: "Instance", class: atom, pristine: [], isOfClassItself: false, contents: [] }] : [],
+      typeof atom === "object"
+        ? [{ part: "Instance", class: atom, pristine: [], isOfClassItself: false, contents: [] }]
+        : [],
     );
     return this.#store({
       ...neverType,
@@ -297,7 +299,8 @@ export class TypeInterner {
     const isOfClassItself = spec.isOfClassItself === true;
     const groupKey = [instanceClass.token, isOfClassItself, ...pristine].join(" ");
     const group = draft.instances.get(groupKey);
-    if (group === undefined) draft.instances.set(groupKey, { class: instanceClass, pristine, isOfClassItself, contents: [contents] });
+    if (group === undefined)
+      draft.instances.set(groupKey, { class: instanceClass, pristine, isOfClassItself, contents: [contents] });
     else group.contents.push(contents);
   }
 
@@ -386,7 +389,6 @@ export class TypeInterner {
       }),
     }));
   }
-
 }
 
 function isOrExtends(candidate: ModelClass, isAncestor: (ancestor: ModelClass) => boolean): boolean {

@@ -35,7 +35,10 @@ impl DeclaredTypesForTesting {
         this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
     ) -> JsLocal<'a> {
-        JsLocal::new(heap, js::held_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED))
+        JsLocal::new(
+            heap,
+            js::held_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED),
+        )
     }
 }
 

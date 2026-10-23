@@ -41,7 +41,8 @@ impl Options {
         self.jsx_import_source.clone_from(&other.jsx_import_source);
         self.jsx_runtime.clone_from(&other.jsx_runtime);
         self.jsx_factory.clone_from(&other.jsx_factory);
-        self.jsx_fragment_factory.clone_from(&other.jsx_fragment_factory);
+        self.jsx_fragment_factory
+            .clone_from(&other.jsx_fragment_factory);
         self.react_namespace.clone_from(&other.react_namespace);
     }
 }

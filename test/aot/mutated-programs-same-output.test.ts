@@ -18,7 +18,11 @@ import { unsupported } from "./run-programs";
 
 const programCount = Number(process.env.AOT_FUZZ_PROGRAMS) || 20;
 const mutantsPerProgram = Number(process.env.AOT_FUZZ_MUTANTS_PER_PROGRAM) || 3;
-const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : freshSeed === undefined ? [1] : [1, freshSeed];
+const seeds = process.env.AOT_FUZZ_SEED
+  ? [Number(process.env.AOT_FUZZ_SEED)]
+  : freshSeed === undefined
+    ? [1]
+    : [1, freshSeed];
 
 function mulberry32(state: number) {
   return () => {
@@ -35,7 +39,12 @@ function singleFilePrograms(folder: string, into: string[] = []) {
   const names = new Set(entries.map(entry => entry.name));
   for (const entry of entries) {
     if (entry.isDirectory()) singleFilePrograms(join(folder, entry.name), into);
-    else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts") && !names.has(entry.name.slice(0, -3) + ".json")) into.push(join(folder, entry.name));
+    else if (
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".d.ts") &&
+      !names.has(entry.name.slice(0, -3) + ".json")
+    )
+      into.push(join(folder, entry.name));
   }
   return into;
 }
@@ -44,11 +53,13 @@ function singleFilePrograms(folder: string, into: string[] = []) {
 const numbers = ["0", "1", "-1", "2", "0.5", "-0", "255", "256", "65536", "2147483647", "2147483648", "-2147483648", "4294967295", "1e21", "1e-7", "9007199254740991", "3"];
 // prettier-ignore
 const operatorGroups = [["+", "-", "*", "/", "%", "**"], ["<", "<=", ">", ">="], ["===", "!=="], ["&&", "||", "??"], ["&", "|", "^"], ["<<", ">>", ">>>"], ["+=", "-=", "*="]];
-const binaryOperator = /(?<=[\w)\] ]) (\*\*|>>>|<<|>>|===|!==|<=|>=|&&|\|\||\?\?|\+=|-=|\*=|[-+*/%<>&|^]) (?=[\w(\[" ])/g;
+const binaryOperator =
+  /(?<=[\w)\] ]) (\*\*|>>>|<<|>>|===|!==|<=|>=|&&|\|\||\?\?|\+=|-=|\*=|[-+*/%<>&|^]) (?=[\w(\[" ])/g;
 
 function mutate(source: string, random: () => number): string {
   const pick = <T>(list: T[]) => list[Math.floor(random() * list.length)];
-  const splice = (start: number, length: number, text: string) => source.slice(0, start) + text + source.slice(start + length);
+  const splice = (start: number, length: number, text: string) =>
+    source.slice(0, start) + text + source.slice(start + length);
   const lines = source.split("\n");
   const codeLines = lines.flatMap((line, index) => (line.trim() && !line.trimStart().startsWith("//") ? [index] : []));
   if (!codeLines.length) return source;
@@ -64,7 +75,11 @@ function mutate(source: string, random: () => number): string {
       const operators = [...source.matchAll(binaryOperator)];
       if (!operators.length) return source;
       const operator = pick(operators);
-      return splice(operator.index + 1, operator[1].length, pick(operatorGroups.find(group => group.includes(operator[1]))!));
+      return splice(
+        operator.index + 1,
+        operator[1].length,
+        pick(operatorGroups.find(group => group.includes(operator[1]))!),
+      );
     }
     case 3: {
       const names = [...source.matchAll(/(?<![\w.$"'`])[a-z_$][\w$]*(?![\w$"'`:])/g)];
@@ -103,54 +118,75 @@ async function run(cmd: string[], cwd: string, timeout: number) {
 async function compare(folder: string, source: string): Promise<string> {
   writeFileSync(join(folder, "main.ts"), source);
   rmSync(join(folder, "compiled"), { force: true });
-  const built = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "./compiled"], folder, 120_000);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "./compiled"],
+    folder,
+    120_000,
+  );
   if (built.signal || /\bpanic/.test(built.stdout + built.stderr)) return "the build crashed";
   if (built.timedOut) return "the build hangs";
   if (!existsSync(join(folder, "compiled"))) return "skipped";
-  const [compiled, interpreted] = [await run(["./compiled"], folder, 30_000), await run([bunExe(), "run", "./main.ts"], folder, 30_000)];
+  const [compiled, interpreted] = [
+    await run(["./compiled"], folder, 30_000),
+    await run([bunExe(), "run", "./main.ts"], folder, 30_000),
+  ];
   if (compiled.signal) return "the program crashed: " + compiled.signal;
   if (compiled.timedOut || interpreted.timedOut) return "skipped";
-  if (compiled.stdout === interpreted.stdout && (compiled.exitCode === 0) === (interpreted.exitCode === 0)) return "same";
+  if (compiled.stdout === interpreted.stdout && (compiled.exitCode === 0) === (interpreted.exitCode === 0))
+    return "same";
   const said = compiled.stdout + compiled.stderr;
   if (said.includes("(bun compile")) return "skipped";
   // Plain Bun does not enforce the temporal dead zone of top-level classes, and the two run out of stack at different depths.
-  if (said.includes("before initialization") || said.includes("ReferenceError") || (said + interpreted.stdout + interpreted.stderr).includes("Maximum call stack")) return "skipped";
+  if (
+    said.includes("before initialization") ||
+    said.includes("ReferenceError") ||
+    (said + interpreted.stdout + interpreted.stderr).includes("Maximum call stack")
+  )
+    return "skipped";
   const [ours, theirs] = [compiled.stdout.split("\n"), interpreted.stdout.split("\n")];
   const line = ours.findIndex((text, index) => text !== theirs[index]);
   return `line ${line + 1}: compiled ${JSON.stringify(ours[line]?.slice(0, 100))}, plain ${JSON.stringify(theirs[line]?.slice(0, 100))}, exit codes ${compiled.exitCode} ${interpreted.exitCode}`;
 }
 
-for (const seed of seeds) test.skipIf(!!unsupported)(
-  `mutants of ${programCount} programs print the same compiled and in plain Bun, AOT_FUZZ_SEED=${seed}`,
-  async () => {
-    using root = tempDir("aot-mutated-programs", {});
-    const programs = singleFilePrograms(join(import.meta.dir, "programs"));
-    const hashed = programs.map(path => ({ path, hash: Number(Bun.hash.crc32(seed + ":" + path.slice(import.meta.dir.length + 1))) }));
-    const jobs = hashed
-      .sort((a, b) => a.hash - b.hash)
-      .slice(0, programCount)
-      .map(({ path, hash }) => {
-        const random = mulberry32(hash);
-        const source = readFileSync(path, "utf8");
-        return { from: path.slice(import.meta.dir.length + 1), source, mutants: Array.from({ length: mutantsPerProgram }, () => mutate(source, random)) };
-      });
-    const failures: { from: string; outcome: string; source: string }[] = [];
-    let next = 0;
-    const worker = async (id: number) => {
-      const folder = join(String(root), String(id));
-      mkdirSync(folder);
-      while (next < jobs.length) {
-        const { from, source, mutants } = jobs[next++];
-        if ((await compare(folder, source)) !== "same") continue;
-        for (const mutant of mutants) {
-          if (mutant === source) continue;
-          const outcome = await compare(folder, mutant);
-          if (outcome !== "same" && outcome !== "skipped") failures.push({ from, outcome, source: mutant });
+for (const seed of seeds)
+  test.skipIf(!!unsupported)(
+    `mutants of ${programCount} programs print the same compiled and in plain Bun, AOT_FUZZ_SEED=${seed}`,
+    async () => {
+      using root = tempDir("aot-mutated-programs", {});
+      const programs = singleFilePrograms(join(import.meta.dir, "programs"));
+      const hashed = programs.map(path => ({
+        path,
+        hash: Number(Bun.hash.crc32(seed + ":" + path.slice(import.meta.dir.length + 1))),
+      }));
+      const jobs = hashed
+        .sort((a, b) => a.hash - b.hash)
+        .slice(0, programCount)
+        .map(({ path, hash }) => {
+          const random = mulberry32(hash);
+          const source = readFileSync(path, "utf8");
+          return {
+            from: path.slice(import.meta.dir.length + 1),
+            source,
+            mutants: Array.from({ length: mutantsPerProgram }, () => mutate(source, random)),
+          };
+        });
+      const failures: { from: string; outcome: string; source: string }[] = [];
+      let next = 0;
+      const worker = async (id: number) => {
+        const folder = join(String(root), String(id));
+        mkdirSync(folder);
+        while (next < jobs.length) {
+          const { from, source, mutants } = jobs[next++];
+          if ((await compare(folder, source)) !== "same") continue;
+          for (const mutant of mutants) {
+            if (mutant === source) continue;
+            const outcome = await compare(folder, mutant);
+            if (outcome !== "same" && outcome !== "skipped") failures.push({ from, outcome, source: mutant });
+          }
         }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) }, (_, id) => worker(id)));
-    expect(failures).toEqual([]);
-  },
-  Math.max(600_000, programCount * mutantsPerProgram * 4_000),
-);
+      };
+      await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) }, (_, id) => worker(id)));
+      expect(failures).toEqual([]);
+    },
+    Math.max(600_000, programCount * mutantsPerProgram * 4_000),
+  );

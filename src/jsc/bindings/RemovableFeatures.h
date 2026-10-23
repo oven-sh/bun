@@ -13,7 +13,8 @@ ASCIILiteral trimFeatureNameOf(JSC::RemovableFeature);
 
 #define BUN_BEGIN_REMOVABLE_ENTRY_POINT(feature, stub, ...) \
     return ::JSC::callRemovableBody<::Bun::Feature::feature, ::JSC::RemovedFeatureStub::stub, __VA_ARGS__>(nullptr, [&]() ALWAYS_INLINE_LAMBDA WTF_IGNORES_THREAD_SAFETY_ANALYSIS -> __VA_ARGS__ {
-#define BUN_END_REMOVABLE_ENTRY_POINT });
+#define BUN_END_REMOVABLE_ENTRY_POINT \
+    });
 #define BUN_REMOVABLE_DEFINITION(feature, ...) ::JSC::recordRemovableDefinition<::Bun::Feature::feature, __VA_ARGS__>()
 #define BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(feature, function) ::JSC::recordRemovableDefinition<::Bun::Feature::feature, function, ::JSC::RemovedFeatureStub::Throw>()
 #define BUN_REMOVABLE_BUILTIN_HOST_FUNCTION_DEFINITION(feature, builtin, function) ::JSC::recordRemovableDefinition<::Bun::Feature::feature, function, ::JSC::RemovedFeatureStub::Throw, builtin>()

@@ -66,10 +66,14 @@ fn with_file(
 }
 
 fn only_string(file: &FileBuilder) -> (ExprId, Atom) {
-    let strings = file.exprs.iter().zip(0..).filter_map(|(expr, id)| match expr.kind {
-        ExprKind::String(text) => Some((ExprId(id), text)),
-        _ => None,
-    });
+    let strings = file
+        .exprs
+        .iter()
+        .zip(0..)
+        .filter_map(|(expr, id)| match expr.kind {
+            ExprKind::String(text) => Some((ExprId(id), text)),
+            _ => None,
+        });
     let [string] = strings.collect::<Vec<_>>()[..] else {
         panic!("{:?}", file.exprs);
     };
@@ -161,7 +165,10 @@ fn ill_formed_bytes_in_template_parts() {
     with_file(b"f`a\\n\xE9\r\n\xE8${b}\xE7`", true, |file, bytes| {
         let text = |text: &str| text.as_bytes().to_vec();
         let expected = [
-            (text("a\n\u{FFFD}\n\u{FFFD}"), text("a\\n\u{FFFD}\n\u{FFFD}")),
+            (
+                text("a\n\u{FFFD}\n\u{FFFD}"),
+                text("a\\n\u{FFFD}\n\u{FFFD}"),
+            ),
             (text("\u{FFFD}"), text("\u{FFFD}")),
         ];
         assert_eq!(template_parts(file, bytes), expected);
@@ -169,7 +176,10 @@ fn ill_formed_bytes_in_template_parts() {
     for options in [javascript(true), tsx(true)] {
         with_parsed(b"f`\xFF\\n\xED\xA0\x80${b}\x80`", options, |file, bytes| {
             let expected = [
-                (b"\xC3\xBF\n\xED\xA0\x80".to_vec(), b"\xC3\xBF\\n\xED\xA0\x80".to_vec()),
+                (
+                    b"\xC3\xBF\n\xED\xA0\x80".to_vec(),
+                    b"\xC3\xBF\\n\xED\xA0\x80".to_vec(),
+                ),
                 (b"\xC2\x80".to_vec(), b"\xC2\x80".to_vec()),
             ];
             assert_eq!(template_parts(file, bytes), expected);
@@ -206,7 +216,11 @@ fn ill_formed_bytes_in_jsx_attribute() {
     let cases: [(&[u8], &[u8], &[u8]); 3] = [
         (b"x = <a b=\"caf\xE9\" />", b"caf\xE9", b"caf\xEF\xBF\xBD"),
         (b"x = <a b=\"\xFF\" />", b"\xFF", b"\xC3\xBF"),
-        (b"x = <a b=\"\xED\xA0\x80\" />", b"\xED\xA0\x80", b"\xED\xA0\x80"),
+        (
+            b"x = <a b=\"\xED\xA0\x80\" />",
+            b"\xED\xA0\x80",
+            b"\xED\xA0\x80",
+        ),
     ];
     for (text, written, expected) in cases {
         for options in [javascript(true), tsx(true)] {
@@ -231,8 +245,16 @@ fn ill_formed_bytes_in_jsx_text() {
     let cases: [(&[u8], &[u8], &str); 4] = [
         (b"x = <a>caf\xE9</a>", b"caf\xEF\xBF\xBD", "caf\u{FFFD}"),
         (b"x = <a>\xFF</a>", b"\xC3\xBF", "\u{FFFD}"),
-        (b"x = <a>a\n  \x80 &amp;\n</a>", b"a \xC2\x80 &", "a \u{FFFD} &"),
-        (b"x = <a>\xED\xA0\x80</a>", b"\xED\xA0\x80", "\u{FFFD}\u{FFFD}\u{FFFD}"),
+        (
+            b"x = <a>a\n  \x80 &amp;\n</a>",
+            b"a \xC2\x80 &",
+            "a \u{FFFD} &",
+        ),
+        (
+            b"x = <a>\xED\xA0\x80</a>",
+            b"\xED\xA0\x80",
+            "\u{FFFD}\u{FFFD}\u{FFFD}",
+        ),
     ];
     for (text, compiled, checked) in cases {
         for options in [javascript(true), tsx(true)] {

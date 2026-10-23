@@ -6,12 +6,19 @@ const ES_NAMES: (&str, &str) = ("names.mjs", "export const f = () => 1; export l
 
 fn is_initialized_holder(probe: &Probe<'_, '_, '_>, function: &str, name: &str) -> bool {
     let key = probe.key(probe.function(function));
-    probe.analysis.is_initialized_holder(key, probe.symbol(name))
+    probe
+        .analysis
+        .is_initialized_holder(key, probe.symbol(name))
 }
 
 #[test]
 fn holder_is_not_captured_by_a_function_made_behind_it() {
-    let cases = [("const", NAMES), ("let", NAMES), ("var", NAMES), ("const", ES_NAMES)];
+    let cases = [
+        ("const", NAMES),
+        ("let", NAMES),
+        ("var", NAMES),
+        ("const", ES_NAMES),
+    ];
     for (declaration, target) in cases {
         let source = format!(
             "{declaration} a = require('./{}'); \
@@ -19,7 +26,10 @@ fn holder_is_not_captured_by_a_function_made_behind_it() {
             target.0
         );
         analyze_files(&[("main.cjs", source.as_str()), target], |probe| {
-            assert!(probe.captures(probe.function("later")).is_empty(), "{source}");
+            assert!(
+                probe.captures(probe.function("later")).is_empty(),
+                "{source}"
+            );
             assert!(is_initialized_holder(probe, "later", "a"), "{source}");
         });
     }
@@ -42,7 +52,10 @@ fn holder_that_is_a_value_is_captured() {
                   module.exports = function later() { return a; };";
     analyze_files(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
-        assert_eq!(probe.captures(probe.function("later")), [Capture::Value(probe.binding("a"))]);
+        assert_eq!(
+            probe.captures(probe.function("later")),
+            [Capture::Value(probe.binding("a"))]
+        );
     });
 }
 

@@ -82,7 +82,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let arguments = self.c.type_arguments(reference);
         let own_range = outer..outer + parameters.len();
         let own_arguments = arguments.get(own_range).ok_or(GaveUp::Unresolved)?;
-        let pairs = parameters.iter().copied().zip(own_arguments.iter().copied());
+        let pairs = parameters
+            .iter()
+            .copied()
+            .zip(own_arguments.iter().copied());
         self.list_type_arguments(pairs)
     }
 

@@ -187,6 +187,7 @@ fn add_resource(
     pattern::bind_pattern(lowering, decl.pat, value, source);
 }
 
+#[allow(clippy::needless_pass_by_value)] // the end of the scope
 fn end_resource_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ResourceScope) {
     let mut follows_async_resource = false;
     for (index, &resource) in scope.resources.iter().enumerate().rev() {

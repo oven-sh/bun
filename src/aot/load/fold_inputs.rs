@@ -79,10 +79,17 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         value: DefineValue::Constant(Constant::Boolean(holds)),
     };
     let build_defines = [
-        define_fact(b"CAN_LOAD_CODE_AT_RUN_TIME", facts.can_load_code_at_run_time),
+        define_fact(
+            b"CAN_LOAD_CODE_AT_RUN_TIME",
+            facts.can_load_code_at_run_time,
+        ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
     ];
-    let defines: Vec<Define<'s>> = manifest_defines.iter().chain(&build_defines).copied().collect();
+    let defines: Vec<Define<'s>> = manifest_defines
+        .iter()
+        .chain(&build_defines)
+        .copied()
+        .collect();
     let defines = arena.alloc_slice_copy(&defines);
     let options = FoldOptions {
         defines: after_constant_globals(defines, platform, arena, atoms),
@@ -112,11 +119,17 @@ fn after_constant_globals<'s>(
         value: DefineValue::Constant(value),
     });
     let locked_builtins = locked_builtin_defines(platform, arena, atoms);
-    let locked_builtins = locked_builtins
+    let locked_builtins = locked_builtins.iter().filter(|locked| {
+        defines
+            .iter()
+            .all(|define| define.path.root != locked.path.root)
+    });
+    let all: Vec<Define<'s>> = constant_globals
         .iter()
-        .filter(|locked| defines.iter().all(|define| define.path.root != locked.path.root));
-    let all: Vec<Define<'s>> =
-        constant_globals.iter().chain(locked_builtins).chain(defines).copied().collect();
+        .chain(locked_builtins)
+        .chain(defines)
+        .copied()
+        .collect();
     arena.alloc_slice_copy(&all)
 }
 
@@ -308,12 +321,18 @@ mod tests {
         assert_eq!(defines.len(), 5);
         assert_eq!(defines[0], constant(&[b"process", b"platform"], linux));
         assert_eq!(defines[0].path.members, [atoms.intern(b"platform")]);
-        assert_eq!(defines[1], constant(&[b"IS_BUN_DEVELOPMENT"], Constant::Boolean(true)));
+        assert_eq!(
+            defines[1],
+            constant(&[b"IS_BUN_DEVELOPMENT"], Constant::Boolean(true))
+        );
         assert_eq!(defines[2], constant(&[b"NOTHING"], Constant::Null));
         assert_eq!(defines[3], constant(&[b"COUNT"], Constant::Number(-2.0)));
         let labels = [DataValue::String(atoms.intern(b"a"))];
         assert_eq!(defines[4].path, global_path(&[b"$Labels"], arena, &atoms));
-        assert_eq!(defines[4].value, DefineValue::Data(&DataValue::Array(&labels)));
+        assert_eq!(
+            defines[4].value,
+            DefineValue::Data(&DataValue::Array(&labels))
+        );
     }
 
     #[test]
@@ -348,8 +367,14 @@ mod tests {
     fn runtime_defines_fold_in_runtime_sources_only() {
         const NAME: &[u8] = b"IS_BUN_DEVELOPMENT";
         let files = [
-            ("a.ts", "import 'node:path'; export const isDevelopment = IS_BUN_DEVELOPMENT;"),
-            ("/$bun/js/node/path.ts", "export default IS_BUN_DEVELOPMENT;"),
+            (
+                "a.ts",
+                "import 'node:path'; export const isDevelopment = IS_BUN_DEVELOPMENT;",
+            ),
+            (
+                "/$bun/js/node/path.ts",
+                "export default IS_BUN_DEVELOPMENT;",
+            ),
         ];
         with_loaded_build(&files, &default_settings(), |_, loaded| {
             let application = loaded.project(ProjectId::Application).loaded.files();
@@ -372,7 +397,9 @@ mod tests {
             let fold = fold_inputs_with_facts(&sessions, &atoms, &limits, facts_where(holds));
             let count_import_sites = |project: ProjectId| {
                 let arena = sessions.get(project).arena();
-                analyze(source, fold.get(project), arena, &atoms).import_sites.len()
+                analyze(source, fold.get(project), arena, &atoms)
+                    .import_sites
+                    .len()
             };
             assert_eq!(count_import_sites(ProjectId::Runtime), usize::from(holds));
             assert_eq!(count_import_sites(ProjectId::Application), 1);
@@ -406,7 +433,9 @@ mod tests {
         let atoms = Interner::new_in(&sessions.application);
         let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
         let arena = sessions.application.arena();
-        analyze(source, &fold.application, arena, &atoms).import_sites.len()
+        analyze(source, &fold.application, arena, &atoms)
+            .import_sites
+            .len()
     }
 
     #[test]
@@ -452,7 +481,10 @@ mod tests {
         let defines = after_constant_globals(&renamed, Platforms::LINUX, arena, &atoms);
         let below = |root: &[u8]| {
             let root = DefineRoot::Global(atoms.intern(root));
-            defines.iter().filter(|define| define.path.root == root).count()
+            defines
+                .iter()
+                .filter(|define| define.path.root == root)
+                .count()
         };
         assert_eq!(below(b"Object"), 1);
         assert!(below(b"Array") > 1);
@@ -473,9 +505,17 @@ mod tests {
         let atoms = Interner::new_in(&sessions.application);
         let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
         let source = "import { nope } from 'bun:bundle'; nope();";
-        let analysis = analyze(source, &fold.application, sessions.application.arena(), &atoms);
+        let analysis = analyze(
+            source,
+            &fold.application,
+            sessions.application.arena(),
+            &atoms,
+        );
         let errors: Vec<FoldErrorKind> = analysis.errors.iter().map(|error| error.kind).collect();
-        assert_eq!(errors, [FoldErrorKind::UnknownBundleExport(atoms.intern(b"nope"))]);
+        assert_eq!(
+            errors,
+            [FoldErrorKind::UnknownBundleExport(atoms.intern(b"nope"))]
+        );
     }
 
     #[test]
@@ -487,10 +527,21 @@ mod tests {
         let fold = fold_inputs_with_limits(&sessions, &atoms, &limits);
         for (project, inputs) in fold.iter() {
             let arena = sessions.get(project).arena();
-            let count_over_limit =
-                |source| analyze(source, inputs, arena, &atoms).strings_over_limit.len();
-            assert_eq!(count_over_limit("export const text = 'abc' + 'def';"), 1, "{project:?}");
-            assert_eq!(count_over_limit("export const text = 'ab' + 'cd';"), 0, "{project:?}");
+            let count_over_limit = |source| {
+                analyze(source, inputs, arena, &atoms)
+                    .strings_over_limit
+                    .len()
+            };
+            assert_eq!(
+                count_over_limit("export const text = 'abc' + 'def';"),
+                1,
+                "{project:?}"
+            );
+            assert_eq!(
+                count_over_limit("export const text = 'ab' + 'cd';"),
+                0,
+                "{project:?}"
+            );
         }
     }
 }

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const wire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
@@ -14,10 +14,18 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 
 async function built(entry: string, files: Record<string, string>) {
   using dir = tempDir("doors-and-reach", files);
-  const build = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], String(dir), bunEnv);
+  const build = await run(
+    [bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"],
+    String(dir),
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const ran = await run([join(String(dir), "program")], String(dir), wire);
-  return { stdout: ran.stdout, exitCode: ran.exitCode, size: statSync(join(String(dir), isWindows ? "program.exe" : "program")).size };
+  return {
+    stdout: ran.stdout,
+    exitCode: ran.exitCode,
+    size: statSync(join(String(dir), isWindows ? "program.exe" : "program")).size,
+  };
 }
 
 const main = `import { double } from "./lib.mjs";\nconsole.log(double(21));\n`;
@@ -34,7 +42,12 @@ test("a door in a function that nothing reaches brings no built-in module along"
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
   for (const [name, lib] of Object.entries(notReached)) {
     const found = await built("main.mjs", { "main.mjs": main, "lib.mjs": lib });
-    expect({ name, stdout: found.stdout, exitCode: found.exitCode, grows: found.size - plain.size > 32 * 1024 }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
+    expect({
+      name,
+      stdout: found.stdout,
+      exitCode: found.exitCode,
+      grows: found.size - plain.size > 32 * 1024,
+    }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
   }
 }, 240_000);
 

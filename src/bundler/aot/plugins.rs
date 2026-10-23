@@ -25,12 +25,14 @@ struct WaiterState {
     answer: Option<Answer>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Answer {
     Load(LoadValue),
     Resolve(ResolveValue),
     Drained,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum WakeReason {
     Answered(Answer),
     Deferred,

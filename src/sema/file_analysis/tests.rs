@@ -279,7 +279,10 @@ fn import_site_lookups() {
             assert_eq!(analysis.import_site_of_call(call), Some(index), "{kind:?}");
         }
     }
-    for absent in [ImportSiteKind::Require(ExprId(5)), ImportSiteKind::JsxPackage] {
+    for absent in [
+        ImportSiteKind::Require(ExprId(5)),
+        ImportSiteKind::JsxPackage,
+    ] {
         assert_eq!(analysis.import_site_index(absent), None, "{absent:?}");
     }
     for call in [ExprId(0), ExprId(6), ExprId(10)] {
@@ -316,7 +319,11 @@ fn empty_file_format() {
         let analyzed = workspace.analyze_tree(hir, &fold, file);
         let analysis = &analyzed.analysis;
         assert_eq!(analysis.module_format, format);
-        assert_eq!(analyzed.hir.is_strict, format == ModuleFormat::Esm, "{format:?}");
+        assert_eq!(
+            analyzed.hir.is_strict,
+            format == ModuleFormat::Esm,
+            "{format:?}"
+        );
         assert!(analysis.import_sites.is_empty());
         assert!(analysis.jsx_imports.is_empty());
         assert!(analysis.errors.is_empty());
@@ -471,12 +478,18 @@ fn host_value_decides_expression() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
     let text = workspace.atoms.intern(b"text");
-    let properties = workspace.arena.alloc_slice_copy(&[(known::value, DataValue::Null)]);
+    let properties = workspace
+        .arena
+        .alloc_slice_copy(&[(known::value, DataValue::Null)]);
     let object: &DataValue<'_> = workspace.arena.alloc(DataValue::Object(properties));
     let string: &DataValue<'_> = workspace.arena.alloc(DataValue::String(text));
     let cases = [
         (HostValue::Data(object), Decision::Data(object), true),
-        (HostValue::Data(string), Decision::Constant(Constant::String(text)), false),
+        (
+            HostValue::Data(string),
+            Decision::Constant(Constant::String(text)),
+            false,
+        ),
         (HostValue::Deferred, Decision::DeferredData, false),
     ];
     for (host_value, expected, is_data_literal) in cases {
@@ -488,13 +501,20 @@ fn host_value_decides_expression() {
         let analyzed = workspace.analyze_with(file, &[statement], inputs);
         let decisions = &analyzed.analysis.decisions;
         assert_eq!(decisions.decision(call), expected);
-        assert_eq!(decisions.is_data_literal(call), is_data_literal, "{expected:?}");
+        assert_eq!(
+            decisions.is_data_literal(call),
+            is_data_literal,
+            "{expected:?}"
+        );
         assert!(!decisions.is_dead_expr(call), "{expected:?}");
         assert!(decisions.is_dead_expr(argument), "{expected:?}");
         let ExprKind::Call(id) = analyzed.hir[call].kind else {
             panic!("{:?} is no call", analyzed.hir[call].kind);
         };
-        assert!(decisions.is_dead_expr(analyzed.hir[id].callee), "{expected:?}");
+        assert!(
+            decisions.is_dead_expr(analyzed.hir[id].callee),
+            "{expected:?}"
+        );
         let constant = match expected {
             Decision::Constant(constant) => FoldedValue::Constant(constant),
             Decision::Unknown
@@ -517,12 +537,18 @@ fn host_value_of_unreached_expression_is_skipped() {
     let unreached = add_call(&mut file, known::get, &[]);
     let reached = add_call(&mut file, known::get, &[]);
     let statement = file.stmt(StmtKind::Expr(reached), 0);
-    let values = [(unreached, HostValue::Data(one)), (reached, HostValue::Data(two))];
+    let values = [
+        (unreached, HostValue::Data(one)),
+        (reached, HostValue::Data(two)),
+    ];
     let inputs = workspace.host_values(&values);
     let analyzed = workspace.analyze_with(file, &[statement], inputs);
     let decisions = &analyzed.analysis.decisions;
     assert_eq!(decisions.decision(unreached), Decision::Unknown);
-    assert_eq!(decisions.constant(&analyzed.hir, unreached), FoldedValue::Unknown);
+    assert_eq!(
+        decisions.constant(&analyzed.hir, unreached),
+        FoldedValue::Unknown
+    );
     assert_eq!(decisions.decision(reached), Decision::Constant(number(2.0)));
 }
 
@@ -552,7 +578,11 @@ fn library_decides_file_scope_constant_reads() {
             (Decision::Unknown, constant)
         };
         assert_eq!(decisions.decision(read), decision, "{is_library}");
-        assert_eq!(decisions.constant(&analyzed.hir, read), constant, "{is_library}");
+        assert_eq!(
+            decisions.constant(&analyzed.hir, read),
+            constant,
+            "{is_library}"
+        );
     }
 }
 
@@ -620,6 +650,9 @@ fn dead_top_level_await_decides_format_only() {
     let analyzed = workspace.analyze_with(file, &[branch], inputs);
     assert!(analyzed.analysis.decisions.is_dead_stmt(yes));
     assert!(!analyzed.analysis.has_live_top_level_await);
-    assert!(has_live_top_level_await(&analyzed.hir, &Decisions::default()));
+    assert!(has_live_top_level_await(
+        &analyzed.hir,
+        &Decisions::default()
+    ));
     assert_eq!(analyzed.analysis.module_format, ModuleFormat::Esm);
 }

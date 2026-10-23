@@ -1273,6 +1273,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // The file of the first entry point has the name of the executable, and its module the name of its source.
     // SAFETY: per fn contract; the resolver is only read.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        // SAFETY: as above.
         && let Some(module) = unsafe {
             let root = graph.base_public_path_with_default_suffix();
             (*parent).transpiler.resolver.resolve_embedded_module(root, str)

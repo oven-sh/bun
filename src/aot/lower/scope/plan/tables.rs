@@ -44,7 +44,9 @@ fn name_initialized_holders(
     holders: &[(WalkedFunctionId, SymbolId)],
 ) -> Vec<(FunctionKey, SymbolId)> {
     let key_of = |function: WalkedFunctionId| context.walk.functions[function.index()].key;
-    let named = holders.iter().map(|&(function, symbol)| (key_of(function), symbol));
+    let named = holders
+        .iter()
+        .map(|&(function, symbol)| (key_of(function), symbol));
     let mut named: Vec<(FunctionKey, SymbolId)> = named.collect();
     named.sort_unstable();
     named
@@ -85,7 +87,10 @@ fn group_bindings(
     let mut entries: Vec<(usize, BindingRef)> = Vec::new();
     for (symbol, &form) in (0..).map(SymbolId).zip(forms) {
         if is_stored_form(form) {
-            entries.push((context.declaring_scope(symbol).idx(), BindingRef::Symbol(symbol)));
+            entries.push((
+                context.declaring_scope(symbol).idx(),
+                BindingRef::Symbol(symbol),
+            ));
         }
     }
     for &((scope, slot), _) in &placements.slots {
@@ -97,13 +102,19 @@ fn group_bindings(
 fn group_fields(context: &Context<'_, '_>, placements: &Placements) -> GroupedList<BindingRef> {
     let fields = placements.fields.iter();
     let entries = fields.map(|&(scope, binding)| (scope.idx(), binding));
-    GroupedList::new(context.input.bound.scopes.len(), &entries.collect::<Vec<_>>())
+    GroupedList::new(
+        context.input.bound.scopes.len(),
+        &entries.collect::<Vec<_>>(),
+    )
 }
 
 fn group_hoisted_functions(context: &Context<'_, '_>) -> GroupedList<(SymbolId, FnId)> {
     let functions = context.walk.hoisted_functions.iter();
     let entries = functions.map(|&(scope, symbol, function)| (scope.idx(), (symbol, function)));
-    GroupedList::new(context.input.bound.scopes.len(), &entries.collect::<Vec<_>>())
+    GroupedList::new(
+        context.input.bound.scopes.len(),
+        &entries.collect::<Vec<_>>(),
+    )
 }
 
 fn collect_symbol_variables(placements: &Placements) -> Vec<(BindingRef, VariableKey)> {
@@ -157,7 +168,12 @@ fn compute_loop_stores(
         let is_loop_carried = |binding: &BindingRef| {
             has_local(forms, placements, *binding)
                 && context.owner_of(*binding) == Some(walked.function)
-                && encloses(context, &depths, context.scope_of(*binding), walked.boundary)
+                && encloses(
+                    context,
+                    &depths,
+                    context.scope_of(*binding),
+                    walked.boundary,
+                )
         };
         let bindings = walked.stored.iter().copied().filter(is_loop_carried);
         stored.extend(bindings.map(|binding| (index, binding)));
@@ -179,7 +195,11 @@ fn compute_function_summaries(
     for (id, function) in (0..).map(WalkedFunctionId).zip(functions) {
         let start = captures.len() as u32;
         captures.extend_from_slice(&parts.captures.captures[id.index()]);
-        let is_over_limit = parts.captures.functions_over_limit.binary_search(&id).is_ok();
+        let is_over_limit = parts
+            .captures
+            .functions_over_limit
+            .binary_search(&id)
+            .is_ok();
         summaries.push(FunctionSummary {
             key: function.key,
             entry_flags: compute_entry_flags(context, function.key, parts),
@@ -193,13 +213,12 @@ fn compute_function_summaries(
     (summaries, captures)
 }
 
-fn argument_reads(
-    context: &Context<'_, '_>,
-    function: FnId,
-) -> impl Iterator<Item = ArgumentRead> {
+fn argument_reads(context: &Context<'_, '_>, function: FnId) -> impl Iterator<Item = ArgumentRead> {
     let walked = context.walk.function_of_fn[function.idx()];
     let reads = context.walk.argument_reads.iter();
-    reads.filter(move |read| Some(read.0) == walked).map(|read| read.1)
+    reads
+        .filter(move |read| Some(read.0) == walked)
+        .map(|read| read.1)
 }
 
 fn count_undeclared_parameters(context: &Context<'_, '_>, key: FunctionKey) -> u32 {
@@ -212,7 +231,11 @@ fn count_undeclared_parameters(context: &Context<'_, '_>, key: FunctionKey) -> u
     });
     let hir = context.input.hir;
     let declared = hir[source.function].params;
-    if declared.iter().next_back().is_some_and(|last| hir[last].flags.contains(Flags::REST)) {
+    if declared
+        .iter()
+        .next_back()
+        .is_some_and(|last| hir[last].flags.contains(Flags::REST))
+    {
         return 0;
     }
     positions.max().unwrap_or(0).saturating_sub(declared.len)
@@ -236,7 +259,9 @@ fn compute_entry_flags(
             }
             flags
         }
-        FunctionKey::WrappedModuleBody(_) | FunctionKey::FaceBody(_) | FunctionKey::CheckBody(_) => {
+        FunctionKey::WrappedModuleBody(_)
+        | FunctionKey::FaceBody(_)
+        | FunctionKey::CheckBody(_) => {
             unreachable!("the walk meets no function of this kind")
         }
         FunctionKey::Source(source) => compute_source_entry_flags(context, source.function, parts),

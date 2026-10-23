@@ -71,10 +71,7 @@ fn emit_first_exports(
     Some(created)
 }
 
-pub(super) fn set_own_exports(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    value: ValueId,
-) {
+pub(super) fn set_own_exports(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, value: ValueId) {
     let own_module = ModuleRef::File(lowering.file.file);
     if !has_exports_variable(lowering.file, own_module) {
         return;
@@ -189,8 +186,9 @@ fn collect_arguments_object(
     entry_values: &mut EntryValues,
 ) {
     let indexes = 0..WRAPPER_PARAMETERS.len() as u32;
-    let values: SmallVec<[ValueId; 5]> =
-        indexes.map(|index| lowering.builder.parameter(index)).collect();
+    let values: SmallVec<[ValueId; 5]> = indexes
+        .map(|index| lowering.builder.parameter(index))
+        .collect();
     let object = parameters::create_arguments_object(lowering, CodeUnit::File, &values);
     if let Some(object) = object {
         entry_values.push((BindingRef::Slot(scope, ScopeSlot::Arguments), object));

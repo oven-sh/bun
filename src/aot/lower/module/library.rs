@@ -114,19 +114,21 @@ pub(super) fn collect_library_functions(
         atoms: &files.atoms,
     };
     let hir = source.hir;
-    let statements = hir.ids(hir.body).filter(|&statement| {
-        !source.analysis.decisions.is_dead_stmt(statement)
-    });
+    let statements = hir
+        .ids(hir.body)
+        .filter(|&statement| !source.analysis.decisions.is_dead_stmt(statement));
     statements
-        .filter_map(|statement| match source.classify_library_statement(statement) {
-            LibraryStatement::Function(function) => {
-                let written_at = hir[statement].loc;
-                Some((function, written_at.pos..written_at.end))
-            }
-            LibraryStatement::Erased
-            | LibraryStatement::Directive(_)
-            | LibraryStatement::TopLevelCode => None,
-        })
+        .filter_map(
+            |statement| match source.classify_library_statement(statement) {
+                LibraryStatement::Function(function) => {
+                    let written_at = hir[statement].loc;
+                    Some((function, written_at.pos..written_at.end))
+                }
+                LibraryStatement::Erased
+                | LibraryStatement::Directive(_)
+                | LibraryStatement::TopLevelCode => None,
+            },
+        )
         .collect()
 }
 
@@ -156,7 +158,10 @@ fn find_runtime_function(
     file: &FileLowering<'_, '_, '_, '_>,
     export_name: &[u8],
 ) -> Option<RuntimeFunction> {
-    let function = file.inputs.sources.runtime_function(file.file, export_name)?;
+    let function = file
+        .inputs
+        .sources
+        .runtime_function(file.file, export_name)?;
     let platforms = table::runtime_function(function)?.platforms;
     platforms
         .contains(file.inputs.options.platform)

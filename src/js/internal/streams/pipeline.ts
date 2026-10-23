@@ -32,9 +32,7 @@ let addAbortListener: $BunModules["internal/abort_listener"]["addAbortListener"]
 
 type AnyIterable = Iterable<unknown> | AsyncIterable<unknown>;
 type PipelineCallback = (error?: Error | null, value?: unknown) => void;
-type Then =
-  | ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown)
-  | undefined;
+type Then = ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown) | undefined;
 
 interface PipelineOptions {
   signal?: AbortSignal;
@@ -316,7 +314,9 @@ function pipelineImpl(streams, callback: PipelineCallback, opts?: PipelineOption
       } else {
         ret = makeAsyncIterable(ret);
       }
-      ret = (stream as (source: AnyIterable, options: { signal: AbortSignal }) => unknown)(ret, { signal: signalForStage() });
+      ret = (stream as (source: AnyIterable, options: { signal: AbortSignal }) => unknown)(ret, {
+        signal: signalForStage(),
+      });
 
       if (reading) {
         if (!isIterable(ret, true)) {

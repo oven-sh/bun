@@ -7,7 +7,9 @@ use bun_sema::hir::{CallId, ExprId, ExprKind};
 use smallvec::SmallVec;
 
 fn evaluates_text(id: BuiltinId) -> bool {
-    table::entry(id).flags.contains(BuiltinFlags::EVALUATES_TEXT)
+    table::entry(id)
+        .flags
+        .contains(BuiltinFlags::EVALUATES_TEXT)
 }
 
 fn evaluated_text_form(id: BuiltinId) -> Option<EvaluatedTextForm> {
@@ -44,9 +46,9 @@ impl Resolver<'_, '_> {
         let hir = self.input.hir;
         let mut arguments = hir.ids(hir[call].args);
         match form {
-            EvaluatedTextForm::FunctionBody => {
-                arguments.map(|argument| self.constant_text(argument)).collect()
-            }
+            EvaluatedTextForm::FunctionBody => arguments
+                .map(|argument| self.constant_text(argument))
+                .collect(),
             EvaluatedTextForm::Script => {
                 let text = self.constant_text(arguments.next()?)?;
                 Some(SmallVec::from_slice(&[text]))

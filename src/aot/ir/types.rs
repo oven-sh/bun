@@ -305,7 +305,10 @@ impl TypeTable {
             (Self::NULLISH, Type::primitives(Primitives::NULLISH)),
             (Self::BOOLEAN, Type::primitives(Primitives::BOOLEAN)),
             (Self::NUMBER, Type::primitives(Primitives::NUMBER)),
-            (Self::INT32, Type::integers(i32::MIN.into(), i32::MAX.into())),
+            (
+                Self::INT32,
+                Type::integers(i32::MIN.into(), i32::MAX.into()),
+            ),
             (Self::UINT32, Type::integers(0, u32::MAX.into())),
             (Self::STRING, Type::primitives(Primitives::STRING)),
             (Self::SYMBOL, Type::primitives(Primitives::SYMBOL)),
@@ -314,7 +317,10 @@ impl TypeTable {
             (Self::FUNCTION, Type::any_function()),
             (Self::ANYTHING, Type::anything()),
             (Self::ABSENT, Type::primitives(Primitives::ABSENT)),
-            (Self::ARRAY, Type::class(BuiltinClass::Array, &[Self::ANYTHING])),
+            (
+                Self::ARRAY,
+                Type::class(BuiltinClass::Array, &[Self::ANYTHING]),
+            ),
             (
                 Self::ANYTHING_OR_ABSENT,
                 Type {

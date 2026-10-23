@@ -155,7 +155,9 @@ export function findUsedFeaturesWithoutGuard({
   entryPoints,
 }: Pick<DeclaredUseInput, "model" | "uses" | "entryPoints">): number[] {
   const guardedFeatures = new Set(entryPoints.map(record => record.feature));
-  return [...featuresWithDeclaredUse(uses, model)].filter(feature => !guardedFeatures.has(feature)).sort((a, b) => a - b);
+  return [...featuresWithDeclaredUse(uses, model)]
+    .filter(feature => !guardedFeatures.has(feature))
+    .sort((a, b) => a - b);
 }
 
 function findUsesWithoutGuard(
@@ -169,7 +171,9 @@ function findUsesWithoutGuard(
   }
   const featuresWithoutGuard = new Set(findUsedFeaturesWithoutGuard(input));
   // A guard at a definition cuts every reference to the function, whoever makes it: which built-in comes to it is not followed.
-  const featuresFollowed = new Set(entryPoints.filter(record => record.origin !== "Definition").map(record => record.feature));
+  const featuresFollowed = new Set(
+    entryPoints.filter(record => record.origin !== "Definition").map(record => record.feature),
+  );
   const featuresByGuardFeature = collectFeaturesByGuardFeature(uses, guardedFeatures);
   const failures: FailureOf<"UseWithoutGuard">[] = [];
   for (const declaration of uses.entries) {
@@ -178,7 +182,8 @@ function findUsesWithoutGuard(
     const guardedBesideIt = guardFeature === undefined ? undefined : featuresByGuardFeature.get(guardFeature);
     for (const feature of declaredFeatures(model, declaration)) {
       if (guarded?.has(feature) || guardedBesideIt?.has(feature)) continue;
-      if (retainedGuardFeatures.has(feature) || featuresWithoutGuard.has(feature) || !featuresFollowed.has(feature)) continue;
+      if (retainedGuardFeatures.has(feature) || featuresWithoutGuard.has(feature) || !featuresFollowed.has(feature))
+        continue;
       failures.push({ kind: "UseWithoutGuard", builtin: declaration.id, feature });
     }
   }
@@ -205,10 +210,12 @@ function findGuardsWithoutUser({
       firstRecordOf.set(feature, record);
     }
   }
-  return Array.from(
-    firstRecordOf.values(),
-    ({ guard, entry, feature }): FailureOf<"GuardWithoutUser"> => ({ kind: "GuardWithoutUser", guard, entry, feature }),
-  ).sort((a, b) => a.guard - b.guard || a.entry - b.entry || a.feature - b.feature);
+  return Array.from(firstRecordOf.values(), ({ guard, entry, feature }): FailureOf<"GuardWithoutUser"> => ({
+    kind: "GuardWithoutUser",
+    guard,
+    entry,
+    feature,
+  })).sort((a, b) => a.guard - b.guard || a.entry - b.entry || a.feature - b.feature);
 }
 
 export function checkDeclaredUses(input: DeclaredUseInput): DeclaredUseFailure[] {

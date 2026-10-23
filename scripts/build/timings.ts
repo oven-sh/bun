@@ -271,7 +271,14 @@ interface ClangTimeTrace {
 const PHASE_FLOOR_MS = 10;
 
 /** The rules compiled with `cxxflags`, which is where flags.ts puts `-ftime-trace`. */
-const clangTraced = new Set<string>(["cxx", "cxx_pch", "cxx_pch_chained", "pch", "pch_chained", "pch_msvc"] satisfies RuleName[]);
+const clangTraced = new Set<string>([
+  "cxx",
+  "cxx_pch",
+  "cxx_pch_chained",
+  "pch",
+  "pch_chained",
+  "pch_msvc",
+] satisfies RuleName[]);
 const RUSTC: RuleName = "rust_rustc";
 
 /**

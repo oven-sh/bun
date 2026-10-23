@@ -18,14 +18,21 @@ const open = holes.filter(hole => !(hole in filed));
 const programs = [1, 2, 3, 4].flatMap(round =>
   Array.from({ length: Math.ceil(open.length / 8) }, (_, index) => {
     const some = open.slice(index * 8, index * 8 + 8);
-    return { name: `round ${round}: ${some.join(", ")}`, round, index, text: programOfHoles(new Random(round * 1000 + index), some, { isLean: round % 2 === 0 }).text };
+    return {
+      name: `round ${round}: ${some.join(", ")}`,
+      round,
+      index,
+      text: programOfHoles(new Random(round * 1000 + index), some, { isLean: round % 2 === 0 }).text,
+    };
   }),
 );
 
 test("TypeScript accepts every program, and none has a cast, any or !", () => {
   const check = typeChecker();
   expect(check).toBeDefined();
-  const errors = check!(programs.map(program => program.text)).flatMap((found, index) => found.map(error => `${programs[index].name}: ${error}`));
+  const errors = check!(programs.map(program => program.text)).flatMap((found, index) =>
+    found.map(error => `${programs[index].name}: ${error}`),
+  );
   expect(errors).toEqual([]);
   expect(programs.flatMap(program => writtenEscapes(program.text))).toEqual([]);
 });

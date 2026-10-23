@@ -125,7 +125,11 @@ impl<'a, 's> Text<'a, 's> {
 
     /// An object finds these names without having them, or keeps what is stored under them elsewhere.
     pub(super) fn can_name_variable(&self, name: Atom) -> bool {
-        let is_number = self.atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let is_number = self
+            .atoms
+            .bytes(name)
+            .first()
+            .is_some_and(u8::is_ascii_digit);
         let is_inherited = self
             .builtin_names
             .get(name)
@@ -146,7 +150,9 @@ impl<'a, 's> Text<'a, 's> {
         if accessed != object || chain != Chain::No {
             return None;
         }
-        let name = self.name_of_key(key).filter(|&name| self.can_name_variable(name))?;
+        let name = self
+            .name_of_key(key)
+            .filter(|&name| self.can_name_variable(name))?;
         let (outermost, parent) = self.parent(node);
         if let Some(target) = self.bound.get_assignment_target(self.hir, outermost) {
             let kind = match (target, self.find_assignment(node)) {
@@ -158,10 +164,14 @@ impl<'a, 's> Text<'a, 's> {
                     AccessKind::Store(StoredValue::Unknown)
                 }
                 (AssignmentTarget::Assign(Some(BinOp::And | BinOp::Or | BinOp::Nullish)), _) => {
-                    let stored = self.find_right_side(outermost).map(|value| self.classify_value(value));
+                    let stored = self
+                        .find_right_side(outermost)
+                        .map(|value| self.classify_value(value));
                     AccessKind::Choice(stored.unwrap_or(StoredValue::Unknown))
                 }
-                (AssignmentTarget::Assign(Some(_)) | AssignmentTarget::Unary, _) => AccessKind::Update,
+                (AssignmentTarget::Assign(Some(_)) | AssignmentTarget::Unary, _) => {
+                    AccessKind::Update
+                }
             };
             return Some(Access { node, name, kind });
         }
@@ -231,10 +241,18 @@ impl<'a, 's> Text<'a, 's> {
     }
 
     fn classify_function(&self, function: FnId) -> StoredValue {
-        let has_eval = self.bound.function_flags(function).contains(FunctionFlags::HAS_DIRECT_EVAL);
-        let functions_with_this = self.functions_with_this.get_or_init(|| self.find_functions_with_this());
+        let has_eval = self
+            .bound
+            .function_flags(function)
+            .contains(FunctionFlags::HAS_DIRECT_EVAL);
+        let functions_with_this = self
+            .functions_with_this
+            .get_or_init(|| self.find_functions_with_this());
         let ignores_this = self.hir[function].kind == FnKind::Arrow
-            || (!has_eval && functions_with_this.as_ref().is_some_and(|functions| !functions.contains(&function)));
+            || (!has_eval
+                && functions_with_this
+                    .as_ref()
+                    .is_some_and(|functions| !functions.contains(&function)));
         match ignores_this {
             true => StoredValue::IgnoresThis,
             false => StoredValue::Unknown,
@@ -256,7 +274,9 @@ impl<'a, 's> Text<'a, 's> {
         match self.bound.binding_initializer(self.hir, symbol) {
             BindingInitializer::Function(function) => self.classify_function(function),
             BindingInitializer::Class(_) => StoredValue::IgnoresThis,
-            BindingInitializer::Expression(value) => self.classify_value_behind_names(value, names_followed + 1),
+            BindingInitializer::Expression(value) => {
+                self.classify_value_behind_names(value, names_followed + 1)
+            }
             _ => StoredValue::Unknown,
         }
     }
@@ -394,7 +414,9 @@ impl<'a, 's> Text<'a, 's> {
     fn is_called_where_written(&self, function: FnId) -> bool {
         let hir = self.hir;
         let mut known = self.called_only_where_written.borrow_mut();
-        !hir[function].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+        !hir[function]
+            .flags
+            .intersects(Flags::ASYNC | Flags::GENERATOR)
             && *known
                 .entry(function)
                 .or_insert_with(|| self.bound.is_called_only_where_written(hir, function))
@@ -410,7 +432,9 @@ impl<'a, 's> Text<'a, 's> {
             if scope.is_none() {
                 continue;
             }
-            let first = first_returns.entry(self.bound.code_unit(scope)).or_insert(u32::MAX);
+            let first = first_returns
+                .entry(self.bound.code_unit(scope))
+                .or_insert(u32::MAX);
             *first = (*first).min(statement.start);
         }
         first_returns
@@ -418,7 +442,9 @@ impl<'a, 's> Text<'a, 's> {
 
     fn is_ahead_of_returns(&self, unit: CodeUnit, position: u32) -> bool {
         let first_returns = self.first_returns.get_or_init(|| self.find_first_returns());
-        first_returns.get(&unit).is_none_or(|&first| position < first)
+        first_returns
+            .get(&unit)
+            .is_none_or(|&first| position < first)
     }
 
     // Whether `user` evaluates its operand whenever it is evaluated itself.
@@ -448,19 +474,19 @@ impl<'a, 's> Text<'a, 's> {
 
     // Whether a statement runs its part whenever it runs itself.
     fn always_runs(&self, user: StmtId, part: Node) -> bool {
-        match (self.hir[user].kind, part) {
-            (StmtKind::Block(_), Node::Statement(_)) => true,
-            (
-                StmtKind::Expr(_)
-                | StmtKind::Var(_)
-                | StmtKind::Throw(_)
-                | StmtKind::ExportAssign(_)
-                | StmtKind::If { .. }
-                | StmtKind::Switch { .. },
-                Node::Expression(_),
-            ) => true,
-            _ => false,
-        }
+        matches!(
+            (self.hir[user].kind, part),
+            (StmtKind::Block(_), Node::Statement(_))
+                | (
+                    StmtKind::Expr(_)
+                        | StmtKind::Var(_)
+                        | StmtKind::Throw(_)
+                        | StmtKind::ExportAssign(_)
+                        | StmtKind::If { .. }
+                        | StmtKind::Switch { .. },
+                    Node::Expression(_),
+                )
+        )
     }
 
     /// Whether every run of `body` passes the expression: it is in no function but one that is called where it is written, in no branch, loop or `try`, and behind no `return`.
@@ -545,7 +571,8 @@ impl<'a, 's> Text<'a, 's> {
         let mut stores = bound.runtime.unbound_name_stores().iter();
         let mut evals = bound.runtime.eval_scopes().iter();
         let mut idents = bound.ident_bindings().iter();
-        stores.any(|&(target, _)| bound.binding(target) == require && !decisions.is_dead_expr(target))
+        stores
+            .any(|&(target, _)| bound.binding(target) == require && !decisions.is_dead_expr(target))
             || evals.any(|&(call, _)| !decisions.is_dead_expr(call))
             || (has_mapped_arguments(self.hir, CodeUnit::File)
                 && idents.any(|&(ident, binding)| {

@@ -32,7 +32,11 @@ fn strict_labeled_function_ends_with_statement() {
     for &text in STRICT_LABELED_FUNCTIONS {
         analyzed("a.cjs", text, |s| {
             let symbol = only_implicit_block_symbol(s);
-            assert_eq!(s.bound.binding_kind(symbol), BindingKind::Function, "{text}");
+            assert_eq!(
+                s.bound.binding_kind(symbol),
+                BindingKind::Function,
+                "{text}"
+            );
             assert_eq!(s.binding("f", 0), Free, "{text}");
             assert!(s.bound.runtime.annex_b_functions().is_empty(), "{text}");
         });
@@ -41,9 +45,13 @@ fn strict_labeled_function_ends_with_statement() {
 
 #[test]
 fn strict_labeled_function_sees_own_name() {
-    analyzed("a.cjs", "class C { m() { label: function f() { f; } } }", |s| {
-        assert_eq!(s.binding("f", 0), Symbol(only_implicit_block_symbol(s)));
-    });
+    analyzed(
+        "a.cjs",
+        "class C { m() { label: function f() { f; } } }",
+        |s| {
+            assert_eq!(s.binding("f", 0), Symbol(only_implicit_block_symbol(s)));
+        },
+    );
 }
 
 #[test]

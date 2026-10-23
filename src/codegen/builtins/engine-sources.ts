@@ -49,11 +49,7 @@ function matchAt(stickyPattern: RegExp, text: string, position: number): RegExpE
   return stickyPattern.exec(text);
 }
 
-function replaceTokens(
-  text: string,
-  pattern: RegExp,
-  respell: (token: string, groups: TokenGroups) => string,
-): string {
+function replaceTokens(text: string, pattern: RegExp, respell: (token: string, groups: TokenGroups) => string): string {
   return text.replace(pattern, (token: string, ...rest: unknown[]) => respell(token, rest.at(-1) as TokenGroups));
 }
 
@@ -112,7 +108,8 @@ function exportedHeadOf(head: string, name: string): string {
 }
 
 function respellToken(token: string, groups: TokenGroups): string {
-  const { skipped, annotation, value, head, declared, literalKey, emptyDeclaration, emptyLiteral, symbol, name } = groups;
+  const { skipped, annotation, value, head, declared, literalKey, emptyDeclaration, emptyLiteral, symbol, name } =
+    groups;
   if (skipped !== undefined) return token;
   if (annotation !== undefined) return directiveOf(annotation, value);
   if (head !== undefined && declared !== undefined) return exportedHeadOf(head, declared);

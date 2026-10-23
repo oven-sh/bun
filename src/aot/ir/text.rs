@@ -185,7 +185,10 @@ impl<'t> Parser<'t> {
 
     pub fn parse_u32(&mut self) -> Parsed<u32> {
         let is_integer = self.at(TokenKind::Integer);
-        let Some(value) = u32::try_from(self.token.integer).ok().filter(|_| is_integer) else {
+        let Some(value) = u32::try_from(self.token.integer)
+            .ok()
+            .filter(|_| is_integer)
+        else {
             return self.fail("an unsigned 32-bit integer");
         };
         self.advance();
@@ -201,7 +204,9 @@ impl<'t> Parser<'t> {
     }
 
     pub fn parse_id<I: Id>(&mut self, expected: &'static str) -> Parsed<I> {
-        let digits = self.word_text().and_then(|word| word.strip_prefix(I::PREFIX));
+        let digits = self
+            .word_text()
+            .and_then(|word| word.strip_prefix(I::PREFIX));
         let number = digits.and_then(|digits| digits.parse::<u32>().ok());
         let Some(number) = number.filter(|&number| number != ABSENT_WORD) else {
             return self.fail(expected);

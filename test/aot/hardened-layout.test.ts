@@ -1,9 +1,9 @@
 import { describe, expect } from "bun:test";
-import { isHardened } from "./hardened";
-import { test } from "./supported";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isHardened } from "./hardened";
+import { test } from "./supported";
 
 const [load, dynamic, gnuRelro] = [1, 2, 0x6474e552];
 const [mayExecute, mayWrite] = [1, 2];
@@ -17,7 +17,10 @@ function describeLayout(path: string) {
   const headers = readElf64ProgramHeaders(path);
   const loads = headers.filter(header => header.type === load && header.filesz > 0n);
   const table = headers.find(header => header.type === dynamic)!;
-  const entries = Array.from({ length: Number(table.filesz / 16n) }, (_, index) => Number(table.offset) + index * 16).map(at => ({
+  const entries = Array.from(
+    { length: Number(table.filesz / 16n) },
+    (_, index) => Number(table.offset) + index * 16,
+  ).map(at => ({
     tag: file.readBigUInt64LE(at),
     value: file.readBigUInt64LE(at + 8),
   }));
@@ -29,11 +32,19 @@ function describeLayout(path: string) {
         .flatMap(header => [header.offset / pageSize, (header.offset + header.filesz - 1n) / pageSize]),
     );
   const codePages = pagesOf(flags => !!(flags & mayExecute));
-  const sections = Array.from({ length: file.readUInt16LE(60) }, (_, index) => Number(file.readBigUInt64LE(40)) + index * file.readUInt16LE(58))
+  const sections = Array.from(
+    { length: file.readUInt16LE(60) },
+    (_, index) => Number(file.readBigUInt64LE(40)) + index * file.readUInt16LE(58),
+  )
     .filter(at => file.readUInt32LE(at + 4) !== noBits)
-    .map(at => ({ start: file.readBigUInt64LE(at + 24), end: file.readBigUInt64LE(at + 24) + file.readBigUInt64LE(at + 32) }));
+    .map(at => ({
+      start: file.readBigUInt64LE(at + 24),
+      end: file.readBigUInt64LE(at + 24) + file.readBigUInt64LE(at + 32),
+    }));
   const unusedPages = loads.map(({ offset, filesz }) => {
-    const ends = sections.filter(section => section.start < offset + filesz && section.end > offset).map(section => section.end);
+    const ends = sections
+      .filter(section => section.start < offset + filesz && section.end > offset)
+      .map(section => section.end);
     const used = ends.reduce((last, end) => (end > last ? end : last), offset);
     return used < offset + filesz ? (offset + filesz - used) / pageSize : 0n;
   });
@@ -79,7 +90,15 @@ describe.skipIf(!isHardened)("a Bun built with --hardened=on", () => {
   test("builds executables with the same layout, which load at a different address each time", async () => {
     using dir = tempDir("aot-hardened-layout", { "program.ts": program });
     const executable = join(String(dir), "program");
-    const built = await run([bunExe(), "build", "--compile", "--aot", join(String(dir), "program.ts"), "--outfile", executable]);
+    const built = await run([
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      join(String(dir), "program.ts"),
+      "--outfile",
+      executable,
+    ]);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
     expect(describeLayout(executable)).toEqual(hardened);
 

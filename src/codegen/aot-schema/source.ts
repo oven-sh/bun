@@ -4,7 +4,9 @@ export interface Location {
   readonly column: number;
 }
 
-export function compareLocations(files: readonly { readonly path: string }[]): (left: Location, right: Location) => number {
+export function compareLocations(
+  files: readonly { readonly path: string }[],
+): (left: Location, right: Location) => number {
   const positions = new Map(files.map((file, index) => [file.path, index]));
   const positionOf = (location: Location) => positions.get(location.path) ?? files.length;
   return (left, right) => positionOf(left) - positionOf(right) || left.line - right.line || left.column - right.column;

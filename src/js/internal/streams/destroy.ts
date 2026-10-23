@@ -67,7 +67,7 @@ declare global {
 
 function checkError(err: Error | null | undefined, w: WritableState | undefined, r: ReadableState | undefined): void {
   if (err) {
-    "unlikely";
+    ("unlikely");
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
     err.stack; // eslint-disable-line no-unused-expressions
 
@@ -111,7 +111,7 @@ const destroy = function destroy(this: $Node.StreamWithState, err?: Error | null
 
   // If still constructing then defer calling _destroy.
   if ((s[kState] & Flag.Constructed) === 0) {
-    "unlikely";
+    ("unlikely");
     this.once(kDestroy, function (this: $Node.StreamWithState, er: Error | null | undefined) {
       _destroy(this, aggregateTwoErrors(er!, err!), cb);
     });
@@ -150,12 +150,12 @@ function _destroy(self: $Node.StreamWithState, err: Error | null | undefined, cb
     }
 
     if (err) {
-      "unlikely";
+      ("unlikely");
       ProcessNextTick(emitErrorCloseNT, self, err);
     } else {
       if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseNT, self);
       else {
-        "unlikely";
+        ("unlikely");
         ProcessNextTick(emitCloseNT, self);
       }
     }

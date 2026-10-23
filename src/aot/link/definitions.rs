@@ -47,7 +47,9 @@ pub(super) struct MergeInput<'a, 's> {
 fn numbered_synthetic_exports<'a>(
     context: &KeyContext<'a>,
 ) -> impl Iterator<Item = (SyntheticExportId, &'a SyntheticExport)> {
-    (0..).map(SyntheticExportId).zip(context.graph.synthetic_exports())
+    (0..)
+        .map(SyntheticExportId)
+        .zip(context.graph.synthetic_exports())
 }
 
 fn is_common_js_file(projects: &PerProject<LinkProject<'_, '_>>, file: ProgramFile) -> bool {
@@ -167,7 +169,12 @@ pub(super) fn choose_definitions(
                     let function_types = merge_function_type_edges(input);
                     let function_types =
                         create_supertype_edges(input.functions.keys.len(), &function_types);
-                    (functions, function_types, merge_builtin_members(input), errors_by_unit)
+                    (
+                        functions,
+                        function_types,
+                        merge_builtin_members(input),
+                        errors_by_unit,
+                    )
                 },
                 || {
                     let mut variables = vec![None; input.variables.keys.len()];
@@ -369,8 +376,14 @@ fn add_synthetic_exports(
                 .and_then(|file| index_by_module.get(&ProgramModule::Face(file)));
             if let Some(&face) = face {
                 let key = context.variable_key(VariableKey::Copy(id));
-                let file = find_file_with_copies(input.projects, exporter).expect("the face has a file");
-                let captures = input.projects.get(file.project).graph.commonjs().face_captures(file.file);
+                let file =
+                    find_file_with_copies(input.projects, exporter).expect("the face has a file");
+                let captures = input
+                    .projects
+                    .get(file.project)
+                    .graph
+                    .commonjs()
+                    .face_captures(file.file);
                 // Whatever a CommonJS file exports, its importers find a `default`.
                 let writer = match captures && export.name != bun_sema::atom::known::default {
                     true => ExportWriter::Capture,
@@ -464,9 +477,10 @@ fn merge_builtin_members(input: &MergeInput<'_, '_>) -> Vec<(u32, BuiltinId)> {
     let mut members: Vec<(u32, BuiltinId)> = Vec::new();
     for (unit, local_to_merged) in input.units.iter().zip(&input.functions.local_to_merged) {
         let unit_members = unit.builtin_members.iter();
-        members.extend(unit_members.map(|&(function_type, builtin)| {
-            (local_to_merged[function_type.index()], builtin)
-        }));
+        members
+            .extend(unit_members.map(|&(function_type, builtin)| {
+                (local_to_merged[function_type.index()], builtin)
+            }));
     }
     members.sort_unstable();
     members.dedup();
@@ -559,8 +573,11 @@ impl<'a> FamilyCloser<'a> {
                 if target.layouts.is_empty() || target.flags.contains(TypeFlags::ANY_OBJECT) {
                     continue;
                 }
-                let targets: SmallVec<[u32; 4]> =
-                    target.layouts.iter().map(|&layout| self.layout(unit, layout)).collect();
+                let targets: SmallVec<[u32; 4]> = target
+                    .layouts
+                    .iter()
+                    .map(|&layout| self.layout(unit, layout))
+                    .collect();
                 for &layout in &source.layouts {
                     let layout = self.layout(unit, layout);
                     if self.reaches_any(layout, &targets) {
@@ -585,7 +602,10 @@ impl<'a> FamilyCloser<'a> {
             .collect();
         while let Some(layout) = pending.pop() {
             for &supertype in &self.above[layout as usize] {
-                if !replace(&mut self.has_members_without_layout[supertype as usize], true) {
+                if !replace(
+                    &mut self.has_members_without_layout[supertype as usize],
+                    true,
+                ) {
                     pending.push(supertype);
                 }
             }

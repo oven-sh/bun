@@ -64,7 +64,13 @@ interface FeatureSets {
   tableEdge?: number;
 }
 
-function partitionOf({ range = [A], referrer = [B], requires = [], guards = [], tableEdge = EdgeKind.Ordinary }: FeatureSets = {}): Partition {
+function partitionOf({
+  range = [A],
+  referrer = [B],
+  requires = [],
+  guards = [],
+  tableEdge = EdgeKind.Ordinary,
+}: FeatureSets = {}): Partition {
   const edgeKind = new Uint8Array(graph.successors.length);
   edgeKind[findEdge(graph, guard, entry)] = EdgeKind.Guarded;
   edgeKind[findEdge(graph, table, entry)] = tableEdge;
@@ -212,10 +218,26 @@ describe("a reference from removable code", () => {
       "Legal",
     ],
     ["whose feature requires nothing", {}, "Illegal"],
-    ["whose feature enters the range's through a guard that aborts", { guards: [[B, A, "AbortingGuard", true]] }, "Illegal"],
-    ["whose feature enters the range's through a guard that recovers", { guards: [[B, A, "RecoverableGuard", true]] }, "Illegal"],
-    ["whose feature enters the range's through a guard that is not followed", { guards: [[B, A, "RecoverableGuard", false]] }, "Illegal"],
-    ["whose feature requires one that only enters the range's through a guard", { requires: [[B, C]], guards: [[C, A, "AbortingGuard", true]] }, "Illegal"],
+    [
+      "whose feature enters the range's through a guard that aborts",
+      { guards: [[B, A, "AbortingGuard", true]] },
+      "Illegal",
+    ],
+    [
+      "whose feature enters the range's through a guard that recovers",
+      { guards: [[B, A, "RecoverableGuard", true]] },
+      "Illegal",
+    ],
+    [
+      "whose feature enters the range's through a guard that is not followed",
+      { guards: [[B, A, "RecoverableGuard", false]] },
+      "Illegal",
+    ],
+    [
+      "whose feature requires one that only enters the range's through a guard",
+      { requires: [[B, C]], guards: [[C, A, "AbortingGuard", true]] },
+      "Illegal",
+    ],
     ["whose feature is required by the range's", { requires: [[A, B]] }, "Illegal"],
     ["with one feature that does not require the range's", { referrer: [B, C], requires: [[B, A]] }, "Illegal"],
     [
@@ -641,7 +663,10 @@ describe("the two links", () => {
     sections.map(section => (section.name === name ? { ...section, ...change(section) } : section));
   const withChangedByte = (name: string) =>
     replaced(name, ({ bytes }) => ({ bytes: Buffer.from(bytes).fill(bytes[0]! ^ 1, 0, 1) }));
-  const differsIn = (section: string): RelocationCheck => ({ failures: [{ kind: "RelinkedImageDiffers", section }], ...counts(0) });
+  const differsIn = (section: string): RelocationCheck => ({
+    failures: [{ kind: "RelinkedImageDiffers", section }],
+    ...counts(0),
+  });
 
   test.each([".text", ".rodata", ".rela.dyn"])("must have the same bytes in %s", name => {
     expect(checkShipped(withChangedByte(name))).toEqual(differsIn(name));

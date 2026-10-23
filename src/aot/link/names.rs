@@ -1,7 +1,9 @@
 use super::beside::{Beside, run_beside};
 use super::body_remap::BodyRemap;
 use super::keys::MergedKeys;
-use super::program_keys::{ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey};
+use super::program_keys::{
+    ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
+};
 use super::state::{ModuleTable, Numbering};
 use crate::engine::Position;
 use crate::ir::generated::SourceRange;
@@ -93,16 +95,25 @@ impl ProgramNames {
     }
 
     pub fn function_module(&self, function: FunctionId) -> Option<ModuleId> {
-        self.function_modules.get(function.index()).copied().flatten()
+        self.function_modules
+            .get(function.index())
+            .copied()
+            .flatten()
     }
 
     pub fn function_range(&self, function: FunctionId) -> Option<(u32, u32)> {
-        self.function_ranges.get(function.index()).copied().flatten()
+        self.function_ranges
+            .get(function.index())
+            .copied()
+            .flatten()
     }
 
     // How many values the function had when the front end sent it.
     pub fn function_values(&self, function: FunctionId) -> u32 {
-        self.function_values.get(function.index()).copied().unwrap_or(0)
+        self.function_values
+            .get(function.index())
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn layout_name(&self, layout: LayoutId) -> &[u8] {
@@ -264,7 +275,9 @@ impl FunctionNames {
             values: Vec::with_capacity(count),
         };
         for (ids, function) in functions.functions() {
-            let name = function.name.map(|name| ids.strings[name.index()].expect("the name of a retained function is retained"));
+            let name = function.name.map(|name| {
+                ids.strings[name.index()].expect("the name of a retained function is retained")
+            });
             names.names.push(pool.copy_optional(name));
             names.modules.push(ids.modules[function.module.index()]);
             names.ranges.push(text_range(function.text));

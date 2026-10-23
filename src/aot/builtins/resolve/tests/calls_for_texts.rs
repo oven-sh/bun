@@ -93,7 +93,11 @@ fn needs_what_some_texts_need(case: &Case<'_, '_>) -> bool {
     assert!(functions.peek().is_some());
     let used = &case.resolved.uses().functions;
     let found = functions.filter(|function| used.contains(function)).count();
-    assert!(found == 0 || found == lists.iter().map(|listed| listed.calls.len()).sum::<usize>(), "{}", case.source);
+    assert!(
+        found == 0 || found == lists.iter().map(|listed| listed.calls.len()).sum::<usize>(),
+        "{}",
+        case.source
+    );
     found != 0
 }
 
@@ -116,7 +120,9 @@ fn a_call_that_writes_another_text_does_without() {
 fn any_other_mention_needs_everything() {
     for setup in [PROGRAM, RUNTIME] {
         for source in LISTED_OR_UNKNOWN_TEXTS {
-            with_case(setup, source, |case| assert!(needs_what_some_texts_need(case), "{source}"));
+            with_case(setup, source, |case| {
+                assert!(needs_what_some_texts_need(case), "{source}")
+            });
         }
     }
 }

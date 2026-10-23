@@ -5,7 +5,10 @@ use bun_sema_standalone as _;
 
 const INVALID_PRAGMAS: [(&str, u32); 2] = [
     ("/// <reference foo=\"x\" />\na;", 1084),
-    ("/// <reference types=\"t\" resolution-mode=\"other\" />\na;", 1453),
+    (
+        "/// <reference types=\"t\" resolution-mode=\"other\" />\na;",
+        1453,
+    ),
 ];
 
 fn parsed(text: &str, options: Options) -> Result<Box<FileBuilder>, Rejection> {
@@ -47,7 +50,11 @@ fn invalid_pragma_is_comment_in_compiled_javascript() {
 fn invalid_pragma_is_parse_error_elsewhere() {
     for (text, code) in INVALID_PRAGMAS {
         for options in [Options::default(), javascript(false, false)] {
-            assert_eq!(parsed(text, options).err(), Some(Rejection::Reported), "{text}");
+            assert_eq!(
+                parsed(text, options).err(),
+                Some(Rejection::Reported),
+                "{text}"
+            );
             let recovering = Options {
                 recovers: true,
                 ..options
@@ -73,7 +80,12 @@ fn invalid_resolution_mode_keeps_reference() {
     };
     assert_eq!((kind, mode), (ReferenceKind::Types, ResolutionMode::None));
     let (text, _) = INVALID_PRAGMAS[0];
-    assert!(parsed(text, javascript(true, false)).unwrap().references.is_empty());
+    assert!(
+        parsed(text, javascript(true, false))
+            .unwrap()
+            .references
+            .is_empty()
+    );
 }
 
 fn tsx(compiles: bool) -> Options {
@@ -113,17 +125,35 @@ fn assert_jsx_pragmas(options: &[Options], cases: &[(&str, ExpectedPragmas)]) {
 }
 
 const COMPILED_JSX_PRAGMAS: &[(&str, ExpectedPragmas)] = &[
-    ("// @jsx fn\n// @jsxFrag something\na;", (None, ["fn", "something", ""])),
+    (
+        "// @jsx fn\n// @jsxFrag something\na;",
+        (None, ["fn", "something", ""]),
+    ),
     ("// @jsxImportSource hello\na;", (None, ["", "", "hello"])),
-    ("// @jsxImportSource @emotion/react\na;", (None, ["", "", "@emotion/react"])),
+    (
+        "// @jsxImportSource @emotion/react\na;",
+        (None, ["", "", "@emotion/react"]),
+    ),
     ("//#jsx h\na;", (None, ["h", "", ""])),
-    ("a;\n/** @jsxRuntime classic */ /** @jsx h */", (Some(true), ["h", "", ""])),
+    (
+        "a;\n/** @jsxRuntime classic */ /** @jsx h */",
+        (Some(true), ["h", "", ""]),
+    ),
     ("a; // @jsx R.h\nb;", (None, ["R.h", "", ""])),
-    ("/** @jsxRuntime classic @jsx h */ a;", (Some(true), ["h", "", ""])),
+    (
+        "/** @jsxRuntime classic @jsx h */ a;",
+        (Some(true), ["h", "", ""]),
+    ),
     ("// @jsx a @jsxFrag b\na;", (None, ["a", "b", ""])),
-    ("/** @jsx first */ a; /** @jsx second */", (None, ["second", "", ""])),
+    (
+        "/** @jsx first */ a; /** @jsx second */",
+        (None, ["second", "", ""]),
+    ),
     ("/* @jsx\th */ a;", (None, ["h", "", ""])),
-    ("/**\n * @jsx h\n * @jsxFrag F\r\n */ a;", (None, ["h", "F", ""])),
+    (
+        "/**\n * @jsx h\n * @jsxFrag F\r\n */ a;",
+        (None, ["h", "F", ""]),
+    ),
 ];
 
 #[test]
@@ -181,7 +211,10 @@ fn compiled_jsx_runtime_names() {
 fn line_break_is_part_of_compiled_block_comment_argument() {
     let cases = [
         ("/**\n * @jsxRuntime classic\n */ a;", (None, ["", "", ""])),
-        ("/**\n * @jsxImportSource b\n */ a;", (None, ["", "", "b\n"])),
+        (
+            "/**\n * @jsxImportSource b\n */ a;",
+            (None, ["", "", "b\n"]),
+        ),
     ];
     assert_jsx_pragmas(&[javascript(true, false), tsx(true)], &cases);
 }
@@ -193,8 +226,14 @@ fn checked_file_reads_jsx_pragmas_like_tsc() {
         ("// @jsx fn\n// @jsxFrag something\na;", none),
         ("// @jsxImportSource hello\na;", none),
         ("a;\n/** @jsxRuntime classic */ /** @jsx h */", none),
-        ("/** @jsx first */ a; /** @jsx second */", (None, ["first", "", ""])),
-        ("/** @jsxRuntime classic @jsx h */ a;", (Some(true), ["", "", ""])),
+        (
+            "/** @jsx first */ a; /** @jsx second */",
+            (None, ["first", "", ""]),
+        ),
+        (
+            "/** @jsxRuntime classic @jsx h */ a;",
+            (Some(true), ["", "", ""]),
+        ),
         ("/* @JSX h */ a;", (None, ["h", "", ""])),
         (
             "/**\n * @jsxRuntime classic\n * @jsxImportSource b\n */ a;",

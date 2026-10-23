@@ -130,7 +130,11 @@ pub(crate) fn emit_return(
         ReturnRule::DeclaredResult => {
             let subject = convert::Int32Subject::Result;
             convert::describe_int32_flow(lowering, returned, subject, source);
-            let is_async = lowering.builder.function().flags.contains(FunctionFlags::IS_ASYNC);
+            let is_async = lowering
+                .builder
+                .function()
+                .flags
+                .contains(FunctionFlags::IS_ASYNC);
             let source = match is_async {
                 true => source.and_then(|source| {
                     generator::find_awaited_source(lowering.file, source, returned)
@@ -229,7 +233,10 @@ pub(crate) fn emit_return_call(
     call: ValueId,
     casts: &[DeclaredType],
 ) {
-    debug_assert!(allows_tail_call(lowering), "the caller checks allows_tail_call first");
+    debug_assert!(
+        allows_tail_call(lowering),
+        "the caller checks allows_tail_call first"
+    );
     let untyped = DeclaredType::untyped();
     let positions = casts.iter().copied().chain([lowering.returned]);
     let casts: SmallVec<[TailCast; 2]> = positions
@@ -322,7 +329,11 @@ pub(crate) fn begin_handler(
 }
 
 pub(crate) fn end_handler(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, handler: Handler) {
-    let Some(ControlEntry::Handler { handler: top, outer }) = lowering.control.entries.pop() else {
+    let Some(ControlEntry::Handler {
+        handler: top,
+        outer,
+    }) = lowering.control.entries.pop()
+    else {
         unreachable!("the top entry of the control stack is a handler");
     };
     debug_assert_eq!(top, handler, "handlers end innermost first");
@@ -336,11 +347,14 @@ pub(crate) fn begin_cleanup(
 ) {
     let handler = lowering.create_handler(role, subject);
     let outer = lowering.enter_handler(handler);
-    lowering.control.entries.push(ControlEntry::Cleanup(Cleanup {
-        handler,
-        outer,
-        exits: SmallVec::new(),
-    }));
+    lowering
+        .control
+        .entries
+        .push(ControlEntry::Cleanup(Cleanup {
+            handler,
+            outer,
+            exits: SmallVec::new(),
+        }));
 }
 
 pub(crate) fn end_cleanup_per_exit(

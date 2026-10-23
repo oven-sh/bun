@@ -92,7 +92,10 @@ struct Case<'a, 's> {
 }
 
 fn intern_all<'s>(texts: &[&str], atoms: &Interner<'s>, arena: &'s Arena) -> &'s [Atom] {
-    let atoms: Vec<Atom> = texts.iter().map(|text| atoms.intern(text.as_bytes())).collect();
+    let atoms: Vec<Atom> = texts
+        .iter()
+        .map(|text| atoms.intern(text.as_bytes()))
+        .collect();
     arena.alloc_slice_copy(&atoms)
 }
 
@@ -101,7 +104,9 @@ fn create_define<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
 ) -> Define<'s> {
-    let (root, members) = path.split_first().expect("a define path starts with a name");
+    let (root, members) = path
+        .split_first()
+        .expect("a define path starts with a name");
     Define {
         path: DefinePath {
             root: DefineRoot::Global(atoms.intern(root.as_bytes())),
@@ -306,12 +311,17 @@ impl Case<'_, '_> {
     fn find_declaration(&self, name: &str) -> Option<Decl> {
         let hir = self.hir;
         let name = self.atoms.intern(name.as_bytes());
-        let patterns = find_ids(&hir.pats, |pattern: &hir::Pat| {
-            matches!(pattern.kind, PatKind::Ident(text) if text == name)
+        let patterns = find_ids(
+            &hir.pats,
+            |pattern: &hir::Pat| matches!(pattern.kind, PatKind::Ident(text) if text == name),
+        );
+        let specifiers = find_ids(&hir.import_specs, |spec: &hir::ImportSpec| {
+            spec.local == name
         });
-        let specifiers = find_ids(&hir.import_specs, |spec: &hir::ImportSpec| spec.local == name);
         let defaults = find_ids(&hir.imports, |import: &hir::Import| import.default == name);
-        let namespaces = find_ids(&hir.imports, |import: &hir::Import| import.namespace == name);
+        let namespaces = find_ids(&hir.imports, |import: &hir::Import| {
+            import.namespace == name
+        });
         let import_equals = find_ids(&hir.import_equals, |import: &hir::ImportEquals| {
             import.name == name
         });
@@ -354,7 +364,11 @@ fn assert_builtin(case: &Case<'_, '_>, text: &str, id: BuiltinId) {
 #[track_caller]
 fn assert_unresolved(case: &Case<'_, '_>, text: &str) {
     let resolved = case.resolved_at(case.expr(text));
-    assert!(resolved.is_none(), "`{text}` is {resolved:?} in: {}", case.source);
+    assert!(
+        resolved.is_none(),
+        "`{text}` is {resolved:?} in: {}",
+        case.source
+    );
 }
 
 #[track_caller]

@@ -139,11 +139,19 @@ fn compare_contents(a: &Type, b: &Type) -> Ordering {
     let scalars = |ty: &Type| {
         let opaque = ty.opaque.map(|kind| kind.to_wire());
         let range = (ty.minimum, ty.maximum);
-        (ty.primitives.to_wire(), ty.flags.to_wire(), opaque, ty.environment, range)
+        (
+            ty.primitives.to_wire(),
+            ty.flags.to_wire(),
+            opaque,
+            ty.environment,
+            range,
+        )
     };
     let classes = |ty: &'_ Type| -> Vec<(u32, Vec<TypeId>)> {
         let parts = ty.classes.iter();
-        parts.map(|part| (u32::from(part.builtin_class.to_wire()), part.contents.clone())).collect()
+        parts
+            .map(|part| (part.builtin_class.to_wire(), part.contents.clone()))
+            .collect()
     };
     let builtins = |ty: &Type| -> Vec<u32> { ty.builtins.iter().map(|id| id.to_wire()).collect() };
     scalars(a)
@@ -340,7 +348,10 @@ impl OccurrenceCheck<'_> {
     }
 }
 
-fn check_occurrences(input: &TypeTableInput<'_>, prepared: &[PreparedType]) -> Result<(), LinkError> {
+fn check_occurrences(
+    input: &TypeTableInput<'_>,
+    prepared: &[PreparedType],
+) -> Result<(), LinkError> {
     let check = OccurrenceCheck {
         units: input.units,
         type_representatives: input.type_representatives,

@@ -127,7 +127,11 @@ pub(super) fn print_outcome(
         BStr::new(outfile),
         BStr::new(&details),
     );
-    if let Some(id) = outcome.executable.as_ref().and_then(|executable| executable.build_id) {
+    if let Some(id) = outcome
+        .executable
+        .as_ref()
+        .and_then(|executable| executable.build_id)
+    {
         let id = bun_crash_handler::build_id::write_hexadecimal(&id);
         bun_core::prettyln!("        <green>build id<r>  {}", BStr::new(&id));
     }

@@ -49,7 +49,10 @@ mod tests {
         with_loaded_build(sources, &default_settings(), |_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
             let declarations = files.by_path.get(PATH);
-            then(files, declarations.expect("the declarations are a root file"))
+            then(
+                files,
+                declarations.expect("the declarations are a root file"),
+            )
         })
     }
 
@@ -104,7 +107,10 @@ mod tests {
         with_application_files(&EMPTY_PROGRAM, |files, declarations| {
             let global = global_bun(files);
             let schema = member_of(files, global, b"Schema");
-            for member in [member_of(files, global, b"int32"), member_of(files, schema, b"Int")] {
+            for member in [
+                member_of(files, global, b"int32"),
+                member_of(files, schema, b"Int"),
+            ] {
                 assert_eq!(files_declaring(files, member), [declarations]);
             }
         });

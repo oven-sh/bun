@@ -127,7 +127,11 @@ pub(in crate::lower) fn lower_call(
     call: ExprId,
     evaluation: Evaluation<'_>,
 ) -> ValueId {
-    let (hir, bound, builtins) = (lowering.file.hir, lowering.file.bound, lowering.file.builtins);
+    let (hir, bound, builtins) = (
+        lowering.file.hir,
+        lowering.file.bound,
+        lowering.file.builtins,
+    );
     let site = call_site(lowering.file, call);
     let exit = evaluation.chain_exit;
     let inner = skip_type_syntax(lowering.file, site.callee);
@@ -264,7 +268,9 @@ pub(in crate::lower) fn lower_argument_slice(
         let position = hir[arguments[0]].pos;
         return Arguments::List(lower_argument_list(lowering, &[], arguments, position));
     }
-    let values = arguments.iter().map(|&argument| lower_expression(lowering, argument));
+    let values = arguments
+        .iter()
+        .map(|&argument| lower_expression(lowering, argument));
     Arguments::Values(values.collect())
 }
 
@@ -409,6 +415,9 @@ fn find_callee_by_signature(
         return None;
     }
     let target = file.queries.resolved_call(call).ok()??;
-    let index = file.inputs.builtin_types.value_of_call_signature(target.declaration?)?;
+    let index = file
+        .inputs
+        .builtin_types
+        .value_of_call_signature(target.declaration?)?;
     builtin_value_of(index)
 }

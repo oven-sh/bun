@@ -102,7 +102,10 @@ impl SourceProvider for PageBundler {
             return Ok(Vec::new());
         }
         let create_manifest = |page: &&[u8]| -> &'s DataValue<'s> {
-            let index = (atoms.intern(b"index"), DataValue::String(atoms.intern(page)));
+            let index = (
+                atoms.intern(b"index"),
+                DataValue::String(atoms.intern(page)),
+            );
             arena.alloc(DataValue::Object(arena.alloc_slice_copy(&[index])))
         };
         Ok(pages.iter().map(create_manifest).collect())
@@ -150,12 +153,20 @@ fn manifests_are_found_by_file() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
         let data = bundle(input, &provider, &session, &atoms).expect("the bundle succeeds");
-        for (name, base_name) in [("home.html", "home.html"), ("pages/about.html", "about.html")] {
+        for (name, base_name) in [
+            ("home.html", "home.html"),
+            ("pages/about.html", "about.html"),
+        ] {
             let file = file_named(input, name);
             let mut pages = input.sources.pages().iter();
-            let (_, path) = pages.find(|page| page.0 == file).expect("the file is a page");
+            let (_, path) = pages
+                .find(|page| page.0 == file)
+                .expect("the file is a page");
             assert!(path.ends_with(base_name.as_bytes()), "{name}");
-            let index = (atoms.intern(b"index"), DataValue::String(atoms.intern(path)));
+            let index = (
+                atoms.intern(b"index"),
+                DataValue::String(atoms.intern(path)),
+            );
             assert_eq!(data.get(file), Some(&DataValue::Object(&[index])), "{name}");
         }
     });

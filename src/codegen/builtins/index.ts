@@ -138,7 +138,9 @@ const bindsWhatExistsForTests = (schemaFileName: string): boolean => schemaFileN
 export async function collectHost(options: GenerateOptions, problems: Problems): Promise<SourcedDeclaration[]> {
   const { bunRoot } = options;
   const typesOnly = new Set(options.typesOnly);
-  const sourcesOfEveryBuild = options.bindgenSources.filter(source => !bindsWhatExistsForTests(schemaFileNameOf(source)));
+  const sourcesOfEveryBuild = options.bindgenSources.filter(
+    source => !bindsWhatExistsForTests(schemaFileNameOf(source)),
+  );
   const written = await loadDeclarationFiles(hostDeclarationFiles(bunRoot), "Host", bunRoot);
   const staticTableMembers = collectStaticTables(written, singleRoot(bunRoot), problems);
   const { nativeModuleLoadSites, nativeCallSites } = globAllSources();
@@ -258,7 +260,9 @@ const normalizedTextOf = (text: string): string => text.replaceAll("\r\n", "\n")
 
 const longestLineShown = 160;
 const shownLineOf = (line: string | undefined): string =>
-  line === undefined ? "nothing" : `\`${line.length > longestLineShown ? `${line.slice(0, longestLineShown)} ..` : line}\``;
+  line === undefined
+    ? "nothing"
+    : `\`${line.length > longestLineShown ? `${line.slice(0, longestLineShown)} ..` : line}\``;
 
 function describeFirstDifference(found: string, written: string): string {
   const foundLines = found.split("\n");

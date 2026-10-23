@@ -49,8 +49,8 @@ fn check_labels(typed: &Label<'_>, untyped: &Label<'_>, nodes: Owners) -> Step {
     ensure(typed.names == untyped.names, Kind::Name, nodes)?;
     ensure(typed.literal == untyped.literal, Kind::Literal, nodes)?;
     ensure(typed.operator == untyped.operator, Kind::Operator, nodes)?;
-    let has_same_marks = untyped.marks.contains(typed.marks)
-        && Marks::PURE.contains(untyped.marks - typed.marks);
+    let has_same_marks =
+        untyped.marks.contains(typed.marks) && Marks::PURE.contains(untyped.marks - typed.marks);
     let has_same_flags = typed.flags == untyped.flags
         && typed.expr_flags == untyped.expr_flags
         && typed.chain == untyped.chain
@@ -105,7 +105,12 @@ fn token_offsets(file: &File<'_>, node: Subtree) -> [u32; MAX_TOKEN_OFFSETS] {
                 ExprKind::Call(call) | ExprKind::New(call) => file[call].close_pos,
                 _ => NO_OFFSET,
             };
-            [file[written].pos, file[e].pos, token_inside, last_byte(file[e].end)]
+            [
+                file[written].pos,
+                file[e].pos,
+                token_inside,
+                last_byte(file[e].end),
+            ]
         }
         Subtree::Stmt(stmt) => {
             let stmt = file[stmt];
@@ -113,7 +118,12 @@ fn token_offsets(file: &File<'_>, node: Subtree) -> [u32; MAX_TOKEN_OFFSETS] {
         }
         Subtree::Function(function) => {
             let function = file[function];
-            [function.start, function.text_start, function.name_pos, function.anchor]
+            [
+                function.start,
+                function.text_start,
+                function.name_pos,
+                function.anchor,
+            ]
         }
         Subtree::Class(class) => {
             let class = file[class];
@@ -121,7 +131,12 @@ fn token_offsets(file: &File<'_>, node: Subtree) -> [u32; MAX_TOKEN_OFFSETS] {
         }
         Subtree::Member(member) => {
             let member = file[member];
-            [member.start, member.name_pos, last_byte(member.loc.end), NO_OFFSET]
+            [
+                member.start,
+                member.name_pos,
+                last_byte(member.loc.end),
+                NO_OFFSET,
+            ]
         }
         Subtree::Prop(prop) | Subtree::AssignmentProperty(prop) => {
             [file[prop].start, file[prop].pos, NO_OFFSET, NO_OFFSET]
@@ -129,9 +144,12 @@ fn token_offsets(file: &File<'_>, node: Subtree) -> [u32; MAX_TOKEN_OFFSETS] {
         Subtree::Pattern(pattern) => [file[pattern].pos, NO_OFFSET, NO_OFFSET, NO_OFFSET],
         Subtree::PatProp(property) => [file[property].pos, NO_OFFSET, NO_OFFSET, NO_OFFSET],
         Subtree::PatElem(element) => [file[element].start, NO_OFFSET, NO_OFFSET, NO_OFFSET],
-        Subtree::VarDecl(declaration) => {
-            [file[file[declaration].pat].pos, NO_OFFSET, NO_OFFSET, NO_OFFSET]
-        }
+        Subtree::VarDecl(declaration) => [
+            file[file[declaration].pat].pos,
+            NO_OFFSET,
+            NO_OFFSET,
+            NO_OFFSET,
+        ],
         Subtree::Case(case) => [file[case].pos, NO_OFFSET, NO_OFFSET, NO_OFFSET],
         Subtree::Param(parameter) => [file[parameter].pos, NO_OFFSET, NO_OFFSET, NO_OFFSET],
         Subtree::ImportSpec(specifier) => [file[specifier].start, NO_OFFSET, NO_OFFSET, NO_OFFSET],
@@ -163,7 +181,8 @@ impl Walk<'_, '_, '_> {
         self.check_decorators()?;
         let typed = Subtree::Statements(self.typed.file.body);
         let untyped = Subtree::Statements(self.untyped.file.body);
-        self.stack.push((typed, untyped, (NodeData::File, NodeData::File)));
+        self.stack
+            .push((typed, untyped, (NodeData::File, NodeData::File)));
         while let Some((typed, untyped, owners)) = self.stack.pop() {
             self.check_pair(typed, untyped, owners)?;
         }
@@ -194,7 +213,11 @@ impl Walk<'_, '_, '_> {
 
     fn check_pair(&mut self, typed: Subtree, untyped: Subtree, owners: Owners) -> Step {
         let nodes = (node_data(typed, owners.0), node_data(untyped, owners.1));
-        ensure(discriminant(&typed) == discriminant(&untyped), Kind::NodeKind, nodes)?;
+        ensure(
+            discriminant(&typed) == discriminant(&untyped),
+            Kind::NodeKind,
+            nodes,
+        )?;
         match (self.typed.describe(typed), self.untyped.describe(untyped)) {
             (NodeShape::Absent, NodeShape::Absent) => return Ok(()),
             (NodeShape::EmitsCode, NodeShape::Absent) => {

@@ -12,7 +12,8 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   return { stdout, stderr, exitCode };
 }
 
-const helper = (name: string) => `function ${name}(a, b) { return (a * 3 + b * 5 - (a ^ b)) * 7 + (a & b) - (a | 1) + (b >> 1); }\n`;
+const helper = (name: string) =>
+  `function ${name}(a, b) { return (a * 3 + b * 5 - (a ^ b)) * 7 + (a & b) - (a | 1) + (b >> 1); }\n`;
 const program = `${helper("helperOfOneCalledByValue")}${helper("helperOfOneCalledFromLoop")}
 function calledByValue(o) { return helperOfOneCalledByValue(o.alpha, o.beta) + 1; }
 function calledFromLoop(o) { return helperOfOneCalledFromLoop(o.alpha, o.beta) + 2; }
@@ -33,8 +34,14 @@ test.todo(
     const cwd = String(dir);
     const executable = join(cwd, isWindows ? "main.exe" : "main");
     const map = join(cwd, "main.map");
-    const built = await run([bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", executable], cwd, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
-    expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
+    const built = await run([bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", executable], cwd, {
+      ...bunEnv,
+      BUN_JSC_aotMapFilePath: map,
+    });
+    expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
+      output: "",
+      exitCode: 0,
+    });
     const plain = await run([bunExe(), "run", "./main.js"], cwd);
     expect(plain.exitCode).toBe(0);
     expect(await run([executable], cwd)).toEqual(plain);
@@ -43,8 +50,14 @@ test.todo(
       const fields = line.split("\t");
       if (fields[0] === "F" && !fields[8].startsWith("generic-")) heat.set(fields[7], fields[12]);
     }
-    expect({ calledByValue: heat.get("calledByValue"), calledFromLoop: heat.get("calledFromLoop") }).toEqual({ calledByValue: "h", calledFromLoop: "h" });
-    expect({ ofOneCalledByValue: heat.has("helperOfOneCalledByValue"), ofOneCalledFromLoop: heat.has("helperOfOneCalledFromLoop") }).toEqual({ ofOneCalledByValue: true, ofOneCalledFromLoop: false });
+    expect({ calledByValue: heat.get("calledByValue"), calledFromLoop: heat.get("calledFromLoop") }).toEqual({
+      calledByValue: "h",
+      calledFromLoop: "h",
+    });
+    expect({
+      ofOneCalledByValue: heat.has("helperOfOneCalledByValue"),
+      ofOneCalledFromLoop: heat.has("helperOfOneCalledFromLoop"),
+    }).toEqual({ ofOneCalledByValue: true, ofOneCalledFromLoop: false });
   },
   240_000,
 );

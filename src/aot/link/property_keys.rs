@@ -1,7 +1,9 @@
 use super::keys::{MergedKeys, merge_keys};
 use super::state::{MergedPropertyKeys, UnitIds, UnitMarks};
 use super::unit::{KeyList, LinkUnit};
-use crate::ir::{Id, IdMap, InParallel, PropertyKey, PropertyKeyId, PropertyKeyTable, for_each_mut};
+use crate::ir::{
+    Id, IdMap, InParallel, PropertyKey, PropertyKeyId, PropertyKeyTable, for_each_mut,
+};
 
 fn remap_marked_keys(
     keys: &PropertyKeyTable,
@@ -46,7 +48,14 @@ fn number_merged_keys(merged: &MergedKeys<PropertyKey>) -> (PropertyKeyTable, Ve
         first_occurrences.extend(unit_keys.filter(|&index| program_ids[index as usize].is_none()));
         first_occurrences.sort_unstable_by_key(|&index| {
             let key = &merged.keys[index as usize];
-            (key.kind, key.text, key.owner, key.symbol, key.module, key.position)
+            (
+                key.kind,
+                key.text,
+                key.owner,
+                key.symbol,
+                key.module,
+                key.position,
+            )
         });
         first_occurrences.dedup();
         for &index in &first_occurrences {

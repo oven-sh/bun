@@ -153,9 +153,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let kind = match (value, self.rests_on_inexact_power(member)) {
             (EnumValue::String(text), false) => ShapeKind::StringLiteral(text),
             (EnumValue::String(_), true) => ShapeKind::String,
-            (EnumValue::Number(bits), false) => {
-                ShapeKind::NumericEnumMember(f64::from_bits(bits))
-            }
+            (EnumValue::Number(bits), false) => ShapeKind::NumericEnumMember(f64::from_bits(bits)),
             (EnumValue::Number(_), true) => ShapeKind::Number,
         };
         TypeShape::declared(kind, self.symbol_trust(member))

@@ -17,18 +17,18 @@ mod referents;
 mod requests;
 mod side_effects;
 mod synthetic_exports;
-mod unloadable;
-mod unread_exports;
-mod wrapped;
 #[cfg(test)]
 pub(crate) mod testing;
 #[cfg(test)]
 mod tests;
+mod unloadable;
+mod unread_exports;
+mod wrapped;
 
 pub use bindings::{
     AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,
-    ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
-    SyntheticExport, SyntheticExportId,
+    ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule, SyntheticExport,
+    SyntheticExportId,
 };
 pub use code_unit_order::compare_code_units;
 pub use commonjs_exports::CommonJsExports;
@@ -122,7 +122,15 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let tables = resolve_exports(&scans, &modules, entries, &texts);
     sites.settle(input.files, &modules, &tables);
     let find_marker = |module: ModuleRef| texts.marker(module);
-    let imports = bind_imports(input, &scans, &modules, &tables, &order, &sites, &find_marker);
+    let imports = bind_imports(
+        input,
+        &scans,
+        &modules,
+        &tables,
+        &order,
+        &sites,
+        &find_marker,
+    );
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts);
     let mut commonjs_exports =
         CommonJsExports::finish(&commonjs_input, texts, &tables, &imports, &synthetic);
@@ -181,12 +189,16 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     BoundModules { graph, counters }
 }
 
-fn collect_inner_commonjs_modules(modules: &ModuleSet, file_count: usize) -> Vec<Vec<InnerCommonJs>> {
+fn collect_inner_commonjs_modules(
+    modules: &ModuleSet,
+    file_count: usize,
+) -> Vec<Vec<InnerCommonJs>> {
     let mut by_file = Vec::new();
     by_file.resize_with(file_count, Vec::new);
     for &file in &modules.compiled_files {
         let inner_modules = modules.wrapped.of_file(file).iter();
-        let commonjs_modules = inner_modules.filter(|inner| inner.kind == InnerModuleKind::CommonJs);
+        let commonjs_modules =
+            inner_modules.filter(|inner| inner.kind == InnerModuleKind::CommonJs);
         by_file[file.idx()] = commonjs_modules
             .map(|inner| InnerCommonJs {
                 holder: inner.holder,

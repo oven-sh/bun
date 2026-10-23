@@ -7,7 +7,12 @@ import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
-const program = join(import.meta.dir, "programs", "escape-analysis", "a-fast-path-is-left-behind-the-read-of-the-method.ts");
+const program = join(
+  import.meta.dir,
+  "programs",
+  "escape-analysis",
+  "a-fast-path-is-left-behind-the-read-of-the-method.ts",
+);
 
 // In `shelves.shelfFor(crateAt(i).label)` the method is read first. Four times in five what crateAt(i) answers is not what its type promised, so the fast path is left behind that read and the general code
 // calls the method as a value: 20,000 times in this program. That value is only called, so it is the one function object that the program has for the method anyway and nothing is allocated for it.

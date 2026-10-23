@@ -8,8 +8,8 @@ use crate::engine::testing::ResultRecords;
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::ids::ABSENT_WORD;
 use crate::report::testing::{
-    DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, NO_LOCATION, PROGRAM, PROGRAM_FUNCTION,
-    RUNTIME, RUNTIME_FUNCTION, ReportFixture, at, location, names, witness,
+    DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, NO_LOCATION, PROGRAM, PROGRAM_FUNCTION, RUNTIME,
+    RUNTIME_FUNCTION, ReportFixture, at, location, names, witness,
 };
 
 const CAN_FAIL: &str =
@@ -256,7 +256,10 @@ fn text_entry_names_type_and_function() {
         text: format!("1. {}", wording.headline).into_bytes(),
         position: at(PROGRAM, LINE_2_COLUMN_14),
         notes: vec![
-            note("The type is declared here.".to_owned(), at(PROGRAM, LINE_1_COLUMN_5)),
+            note(
+                "The type is declared here.".to_owned(),
+                at(PROGRAM, LINE_1_COLUMN_5),
+            ),
             note("in function 'double'".to_owned(), None),
             note(format!("fix: {}", wording.fix), None),
             note("id d29c4cccbb35 (property)".to_owned(), None),
@@ -273,7 +276,10 @@ fn text_entry_omits_absent_notes() {
     let entry = &report[2];
     let wording = check_wording(CheckCause::AddedByPass);
     assert_eq!(entry.position, None);
-    assert_eq!(BString::from(&entry.text[..]), format!("1. {}", wording.headline));
+    assert_eq!(
+        BString::from(&entry.text[..]),
+        format!("1. {}", wording.headline)
+    );
     let notes = entry.notes.iter().map(|note| BString::from(&note.text[..]));
     let notes: Vec<BString> = notes.collect();
     assert_eq!(
@@ -301,9 +307,15 @@ fn type_note_points_at_origin() {
         type_note_position(location(PROGRAM, LINE_1_COLUMN_5)),
         Some(at(PROGRAM, LINE_1_COLUMN_5))
     );
-    assert_eq!(type_note_position(location(DEPENDENCY, 0)), Some(at(DEPENDENCY, 0)));
+    assert_eq!(
+        type_note_position(location(DEPENDENCY, 0)),
+        Some(at(DEPENDENCY, 0))
+    );
     assert_eq!(type_note_position(NO_LOCATION), None);
-    assert_eq!(type_note_position(location(PROGRAM, LINE_2_COLUMN_14)), None);
+    assert_eq!(
+        type_note_position(location(PROGRAM, LINE_2_COLUMN_14)),
+        None
+    );
     assert_eq!(type_note_position(location(RUNTIME, 0)), None);
 }
 
@@ -315,7 +327,10 @@ fn text_caps_checks_per_cause() {
     assert_eq!(report.len(), 2 + 203 + 1);
     assert_eq!(report[0], format!("208 type guards{CAN_FAIL}"));
     for (number, entry) in (1..=203).zip(&report[2..]) {
-        assert!(entry.starts_with(format!("{number}. ").as_bytes()), "{entry}");
+        assert!(
+            entry.starts_with(format!("{number}. ").as_bytes()),
+            "{entry}"
+        );
     }
     assert!(report[201].starts_with(b"200. a value of the wrong type reaches this guard"));
     assert!(report[202].starts_with(b"201. the value may come from untyped code"));
@@ -342,7 +357,11 @@ fn json_lists_every_check() {
         .collect();
     let report = json_report(&fixture(&records));
     assert_eq!(report.len(), 205);
-    assert!(report.iter().all(|entry| entry.kind == ExplainSet::CHECKS_JSON));
+    assert!(
+        report
+            .iter()
+            .all(|entry| entry.kind == ExplainSet::CHECKS_JSON)
+    );
 }
 
 #[test]
@@ -351,7 +370,13 @@ fn logging_build_lists_no_check() {
     let mut fixture = fixture(&records);
     fixture.options.reports_type_mismatches = true;
     let report = text_report(&fixture);
-    assert_eq!(report, [ReportEntry::line(ExplainSet::CHECKS, LOGGING_BUILD_NOTE.to_vec())]);
+    assert_eq!(
+        report,
+        [ReportEntry::line(
+            ExplainSet::CHECKS,
+            LOGGING_BUILD_NOTE.to_vec()
+        )]
+    );
     assert!(LOGGING_BUILD_NOTE.starts_with(b"A build with --aot-log-type-mismatches doesn't rely"));
     assert!(json_report(&fixture).is_empty());
 }
@@ -395,7 +420,10 @@ fn json_entry_without_location() {
 fn json_cause_is_code_of_wording() {
     for cause in CheckCause::ALL {
         let report = texts_of(&json_report(&fixture(&[check(1, PROGRAM, 0, cause)])));
-        let start = format!(r#"{{"aot":"type-check","cause":"{}","#, guard_cause_code(cause));
+        let start = format!(
+            r#"{{"aot":"type-check","cause":"{}","#,
+            guard_cause_code(cause)
+        );
         assert!(report[0].starts_with(start.as_bytes()), "{}", report[0]);
     }
 }
@@ -407,5 +435,9 @@ fn json_type_needs_text_of_origin() {
         ..property_read()
     }];
     let report = texts_of(&json_report(&fixture(&records)));
-    assert!(report[0].ends_with(br#""id":"d29c4cccbb35"}"#), "{}", report[0]);
+    assert!(
+        report[0].ends_with(br#""id":"d29c4cccbb35"}"#),
+        "{}",
+        report[0]
+    );
 }

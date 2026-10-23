@@ -34,7 +34,9 @@ fn bind(files: &[(&str, &str)]) -> Log {
 
 fn written_link_error(error: LinkError, limits: &LimitValues) -> (bool, Vec<(Kind, String)>) {
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_link_errors(vec![error], limits, &|error| format!("{error:?}").into_bytes());
+    diagnostics.add_link_errors(vec![error], limits, &|error| {
+        format!("{error:?}").into_bytes()
+    });
     let is_internal = diagnostics.has_internal_errors();
     (is_internal, kinds_and_texts(&written(diagnostics)))
 }
@@ -182,10 +184,8 @@ fn import_statement_in_commonjs_lists_evidence_in_order() {
         let log = written(diagnostics);
         assert_eq!(
             describe(&log),
-            [
-                "/project/main.ts:1:1 Err TS100106: \
-                 Cannot use import statement with CommonJS-only features"
-            ]
+            ["/project/main.ts:1:1 Err TS100106: \
+                 Cannot use import statement with CommonJS-only features"]
         );
         let notes = log.msgs[0].notes.iter();
         let notes: Vec<String> = notes.map(|note| text(&note.text)).collect();
@@ -239,7 +239,10 @@ fn missing_and_ambiguous_exports_stop_build() {
 
     let ambiguous = bind(&[
         ("main.ts", "import { x } from \"./both\";\nx;\n"),
-        ("both.ts", "export * from \"./a\";\nexport * from \"./b\";\n"),
+        (
+            "both.ts",
+            "export * from \"./a\";\nexport * from \"./b\";\n",
+        ),
         ("a.ts", "export const x = 1;\n"),
         ("b.ts", "export const x = 2;\n"),
     ]);
@@ -259,7 +262,10 @@ fn resolved_imports_report_nothing() {
 #[should_panic(expected = "the build failed in stage \"Load\":\n/project/main.js:1:1: TS100106: ")]
 fn fold_errors_stop_load() {
     let files = [
-        ("main.js", "import { b } from \"./b.js\";\nmodule.exports = b;\n"),
+        (
+            "main.js",
+            "import { b } from \"./b.js\";\nmodule.exports = b;\n",
+        ),
         ("b.js", "export const b = 1;\n"),
     ];
     with_project_view(&files, |_| {});
@@ -327,7 +333,10 @@ fn only_link_limits_are_user_errors() {
             file: FileId(3),
         },
     };
-    let missing = format!("internal compiler error (LinkAndEmit): {:?}", missing_unit());
+    let missing = format!(
+        "internal compiler error (LinkAndEmit): {:?}",
+        missing_unit()
+    );
     assert_eq!(
         written_link_error(missing_unit(), &limits),
         (true, vec![(Kind::Err, missing)])
@@ -340,7 +349,11 @@ fn link_limit_message_uses_build_limit_value() {
     let mut limits = LimitValues::for_host();
     limits.lower(limit, 3);
     let (_, printed) = written_link_error(LinkError::LimitExceeded { limit, count: 4 }, &limits);
-    assert!(printed[0].1.ends_with(" is limited to 3, and it needs 4"), "{}", printed[0].1);
+    assert!(
+        printed[0].1.ends_with(" is limited to 3, and it needs 4"),
+        "{}",
+        printed[0].1
+    );
 }
 
 #[test]

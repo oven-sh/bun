@@ -35,11 +35,26 @@ pub(super) const ESCAPE_REASONS: [(AllocationEscapeReason, &str);
         AllocationEscapeReason::STORED_IN_UNKNOWN_MEMORY,
         "it is stored somewhere the compiler can't track",
     ),
-    (AllocationEscapeReason::PASSED_TO_UNKNOWN_CODE, "it is passed to code the compiler can't see"),
-    (AllocationEscapeReason::RETAINED_BY_CALLEE, "a callee keeps a reference to it"),
-    (AllocationEscapeReason::STORED_IN_ESCAPING_OBJECT, "it is stored in an object that escapes"),
-    (AllocationEscapeReason::LEAKED_BY_CONTAINER, "it is in a collection that escapes"),
-    (AllocationEscapeReason::LIMIT_REACHED, "escape analysis hit a limit"),
+    (
+        AllocationEscapeReason::PASSED_TO_UNKNOWN_CODE,
+        "it is passed to code the compiler can't see",
+    ),
+    (
+        AllocationEscapeReason::RETAINED_BY_CALLEE,
+        "a callee keeps a reference to it",
+    ),
+    (
+        AllocationEscapeReason::STORED_IN_ESCAPING_OBJECT,
+        "it is stored in an object that escapes",
+    ),
+    (
+        AllocationEscapeReason::LEAKED_BY_CONTAINER,
+        "it is in a collection that escapes",
+    ),
+    (
+        AllocationEscapeReason::LIMIT_REACHED,
+        "escape analysis hit a limit",
+    ),
 ];
 
 pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
@@ -655,9 +670,7 @@ pub(super) fn column_key(column: AccessColumn) -> &'static str {
 pub(super) fn column_description(column: AccessColumn) -> &'static str {
     match column {
         AccessColumn::Free => "free: one load or store at a fixed offset",
-        AccessColumn::Tested => {
-            "tested: a test of its own, then a load or store at a fixed offset"
-        }
+        AccessColumn::Tested => "tested: a test of its own, then a load or store at a fixed offset",
         AccessColumn::ByName => "by name: looked up by name",
     }
 }

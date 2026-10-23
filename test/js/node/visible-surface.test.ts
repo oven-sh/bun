@@ -59,7 +59,8 @@ test("the visible surface of the modules of Node.js", () => {
     if (known !== undefined) return void lines.push(`${path} = ${known}`);
     seen.set(value, path);
     const above = Object.getPrototypeOf(value);
-    const shape = typeof value === "function" ? ` ${kindOf(value)} name=${JSON.stringify(value.name)} length=${value.length}` : "";
+    const shape =
+      typeof value === "function" ? ` ${kindOf(value)} name=${JSON.stringify(value.name)} length=${value.length}` : "";
     const aboveName = above === null ? "null" : (seen.get(above) ?? above.constructor?.name ?? "?");
     lines.push(`${path}: ${typeof value}${shape} above=${aboveName} extensible=${Object.isExtensible(value)}`);
     if (depth === 0) return;
@@ -67,7 +68,9 @@ test("the visible surface of the modules of Node.js", () => {
       const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
       const name = `${path}[${String(key)}]`;
       if (!("value" in descriptor)) {
-        lines.push(`${name} ${attributesOf(descriptor)} accessor get=${typeof descriptor.get} set=${typeof descriptor.set}`);
+        lines.push(
+          `${name} ${attributesOf(descriptor)} accessor get=${typeof descriptor.get} set=${typeof descriptor.set}`,
+        );
         continue;
       }
       const held = descriptor.value;
@@ -147,7 +150,8 @@ test("constructors that old code applies to an object of its own", () => {
     let outcome: string;
     try {
       const answer = constructor.apply(self, args);
-      outcome = answer === undefined ? "answers undefined" : answer === self ? "answers this" : `answers ${typeof answer}`;
+      outcome =
+        answer === undefined ? "answers undefined" : answer === self ? "answers this" : `answers ${typeof answer}`;
     } catch (error) {
       outcome = `throws ${(error as Error).constructor.name}`;
     }

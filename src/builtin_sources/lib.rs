@@ -41,7 +41,12 @@ impl Manifest {
             }
             let mut fields = bun_core::strings::split(line, b"\t");
             let kind = fields.next().ok_or_else(error)?;
-            let mut field = || fields.next().filter(|bytes| !bytes.is_empty()).ok_or_else(error);
+            let mut field = || {
+                fields
+                    .next()
+                    .filter(|bytes| !bytes.is_empty())
+                    .ok_or_else(error)
+            };
             match kind {
                 b"define" => manifest.defines.push((field()?.into(), field()?.into())),
                 b"module" => manifest.modules.push(Module {
@@ -54,7 +59,9 @@ impl Manifest {
                     let id = number(field()?).ok_or_else(error)?;
                     let file = field()?;
                     let key = [file, field()?].join(&b'\t');
-                    manifest.builtin_functions.push((key.into_boxed_slice(), id));
+                    manifest
+                        .builtin_functions
+                        .push((key.into_boxed_slice(), id));
                     functions.push((id, file, index + 1));
                 }
                 _ => return Err(error()),
@@ -185,7 +192,8 @@ impl Archive {
         static EMBEDDED: OnceLock<Archive> = OnceLock::new();
         EMBEDDED.get_or_init(|| {
             let text = Archive::read(b"manifest").expect("the archive has a manifest");
-            let manifest = Manifest::parse(&text).expect("the manifest of the archive is well-formed");
+            let manifest =
+                Manifest::parse(&text).expect("the manifest of the archive is well-formed");
             let mut paths: Vec<Option<Box<[u8]>>> = Vec::new();
             for module in &manifest.modules {
                 let Some(path) = &module.path else {
@@ -209,13 +217,17 @@ impl Archive {
     }
 
     pub fn read(name: &[u8]) -> Option<Vec<u8>> {
-        let number = |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let number =
+            |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let archive = archive();
         let records = &archive[4..][..number(archive) * RECORD_LEN];
         let records = records.as_chunks::<RECORD_LEN>().0;
         let found = records.binary_search_by(|record| record[1..][..record[0] as usize].cmp(name));
         let offset_and_len = &records[found.ok()?][1 + NAME_LEN..];
-        bun_zstd::decompress_alloc(&archive[number(offset_and_len)..][..number(&offset_and_len[4..])]).ok()
+        bun_zstd::decompress_alloc(
+            &archive[number(offset_and_len)..][..number(&offset_and_len[4..])],
+        )
+        .ok()
     }
 }
 
@@ -290,11 +302,26 @@ mod tests {
         let manifest = Manifest::parse(MANIFEST).unwrap();
         let id = manifest.builtin_function_id(b"/$bun/js/builtins/Fifo.ts", b"createFIFO");
         assert_eq!(id, Some(65536));
-        assert_eq!(manifest.builtin_function_id(b"builtins/Fifo.ts", b"createFIFO"), id);
-        assert_eq!(manifest.builtin_function_id(b"builtins/Fifo.ts", b"create"), None);
-        assert_eq!(manifest.builtin_function_id(b"engine/ArrayPrototype.js", b"map"), Some(7));
-        assert_eq!(manifest.function_file(65536), Some(&b"builtins/Fifo.ts"[..]));
-        assert_eq!(manifest.function_file(7), Some(&b"engine/ArrayPrototype.js"[..]));
+        assert_eq!(
+            manifest.builtin_function_id(b"builtins/Fifo.ts", b"createFIFO"),
+            id
+        );
+        assert_eq!(
+            manifest.builtin_function_id(b"builtins/Fifo.ts", b"create"),
+            None
+        );
+        assert_eq!(
+            manifest.builtin_function_id(b"engine/ArrayPrototype.js", b"map"),
+            Some(7)
+        );
+        assert_eq!(
+            manifest.function_file(65536),
+            Some(&b"builtins/Fifo.ts"[..])
+        );
+        assert_eq!(
+            manifest.function_file(7),
+            Some(&b"engine/ArrayPrototype.js"[..])
+        );
         assert_eq!(manifest.function_file(65537), None);
     }
 
@@ -362,7 +389,11 @@ mod tests {
                 continue;
             };
             let text = Archive::read(path);
-            assert!(text.is_some_and(|text| !text.is_empty()), "{}", path.escape_ascii());
+            assert!(
+                text.is_some_and(|text| !text.is_empty()),
+                "{}",
+                path.escape_ascii()
+            );
             let virtual_path = [VIRTUAL_ROOT, &path[..]].concat();
             assert_eq!(archive.path(module.id), Some(&virtual_path[..]));
         }
@@ -370,12 +401,19 @@ mod tests {
         let other_files = [&b"tsconfig.json"[..], b"builtins.d.ts", b"private.d.ts"];
         for name in function_files.chain(other_files) {
             let text = Archive::read(name);
-            assert!(text.is_some_and(|text| !text.is_empty()), "{}", name.escape_ascii());
+            assert!(
+                text.is_some_and(|text| !text.is_empty()),
+                "{}",
+                name.escape_ascii()
+            );
         }
         let wrap = manifest.module_by_specifier(b"bun:wrap");
         assert!(wrap.is_some_and(|id| manifest.has_source(id)));
         let runtime = manifest.resolve(b"./runtime", b"runtime.bun.js");
-        assert_eq!(runtime.and_then(|id| archive.path(id)), Some(&b"/$bun/js/runtime.js"[..]));
+        assert_eq!(
+            runtime.and_then(|id| archive.path(id)),
+            Some(&b"/$bun/js/runtime.js"[..])
+        );
     }
 
     #[test]

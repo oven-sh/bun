@@ -263,9 +263,14 @@ function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
   expect(unmet.map(({ name, relation, bound }) => `${name} ${relation} ${bound}, but the build counted ${counted.get(name) ?? "no such statistic"}`)).toEqual([]);
 }
 
+// The check of references reads what B3's road leaves behind, so a build with it generates no code directly: a program that is here for the direct code generators is built without.
+// There are none on Windows, and a Bun built with AddressSanitizer sends every function through B3, which puts the checks of the shadow memory into the code.
+const generatesAllCodeDirectly = (program: CompiledProgram) => !isWindows && !isASAN && program.buildFlags.includes("--aot-testing=GenerateAllCodeDirectly");
+
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");
-  const flags = ["--aot-check=validate-references", ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected ? ["--explain=statistics"] : [])];
+  const checks = generatesAllCodeDirectly(program) ? [] : ["--aot-check=validate-references"];
+  const flags = [...checks, ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected || generatesAllCodeDirectly(program) ? ["--explain=statistics"] : [])];
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, ...program.entryPoints, "--outfile", executable];
   return { ...(await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment })), executable };
 }
@@ -275,7 +280,11 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
   const build = await buildCompiled(program);
   try {
     built(build);
-    expectStatistics(build.stderr, [...(program.statistics ?? []), ...(program.stubCopiesExpected ? [{ name: "StubCopiesEmitted", relation: ">=", bound: 2 } as const] : [])]);
+    expectStatistics(build.stderr, [
+      ...(program.statistics ?? []),
+      ...(program.stubCopiesExpected ? [{ name: "StubCopiesEmitted", relation: ">=", bound: 2 } as const] : []),
+      ...(generatesAllCodeDirectly(program) ? [{ name: "FunctionsGeneratedDirectly", relation: ">=", bound: 1 } as const] : []),
+    ]);
     for (const environment of program.runEnvironments) {
       const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" });
       expect({ environment, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ environment, signal: null, stderr: "" });

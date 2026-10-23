@@ -36,7 +36,10 @@ pub(super) fn check_arguments(command_line: &CommandLine) {
     if command_line.build {
         usage_error(format_args!("--aot does not support --build"));
     }
-    let mut names = command_line.compiler_options.iter().map(CompilerOption::name);
+    let mut names = command_line
+        .compiler_options
+        .iter()
+        .map(CompilerOption::name);
     if let Some(name) = names.find(|name| *name != b"pretty") {
         usage_error(format_args!(
             "--aot does not take compiler options (--{}). It checks with the tsconfig.json that bun compile would use",
@@ -79,12 +82,13 @@ fn set_compile_context(ctx: &mut ContextData, options: &Options, cwd: &[u8]) {
         Ok(explain) => explain,
         Err(error) => option_usage_error(&error),
     };
-    let exec_argv = options.code_generation_flag.map(|level| {
-        match compile_options::prepend_code_generation_flag(level, b"") {
-            Ok(exec_argv) => exec_argv.into_boxed_slice(),
-            Err(error) => option_usage_error(&error),
-        }
-    });
+    let exec_argv =
+        options.code_generation_flag.map(
+            |level| match compile_options::prepend_code_generation_flag(level, b"") {
+                Ok(exec_argv) => exec_argv.into_boxed_slice(),
+                Err(error) => option_usage_error(&error),
+            },
+        );
     let define = match arguments::resolve_defines(&options.defines) {
         Ok(define) => define,
         Err(error) => usage_error(format_args!("{}", error.name())),
@@ -194,7 +198,10 @@ fn report_compile_check(
 
 /// The last line of plain `bun check`: sema/driver/format.rs.
 fn errors_line(log: &bun_ast::Log, files_checked: u32) -> Vec<u8> {
-    let errors = log.msgs.iter().filter(|message| message.kind == bun_ast::Kind::Err);
+    let errors = log
+        .msgs
+        .iter()
+        .filter(|message| message.kind == bun_ast::Kind::Err);
     let mut files: Vec<&[u8]> = errors
         .filter_map(|message| message.data.location.as_ref())
         .map(|location| &location.file[..])
@@ -275,12 +282,18 @@ mod tests {
         for text in [&b"TS2322: x"[..], b"TS2322: y"] {
             log.msgs.push(bun_ast::Msg {
                 kind: Kind::Err,
-                data: Data { text: Cow::Borrowed(text), ..located(b"") },
+                data: Data {
+                    text: Cow::Borrowed(text),
+                    ..located(b"")
+                },
                 ..Default::default()
             });
             log.errors += 1;
         }
-        assert_eq!(errors_line(&log, 3), b"Found 2 errors in 1 file, checked 3 files");
+        assert_eq!(
+            errors_line(&log, 3),
+            b"Found 2 errors in 1 file, checked 3 files"
+        );
         assert_eq!(errors_line(&log, 0), b"Found 2 errors in 1 file");
     }
 
@@ -305,7 +318,10 @@ mod tests {
     #[test]
     fn plain_note_with_indent() {
         let data = located(b"x");
-        assert_eq!(plain_message(Kind::Note, &data, b"  "), b"  a.ts(1,14): x\n");
+        assert_eq!(
+            plain_message(Kind::Note, &data, b"  "),
+            b"  a.ts(1,14): x\n"
+        );
     }
 
     #[test]

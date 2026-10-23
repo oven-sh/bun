@@ -96,7 +96,11 @@ test("only a class of array buffer cells has a sharing mode", () => {
 
 test("a host class with locked prototypes names the Structure of its instances or is never pristine", () => {
   const prototypeOf = (flags: readonly BuiltinFlag[], above: ModelBuiltin | null) =>
-    ({ flags, sameObjectAs: null, prototype: above === null ? { link: "Null" } : { link: "Builtin", builtin: above } }) as ModelBuiltin;
+    ({
+      flags,
+      sameObjectAs: null,
+      prototype: above === null ? { link: "Null" } : { link: "Builtin", builtin: above },
+    }) as ModelBuiltin;
   const objectPrototype = prototypeOf(["IsLockedObject"], null);
   const locked = prototypeOf(["HasLockedMembers"], objectPrototype);
   const hostClass = (token: string, columns: Partial<ModelClass> = {}) =>

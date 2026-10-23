@@ -15,9 +15,7 @@ use super::lexical_owners::compute_lexical_owners;
 use super::walk::{EvalUse, ScopeWalk, WalkInput, walk_file};
 use super::{BindingForm, BindingRef, Placement, ScopeInput, WalkedFunctionId};
 use crate::ir::VariableKey;
-use crate::lower::captures::{
-    self, CaptureInput, CapturePlan, CapturedBinding, compute_captures,
-};
+use crate::lower::captures::{self, CaptureInput, CapturePlan, CapturedBinding, compute_captures};
 use crate::modules::ModuleKind;
 
 struct Context<'x, 's> {
@@ -141,7 +139,9 @@ fn find_module_bodies(walk: &ScopeWalk) -> Vec<WalkedFunctionId> {
     let mut bodies: Vec<WalkedFunctionId> = Vec::with_capacity(walk.functions.len());
     for (id, function) in (0..).map(WalkedFunctionId).zip(&walk.functions) {
         debug_assert!(function.creator.is_none_or(|creator| creator < id));
-        let body = function.creator.map_or(id, |creator| bodies[creator.index()]);
+        let body = function
+            .creator
+            .map_or(id, |creator| bodies[creator.index()]);
         bodies.push(body);
     }
     bodies

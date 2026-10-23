@@ -88,7 +88,9 @@ const storesByName = overload({
     parameter(first, { accepted: anyObject, uses: ["Inspects", "WritesContents", "StoresByKey"] }),
     parameter(second, { uses: ["Inspects", "Retains"] }),
   ],
-  propertyActions: [action({ action: "StoresByKey", object: first, key: { key: "Names", names: ["x"] }, value: operandPlace(second) })],
+  propertyActions: [
+    action({ action: "StoresByKey", object: first, key: { key: "Names", names: ["x"] }, value: operandPlace(second) }),
+  ],
   writes: objectHeaps,
   throws: true,
 });
@@ -99,7 +101,9 @@ const deletesName = overload({
   throws: true,
 });
 const freezes = overload({
-  parameters: [parameter(first, { accepted: anyObject, uses: ["Inspects", "ChangesIntegrity"], protocols: ["OwnKeys"] })],
+  parameters: [
+    parameter(first, { accepted: anyObject, uses: ["Inspects", "ChangesIntegrity"], protocols: ["OwnKeys"] }),
+  ],
   propertyActions: [action({ action: "ChangesIntegrity", object: first, integrityLevel: "Frozen" })],
   writes: objectHeaps,
   throws: true,
@@ -138,7 +142,10 @@ const readsResultOfCallback = overload({
   callbacks: [callback(first, { resultUse: "Escapes" })],
   throws: true,
 });
-const usesReceiver = overload({ receiver: parameter("this", { protocols: ["Named"], namedMembers: ["name"] }), throws: true });
+const usesReceiver = overload({
+  receiver: parameter("this", { protocols: ["Named"], namedMembers: ["name"] }),
+  throws: true,
+});
 const takesObject = overload({ parameters: [parameter(first, { accepted: anything })], capability: "none" });
 const readsLengthFirst = overload({
   receiver: parameter("this", { accepted: pristineArray, uses: ["Inspects", "ReadsContents"] }),
@@ -211,7 +218,10 @@ const cases: Case[] = [
   {
     title: "this of a callback",
     double: (called: Function) => void Reflect.apply(called, shared, [1]),
-    declared: { ...callsOnce, callbacks: [callback(first, { thisValue: newValue(anyObject), arguments: callsOnce.callbacks[0].arguments })] },
+    declared: {
+      ...callsOnce,
+      callbacks: [callback(first, { thisValue: newValue(anyObject), arguments: callsOnce.callbacks[0].arguments })],
+    },
     wrong: callsOnce,
     column: "callbacks[0].thisValue",
   },
@@ -275,7 +285,10 @@ const cases: Case[] = [
     title: "the value of a store",
     double: storeUnderName,
     declared: storesByName,
-    wrong: { ...storesByName, propertyActions: [{ ...storesByName.propertyActions[0], value: newValue(primitive("Number")) }] },
+    wrong: {
+      ...storesByName,
+      propertyActions: [{ ...storesByName.propertyActions[0], value: newValue(primitive("Number")) }],
+    },
     column: "parameters[1].uses",
   },
   {
@@ -339,10 +352,14 @@ const cases: Case[] = [
     hasOtherwise: true,
     double: (array: unknown[]) => {
       if (!Array.isArray(array)) throw new TypeError();
-      for (let index = 0; index < array.length; index++) if (Object.hasOwn(array, index)) String(Reflect.getOwnPropertyDescriptor(array, index)!.value);
+      for (let index = 0; index < array.length; index++)
+        if (Object.hasOwn(array, index)) String(Reflect.getOwnPropertyDescriptor(array, index)!.value);
     },
     declared: convertsElements,
-    wrong: withParameters(convertsElements, parameter(first, { accepted: pristineArray, uses: ["Inspects", "ReadsContents"] })),
+    wrong: withParameters(
+      convertsElements,
+      parameter(first, { accepted: pristineArray, uses: ["Inspects", "ReadsContents"] }),
+    ),
     column: "parameters[0].uses",
   },
   {
@@ -413,7 +430,11 @@ const cases: Case[] = [
   {
     title: "a surplus argument",
     double: (_: unknown, surplus: any) => void surplus?.name,
-    declared: withParameters(readsName, parameter(first), parameter(second, { protocols: ["Named"], namedMembers: ["name"] })),
+    declared: withParameters(
+      readsName,
+      parameter(first),
+      parameter(second, { protocols: ["Named"], namedMembers: ["name"] }),
+    ),
     wrong: withParameters(readsName, parameter(first)),
     column: "parameters",
   },
@@ -473,7 +494,8 @@ describe("an entry that leaves out", () => {
     const others = hasOtherwise ? [otherwise] : [];
     test(title, async () => {
       expect(await differencesOf(double, [declared, ...others], entry)).toEqual([]);
-      if (column !== "") expect(await differingColumnsOf(double, [wrong, ...others], wrongEntry ?? entry)).toContain(column);
+      if (column !== "")
+        expect(await differingColumnsOf(double, [wrong, ...others], wrongEntry ?? entry)).toContain(column);
     });
   }
 

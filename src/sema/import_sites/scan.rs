@@ -36,8 +36,8 @@ pub(crate) fn collect_import_sites<'s>(
     let sites = statements.sites;
     let mut sites_by_kind: Vec<u32> = (0..sites.len() as u32).collect();
     sites_by_kind.shared_sort_unstable_by_key(|&index| sites[index as usize].kind);
-    let imports_used_only_in_dead_code = (uses.as_ref())
-        .map_or_else(Vec::new, |uses| uses.symbols_used_only_in_dead_code());
+    let imports_used_only_in_dead_code =
+        (uses.as_ref()).map_or_else(Vec::new, |uses| uses.symbols_used_only_in_dead_code());
     let unused_import_symbols = uses.map_or_else(Vec::new, |uses| uses.unused_symbols());
     ImportScan {
         sites: slice_in(&sites, arena),

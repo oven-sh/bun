@@ -69,7 +69,11 @@ pub mod build_report {
     use super::{ReportInput, linked};
 
     /// `build_id` is the digits that the build prints, where it wrote an executable.
-    pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8> {
+    pub fn write(
+        input: &ReportInput<'_>,
+        detail: ReportDetail,
+        build_id: Option<&[u8]>,
+    ) -> Vec<u8> {
         linked::bun_aot_write_build_report(input, detail, build_id)
     }
 }

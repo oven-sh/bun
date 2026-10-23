@@ -98,11 +98,13 @@ function resultOriginOf(entry: Entry): string {
   }
   const accessClass = memberOf(entry, "accessClass");
   if (accessClass === "IndirectCall" || accessClass === "DirectCall") return "ResultOrigin::Call";
-  if (rule === "Constant" && operands.length === 0 && !entry.effects.collects && !entry.effects.throws) return "ResultOrigin::Constant";
+  if (rule === "Constant" && operands.length === 0 && !entry.effects.collects && !entry.effects.throws)
+    return "ResultOrigin::Constant";
   // One object for the place in the program, the same whenever the operation runs: whoever has run it before has it too.
   if (memberOf(entry, "boundTo") === "Site") return "ResultOrigin::Other";
   const retainsInResult = operands.some(operand => operand.uses.retainedIn === "Result");
-  if (rule === "Allocation" || memberOf(entry, "flow") === "Allocates" || retainsInResult) return "ResultOrigin::Allocation";
+  if (rule === "Allocation" || memberOf(entry, "flow") === "Allocates" || retainsInResult)
+    return "ResultOrigin::Allocation";
   const receiver = receiverOfRead(entry);
   if (receiver !== null && !receiver.isVariadic) return `ResultOrigin::Read { receiver: ${receiver.index} }`;
   // The operation alone says what kind of value comes out, whatever it does to its operands on the way.
@@ -118,7 +120,9 @@ function retainingHeapOf(entry: Entry): string {
 // The object is made from what the operation itself names alone: it has no operand that could say what the object holds.
 function isMadeFromPayload(entry: Entry): boolean {
   const hasOperands = operandsOf(entry).some(operand => !operand.isEngine);
-  return resultOriginOf(entry) === "ResultOrigin::Allocation" && entry.result.unproven.rule === "Constant" && !hasOperands;
+  return (
+    resultOriginOf(entry) === "ResultOrigin::Allocation" && entry.result.unproven.rule === "Constant" && !hasOperands
+  );
 }
 
 function definesMembers(entry: Entry): boolean {
@@ -128,7 +132,13 @@ function definesMembers(entry: Entry): boolean {
 // `Opcode` belongs to another crate in the product, so these are functions and not its methods.
 function answerFunction(head: string, entries: readonly Entry[], answerOf: (entry: Entry) => string[]): string[] {
   const bodies = entries.map(entry => ({ label: entry.name, body: answerOf(entry) }));
-  return [`${head} {`, `${indentation}match opcode {`, ...groupedArms("Opcode", bodies, twoLevels), `${indentation}}`, "}"];
+  return [
+    `${head} {`,
+    `${indentation}match opcode {`,
+    ...groupedArms("Opcode", bodies, twoLevels),
+    `${indentation}}`,
+    "}",
+  ];
 }
 
 function entryUsesRs(schema: Schema): string[] {
@@ -145,13 +155,23 @@ function entryUsesRs(schema: Schema): string[] {
         "// By the index of the operand. Where the operation takes any number of operands the last entry stands for all of them.",
         ...answerFunction("pub fn operand_infos_of(opcode: Opcode) -> &'static [OperandInfo]", operations, entry => {
           const operands = operandsOf(entry);
-          return operands.length === 0 ? ["&[]"] : ["&[", ...operands.map(operand => indentation + operandInfoText(operand)), "]"];
+          return operands.length === 0
+            ? ["&[]"]
+            : ["&[", ...operands.map(operand => indentation + operandInfoText(operand)), "]"];
         }),
       ],
-      answerFunction("pub fn result_origin_of(opcode: Opcode) -> ResultOrigin", operations, entry => [resultOriginOf(entry)]),
-      answerFunction("pub fn retaining_heap_of(opcode: Opcode) -> RetainingHeap", operations, entry => [retainingHeapOf(entry)]),
-      answerFunction("pub fn is_made_from_payload(opcode: Opcode) -> bool", operations, entry => [String(isMadeFromPayload(entry))]),
-      answerFunction("pub fn defines_members(opcode: Opcode) -> bool", operations, entry => [String(definesMembers(entry))]),
+      answerFunction("pub fn result_origin_of(opcode: Opcode) -> ResultOrigin", operations, entry => [
+        resultOriginOf(entry),
+      ]),
+      answerFunction("pub fn retaining_heap_of(opcode: Opcode) -> RetainingHeap", operations, entry => [
+        retainingHeapOf(entry),
+      ]),
+      answerFunction("pub fn is_made_from_payload(opcode: Opcode) -> bool", operations, entry => [
+        String(isMadeFromPayload(entry)),
+      ]),
+      answerFunction("pub fn defines_members(opcode: Opcode) -> bool", operations, entry => [
+        String(definesMembers(entry)),
+      ]),
       answerFunction("pub fn compares_identity(opcode: Opcode) -> bool", operations, entry => [
         String(memberOf(entry, "proves") === "Equality"),
       ]),

@@ -100,7 +100,9 @@ fn serialize_metadata_array(
     for &entry in entries {
         values.push(serialize_metadata(lowering, class, entry));
     }
-    lowering.builder.new_array(TypeTable::ANYTHING, &[], &values)
+    lowering
+        .builder
+        .new_array(TypeTable::ANYTHING, &[], &values)
 }
 
 fn emit_metadata_global(

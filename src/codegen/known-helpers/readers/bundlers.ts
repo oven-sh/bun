@@ -27,7 +27,8 @@ function moduleWrappersIn(statements: readonly Node[]): Node[] {
       if (isFunction(wrapper)) wrappers.push(wrapper);
     } else if (statement.type === "VariableDeclaration") {
       for (const { init } of statement.declarations) {
-        if (init?.type === "CallExpression" && init.callee.type === "Identifier") wrappers.push(...functionsGivenTo(init));
+        if (init?.type === "CallExpression" && init.callee.type === "Identifier")
+          wrappers.push(...functionsGivenTo(init));
       }
     }
   }
@@ -55,7 +56,9 @@ class Collector {
 function everyCombination(axes: Record<string, readonly unknown[]>): Record<string, unknown>[] {
   let combinations: Record<string, unknown>[] = [{}];
   for (const [name, values] of Object.entries(axes)) {
-    combinations = combinations.flatMap(combination => values.map(value => (value === undefined ? combination : { ...combination, [name]: value })));
+    combinations = combinations.flatMap(combination =>
+      values.map(value => (value === undefined ? combination : { ...combination, [name]: value })),
+    );
   }
   return combinations;
 }
@@ -85,7 +88,11 @@ async function withSilentConsole<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-function writeSyntaxProbe(probe: Probe, folder: string, otherFiles: readonly (readonly [string, string])[] = []): string {
+function writeSyntaxProbe(
+  probe: Probe,
+  folder: string,
+  otherFiles: readonly (readonly [string, string])[] = [],
+): string {
   const file = `${probe.name}.${probe.hasJsx ? "tsx" : "ts"}`;
   return writeBundleProbe({ name: probe.name, files: [[file, probe.text], ...otherFiles] }, folder);
 }
@@ -120,7 +127,8 @@ export async function readRollup(folder: string): Promise<FoundFunction[]> {
       for (const output of outputs) {
         try {
           const generated = await bundle.generate(output);
-          for (const chunk of generated.output ?? [generated]) collector.read(`${probe.name} (${describeOptions(output)})`, chunk.code);
+          for (const chunk of generated.output ?? [generated])
+            collector.read(`${probe.name} (${describeOptions(output)})`, chunk.code);
         } catch {}
       }
       await bundle.close?.();
@@ -148,7 +156,10 @@ export async function readRolldown(folder: string): Promise<FoundFunction[]> {
     } catch {}
   };
 
-  const bundleInputs = everyCombination({ platform: ["node", "neutral", "browser"], profilerNames: [undefined, true, false] });
+  const bundleInputs = everyCombination({
+    platform: ["node", "neutral", "browser"],
+    profilerNames: [undefined, true, false],
+  });
   const bundleOutputs = everyCombination({
     format: ["esm", "cjs"],
     exports: ["named"],
@@ -196,19 +207,33 @@ interface BunEntry {
   readonly settings: readonly string[];
 }
 
-const experimentalDecorators = JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } });
+const experimentalDecorators = JSON.stringify({
+  compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+});
 
 function writeBunEntries(work: string): BunEntry[] {
   const entries: BunEntry[] = [];
   for (const probe of bundleProbes) {
-    entries.push({ name: probe.name, file: writeBundleProbe(probe, path.join(work, probe.name)), flags: ["--external=probe-external-*"], settings: [] });
+    entries.push({
+      name: probe.name,
+      file: writeBundleProbe(probe, path.join(work, probe.name)),
+      flags: ["--external=probe-external-*"],
+      settings: [],
+    });
   }
   const flags = ["--external=./probe-*", "--external=react/*"];
   for (const probe of probes) {
     entries.push({ name: probe.name, file: writeSyntaxProbe(probe, path.join(work, "syntax")), flags, settings: [] });
     if (!usesDecorators(probe)) continue;
-    const file = writeSyntaxProbe(probe, path.join(work, "experimental-decorators"), [["tsconfig.json", experimentalDecorators]]);
-    entries.push({ name: probe.name, file, flags, settings: ["tsconfig.json: experimentalDecorators, emitDecoratorMetadata"] });
+    const file = writeSyntaxProbe(probe, path.join(work, "experimental-decorators"), [
+      ["tsconfig.json", experimentalDecorators],
+    ]);
+    entries.push({
+      name: probe.name,
+      file,
+      flags,
+      settings: ["tsconfig.json: experimentalDecorators, emitDecoratorMetadata"],
+    });
   }
   return entries;
 }
@@ -224,8 +249,17 @@ export function readBun(folder: string): Promise<FoundFunction[]> {
         for (const target of ["node", "bun", "browser"]) {
           for (const entry of entries) {
             const flags = [`--format=${format}`, `--target=${target}`, ...style, ...entry.flags];
-            const result = Bun.spawnSync([binary, "build", entry.file, ...flags], { cwd: work, stdout: "pipe", stderr: "ignore", env: { PATH: "", HOME: work } });
-            if (result.exitCode === 0) collector.read(`${entry.name} (${[flags.join(" "), ...entry.settings].join("; ")})`, result.stdout.toString());
+            const result = Bun.spawnSync([binary, "build", entry.file, ...flags], {
+              cwd: work,
+              stdout: "pipe",
+              stderr: "ignore",
+              env: { PATH: "", HOME: work },
+            });
+            if (result.exitCode === 0)
+              collector.read(
+                `${entry.name} (${[flags.join(" "), ...entry.settings].join("; ")})`,
+                result.stdout.toString(),
+              );
           }
         }
       }

@@ -64,7 +64,11 @@ impl Moved {
     }
 
     fn module_id(&self, file: ProgramFile) -> Option<ModuleId> {
-        let index = self.numbered.prepared.modules.index_of(ProgramModule::File(file));
+        let index = self
+            .numbered
+            .prepared
+            .modules
+            .index_of(ProgramModule::File(file));
         self.numbered.numbering.modules[index as usize]
     }
 
@@ -100,7 +104,11 @@ fn move_units(projects: &Projects<'_, '_>, units: Vec<LinkUnit>) -> Moved {
     };
     let mut tables = move_definitions(&mut prepared.units, &input, strings);
     let mut functions = Vec::new();
-    for (ids, list) in numbering.units.iter().zip(core::mem::take(&mut tables.functions_by_unit)) {
+    for (ids, list) in numbering
+        .units
+        .iter()
+        .zip(core::mem::take(&mut tables.functions_by_unit))
+    {
         for function in list {
             let mut function = std::sync::Arc::unwrap_or_clone(function);
             let function_types = core::mem::take(&mut function.function_types);
@@ -165,7 +173,9 @@ fn call(function: FunctionId) -> Reference {
 
 fn define_variable(unit: &mut TestUnit, symbol: u32) -> Reference {
     let name = unit.fragment.strings.intern(b"variable");
-    let id = unit.fragment.declare_variable(test_variable_key(unit.file.0, symbol));
+    let id = unit
+        .fragment
+        .declare_variable(test_variable_key(unit.file.0, symbol));
     let definition = synthetic_export_variable(name, unit.module, ExportWriter::Loader);
     unit.fragment.define_variable(id, definition);
     Reference::Variable(id)
@@ -233,16 +243,24 @@ fn sorted<const COUNT: usize>(mut files: [FileId; COUNT]) -> [FileId; COUNT] {
 
 fn create_function_fragments([main, first, second]: [FileId; 3]) -> ([Fragment; 3], FunctionId) {
     let mut first_unit = TestUnit::new(first);
-    first_unit.fragment.declare_function(test_function_key(first.0, 0));
+    first_unit
+        .fragment
+        .declare_function(test_function_key(first.0, 0));
     define_function(&mut first_unit, 1, &[]);
     let dropped = define_function(&mut first_unit, 2, &[]);
     define_function(&mut first_unit, 0, &[]);
     let mut second_unit = TestUnit::new(second);
-    let callee = second_unit.fragment.declare_function(test_function_key(first.0, 0));
+    let callee = second_unit
+        .fragment
+        .declare_function(test_function_key(first.0, 0));
     define_function(&mut second_unit, 0, &[call(callee)]);
     let mut main_unit = TestUnit::new(main);
     let callees = [(first, 0), (first, 1), (second, 0)].map(|(file, function)| {
-        call(main_unit.fragment.declare_function(test_function_key(file.0, function)))
+        call(
+            main_unit
+                .fragment
+                .declare_function(test_function_key(file.0, function)),
+        )
     });
     let fragments = [
         second_unit.finish(),
@@ -315,12 +333,17 @@ fn ignored_definitions_get_no_ids() {
         let definers = [first, second].map(|file| {
             let mut unit = TestUnit::new(file);
             let layout = unit.fragment.declare_layout(layout_key);
-            unit.fragment.define_layout(layout, empty_layout(&layout_key));
+            unit.fragment
+                .define_layout(layout, empty_layout(&layout_key));
             define_function(&mut unit, 0, &[Reference::Layout(layout)]);
             unit.finish()
         });
         let callees = [first, second].map(|file| {
-            call(main_unit.fragment.declare_function(test_function_key(file.0, 0)))
+            call(
+                main_unit
+                    .fragment
+                    .declare_function(test_function_key(file.0, 0)),
+            )
         });
         let [first_fragment, second_fragment] = definers;
         let fragments = [
@@ -345,7 +368,10 @@ fn synthetic_export_variables_follow_unit_variables() {
             "main.js",
             "import { a, b, c } from './legacy.cjs';\nconsole.log(a, b, c);\n",
         ),
-        ("legacy.cjs", "exports.a = 1;\nexports.b = 2;\nexports.c = 3;\n"),
+        (
+            "legacy.cjs",
+            "exports.a = 1;\nexports.b = 2;\nexports.c = 3;\n",
+        ),
     ];
     with_projects_without_bun_modules(&files, |projects| {
         let application = ProjectId::Application;
@@ -457,7 +483,9 @@ fn records_of_later_units_continue_the_count() {
         define_function(&mut first_unit, 0, &[Reference::TypeSite(first_site)]);
         let mut main_unit = TestUnit::new(main);
         let main_site = add_type_site(&mut main_unit, main.0);
-        let callee = main_unit.fragment.declare_function(test_function_key(first.0, 0));
+        let callee = main_unit
+            .fragment
+            .declare_function(test_function_key(first.0, 0));
         let names = [Reference::TypeSite(main_site), call(callee)];
         let fragments = [first_unit.finish(), finish_with_body(main_unit, &names)];
 
@@ -481,7 +509,10 @@ fn class_follows_base() {
         let class = add_class(&mut unit, 0, Some(base));
         add_class(&mut unit, 1, None);
 
-        let moved = move_fragments(projects, [finish_with_body(unit, &[Reference::Layout(class)])]);
+        let moved = move_fragments(
+            projects,
+            [finish_with_body(unit, &[Reference::Layout(class)])],
+        );
 
         let ids = [1, 0].map(|class| moved.layout_id(test_class_key(main.0, class)));
         assert_eq!(ids, some_ids([0, 1]));
@@ -497,12 +528,17 @@ fn empty_layouts_ascend_by_key() {
         let mut names = vec![Reference::Layout(class)];
         for identity in (0..16).rev() {
             let layout = unit.fragment.declare_layout(test_object_type_key(identity));
-            names.push(Reference::Type(unit.fragment.types.intern(Type::layout(layout))));
+            names.push(Reference::Type(
+                unit.fragment.types.intern(Type::layout(layout)),
+            ));
         }
 
         let moved = move_fragments(projects, [finish_with_body(unit, &names)]);
 
-        assert_eq!(moved.layout_id(test_class_key(main.0, 0)), Some(LayoutId::new(0)));
+        assert_eq!(
+            moved.layout_id(test_class_key(main.0, 0)),
+            Some(LayoutId::new(0))
+        );
         for (identity, index) in (0..16).zip(1..) {
             let key = test_object_type_key(identity);
             assert_eq!(moved.layout_id(key), Some(LayoutId::new(index)));
@@ -540,7 +576,10 @@ fn supertypes_ascend_by_program_id() {
         }
         unit.fragment.add_supertype(supertypes[0], supertypes[1]);
 
-        let moved = move_fragments(projects, [finish_with_body(unit, &[Reference::Layout(class)])]);
+        let moved = move_fragments(
+            projects,
+            [finish_with_body(unit, &[Reference::Layout(class)])],
+        );
 
         let layouts = &moved.tables.layouts;
         assert_eq!(layouts[0].supertypes, [1, 2, 3, 4].map(LayoutId::new));
@@ -556,7 +595,10 @@ fn members_without_layout_are_flagged_up_to_the_supertypes() {
         let other_class = add_class(&mut unit, 1, None);
         let supertype = unit.fragment.declare_layout(test_object_type_key(0));
         unit.fragment.add_supertype(class, supertype);
-        unit.fragment.family_facts.layouts_with_members_without_layout.push(class);
+        unit.fragment
+            .family_facts
+            .layouts_with_members_without_layout
+            .push(class);
 
         let names = [class, other_class].map(Reference::Layout);
         let moved = move_fragments(projects, [finish_with_body(unit, &names)]);
@@ -647,7 +689,10 @@ fn module_named_by_dropped_function_has_an_id() {
 #[test]
 fn application_ids_precede_runtime_ids() {
     with_projects(&[("main.js", "import 'node:path';\n")], |projects| {
-        let path = projects.runtime.sources.runtime_module_file(RuntimeModule::NodePath);
+        let path = projects
+            .runtime
+            .sources
+            .runtime_module_file(RuntimeModule::NodePath);
         let files = [
             application_file(find_file(projects, "main.js")),
             ProgramFile {
@@ -799,7 +844,10 @@ fn shared_synthetic_export_is_numbered_once() {
         let merged = variables.find(&key).expect("the key is listed");
         numbering.variables[merged as usize]
     });
-    assert_eq!(ids, [Some(VariableId::new(0)), Some(VariableId::new(1)), None]);
+    assert_eq!(
+        ids,
+        [Some(VariableId::new(0)), Some(VariableId::new(1)), None]
+    );
     assert_eq!(numbering.counts.variables, 2);
 }
 

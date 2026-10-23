@@ -4,8 +4,16 @@ import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
-const shared = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [] as string[], strict: true };
-const config = (more: object = {}, rest: object = {}) => JSON.stringify({ compilerOptions: { ...shared, ...more }, ...rest });
+const shared = {
+  target: "ESNext",
+  module: "Preserve",
+  moduleResolution: "bundler",
+  noEmit: true,
+  types: [] as string[],
+  strict: true,
+};
+const config = (more: object = {}, rest: object = {}) =>
+  JSON.stringify({ compilerOptions: { ...shared, ...more }, ...rest });
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -18,7 +26,9 @@ const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$
 const errors = (said: string) =>
   [
     ...[...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(match => `${match[1]} ${match[2]}`),
-    ...[...said.matchAll(/^error: (TS\d+):.*\n +at .*tsconfig-governs-each-file[^\\/]*[\\/](.+):\d+:\d+$/gm)].map(match => `${match[2].replaceAll("\\", "/")} ${match[1]}`),
+    ...[...said.matchAll(/^error: (TS\d+):.*\n +at .*tsconfig-governs-each-file[^\\/]*[\\/](.+):\d+:\d+$/gm)].map(
+      match => `${match[2].replaceAll("\\", "/")} ${match[1]}`,
+    ),
   ].sort();
 const codes = (said: string) => [...new Set([...said.matchAll(/\bTS\d+/g)].map(match => match[0]))].sort();
 
@@ -38,7 +48,8 @@ function threeProjects(outer: string, inner: string, ending: string, more: (name
 
 const called = () => `smells(true, 1);\n`;
 const tested = (name: string) => `test(${JSON.stringify(name)}, () => { expect(smells(true, 1)).toBe(1); });\n`;
-const expected = (outer: string, inner: string, ending: string) => [`${outer}/${inner}/deep${ending} TS7006`, `${outer}/middle${ending} TS6133`, `top${ending} TS7030`].sort();
+const expected = (outer: string, inner: string, ending: string) =>
+  [`${outer}/${inner}/deep${ending} TS7006`, `${outer}/middle${ending} TS6133`, `top${ending} TS7030`].sort();
 
 test("bun check --aot: each entry point is checked under the tsconfig.json nearest to it, in any order", async () => {
   using dir = tempDir("tsconfig-governs-each-file", threeProjects("pkg", "test", ".ts", called));
@@ -66,7 +77,15 @@ test("bun build --compile --aot agrees with bun check --aot", async () => {
     ...threeProjects("pkg", "test", ".ts", called),
     "pkg/test/main.ts": `import "../../top";\nimport "../middle";\nimport "./deep";\n`,
   });
-  const { said, exitCode } = await run(String(dir), "build", "--compile", "--aot", "pkg/test/main.ts", "--outfile", "program");
+  const { said, exitCode } = await run(
+    String(dir),
+    "build",
+    "--compile",
+    "--aot",
+    "pkg/test/main.ts",
+    "--outfile",
+    "program",
+  );
   expect(codes(said)).toEqual(["TS6133", "TS7006", "TS7030"]);
   expect(said.split("TS7006").length - 1).toBe(1);
   expect(said.split("TS6133").length - 1).toBe(1);
@@ -75,7 +94,12 @@ test("bun build --compile --aot agrees with bun check --aot", async () => {
 }, 120_000);
 
 test("bun test --aot agrees, whatever the folders are called", async () => {
-  for (const [outer, inner] of [["pkg", "test"], ["aaa", "aaa"], ["zzz", "zzz"], ["aaa", "zzz"]]) {
+  for (const [outer, inner] of [
+    ["pkg", "test"],
+    ["aaa", "aaa"],
+    ["zzz", "zzz"],
+    ["aaa", "zzz"],
+  ]) {
     using dir = tempDir("tsconfig-governs-each-file", threeProjects(outer, inner, ".test.ts", tested));
     const { said, exitCode } = await run(String(dir), "test", "--aot");
     expect(errors(said)).toEqual(expected(outer, inner, ".test.ts"));
@@ -86,7 +110,8 @@ test("bun test --aot agrees, whatever the folders are called", async () => {
 
 test("a source file that tests under two tsconfig.json files import is checked under its own", async () => {
   const box = `export class Box {\n  value: number;\n  set(value: number) { this.value = value; return this; }\n}\n`;
-  const uses = (name: string, from: string) => `import { Box } from ${JSON.stringify(from)};\ntest(${JSON.stringify(name)}, () => { expect(new Box().set(1).value).toBe(1); });\n`;
+  const uses = (name: string, from: string) =>
+    `import { Box } from ${JSON.stringify(from)};\ntest(${JSON.stringify(name)}, () => { expect(new Box().set(1).value).toBe(1); });\n`;
   for (const first of ["a-strict", "z-strict"]) {
     using dir = tempDir("tsconfig-governs-each-file", {
       "lib/tsconfig.json": config({ strictPropertyInitialization: false }),
@@ -127,9 +152,18 @@ test("a type error fails its test file alone and beside a test file of another t
 
 test("under a tsconfig.json that only has references, the referenced project that includes a file governs it", async () => {
   using dir = tempDir("tsconfig-governs-each-file", {
-    "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.test.json" }] }),
-    "tsconfig.app.json": config({ ...lenient, composite: true, noEmit: false, outDir: "out/app" }, { include: ["src"] }),
-    "tsconfig.test.json": config({ ...lenient, composite: true, noEmit: false, outDir: "out/test", noUnusedLocals: true }, { include: ["test"] }),
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.test.json" }],
+    }),
+    "tsconfig.app.json": config(
+      { ...lenient, composite: true, noEmit: false, outDir: "out/app" },
+      { include: ["src"] },
+    ),
+    "tsconfig.test.json": config(
+      { ...lenient, composite: true, noEmit: false, outDir: "out/test", noUnusedLocals: true },
+      { include: ["test"] },
+    ),
     "src/app.ts": smells,
     "test/fine.test.ts": `import { smells } from "../src/app";\ntest("the application's options", () => { expect(smells(true, 1)).toBe(1); });\n`,
     "test/unused.test.ts": smells + tested("never run"),
@@ -141,22 +175,42 @@ test("under a tsconfig.json that only has references, the referenced project tha
 
 test("a build under a tsconfig.json that only has references goes by the referenced project that includes each file", async () => {
   using dir = tempDir("tsconfig-governs-each-file", {
-    "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.tools.json" }] }),
-    "tsconfig.app.json": config({ ...lenient, composite: true, noEmit: false, outDir: "out/app" }, { include: ["src"] }),
-    "tsconfig.tools.json": config({ ...lenient, composite: true, noEmit: false, outDir: "out/tools", noUnusedLocals: true }, { include: ["tools"] }),
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.tools.json" }],
+    }),
+    "tsconfig.app.json": config(
+      { ...lenient, composite: true, noEmit: false, outDir: "out/app" },
+      { include: ["src"] },
+    ),
+    "tsconfig.tools.json": config(
+      { ...lenient, composite: true, noEmit: false, outDir: "out/tools", noUnusedLocals: true },
+      { include: ["tools"] },
+    ),
     "src/app.ts": smells + `console.log(smells(true, 1));\n`,
     "src/with-tools.ts": `import { smells } from "../tools/tool";\nconsole.log(smells(true, 1));\n`,
     "tools/tool.ts": smells,
   });
   const outfile = join(String(dir), "program");
-  for (const command of [["check", "--aot", "src/app.ts"], ["build", "--compile", "--aot", "src/app.ts", "--outfile", outfile]]) {
+  for (const command of [
+    ["check", "--aot", "src/app.ts"],
+    ["build", "--compile", "--aot", "src/app.ts", "--outfile", outfile],
+  ]) {
     const { said, exitCode } = await run(String(dir), ...command);
     expect(errors(said)).toEqual([]);
     expect(exitCode).toBe(0);
   }
   await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   expect(await ran.stdout.text()).toBe("1\n");
-  const { said, exitCode } = await run(String(dir), "build", "--compile", "--aot", "src/with-tools.ts", "--outfile", outfile);
+  const { said, exitCode } = await run(
+    String(dir),
+    "build",
+    "--compile",
+    "--aot",
+    "src/with-tools.ts",
+    "--outfile",
+    outfile,
+  );
   expect(errors(said)).toEqual(["tools/tool.ts TS6133"]);
   expect(exitCode).toBe(1);
 }, 120_000);
@@ -167,7 +221,11 @@ test("a build declares what the types of an imported file's tsconfig.json declar
     "app/main.ts": `import { known, type Size } from "../lib/index";\nconst size: Size = 1;\nconsole.log(known, size);\n`,
     "lib/tsconfig.json": config({ types: ["widget"] }),
     "lib/index.ts": `import type * as kit from "widget-kit";\nexport type Size = ReturnType<typeof kit.size>;\nexport const known: boolean = typeof WIDGET_VERSION === "number";\n`,
-    "node_modules/@types/widget/package.json": JSON.stringify({ name: "@types/widget", version: "1.0.0", types: "index.d.ts" }),
+    "node_modules/@types/widget/package.json": JSON.stringify({
+      name: "@types/widget",
+      version: "1.0.0",
+      types: "index.d.ts",
+    }),
     "node_modules/@types/widget/index.d.ts": `declare const WIDGET_VERSION: number;\ndeclare module "widget-kit" {\n  export function size(): number;\n}\n`,
   });
   const outfile = join(String(dir), "program");
@@ -194,35 +252,43 @@ test("the lib of one test file's tsconfig.json does not reach the files of anoth
 });
 
 // TODO: today the program is the project of the first file of the run. Errors that are expected here are not reported; nothing valid is refused.
-test.todo("what the tsconfig.json files of all the test files agree on holds for the program, Bun's defaults where they differ", async () => {
-  const usesTheDom = (name: string) => `const body: BodyInit = ${JSON.stringify(name)};\ntest(${JSON.stringify(name)}, () => { expect(body).toBe(${JSON.stringify(name)}); });\n`;
-  const packages = (first: object, second: object) => ({
-    "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./first" }, { path: "./second" }] }),
-    "first/tsconfig.json": config({ composite: true, noEmit: false, outDir: "out", ...first }),
-    "first/first.test.ts": usesTheDom("first"),
-    "second/tsconfig.json": config({ composite: true, noEmit: false, outDir: "out", ...second }),
-    "second/second.test.ts": usesTheDom("second"),
-  });
-  {
-    using dir = tempDir("tsconfig-governs-each-file", packages({}, {}));
-    for (const files of [["first"], ["second"], []]) {
-      const { said, exitCode } = await run(String(dir), "test", "--aot", ...files);
-      expect(codes(said)).toEqual([]);
-      expect(passed(said)).toEqual(files.length ? files : ["first", "second"]);
-      expect(exitCode).toBe(0);
+test.todo(
+  "what the tsconfig.json files of all the test files agree on holds for the program, Bun's defaults where they differ",
+  async () => {
+    const usesTheDom = (name: string) =>
+      `const body: BodyInit = ${JSON.stringify(name)};\ntest(${JSON.stringify(name)}, () => { expect(body).toBe(${JSON.stringify(name)}); });\n`;
+    const packages = (first: object, second: object) => ({
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./first" }, { path: "./second" }] }),
+      "first/tsconfig.json": config({ composite: true, noEmit: false, outDir: "out", ...first }),
+      "first/first.test.ts": usesTheDom("first"),
+      "second/tsconfig.json": config({ composite: true, noEmit: false, outDir: "out", ...second }),
+      "second/second.test.ts": usesTheDom("second"),
+    });
+    {
+      using dir = tempDir("tsconfig-governs-each-file", packages({}, {}));
+      for (const files of [["first"], ["second"], []]) {
+        const { said, exitCode } = await run(String(dir), "test", "--aot", ...files);
+        expect(codes(said)).toEqual([]);
+        expect(passed(said)).toEqual(files.length ? files : ["first", "second"]);
+        expect(exitCode).toBe(0);
+      }
     }
-  }
-  using dir = tempDir("tsconfig-governs-each-file", packages({ lib: ["ESNext", "DOM"] }, { lib: ["ES2022", "DOM"] }));
-  const { said } = await run(String(dir), "test", "--aot");
-  expect(errors(said)).toEqual(["first/first.test.ts TS2304", "second/second.test.ts TS2304"]);
-  expect(passed(said)).toEqual([]);
-});
+    using dir = tempDir("tsconfig-governs-each-file", packages({ lib: ["ESNext", "DOM"] }, { lib: ["ES2022", "DOM"] }));
+    const { said } = await run(String(dir), "test", "--aot");
+    expect(errors(said)).toEqual(["first/first.test.ts TS2304", "second/second.test.ts TS2304"]);
+    expect(passed(said)).toEqual([]);
+  },
+);
 
 test("rootDir has no say about the test files of other tsconfig.json files", async () => {
   using dir = tempDir("tsconfig-governs-each-file", {
     "tsconfig.json": config({ rootDir: "./src", outDir: "./dist", noEmit: false }, { include: ["./src/**/*.ts"] }),
     "src/one.ts": `export const one = 1;\n`,
-    "test/tsconfig.json": JSON.stringify({ extends: "../tsconfig.json", compilerOptions: { rootDir: "." }, include: ["."] }),
+    "test/tsconfig.json": JSON.stringify({
+      extends: "../tsconfig.json",
+      compilerOptions: { rootDir: "." },
+      include: ["."],
+    }),
     "test/one.test.ts": `// declare global\nimport { one } from "../src/one";\ntest("one", () => { expect(one).toBe(1); });\n`,
     "fixtures/a/tsconfig.json": config(),
     "fixtures/a/a.test.ts": `test("a fixture", () => { expect(1).toBe(1); });\n`,
@@ -253,10 +319,19 @@ test("the sources of a referenced workspace package stand in for its build outpu
   using dir = tempDir("tsconfig-governs-each-file", {
     "package.json": JSON.stringify({ name: "workspace", workspaces: ["packages/*"] }),
     "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/types" }, { path: "packages/app" }] }),
-    "packages/types/package.json": JSON.stringify({ name: "@workspace/types", version: "1.0.0", main: "lib/index.js", types: "lib/index.d.ts" }),
+    "packages/types/package.json": JSON.stringify({
+      name: "@workspace/types",
+      version: "1.0.0",
+      main: "lib/index.js",
+      types: "lib/index.d.ts",
+    }),
     "packages/types/tsconfig.json": config(built, { include: ["src"] }),
     "packages/types/src/index.ts": `export interface Rule {\n  level: number;\n}\n`,
-    "packages/app/package.json": JSON.stringify({ name: "@workspace/app", version: "1.0.0", dependencies: { "@workspace/types": "workspace:*" } }),
+    "packages/app/package.json": JSON.stringify({
+      name: "@workspace/app",
+      version: "1.0.0",
+      dependencies: { "@workspace/types": "workspace:*" },
+    }),
     "packages/app/tsconfig.json": config(built, { include: ["src"], references: [{ path: "../types" }] }),
     "packages/app/src/app.test.ts": `import type { Rule } from "@workspace/types";\nconst rule: Rule = { level: 1 };\ntest("a rule", () => { expect(rule.level).toBe(1); });\n`,
   });
@@ -275,10 +350,19 @@ test("in a build the sources of a referenced workspace package stand in for its 
   using dir = tempDir("tsconfig-governs-each-file", {
     "package.json": JSON.stringify({ name: "workspace", workspaces: ["packages/*"] }),
     "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/types" }, { path: "packages/app" }] }),
-    "packages/types/package.json": JSON.stringify({ name: "@workspace/types", version: "1.0.0", main: "lib/index.js", types: "lib/index.d.ts" }),
+    "packages/types/package.json": JSON.stringify({
+      name: "@workspace/types",
+      version: "1.0.0",
+      main: "lib/index.js",
+      types: "lib/index.d.ts",
+    }),
     "packages/types/tsconfig.json": config(built, { include: ["src"] }),
     "packages/types/src/index.ts": `export interface Rule {\n  level: number;\n}\n`,
-    "packages/app/package.json": JSON.stringify({ name: "@workspace/app", version: "1.0.0", dependencies: { "@workspace/types": "workspace:*" } }),
+    "packages/app/package.json": JSON.stringify({
+      name: "@workspace/app",
+      version: "1.0.0",
+      dependencies: { "@workspace/types": "workspace:*" },
+    }),
     "packages/app/tsconfig.json": config(built, { include: ["src"], references: [{ path: "../types" }] }),
     "packages/app/src/main.ts": `import type { Rule } from "@workspace/types";\nconst rule: Rule = { level: 1 };\nconsole.log(rule.level);\n`,
     "packages/app/src/wrong.ts": `import type { Rule } from "@workspace/types";\nconst rule: Rule = { level: "one" };\nconsole.log(rule.level);\n`,
@@ -286,11 +370,27 @@ test("in a build the sources of a referenced workspace package stand in for its 
   mkdirSync(join(String(dir), "node_modules", "@workspace"), { recursive: true });
   symlinkSync(join(String(dir), "packages", "types"), join(String(dir), "node_modules", "@workspace", "types"), "dir");
   const outfile = join(String(dir), "program");
-  const accepted = await run(String(dir), "build", "--compile", "--aot", "packages/app/src/main.ts", "--outfile", outfile);
+  const accepted = await run(
+    String(dir),
+    "build",
+    "--compile",
+    "--aot",
+    "packages/app/src/main.ts",
+    "--outfile",
+    outfile,
+  );
   expect({ codes: codes(accepted.said), exitCode: accepted.exitCode }).toEqual({ codes: [], exitCode: 0 });
   await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   expect(await ran.stdout.text()).toBe("1\n");
-  const refused = await run(String(dir), "build", "--compile", "--aot", "packages/app/src/wrong.ts", "--outfile", outfile);
+  const refused = await run(
+    String(dir),
+    "build",
+    "--compile",
+    "--aot",
+    "packages/app/src/wrong.ts",
+    "--outfile",
+    outfile,
+  );
   expect(errors(refused.said)).toEqual(["packages/app/src/wrong.ts TS2322"]);
 }, 120_000);
 
@@ -298,14 +398,18 @@ const jsxRuntime = (prefix: string) => ({
   "jsx-runtime.ts": `export function jsx(tag: string, props: { children?: unknown }): string { return ${JSON.stringify(prefix)} + tag + ":" + String(props.children); }\nexport const jsxs = jsx;\nexport const jsxDEV = jsx;\nexport const Fragment = "fragment";\nexport namespace JSX {\n  export type Element = string;\n  export interface IntrinsicElements { [name: string]: { children?: unknown } }\n}\n`,
   "jsx-dev-runtime.ts": `export * from "./jsx-runtime";\n`,
 });
-const under = (folder: string, files: Record<string, string>) => Object.fromEntries(Object.entries(files).map(([name, text]) => [`${folder}/${name}`, text]));
+const under = (folder: string, files: Record<string, string>) =>
+  Object.fromEntries(Object.entries(files).map(([name, text]) => [`${folder}/${name}`, text]));
 
 test("bun test --aot takes decorators as bun test compiles them: by the tsconfig.json of the working directory", async () => {
-  const marked = (mark: string) => `let count = 0;\n${mark}\n@mark\nclass Marked {}\ntest("marked", () => { console.log(Marked.name + " got " + count); });\n`;
+  const marked = (mark: string) =>
+    `let count = 0;\n${mark}\n@mark\nclass Marked {}\ntest("marked", () => { console.log(Marked.name + " got " + count); });\n`;
   using dir = tempDir("tsconfig-governs-each-file", {
     "tsconfig.json": config({ experimentalDecorators: false }),
     "legacy/tsconfig.json": config({ experimentalDecorators: true }),
-    "legacy/standard-style.test.ts": marked(`function mark(value: Function, context: ClassDecoratorContext) { count = arguments.length; }`),
+    "legacy/standard-style.test.ts": marked(
+      `function mark(value: Function, context: ClassDecoratorContext) { count = arguments.length; }`,
+    ),
     "legacy/legacy-style.test.ts": marked(`function mark(target: Function) { count = arguments.length; }`),
   });
   for (const aot of [[], ["--aot"]]) {
@@ -379,7 +483,9 @@ test("bun check --aot takes JSX and decorators as bun build --compile compiles t
   const refused = await run(String(dir), "build", "--compile", "--aot", "./inner/wrong.tsx", "--outfile", outfile);
   expect(codes(refused.said)).toContain("TS2322");
   expect(refused.exitCode).not.toBe(0);
-  expect(errors((await run(String(dir), "check", "--aot", "inner/wrong.tsx")).said)).toEqual(["inner/wrong.tsx TS2322"]);
+  expect(errors((await run(String(dir), "check", "--aot", "inner/wrong.tsx")).said)).toEqual([
+    "inner/wrong.tsx TS2322",
+  ]);
 }, 120_000);
 
 test("bun check --aot passes the decorators that a build compiles", async () => {
@@ -393,7 +499,10 @@ test("bun check --aot passes the decorators that a build compiles", async () => 
   for (const aot of [[], ["--aot"]]) {
     const built = await run(String(dir), "build", "--compile", ...aot, "./main.ts", "--outfile", outfile);
     expect({ codes: codes(built.said), exitCode: built.exitCode }).toEqual({ codes: [], exitCode: 0 });
-    if (aot.length) expect(built.said).toMatch(/^[\d.]+% of property accesses are one load: \d+ free, \d+ tested, \d+ by name \(\d+\)$/m);
+    if (aot.length)
+      expect(built.said).toMatch(
+        /^[\d.]+% of property accesses are one load: \d+ free, \d+ tested, \d+ by name \(\d+\)$/m,
+      );
     await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     expect(await ran.stdout.text()).toBe("2\n");
   }

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -43,24 +43,39 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   return { stdout, stderr, exitCode };
 }
 
-test.each(["main", "stores"])("a store that reaches a native setter looks nothing up once the setter is known: %s.mjs", async name => {
-  using dir = tempDir("aot-stores-to-native-setters", files);
-  const plain = await run([bunExe(), name + ".mjs", "500"], String(dir), bunEnv);
-  expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const executable = join(String(dir), name + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", name + ".mjs", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const counted = async (rounds: number) => {
-    const path = join(String(dir), "counts" + rounds);
-    const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotCountsPath: path };
-    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-      const [count, name] = line.split("\toperation:");
-      if (name === "operationAOTPutByIdAndCache") return Number(count);
-    }
-    return 0;
-  };
-  const few = await counted(500);
-  const many = await counted(2500);
-  expect(many - few).toBeLessThanOrEqual(200);
-}, 240_000);
+test.each(["main", "stores"])(
+  "a store that reaches a native setter looks nothing up once the setter is known: %s.mjs",
+  async name => {
+    using dir = tempDir("aot-stores-to-native-setters", files);
+    const plain = await run([bunExe(), name + ".mjs", "500"], String(dir), bunEnv);
+    expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const executable = join(String(dir), name + (isWindows ? ".exe" : ""));
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", name + ".mjs", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const counted = async (rounds: number) => {
+      const path = join(String(dir), "counts" + rounds);
+      const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotCountsPath: path };
+      expect(await run([executable, String(rounds)], String(dir), env)).toEqual({
+        stdout: plain.stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        const [count, name] = line.split("\toperation:");
+        if (name === "operationAOTPutByIdAndCache") return Number(count);
+      }
+      return 0;
+    };
+    const few = await counted(500);
+    const many = await counted(2500);
+    expect(many - few).toBeLessThanOrEqual(200);
+  },
+  240_000,
+);

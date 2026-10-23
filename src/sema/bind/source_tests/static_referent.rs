@@ -176,7 +176,11 @@ fn with_program(
 
 fn assert_unknown(path: &'static str, text: &'static str, reason: UnknownReferent) {
     with_program(&[(path, text)], |program| {
-        assert_eq!(program.resolve().referent, StaticReferent::Unknown(reason), "{text}");
+        assert_eq!(
+            program.resolve().referent,
+            StaticReferent::Unknown(reason),
+            "{text}"
+        );
     });
 }
 
@@ -187,7 +191,11 @@ fn assert_required_unknown(
 ) {
     with_program(&[("a.cjs", importer), ("b.cjs", exporter)], |program| {
         let found = program.resolve().referent;
-        assert_eq!(found, StaticReferent::Unknown(reason), "{importer} {exporter}");
+        assert_eq!(
+            found,
+            StaticReferent::Unknown(reason),
+            "{importer} {exporter}"
+        );
     });
 }
 
@@ -306,12 +314,28 @@ fn members_that_object_literals_do_not_name() {
     use UnknownReferent::{MemberOfValue, MissingMember, NotAReference};
     assert_unknown("a.mjs", "const o = { f() {} }; o;", NotAReference);
     assert_unknown("a.mjs", "const o = { f() {} }; o.g;", MissingMember);
-    assert_unknown("a.mjs", "const o = { get f() { return 1; } }; o.f;", MissingMember);
-    assert_unknown("a.mjs", "const o = { f() {}, set f(v) {} }; o.f;", MissingMember);
+    assert_unknown(
+        "a.mjs",
+        "const o = { get f() { return 1; } }; o.f;",
+        MissingMember,
+    );
+    assert_unknown(
+        "a.mjs",
+        "const o = { f() {}, set f(v) {} }; o.f;",
+        MissingMember,
+    );
     assert_unknown("a.mjs", "const o = { f() {}, ...p }; o.f;", MissingMember);
     assert_unknown("a.mjs", "const o = { f() {}, [k]: 1 }; o.f;", MissingMember);
-    assert_unknown("a.mjs", "const o = { __proto__: { f() {} } }; o.f;", MissingMember);
-    assert_unknown("a.mjs", "const o = { __proto__: p }; o.__proto__;", MemberOfValue);
+    assert_unknown(
+        "a.mjs",
+        "const o = { __proto__: { f() {} } }; o.f;",
+        MissingMember,
+    );
+    assert_unknown(
+        "a.mjs",
+        "const o = { __proto__: p }; o.__proto__;",
+        MemberOfValue,
+    );
     assert_unknown("a.mjs", "const o = { f: 1 }; o.f;", NotAReference);
 }
 
@@ -351,7 +375,11 @@ fn default_exports() {
     for &exporter in EXPORTERS {
         let importer = r#"import B from "./b.mjs"; B;"#;
         with_program(&[("a.mjs", importer), ("b.mjs", exporter)], |program| {
-            assert_eq!(program.resolve().referent, program.class(1, "A"), "{exporter}");
+            assert_eq!(
+                program.resolve().referent,
+                program.class(1, "A"),
+                "{exporter}"
+            );
         });
     }
 }
@@ -359,10 +387,16 @@ fn default_exports() {
 #[test]
 fn module_namespace() {
     let importer = r#"import * as ns from "./b.mjs"; ns;"#;
-    with_program(&[("a.mjs", importer), ("b.mjs", "export class A {}")], |program| {
-        let namespace = NamespaceReferent::Module(FileId(1));
-        assert_eq!(program.resolve().referent, StaticReferent::Namespace(namespace));
-    });
+    with_program(
+        &[("a.mjs", importer), ("b.mjs", "export class A {}")],
+        |program| {
+            let namespace = NamespaceReferent::Module(FileId(1));
+            assert_eq!(
+                program.resolve().referent,
+                StaticReferent::Namespace(namespace)
+            );
+        },
+    );
 }
 
 #[test]
@@ -380,7 +414,11 @@ fn builtins_come_from_the_context() {
     for text in ["Error;", "const E = Error; E;", "(Error as any);"] {
         with_program(&[("a.ts", text)], |program| {
             let error = program.files[0].workspace.atom("Error");
-            assert_eq!(program.resolve().referent, StaticReferent::Builtin(error), "{text}");
+            assert_eq!(
+                program.resolve().referent,
+                StaticReferent::Builtin(error),
+                "{text}"
+            );
         });
     }
     with_program(&[("a.mjs", "class Error {} Error;")], |program| {
@@ -528,7 +566,11 @@ fn exports_that_commonjs_files_do_not_name() {
         UnstableBinding(NotInitializedOnce),
     );
     assert_required_unknown(property, "exports.B = class A {};", MissingMember);
-    assert_required_unknown(property, "module.exports = { B: class A {} };", MissingMember);
+    assert_required_unknown(
+        property,
+        "module.exports = { B: class A {} };",
+        MissingMember,
+    );
     assert_required_unknown(property, "module.exports = class B {};", MemberOfValue);
     assert_required_unknown(
         property,
@@ -586,17 +628,26 @@ fn required_es_modules() {
         });
     }
     let importer = r#"const b = require("./b.mjs"); b;"#;
-    with_program(&[("a.cjs", importer), ("b.mjs", "export default class A {}")], |program| {
-        let namespace = NamespaceReferent::Module(FileId(1));
-        assert_eq!(program.resolve().referent, StaticReferent::Namespace(namespace));
-        program.requires_default_exports = true;
-        assert_eq!(program.resolve().referent, program.class(1, "A"));
-    });
-    with_program(&[("a.cjs", importer), ("b.mjs", "export class A {}")], |program| {
-        program.requires_default_exports = true;
-        let reason = UnknownReferent::MissingMember;
-        assert_eq!(program.resolve().referent, StaticReferent::Unknown(reason));
-    });
+    with_program(
+        &[("a.cjs", importer), ("b.mjs", "export default class A {}")],
+        |program| {
+            let namespace = NamespaceReferent::Module(FileId(1));
+            assert_eq!(
+                program.resolve().referent,
+                StaticReferent::Namespace(namespace)
+            );
+            program.requires_default_exports = true;
+            assert_eq!(program.resolve().referent, program.class(1, "A"));
+        },
+    );
+    with_program(
+        &[("a.cjs", importer), ("b.mjs", "export class A {}")],
+        |program| {
+            program.requires_default_exports = true;
+            let reason = UnknownReferent::MissingMember;
+            assert_eq!(program.resolve().referent, StaticReferent::Unknown(reason));
+        },
+    );
 }
 
 #[test]
@@ -618,30 +669,58 @@ fn members_stored_into_an_exported_function() {
                 referent: program.function(0, "g"),
                 certainty: Expected,
             };
-            assert_eq!(program.resolve_default_export(Some("g")), expected, "{text}");
+            assert_eq!(
+                program.resolve_default_export(Some("g")),
+                expected,
+                "{text}"
+            );
         });
     }
     let typed = "function f() {} function g() {} (f as any).g = g as any; export default f as any;";
     with_program(&[("a.ts", typed)], |program| {
-        assert_eq!(program.resolve_default_export(Some("g")).referent, program.function(0, "g"));
-        assert_eq!(program.resolve_default_export(None).referent, program.function(0, "f"));
+        assert_eq!(
+            program.resolve_default_export(Some("g")).referent,
+            program.function(0, "g")
+        );
+        assert_eq!(
+            program.resolve_default_export(None).referent,
+            program.function(0, "f")
+        );
     });
 }
 
 #[test]
 fn members_stored_by_the_files_on_the_way() {
     let sources = [
-        ("a.mjs", r#"import all from "./b.mjs"; import g from "./d.mjs"; all.late = g; export default all;"#),
-        ("b.mjs", r#"import { f } from "./c.mjs"; import g from "./d.mjs"; f.g = g; export default f;"#),
-        ("c.mjs", "export function f() {} function own() {} f.own = own;"),
+        (
+            "a.mjs",
+            r#"import all from "./b.mjs"; import g from "./d.mjs"; all.late = g; export default all;"#,
+        ),
+        (
+            "b.mjs",
+            r#"import { f } from "./c.mjs"; import g from "./d.mjs"; f.g = g; export default f;"#,
+        ),
+        (
+            "c.mjs",
+            "export function f() {} function own() {} f.own = own;",
+        ),
         ("d.mjs", "export default function g() {}"),
     ];
     with_program(&sources, |program| {
-        assert_eq!(program.resolve_default_export(None).referent, program.function(2, "f"));
+        assert_eq!(
+            program.resolve_default_export(None).referent,
+            program.function(2, "f")
+        );
         for name in ["g", "late"] {
-            assert_eq!(program.resolve_default_export(Some(name)).referent, program.function(3, "g"));
+            assert_eq!(
+                program.resolve_default_export(Some(name)).referent,
+                program.function(3, "g")
+            );
         }
-        assert_eq!(program.resolve_default_export(Some("own")).referent, program.function(2, "own"));
+        assert_eq!(
+            program.resolve_default_export(Some("own")).referent,
+            program.function(2, "own")
+        );
     });
 }
 
@@ -651,13 +730,34 @@ fn members_that_no_one_store_decides() {
     use UnknownReferent::{MemberOfValue, MissingMember, UnstableBinding};
     const UNKNOWN: &[(&str, UnknownReferent)] = &[
         ("function f() {} export default f;", MissingMember),
-        ("function f() {} function g() {} f.h = g; export default f;", MissingMember),
-        ("function f() {} function g() {} function late() { f.g = g; } export default f;", MissingMember),
-        ("function f() {} function g() {} if (f) f.g = g; export default f;", MissingMember),
-        ("function f() {} function g() {} const o = {}; o.g = g; export default f;", MissingMember),
-        ("function f() {} function g() {} assign({}, f, { g }); export default f;", MissingMember),
-        ("function f() {} function g() {} f.g = g; f.g = f; export default f;", UnstableBinding(NotInitializedOnce)),
-        ("function f() {} function g() {} f.g = g; assign(f, { g }); export default f;", UnstableBinding(NotInitializedOnce)),
+        (
+            "function f() {} function g() {} f.h = g; export default f;",
+            MissingMember,
+        ),
+        (
+            "function f() {} function g() {} function late() { f.g = g; } export default f;",
+            MissingMember,
+        ),
+        (
+            "function f() {} function g() {} if (f) f.g = g; export default f;",
+            MissingMember,
+        ),
+        (
+            "function f() {} function g() {} const o = {}; o.g = g; export default f;",
+            MissingMember,
+        ),
+        (
+            "function f() {} function g() {} assign({}, f, { g }); export default f;",
+            MissingMember,
+        ),
+        (
+            "function f() {} function g() {} f.g = g; f.g = f; export default f;",
+            UnstableBinding(NotInitializedOnce),
+        ),
+        (
+            "function f() {} function g() {} f.g = g; assign(f, { g }); export default f;",
+            UnstableBinding(NotInitializedOnce),
+        ),
     ];
     for &(text, reason) in UNKNOWN {
         with_program(&[("a.mjs", text)], |program| {
@@ -666,12 +766,22 @@ fn members_that_no_one_store_decides() {
         });
     }
     // Only the walk from an export reads whole files.
-    assert_unknown("a.mjs", "function f() {} function g() {} f.g = g; f.g;", MemberOfValue);
-    with_program(&[("a.mjs", "function f() {} function g() {} f.g = g; export default f;")], |program| {
-        program.ignores_stores = true;
-        let found = program.resolve_default_export(Some("g")).referent;
-        assert_eq!(found, StaticReferent::Unknown(MissingMember));
-    });
+    assert_unknown(
+        "a.mjs",
+        "function f() {} function g() {} f.g = g; f.g;",
+        MemberOfValue,
+    );
+    with_program(
+        &[(
+            "a.mjs",
+            "function f() {} function g() {} f.g = g; export default f;",
+        )],
+        |program| {
+            program.ignores_stores = true;
+            let found = program.resolve_default_export(Some("g")).referent;
+            assert_eq!(found, StaticReferent::Unknown(MissingMember));
+        },
+    );
 }
 
 const NAMESPACE: &str = "namespace N { export class A {} export function f() {} \
@@ -683,16 +793,24 @@ fn resolve_beside_namespace(
     test: impl for<'s> FnOnce(&Program<'s>, Resolved) + Send,
 ) {
     let text: &'static str = format!("{NAMESPACE} {reference};").leak();
-    with_program(&[("a.ts", text)], |program| test(program, program.resolve()));
+    with_program(&[("a.ts", text)], |program| {
+        test(program, program.resolve())
+    });
 }
 
 #[test]
 fn members_of_declared_namespaces() {
     resolve_beside_namespace("N.A", |program, found| {
-        assert_eq!((found.referent, found.certainty), (program.class(0, "A"), Expected));
+        assert_eq!(
+            (found.referent, found.certainty),
+            (program.class(0, "A"), Expected)
+        );
     });
     resolve_beside_namespace("N.f", |program, found| {
-        assert_eq!((found.referent, found.certainty), (program.function(0, "f"), Expected));
+        assert_eq!(
+            (found.referent, found.certainty),
+            (program.function(0, "f"), Expected)
+        );
     });
     resolve_beside_namespace("N.M.B", |program, found| {
         assert_eq!(found.referent, program.class(0, "B"));
@@ -711,7 +829,11 @@ fn properties_of_declared_namespaces_are_unknown() {
     let container_member = UnknownReferent::UnstableBinding(BindingStability::ContainerMember);
     for property in ["N.v", "N.E.X"] {
         resolve_beside_namespace(property, |_, found| {
-            assert_eq!(found.referent, StaticReferent::Unknown(container_member), "{property}");
+            assert_eq!(
+                found.referent,
+                StaticReferent::Unknown(container_member),
+                "{property}"
+            );
         });
     }
     for missing in ["N.Hidden", "N.missing", "N.M.missing"] {
@@ -732,12 +854,15 @@ fn entity_names() {
 
 #[test]
 fn dead_stores_are_the_contexts_answer() {
-    with_program(&[("a.mjs", "class A {} let B = A; if (false) B = 1; B;")], |program| {
-        let reason = UnknownReferent::UnstableBinding(BindingStability::Stored);
-        assert_eq!(program.resolve().referent, StaticReferent::Unknown(reason));
-        program.ignores_stores = true;
-        assert_eq!(program.resolve().referent, program.class(0, "A"));
-    });
+    with_program(
+        &[("a.mjs", "class A {} let B = A; if (false) B = 1; B;")],
+        |program| {
+            let reason = UnknownReferent::UnstableBinding(BindingStability::Stored);
+            assert_eq!(program.resolve().referent, StaticReferent::Unknown(reason));
+            program.ignores_stores = true;
+            assert_eq!(program.resolve().referent, program.class(0, "A"));
+        },
+    );
     let importer = r#"const B = require("./b.cjs"); B;"#;
     let exporter = "module.exports = class A {};";
     with_program(&[("a.cjs", importer), ("b.cjs", exporter)], |program| {
@@ -753,7 +878,10 @@ fn symbols_resolve_like_their_references() {
     with_program(&[("a.mjs", "class A {} const B = A; B;")], |program| {
         let id = program.files[0].variable("B", 0);
         let file = FileId(0);
-        assert_eq!(symbol_referent(&*program, Sym { file, id }), program.resolve());
+        assert_eq!(
+            symbol_referent(&*program, Sym { file, id }),
+            program.resolve()
+        );
     });
 }
 
@@ -769,21 +897,49 @@ fn unknown_referents() {
     assert_unknown("a.mjs", "class A {} let b = A; (b += A);", NotAReference);
     assert_unknown("a.mjs", "class A {} A?.b;", NotAReference);
     assert_unknown("a.mjs", "class A {} A[k];", NotAReference);
-    assert_unknown("a.mjs", "class A { static #p; static m() { A.#p; } }", NotAReference);
+    assert_unknown(
+        "a.mjs",
+        "class A { static #p; static m() { A.#p; } }",
+        NotAReference,
+    );
     assert_unknown("a.cjs", "module;", NotAReference);
     assert_unknown("a.cjs", "function f() { arguments; }", NotAReference);
     assert_unknown("a.cjs", "class A {} with (o) { A; }", DynamicScope);
-    assert_unknown("a.cjs", r#"class A {} function f() { eval(""); A; }"#, DynamicScope);
-    assert_unknown("a.mjs", "class A {} let B = A; B = 1; B;", UnstableBinding(Stored));
-    assert_unknown("a.cjs", "var B = 1; var B = 2; B;", UnstableBinding(NotInitializedOnce));
-    assert_unknown("a.cjs", r#"let B = 1; eval(""); B;"#, UnstableBinding(VisibleToEval));
-    assert_unknown("a.cjs", "function f(p) { arguments; p; }", UnstableBinding(MappedArgument));
+    assert_unknown(
+        "a.cjs",
+        r#"class A {} function f() { eval(""); A; }"#,
+        DynamicScope,
+    );
+    assert_unknown(
+        "a.mjs",
+        "class A {} let B = A; B = 1; B;",
+        UnstableBinding(Stored),
+    );
+    assert_unknown(
+        "a.cjs",
+        "var B = 1; var B = 2; B;",
+        UnstableBinding(NotInitializedOnce),
+    );
+    assert_unknown(
+        "a.cjs",
+        r#"let B = 1; eval(""); B;"#,
+        UnstableBinding(VisibleToEval),
+    );
+    assert_unknown(
+        "a.cjs",
+        "function f(p) { arguments; p; }",
+        UnstableBinding(MappedArgument),
+    );
     assert_unknown("a.mjs", "function f(p) { p; }", OpaqueInitializer);
     assert_unknown("a.mjs", "const [B] = o; B;", OpaqueInitializer);
     assert_unknown("a.mjs", "for (const B of o) { B; }", OpaqueInitializer);
     assert_unknown("a.ts", "@d class A {} A;", DecoratedClass);
     assert_unknown("a.ts", "const B = @d class A {}; B;", DecoratedClass);
-    assert_unknown("a.mjs", r#"import { A } from "./missing.mjs"; A;"#, UnlinkedImport);
+    assert_unknown(
+        "a.mjs",
+        r#"import { A } from "./missing.mjs"; A;"#,
+        UnlinkedImport,
+    );
     assert_unknown("a.mjs", "class A {} A.prototype;", MemberOfValue);
     assert_unknown("a.mjs", "function f() {} f.call;", MemberOfValue);
     assert_unknown("a.mjs", "Error.prototype;", MemberOfValue);

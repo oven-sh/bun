@@ -74,12 +74,17 @@ fn folded_import_is_not_resolved() {
     for call in ["require", "import"] {
         let main = conditional_import(call);
         let files = [("main.js", main.as_str()), ("a.js", ""), ("b.js", "")];
-        with_defines(&files, &["./main.js"], &[("process.env.X", "b")], |program| {
-            let b = program.file("b.js");
-            assert_eq!(code_answers(program, "main.js"), [CodeAnswer::File(b)]);
-            assert_eq!(code_edges(program, "main.js"), [b]);
-            assert_eq!(program.find("a.js"), None);
-        });
+        with_defines(
+            &files,
+            &["./main.js"],
+            &[("process.env.X", "b")],
+            |program| {
+                let b = program.file("b.js");
+                assert_eq!(code_answers(program, "main.js"), [CodeAnswer::File(b)]);
+                assert_eq!(code_edges(program, "main.js"), [b]);
+                assert_eq!(program.find("a.js"), None);
+            },
+        );
         with_program(&files, &["./main.js"], 1, |program| {
             let (a, b) = (program.file("a.js"), program.file("b.js"));
             let expected = [CodeAnswer::File(a), CodeAnswer::File(b)];
@@ -94,10 +99,15 @@ fn folded_import_of_missing_file_is_not_an_answer() {
     for call in ["require", "import"] {
         let main = conditional_import(call);
         let files = [("main.js", main.as_str()), ("b.js", "")];
-        with_defines(&files, &["./main.js"], &[("process.env.X", "b")], |program| {
-            let b = program.file("b.js");
-            assert_eq!(code_answers(program, "main.js"), [CodeAnswer::File(b)]);
-        });
+        with_defines(
+            &files,
+            &["./main.js"],
+            &[("process.env.X", "b")],
+            |program| {
+                let b = program.file("b.js");
+                assert_eq!(code_answers(program, "main.js"), [CodeAnswer::File(b)]);
+            },
+        );
         with_program(&files, &["./main.js"], 1, |program| {
             let not_found = CodeAnswer::NotFound(CodeFailure::ModuleNotFound);
             let expected = [not_found, CodeAnswer::File(program.file("b.js"))];
@@ -125,8 +135,9 @@ import(name);
             ImportSpecifier::Constant(specifier) => Some(atoms.bytes(specifier)),
             ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => None,
         });
-        let answers: Vec<(Option<&[u8]>, CodeAnswer<'_>)> =
-            specifiers.zip(compiled.code_answers.iter().copied()).collect();
+        let answers: Vec<(Option<&[u8]>, CodeAnswer<'_>)> = specifiers
+            .zip(compiled.code_answers.iter().copied())
+            .collect();
         let a = program.file("a.js");
         let external = CodeAnswer::External {
             specifier: atoms.intern(b"https://example.com/x.js"),
@@ -157,7 +168,10 @@ const PAGES: [(&str, &str); 3] = [("pages/a.js", ""), ("pages/b.js", ""), ("othe
 
 #[test]
 fn computed_specifier_with_prefix_answers_a_set() {
-    let main = ("main.js", "export const load = (name) => import(`./pages/${name}.js`);\n");
+    let main = (
+        "main.js",
+        "export const load = (name) => import(`./pages/${name}.js`);\n",
+    );
     let files = [&[main][..], &PAGES[..]].concat();
     with_program(&files, &["./main.js"], 1, |program| {
         let (a, b) = (program.file("pages/a.js"), program.file("pages/b.js"));
@@ -172,7 +186,10 @@ fn computed_specifier_with_prefix_answers_a_set() {
                 (atoms.intern(b"./pages/b.js"), ComputedTarget::File(b)),
             ],
         };
-        assert_eq!(code_answers(program, "main.js"), [CodeAnswer::Computed(expected)]);
+        assert_eq!(
+            code_answers(program, "main.js"),
+            [CodeAnswer::Computed(expected)]
+        );
         assert_eq!(code_edges(program, "main.js"), [a, b]);
         assert!(program.files().is_compiled(a) && program.files().is_compiled(b));
         assert_eq!(program.find("other.js"), None);
@@ -181,14 +198,20 @@ fn computed_specifier_with_prefix_answers_a_set() {
 
 #[test]
 fn computed_specifier_without_prefix_is_unknown() {
-    let main = ("main.js", "export const load = (name) => import(`${name}.js`);\n");
+    let main = (
+        "main.js",
+        "export const load = (name) => import(`${name}.js`);\n",
+    );
     let files = [&[main][..], &PAGES[..]].concat();
     with_program(&files, &["./main.js"], 1, |program| {
         let expected = ComputedTargets::All {
             cause: ComputedUnknown::NoConstantPrefix,
             host_modules: &[],
         };
-        assert_eq!(code_answers(program, "main.js"), [CodeAnswer::Computed(expected)]);
+        assert_eq!(
+            code_answers(program, "main.js"),
+            [CodeAnswer::Computed(expected)]
+        );
         assert!(code_edges(program, "main.js").is_empty());
         assert_eq!(program.find("pages/a.js"), None);
     });
@@ -205,13 +228,18 @@ import("./m.js", { with: { type: "macro" } });
         attribute_loader: HostLoader(1),
         ..HostScript::default()
     };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.js", |program| {
-        let m = program.file("m.js");
-        let expected = [CodeAnswer::Erased, CodeAnswer::File(m)];
-        assert_eq!(code_answers(program, "main.js"), expected);
-        assert_eq!(code_edges(program, "main.js"), [m]);
-        assert_eq!(compiled(program, "m.js").loader, HostLoader::default());
-    });
+    with_host(
+        &ScriptedHost(&disk, script),
+        PROJECT,
+        "./main.js",
+        |program| {
+            let m = program.file("m.js");
+            let expected = [CodeAnswer::Erased, CodeAnswer::File(m)];
+            assert_eq!(code_answers(program, "main.js"), expected);
+            assert_eq!(code_edges(program, "main.js"), [m]);
+            assert_eq!(compiled(program, "m.js").loader, HostLoader::default());
+        },
+    );
 }
 
 #[test]
@@ -228,7 +256,10 @@ fn jsx_imports() {
         let package = program.file("node_modules/react/index.js");
         let other = program.file("other.js");
         let expected = [runtime, package, other].map(CodeAnswer::File);
-        assert_eq!(jsx_answers(program, "main.tsx"), [Some(expected[0]), Some(expected[1])]);
+        assert_eq!(
+            jsx_answers(program, "main.tsx"),
+            [Some(expected[0]), Some(expected[1])]
+        );
         assert_eq!(code_answers(program, "main.tsx"), expected);
         assert_eq!(code_edges(program, "main.tsx"), [runtime, package, other]);
         assert_eq!(program.find("node_modules/react/jsx-dev-runtime.js"), None);
@@ -267,10 +298,15 @@ fn jsx_imports_need_automatic_runtime_and_live_element() {
 
     let conditional = r#"export const element = process.env.X === "a" ? <div /> : null;"#;
     let files = with_react(&[("main.tsx", conditional)]);
-    with_defines(&files, &["./main.tsx"], &[("process.env.X", "b")], |program| {
-        assert_eq!(jsx_answers(program, "main.tsx"), [None, None]);
-        assert!(code_edges(program, "main.tsx").is_empty());
-    });
+    with_defines(
+        &files,
+        &["./main.tsx"],
+        &[("process.env.X", "b")],
+        |program| {
+            assert_eq!(jsx_answers(program, "main.tsx"), [None, None]);
+            assert!(code_edges(program, "main.tsx").is_empty());
+        },
+    );
     with_program(&files, &["./main.tsx"], 1, |program| {
         assert!(jsx_answers(program, "main.tsx")[0].is_some());
         assert_eq!(code_edges(program, "main.tsx").len(), 1);
@@ -280,9 +316,7 @@ fn jsx_imports_need_automatic_runtime_and_live_element() {
 #[test]
 fn jsx_import_source_pragma_selects_package() {
     let tsconfig = tsconfig(r#", "jsx": "react-jsxdev""#, "");
-    let main = format!(
-        "/* @jsxImportSource preact */\n{ELEMENT}{ELEMENT_WITH_KEY_AFTER_SPREAD}"
-    );
+    let main = format!("/* @jsxImportSource preact */\n{ELEMENT}{ELEMENT_WITH_KEY_AFTER_SPREAD}");
     let files = with_react(&[
         ("tsconfig.json", tsconfig.as_str()),
         ("main.tsx", main.as_str()),
@@ -310,14 +344,19 @@ fn jsx_import_source_pragma_selects_package() {
 #[test]
 fn jsx_imports_of_missing_package_are_not_found() {
     let main = format!("{ELEMENT}{ELEMENT_WITH_KEY_AFTER_SPREAD}");
-    with_program(&[("main.tsx", main.as_str())], &["./main.tsx"], 1, |program| {
-        let expected = [
-            Some(CodeAnswer::NotFound(CodeFailure::ModuleNotFound)),
-            Some(CodeAnswer::NotFound(CodeFailure::PackageNotFound)),
-        ];
-        assert_eq!(jsx_answers(program, "main.tsx"), expected);
-        assert!(code_edges(program, "main.tsx").is_empty());
-    });
+    with_program(
+        &[("main.tsx", main.as_str())],
+        &["./main.tsx"],
+        1,
+        |program| {
+            let expected = [
+                Some(CodeAnswer::NotFound(CodeFailure::ModuleNotFound)),
+                Some(CodeAnswer::NotFound(CodeFailure::PackageNotFound)),
+            ];
+            assert_eq!(jsx_answers(program, "main.tsx"), expected);
+            assert!(code_edges(program, "main.tsx").is_empty());
+        },
+    );
 }
 
 #[test]
@@ -484,9 +523,15 @@ fn other_loader_has_no_typed_version() {
     with_typed_file(import, EXACT_TYPED_TEXT, HostLoader::default(), |program| {
         let compiled = compiled(program, "a.js");
         assert!(compiled.typed_source_path.is_some());
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Host));
+        assert_eq!(
+            compiled.typed_version_origin,
+            Some(TypedVersionOrigin::Host)
+        );
         assert_eq!(compiled.rejected_typed_version, None);
-        assert_eq!(program.files().role(program.file("a.js")), FileRole::Checked);
+        assert_eq!(
+            program.files().role(program.file("a.js")),
+            FileRole::Checked
+        );
     });
 }
 
@@ -496,21 +541,24 @@ fn rejected_typed_version_is_recorded() {
     with_typed_file(import, typed_text, HostLoader::default(), |program| {
         let compiled = compiled(program, "a.js");
         assert_eq!(compiled.typed_source_path, None);
-        assert_eq!(compiled.typed_version_origin, Some(TypedVersionOrigin::Host));
+        assert_eq!(
+            compiled.typed_version_origin,
+            Some(TypedVersionOrigin::Host)
+        );
         let rejected = compiled.rejected_typed_version;
         let rejected = rejected.expect("the typed version has another literal");
         assert_eq!(rejected.path, b"/project/a.sound.ts");
         assert_eq!(rejected.kind, ErasureMismatchKind::Literal);
-        assert_eq!(program.files().role(program.file("a.js")), FileRole::Inferred);
+        assert_eq!(
+            program.files().role(program.file("a.js")),
+            FileRole::Inferred
+        );
     });
 }
 
 const IMPLIED_FILE: [(&str, &str); 1] = [("main.ts", "implied.js")];
 
-fn with_implied_file<R>(
-    files: &[(&str, &str)],
-    then: impl FnOnce(&TestProgram<'_, '_>) -> R,
-) -> R {
+fn with_implied_file<R>(files: &[(&str, &str)], then: impl FnOnce(&TestProgram<'_, '_>) -> R) -> R {
     let disk = project_disk(files, 1);
     let script = HostScript {
         implied_files: &IMPLIED_FILE,
@@ -523,7 +571,10 @@ fn with_implied_file<R>(
 fn implied_file_comes_last_in_code_edges() {
     let files = [
         ("entry.ts", r#"import "./main.ts";"#),
-        ("main.ts", r#"import "./a.js"; import "./implied.js"; import "./b.js";"#),
+        (
+            "main.ts",
+            r#"import "./a.js"; import "./implied.js"; import "./b.js";"#,
+        ),
         ("a.js", ""),
         ("b.js", ""),
         ("implied.js", ""),

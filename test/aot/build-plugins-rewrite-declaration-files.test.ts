@@ -19,7 +19,10 @@ for (const log of result.logs) console.log(String(log));
 process.exit(result.success ? 0 : 1);
 `;
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] }, include: ["*.ts"] });
+const tsconfig = JSON.stringify({
+  compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] },
+  include: ["*.ts"],
+});
 
 type Case = { files: Record<string, string>; rewrites: Record<string, string>; prints: string };
 
@@ -56,11 +59,24 @@ describe.skipIf(!!unsupported)("declaration files that a plugin rewrites during 
     for (const delay of ["0", "300"]) {
       test.concurrent(`${name}, ${delay} ms into the load`, () =>
         slot(async () => {
-          using dir = tempDir("aot-plugin-rewrites", { "build.ts": build, "tsconfig.json": tsconfig, "note.txt": "hello", ...files });
+          using dir = tempDir("aot-plugin-rewrites", {
+            "build.ts": build,
+            "tsconfig.json": tsconfig,
+            "note.txt": "hello",
+            ...files,
+          });
           const folder = String(dir);
           const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
-          const built = await spawned([bunExe(), "build.ts", executable], folder, { ...bunEnv, PLUGIN_DELAY_MS: delay, REWRITES: JSON.stringify(rewrites) });
-          expect({ stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+          const built = await spawned([bunExe(), "build.ts", executable], folder, {
+            ...bunEnv,
+            PLUGIN_DELAY_MS: delay,
+            REWRITES: JSON.stringify(rewrites),
+          });
+          expect({ stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+            stdout: "",
+            stderr: expect.any(String),
+            exitCode: 0,
+          });
           const ran = await spawned([executable], folder, bunEnv);
           expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: prints, exitCode: 0 });
         }),

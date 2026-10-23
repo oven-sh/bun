@@ -378,7 +378,7 @@ async function start() {
   if (++runs === 1) restarted = isRestart();
   const flags = defaultServeFlags();
   // There is no entry module, so the arguments start at argv[1], as for `bun -e`.
-  for (let i = 1, argvLength = argv.length; i < argvLength; ) {
+  for (let i = 1, argvLength = argv.length; i < argvLength;) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       console.log(help);

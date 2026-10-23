@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { describe, test } from "./supported";
 
 const files = {
   "kinds.mjs": `export const thing = 1;
@@ -125,7 +125,11 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
   test("an executable built with --aot prints what bun run prints", async () => {
     using dir = tempDir("jsdoc-import-tags", { ...files, [entry]: programs[entry] });
     const plain = await run([bunExe(), "run", entry], String(dir), bunEnv);
-    const build = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], String(dir), bunEnv);
+    const build = await run(
+      [bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"],
+      String(dir),
+      bunEnv,
+    );
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
     const aot = await run([join(String(dir), "program")], String(dir), env);
     expect(plain.exitCode).toBe(0);

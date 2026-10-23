@@ -27,8 +27,16 @@ import { describe, test } from "../supported";
 const root = join(import.meta.dir, "operations");
 const mode = process.env.AOT_PERF;
 const columns = [
-  { title: "compile/aot/perf/operations", programs: "rows", pinsPath: join(import.meta.dir, `operations.${process.platform}-${process.arch}.json`) },
-  { title: "compile/aot/perf/operations/opened", programs: "opened", pinsPath: join(import.meta.dir, `operations-opened.${process.platform}-${process.arch}.json`) },
+  {
+    title: "compile/aot/perf/operations",
+    programs: "rows",
+    pinsPath: join(import.meta.dir, `operations.${process.platform}-${process.arch}.json`),
+  },
+  {
+    title: "compile/aot/perf/operations/opened",
+    programs: "opened",
+    pinsPath: join(import.meta.dir, `operations-opened.${process.platform}-${process.arch}.json`),
+  },
 ];
 
 const rows = readFileSync(join(root, "rows.tsv"), "utf8")
@@ -45,7 +53,13 @@ const isWorse = (now: number, pin: number) => now > pin * 1.1 && now > pin + 1;
 for (const { title, programs, pinsPath } of columns) {
   const pins: Record<string, number> = existsSync(pinsPath) ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
   const skipped =
-    isDebug || isASAN ? "a debug or ASAN build counts other instructions" : isWindows ? "it counts with perf_event_open or /usr/bin/time -l" : !existsSync(pinsPath) && mode !== "update" ? `there is no ${pinsPath}` : undefined;
+    isDebug || isASAN
+      ? "a debug or ASAN build counts other instructions"
+      : isWindows
+        ? "it counts with perf_event_open or /usr/bin/time -l"
+        : !existsSync(pinsPath) && mode !== "update"
+          ? `there is no ${pinsPath}`
+          : undefined;
   if (skipped) console.error(`SKIPPED: test/aot/perf/operations.test.ts: ${programs}: ${skipped}`);
 
   describe.skipIf(!!skipped)(title, () => {
@@ -53,7 +67,11 @@ for (const { title, programs, pinsPath } of columns) {
     const carrier = skipped ? [] : withoutDebugInformation();
     afterAll(() => {
       rmSync(folder, { recursive: true, force: true });
-      if (mode === "update" || mode === "lower") writeFileSync(pinsPath, JSON.stringify(Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n");
+      if (mode === "update" || mode === "lower")
+        writeFileSync(
+          pinsPath,
+          JSON.stringify(Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n",
+        );
     });
 
     for (const { name, isHeavy, what } of rows) {
@@ -63,10 +81,24 @@ for (const { title, programs, pinsPath } of columns) {
           slot(async () => {
             const source = join(root, programs, `${name}.ts`);
             const executable = join(folder, name);
-            const build = await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, source, "--outfile", executable], root, bunEnv);
-            expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+            const build = await spawned(
+              [bunExe(), "build", "--compile", "--aot", ...carrier, source, "--outfile", executable],
+              root,
+              bunEnv,
+            );
+            expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+              stderr: expect.not.stringMatching(/^error\b/m),
+              exitCode: 0,
+            });
             const [few, many] = isHeavy ? [1000, 21000] : [1000, 401000];
-            const operands = (sites: number, calls: number) => [`${name}_${sites}`, String(calls), "2", "lit_zz", "DELETE", "PATCH"];
+            const operands = (sites: number, calls: number) => [
+              `${name}_${sites}`,
+              String(calls),
+              "2",
+              "lit_zz",
+              "DELETE",
+              "PATCH",
+            ];
             const env = { ...bunEnv, ...withSteadyCollections };
             try {
               const costs: Record<string, number | undefined> = {};
@@ -80,15 +112,27 @@ for (const { title, programs, pinsPath } of columns) {
                   expect(run.stdout).toStartWith(name);
                 }
               }
-              if (Object.values(costs).includes(undefined)) return void console.error(`SKIPPED: ${name}: instructions cannot be counted here`);
+              if (Object.values(costs).includes(undefined))
+                return void console.error(`SKIPPED: ${name}: instructions cannot be counted here`);
               const calls = many - few;
-              const now = Math.round(((costs[`12 ${many}`]! - costs[`12 ${few}`]! - (costs[`4 ${many}`]! - costs[`4 ${few}`]!)) / 8 / calls) * 10) / 10;
+              const now =
+                Math.round(
+                  ((costs[`12 ${many}`]! - costs[`12 ${few}`]! - (costs[`4 ${many}`]! - costs[`4 ${few}`]!)) /
+                    8 /
+                    calls) *
+                    10,
+                ) / 10;
               const pin = pins[name];
               console.error(`OPERATION ${programs === "rows" ? "" : programs + " "}${name}\t${now}\t| the pin\t${pin}`);
               if (mode === "update") return void (pins[name] = now);
               expect(pin).toBeDefined();
               if (mode === "lower") pins[name] = Math.min(pin, now);
-              expect({ name, instructionsASite: now, isWorse: isWorse(now, pin), pin }).toEqual({ name, instructionsASite: now, isWorse: false, pin });
+              expect({ name, instructionsASite: now, isWorse: isWorse(now, pin), pin }).toEqual({
+                name,
+                instructionsASite: now,
+                isWorse: false,
+                pin,
+              });
             } finally {
               rmSync(executable, { force: true });
             }

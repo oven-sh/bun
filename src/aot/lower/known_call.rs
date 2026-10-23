@@ -87,7 +87,11 @@ pub(in crate::lower) fn try_lower_known_call(
     if !is_plain_call(lowering.file, site) {
         return None;
     }
-    let callee = resolve_callee(&resolve_input(lowering.file), lowering.file.file, site.callee)?;
+    let callee = resolve_callee(
+        &resolve_input(lowering.file),
+        lowering.file.file,
+        site.callee,
+    )?;
     if !is_lowered(lowering.file, callee.file) {
         return None;
     }
@@ -137,7 +141,9 @@ fn find_private_state(
 ) -> Option<PrivateStateSite> {
     let inputs = file.inputs;
     let files = file.queries.files();
-    let states = inputs.known_helpers.private_states(files, inputs.modules, file.file)?;
+    let states = inputs
+        .known_helpers
+        .private_states(files, inputs.modules, file.file)?;
     states.site(call)
 }
 
@@ -256,7 +262,13 @@ fn guard_callee(
 ) {
     if callee.needs_guard() {
         let function = lowered.callee.function;
-        guard_closure(lowering, function, callee.file, held.closure, lowered.slow_path);
+        guard_closure(
+            lowering,
+            function,
+            callee.file,
+            held.closure,
+            lowered.slow_path,
+        );
     }
 }
 
@@ -285,7 +297,11 @@ fn is_readable(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: SymbolId
     if captures::find_captured_value(lowering, Capture::Value(binding)).is_some() {
         return true;
     }
-    match file.scopes.placement(binding).map(|placement| placement.storage) {
+    match file
+        .scopes
+        .placement(binding)
+        .map(|placement| placement.storage)
+    {
         Some(Storage::Variable(_)) => true,
         Some(Storage::Field { scope, .. }) => {
             let captured = captures::find_captured_value(lowering, Capture::Environment(scope));
@@ -294,8 +310,7 @@ fn is_readable(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: SymbolId
         Some(Storage::Local) => {
             let declaring = file.bound.symbol_scope(symbol).some();
             let declaring = declaring.unwrap_or_else(|| module::file_scope(file));
-            lowering.scopes.find_local(binding).is_some()
-                && is_enclosing_scope(lowering, declaring)
+            lowering.scopes.find_local(binding).is_some() && is_enclosing_scope(lowering, declaring)
         }
         None => false,
     }
@@ -418,7 +433,9 @@ fn find_create_binding_builtins(
         path: find_callee(file, define)?,
         builtin: BuiltinId::ObjectDefineProperty,
     });
-    let is_resolved = builtins.iter().all(|&expected| resolves_to_builtin(file, expected));
+    let is_resolved = builtins
+        .iter()
+        .all(|&expected| resolves_to_builtin(file, expected));
     is_resolved.then_some(builtins)
 }
 
@@ -488,7 +505,13 @@ fn emit_export_star(
     let file = lowering.file.file;
     if plan.create_binding.needs_guard {
         let held = scope::get_stored(lowering, BindingRef::Symbol(plan.create_binding.symbol));
-        guard_closure(lowering, held, file, plan.create_binding.function.closure, slow_path);
+        guard_closure(
+            lowering,
+            held,
+            file,
+            plan.create_binding.function.closure,
+            slow_path,
+        );
     }
     let has_own_property = guard_builtin_path(lowering, plan.has_own_property, slow_path);
     let key = member::name_key(lowering.file, plan.call_name);
@@ -602,7 +625,12 @@ fn lower_private_field_access(
         return None;
     }
     let lowered = lower_call_operands(lowering, call, site);
-    guard_callee(lowering, &lowered, &helper_call.callee, helper_call.callee.functions[0]);
+    guard_callee(
+        lowering,
+        &lowered,
+        &helper_call.callee,
+        helper_call.callee.functions[0],
+    );
     let access = PrivateStateAccess {
         state: state.state,
         collection: lowered.arguments[helper_call.state],
@@ -653,7 +681,11 @@ fn may_hold_class(file: &FileLowering<'_, '_, '_, '_>, state: ExprId) -> bool {
 }
 
 fn classify_static_member_access(helper_call: &PrivateFieldCall) -> Option<StaticMemberAccess> {
-    match (helper_call.helper, helper_call.member_kind, helper_call.member) {
+    match (
+        helper_call.helper,
+        helper_call.member_kind,
+        helper_call.member,
+    ) {
         (Helper::ClassPrivateFieldGet, PrivateMemberKind::Method, Some(member)) => {
             Some(StaticMemberAccess::GetMethod { member })
         }
@@ -675,7 +707,12 @@ fn lower_static_member_access(
         return None;
     }
     let lowered = lower_call_operands(lowering, call, site);
-    guard_callee(lowering, &lowered, &helper_call.callee, helper_call.callee.functions[0]);
+    guard_callee(
+        lowering,
+        &lowered,
+        &helper_call.callee,
+        helper_call.callee.functions[0],
+    );
     let slow_path = lowered.slow_path;
     let object = lowered.arguments[helper_call.receiver];
     let class = lowered.arguments[helper_call.state];
@@ -734,7 +771,9 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         let bodies = fragments.filter_map(|fragment| {
             let body = fragment.module.body?;
             let mut functions = fragment.functions.iter();
-            functions.find(|(id, _)| *id == body).map(|(_, function)| function)
+            functions
+                .find(|(id, _)| *id == body)
+                .map(|(_, function)| function)
         });
         let blocks = bodies.flat_map(|function| function.body.blocks());
         let values = blocks.flat_map(|block| block.values());
@@ -748,7 +787,10 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         assert_eq!(count_in_module_bodies(&files, Opcode::TryReExportFields), 1);
         assert_eq!(count_in_module_bodies(&files, Opcode::IsClosureOf), 0);
         let behind_a_call = format!("require(\"./a.cjs\");\n{main}");
-        let files = [("main.cjs", behind_a_call.as_str()), ("a.cjs", "exports.a = 1;")];
+        let files = [
+            ("main.cjs", behind_a_call.as_str()),
+            ("a.cjs", "exports.a = 1;"),
+        ];
         assert_eq!(count_in_module_bodies(&files, Opcode::TryReExportFields), 1);
         assert_eq!(count_in_module_bodies(&files, Opcode::IsClosureOf), 2);
     }
@@ -772,10 +814,17 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 
     #[test]
     fn spread_and_optional_calls_are_ordinary_calls() {
-        for call in ["__exportStar(...[exports, exports]);", "__exportStar?.(exports, exports);"] {
+        for call in [
+            "__exportStar(...[exports, exports]);",
+            "__exportStar?.(exports, exports);",
+        ] {
             let main = format!("{HELPERS}{call}");
             let files = [("main.cjs", main.as_str())];
-            assert_eq!(count_in_module_bodies(&files, Opcode::TryReExportFields), 0, "{call}");
+            assert_eq!(
+                count_in_module_bodies(&files, Opcode::TryReExportFields),
+                0,
+                "{call}"
+            );
         }
     }
 }

@@ -111,7 +111,12 @@ function declaresInItsBlock(statement: Node): boolean {
 
 function canonicalStatement(statement: Node): Node {
   let current = statement;
-  while (current.type === "BlockStatement" && current.body.length === 1 && !current.directives?.length && !declaresInItsBlock(current.body[0])) {
+  while (
+    current.type === "BlockStatement" &&
+    current.body.length === 1 &&
+    !current.directives?.length &&
+    !declaresInItsBlock(current.body[0])
+  ) {
     current = current.body[0];
   }
   return current;
@@ -119,7 +124,13 @@ function canonicalStatement(statement: Node): Node {
 
 function canonicalBody(node: Node): Node {
   const body: Node = node.body;
-  if (node.type !== "ArrowFunctionExpression" || body.type !== "BlockStatement" || body.body.length !== 1 || body.directives?.length) return body;
+  if (
+    node.type !== "ArrowFunctionExpression" ||
+    body.type !== "BlockStatement" ||
+    body.body.length !== 1 ||
+    body.directives?.length
+  )
+    return body;
   const only = canonicalStatement(body.body[0]);
   return only.type === "ReturnStatement" && only.argument ? only.argument : body;
 }
@@ -619,7 +630,8 @@ class Writer {
         this.expressions(node.arguments);
         break;
       case "UnaryExpression":
-        if (node.operator === "!" && node.argument.type === "NumericLiteral") this.out.push(node.argument.value === 0 ? "E4" : "E5");
+        if (node.operator === "!" && node.argument.type === "NumericLiteral")
+          this.out.push(node.argument.value === 0 ? "E4" : "E5");
         else if (node.operator === "void" && node.argument.type === "NumericLiteral") this.out.push("E1", "U");
         else {
           this.out.push("E18", node.operator);
@@ -632,7 +644,12 @@ class Writer {
         break;
       case "BinaryExpression":
       case "LogicalExpression":
-        this.out.push("E19", (node.operator === "==" || node.operator === "!=") && comparesTypeName(node.left, node.right) ? `${node.operator}=` : node.operator);
+        this.out.push(
+          "E19",
+          (node.operator === "==" || node.operator === "!=") && comparesTypeName(node.left, node.right)
+            ? `${node.operator}=`
+            : node.operator,
+        );
         if (node.left.type === "PrivateName") this.refuse("a private name");
         else this.expression(node.left);
         this.expression(node.right);

@@ -28,7 +28,14 @@ enum Reason {
 
 fn sort_key(record: &DeclineRecord) -> (bool, Option<Position>, DeclineKind, u32, u32, LimitId) {
     let position = position_of(record.witness.location);
-    (position.is_none(), position, record.kind, record.reason, record.count, record.limit)
+    (
+        position.is_none(),
+        position,
+        record.kind,
+        record.reason,
+        record.count,
+        record.limit,
+    )
 }
 
 fn is_same_decline(first: &DeclineRecord, second: &DeclineRecord) -> bool {
@@ -74,8 +81,9 @@ fn reason_of(record: &DeclineRecord) -> Reason {
             return Reason::Escape(AllocationEscapeReason(reason));
         }
         DeclineKind::TypedResultNotSelected => typed_result_decline_sentence(reason),
-        DeclineKind::LoopNotVersioned
-        | DeclineKind::LoopBoundNotClamped => loop_decline_sentence(reason),
+        DeclineKind::LoopNotVersioned | DeclineKind::LoopBoundNotClamped => {
+            loop_decline_sentence(reason)
+        }
         DeclineKind::ResultNodeInterpreted => interpreted_cause_sentence(reason),
         DeclineKind::Unknown
         | DeclineKind::HotCallNotInlined
@@ -110,7 +118,10 @@ fn write_count_clause(out: &mut Vec<u8>, record: &DeclineRecord) {
     out.extend_from_slice(b", ");
     match record.kind {
         DeclineKind::HotCallNotInlined => {
-            let (one, many) = ("byte over the inlining budget", "bytes over the inlining budget");
+            let (one, many) = (
+                "byte over the inlining budget",
+                "bytes over the inlining budget",
+            );
             write_counted(out, count, one, many);
         }
         DeclineKind::StringBuilderNotCreated => write_counted(out, count, "append", "appends"),
@@ -187,7 +198,13 @@ fn decline_entry(
     let limit_value = input.engine.limit_value(record.limit);
 
     let mut text = Vec::new();
-    write_decline_line(&mut text, decline, shown_position.as_ref(), function_name, limit_value);
+    write_decline_line(
+        &mut text,
+        decline,
+        shown_position.as_ref(),
+        function_name,
+        limit_value,
+    );
     ReportEntry {
         kind: ExplainSet::DECLINES,
         text,
@@ -209,11 +226,18 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     for decline in &merged {
         totals[decline.record.kind as usize] += u64::from(decline.times);
     }
-    let occurring = DeclineKind::ALL.into_iter().zip(totals).filter(|&(_, times)| times > 0);
+    let occurring = DeclineKind::ALL
+        .into_iter()
+        .zip(totals)
+        .filter(|&(_, times)| times > 0);
     out.extend(occurring.map(|(kind, times)| kind_total_entry(kind, times)));
 
     let mut positions = Positions::new(input, PathStyle::Native);
-    out.extend(merged.iter().map(|decline| decline_entry(input, &mut positions, decline)));
+    out.extend(
+        merged
+            .iter()
+            .map(|decline| decline_entry(input, &mut positions, decline)),
+    );
 }
 
 #[cfg(test)]

@@ -90,7 +90,9 @@ fn empty_tables_have_no_task() {
 fn large_table_is_chunked() {
     let program = create_program_with_variables(10_000);
     let tasks = create_table_tasks(&program);
-    let counts = tasks.iter().map(|task| measure(task)[ProgramList::Variables as usize]);
+    let counts = tasks
+        .iter()
+        .map(|task| measure(task)[ProgramList::Variables as usize]);
     let counts: Vec<u64> = counts.filter(|&count| count > 0).collect();
     assert_eq!(counts, [4096, 4096, 1808]);
 }

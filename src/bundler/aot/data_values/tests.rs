@@ -229,7 +229,10 @@ fn repeated_key_in_large_object() {
             panic!("expected an object");
         };
         assert_eq!(properties.len(), 19);
-        assert_eq!(properties[3], (atoms.intern(b"k3"), DataValue::Number(100.0)));
+        assert_eq!(
+            properties[3],
+            (atoms.intern(b"k3"), DataValue::Number(100.0))
+        );
         assert_eq!(properties[4], (atoms.intern(b"k4"), DataValue::Number(4.0)));
     });
 }
@@ -327,13 +330,19 @@ fn surrogate_halves_of_rope_parts_are_joined() {
         head.rope_len = 6;
         let root = Expr::init(head, Loc::EMPTY);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
-        assert_eq!(*value, DataValue::String(atoms.intern("\u{1F600}".as_bytes())));
+        assert_eq!(
+            *value,
+            DataValue::String(atoms.intern("\u{1F600}".as_bytes()))
+        );
     });
 }
 
 #[test]
 fn well_formed_text_is_borrowed() {
-    assert!(matches!(to_canonical_wtf8("caf\u{E9}".as_bytes()), Cow::Borrowed(_)));
+    assert!(matches!(
+        to_canonical_wtf8("caf\u{E9}".as_bytes()),
+        Cow::Borrowed(_)
+    ));
     assert!(matches!(to_canonical_wtf8(b"caf\xE9"), Cow::Owned(_)));
 }
 
@@ -360,7 +369,10 @@ fn big_int_takes_decimal_digits_only() {
         let value = data_value_from_expr(&decimal, scratch, arena, atoms).expect("data");
         assert_eq!(*value, DataValue::BigInt(atoms.intern(b"10")));
         let hexadecimal = big_int_expr(b"0x10");
-        assert!(matches!(write_error(&hexadecimal, scratch), NotData::Expression));
+        assert!(matches!(
+            write_error(&hexadecimal, scratch),
+            NotData::Expression
+        ));
     });
 }
 
@@ -370,7 +382,10 @@ fn only_utf8_tapes_are_data() {
     assert!(check_tape_encoding(&tape).is_ok());
     for encoding in [E::StrEncoding::Latin1, E::StrEncoding::Utf16] {
         tape.encoding = encoding;
-        assert!(matches!(check_tape_encoding(&tape), Err(NotData::Expression)));
+        assert!(matches!(
+            check_tape_encoding(&tape),
+            Err(NotData::Expression)
+        ));
     }
 }
 
@@ -563,8 +578,7 @@ fn limit_is_equal_in_every_build() {
 #[test]
 fn toml_date_time_is_not_data() {
     with_scope(|_, _, scratch| {
-        let date =
-            E::EString::init_toml_datetime(b"1979-05-27", E::TomlDateTimeKind::LocalDate);
+        let date = E::EString::init_toml_datetime(b"1979-05-27", E::TomlDateTimeKind::LocalDate);
         let root = Expr::init(date, Loc::EMPTY);
         assert!(matches!(write_error(&root, scratch), NotData::TomlDateTime));
     });
@@ -587,7 +601,10 @@ fn each_error_is_reported_once() {
     assert_eq!(reported_text(NotData::TooLarge), size_message.as_bytes());
     let date_time = reported_text(NotData::TomlDateTime);
     assert!(date_time.starts_with(b"TS100050"));
-    assert!(contains(&date_time, b"the TOML file \"/project/value.toml\""));
+    assert!(contains(
+        &date_time,
+        b"the TOML file \"/project/value.toml\""
+    ));
 }
 
 #[test]

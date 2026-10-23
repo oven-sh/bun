@@ -96,7 +96,11 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(crate) fn mode(&self) -> ECMAMode {
         let is_strict = match scope::innermost_scope(self).some() {
             Some(innermost) => self.file.bound.is_strict_scope(innermost),
-            None => !self.builder.function().flags.contains(FunctionFlags::IS_SLOPPY),
+            None => !self
+                .builder
+                .function()
+                .flags
+                .contains(FunctionFlags::IS_SLOPPY),
         };
         if is_strict {
             ECMAMode::Strict

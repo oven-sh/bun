@@ -56,7 +56,8 @@ function createFailingGraph() {
   for (let index = 0; index < failureDepth; index++) {
     const next = index + 1 < failureDepth ? `import "./chain-${index + 1}.mjs";\n` : "";
     const body = index === throwingIndex ? `throw new Error("thrown by chain-${index}");\n` : "";
-    files[`chain-${index}.mjs`] = `import { bodies } from "./log.mjs";\nimport "./sibling-${index}.mjs";\n${next}bodies.push("chain-${index}");\n${body}`;
+    files[`chain-${index}.mjs`] =
+      `import { bodies } from "./log.mjs";\nimport "./sibling-${index}.mjs";\n${next}bodies.push("chain-${index}");\n${body}`;
     files[`sibling-${index}.mjs`] = `import { bodies } from "./log.mjs";\nbodies.push("sibling-${index}");\n`;
   }
   return files;
@@ -87,7 +88,10 @@ async function run(cmd: string[], cwd: string) {
 async function compileAndRun(folder: string) {
   const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
   const build = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], folder);
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   return run([executable], folder);
 }
 

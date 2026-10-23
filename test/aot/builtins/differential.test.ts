@@ -51,7 +51,8 @@ function readListedHashes(origin: Origin): Set<string> {
 }
 
 const listedHashes = new Map(origins.map(origin => [origin, readListedHashes(origin)]));
-const isListed = (entry: DumpedEntry, overload: DumpedOverload) => listedHashes.get(entry.origin)!.has(overload.textHash);
+const isListed = (entry: DumpedEntry, overload: DumpedOverload) =>
+  listedHashes.get(entry.origin)!.has(overload.textHash);
 const isChecked = (entry: DumpedEntry, overload: DumpedOverload) =>
   needsDifferentialTest(overload) && (isUpdate || isListed(entry, overload));
 
@@ -136,16 +137,31 @@ function writeLists(): void {
       const call = checkedCalls.find(other => other.entry === entry && other.mode === overload.mode);
       return call ? findProblems(call, overload).length === 0 : isListed(entry, overload);
     });
-    writeFileSync(pathOfList(origin), formatVerifiedList(origin, passed.map(({ overload }) => overload)));
+    writeFileSync(
+      pathOfList(origin),
+      formatVerifiedList(
+        origin,
+        passed.map(({ overload }) => overload),
+      ),
+    );
   }
 }
 
-type WrongEntry = { title: string; path: string; mode: CallMode; column: string; applyTo(overload: DumpedOverload): DumpedOverload };
+type WrongEntry = {
+  title: string;
+  path: string;
+  mode: CallMode;
+  column: string;
+  applyTo(overload: DumpedOverload): DumpedOverload;
+};
 
 function withoutReceiverUses(...removed: OperandUse[]): WrongEntry["applyTo"] {
   return overload => ({
     ...overload,
-    receiver: overload.receiver && { ...overload.receiver, uses: overload.receiver.uses.filter(use => !removed.includes(use)) },
+    receiver: overload.receiver && {
+      ...overload.receiver,
+      uses: overload.receiver.uses.filter(use => !removed.includes(use)),
+    },
   });
 }
 
@@ -182,7 +198,10 @@ const wrongEntries: WrongEntry[] = [
     applyTo: overload => ({
       ...overload,
       propertyActions: [],
-      parameters: overload.parameters.map(parameter => ({ ...parameter, uses: parameter.uses.filter(use => use !== "ChangesIntegrity") })),
+      parameters: overload.parameters.map(parameter => ({
+        ...parameter,
+        uses: parameter.uses.filter(use => use !== "ChangesIntegrity"),
+      })),
     }),
   },
   {
@@ -190,7 +209,12 @@ const wrongEntries: WrongEntry[] = [
     path: "Map.prototype.set",
     mode: "Call",
     column: "parameters[1].uses",
-    applyTo: overload => ({ ...overload, transfers: overload.transfers.filter(({ from }) => JSON.stringify(from) !== '{"place":"Operand","operand":{"argument":1}}') }),
+    applyTo: overload => ({
+      ...overload,
+      transfers: overload.transfers.filter(
+        ({ from }) => JSON.stringify(from) !== '{"place":"Operand","operand":{"argument":1}}',
+      ),
+    }),
   },
   {
     title: "JSON.parse that does not throw",
@@ -211,14 +235,20 @@ const wrongEntries: WrongEntry[] = [
     path: "Uint8Array",
     mode: "Construct",
     column: "throws",
-    applyTo: overload => ({ ...overload, parameters: overload.parameters.map(parameter => ({ ...parameter, admitted: null })) }),
+    applyTo: overload => ({
+      ...overload,
+      parameters: overload.parameters.map(parameter => ({ ...parameter, admitted: null })),
+    }),
   },
   {
     title: "Array.prototype.sort whose comparator gets one argument",
     path: "Array.prototype.sort",
     mode: "Call",
     column: "callbacks[0].arguments",
-    applyTo: overload => ({ ...overload, callbacks: overload.callbacks.map(callback => ({ ...callback, arguments: callback.arguments.slice(0, 1) })) }),
+    applyTo: overload => ({
+      ...overload,
+      callbacks: overload.callbacks.map(callback => ({ ...callback, arguments: callback.arguments.slice(0, 1) })),
+    }),
   },
   {
     title: "Object.keys that runs no code",
@@ -235,9 +265,13 @@ function defineWrongEntryTests(): void {
       test(title, async () => {
         const entry = dump.entries.find(other => other.path === path);
         if (!entry) throw new Error(`the table has no ${path}`);
-        const overloads = table.overloadsOf(entry, mode).map(overload => (overload.isUndeclared ? overload : applyTo(overload)));
+        const overloads = table
+          .overloadsOf(entry, mode)
+          .map(overload => (overload.isUndeclared ? overload : applyTo(overload)));
         const report = await checkCall(new Realm(table), { entry, mode, overloads });
-        expect(report.overloads.flatMap(({ differences }) => differences.map(difference => difference.column))).toContain(column);
+        expect(
+          report.overloads.flatMap(({ differences }) => differences.map(difference => difference.column)),
+        ).toContain(column);
       });
     }
   });

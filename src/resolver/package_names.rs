@@ -26,7 +26,10 @@ pub struct PackageName {
 const NODE_MODULES: &[u8] = b"node_modules";
 
 fn last_component(path: &[u8]) -> &[u8] {
-    &path[path.iter().rposition(|&byte| is_sep_native(byte)).map_or(0, |separator| separator + 1)..]
+    &path[path
+        .iter()
+        .rposition(|&byte| is_sep_native(byte))
+        .map_or(0, |separator| separator + 1)..]
 }
 
 fn parent(path: &[u8]) -> Option<&[u8]> {
@@ -73,7 +76,9 @@ impl Resolver<'_> {
     ) -> Option<u32> {
         let found = self.resolve(folder, specifier, kind).ok()?;
         let path = found.path_pair.primary.text();
-        let position = entry_points.iter().position(|entry_point| entry_point.source_path == path);
+        let position = entry_points
+            .iter()
+            .position(|entry_point| entry_point.source_path == path);
         position.map(|index| index as u32)
     }
 
@@ -84,13 +89,19 @@ impl Resolver<'_> {
         folders: &[BuildPaths<'_>],
     ) -> Vec<PackageName> {
         let files = entry_points.iter();
-        let mut packages: Vec<Vec<u8>> = files.filter_map(|file| find_name_of_package(file.source_path)).collect();
+        let mut packages: Vec<Vec<u8>> = files
+            .filter_map(|file| find_name_of_package(file.source_path))
+            .collect();
         packages.sort_unstable();
         packages.dedup();
         if packages.is_empty() {
             return Vec::new();
         }
-        let mut places: Vec<BuildPaths<'_>> = folders.iter().copied().flat_map(with_folders_above).collect();
+        let mut places: Vec<BuildPaths<'_>> = folders
+            .iter()
+            .copied()
+            .flat_map(with_folders_above)
+            .collect();
         places.retain(|place| last_component(place.source_path) != NODE_MODULES);
         places.sort_unstable();
         places.dedup();
@@ -101,13 +112,25 @@ impl Resolver<'_> {
         // A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut names = Vec::new();
-        for (place, package) in places.iter().flat_map(|place| packages.iter().map(move |package| (place, &package[..]))) {
+        for (place, package) in places
+            .iter()
+            .flat_map(|place| packages.iter().map(move |package| (place, &package[..])))
+        {
             let separator = &[bun_paths::SEP][..];
-            let directory = [place.source_path, separator, NODE_MODULES, separator, package].concat();
+            let directory = [
+                place.source_path,
+                separator,
+                NODE_MODULES,
+                separator,
+                package,
+            ]
+            .concat();
             let Some(directory) = self.read_dir_info_ignore_error(&directory) else {
                 continue;
             };
-            let exports = directory.package_json().and_then(|manifest| manifest.exports.as_ref());
+            let exports = directory
+                .package_json()
+                .and_then(|manifest| manifest.exports.as_ref());
             let real_directory = match directory.abs_real_path {
                 b"" => directory.abs_path,
                 real_path => real_path,
@@ -116,9 +139,16 @@ impl Resolver<'_> {
             if let Some(exports) = exports {
                 subpaths.extend(exports.written_subpaths().into_iter().map(<[u8]>::to_vec));
                 let real_directory = bun_paths::strings::without_trailing_slash(real_directory);
-                let inside = entry_points.iter().filter_map(|file| file.source_path.strip_prefix(real_directory));
-                for path in inside.filter(|path| path.first().is_some_and(|&byte| is_sep_native(byte))) {
-                    let path: Vec<u8> = path.iter().map(|&byte| if is_sep_native(byte) { b'/' } else { byte }).collect();
+                let inside = entry_points
+                    .iter()
+                    .filter_map(|file| file.source_path.strip_prefix(real_directory));
+                for path in
+                    inside.filter(|path| path.first().is_some_and(|&byte| is_sep_native(byte)))
+                {
+                    let path: Vec<u8> = path
+                        .iter()
+                        .map(|&byte| if is_sep_native(byte) { b'/' } else { byte })
+                        .collect();
                     subpaths.extend(exports.subpaths_by_pattern(&path));
                     subpaths.push(path);
                 }
@@ -129,8 +159,18 @@ impl Resolver<'_> {
                 // The resolver keeps what it is asked for.
                 let specifier: &'static [u8] = [package, &subpath[..]].concat().leak();
                 let folder = place.source_path;
-                let required = self.find_entry_point_named(folder, specifier, ImportKind::Require, entry_points);
-                let imported = self.find_entry_point_named(folder, specifier, ImportKind::Dynamic, entry_points);
+                let required = self.find_entry_point_named(
+                    folder,
+                    specifier,
+                    ImportKind::Require,
+                    entry_points,
+                );
+                let imported = self.find_entry_point_named(
+                    folder,
+                    specifier,
+                    ImportKind::Dynamic,
+                    entry_points,
+                );
                 let hides_other_paths = subpath.is_empty() && exports.is_some();
                 if required.is_some() || imported.is_some() || hides_other_paths {
                     names.push(PackageName {
@@ -157,18 +197,38 @@ mod tests {
     #[test]
     fn name_of_the_package_of_a_file() {
         for (file, name) in [
-            (&b"/app/node_modules/driver/lib/entry.js"[..], Some(&b"driver"[..])),
+            (
+                &b"/app/node_modules/driver/lib/entry.js"[..],
+                Some(&b"driver"[..]),
+            ),
             (b"/app/node_modules/driver/entry.js", Some(b"driver")),
-            (b"/app/node_modules/@scope/driver/main.cjs", Some(b"@scope/driver")),
-            (b"/app/node_modules/@scope/driver/lib/deep/main.cjs", Some(b"@scope/driver")),
-            (b"/app/node_modules/orm/node_modules/driver/a.js", Some(b"driver")),
-            (b"/app/node_modules/.bun/driver@1.0.0/node_modules/driver/a.js", Some(b"driver")),
+            (
+                b"/app/node_modules/@scope/driver/main.cjs",
+                Some(b"@scope/driver"),
+            ),
+            (
+                b"/app/node_modules/@scope/driver/lib/deep/main.cjs",
+                Some(b"@scope/driver"),
+            ),
+            (
+                b"/app/node_modules/orm/node_modules/driver/a.js",
+                Some(b"driver"),
+            ),
+            (
+                b"/app/node_modules/.bun/driver@1.0.0/node_modules/driver/a.js",
+                Some(b"driver"),
+            ),
             (b"/app/plugins/a.js", None),
             (b"/app/node_modules/single.js", None),
             (b"/app/node_modules/@scope/single.js", None),
             (b"/a.js", None),
         ] {
-            assert_eq!(find_name_of_package(file).as_deref(), name, "{}", String::from_utf8_lossy(file));
+            assert_eq!(
+                find_name_of_package(file).as_deref(),
+                name,
+                "{}",
+                String::from_utf8_lossy(file)
+            );
         }
     }
 
@@ -179,11 +239,27 @@ mod tests {
                 source_path,
                 public_path,
             };
-            with_folders_above(folder).map(|it| it.public_path.to_vec()).collect::<Vec<_>>()
+            with_folders_above(folder)
+                .map(|it| it.public_path.to_vec())
+                .collect::<Vec<_>>()
         };
-        let expected: [&[u8]; 3] = [b"/$bunfs/root/lib/deep", b"/$bunfs/root/lib", b"/$bunfs/root"];
-        assert_eq!(above(b"/work/app/lib/deep", b"/$bunfs/root/lib/deep"), expected);
-        let outside: [&[u8]; 3] = [b"/$bunfs/root/_.._/shared/lib", b"/$bunfs/root/_.._/shared", b"/$bunfs/root/_.._"];
-        assert_eq!(above(b"/work/shared/lib", b"/$bunfs/root/_.._/shared/lib"), outside);
+        let expected: [&[u8]; 3] = [
+            b"/$bunfs/root/lib/deep",
+            b"/$bunfs/root/lib",
+            b"/$bunfs/root",
+        ];
+        assert_eq!(
+            above(b"/work/app/lib/deep", b"/$bunfs/root/lib/deep"),
+            expected
+        );
+        let outside: [&[u8]; 3] = [
+            b"/$bunfs/root/_.._/shared/lib",
+            b"/$bunfs/root/_.._/shared",
+            b"/$bunfs/root/_.._",
+        ];
+        assert_eq!(
+            above(b"/work/shared/lib", b"/$bunfs/root/_.._/shared/lib"),
+            outside
+        );
     }
 }

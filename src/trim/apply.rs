@@ -3,7 +3,9 @@ use core::ops::Range;
 
 use bun_exe_format::builtins::{Builtins, HEADER_SIZE as BUILTIN_MODULES_HEADER_SIZE};
 use bun_exe_format::cut_model::{Fill, RemovableBytes};
-use bun_exe_format::image::{AddressRange, Architecture, ImageBytes, ImageEditor, KnownSection, SectionLocation};
+use bun_exe_format::image::{
+    AddressRange, Architecture, ImageBytes, ImageEditor, KnownSection, SectionLocation,
+};
 use bun_removable_features::{Feature, FeatureSet, RemovableFeatureState, RemovedRange};
 
 use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
@@ -119,7 +121,8 @@ fn check_state_untrimmed(
     if !state.starts_with(&RemovableFeatureState::MAGIC) {
         return Err(TrimInternalError::MalformedTable.into());
     }
-    let flags = offset_of!(RemovableFeatureState, is_trimmed)..offset_of!(RemovableFeatureState, removed_ranges_offset);
+    let flags = offset_of!(RemovableFeatureState, is_trimmed)
+        ..offset_of!(RemovableFeatureState, removed_ranges_offset);
     if state[flags].iter().any(|byte| *byte != 0) {
         return Err(UnsupportedReason::AlreadyTrimmed.into());
     }
@@ -199,7 +202,10 @@ fn check_removable_bytes(
         if editor.bytes_at_mut(range).is_none() {
             return Err(TrimInternalError::RangeOutsideImage);
         }
-        if protected.iter().any(|section| ranges_intersect(*section, range)) {
+        if protected
+            .iter()
+            .any(|section| ranges_intersect(*section, range))
+        {
             return Err(TrimInternalError::MalformedTable);
         }
     }
@@ -244,7 +250,12 @@ fn clear_removed_module_texts(
     let data_address = section.start + u64::from(read_u32(bytes, MODULE_DATA_OFFSET));
     let records = &mut bytes[records_offset..][..module_count * MODULE_RECORD_BYTES];
     let record_addresses = (section.start + records_offset as u64..).step_by(MODULE_RECORD_BYTES);
-    for (record, address) in records.chunks_exact_mut(MODULE_RECORD_BYTES).zip(record_addresses) {
+    for (record, address) in records
+        .as_chunks_mut::<MODULE_RECORD_BYTES>()
+        .0
+        .iter_mut()
+        .zip(record_addresses)
+    {
         let text_start = data_address + u64::from(read_u32(record, TEXT_OFFSET_IN_RECORD));
         let text = AddressRange {
             start: text_start,
@@ -255,7 +266,9 @@ fn clear_removed_module_texts(
             end: address + MODULE_RECORD_BYTES as u64,
         };
         let is_text_removed = !text.is_empty() && removed.iter().any(|run| run.contains(text));
-        let is_record_removed = removed.iter().any(|run| ranges_intersect(*run, record_range));
+        let is_record_removed = removed
+            .iter()
+            .any(|run| ranges_intersect(*run, record_range));
         if is_text_removed && !is_record_removed {
             record[TEXT_FIELDS_OF_RECORD].fill(0);
         }
@@ -300,8 +313,16 @@ fn write_removal_state(
         removal[usize::from(feature.index())] = plan.removal_of(feature) as u8;
     }
     // A trimmed process looks up the native code of each built-in in the removed ranges.
-    let is_trimmed = u32::from(!plan.removed().is_subset_of(&Feature::all_outside_compiled_programs()));
-    write_state_field(state, offset_of!(RemovableFeatureState, is_trimmed), &is_trimmed.to_le_bytes());
+    let is_trimmed = u32::from(
+        !plan
+            .removed()
+            .is_subset_of(&Feature::all_outside_compiled_programs()),
+    );
+    write_state_field(
+        state,
+        offset_of!(RemovableFeatureState, is_trimmed),
+        &is_trimmed.to_le_bytes(),
+    );
     Ok(())
 }
 
@@ -351,7 +372,12 @@ fn collect_removed_ranges(
     ascending.sort_by_key(|planned| planned.range.start);
     let mut records = Vec::with_capacity(ascending.len());
     for planned in ascending {
-        push_removed_range(&mut records, planned.range, planned.named_feature, state_address);
+        push_removed_range(
+            &mut records,
+            planned.range,
+            planned.named_feature,
+            state_address,
+        );
     }
     records
 }
@@ -472,7 +498,14 @@ mod tests {
         let at = 64 + index * 56;
         put(bytes, at, &kind.to_le_bytes());
         put(bytes, at + 4, &flags.to_le_bytes());
-        let fields = [file.start, file.start, file.start, file.len(), file.len(), align];
+        let fields = [
+            file.start,
+            file.start,
+            file.start,
+            file.len(),
+            file.len(),
+            align,
+        ];
         for (field, value) in (at + 8..).step_by(8).zip(fields) {
             put(bytes, field, &value.to_le_bytes());
         }
@@ -535,7 +568,10 @@ mod tests {
             data.extend_from_slice(text);
             data.push(0);
             let data_address = BUILTINS_ADDRESS + BUILTINS_DATA_OFFSET;
-            texts.push(range(data_address + start, data_address + data.len() as u64));
+            texts.push(range(
+                data_address + start,
+                data_address + data.len() as u64,
+            ));
             let name = data.len() as u32;
             data.extend_from_slice(b"name\0builtin://name\0");
             records.extend([name, 4, name + 5, 14, start as u32, text.len() as u32]);
@@ -555,7 +591,12 @@ mod tests {
             0,
         ];
         let mut bytes = b"BUNBLTNS".to_vec();
-        bytes.extend(header.iter().chain(&records).flat_map(|word| word.to_le_bytes()));
+        bytes.extend(
+            header
+                .iter()
+                .chain(&records)
+                .flat_map(|word| word.to_le_bytes()),
+        );
         bytes.resize(BUILTINS_DATA_OFFSET as usize, 0);
         bytes.extend_from_slice(&data);
         ToyBuiltins { bytes, texts }
@@ -566,11 +607,23 @@ mod tests {
         let section_headers = (TEXT_END + names_bytes).next_multiple_of(8);
         let sections = [
             toy_section(1, SHT_PROGBITS, SHF_ALLOC, STATE_ADDRESS, STATE_BYTES),
-            toy_section(49, SHT_PROGBITS, SHF_ALLOC, BUILTINS_ADDRESS, BUILTINS_BYTES),
+            toy_section(
+                49,
+                SHT_PROGBITS,
+                SHF_ALLOC,
+                BUILTINS_ADDRESS,
+                BUILTINS_BYTES,
+            ),
             toy_section(63, SHT_PROGBITS, SHF_ALLOC, PAYLOAD_ADDRESS, PAYLOAD_BYTES),
             toy_section(15, SHT_PROGBITS, SHF_ALLOC, TABLE_ADDRESS, table_bytes),
             toy_section(25, SHT_PROGBITS, SHF_ALLOC, RODATA_ADDRESS, RODATA_BYTES),
-            toy_section(33, SHT_PROGBITS, SHF_ALLOC_EXECINSTR, TEXT_ADDRESS, TEXT_BYTES),
+            toy_section(
+                33,
+                SHT_PROGBITS,
+                SHF_ALLOC_EXECINSTR,
+                TEXT_ADDRESS,
+                TEXT_BYTES,
+            ),
             toy_section(39, SHT_STRTAB, 0, TEXT_END, names_bytes),
         ];
         let mut bytes = vec![0; (section_headers + 64 * (sections.len() as u64 + 1)) as usize];
@@ -579,7 +632,14 @@ mod tests {
         let note = range(ROOM_NOTE_OFFSET, NOTE_END);
         let text = range(TEXT_ADDRESS, TEXT_END);
         put_program_header(&mut bytes, 0, PT_NOTE, PF_R, note, 8);
-        put_program_header(&mut bytes, 1, PT_LOAD, PF_R, range(0, TEXT_ADDRESS), SEGMENT_ALIGNMENT);
+        put_program_header(
+            &mut bytes,
+            1,
+            PT_LOAD,
+            PF_R,
+            range(0, TEXT_ADDRESS),
+            SEGMENT_ALIGNMENT,
+        );
         put_program_header(&mut bytes, 2, PT_LOAD, PF_RX, text, SEGMENT_ALIGNMENT);
         put_room_note(&mut bytes);
         put(&mut bytes, STATE_ADDRESS, &RemovableFeatureState::MAGIC);
@@ -590,7 +650,11 @@ mod tests {
         bytes[TEXT_ADDRESS as usize..TEXT_END as usize].fill(TEXT_BYTE);
         put(&mut bytes, TEXT_END, SECTION_NAMES);
         for (index, section) in sections.iter().enumerate() {
-            put_section_header(&mut bytes, section_headers + 64 * (index as u64 + 1), *section);
+            put_section_header(
+                &mut bytes,
+                section_headers + 64 * (index as u64 + 1),
+                *section,
+            );
         }
         bytes
     }
@@ -660,7 +724,10 @@ mod tests {
     }
 
     fn read_state(executable: &mut Vec<u8>) -> Vec<u8> {
-        read_at(executable, range(STATE_ADDRESS, STATE_ADDRESS + STATE_BYTES))
+        read_at(
+            executable,
+            range(STATE_ADDRESS, STATE_ADDRESS + STATE_BYTES),
+        )
     }
 
     fn state_u32(state: &[u8], offset: usize) -> u32 {
@@ -671,7 +738,10 @@ mod tests {
         let state = read_state(executable);
         let count_offset = offset_of!(RemovableFeatureState, removed_range_count);
         let count = state_u32(&state, count_offset) as usize;
-        let table = read_at(executable, range(TABLE_ADDRESS, TABLE_ADDRESS + table_bytes));
+        let table = read_at(
+            executable,
+            range(TABLE_ADDRESS, TABLE_ADDRESS + table_bytes),
+        );
         table[REMOVED_RANGES_HEADER_BYTES..]
             .chunks_exact(16)
             .take(count)
@@ -712,8 +782,15 @@ mod tests {
         for (index, byte) in removal.iter().enumerate() {
             assert_eq!(*byte, u8::from(removed.contains(&index)));
         }
-        assert_eq!(state_u32(&state, offset_of!(RemovableFeatureState, is_trimmed)), 1);
-        assert!(!plan.removed().is_subset_of(&Feature::all_outside_compiled_programs()));
+        assert_eq!(
+            state_u32(&state, offset_of!(RemovableFeatureState, is_trimmed)),
+            1
+        );
+        assert!(
+            !plan
+                .removed()
+                .is_subset_of(&Feature::all_outside_compiled_programs())
+        );
 
         let cut_bytes = 0x57000 - 0x30000;
         assert_eq!(old_len - executable.len() as u64, summary.file_bytes_saved);
@@ -725,22 +802,51 @@ mod tests {
         assert_eq!(summary.format, Some(ExecutableFormat::Elf));
 
         let is_trap = |byte: &u8| *byte == X86_64_TRAP;
-        assert!(read_at(&mut executable, range(CUT_START, 0x30000)).iter().all(is_trap));
-        assert!(read_at(&mut executable, range(0x57000, CUT_END)).iter().all(is_trap));
-        assert_eq!(read_at(&mut executable, range(CUT_START - 1, CUT_START)), [TEXT_BYTE]);
-        assert_eq!(read_at(&mut executable, range(CUT_END, CUT_END + 1)), [TEXT_BYTE]);
+        assert!(
+            read_at(&mut executable, range(CUT_START, 0x30000))
+                .iter()
+                .all(is_trap)
+        );
+        assert!(
+            read_at(&mut executable, range(0x57000, CUT_END))
+                .iter()
+                .all(is_trap)
+        );
+        assert_eq!(
+            read_at(&mut executable, range(CUT_START - 1, CUT_START)),
+            [TEXT_BYTE]
+        );
+        assert_eq!(
+            read_at(&mut executable, range(CUT_END, CUT_END + 1)),
+            [TEXT_BYTE]
+        );
         assert_eq!(read_at(&mut executable, range(0x4000, 0x5000)), [0; 0x1000]);
-        assert_eq!(read_at(&mut executable, range(0x5000, 0x5001)), [RODATA_BYTE]);
+        assert_eq!(
+            read_at(&mut executable, range(0x5000, 0x5001)),
+            [RODATA_BYTE]
+        );
 
-        let table = read_at(&mut executable, range(TABLE_ADDRESS, TABLE_ADDRESS + TABLE_BYTES));
+        let table = read_at(
+            &mut executable,
+            range(TABLE_ADDRESS, TABLE_ADDRESS + TABLE_BYTES),
+        );
         assert!(table.starts_with(&TRIMMED_MAGIC));
         assert!(!table.contains(&0xee));
         let records = read_records(&mut executable, TABLE_BYTES);
         assert_eq!(feature_at(&records, 0x4800), Some(named_feature().index()));
-        assert_eq!(feature_at(&records, CUT_START), Some(unused_feature().index()));
-        assert_eq!(feature_at(&records, CUT_END - 1), Some(unused_feature().index()));
         assert_eq!(
-            state_u32(&state, offset_of!(RemovableFeatureState, removed_range_count)) as usize,
+            feature_at(&records, CUT_START),
+            Some(unused_feature().index())
+        );
+        assert_eq!(
+            feature_at(&records, CUT_END - 1),
+            Some(unused_feature().index())
+        );
+        assert_eq!(
+            state_u32(
+                &state,
+                offset_of!(RemovableFeatureState, removed_range_count)
+            ) as usize,
             records.len(),
         );
     }
@@ -754,7 +860,10 @@ mod tests {
         ]);
         apply(&mut executable, &plan).unwrap();
         let records = read_records(&mut executable, TABLE_BYTES);
-        assert_eq!(feature_at(&records, 0x30000), Some(unused_feature().index()));
+        assert_eq!(
+            feature_at(&records, 0x30000),
+            Some(unused_feature().index())
+        );
         assert_eq!(feature_at(&records, 0x48800), None);
         assert_eq!(feature_at(&records, 0x60000), Some(named_feature().index()));
     }
@@ -770,8 +879,14 @@ mod tests {
         assert_eq!(summary.uncut, None);
         assert_eq!(old_len - executable.len() as u64, summary.file_bytes_saved);
         assert!(summary.file_bytes_saved.abs_diff(0x1000) <= 256);
-        assert_eq!(read_at(&mut executable, range(0x2ffff, 0x30000)), [TEXT_BYTE]);
-        assert_eq!(read_at(&mut executable, range(0x31000, 0x31001)), [TEXT_BYTE]);
+        assert_eq!(
+            read_at(&mut executable, range(0x2ffff, 0x30000)),
+            [TEXT_BYTE]
+        );
+        assert_eq!(
+            read_at(&mut executable, range(0x31000, 0x31001)),
+            [TEXT_BYTE]
+        );
     }
 
     #[test]
@@ -804,7 +919,11 @@ mod tests {
             }),
         );
         let is_trap = |byte: &u8| *byte == X86_64_TRAP;
-        assert!(read_at(&mut executable, range(CUT_START, CUT_END)).iter().all(is_trap));
+        assert!(
+            read_at(&mut executable, range(CUT_START, CUT_END))
+                .iter()
+                .all(is_trap)
+        );
     }
 
     #[test]
@@ -819,8 +938,14 @@ mod tests {
         assert_words_trap(&read_at(&mut executable, range(CUT_START, 0x30000)));
         assert_words_trap(&read_at(&mut executable, range(0x50000, CUT_END)));
         assert_words_trap(&read_at(&mut executable, range(0x21004, 0x21010)));
-        assert_eq!(read_at(&mut executable, range(0x21002, 0x21004)), AARCH64_TRAP[2..]);
-        assert_eq!(read_at(&mut executable, range(0x21001, 0x21002)), [TEXT_BYTE]);
+        assert_eq!(
+            read_at(&mut executable, range(0x21002, 0x21004)),
+            AARCH64_TRAP[2..]
+        );
+        assert_eq!(
+            read_at(&mut executable, range(0x21001, 0x21002)),
+            [TEXT_BYTE]
+        );
     }
 
     #[test]
@@ -836,13 +961,27 @@ mod tests {
         assert!(summary.file_bytes_saved.abs_diff(summary.cut_bytes) <= 256);
 
         let is_text = |byte: &u8| *byte == TEXT_BYTE;
-        assert_eq!(read_at(&mut executable, range(0x4100, 0x4f00)), [RODATA_BYTE; 0xe00]);
-        assert!(read_at(&mut executable, range(CUT_START, 0x30000)).iter().all(is_text));
-        assert!(read_at(&mut executable, range(0x57000, CUT_END)).iter().all(is_text));
+        assert_eq!(
+            read_at(&mut executable, range(0x4100, 0x4f00)),
+            [RODATA_BYTE; 0xe00]
+        );
+        assert!(
+            read_at(&mut executable, range(CUT_START, 0x30000))
+                .iter()
+                .all(is_text)
+        );
+        assert!(
+            read_at(&mut executable, range(0x57000, CUT_END))
+                .iter()
+                .all(is_text)
+        );
 
         let records = read_records(&mut executable, TABLE_BYTES);
         assert_eq!(feature_at(&records, 0x4800), Some(named_feature().index()));
-        assert_eq!(feature_at(&records, CUT_START), Some(unused_feature().index()));
+        assert_eq!(
+            feature_at(&records, CUT_START),
+            Some(unused_feature().index())
+        );
     }
 
     #[test]
@@ -921,7 +1060,13 @@ mod tests {
     #[test]
     fn record_stops_at_size_limit() {
         let limit = u64::from(u32::MAX);
-        let ranges = [planned(0x4000, 0x4000 + limit + 1, false, false, named_feature())];
+        let ranges = [planned(
+            0x4000,
+            0x4000 + limit + 1,
+            false,
+            false,
+            named_feature(),
+        )];
         let records = collect_removed_ranges(&ranges, STATE_ADDRESS);
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].size, u32::MAX);
@@ -931,7 +1076,13 @@ mod tests {
     #[test]
     fn range_past_text_is_outside_image() {
         let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
-        let past_text = planned(TEXT_END - 0x1000, TEXT_END + 0x1000, true, false, named_feature());
+        let past_text = planned(
+            TEXT_END - 0x1000,
+            TEXT_END + 0x1000,
+            true,
+            false,
+            named_feature(),
+        );
         let result = apply(&mut executable, &create_plan(vec![past_text]));
         assert_internal(result, &TrimInternalError::RangeOutsideImage);
     }
@@ -972,9 +1123,18 @@ mod tests {
     fn range_after_builtin_modules_header_is_filled() {
         let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
         let builtins_end = BUILTINS_ADDRESS + BUILTINS_BYTES;
-        let body = planned(BUILTINS_HEADER_END, builtins_end, false, false, named_feature());
+        let body = planned(
+            BUILTINS_HEADER_END,
+            builtins_end,
+            false,
+            false,
+            named_feature(),
+        );
         apply(&mut executable, &create_plan(vec![body])).unwrap();
-        let header = read_at(&mut executable, range(BUILTINS_ADDRESS, BUILTINS_HEADER_END));
+        let header = read_at(
+            &mut executable,
+            range(BUILTINS_ADDRESS, BUILTINS_HEADER_END),
+        );
         assert_eq!(header, toy_builtins().bytes[..BUILTIN_MODULES_HEADER_SIZE]);
         let body = read_at(&mut executable, range(BUILTINS_HEADER_END, builtins_end));
         assert!(body.iter().all(|byte| *byte == 0));
@@ -991,7 +1151,10 @@ mod tests {
         (0..MODULE_TEXTS.len() as u32)
             .map(|id| {
                 let module = builtins.module(id).unwrap();
-                assert_eq!((module.name, module.url), (&b"name"[..], &b"builtin://name"[..]));
+                assert_eq!(
+                    (module.name, module.url),
+                    (&b"name"[..], &b"builtin://name"[..])
+                );
                 module.source.to_vec()
             })
             .collect()
@@ -1010,10 +1173,20 @@ mod tests {
         let second = toy_builtins().texts[1];
         let summary = apply(&mut executable, &create_plan(vec![module_text(second)])).unwrap();
         assert_eq!(summary.filled_bytes, second.len());
-        assert_eq!(read_module_texts(&mut executable), [MODULE_TEXTS[0], NO_TEXT, MODULE_TEXTS[2]]);
-        assert!(read_at(&mut executable, second).iter().all(|byte| *byte == 0));
+        assert_eq!(
+            read_module_texts(&mut executable),
+            [MODULE_TEXTS[0], NO_TEXT, MODULE_TEXTS[2]]
+        );
+        assert!(
+            read_at(&mut executable, second)
+                .iter()
+                .all(|byte| *byte == 0)
+        );
         let records = read_records(&mut executable, TABLE_BYTES);
-        assert_eq!(feature_at(&records, second.start), Some(named_feature().index()));
+        assert_eq!(
+            feature_at(&records, second.start),
+            Some(named_feature().index())
+        );
     }
 
     #[test]
@@ -1023,7 +1196,10 @@ mod tests {
         let middle = first.start + 8;
         let halves = [range(first.start, middle), range(middle, first.end)].map(module_text);
         apply(&mut executable, &create_plan(halves.to_vec())).unwrap();
-        assert_eq!(read_module_texts(&mut executable), [NO_TEXT, MODULE_TEXTS[1], MODULE_TEXTS[2]]);
+        assert_eq!(
+            read_module_texts(&mut executable),
+            [NO_TEXT, MODULE_TEXTS[1], MODULE_TEXTS[2]]
+        );
     }
 
     #[test]
@@ -1045,8 +1221,15 @@ mod tests {
         let first = toy_builtins().texts[0];
         let before = read_at(&mut executable, range(BUILTINS_ADDRESS, first.start));
         apply(&mut executable, &create_plan(vec![module_text(first)])).unwrap();
-        assert_eq!(read_at(&mut executable, range(BUILTINS_ADDRESS, first.start)), before);
-        assert!(read_at(&mut executable, first).iter().all(|byte| *byte == 0));
+        assert_eq!(
+            read_at(&mut executable, range(BUILTINS_ADDRESS, first.start)),
+            before
+        );
+        assert!(
+            read_at(&mut executable, first)
+                .iter()
+                .all(|byte| *byte == 0)
+        );
     }
 
     #[test]
@@ -1061,9 +1244,15 @@ mod tests {
         apply(&mut executable, &plan).unwrap();
         let records = read_records(&mut executable, TABLE_BYTES);
         assert!(records.is_sorted_by_key(|record| record.start));
-        assert_eq!(feature_at(&records, texts[0].start), Some(named_feature().index()));
+        assert_eq!(
+            feature_at(&records, texts[0].start),
+            Some(named_feature().index())
+        );
         assert_eq!(feature_at(&records, texts[1].start), None);
-        assert_eq!(feature_at(&records, texts[2].start), Some(named_feature().index()));
+        assert_eq!(
+            feature_at(&records, texts[2].start),
+            Some(named_feature().index())
+        );
         assert_eq!(feature_at(&records, 0x6100), Some(unused_feature().index()));
     }
 

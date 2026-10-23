@@ -126,7 +126,8 @@ impl ExternalBodies {
         for_each_mut(&mut tasks, in_parallel, &|task| {
             let slots = task.code.iter_mut().zip(task.bodies.iter_mut());
             for (function, (code, body)) in task.functions.iter_mut().zip(slots) {
-                let function = Arc::get_mut(function).expect("the link leaves each record to one owner");
+                let function =
+                    Arc::get_mut(function).expect("the link leaves each record to one owner");
                 *code = take(&mut function.body.code);
                 *body = ExternalFunctionBody {
                     code: code.as_ptr(),
@@ -145,7 +146,10 @@ impl ExternalBodies {
     }
 
     pub fn size_in_bytes(&self) -> usize {
-        self.bodies.iter().map(|body| body.word_count as usize * 4).sum()
+        self.bodies
+            .iter()
+            .map(|body| body.word_count as usize * 4)
+            .sum()
     }
 
     /// Valid while `self` is alive.

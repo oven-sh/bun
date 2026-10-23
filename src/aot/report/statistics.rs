@@ -12,10 +12,12 @@ fn statistic_line(id: StatisticId, value: u64) -> Vec<u8> {
 }
 
 fn collect_lines(value_of: impl Fn(StatisticId) -> u64, out: &mut Vec<ReportEntry>) {
-    let ids = StatisticId::ALL.into_iter().filter(|&id| id != StatisticId::None);
-    out.extend(ids.map(|id| {
-        ReportEntry::line(ExplainSet::STATISTICS, statistic_line(id, value_of(id)))
-    }));
+    let ids = StatisticId::ALL
+        .into_iter()
+        .filter(|&id| id != StatisticId::None);
+    out.extend(
+        ids.map(|id| ReportEntry::line(ExplainSet::STATISTICS, statistic_line(id, value_of(id)))),
+    );
 }
 
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {

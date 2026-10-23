@@ -17,8 +17,22 @@ async function run(cmd: string[], cwd: string) {
       "program.js": `try {\n  console.log(escape("a b"));\n} catch (error) {\n  console.log("caught", error.code);\n}\n`,
     });
     const folder = String(dir);
-    const build = [bunExe(), "build", "--compile", "--aot", "--trim", ...withoutFeatures([featureOf("escape")]), "program.js", "--outfile", "program"];
+    const build = [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--trim",
+      ...withoutFeatures([featureOf("escape")]),
+      "program.js",
+      "--outfile",
+      "program",
+    ];
     expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
-    expect(await run([join(folder, "program")], folder)).toEqual({ stdout: "caught ERR_FEATURE_REMOVED\n", stderr: "", exitCode: 0 });
+    expect(await run([join(folder, "program")], folder)).toEqual({
+      stdout: "caught ERR_FEATURE_REMOVED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   },
 );

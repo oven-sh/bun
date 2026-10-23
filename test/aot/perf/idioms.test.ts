@@ -43,15 +43,30 @@ const idioms = readdirSync(root, { recursive: true })
   .sort();
 
 const forms = ["typed", "untyped"] as const;
-const isWorse = (now: number, pin: number) => (now > pin * 1.1 && now > pin + 20) || (now > pin * 1.25 && now > pin + 4);
+const isWorse = (now: number, pin: number) =>
+  (now > pin * 1.1 && now > pin + 20) || (now > pin * 1.25 && now > pin + 4);
 
 function withBest(now: Forms, before: Forms | undefined): Forms {
-  const best = { typed: Math.min(now.typed, before?.best?.typed ?? before?.typed ?? Infinity), untyped: Math.min(now.untyped, before?.best?.untyped ?? before?.untyped ?? Infinity) };
-  return { typed: now.typed, untyped: now.untyped, jit: now.jit, best: best.typed < now.typed || best.untyped < now.untyped ? best : undefined };
+  const best = {
+    typed: Math.min(now.typed, before?.best?.typed ?? before?.typed ?? Infinity),
+    untyped: Math.min(now.untyped, before?.best?.untyped ?? before?.untyped ?? Infinity),
+  };
+  return {
+    typed: now.typed,
+    untyped: now.untyped,
+    jit: now.jit,
+    best: best.typed < now.typed || best.untyped < now.untyped ? best : undefined,
+  };
 }
 
 const skipped =
-  isDebug || isASAN ? "a debug or ASAN build counts other instructions" : isWindows ? "it counts with perf_event_open or /usr/bin/time -l" : !existsSync(pinsPath) && mode !== "update" ? `there is no ${pinsPath}` : undefined;
+  isDebug || isASAN
+    ? "a debug or ASAN build counts other instructions"
+    : isWindows
+      ? "it counts with perf_event_open or /usr/bin/time -l"
+      : !existsSync(pinsPath) && mode !== "update"
+        ? `there is no ${pinsPath}`
+        : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/idioms.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
@@ -64,18 +79,36 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
 
   async function instructions(cmd: string[], n: number) {
     // With concurrent compilation, how much the JIT's threads get done during a short and a long run is a matter of chance.
-    const run = await measureCommand(root, cmd, 300_000, { ...bunEnv, ...withSteadyCollections, AOT_PERF_TURNS: String(n), BUN_JSC_useConcurrentJIT: "0" });
+    const run = await measureCommand(root, cmd, 300_000, {
+      ...bunEnv,
+      ...withSteadyCollections,
+      AOT_PERF_TURNS: String(n),
+      BUN_JSC_useConcurrentJIT: "0",
+    });
     return { count: run.instructions, printed: run.stdout };
   }
   async function aTurn(cmd: string[], n: number) {
     const short = await instructions(cmd, n >> 2);
     const long = await instructions(cmd, n);
-    return { instructions: short.count === undefined || long.count === undefined ? undefined : Math.round(((long.count - short.count) / (n - (n >> 2))) * 10) / 10, printed: long.printed };
+    return {
+      instructions:
+        short.count === undefined || long.count === undefined
+          ? undefined
+          : Math.round(((long.count - short.count) / (n - (n >> 2))) * 10) / 10,
+      printed: long.printed,
+    };
   }
   async function compiled(source: string, n: number) {
     const executable = join(folder, source.replaceAll(/[^a-z0-9]+/gi, "-"));
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, join(root, source), "--outfile", executable], root, bunEnv);
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+    const build = await spawned(
+      [bunExe(), "build", "--compile", "--aot", ...carrier, join(root, source), "--outfile", executable],
+      root,
+      bunEnv,
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+      stderr: expect.not.stringMatching(/^error\b/m),
+      exitCode: 0,
+    });
     try {
       return await aTurn([executable], n);
     } finally {
@@ -87,7 +120,8 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
   for (const name of idioms) {
     for (const form of forms) {
       const { best, [form]: pin } = pins[name] ?? {};
-      if (best && pin !== undefined && isWorse(pin, best[form])) test.todo(`${name}, ${form}: ${pin} instructions an iteration; it was ${best[form]}`);
+      if (best && pin !== undefined && isWorse(pin, best[form]))
+        test.todo(`${name}, ${form}: ${pin} instructions an iteration; it was ${best[form]}`);
     }
   }
   for (const name of idioms) {
@@ -98,18 +132,34 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
           const n = turns[name];
           const typed = await compiled(name + ".ts", n);
           const untyped = await compiled(name + ".js", n);
-          const plain = mode === "update" ? await aTurn([bunExe(), "run", join(root, name + ".js")], n) : await instructions([bunExe(), "run", join(root, name + ".js")], n);
+          const plain =
+            mode === "update"
+              ? await aTurn([bunExe(), "run", join(root, name + ".js")], n)
+              : await instructions([bunExe(), "run", join(root, name + ".js")], n);
           // All three forms did the same work.
           expect([typed.printed, untyped.printed]).toEqual([plain.printed, plain.printed]);
-          if (typed.instructions === undefined || untyped.instructions === undefined) return void console.error(`SKIPPED: ${name}: instructions cannot be counted here`);
+          if (typed.instructions === undefined || untyped.instructions === undefined)
+            return void console.error(`SKIPPED: ${name}: instructions cannot be counted here`);
           const now: Forms = { typed: typed.instructions, untyped: untyped.instructions };
           const pin = pins[name];
           console.error(`IDIOM ${name}\t${now.typed}\t${now.untyped}\t| the pin\t${pin?.typed}\t${pin?.untyped}`);
-          if (mode === "update") return void (pins[name] = withBest({ ...now, jit: "instructions" in plain ? plain.instructions : undefined }, pin));
+          if (mode === "update")
+            return void (pins[name] = withBest(
+              { ...now, jit: "instructions" in plain ? plain.instructions : undefined },
+              pin,
+            ));
           expect(pin).toBeDefined();
-          if (mode === "lower") pins[name] = withBest({ ...pin, typed: Math.min(pin.typed, now.typed), untyped: Math.min(pin.untyped, now.untyped) }, pin);
+          if (mode === "lower")
+            pins[name] = withBest(
+              { ...pin, typed: Math.min(pin.typed, now.typed), untyped: Math.min(pin.untyped, now.untyped) },
+              pin,
+            );
           const worse = forms.filter(form => isWorse(now[form], pin[form]));
-          expect({ worse, now, pin: { typed: pin.typed, untyped: pin.untyped } }).toEqual({ worse: [], now, pin: { typed: pin.typed, untyped: pin.untyped } });
+          expect({ worse, now, pin: { typed: pin.typed, untyped: pin.untyped } }).toEqual({
+            worse: [],
+            now,
+            pin: { typed: pin.typed, untyped: pin.untyped },
+          });
         }),
       900_000,
     );

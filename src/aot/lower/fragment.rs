@@ -13,13 +13,12 @@ use super::layouts::ObjectTypeKey;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, LayoutFlags, RuntimeFunctionEntry,
-    SourcePositions,
-    TypeSite, Variable,
+    SourcePositions, TypeSite, Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, FunctionKey, Id, LayoutId, LayoutKey,
-    ModuleFailureId, ModuleId, PropertyKeyId, PropertyKeyTable, Reference, StringTable,
-    TypeSiteId, TypeTable, VariableId, VariableKey,
+    ModuleFailureId, ModuleId, PropertyKeyId, PropertyKeyTable, Reference, StringTable, TypeSiteId,
+    TypeTable, VariableId, VariableKey,
 };
 use crate::modules::{self, ModuleRef};
 
@@ -121,7 +120,10 @@ fn set_mark(marks: &mut Vec<bool>, id: impl Id) {
 }
 
 fn collect_marked<I: Id>(marks: &[bool]) -> Vec<I> {
-    let marked = marks.iter().enumerate().filter(|&(_, &is_marked)| is_marked);
+    let marked = marks
+        .iter()
+        .enumerate()
+        .filter(|&(_, &is_marked)| is_marked);
     marked.map(|(index, _)| I::new(index)).collect()
 }
 
@@ -284,13 +286,19 @@ impl FragmentBuilder {
             is_function_type(self.function_key(id))
                 || self.function_key(id).home_file() == self.file
         );
-        debug_assert!(function.function_types.is_empty(), "function types are edges until link");
+        debug_assert!(
+            function.function_types.is_empty(),
+            "function types are edges until link"
+        );
         self.function_keys.mark_defined(id);
         self.functions.push((id, function));
     }
 
     pub(crate) fn define_layout(&mut self, id: LayoutId, layout: Layout) {
-        debug_assert!(layout.supertypes.is_empty(), "supertypes are edges until link");
+        debug_assert!(
+            layout.supertypes.is_empty(),
+            "supertypes are edges until link"
+        );
         self.layout_keys.mark_defined(id);
         self.layouts.push((id, layout));
     }
@@ -325,7 +333,9 @@ impl FragmentBuilder {
     }
 
     pub(crate) fn is_allocated(&self, layout: LayoutId) -> bool {
-        self.is_layout_allocated.get(layout.index()).is_some_and(|&is_marked| is_marked)
+        self.is_layout_allocated
+            .get(layout.index())
+            .is_some_and(|&is_marked| is_marked)
     }
 
     pub(crate) fn note_allocation(&mut self, layout: LayoutId) {
@@ -409,14 +419,22 @@ impl FragmentBuilder {
     }
 
     pub(crate) fn finish(mut self, module: ModuleFragment) -> Fragment {
-        debug_assert!(module.body.is_none_or(|body| self.function_keys.is_declared(body)));
+        debug_assert!(
+            module
+                .body
+                .is_none_or(|body| self.function_keys.is_declared(body))
+        );
         for (id, layout) in &mut self.layouts {
             let marks = &self.is_layout_written_under_dictionary_type;
             if marks.get(id.index()).is_some_and(|&is_marked| is_marked) {
                 layout.flags |= LayoutFlags::IS_WRITTEN_UNDER_DICTIONARY_TYPE;
             }
         }
-        debug_assert!(module.data.is_none_or(|data| data.index() < self.data.len()));
+        debug_assert!(
+            module
+                .data
+                .is_none_or(|data| data.index() < self.data.len())
+        );
         Fragment {
             file: self.file,
             is_checked: self.is_checked,
@@ -424,7 +442,9 @@ impl FragmentBuilder {
             property_keys: self.property_keys,
             types: self.types,
             function_keys: self.function_keys.keys,
-            code_layout_count: self.code_layout_count.unwrap_or(self.layout_keys.keys.len()),
+            code_layout_count: self
+                .code_layout_count
+                .unwrap_or(self.layout_keys.keys.len()),
             layout_keys: self.layout_keys.keys,
             variable_keys: self.variable_keys.keys,
             module_keys: self.module_keys.keys,

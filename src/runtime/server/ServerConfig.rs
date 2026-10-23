@@ -9,8 +9,8 @@ use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
-use bun_url::URL;
 use bun_removable_features::{Feature, is_removed};
+use bun_url::URL;
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;

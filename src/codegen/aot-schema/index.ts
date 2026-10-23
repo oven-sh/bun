@@ -60,8 +60,10 @@ function updateFolder(directory: string, files: readonly OutputFile[], check: bo
 
 function updateOutputs(options: Options, loaded: LoadedSchema): string[] {
   const problems: string[] = [];
-  if (options.engineOut !== undefined) problems.push(...updateFolder(options.engineOut, engineOutputs(loaded), options.check));
-  if (options.rustOut !== undefined) problems.push(...updateFolder(options.rustOut, rustOutputs(loaded), options.check));
+  if (options.engineOut !== undefined)
+    problems.push(...updateFolder(options.engineOut, engineOutputs(loaded), options.check));
+  if (options.rustOut !== undefined)
+    problems.push(...updateFolder(options.rustOut, rustOutputs(loaded), options.check));
   if (problems.length > 0) problems.push("run src/codegen/aot-schema/index.ts without --check and check the result in");
   return problems;
 }

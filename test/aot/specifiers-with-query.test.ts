@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, test } from "./supported";
 
 // `import "./mod.mjs?two"`. A specifier with a query names a module of its own: the file is evaluated again, with its own
 // variables, functions and classes, while the modules it imports are shared with the first.
@@ -87,10 +87,17 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
   test.todo("bun run --aot interprets nothing and prints what bun run prints", async () => {
-    using dir = tempDir("specifiers-with-query", { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "allowJs": true, "types": [] } }` });
+    using dir = tempDir("specifiers-with-query", {
+      ...files,
+      [entry]: programs[entry],
+      "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "allowJs": true, "types": [] } }`,
+    });
     const plain = await spawned([bunExe(), "run", entry], String(dir));
     expect(plain.exitCode).toBe(0);
-    const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), {
+      ...bunEnv,
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+    });
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });

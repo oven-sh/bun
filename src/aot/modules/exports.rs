@@ -9,7 +9,7 @@ use self::commonjs::{CommonJsNames, resolve_commonjs_names};
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ModuleExport, RequiredName};
 use super::code_unit_order::compare_code_units;
-use super::commonjs_exports::{CommonJsTexts, CommonJsImport};
+use super::commonjs_exports::{CommonJsImport, CommonJsTexts};
 use super::failures::{FailureOrder, ModuleFailure, ModuleFailureKind, PendingFailure};
 use super::interop::{ImportPhase, ModuleKind};
 use super::module_set::ModuleSet;
@@ -31,11 +31,26 @@ pub(super) enum Resolution {
         module: ModuleRef,
         phase: ImportPhase,
     },
-    RuntimeMember { module: RuntimeModule, name: Atom },
-    Synthetic { module: ModuleRef, name: Atom },
-    LiveName { module: ModuleRef, name: Atom },
-    DynamicStar { module: FileId, name: Atom },
-    Unloadable { importer: FileId, site: u32 },
+    RuntimeMember {
+        module: RuntimeModule,
+        name: Atom,
+    },
+    Synthetic {
+        module: ModuleRef,
+        name: Atom,
+    },
+    LiveName {
+        module: ModuleRef,
+        name: Atom,
+    },
+    DynamicStar {
+        module: FileId,
+        name: Atom,
+    },
+    Unloadable {
+        importer: FileId,
+        site: u32,
+    },
     NotFound,
     Ambiguous,
 }
@@ -676,7 +691,12 @@ pub(super) fn resolve_exports(
     for (table, module) in nodes.tables.iter().zip(entries) {
         let own_results = &results[table.nodes.start as usize..];
         for (&(_, entry), &(_, resolved)) in module.own.iter().zip(own_results) {
-            failures.extend(find_link_failure(scans, module.file, entry, resolved.resolution));
+            failures.extend(find_link_failure(
+                scans,
+                module.file,
+                entry,
+                resolved.resolution,
+            ));
         }
     }
     let mut tables = ExportTables {
@@ -710,10 +730,15 @@ pub(super) fn resolve_exports(
             absent_names.push((written.imported, written.order));
         }
     }
-    tables.failures.sort_by_key(|pending| (pending.failure.importer, pending.order));
+    tables
+        .failures
+        .sort_by_key(|pending| (pending.failure.importer, pending.order));
     absent_names.sort_by_key(|&(imported, order)| (imported.importer, order));
     tables.absent_commonjs_names = absent_names;
-    tables.commonjs_imports = commonjs_imports.iter().map(|written| written.imported).collect();
+    tables.commonjs_imports = commonjs_imports
+        .iter()
+        .map(|written| written.imported)
+        .collect();
     commonjs_namespace_loads.sort_unstable();
     commonjs_namespace_loads.dedup();
     tables.commonjs_namespace_loads = commonjs_namespace_loads;
@@ -770,7 +795,9 @@ impl ExportTables {
     ) -> ResolvedName {
         match modules.table_file(target) {
             Some(file) => self.resolve(modules, file, name),
-            None => self.follow(ResolvedName::new(captured_resolution(modules, target, name))),
+            None => self.follow(ResolvedName::new(captured_resolution(
+                modules, target, name,
+            ))),
         }
     }
 
@@ -790,10 +817,12 @@ impl ExportTables {
 
     /// The modules whose captured `default` an ES module exports, under whatever name and through however many files.
     pub(super) fn modules_whose_default_is_exported(&self) -> impl Iterator<Item = ModuleRef> + '_ {
-        self.results.iter().filter_map(|&(_, resolved)| match resolved.resolution {
-            Resolution::Synthetic { module, name } if name == known::default => Some(module),
-            _ => None,
-        })
+        self.results
+            .iter()
+            .filter_map(|&(_, resolved)| match resolved.resolution {
+                Resolution::Synthetic { module, name } if name == known::default => Some(module),
+                _ => None,
+            })
     }
 
     pub(super) fn absent_commonjs_names(&self) -> &[(CommonJsImport, FailureOrder)] {

@@ -193,7 +193,10 @@ pub(crate) const MEMBER_KEY_IMPORTS: &[(&str, bool)] = &[
         r#"import { k } from "m"; abstract class A { abstract [k]: number; }"#,
         true,
     ),
-    (r#"import { k } from "m"; class A { declare [k]: number; }"#, true),
+    (
+        r#"import { k } from "m"; class A { declare [k]: number; }"#,
+        true,
+    ),
     (r#"import { k } from "m"; class A { [k] = 1; }"#, false),
     (r#"import { K } from "m"; declare enum E { A = K.B }"#, true),
     (r#"import { K } from "m"; enum E { A = K.B }"#, false),

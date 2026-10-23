@@ -1,7 +1,8 @@
 //! What ES modules see of a CommonJS file.
 
 use super::own_text::Form;
-use super::{CommonJsExports, CommonJsInput, CommonJsImport, Target};
+use super::{CommonJsExports, CommonJsImport, CommonJsInput, Target};
+use crate::ir::parallel::for_each_mut;
 use crate::modules::bindings::{ExportBinding, ImportBinding, ModuleExport, SyntheticExportId};
 use crate::modules::code_unit_order::compare_code_units;
 use crate::modules::exports::ExportTables;
@@ -12,7 +13,6 @@ use crate::modules::module_set::ModuleSet;
 use crate::modules::plan::Shape;
 use crate::modules::reached_targets::ReachedTargets;
 use crate::modules::requests::Scans;
-use crate::ir::parallel::for_each_mut;
 use crate::modules::{ModuleRef, collect_pending_failures};
 use bun_sema::atom::{Atom, known};
 use bun_sema::program::FileId;
@@ -80,10 +80,16 @@ pub(in crate::modules) fn collect_seen_namespaces(
     for file_imports in imports {
         let bindings = file_imports.bindings.iter();
         let namespaces = bindings.filter_map(|&(_, binding)| match binding {
-            PendingBinding::Bound(ImportBinding::Namespace { module, .. }) => find_commonjs_file(modules, module),
+            PendingBinding::Bound(ImportBinding::Namespace { module, .. }) => {
+                find_commonjs_file(modules, module)
+            }
             _ => None,
         });
-        let is_value = |file: &FileId| file_imports.namespace_values.contains(&ModuleRef::File(*file));
+        let is_value = |file: &FileId| {
+            file_imports
+                .namespace_values
+                .contains(&ModuleRef::File(*file))
+        };
         seen.extend(namespaces.filter(is_value));
     }
     seen.sort_unstable();
@@ -115,7 +121,8 @@ pub(in crate::modules) fn collect_members_of_namespaces(
         }
         // What JSX imports without a statement.
         for (&(_, binding), &exporter) in file_imports.jsx.iter().zip(&file_imports.jsx_exporters) {
-            let (PendingBinding::Synthetic { module, name }, Some(exporter)) = (binding, exporter) else {
+            let (PendingBinding::Synthetic { module, name }, Some(exporter)) = (binding, exporter)
+            else {
                 continue;
             };
             let exporter = find_commonjs_file(modules, exporter);
@@ -130,9 +137,16 @@ pub(in crate::modules) fn collect_members_of_namespaces(
 }
 
 // By ES module: the ES modules that it imports, in the order of its text.
-fn collect_imports_between_es_modules(scans: &Scans, modules: &ModuleSet, file_count: usize) -> Vec<Vec<FileId>> {
-    let is_es_module =
-        |file: FileId| scans.find(file).is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText);
+fn collect_imports_between_es_modules(
+    scans: &Scans,
+    modules: &ModuleSet,
+    file_count: usize,
+) -> Vec<Vec<FileId>> {
+    let is_es_module = |file: FileId| {
+        scans
+            .find(file)
+            .is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText)
+    };
     let mut imports = Vec::new();
     imports.resize_with(file_count, Vec::new);
     for &file in &modules.compiled_files {
@@ -150,7 +164,11 @@ fn collect_imports_between_es_modules(scans: &Scans, modules: &ModuleSet, file_c
 }
 
 // A module is linked behind everything that it imports. Of the modules that are linked with `root`, the targets.
-fn list_targets_in_link_order(root: FileId, imports: &[Vec<FileId>], below: &ReachedTargets) -> Vec<FileId> {
+fn list_targets_in_link_order(
+    root: FileId,
+    imports: &[Vec<FileId>],
+    below: &ReachedTargets,
+) -> Vec<FileId> {
     let mut order = Vec::new();
     let mut remaining = below.start_walk(root);
     remaining.take(below, root);
@@ -215,9 +233,13 @@ impl Faces {
         roots.retain(|&root| importers_below.leads_to_target(root) && (input.is_prefix_root)(root));
         roots.sort_unstable();
         faces.linked_importers = roots.into_iter().map(|root| (root, Vec::new())).collect();
-        for_each_mut(&mut faces.linked_importers, input.bind.in_parallel, &|(root, linked)| {
-            *linked = list_targets_in_link_order(*root, &es_imports, &importers_below);
-        });
+        for_each_mut(
+            &mut faces.linked_importers,
+            input.bind.in_parallel,
+            &|(root, linked)| {
+                *linked = list_targets_in_link_order(*root, &es_imports, &importers_below);
+            },
+        );
         faces.absent_names = absent_names;
         faces
     }
@@ -280,7 +302,12 @@ impl Faces {
         }
     }
 
-    fn export_of(&mut self, exports: &CommonJsExports, file: FileId, name: Atom) -> Option<ModuleExport> {
+    fn export_of(
+        &mut self,
+        exports: &CommonJsExports,
+        file: FileId,
+        name: Atom,
+    ) -> Option<ModuleExport> {
         let module = ModuleRef::File(file);
         let target = exports.targets.get(&(module, name)).copied();
         let binding = match target.unwrap_or(Target::Name(module, name)) {
@@ -305,16 +332,23 @@ impl Faces {
 
     fn add_seen_namespace(&mut self, exports: &CommonJsExports, file: FileId) {
         let module = ModuleRef::File(file);
-        let is_said_by_text = exports.shape(module) == Shape::Names && exports.marker(module).is_some();
-        let names = self.names_of_namespaces.get(&file).filter(|_| is_said_by_text).cloned();
+        let is_said_by_text =
+            exports.shape(module) == Shape::Names && exports.marker(module).is_some();
+        let names = self
+            .names_of_namespaces
+            .get(&file)
+            .filter(|_| is_said_by_text)
+            .cloned();
         let Some(names) = names else {
             let face = self.faces.entry(file).or_default();
             face.captures = true;
             face.exports.clear();
             return;
         };
-        let table: Vec<ModuleExport> =
-            names.into_iter().filter_map(|name| self.export_of(exports, file, name)).collect();
+        let table: Vec<ModuleExport> = names
+            .into_iter()
+            .filter_map(|name| self.export_of(exports, file, name))
+            .collect();
         self.faces.entry(file).or_default().exports = table;
     }
 
@@ -329,7 +363,9 @@ impl Faces {
             for &importer in importers {
                 let names = &self.absent_names;
                 let start = names.partition_point(|absent| absent.imported.importer < importer);
-                let of_importer = names[start..].iter().take_while(|absent| absent.imported.importer == importer);
+                let of_importer = names[start..]
+                    .iter()
+                    .take_while(|absent| absent.imported.importer == importer);
                 copies.extend(of_importer.filter_map(id_of));
             }
             if !copies.is_empty() {
@@ -341,7 +377,8 @@ impl Faces {
     /// Which files have a face, what it copies, and which graphs of imports have a check.
     pub(super) fn decide(&mut self, exports: &CommonJsExports) {
         let written = self.written_imports.iter().filter_map(|imported| {
-            let (owner, name) = exports.owner_of(ModuleRef::File(imported.exporter), imported.name)?;
+            let (owner, name) =
+                exports.owner_of(ModuleRef::File(imported.exporter), imported.name)?;
             Some(ImportedVariable {
                 exporter: imported.exporter,
                 owner,
@@ -351,7 +388,10 @@ impl Faces {
         self.imported_variables.extend(written);
         for position in 0..self.imported_variables.len() {
             let imported = self.imported_variables[position];
-            self.imports_by_owner.entry(imported.owner).or_default().push(position as u32);
+            self.imports_by_owner
+                .entry(imported.owner)
+                .or_default()
+                .push(position as u32);
             self.add_imported_variable(exports, imported);
         }
         for position in 0..self.seen_namespaces.len() {
@@ -366,7 +406,11 @@ impl Faces {
         if !self.is_decided {
             return;
         }
-        let positions = self.imports_by_owner.get(&module).cloned().unwrap_or_default();
+        let positions = self
+            .imports_by_owner
+            .get(&module)
+            .cloned()
+            .unwrap_or_default();
         for position in positions {
             self.add_imported_variable(exports, self.imported_variables[position as usize]);
         }

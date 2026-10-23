@@ -47,7 +47,9 @@ impl LeftOutBodies {
     }
 
     fn of_file(&self, file: FileId) -> &[FunctionRef] {
-        let first = self.functions.partition_point(|function| function.file < file);
+        let first = self
+            .functions
+            .partition_point(|function| function.file < file);
         let count = self.functions[first..].partition_point(|function| function.file == file);
         &self.functions[first..first + count]
     }
@@ -76,7 +78,10 @@ impl Checker<'_, '_> {
     // The decorators of a parameter, and the parameter types that the metadata of a decorated member or class holds.
     fn may_have_parameters_evaluated_with_class(&self, file: FileId, function: FnId) -> bool {
         !self.hir(file).decorators.is_empty()
-            && matches!(self.bound(file).fns[function.idx()].owner, FnOwner::Member(_))
+            && matches!(
+                self.bound(file).fns[function.idx()].owner,
+                FnOwner::Member(_)
+            )
     }
 
     // Decorators and a computed name are evaluated with the class, so they stay outside.
@@ -94,9 +99,13 @@ impl Checker<'_, '_> {
     pub(in crate::check) fn find_left_out_ranges(&mut self, file: FileId) {
         let mut ranges = std::mem::take(&mut self.left_out.ranges);
         ranges.clear();
-        let functions = self.left_out.bodies.map_or(&[][..], |bodies| bodies.of_file(file));
+        let functions = self
+            .left_out
+            .bodies
+            .map_or(&[][..], |bodies| bodies.of_file(file));
         let functions = functions.iter().map(|it| it.function);
-        let functions = functions.filter(|&it| !self.may_have_parameters_evaluated_with_class(file, it));
+        let functions =
+            functions.filter(|&it| !self.may_have_parameters_evaluated_with_class(file, it));
         ranges.extend(functions.map(|it| self.left_out_range(file, it)));
         ranges.shared_sort_unstable();
         let mut end_of_outermost = 0;
@@ -136,7 +145,12 @@ mod tests {
 
     #[test]
     fn contains_what_it_was_made_of() {
-        let bodies = LeftOutBodies::new([function(2, 1), function(0, 7), function(2, 0), function(2, 1)]);
+        let bodies = LeftOutBodies::new([
+            function(2, 1),
+            function(0, 7),
+            function(2, 0),
+            function(2, 1),
+        ]);
         assert!(!bodies.is_empty());
         assert!(bodies.contains(function(0, 7)));
         assert!(bodies.contains(function(2, 0)));
@@ -146,7 +160,12 @@ mod tests {
 
     #[test]
     fn lists_functions_of_one_file() {
-        let bodies = LeftOutBodies::new([function(2, 1), function(0, 7), function(2, 0), function(3, 4)]);
+        let bodies = LeftOutBodies::new([
+            function(2, 1),
+            function(0, 7),
+            function(2, 0),
+            function(3, 4),
+        ]);
         assert_eq!(bodies.of_file(FileId(2)), [function(2, 0), function(2, 1)]);
         assert_eq!(bodies.of_file(FileId(1)), []);
         assert_eq!(bodies.of_file(FileId(4)), []);
@@ -154,7 +173,8 @@ mod tests {
 
     #[test]
     fn contains_files_it_was_given() {
-        let bodies = LeftOutBodies::new([function(2, 1)]).with_files([FileId(5), FileId(3), FileId(5)]);
+        let bodies =
+            LeftOutBodies::new([function(2, 1)]).with_files([FileId(5), FileId(3), FileId(5)]);
         assert!(bodies.contains_file(FileId(3)));
         assert!(bodies.contains_file(FileId(5)));
         assert!(!bodies.contains_file(FileId(2)));

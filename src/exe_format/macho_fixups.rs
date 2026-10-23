@@ -94,7 +94,7 @@ fn read_fixups<'a>(
     let symbols_offset = header.symbols_offset as usize;
     if header.fixups_version != 0
         || starts_offset < header_size
-        || starts_offset % size_of::<u32>() != 0
+        || !starts_offset.is_multiple_of(size_of::<u32>())
         || !fits_within(starts_offset, size_of::<u32>(), imports_offset)
         || imports_offset > symbols_offset
         || symbols_offset > old.len()
@@ -112,7 +112,12 @@ fn read_fixups<'a>(
 
     let table = &starts_area[table_offset..][..table_size];
     let mut segments = Vec::with_capacity(seg_count);
-    for (entry, segment) in table.chunks_exact(size_of::<u32>()).zip(old_segments) {
+    for (entry, segment) in table
+        .as_chunks::<{ size_of::<u32>() }>()
+        .0
+        .iter()
+        .zip(old_segments)
+    {
         let seg_info_offset = read_struct::<u32>(entry) as usize;
         if seg_info_offset == 0 {
             segments.push(None);
@@ -121,7 +126,12 @@ fn read_fixups<'a>(
         let at = starts_offset
             .checked_add(seg_info_offset)
             .ok_or(ImageError::UnsupportedFixups)?;
-        segments.push(Some(read_segment_starts(starts_area, at, *segment, image_base)?));
+        segments.push(Some(read_segment_starts(
+            starts_area,
+            at,
+            *segment,
+            image_base,
+        )?));
     }
 
     Ok(OldFixups {
@@ -157,12 +167,17 @@ fn read_segment_starts(
 
     let page_starts = &starts_area[page_starts_at..][..page_starts_size];
     let are_valid = page_starts
-        .chunks_exact(PAGE_START_SIZE)
+        .as_chunks::<PAGE_START_SIZE>()
+        .0
+        .iter()
         .all(|start| is_valid_page_start(read_struct(start), record.page_size));
     if !are_valid {
         return Err(ImageError::UnsupportedFixups);
     }
-    Ok(SegmentStarts { record, page_starts })
+    Ok(SegmentStarts {
+        record,
+        page_starts,
+    })
 }
 
 fn is_valid_page_start(start: u16, page_size: u16) -> bool {
@@ -195,7 +210,7 @@ fn find_piece_page_starts<'a>(
 ) -> Result<&'a [u8], ImageError> {
     let page_size = u64::from(starts.record.page_size);
     let piece_offset = piece.start - segment.start;
-    if piece_offset % page_size != 0 {
+    if !piece_offset.is_multiple_of(page_size) {
         return Err(ImageError::CutNotAligned);
     }
     let first = piece_offset / page_size;
@@ -209,7 +224,9 @@ fn find_piece_page_starts<'a>(
     let covered_end = PAGE_START_SIZE * last as usize;
     let covered = &starts.page_starts[covered_start..covered_end];
     let used_pages = covered
-        .chunks_exact(PAGE_START_SIZE)
+        .as_chunks::<PAGE_START_SIZE>()
+        .0
+        .iter()
         .rposition(|start| read_struct::<u16>(start) != DYLD_CHAINED_PTR_START_NONE)
         .map_or(0, |last_used| last_used + 1);
     Ok(&covered[..PAGE_START_SIZE * used_pages])
@@ -361,7 +378,10 @@ mod tests {
         segments
             .iter()
             .enumerate()
-            .map(|(old_index, addresses)| SegmentPiece { old_index, addresses: *addresses })
+            .map(|(old_index, addresses)| SegmentPiece {
+                old_index,
+                addresses: *addresses,
+            })
             .collect()
     }
 
@@ -397,7 +417,11 @@ mod tests {
     #[test]
     fn identity() {
         let page_starts: &[u16] = &[0, NONE, 8, 16, NONE, 24, 0, 32];
-        let old = blob(&[None, None, Some((0x4000, page_starts)), None], IMPORTS, SYMBOLS);
+        let old = blob(
+            &[None, None, Some((0x4000, page_starts)), None],
+            IMPORTS,
+            SYMBOLS,
+        );
         let new = rebuild_whole(&old, 4).unwrap();
 
         assert_eq!(starts_of(&new), starts_of(&old));
@@ -421,7 +445,11 @@ mod tests {
     #[test]
     fn split_takes_page_starts_of_each_piece() {
         let page_starts: &[u16] = &[0, NONE, 8, 16, NONE, 24, NONE, NONE];
-        let old = blob(&[None, None, Some((0x4000, page_starts)), None], IMPORTS, SYMBOLS);
+        let old = blob(
+            &[None, None, Some((0x4000, page_starts)), None],
+            IMPORTS,
+            SYMBOLS,
+        );
         let pieces = [
             piece(0, 0, SEGMENT_SPAN),
             piece(1, 0, SEGMENT_SPAN),
@@ -490,7 +518,10 @@ mod tests {
         let new = rebuild(&old, 1, &pieces).unwrap();
         assert_eq!(
             starts_of(&new),
-            vec![Some((0, vec![0, 8])), Some((0x4000, vec![NONE, 16, 24, 32]))]
+            vec![
+                Some((0, vec![0, 8])),
+                Some((0x4000, vec![NONE, 16, 24, 32]))
+            ]
         );
     }
 
@@ -508,7 +539,10 @@ mod tests {
     #[test]
     fn rejects_short_blob() {
         let old = one_segment_blob(0x4000, &[0]);
-        assert_eq!(rebuild_whole(&old[..27], 1), Err(ImageError::UnsupportedFixups));
+        assert_eq!(
+            rebuild_whole(&old[..27], 1),
+            Err(ImageError::UnsupportedFixups)
+        );
     }
 
     #[test]
@@ -604,9 +638,21 @@ mod tests {
         let overlapping = [piece(0, 0, 2 * PAGE), piece(0, PAGE, 3 * PAGE)];
         let unknown_segment = [piece(1, 0, PAGE)];
         let inverted = [piece(0, PAGE, 0)];
-        assert_eq!(rebuild(&old, 1, &outside), Err(ImageError::MalformedHeaders));
-        assert_eq!(rebuild(&old, 1, &overlapping), Err(ImageError::MalformedHeaders));
-        assert_eq!(rebuild(&old, 1, &unknown_segment), Err(ImageError::MalformedHeaders));
-        assert_eq!(rebuild(&old, 1, &inverted), Err(ImageError::MalformedHeaders));
+        assert_eq!(
+            rebuild(&old, 1, &outside),
+            Err(ImageError::MalformedHeaders)
+        );
+        assert_eq!(
+            rebuild(&old, 1, &overlapping),
+            Err(ImageError::MalformedHeaders)
+        );
+        assert_eq!(
+            rebuild(&old, 1, &unknown_segment),
+            Err(ImageError::MalformedHeaders)
+        );
+        assert_eq!(
+            rebuild(&old, 1, &inverted),
+            Err(ImageError::MalformedHeaders)
+        );
     }
 }

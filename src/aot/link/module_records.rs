@@ -3,9 +3,7 @@ mod tests;
 
 use super::entries::build_entries;
 use super::keys::MergedKeys;
-use super::module_marks::{
-    exported_variable_key, holds_exports_in_variable, is_filled_by_loader,
-};
+use super::module_marks::{exported_variable_key, holds_exports_in_variable, is_filled_by_loader};
 use super::program_keys::{ProgramFunctionKey, ProgramModule, ProgramVariableKey};
 use super::state::{
     Definitions, ExportWriter, ModuleRecords, ModuleTable, Numbering, VariableDefinition,
@@ -53,7 +51,9 @@ impl RecordInput<'_, '_> {
     }
 
     fn body_of(&self, module: ProgramModule) -> FunctionId {
-        let key = module.body_key().expect("the fragment names the body of a file");
+        let key = module
+            .body_key()
+            .expect("the fragment names the body of a file");
         let merged = self.functions.find(&key);
         let merged = merged.expect("the mark reports a record without a body");
         self.numbering.functions[merged as usize].expect("link dropped the body of a record")
@@ -315,10 +315,14 @@ impl RecordBuilder<'_, '_, '_> {
     ) -> generated::Module {
         let input = self.input;
         let LinkProject { graph, sources, .. } = *input.projects.get(file.project);
-        let (project, own) = module.in_own_project().expect("the record belongs to a file");
+        let (project, own) = module
+            .in_own_project()
+            .expect("the record belongs to a file");
         let id = input.numbering.modules[index as usize].expect("every module has an id");
         let path = self.strings.intern(format!("#{}", id.index()).as_bytes());
-        let display_path = self.strings.intern(sources.module_paths(file.file).display_path);
+        let display_path = self
+            .strings
+            .intern(sources.module_paths(file.file).display_path);
         let interop = graph.interop(own);
         let mut record = create_record(interop, path, display_path);
         record.flags = self.planned_flags(project, own);
@@ -336,9 +340,9 @@ impl RecordBuilder<'_, '_, '_> {
                 record.exports = self.build_exports(project, graph.exports_of(own));
             }
             ProgramModule::Inner { .. } | ProgramModule::Check(_) => {}
-            ProgramModule::File(_)
-            | ProgramModule::Runtime(_)
-            | ProgramModule::External { .. } => unreachable!("the record belongs to a file"),
+            ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
+                unreachable!("the record belongs to a file")
+            }
         }
         record
     }

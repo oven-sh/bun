@@ -78,7 +78,10 @@ mod tests {
         counts.add_for_origin(ModuleOrigin::Program, 2);
         counts.add_for_origin(ModuleOrigin::Dependency, 3);
         counts.add_for_origin(ModuleOrigin::Runtime, 5);
-        assert_eq!((counts.program, counts.dependencies, counts.total()), (2, 3, 5));
+        assert_eq!(
+            (counts.program, counts.dependencies, counts.total()),
+            (2, 3, 5)
+        );
     }
 
     #[test]

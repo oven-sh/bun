@@ -36,8 +36,16 @@ const backEndOptions = {
 async function hashOfBuild(folder: string, name: string, env: Record<string, string>) {
   const executable = join(folder, name, isWindows ? "program.exe" : "program");
   mkdirSync(dirname(executable), { recursive: true });
-  const build = await spawned([bunExe(), "build", "--compile", "--aot", program, "--outfile", executable], dirname(program), { ...bunEnv, ...env });
-  expect({ stderr: build.stderr, exitCode: build.exitCode, signal: build.signal }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0, signal: null });
+  const build = await spawned(
+    [bunExe(), "build", "--compile", "--aot", program, "--outfile", executable],
+    dirname(program),
+    { ...bunEnv, ...env },
+  );
+  expect({ stderr: build.stderr, exitCode: build.exitCode, signal: build.signal }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+    signal: null,
+  });
   return new Bun.CryptoHasher("sha256").update(await Bun.file(executable).bytes()).digest("hex");
 }
 
@@ -48,7 +56,10 @@ describe("compile/aot/back-end options from the environment", () => {
     "a release build of Bun ignores them",
     async () => {
       using folder = tempDir("aot-back-end-options", {});
-      const [reference, changed] = await Promise.all([hashOfBuild(String(folder), "reference", {}), hashOfBuild(String(folder), "changed", backEndOptions)]);
+      const [reference, changed] = await Promise.all([
+        hashOfBuild(String(folder), "reference", {}),
+        hashOfBuild(String(folder), "changed", backEndOptions),
+      ]);
       expect(changed).toBe(reference);
     },
     180_000,

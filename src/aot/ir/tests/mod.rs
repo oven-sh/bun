@@ -50,7 +50,12 @@ pub(super) fn print_alone(function: &Function) -> String {
     };
     let program = Program::new();
     let mut text = String::new();
-    print_function(program.name_tables(), FunctionId::new(0), &function, &mut text);
+    print_function(
+        program.name_tables(),
+        FunctionId::new(0),
+        &function,
+        &mut text,
+    );
     text
 }
 

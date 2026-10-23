@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
@@ -72,29 +72,39 @@ console.log(
 );
 `,
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
   }),
 };
 
-test.each([[["--aot"]], [[]]])("a heap snapshot names the properties that hold objects: bun build --compile %p", async flags => {
-  using folder = tempDir("compile-aot-heap-snapshot", files);
-  const dir = String(folder);
-  await using build = spawn({
-    cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-  expect(buildErrors).not.toContain("error");
-  expect(buildExitCode).toBe(0);
-  await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ read: 1497, first: 1, others: 99, settings: 1, v8: [], closures: [] });
-  expect(exitCode).toBe(0);
-});
+test.each([[["--aot"]], [[]]])(
+  "a heap snapshot names the properties that hold objects: bun build --compile %p",
+  async flags => {
+    using folder = tempDir("compile-aot-heap-snapshot", files);
+    const dir = String(folder);
+    await using build = spawn({
+      cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildErrors).not.toContain("error");
+    expect(buildExitCode).toBe(0);
+    await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ read: 1497, first: 1, others: 99, settings: 1, v8: [], closures: [] });
+    expect(exitCode).toBe(0);
+  },
+);
 
 const manyShapes = {
   "app.ts": `
@@ -117,22 +127,25 @@ if (Bun.isMainThread) {
   "tsconfig.json": files["tsconfig.json"],
 };
 
-test.each([[["--aot"]], [[]]])("a heap snapshot of a program with many shapes, in a Worker too: bun build --compile %p", async flags => {
-  using folder = tempDir("compile-aot-heap-snapshot", manyShapes);
-  const dir = String(folder);
-  await using build = spawn({
-    cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-  expect(buildErrors).not.toContain("error");
-  expect(buildExitCode).toBe(0);
-  await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ main: [6000, 400, true], worker: [6000, 400, true] });
-  expect(exitCode).toBe(0);
-});
+test.each([[["--aot"]], [[]]])(
+  "a heap snapshot of a program with many shapes, in a Worker too: bun build --compile %p",
+  async flags => {
+    using folder = tempDir("compile-aot-heap-snapshot", manyShapes);
+    const dir = String(folder);
+    await using build = spawn({
+      cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildErrors).not.toContain("error");
+    expect(buildExitCode).toBe(0);
+    await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ main: [6000, 400, true], worker: [6000, 400, true] });
+    expect(exitCode).toBe(0);
+  },
+);

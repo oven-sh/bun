@@ -29,7 +29,10 @@ let statementsOfTheirOwn = 0;
 const withoutQuotedSource = (outcome: string) =>
   outcome
     .replace(/ \(evaluating '.*'\)$/s, "")
-    .replace(/^(threw TypeError: ).* is not a (function|constructor)\. \(In '.*', '.*' is (.*)\)$/s, "$1$3 is not a $2");
+    .replace(
+      /^(threw TypeError: ).* is not a (function|constructor)\. \(In '.*', '.*' is (.*)\)$/s,
+      "$1$3 is not a $2",
+    );
 
 type Case = { expression: string; declared: string; unused: string; used: string };
 
@@ -48,7 +51,8 @@ const parse = (stdout: string): Case[] =>
 // docs/bundler/aot-compatibility.mdx, "When a function of Bun or Node rejects an argument": an executable describes what it got without running
 // a trap of a proxy, which it shows as [Object]. Plain Bun asks a revoked proxy, and the error of that takes the place of the rejection.
 const isRejectionOfProxy = (plain: string, compiled: string) =>
-  plain.startsWith("threw TypeError: Proxy has already been revoked.") && /^threw TypeError: .* Received \[Object\] \[ERR_INVALID_ARG_TYPE\]$/.test(compiled);
+  plain.startsWith("threw TypeError: Proxy has already been revoked.") &&
+  /^threw TypeError: .* Received \[Object\] \[ERR_INVALID_ARG_TYPE\]$/.test(compiled);
 
 // No program may count on an error for lack of memory, so it may go with the allocation that nobody uses.
 const mayGoUnused = (outcome: string) => outcome === "threw RangeError: Out of memory";
@@ -62,7 +66,8 @@ async function findDifferences(module: string | null, expressions: readonly stri
   built(await spawned([bunExe(), ...compileCommand, "main.js", "--outfile", executable], folder, env));
   const compiled = await spawned([executable], folder, env);
   // A module that is deprecated says so when it is loaded, in both, with the number of the process and the name of the executable.
-  const withoutProcess = (stderr: string) => stderr.replace(/^\(node:\d+\)/gm, "(node)").replace(/^\(Use `\S+ /gm, "(Use `bun ");
+  const withoutProcess = (stderr: string) =>
+    stderr.replace(/^\(node:\d+\)/gm, "(node)").replace(/^\(Use `\S+ /gm, "(Use `bun ");
   expect({ stderr: withoutProcess(compiled.stderr), exitCode: compiled.exitCode, signal: compiled.signal }).toEqual({
     stderr: withoutProcess(plain.stderr),
     exitCode: 0,
@@ -76,7 +81,9 @@ async function findDifferences(module: string | null, expressions: readonly stri
   // What plain Bun does with the result kept is the measure: its transpiler takes some unused expressions away by a list of its own.
   const inForms = ({ declared, unused, used }: Case) =>
     declared === used && unused === used ? used : `declared and not read ${declared}, unused ${unused}, used ${used}`;
-  plainBunDiffersFromItself += expected.filter(({ declared, unused, used }) => declared !== used || unused !== used).length;
+  plainBunDiffersFromItself += expected.filter(
+    ({ declared, unused, used }) => declared !== used || unused !== used,
+  ).length;
   const differences = expected.flatMap((plainCase, index) => {
     const { declared, unused, used } = actual[index];
     const isUsedAlike = used === plainCase.used || isRejectionOfProxy(plainCase.used, used);
@@ -88,7 +95,13 @@ async function findDifferences(module: string | null, expressions: readonly stri
   const throwing = actual.filter(({ used }) => used !== "returned" && !mayGoUnused(used));
   if (throwing.length === 0) return differences;
   statementsOfTheirOwn += throwing.length;
-  using modules = tempDir("aot-unused-calls-modules", modulesOf(module, throwing.map(({ expression }) => expression)));
+  using modules = tempDir(
+    "aot-unused-calls-modules",
+    modulesOf(
+      module,
+      throwing.map(({ expression }) => expression),
+    ),
+  );
   const modulesFolder = String(modules);
   const loader = join(modulesFolder, isWindows ? "app.exe" : "app");
   built(await spawned([bunExe(), ...compileCommand, "main.js", "--outfile", loader], modulesFolder, env));
@@ -104,7 +117,8 @@ async function findDifferences(module: string | null, expressions: readonly stri
   return differences.concat(
     throwing.flatMap(({ expression, used }, index) => {
       const { declared, unused } = alone[index];
-      const isAlike = (outcome: string, plain: string) => outcome === used || (plain !== "returned" && outcome === plain);
+      const isAlike = (outcome: string, plain: string) =>
+        outcome === used || (plain !== "returned" && outcome === plain);
       if (isAlike(declared, plainAlone[index].declared) && isAlike(unused, plainAlone[index].unused)) return [];
       return [
         `${expression}\n  in a function: ${used}\n  alone in a module, plain Bun: declared and not read ${plainAlone[index].declared}, bare ${plainAlone[index].unused}` +
@@ -120,7 +134,11 @@ describe.concurrent("an unused result takes no error away:", () => {
     for (let start = 0; start < expressions.length; start += expressionsPerProgram) {
       const part = expressions.slice(start, start + expressionsPerProgram);
       const title = expressions.length > expressionsPerProgram ? `${holder}, from ${start}` : holder;
-      test(`${title} (${part.length})`, () => slot(async () => expect(await findDifferences(module, part)).toEqual([])), 600_000);
+      test(
+        `${title} (${part.length})`,
+        () => slot(async () => expect(await findDifferences(module, part)).toEqual([])),
+        600_000,
+      );
     }
   }
 });
@@ -128,7 +146,9 @@ describe.concurrent("an unused result takes no error away:", () => {
 test("what is covered and what is left out", () => {
   const cases = [...groups.values()].reduce((sum, { expressions }) => sum + expressions.length, 0);
   const byRule = Object.groupBy(leftOut, ({ rule }) => rule);
-  console.log(`${overloads} overloads that may be removed, ${cases} expressions, each in three forms, in plain Bun and compiled`);
+  console.log(
+    `${overloads} overloads that may be removed, ${cases} expressions, each in three forms, in plain Bun and compiled`,
+  );
   console.log(`plain Bun does something else with the result unused than with it used: ${plainBunDiffersFromItself}`);
   console.log(`expressions that throw, each also alone in two modules: ${statementsOfTheirOwn}`);
   for (const [rule, entries] of Object.entries(byRule)) console.log(`left out, ${rule}: ${entries!.length}`);

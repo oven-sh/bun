@@ -1,7 +1,7 @@
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
-import { beforeAll, describe, test } from "./supported";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { beforeAll, describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
 
@@ -14,7 +14,12 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 }
 
 const printsProgramOutput = { stdout: "ran\n", stderr: "", exitCode: 0, signalCode: null };
-const exitsWith = (message: string) => ({ stdout: "", stderr: expect.stringContaining(message), exitCode: 1, signalCode: null });
+const exitsWith = (message: string) => ({
+  stdout: "",
+  stderr: expect.stringContaining(message),
+  exitCode: 1,
+  signalCode: null,
+});
 
 describe("cell cage messages", () => {
   let folder: ReturnType<typeof tempDir> | undefined;
@@ -23,7 +28,11 @@ describe("cell cage messages", () => {
   let wide: string;
 
   async function build(flags: string[], outfile: string) {
-    const built = await run([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile], cwd, bunEnv);
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile],
+      cwd,
+      bunEnv,
+    );
     expect(built.stderr).not.toMatch(/^error\b/m);
     expect(built.exitCode).toBe(0);
   }
@@ -38,20 +47,26 @@ describe("cell cage messages", () => {
   afterAll(() => folder?.[Symbol.dispose]());
 
   test("invalid size", async () => {
-    expect(await run([narrow], cwd, cageSize("3"))).toEqual(exitsWith("markedBlockCageSizeInMB is not 0 or a power of two of at most 32768: 3\n"));
+    expect(await run([narrow], cwd, cageSize("3"))).toEqual(
+      exitsWith("markedBlockCageSizeInMB is not 0 or a power of two of at most 32768: 3\n"),
+    );
   });
 
   test("no cage for 32-bit references", async () => {
     const result = await run([narrow], cwd, cageSize("0"));
     expect(result).toEqual(
-      exitsWith("error: this executable can't run with BUN_JSC_markedBlockCageSizeInMB=0. Build it with --aot-huge-heap to run it without a heap limit.\n"),
+      exitsWith(
+        "error: this executable can't run with BUN_JSC_markedBlockCageSizeInMB=0. Build it with --aot-huge-heap to run it without a heap limit.\n",
+      ),
     );
     expect(result.stderr).not.toContain("cannot be used");
   });
 
   test("blocks outside cage", async () => {
     expect(await run([narrow], cwd, cageSize("1"))).toEqual(
-      exitsWith("error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=1. Raise it, or build with --aot-huge-heap.\n"),
+      exitsWith(
+        "error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=1. Raise it, or build with --aot-huge-heap.\n",
+      ),
     );
   });
 
@@ -66,9 +81,14 @@ describe("cell cage messages", () => {
     });
   });
 
-  test.skipIf(!isLinux || isASAN || isDebug).each([2_000_000, 1_000_000, 500_000])("narrow references run under a limit of %d kB on address space", async limit => {
-    expect(await run(["sh", "-c", `ulimit -v ${limit} && exec "$0"`, narrow], cwd, cageSize(undefined))).toEqual(printsProgramOutput);
-  });
+  test.skipIf(!isLinux || isASAN || isDebug).each([2_000_000, 1_000_000, 500_000])(
+    "narrow references run under a limit of %d kB on address space",
+    async limit => {
+      expect(await run(["sh", "-c", `ulimit -v ${limit} && exec "$0"`, narrow], cwd, cageSize(undefined))).toEqual(
+        printsProgramOutput,
+      );
+    },
+  );
 
   test.each(["0", "1", "64"])("wide references run with cage size %s", async size => {
     expect(await run([wide], cwd, cageSize(size))).toEqual(printsProgramOutput);
@@ -98,7 +118,14 @@ function ${deepName}(depth: number): number {
 console.log(${deepName}(200));
 `,
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
   }),
 };
 
@@ -109,7 +136,11 @@ test.skipIf(isASAN)("crash report of compiled frames ends with a complete line w
   expect(built.stderr).not.toContain("error");
   expect(built.exitCode).toBe(0);
 
-  const { stderr } = await run([join(cwd, "app")], cwd, { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" });
+  const { stderr } = await run([join(cwd, "app")], cwd, {
+    ...bunEnv,
+    BUN_CRASH_REPORT_URL: "",
+    BUN_ENABLE_CRASH_REPORTING: "0",
+  });
   const header = "Compiled JavaScript on the stack:\n";
   const start = stderr.indexOf(header);
   expect(start).toBeGreaterThan(-1);
@@ -120,5 +151,6 @@ test.skipIf(isASAN)("crash report of compiled frames ends with a complete line w
   const frameBytes = frames.reduce((total, frame) => total + Buffer.byteLength(frame) + 1, 0);
   expect(frameBytes).toBeLessThanOrEqual(4096);
   expect(frameBytes + Buffer.byteLength(frames[0]) + 1).toBeGreaterThan(4096);
-  for (const frame of frames) expect(frame).toMatch(new RegExp(`^    at ${deepName} \\(/\\$bunfs/root/app\\.ts:\\d+:\\d+\\)$`));
+  for (const frame of frames)
+    expect(frame).toMatch(new RegExp(`^    at ${deepName} \\(/\\$bunfs/root/app\\.ts:\\d+:\\d+\\)$`));
 });

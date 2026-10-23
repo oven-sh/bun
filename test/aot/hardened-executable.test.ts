@@ -34,10 +34,22 @@ const guards = readFileSync("/proc/self/maps", "utf8").split("\\n").filter(line 
 console.log(onThisThread, onAnotherThread, guards.length >= 2);
 `;
 
-async function withCompiledProgram(check: (file: ElfFile, path: string) => void | Promise<void>, source = program, output = "5\n") {
+async function withCompiledProgram(
+  check: (file: ElfFile, path: string) => void | Promise<void>,
+  source = program,
+  output = "5\n",
+) {
   using dir = tempDir("aot-hardened-executable", { "program.ts": source });
   const executable = join(String(dir), "program");
-  const built = await run([bunExe(), "build", "--compile", "--aot", join(String(dir), "program.ts"), "--outfile", executable]);
+  const built = await run([
+    bunExe(),
+    "build",
+    "--compile",
+    "--aot",
+    join(String(dir), "program.ts"),
+    "--outfile",
+    executable,
+  ]);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   expect(await run([executable])).toEqual({ stdout: output, stderr: "", exitCode: 0 });
   await check(readElfFile(executable), executable);
@@ -45,7 +57,8 @@ async function withCompiledProgram(check: (file: ElfFile, path: string) => void 
 
 const canaryLoad = /\x64[\x48\x4c]\x8b[\x04\x0c\x14\x1c\x24\x2c\x34\x3c]\x25\x28\x00\x00\x00/g;
 const pageProbe = /\x48\x81\xec\x00\x10\x00\x00\x48\xc7\x04\x24\x00\x00\x00\x00/g;
-const systemLibrary = /^(libc|libm|libdl|libpthread|ld-linux-[a-z0-9-]+|libc\.musl-[a-z0-9_]+|libstdc\+\+|libgcc_s|libicu(data|i18n|uc))\.so(\.\d+)*$/;
+const systemLibrary =
+  /^(libc|libm|libdl|libpthread|ld-linux-[a-z0-9-]+|libc\.musl-[a-z0-9_]+|libstdc\+\+|libgcc_s|libicu(data|i18n|uc))\.so(\.\d+)*$/;
 
 describe.skipIf(!isLinux)("every executable", () => {
   test("has a stack that cannot be executed", async () => {
@@ -65,20 +78,31 @@ describe.skipIf(!isLinux)("every executable", () => {
 });
 
 describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", () => {
-  test.skipIf(!isX64)("checks a canary before its functions return", async () => {
-    await withCompiledProgram(file => {
-      for (const each of [runtime!, file]) {
-        expect(each.importedSymbols).toContain("__stack_chk_fail");
-        expect(each.countInCode(canaryLoad)).toBeGreaterThan(20_000);
-      }
-    });
-  }, 120_000);
+  test.skipIf(!isX64)(
+    "checks a canary before its functions return",
+    async () => {
+      await withCompiledProgram(file => {
+        for (const each of [runtime!, file]) {
+          expect(each.importedSymbols).toContain("__stack_chk_fail");
+          expect(each.countInCode(canaryLoad)).toBeGreaterThan(20_000);
+        }
+      });
+    },
+    120_000,
+  );
 
-  test.skipIf(!isGlibc)("calls the checked forms of the C library's copying and formatting functions", async () => {
-    await withCompiledProgram(file => {
-      for (const each of [runtime!, file]) expect([...each.importedSymbols]).toEqual(expect.arrayContaining(["__memcpy_chk", "__snprintf_chk", "__strcpy_chk"]));
-    });
-  }, 120_000);
+  test.skipIf(!isGlibc)(
+    "calls the checked forms of the C library's copying and formatting functions",
+    async () => {
+      await withCompiledProgram(file => {
+        for (const each of [runtime!, file])
+          expect([...each.importedSymbols]).toEqual(
+            expect.arrayContaining(["__memcpy_chk", "__snprintf_chk", "__strcpy_chk"]),
+          );
+      });
+    },
+    120_000,
+  );
 
   test("stops at an integer overflow in Rust", async () => {
     await withCompiledProgram(file => {
@@ -88,7 +112,8 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
 
   test("checks what unsafe Rust promises the standard library", async () => {
     await withCompiledProgram(file => {
-      for (const each of [runtime!, file]) expect(each.contains("unsafe precondition(s) violated: slice::get_unchecked")).toBe(true);
+      for (const each of [runtime!, file])
+        expect(each.contains("unsafe precondition(s) violated: slice::get_unchecked")).toBe(true);
     });
   }, 120_000);
 
@@ -98,19 +123,27 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
     });
   }, 120_000);
 
-  test.skipIf(!isX64 || !isGlibc)("gives every thread a second stack between guards for the arrays of its C libraries", async () => {
-    await withCompiledProgram(
-      file => {
-        for (const each of [runtime!, file]) expect(each.earlyInitializers).toBe(1);
-      },
-      programThatCompresses,
-      "true true true\n",
-    );
-  }, 120_000);
+  test.skipIf(!isX64 || !isGlibc)(
+    "gives every thread a second stack between guards for the arrays of its C libraries",
+    async () => {
+      await withCompiledProgram(
+        file => {
+          for (const each of [runtime!, file]) expect(each.earlyInitializers).toBe(1);
+        },
+        programThatCompresses,
+        "true true true\n",
+      );
+    },
+    120_000,
+  );
 
-  test.skipIf(!isX64)("touches every page of a large frame", async () => {
-    await withCompiledProgram(file => {
-      for (const each of [runtime!, file]) expect(each.countInCode(pageProbe)).toBeGreaterThan(0);
-    });
-  }, 120_000);
+  test.skipIf(!isX64)(
+    "touches every page of a large frame",
+    async () => {
+      await withCompiledProgram(file => {
+        for (const each of [runtime!, file]) expect(each.countInCode(pageProbe)).toBeGreaterThan(0);
+      });
+    },
+    120_000,
+  );
 });

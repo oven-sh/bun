@@ -1,5 +1,5 @@
-use super::view::{self, NodeShape};
 use super::PatternNode;
+use super::view::{self, NodeShape};
 use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind};
 use crate::ir::{Edge, TypeTable, ValueId};
 use crate::lower::FunctionLowering;
@@ -27,7 +27,11 @@ pub(super) fn destructure_array(
         iterator: iteration::emit_iterator_open(lowering, value, IteratorKind::Sync, Some(shape)),
         position: lowering.position(),
     };
-    control::begin_cleanup(lowering, BlockRole::IterationCleanup, Some(iteration.iterator));
+    control::begin_cleanup(
+        lowering,
+        BlockRole::IterationCleanup,
+        Some(iteration.iterator),
+    );
     for (index, element) in elements.iter().enumerate() {
         let prepared = super::prepare_target(lowering, element.target);
         let read = if element.is_rest {
@@ -79,7 +83,9 @@ fn collect_rest(
     lowering.builder.switch_to(header);
     lowering.builder.loop_hint();
     let step = emit_pattern_step(lowering, iteration, step_index);
-    lowering.builder.branch(step.done, Edge::to(exit), Edge::to(append));
+    lowering
+        .builder
+        .branch(step.done, Edge::to(exit), Edge::to(append));
     lowering.continue_in(append);
     lowering.builder.append_element(array, step.value);
     lowering.jump(header);

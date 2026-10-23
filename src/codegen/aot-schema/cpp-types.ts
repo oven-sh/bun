@@ -1,8 +1,29 @@
-import type { Entry, External, Field, Kind, RecordForm, ScalarKind, Schema, SchemaEnum, SchemaRecord, SchemaType } from "./model.ts";
-import { entriesOf, fieldsOf, innermostKindOf, nameOf, scalarKinds, scalarPayloadWordsOf, wireWordsOf } from "./model.ts";
+import type {
+  Entry,
+  External,
+  Field,
+  Kind,
+  RecordForm,
+  ScalarKind,
+  Schema,
+  SchemaEnum,
+  SchemaRecord,
+  SchemaType,
+} from "./model.ts";
+import {
+  entriesOf,
+  fieldsOf,
+  innermostKindOf,
+  nameOf,
+  scalarKinds,
+  scalarPayloadWordsOf,
+  wireWordsOf,
+} from "./model.ts";
 import { cppIdTypeName } from "./names.ts";
 
-export const twoWordScalars: ReadonlySet<ScalarKind> = new Set(scalarKinds.filter(scalar => wireWordsOf({ tag: "Scalar", scalar }) === 2));
+export const twoWordScalars: ReadonlySet<ScalarKind> = new Set(
+  scalarKinds.filter(scalar => wireWordsOf({ tag: "Scalar", scalar }) === 2),
+);
 
 const rawNumberTypes: ReadonlySet<string> = new Set(["uint8_t", "uint32_t", "uint64_t", "double"]);
 
@@ -41,7 +62,10 @@ export function namespaceOf(type: SchemaEnum): "Wire" | "Typed" {
 export function isBorrowedSpan(kind: Kind): boolean {
   if (kind.tag !== "Span" && kind.tag !== "List") return false;
   const element = kind.element;
-  return element.tag === "Scalar" && (element.scalar === "Byte" || element.scalar === "Word" || element.scalar === "CodeWord");
+  return (
+    element.tag === "Scalar" &&
+    (element.scalar === "Byte" || element.scalar === "Word" || element.scalar === "CodeWord")
+  );
 }
 
 export function engineRecordNameOf(record: SchemaRecord): string {
@@ -91,7 +115,8 @@ export function engineInitializerOf(field: Field): string {
   const kind = field.kind;
   if (field.isOptional) return "";
   if (kind.tag === "Scalar") return kind.scalar === "Bool" ? " { false }" : " { 0 }";
-  if (kind.tag === "Enum") return kind.type.isGenerated ? " { }" : ` { ${kind.type.name}::${kind.type.members[0].name} }`;
+  if (kind.tag === "Enum")
+    return kind.type.isGenerated ? " { }" : ` { ${kind.type.name}::${kind.type.members[0].name} }`;
   if (kind.tag === "External" && kind.external.form === "enum") return " { }";
   return "";
 }

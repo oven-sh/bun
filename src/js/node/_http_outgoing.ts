@@ -1251,7 +1251,8 @@ function headerEntriesOf(exchange: Exchange): unknown[] {
   if (shape !== spilledHeadersShape) {
     const names = namesOf(shape);
     const keys = shape.keys!;
-    for (let index = 0; index < names.length; index++) entries.push(keys[index], names[index], shapedValue(exchange, index));
+    for (let index = 0; index < names.length; index++)
+      entries.push(keys[index], names[index], shapedValue(exchange, index));
     return entries;
   }
   const headers = exchange.response[kOutHeaders];
@@ -1464,7 +1465,10 @@ function pushRenderedHeader(
 ): void {
   if ($isArray(value)) {
     const valueLength = value.length;
-    if (valueLength >= 2 && (key === "cookie" || (message[kUniqueHeaders] != null && message[kUniqueHeaders].$has(key)))) {
+    if (
+      valueLength >= 2 &&
+      (key === "cookie" || (message[kUniqueHeaders] != null && message[kUniqueHeaders].$has(key)))
+    ) {
       flat.push(name, value.join("; "));
     } else {
       for (let i = 0; i < valueLength; i++) {
@@ -1554,11 +1558,7 @@ http.responseRoad.flatHeadersOf = flatHeadersOf;
 http.responseRoad.headerEntriesOf = headerEntriesOf;
 http.responseRoad.pushRenderedHeader = pushRenderedHeader;
 
-const outgoingSetHeader = function setHeader(
-  this: $Node.OutgoingMessage,
-  name: string,
-  value: $Node.HttpHeaderValue,
-) {
+const outgoingSetHeader = function setHeader(this: $Node.OutgoingMessage, name: string, value: $Node.HttpHeaderValue) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }

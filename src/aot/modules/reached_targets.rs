@@ -99,7 +99,10 @@ impl RemainingTargets {
 
     /// The edges lead from `file` to a target that the walk has not come to.
     pub(super) fn has_some_below(&self, reached: &ReachedTargets, file: FileId) -> bool {
-        self.words.iter().zip(reached.set_of(file)).any(|(&left, &below)| left & below != 0)
+        self.words
+            .iter()
+            .zip(reached.set_of(file))
+            .any(|(&left, &below)| left & below != 0)
     }
 
     /// The walk has come to `file`. `true`: it is a target, for the first time.
@@ -133,7 +136,9 @@ fn list_successors_first(successors: &[Vec<FileId>]) -> Vec<usize> {
             };
             *next += 1;
             let successor = successor.idx();
-            if !successors[successor].is_empty() && !core::mem::replace(&mut is_visited[successor], true) {
+            if !successors[successor].is_empty()
+                && !core::mem::replace(&mut is_visited[successor], true)
+            {
                 path.push((successor, 0));
             }
         }
@@ -146,12 +151,17 @@ mod tests {
     use super::*;
 
     fn graph(edges: &[&[u32]]) -> Vec<Vec<FileId>> {
-        edges.iter().map(|targets| targets.iter().map(|&target| FileId(target)).collect()).collect()
+        edges
+            .iter()
+            .map(|targets| targets.iter().map(|&target| FileId(target)).collect())
+            .collect()
     }
 
     fn below(reached: &ReachedTargets, file: u32, count: u32) -> Vec<u32> {
         let mut remaining = reached.start_walk(FileId(file));
-        (0..count).filter(|&target| remaining.take(reached, FileId(target))).collect()
+        (0..count)
+            .filter(|&target| remaining.take(reached, FileId(target)))
+            .collect()
     }
 
     #[test]

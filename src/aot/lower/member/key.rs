@@ -65,9 +65,9 @@ fn find_constant_key(
             let text = file.intern_bytes(&number_to_string(number));
             Some(file.text_key(text))
         }
-        Some(
-            Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_),
-        ) => None,
+        Some(Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_)) => {
+            None
+        }
         None => find_locked_symbol_key(file, key),
     }
 }
@@ -76,7 +76,10 @@ fn find_locked_symbol_key(
     file: &mut FileLowering<'_, '_, '_, '_>,
     key: ExprId,
 ) -> Option<PropertyKeyId> {
-    let path = match file.builtins.of_expr(expression::skip_type_syntax(file, key)) {
+    let path = match file
+        .builtins
+        .of_expr(expression::skip_type_syntax(file, key))
+    {
         Some(Resolved::Builtin(path)) => path,
         Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => return None,
     };
@@ -129,7 +132,9 @@ pub(super) fn emit_name_value(
             lowering.builder.string(text)
         }
         PropertyKeyKind::WellKnownSymbol => {
-            let symbol = key.symbol.expect("a well-known symbol key names its symbol");
+            let symbol = key
+                .symbol
+                .expect("a well-known symbol key names its symbol");
             expression::emit_locked_builtin(lowering, table::symbol_constant(symbol))
         }
         PropertyKeyKind::EnginePrivateName
@@ -175,9 +180,9 @@ pub(in crate::lower) fn find_function_name(
 ) -> Option<StringId> {
     let key = file.fragment.property_keys.get(key);
     match key.kind {
-        PropertyKeyKind::Text | PropertyKeyKind::EnginePrivateName | PropertyKeyKind::PrivateName => {
-            key.string_name()
-        }
+        PropertyKeyKind::Text
+        | PropertyKeyKind::EnginePrivateName
+        | PropertyKeyKind::PrivateName => key.string_name(),
         PropertyKeyKind::WellKnownSymbol | PropertyKeyKind::CreatedSymbol => None,
     }
 }

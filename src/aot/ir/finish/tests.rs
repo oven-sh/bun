@@ -51,7 +51,9 @@ fn last_value_of(body: &Body) -> ValueView<'_> {
 }
 
 fn integer_constants(block: &BlockView<'_>) -> Vec<i64> {
-    let integers = block.values().filter(|value| value.opcode == Opcode::Integer);
+    let integers = block
+        .values()
+        .filter(|value| value.opcode == Opcode::Integer);
     integers
         .map(|value| ((u64::from(value.fields[1]) << 32) | u64::from(value.fields[0])) as i64)
         .collect()
@@ -60,7 +62,13 @@ fn integer_constants(block: &BlockView<'_>) -> Vec<i64> {
 fn targets_of(block: &BlockView<'_>) -> Vec<Target> {
     let targets = block.terminator().targets();
     targets
-        .map(|target| (target.block.index(), target.arguments().collect(), target.proofs.to_vec()))
+        .map(|target| {
+            (
+                target.block.index(),
+                target.arguments().collect(),
+                target.proofs.to_vec(),
+            )
+        })
         .collect()
 }
 
@@ -101,12 +109,21 @@ fn call_round_trip() {
     let reference = (4 + DROPPED_VALUE_COUNT) as u32;
     assert_eq!((with_this.id, with_this.opcode), (value(5), Opcode::Call));
     assert_eq!(with_this.position, Some(17));
-    assert_eq!(with_this.fields, [1, 0, 1, 3, 2, 4, 3, reference, reference, reference]);
+    assert_eq!(
+        with_this.fields,
+        [1, 0, 1, 3, 2, 4, 3, reference, reference, reference]
+    );
 
-    assert_eq!((without_this.id, without_this.opcode), (value(6), Opcode::Call));
+    assert_eq!(
+        (without_this.id, without_this.opcode),
+        (value(6), Opcode::Call)
+    );
     assert_eq!(without_this.position, None);
     let absent = ABSENT_WORD;
-    assert_eq!(without_this.fields, [2, 0, absent, 0, absent, absent, absent]);
+    assert_eq!(
+        without_this.fields,
+        [2, 0, absent, 0, absent, absent, absent]
+    );
 }
 
 #[test]
@@ -148,7 +165,10 @@ fn negative_integer_round_trip() {
         &[3, 0],
     ];
     assert_eq!(fields, expected);
-    assert_eq!(integer_constants(&entry_of(&body)), [-1, i64::MIN, i64::MAX, 3]);
+    assert_eq!(
+        integer_constants(&entry_of(&body)),
+        [-1, i64::MIN, i64::MAX, 3]
+    );
 }
 
 #[test]
@@ -192,7 +212,10 @@ fn switch_round_trip() {
     let terminator = entry_of(&body).terminator();
     assert_eq!(terminator.kind, TerminatorKind::Switch);
     assert_eq!(terminator.position, Some(3));
-    assert_eq!(terminator.fields, [0, 3, u32::MAX, u32::MAX, 0, 0, 0, 1 << 8]);
+    assert_eq!(
+        terminator.fields,
+        [0, 3, u32::MAX, u32::MAX, 0, 0, 0, 1 << 8]
+    );
     assert_eq!(terminator.target_count(), 4);
     assert_eq!(targets_of(&entry_of(&body)), [1, 2, 3, 4].map(target_to));
 }
@@ -310,7 +333,10 @@ fn loop_header_precedes_loop_body() {
         builder.return_value(None);
     });
     let blocks: Vec<BlockView<'_>> = body.blocks().collect();
-    let constants: Vec<Vec<i64>> = body.blocks().map(|block| integer_constants(&block)).collect();
+    let constants: Vec<Vec<i64>> = body
+        .blocks()
+        .map(|block| integer_constants(&block))
+        .collect();
     assert_eq!(constants, [vec![], vec![1], vec![2], vec![3]]);
     assert_eq!(targets_of(&blocks[1]), [2, 3].map(target_to));
     assert_eq!(targets_of(&blocks[2]), [target_to(1)]);
@@ -385,7 +411,10 @@ fn handler_is_a_successor() {
         indices.map(|index| successor(block, index)).collect()
     };
     assert_eq!(successors_of(entry), [branching]);
-    assert_eq!(successors_of(branching), [returning, uncovered, handler.block()]);
+    assert_eq!(
+        successors_of(branching),
+        [returning, uncovered, handler.block()]
+    );
     assert_eq!(successors_of(returning), [handler.block()]);
     assert!(successors_of(uncovered).is_empty());
 }
@@ -412,7 +441,10 @@ fn landing_block_follows_covered_blocks() {
         builder.integer(4);
         builder.return_value(None);
     });
-    let constants: Vec<Vec<i64>> = body.blocks().map(|block| integer_constants(&block)).collect();
+    let constants: Vec<Vec<i64>> = body
+        .blocks()
+        .map(|block| integer_constants(&block))
+        .collect();
     assert_eq!(constants, [vec![], vec![1], vec![2], vec![3], vec![4]]);
     let landing = body.blocks().nth(3).expect("the body has five blocks");
     assert_eq!(landing.role, BlockRole::CatchHandler);
@@ -471,11 +503,17 @@ fn fill_join_with_every_kind_of_parameter(builder: &mut FunctionBuilder) {
 
 #[test]
 fn parameters_are_ordered_explicit_variable_edge_result() {
-    let body = build(&[TypeTable::ANYTHING], fill_join_with_every_kind_of_parameter);
+    let body = build(
+        &[TypeTable::ANYTHING],
+        fill_join_with_every_kind_of_parameter,
+    );
     let join = body.blocks().last().expect("the body has blocks");
     assert_eq!(join.first_parameter, value(4));
     let parameter_types: Vec<Option<TypeId>> = join.parameter_types().collect();
-    assert_eq!(parameter_types, [Some(TypeTable::STRING), Some(TypeTable::NUMBER), None]);
+    assert_eq!(
+        parameter_types,
+        [Some(TypeTable::STRING), Some(TypeTable::NUMBER), None]
+    );
     let values: Vec<ValueView<'_>> = join.values().collect();
     let [strcat] = values[..] else {
         panic!("{} values", values.len());
@@ -485,7 +523,10 @@ fn parameters_are_ordered_explicit_variable_edge_result() {
 
 #[test]
 fn arguments_are_ordered_like_parameters() {
-    let body = build(&[TypeTable::ANYTHING], fill_join_with_every_kind_of_parameter);
+    let body = build(
+        &[TypeTable::ANYTHING],
+        fill_join_with_every_kind_of_parameter,
+    );
     let blocks: Vec<BlockView<'_>> = body.blocks().collect();
     let [entry, other, _] = blocks[..] else {
         panic!("{} blocks", blocks.len());
@@ -535,7 +576,12 @@ fn fill_function_with_every_kind_of_word(builder: &mut FunctionBuilder) {
     builder.write_variable(variable, constant);
     builder.strcat(&[subject, constant]);
     let cases = [Edge::with_proofs(case, &[0])];
-    builder.switch(subject, &[5], &cases, Edge::with_arguments(otherwise, &[constant]));
+    builder.switch(
+        subject,
+        &[5],
+        &cases,
+        Edge::with_arguments(otherwise, &[constant]),
+    );
     for block in [case, otherwise, cleanup.block()] {
         builder.seal(block);
     }

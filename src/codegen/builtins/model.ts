@@ -165,9 +165,7 @@ export interface ModelName {
 }
 
 export type ModelOperand =
-  | { operand: "Receiver" }
-  | { operand: "Argument"; index: number }
-  | { operand: "ArgumentsFrom"; index: number };
+  { operand: "Receiver" } | { operand: "Argument"; index: number } | { operand: "ArgumentsFrom"; index: number };
 
 export interface ModelBound {
   value: number;
@@ -767,4 +765,3 @@ export interface TableModel {
   syntax: ModelSyntax;
   engineFiles: readonly ModelEngineFile[];
 }
-

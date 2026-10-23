@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const files = {
   "called-from-an-inner-block.cjs": `"use strict";\nfunction f(code) {\n  switch (code) {\n    case 1:\n      function helper(n) { return n + 1; }\n      if (code) { return helper(1); }\n  }\n  return 0;\n}\nconsole.log(f(1), f(2));\n`,
@@ -36,12 +36,26 @@ test.concurrent.each(Object.keys(files))(
   "%s answers under --aot as it should",
   async entry => {
     using dir = tempDir("aot-functions-in-switch-cases", files);
-    const plain = entry in byTheLanguage ? { stdout: byTheLanguage[entry], stderr: "", exitCode: 0 } : await run(String(dir), [bunExe(), "run", `./${entry}`]);
+    const plain =
+      entry in byTheLanguage
+        ? { stdout: byTheLanguage[entry], stderr: "", exitCode: 0 }
+        : await run(String(dir), [bunExe(), "run", `./${entry}`]);
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(plain.stdout).not.toBe("");
     expect(await run(String(dir), [bunExe(), "run", "--debug-aot", `./${entry}`])).toEqual(plain);
-    const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", `./${entry}.exe`]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const built = await run(String(dir), [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `./${entry}`,
+      "--outfile",
+      `./${entry}.exe`,
+    ]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     expect(await run(String(dir), [`./${entry}.exe`])).toEqual(plain);
   },
   120_000,

@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { test } from "./supported";
 
 const registry = `class Registry {\n  static create(): Registry { return new Registry(); }\n  value = 41;\n}\n`;
 const codedError = `interface CodedError extends Error { code: number }\nconst error = Object.assign(new Error("e"), { code: 41 }) as CodedError;\n`;
@@ -34,7 +34,8 @@ const programs: Record<string, Record<string, string>> = {
   "the worker hands its class to a function that both import": {
     "shared.ts": factories,
     "worker.ts": `import { make } from "./shared";\n` + registry + `postMessage(make(Registry));\n`,
-    "main.ts": `import { make } from "./shared";\n` + startsTheWorker("event.data + make({ create: () => ({ value: -1 }) })"),
+    "main.ts":
+      `import { make } from "./shared";\n` + startsTheWorker("event.data + make({ create: () => ({ value: -1 }) })"),
   },
   "the worker hands its error to a function that both import": {
     "shared.ts": codes,
@@ -57,7 +58,17 @@ for (const [name, files] of Object.entries(programs)) {
         using dir = tempDir("aot-entry-points", files);
         const cwd = String(dir);
         const built = await spawned(
-          [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, "./main.ts", "./worker.ts", "--outfile", "./app"],
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            `--aot-threads=${threads}`,
+            "./main.ts",
+            "./worker.ts",
+            "--outfile",
+            "./app",
+          ],
           cwd,
         );
         expect(built.exitCode, built.stderr).toBe(0);
@@ -80,7 +91,10 @@ for (const mode of ["--aot", "--debug-aot"]) {
           registry +
           `test("the sum", () => {\n  expect((globalThis as any).count + Registry.create().value).toBe(42);\n});\n`,
       });
-      const { stderr, exitCode } = await spawned([bunExe(), "test", mode, "--preload", "./preload.ts", "./registry.test.ts"], String(dir));
+      const { stderr, exitCode } = await spawned(
+        [bunExe(), "test", mode, "--preload", "./preload.ts", "./registry.test.ts"],
+        String(dir),
+      );
       expect(stderr).toContain(" 1 pass");
       expect(stderr).toContain(" 0 fail");
       expect(exitCode).toBe(0);

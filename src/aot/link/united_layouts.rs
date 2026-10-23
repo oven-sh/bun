@@ -17,9 +17,8 @@ pub(super) fn has_united_definitions(key: &LayoutKey) -> bool {
     )
 }
 
-const FLAGS_THAT_ALL_GIVE: FieldFlags = FieldFlags(
-    FieldFlags::IS_REQUIRED.0 | FieldFlags::IS_METHOD.0 | FieldFlags::IS_IMMUTABLE.0,
-);
+const FLAGS_THAT_ALL_GIVE: FieldFlags =
+    FieldFlags(FieldFlags::IS_REQUIRED.0 | FieldFlags::IS_METHOD.0 | FieldFlags::IS_IMMUTABLE.0);
 
 // Many files define a layout with the same few types.
 struct Unions<'a> {
@@ -33,7 +32,10 @@ impl Unions<'_> {
             return left;
         }
         let types = &mut *self.types;
-        *self.known.entry((left, right)).or_insert_with(|| types.union(left, right))
+        *self
+            .known
+            .entry((left, right))
+            .or_insert_with(|| types.union(left, right))
     }
 }
 
@@ -114,7 +116,11 @@ fn find_twin<'a>(other: &'a Layout, index: usize, field: &Field) -> Option<&'a F
 
 // The layout is shown under the name, and at the place, of its first definition.
 fn unite_layouts(united: &mut Layout, other: &Layout, uniting: &mut Uniting<'_>) {
-    debug_assert_eq!(united.fields.len(), other.fields.len(), "one key is one set of names");
+    debug_assert_eq!(
+        united.fields.len(),
+        other.fields.len(),
+        "one key is one set of names"
+    );
     for (index, field) in united.fields.iter_mut().enumerate() {
         match find_twin(other, index, field) {
             Some(twin) => unite_fields(field, twin, index, uniting),
@@ -151,11 +157,17 @@ fn find_only_literal(ty: &Type) -> Option<Literal> {
 type Literals = Vec<(PropertyKeyId, Literal)>;
 
 fn says_what_fields_hold(definition: &Layout) -> bool {
-    definition.fields.iter().all(|field| field.declared.is_said())
+    definition
+        .fields
+        .iter()
+        .all(|field| field.declared.is_said())
 }
 
 fn list_literals(definition: &Layout, types: &TypeTable) -> Literals {
-    let checked = definition.fields.iter().filter(|field| !field.declared.is_expected());
+    let checked = definition
+        .fields
+        .iter()
+        .filter(|field| !field.declared.is_expected());
     let mut literals: Literals = checked
         .filter_map(|field| Some((field.key?, find_only_literal(types.get(field.declared.ty))?)))
         .collect();
@@ -224,8 +236,9 @@ struct UnitedLayout<'a> {
 impl UnitedLayout<'_> {
     fn unite_without_table(&mut self, others: &[Vec<(LayoutId, Layout)>], types: &TypeTable) {
         let places = self.places.iter();
-        let definitions: Vec<&Layout> =
-            places.map(|&(_, (list, index))| &others[list as usize][index as usize].1).collect();
+        let definitions: Vec<&Layout> = places
+            .map(|&(_, (list, index))| &others[list as usize][index as usize].1)
+            .collect();
         let (views, waiting) = (&mut self.views, &mut self.waiting);
         collect_views_of_literals(self.id, self.united, &definitions, types, views, waiting);
         let mut uniting = Uniting::new(0, &self.united.fields, waiting);
@@ -257,7 +270,9 @@ fn split_united_layouts<'a>(
     for places in order.chunk_by(|left, right| left.0 == right.0) {
         let id = places[0].0;
         let (_, rest) = core::mem::take(&mut layouts).split_at_mut(id.index() - first_index);
-        let (united, rest) = rest.split_first_mut().expect("a definition is of a layout of the program");
+        let (united, rest) = rest
+            .split_first_mut()
+            .expect("a definition is of a layout of the program");
         (layouts, first_index) = (rest, id.index() + 1);
         united_layouts.push(UnitedLayout {
             id,
@@ -282,11 +297,16 @@ pub(super) fn unite_layout_definitions(
     // A layout is a large record to move, so what is sorted is its place.
     let mut order: Vec<(LayoutId, Place)> = Vec::with_capacity(others.iter().map(Vec::len).sum());
     for (list, definitions) in (0..).zip(&others) {
-        order.extend((0..).zip(definitions).map(|(index, &(id, _))| (id, (list, index))));
+        order.extend(
+            (0..)
+                .zip(definitions)
+                .map(|(index, &(id, _))| (id, (list, index))),
+        );
     }
     order.sort_unstable();
     let mut united_layouts = split_united_layouts(layouts, &order);
-    let mut tasks: Vec<&mut [UnitedLayout<'_>]> = united_layouts.chunks_mut(LAYOUTS_IN_A_TASK).collect();
+    let mut tasks: Vec<&mut [UnitedLayout<'_>]> =
+        united_layouts.chunks_mut(LAYOUTS_IN_A_TASK).collect();
     let known_types: &TypeTable = types;
     for_each_mut(&mut tasks, in_parallel, &|task| {
         for layout in task.iter_mut() {
@@ -304,7 +324,9 @@ pub(super) fn unite_layout_definitions(
     }
     let mut tasks: Vec<&mut [Layout]> = layouts.chunks_mut(LAYOUTS_IN_A_TASK * 4).collect();
     for_each_mut(&mut tasks, in_parallel, &|task| {
-        let records = task.iter_mut().filter(|layout| layout.kind == LayoutKind::Record);
+        let records = task
+            .iter_mut()
+            .filter(|layout| layout.kind == LayoutKind::Record);
         for field in records.flat_map(|layout| &mut layout.fields) {
             if !field.declared.is_said() {
                 field.declared = DeclaredType::untyped();
@@ -341,7 +363,9 @@ fn find_types_of_made_objects(layouts: &[Layout]) -> Vec<bool> {
         }
     }
     let makers = layouts.iter().filter(|layout| is_maker(layout));
-    let mut worklist: Vec<LayoutId> = makers.flat_map(|maker| maker.supertypes.iter().copied()).collect();
+    let mut worklist: Vec<LayoutId> = makers
+        .flat_map(|maker| maker.supertypes.iter().copied())
+        .collect();
     let mut is_found = vec![false; layouts.len()];
     while let Some(layout) = worklist.pop() {
         if !core::mem::replace(&mut is_found[layout.index()], true) {
@@ -446,7 +470,10 @@ mod tests {
         let definitions = vec![tagged(11, five, None), tagged(12, one, None)];
         let layouts = unite_with_views(tagged(10, one, Some(3)), definitions, &mut types);
         assert_eq!(layouts.len(), 3);
-        assert_eq!(*types.get(layouts[0].fields[0].declared.ty), Type::integers(1, 5));
+        assert_eq!(
+            *types.get(layouts[0].fields[0].declared.ty),
+            Type::integers(1, 5)
+        );
         for (view, (name, tag)) in layouts[1..].iter().zip([(10, one), (11, five)]) {
             assert_eq!(view.name, Some(StringId::new(name)));
             assert_eq!(view.fields[0].declared, checked(tag, None));
@@ -460,10 +487,17 @@ mod tests {
     fn definitions_with_one_literal_need_no_view() {
         let mut types = TypeTable::new();
         let one = types.intern(Type::integers(1, 1));
-        let layouts = unite_with_views(tagged(10, one, None), vec![tagged(11, one, None)], &mut types);
+        let layouts = unite_with_views(
+            tagged(10, one, None),
+            vec![tagged(11, one, None)],
+            &mut types,
+        );
         assert_eq!(layouts.len(), 1);
         let plain = || tagged(10, TypeTable::NUMBER, None);
-        assert_eq!(unite_with_views(plain(), vec![plain()], &mut types).len(), 1);
+        assert_eq!(
+            unite_with_views(plain(), vec![plain()], &mut types).len(),
+            1
+        );
     }
 
     #[test]
@@ -524,11 +558,17 @@ mod tests {
     #[test]
     fn field_has_union_of_types_and_first_site() {
         let all = FieldFlags::IS_REQUIRED;
-        let first = layout(None, vec![field(0, checked(TypeTable::STRING, Some(3)), all)]);
+        let first = layout(
+            None,
+            vec![field(0, checked(TypeTable::STRING, Some(3)), all)],
+        );
         let second = layout(None, vec![field(0, checked(TypeTable::NUMBER, None), all)]);
         let (united, mut types) = unite(first, vec![second]);
         let declared = united.fields[0].declared;
-        assert_eq!(declared.ty, types.union(TypeTable::STRING, TypeTable::NUMBER));
+        assert_eq!(
+            declared.ty,
+            types.union(TypeTable::STRING, TypeTable::NUMBER)
+        );
         assert_eq!(declared.site, Some(TypeSiteId::new(3)));
         assert!(!declared.is_expected());
         assert_eq!(united.fields[0].flags, all);
@@ -538,9 +578,15 @@ mod tests {
     fn flag_stays_only_if_every_definition_gives_it() {
         let method = FieldFlags::IS_REQUIRED | FieldFlags::IS_METHOD | FieldFlags::IS_IMMUTABLE;
         let declared = checked(TypeTable::STRING, None);
-        let first = layout(None, vec![field(0, declared, method), field(1, declared, method)]);
+        let first = layout(
+            None,
+            vec![field(0, declared, method), field(1, declared, method)],
+        );
         let plain = FieldFlags::IS_METHOD;
-        let second = layout(None, vec![field(0, declared, method), field(1, declared, plain)]);
+        let second = layout(
+            None,
+            vec![field(0, declared, method), field(1, declared, plain)],
+        );
         let (united, _) = unite(first, vec![second]);
         assert_eq!(united.fields[0].flags, method);
         assert_eq!(united.fields[1].flags, FieldFlags::IS_METHOD);
@@ -550,8 +596,11 @@ mod tests {
     fn expected_position_of_one_definition_makes_field_expected() {
         let promise = PositionFlags::IS_INT32_PROMISE;
         let promised = DeclaredType::new(Mapped::checked(TypeTable::INT32), None, promise);
-        let expected =
-            DeclaredType::new(Mapped::expected(TypeTable::INT32), None, PositionFlags::default());
+        let expected = DeclaredType::new(
+            Mapped::expected(TypeTable::INT32),
+            None,
+            PositionFlags::default(),
+        );
         let flags = FieldFlags::default();
         let both = layout(None, vec![field(0, promised, flags)]);
         let (united, _) = unite(both.clone(), vec![both.clone()]);
@@ -563,7 +612,10 @@ mod tests {
     #[test]
     fn untyped_position_of_one_definition_makes_field_untyped() {
         let flags = FieldFlags::default();
-        let first = layout(None, vec![field(0, checked(TypeTable::STRING, Some(1)), flags)]);
+        let first = layout(
+            None,
+            vec![field(0, checked(TypeTable::STRING, Some(1)), flags)],
+        );
         let second = layout(None, vec![field(0, DeclaredType::untyped(), flags)]);
         let (united, _) = unite(first, vec![second]);
         assert_eq!(united.fields[0].declared, DeclaredType::untyped());
@@ -572,7 +624,10 @@ mod tests {
     #[test]
     fn fields_are_matched_by_key() {
         let flags = FieldFlags::default();
-        let (string, number) = (checked(TypeTable::STRING, None), checked(TypeTable::NUMBER, None));
+        let (string, number) = (
+            checked(TypeTable::STRING, None),
+            checked(TypeTable::NUMBER, None),
+        );
         let first = layout(None, vec![field(0, string, flags), field(1, number, flags)]);
         let second = layout(None, vec![field(1, number, flags), field(0, string, flags)]);
         let (united, _) = unite(first.clone(), vec![second]);
@@ -585,7 +640,12 @@ mod tests {
         let first = Some(StringId::new(1));
         assert_eq!(unite(named(Some(1)), vec![named(Some(1))]).0.name, first);
         assert_eq!(unite(named(Some(1)), vec![named(Some(2))]).0.name, first);
-        assert_eq!(unite(named(Some(1)), vec![named(None), named(Some(1))]).0.name, first);
+        assert_eq!(
+            unite(named(Some(1)), vec![named(None), named(Some(1))])
+                .0
+                .name,
+            first
+        );
         assert_eq!(unite(named(None), vec![named(Some(1))]).0.name, None);
     }
 
@@ -596,11 +656,19 @@ mod tests {
             let either = types.union(TypeTable::STRING, TypeTable::NUMBER);
             let all = FieldFlags::IS_REQUIRED | FieldFlags::IS_METHOD;
             let definitions = [
-                layout(Some(1), vec![field(0, checked(TypeTable::STRING, Some(3)), all)]),
-                layout(Some(2), vec![field(0, checked(either, Some(4)), FieldFlags::IS_METHOD)]),
+                layout(
+                    Some(1),
+                    vec![field(0, checked(TypeTable::STRING, Some(3)), all)],
+                ),
+                layout(
+                    Some(2),
+                    vec![field(0, checked(either, Some(4)), FieldFlags::IS_METHOD)],
+                ),
             ];
             let mut layouts = vec![definitions[0].clone()];
-            let others = others.iter().map(|&other| (LayoutId::new(0), definitions[other].clone()));
+            let others = others
+                .iter()
+                .map(|&other| (LayoutId::new(0), definitions[other].clone()));
             unite_layout_definitions(&mut layouts, vec![others.collect()], &mut types, &reverse);
             (layouts.remove(0), types.len())
         };

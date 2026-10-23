@@ -27,7 +27,11 @@ fn only_the_first_statement_of_an_arm_is_a_mark() {
     let source = "export function probe(x: any) { if (x) { x = 1; \"unlikely\"; } { \"unlikely\"; } return x; }";
     let lowered = lower_runtime_module(source);
     let lowered = lowered.function("probe").to_string();
-    assert_eq!(lowered.matches("frequency=Unlikely").count(), 0, "{lowered}");
+    assert_eq!(
+        lowered.matches("frequency=Unlikely").count(),
+        0,
+        "{lowered}"
+    );
 }
 
 #[test]
@@ -35,5 +39,9 @@ fn a_program_of_the_user_has_no_marks() {
     let source = "export function probe(x: any) { if (x) { \"unlikely\"; return 1; } return 2; }";
     let lowered = lower_files(&[("main.ts", source)]);
     let lowered = lowered.function("probe").to_string();
-    assert_eq!(lowered.matches("frequency=Unlikely").count(), 0, "{lowered}");
+    assert_eq!(
+        lowered.matches("frequency=Unlikely").count(),
+        0,
+        "{lowered}"
+    );
 }

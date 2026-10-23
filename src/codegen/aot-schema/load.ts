@@ -71,7 +71,8 @@ function memberNames(types: readonly SchemaEnum[]): Map<string, readonly string[
 }
 
 function summarizeEffects(effects: Effects): EffectsSummary {
-  const { isUnknownCode, readsAllHeaps, writesAllHeaps, reads, writes, throws, collects, suspends, terminates } = effects;
+  const { isUnknownCode, readsAllHeaps, writesAllHeaps, reads, writes, throws, collects, suspends, terminates } =
+    effects;
   return {
     isUnknownCode,
     readsAllHeaps,

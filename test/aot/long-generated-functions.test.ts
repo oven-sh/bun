@@ -8,7 +8,8 @@ import { test } from "./supported";
 
 const n = isDebug || isASAN ? 4_000 : 16_000;
 const parts = (length: number, part: (k: number) => string) => Array.from({ length }, (_, k) => part(k)).join("");
-const inOneFunction = (body: string) => `function run(o, r, i) {\n${body}\n  return r.length;\n}\nconsole.log(run({ f: 1, g: 2, s: "x" }, [], 0));\n`;
+const inOneFunction = (body: string) =>
+  `function run(o, r, i) {\n${body}\n  return r.length;\n}\nconsole.log(run({ f: 1, g: 2, s: "x" }, [], 0));\n`;
 
 /** Twice the length may cost this many times the instructions. Work that grows with the square of the length costs four times as many, with the cube eight times. */
 const mostGrowth = 2.5;
@@ -39,7 +40,9 @@ async function growsWithItsLength({ file, length, source, prints }: Program) {
   for (const size of [length / 2, length]) {
     using dir = tempDir("long-generated-functions", { [file]: source(size) });
     const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-    const command = prints ? ["build", "--compile", "--aot", "./" + file, "--outfile", outfile] : ["check", "--aot", "./" + file];
+    const command = prints
+      ? ["build", "--compile", "--aot", "./" + file, "--outfile", outfile]
+      : ["check", "--aot", "./" + file];
     counted.push(await instructionsOf(String(dir), [bunExe(), ...command]));
     if (prints) expect(await run(String(dir), [outfile])).toEqual({ stdout: prints(size), stderr: "", exitCode: 0 });
   }
@@ -56,7 +59,8 @@ test.todo(
     growsWithItsLength({
       file: "main.js",
       length: n,
-      source: length => inOneFunction(`  switch (i) {\n${parts(length, k => `    case ${k + 1}: r.push(${k}); break;\n`)}  }`),
+      source: length =>
+        inOneFunction(`  switch (i) {\n${parts(length, k => `    case ${k + 1}: r.push(${k}); break;\n`)}  }`),
       prints: () => "0\n",
     }),
   limit,

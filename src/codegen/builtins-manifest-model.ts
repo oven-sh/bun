@@ -70,7 +70,12 @@ export interface NativeCall {
 export function typesOnlySchemas(argv: readonly string[]): ReadonlySet<string> {
   const prefix = "--types-only=";
   const flag = argv.find(argument => argument.startsWith(prefix));
-  return new Set(flag?.slice(prefix.length).split(",").filter(schema => schema !== ""));
+  return new Set(
+    flag
+      ?.slice(prefix.length)
+      .split(",")
+      .filter(schema => schema !== ""),
+  );
 }
 
 const nativeMacros: Record<NativeCall["macro"], { kind: "cpp" | "rust" | "bind"; takesLength: boolean }> = {
@@ -102,7 +107,9 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
         throw new Error(`${file}: $${macro} takes ${takesLength ? "three" : "two"} arguments, but got '${match[0]}'`);
       }
       const isTypesOnly = macro === "bindgen" && typesOnly.has(nativeFile);
-      const id = isTypesOnly ? null : registerNativeCall(kind, nativeFile, symbol, length === undefined ? null : Number(length));
+      const id = isTypesOnly
+        ? null
+        : registerNativeCall(kind, nativeFile, symbol, length === undefined ? null : Number(length));
       if (seen.has(key)) continue;
       seen.add(key);
       list.push({ id, macro, file: nativeFile, symbol });

@@ -198,6 +198,8 @@ impl SourceProvider for WithoutServices {
                 }
             },
             Loader::Text => {
+                #[allow(clippy::disallowed_methods)]
+                // a JavaScript string holds no ill-formed UTF-8
                 let text = String::from_utf8_lossy(file.contents);
                 Ok(DataModule::Value {
                     default: arena.alloc(DataValue::String(atoms.intern(text.as_bytes()))),

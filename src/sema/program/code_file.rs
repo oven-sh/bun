@@ -97,7 +97,12 @@ pub(super) fn load_code_file<'s, 'r>(
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)
     });
-    debug_assert_eq!(tree.hir.validate(), Ok(()), "invalid tree: {}", path.as_bstr());
+    debug_assert_eq!(
+        tree.hir.validate(),
+        Ok(()),
+        "invalid tree: {}",
+        path.as_bstr()
+    );
     let mut code = resolve_code_imports(context, key, &tree.hir, analyzed);
     code.add_implied(context, key, &tree.hir, &bound, &mut tree.payload);
     code.requests = summarize_requests(context, key, &tree.hir, &bound, &code);
@@ -333,6 +338,7 @@ fn analyze<'s, 'r>(
     (bound, analyzed)
 }
 
+#[allow(clippy::large_types_passed_by_value)] // taken apart at once
 fn analyze_with_host<'s>(
     context: &CodeLoadContext<'_, 's, '_>,
     arena: &'s Arena,

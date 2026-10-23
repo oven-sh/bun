@@ -43,7 +43,11 @@ const TYPE_PATHS: [BuiltinTypePath<'static>; 7] = [
     type_path(SET, &["Set"], Denotation::Exact),
     type_path(ERROR, &["Error"], Denotation::Exact),
     type_path(TYPE_ERROR, &["TypeError"], Denotation::Exact),
-    type_path(DATE_TIME_FORMAT, &["Intl", "DateTimeFormat"], Denotation::Exact),
+    type_path(
+        DATE_TIME_FORMAT,
+        &["Intl", "DateTimeFormat"],
+        Denotation::Exact,
+    ),
     type_path(WEAK_REF, &["WeakRef"], Denotation::Exact),
 ];
 
@@ -167,7 +171,14 @@ fn with_files<R>(sources: &[SourceFile], test: impl FnOnce(&Files<'_>) -> R) -> 
     let roots: Vec<Vec<u8>> = (sources.iter())
         .map(|source| source.path.as_bytes().to_vec())
         .collect();
-    test(&Files::load(&session, None, &host, Options::default(), &roots, &|_| {}))
+    test(&Files::load(
+        &session,
+        None,
+        &host,
+        Options::default(),
+        &roots,
+        &|_| {},
+    ))
 }
 
 fn file_at(files: &Files<'_>, path: &str) -> FileId {
@@ -352,7 +363,11 @@ fn unknown_subtype_in_default_library_keeps_type_exact() {
     };
     let roots = [LIBRARY_PATH.as_bytes().to_vec()];
     let files = Files::load(&session, None, &host, options, &roots, &|_| {});
-    assert!(files.module(file_at(&files, "/library/lib.dom.d.ts")).is_lib);
+    assert!(
+        files
+            .module(file_at(&files, "/library/lib.dom.d.ts"))
+            .is_lib
+    );
     let classes = resolve_type_classes(&files, &TYPE_PATHS);
     let map = interface_symbol(&files, LIBRARY_PATH, "Map");
     assert_eq!(classes.get(&map).copied(), exact(MAP));
@@ -420,7 +435,11 @@ fn program_subtypes_are_interfaces_of_files_with_code() {
         subinterface("Span", &["Range"]),
         subinterface("Listed", &["Registry"]),
     ];
-    let sources = [LIBRARY, script("/registry.d.ts", DECLARED), module("/a.ts", PROGRAM)];
+    let sources = [
+        LIBRARY,
+        script("/registry.d.ts", DECLARED),
+        module("/a.ts", PROGRAM),
+    ];
     with_files(&sources, |files| {
         let symbols = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, &[]);
         let expected = ["Index", "NamedIndex", "Failure", "Listed"];
@@ -429,7 +448,10 @@ fn program_subtypes_are_interfaces_of_files_with_code() {
         for &subtype in symbols.program_subtypes() {
             assert!(can_list_declarations_of(files, subtype.file));
         }
-        assert!(!can_list_declarations_of(files, file_at(files, "/registry.d.ts")));
+        assert!(!can_list_declarations_of(
+            files,
+            file_at(files, "/registry.d.ts")
+        ));
     });
 }
 
@@ -523,7 +545,10 @@ fn symbol_has_requested_meaning() {
     const VALUES: &[Declaration] = &[variable("process", "Map")];
     with_files(&[LIBRARY, script("/values.d.ts", VALUES)], |files| {
         let map = interface_symbol(files, LIBRARY_PATH, "Map");
-        assert_eq!(find_symbol(files, None, &["Map"], SymFlags::TYPE), Some(map));
+        assert_eq!(
+            find_symbol(files, None, &["Map"], SymFlags::TYPE),
+            Some(map)
+        );
         assert_eq!(find_symbol(files, None, &["Map"], SymFlags::VALUE), None);
         assert!(find_symbol(files, None, &["process"], SymFlags::VALUE).is_some());
         assert_eq!(find_symbol(files, None, &["process"], SymFlags::TYPE), None);
@@ -635,7 +660,13 @@ fn runtime_declaration_of_global_value_removes_signatures() {
     const REPLACED: &[Declaration] = &[function("fetch", true)];
     let values = [value_path(3, None, &["fetch"])];
     let declared = [script("/globals.d.ts", DECLARED)];
-    assert_eq!(values_of_functions(&declared, "/globals.d.ts", &values), [Some(3)]);
+    assert_eq!(
+        values_of_functions(&declared, "/globals.d.ts", &values),
+        [Some(3)]
+    );
     let replaced = [declared[0], script("/script.ts", REPLACED)];
-    assert_eq!(values_of_functions(&replaced, "/globals.d.ts", &values), [None]);
+    assert_eq!(
+        values_of_functions(&replaced, "/globals.d.ts", &values),
+        [None]
+    );
 }

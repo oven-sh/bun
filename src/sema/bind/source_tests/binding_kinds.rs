@@ -9,11 +9,19 @@ const VARIABLES: &[(&str, &str, BindingKind)] = &[
     ("a.mjs", "{ await using v = null; }", BindingKind::Const),
     ("a.cjs", "for (const v of []) {}", BindingKind::Const),
     ("a.cjs", "for (let v in {}) {}", BindingKind::Let),
-    ("a.cjs", "try {} catch (v) {}", BindingKind::SimpleCatchParameter),
+    (
+        "a.cjs",
+        "try {} catch (v) {}",
+        BindingKind::SimpleCatchParameter,
+    ),
     ("a.cjs", "try {} catch ({ v }) {}", BindingKind::Let),
     ("a.cjs", r#"var v = require("m");"#, BindingKind::Var),
     ("a.cjs", r#"const v = require("m");"#, BindingKind::Const),
-    ("a.cjs", r#"{ const v = require("m"); }"#, BindingKind::Const),
+    (
+        "a.cjs",
+        r#"{ const v = require("m"); }"#,
+        BindingKind::Const,
+    ),
     ("a.cjs", r#"{ let v = require("m"); }"#, BindingKind::Let),
     ("a.ts", "declare const v: number;", BindingKind::NoBinding),
     ("a.ts", "declare var v: number;", BindingKind::NoBinding),
@@ -89,14 +97,42 @@ const HOISTED_VARIABLES: &[(&str, BindingKind, InitialState)] = &[
     ("let v;", BindingKind::Var, InitialState::Undefined),
     ("let v = 1;", BindingKind::Var, InitialState::Undefined),
     ("const v = 1;", BindingKind::Var, InitialState::Undefined),
-    ("const { v } = {};", BindingKind::Var, InitialState::Undefined),
-    ("export const v = 1;", BindingKind::Var, InitialState::Undefined),
+    (
+        "const { v } = {};",
+        BindingKind::Var,
+        InitialState::Undefined,
+    ),
+    (
+        "export const v = 1;",
+        BindingKind::Var,
+        InitialState::Undefined,
+    ),
     ("{ let v; }", BindingKind::Let, InitialState::Uninitialized),
-    ("{ const v = 1; }", BindingKind::Const, InitialState::Uninitialized),
-    ("function f() { const v = 1; }", BindingKind::Const, InitialState::Uninitialized),
-    ("for (let v = 0; ; ) {}", BindingKind::Let, InitialState::Uninitialized),
-    ("for (const v of []) {}", BindingKind::Const, InitialState::Uninitialized),
-    ("using v = null;", BindingKind::Const, InitialState::Uninitialized),
+    (
+        "{ const v = 1; }",
+        BindingKind::Const,
+        InitialState::Uninitialized,
+    ),
+    (
+        "function f() { const v = 1; }",
+        BindingKind::Const,
+        InitialState::Uninitialized,
+    ),
+    (
+        "for (let v = 0; ; ) {}",
+        BindingKind::Let,
+        InitialState::Uninitialized,
+    ),
+    (
+        "for (const v of []) {}",
+        BindingKind::Const,
+        InitialState::Uninitialized,
+    ),
+    (
+        "using v = null;",
+        BindingKind::Const,
+        InitialState::Uninitialized,
+    ),
 ];
 
 #[test]
@@ -121,7 +157,10 @@ fn top_level_variables_of_hoisting_file() {
         ..Source::new("a.mts", "class C {}")
     };
     analyzed_source(&source, |s| {
-        assert_eq!(declared_kind(s, Decl::Class(ClassId(0))), BindingKind::Class);
+        assert_eq!(
+            declared_kind(s, Decl::Class(ClassId(0))),
+            BindingKind::Class
+        );
     });
     analyzed("a.mts", "const v = 1;", |s| {
         let symbol = s.variable("v", 0);
@@ -133,7 +172,9 @@ fn top_level_variables_of_hoisting_file() {
 #[test]
 fn functions() {
     for &(text, kind) in FUNCTIONS {
-        analyzed("a.cjs", text, |s| assert_eq!(function_kind(s, "f"), kind, "{text}"));
+        analyzed("a.cjs", text, |s| {
+            assert_eq!(function_kind(s, "f"), kind, "{text}")
+        });
     }
     analyzed("a.ts", "declare function f(): void;", |s| {
         assert_eq!(declared_kind(s, Decl::Fn(FnId(0))), BindingKind::NoBinding);
@@ -150,7 +191,11 @@ fn annex_b_variables() {
             let [hoist] = s.bound.runtime.annex_b_functions()[..] else {
                 panic!("{text}: {:?}", s.bound.runtime.annex_b_functions());
             };
-            assert_eq!(s.bound.binding_kind(hoist.var_symbol), BindingKind::Var, "{text}");
+            assert_eq!(
+                s.bound.binding_kind(hoist.var_symbol),
+                BindingKind::Var,
+                "{text}"
+            );
         });
     }
 }
@@ -195,10 +240,17 @@ fn body_variables() {
         assert_eq!(s.bound.binding_kind(copy.parameter), BindingKind::Parameter);
         assert_eq!(s.bound.binding_kind(copy.variable), BindingKind::Var);
     });
-    analyzed("a.cjs", "function f(p, q = () => p) { function p() {} }", |s| {
-        assert_eq!(declared_kind(s, Decl::Param(s.pat("p", 0))), BindingKind::Parameter);
-        assert_eq!(function_kind(s, "p"), BindingKind::Var);
-    });
+    analyzed(
+        "a.cjs",
+        "function f(p, q = () => p) { function p() {} }",
+        |s| {
+            assert_eq!(
+                declared_kind(s, Decl::Param(s.pat("p", 0))),
+                BindingKind::Parameter
+            );
+            assert_eq!(function_kind(s, "p"), BindingKind::Var);
+        },
+    );
 }
 
 #[test]
@@ -214,57 +266,97 @@ fn classes() {
         assert_eq!(s.bound.binding_kind(inner), BindingKind::ClassInnerName);
     });
     analyzed("a.cjs", "(class {});", |s| {
-        assert_eq!(declared_kind(s, Decl::Class(ClassId(0))), BindingKind::NoBinding);
+        assert_eq!(
+            declared_kind(s, Decl::Class(ClassId(0))),
+            BindingKind::NoBinding
+        );
     });
     analyzed("a.ts", "declare class C {}", |s| {
-        assert_eq!(declared_kind(s, Decl::Class(s.class("C"))), BindingKind::NoBinding);
+        assert_eq!(
+            declared_kind(s, Decl::Class(s.class("C"))),
+            BindingKind::NoBinding
+        );
     });
 }
 
 #[test]
 fn enums_and_namespaces() {
     analyzed("a.ts", "enum E { A }", |s| {
-        assert_eq!(declared_kind(s, Decl::Enum(EnumId(0))), BindingKind::TypeScriptContainer);
-        assert_eq!(declared_kind(s, Decl::EnumMember(EnumMemberId(0))), BindingKind::Const);
+        assert_eq!(
+            declared_kind(s, Decl::Enum(EnumId(0))),
+            BindingKind::TypeScriptContainer
+        );
+        assert_eq!(
+            declared_kind(s, Decl::EnumMember(EnumMemberId(0))),
+            BindingKind::Const
+        );
     });
     analyzed("a.ts", "declare enum E { A }", |s| {
-        assert_eq!(declared_kind(s, Decl::Enum(EnumId(0))), BindingKind::NoBinding);
-        assert_eq!(declared_kind(s, Decl::EnumMember(EnumMemberId(0))), BindingKind::NoBinding);
+        assert_eq!(
+            declared_kind(s, Decl::Enum(EnumId(0))),
+            BindingKind::NoBinding
+        );
+        assert_eq!(
+            declared_kind(s, Decl::EnumMember(EnumMemberId(0))),
+            BindingKind::NoBinding
+        );
     });
     analyzed("a.ts", "namespace N { export const a = 1; }", |s| {
-        assert_eq!(declared_kind(s, Decl::Module(ModuleId(0))), BindingKind::TypeScriptContainer);
+        assert_eq!(
+            declared_kind(s, Decl::Module(ModuleId(0))),
+            BindingKind::TypeScriptContainer
+        );
     });
     analyzed("a.ts", "namespace N { export type T = 1; }", |s| {
-        assert_eq!(declared_kind(s, Decl::Module(ModuleId(0))), BindingKind::NoBinding);
+        assert_eq!(
+            declared_kind(s, Decl::Module(ModuleId(0))),
+            BindingKind::NoBinding
+        );
     });
 }
 
 #[test]
 fn imports() {
     for &(path, text, decl, kind) in IMPORTS {
-        analyzed(path, text, |s| assert_eq!(declared_kind(s, decl), kind, "{text}"));
+        analyzed(path, text, |s| {
+            assert_eq!(declared_kind(s, decl), kind, "{text}")
+        });
     }
 }
 
 #[test]
 fn replaced_import_takes_local_kind() {
-    analyzed("a.ts", r#"import { A } from "m"; export const A = 1;"#, |s| {
-        assert_eq!(s.bound.binding_kind(s.variable("A", 0)), BindingKind::Const);
-    });
-    analyzed("a.ts", r#"import type { A } from "m"; function A() {}"#, |s| {
-        assert_eq!(function_kind(s, "A"), BindingKind::Function);
-    });
+    analyzed(
+        "a.ts",
+        r#"import { A } from "m"; export const A = 1;"#,
+        |s| {
+            assert_eq!(s.bound.binding_kind(s.variable("A", 0)), BindingKind::Const);
+        },
+    );
+    analyzed(
+        "a.ts",
+        r#"import type { A } from "m"; function A() {}"#,
+        |s| {
+            assert_eq!(function_kind(s, "A"), BindingKind::Function);
+        },
+    );
 }
 
 #[test]
 fn export_expressions() {
     analyzed("a.mjs", "export default 1;", |s| {
         let statements = find_stmts(&s.hir, |kind| matches!(kind, StmtKind::ExportDefault(_)));
-        assert_eq!(declared_kind(s, Decl::ExportExpr(statements[0])), BindingKind::Let);
+        assert_eq!(
+            declared_kind(s, Decl::ExportExpr(statements[0])),
+            BindingKind::Let
+        );
     });
     analyzed("a.ts", "export = 1;", |s| {
         let statements = find_stmts(&s.hir, |kind| matches!(kind, StmtKind::ExportAssign(_)));
-        assert_eq!(declared_kind(s, Decl::ExportExpr(statements[0])), BindingKind::NoBinding);
+        assert_eq!(
+            declared_kind(s, Decl::ExportExpr(statements[0])),
+            BindingKind::NoBinding
+        );
     });
 }
 
@@ -272,7 +364,10 @@ fn export_expressions() {
 fn export_local_symbol_has_no_kind() {
     analyzed("a.mjs", "export const v = 1;", |s| {
         let member = s.variable("v", 0);
-        let local = s.bound.lookup(s.bound.scopes[0].locals, s.workspace.atom("v")).unwrap();
+        let local = s
+            .bound
+            .lookup(s.bound.scopes[0].locals, s.workspace.atom("v"))
+            .unwrap();
         assert_ne!(local, member);
         assert_eq!(s.bound.binding_kind(member), BindingKind::Const);
         assert_eq!(s.bound.binding_kind(local), BindingKind::NoBinding);
@@ -281,13 +376,27 @@ fn export_local_symbol_has_no_kind() {
 
 #[test]
 fn merged_declarations_take_highest_kind() {
-    analyzed("a.ts", "function f() {} namespace f { export const a = 1; }", |s| {
-        assert_eq!(function_kind(s, "f"), BindingKind::Function);
-        assert_eq!(declared_kind(s, Decl::Module(ModuleId(0))), BindingKind::Function);
-    });
-    analyzed("a.ts", "class C {} namespace C { export const a = 1; }", |s| {
-        assert_eq!(declared_kind(s, Decl::Module(ModuleId(0))), BindingKind::Class);
-    });
+    analyzed(
+        "a.ts",
+        "function f() {} namespace f { export const a = 1; }",
+        |s| {
+            assert_eq!(function_kind(s, "f"), BindingKind::Function);
+            assert_eq!(
+                declared_kind(s, Decl::Module(ModuleId(0))),
+                BindingKind::Function
+            );
+        },
+    );
+    analyzed(
+        "a.ts",
+        "class C {} namespace C { export const a = 1; }",
+        |s| {
+            assert_eq!(
+                declared_kind(s, Decl::Module(ModuleId(0))),
+                BindingKind::Class
+            );
+        },
+    );
 }
 
 #[test]

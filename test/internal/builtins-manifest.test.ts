@@ -14,9 +14,14 @@ import {
 } from "../../src/codegen/builtins-manifest-model";
 
 const root = join(import.meta.dir, "..", "..");
-const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time"), { recursive: true, withFileTypes: true })
+const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time"), {
+  recursive: true,
+  withFileTypes: true,
+})
   .filter(entry => entry.isFile())
-  .map(entry => relative(join(root, "src", "js", "ahead-of-time"), join(entry.parentPath, entry.name)).replaceAll("\\", "/"));
+  .map(entry =>
+    relative(join(root, "src", "js", "ahead-of-time"), join(entry.parentPath, entry.name)).replaceAll("\\", "/"),
+  );
 const script = join(root, "src", "codegen", "builtins-manifest.ts");
 // A debug build takes seconds to load the script and to compress the archive.
 const generatorTimeout = 120_000;
@@ -231,7 +236,12 @@ describe("builtins-manifest-model.ts", () => {
 
   test("the registry has no text that is for --aot only", () => {
     expect(moduleList.filter(file => file.startsWith("ahead-of-time/"))).toEqual([]);
-    expect(functionIds.keys().filter(key => key.includes("ahead-of-time")).toArray()).toEqual([]);
+    expect(
+      functionIds
+        .keys()
+        .filter(key => key.includes("ahead-of-time"))
+        .toArray(),
+    ).toEqual([]);
     expect(textsForTheCompiler).toContain("internal/primordials.js");
     // The model starts from its own folder, which is the real one where `src` is a link.
     const sources = realpathSync(join(root, "src", "js"));

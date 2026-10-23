@@ -41,7 +41,12 @@ pub(super) fn lower_class_declaration(
     }
     let default_key = member::name_key(lowering.file, known::default);
     let default_name = PropertyName::Constant(default_key);
-    evaluate_class(lowering, class, Some(default_name), Some((binding, known::default)));
+    evaluate_class(
+        lowering,
+        class,
+        Some(default_name),
+        Some((binding, known::default)),
+    );
 }
 
 fn evaluate_class(

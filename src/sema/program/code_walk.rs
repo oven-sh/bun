@@ -229,7 +229,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let paths: Vec<&'r [u8]> = found.iter().map(path_of).collect();
         drop(state);
         let host = self.context.host;
-        let by_plugin: Vec<bool> = paths.iter().map(|path| host.is_read_by_plugin(path)).collect();
+        let by_plugin: Vec<bool> = paths
+            .iter()
+            .map(|path| host.is_read_by_plugin(path))
+            .collect();
         let mut state = self.state.lock();
         for ((index, path), is_read_by_plugin) in found.into_iter().zip(paths).zip(by_plugin) {
             if !is_read_by_plugin {
@@ -277,7 +280,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     let thread = std::thread::Builder::new()
                         .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
                     let _ = thread.spawn_scoped(scope, move || {
-                        bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Early Load"));
+                        bun_core::Output::Source::configure_named_thread(bun_core::zstr!(
+                            "Early Load"
+                        ));
                         bun_threading::lower_current_thread_priority();
                         walk.load_early();
                     });
@@ -384,8 +389,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut arena = None;
         let mut state = self.state.lock();
         loop {
-            let can_read_by_plugin =
-                reads && state.plugin_readers == 0 && !state.has_plugin_reader;
+            let can_read_by_plugin = reads && state.plugin_readers == 0 && !state.has_plugin_reader;
             if can_read_by_plugin && let Some(index) = state.to_read_by_plugin.pop_front() {
                 state.has_plugin_reader = true;
                 state.in_progress += 1;
@@ -431,7 +435,11 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     let has_deferred_reads = !state.deferred.is_empty();
                     state.in_progress += pending_assets.len();
                     drop(state);
-                    self.finish_without_assets(pending_assets, has_deferred_reads, start.plugin_reader);
+                    self.finish_without_assets(
+                        pending_assets,
+                        has_deferred_reads,
+                        start.plugin_reader,
+                    );
                     state = self.state.lock();
                     continue;
                 }
@@ -476,7 +484,11 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         if reads_in_background {
             let empty = Cow::Borrowed(&b""[..]);
-            state.ready.extend(pending_assets.into_iter().map(|index| (index, empty.clone())));
+            state.ready.extend(
+                pending_assets
+                    .into_iter()
+                    .map(|index| (index, empty.clone())),
+            );
         } else {
             state.background_reads_disabled = true;
             let count = pending_assets.len();

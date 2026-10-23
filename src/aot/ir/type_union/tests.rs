@@ -22,7 +22,10 @@ fn array_of(contents: TypeId) -> Type {
 }
 
 fn instance_of(class: BuiltinClass) -> Type {
-    Type::class(class, &vec![TypeTable::ANYTHING; class_data(class).contents.len()])
+    Type::class(
+        class,
+        &vec![TypeTable::ANYTHING; class_data(class).contents.len()],
+    )
 }
 
 fn map_of(key: TypeId, value: TypeId) -> Type {
@@ -184,7 +187,10 @@ fn hull_covers_only_members_with_a_range() {
     assert_eq!(*table.get(positive), Type::integers(5, 9));
     let negative = table.union(negative_high, negative_low);
     assert_eq!(*table.get(negative), Type::integers(-9, -5));
-    for members in [[TypeTable::STRING, low, high], [low, TypeTable::STRING, high]] {
+    for members in [
+        [TypeTable::STRING, low, high],
+        [low, TypeTable::STRING, high],
+    ] {
         let union = table.union_all(members);
         assert_eq!(table.get(union).integer_range(), Some((5, 9)));
         assert_eq!(table.get(union).primitives, Primitives::STRING);
@@ -227,7 +233,13 @@ fn any_object_absorbs_every_object_part() {
     let mut table = TypeTable::new();
     let builtin = table.intern(Type::builtin(BuiltinId::GlobalThis));
     let object = table.intern(Type::layout(layout(1)));
-    let members = [builtin, TypeTable::FUNCTION, object, TypeTable::ARRAY, TypeTable::OBJECT];
+    let members = [
+        builtin,
+        TypeTable::FUNCTION,
+        object,
+        TypeTable::ARRAY,
+        TypeTable::OBJECT,
+    ];
     assert_eq!(table.union_all(members), TypeTable::OBJECT);
 }
 
@@ -254,7 +266,10 @@ fn union_of_one_distinct_member_interns_nothing() {
     let object = table.intern(Type::layout(layout(1)));
     let count = table.len();
     let never = TypeTable::NEVER;
-    assert_eq!(union_all_types(&mut table, [never, object, object, never, object]), object);
+    assert_eq!(
+        union_all_types(&mut table, [never, object, object, never, object]),
+        object
+    );
     assert_eq!(union_types(&mut table, object, never), object);
     assert_eq!(table.len(), count);
 }
@@ -313,8 +328,14 @@ fn removing_one_kind_keeps_parts_of_other_kinds() {
 fn internal_type_in_union_is_anything() {
     let mut table = TypeTable::new();
     let environment = table.intern(Type::environment(layout(0)));
-    assert_eq!(table.union(environment, TypeTable::NUMBER), TypeTable::ANYTHING);
-    assert_eq!(table.union(TypeTable::NUMBER, environment), TypeTable::ANYTHING);
+    assert_eq!(
+        table.union(environment, TypeTable::NUMBER),
+        TypeTable::ANYTHING
+    );
+    assert_eq!(
+        table.union(TypeTable::NUMBER, environment),
+        TypeTable::ANYTHING
+    );
 }
 
 #[test]
@@ -328,16 +349,34 @@ fn missing_objects_are_added_by_kind() {
     let string_or_object = table.union(TypeTable::STRING, TypeTable::OBJECT);
 
     let any_view = table.intern(instance_of(BuiltinClass::TypedArray));
-    for source in [TypeTable::ANYTHING, TypeTable::OBJECT, record, global, any_view] {
-        assert_eq!(table.with_missing_objects_of(TypeTable::STRING, source), string_or_object);
+    for source in [
+        TypeTable::ANYTHING,
+        TypeTable::OBJECT,
+        record,
+        global,
+        any_view,
+    ] {
+        assert_eq!(
+            table.with_missing_objects_of(TypeTable::STRING, source),
+            string_or_object
+        );
     }
     let doubles = table.intern(instance_of(BuiltinClass::Float64Array));
-    assert_eq!(table.with_missing_objects_of(doubles, any_view), TypeTable::OBJECT);
+    assert_eq!(
+        table.with_missing_objects_of(doubles, any_view),
+        TypeTable::OBJECT
+    );
     let string_or_function = table.union(TypeTable::STRING, TypeTable::FUNCTION);
-    assert_eq!(table.with_missing_objects_of(TypeTable::STRING, TypeTable::FUNCTION), string_or_function);
+    assert_eq!(
+        table.with_missing_objects_of(TypeTable::STRING, TypeTable::FUNCTION),
+        string_or_function
+    );
     let any_array = table.intern(array_of(TypeTable::ANYTHING));
     let string_or_array = table.union(TypeTable::STRING, any_array);
-    assert_eq!(table.with_missing_objects_of(TypeTable::STRING, numbers), string_or_array);
+    assert_eq!(
+        table.with_missing_objects_of(TypeTable::STRING, numbers),
+        string_or_array
+    );
     let any_map = table.intern(map_of(TypeTable::ANYTHING, TypeTable::ANYTHING));
     let strings_or_map = table.union(strings, any_map);
     assert_eq!(table.with_missing_objects_of(strings, map), strings_or_map);
@@ -351,10 +390,27 @@ fn nothing_is_added_to_type_that_has_the_kind() {
     let number_or_numbers = table.union(TypeTable::NUMBER, numbers);
 
     assert_eq!(table.with_missing_objects_of(strings, numbers), strings);
-    assert_eq!(table.with_missing_objects_of(strings, number_or_numbers), strings);
-    assert_eq!(table.with_missing_objects_of(TypeTable::FUNCTION, TypeTable::FUNCTION), TypeTable::FUNCTION);
-    assert_eq!(table.with_missing_objects_of(TypeTable::OBJECT, TypeTable::ANYTHING), TypeTable::OBJECT);
-    for source in [TypeTable::NEVER, TypeTable::NULLISH, TypeTable::NUMBER, TypeTable::STRING] {
-        assert_eq!(table.with_missing_objects_of(TypeTable::STRING, source), TypeTable::STRING);
+    assert_eq!(
+        table.with_missing_objects_of(strings, number_or_numbers),
+        strings
+    );
+    assert_eq!(
+        table.with_missing_objects_of(TypeTable::FUNCTION, TypeTable::FUNCTION),
+        TypeTable::FUNCTION
+    );
+    assert_eq!(
+        table.with_missing_objects_of(TypeTable::OBJECT, TypeTable::ANYTHING),
+        TypeTable::OBJECT
+    );
+    for source in [
+        TypeTable::NEVER,
+        TypeTable::NULLISH,
+        TypeTable::NUMBER,
+        TypeTable::STRING,
+    ] {
+        assert_eq!(
+            table.with_missing_objects_of(TypeTable::STRING, source),
+            TypeTable::STRING
+        );
     }
 }

@@ -100,8 +100,11 @@ function filesOf(oddLine: string) {
     "extra.mjs": `export const n = 1000;\n`,
   };
   const names = Array.from({ length: plainFiles }, (_, i) => `p${i}`);
-  for (const [i, name] of names.entries()) files[`${name}.cjs`] = `"use strict";\nexports.n = ${i};\nexports.f = function (x) { return x + exports.n; };\n`;
-  files["odd.cjs"] = names.map(name => `const ${name} = require("./${name}.cjs");\n`).join("") + `globalThis.sum = ${names.map(name => `${name}.f(1)`).join(" + ")};\n${oddLine}\n`;
+  for (const [i, name] of names.entries())
+    files[`${name}.cjs`] = `"use strict";\nexports.n = ${i};\nexports.f = function (x) { return x + exports.n; };\n`;
+  files["odd.cjs"] =
+    names.map(name => `const ${name} = require("./${name}.cjs");\n`).join("") +
+    `globalThis.sum = ${names.map(name => `${name}.f(1)`).join(" + ")};\n${oddLine}\n`;
   return files;
 }
 
@@ -109,9 +112,11 @@ const sum = (plainFiles * (plainFiles + 1)) / 2;
 const only = process.env.AOT_ODD;
 
 // Cliffs that stand today: the line costs the 200 plain files their form. The program is built and run all the same and prints the sum.
-const handsTheLoaderOn = "the odd file hands require or module to code that the compiler does not see, so every file may be asked for by a computed name";
+const handsTheLoaderOn =
+  "the odd file hands require or module to code that the compiler does not see, so every file may be asked for by a computed name";
 const cliffs: Record<string, string> = {
-  "module.children.length": "a program that names a way from one module object to another has a module object for every file",
+  "module.children.length":
+    "a program that names a way from one module object to another has a module object for every file",
   "arguments at the top": handsTheLoaderOn,
   "a direct eval": handsTheLoaderOn,
   "with": handsTheLoaderOn,
@@ -131,16 +136,35 @@ describe.concurrent("one odd file beside 200 plain ones", () => {
           using directory = tempDir("aot-one-odd-file", filesOf(oddLine));
           const folder = String(directory);
           const executable = join(folder, isWindows ? "program.exe" : "program");
-          const build = await spawned([bunExe(), "build", "--compile", "--aot", "--explain=statistics", ...withoutDebugInformation(), "main.cjs", "--outfile", executable], folder, bunEnv);
+          const build = await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              "--explain=statistics",
+              ...withoutDebugInformation(),
+              "main.cjs",
+              "--outfile",
+              executable,
+            ],
+            folder,
+            bunEnv,
+          );
           built(build);
-          const statistic = (statistic: string) => Number(new RegExp(`^${statistic} (\\d+)$`, "m").exec(build.stderr + build.stdout)?.[1]);
+          const statistic = (statistic: string) =>
+            Number(new RegExp(`^${statistic} (\\d+)$`, "m").exec(build.stderr + build.stdout)?.[1]);
           if (!cliff)
             expect({
               plainFilesWithNames: Math.min(plainFiles, statistic("ModulesWithNames")),
               plainFilesWithoutState: Math.min(plainFiles, statistic("ModulesWithoutState")),
             }).toEqual({ plainFilesWithNames: plainFiles, plainFilesWithoutState: plainFiles });
           const ran = await spawned([executable], folder, bunEnv);
-          expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stdout: `${sum}\n`, stderr: "", exitCode: 0 });
+          expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+            stdout: `${sum}\n`,
+            stderr: "",
+            exitCode: 0,
+          });
         }),
       600_000,
     );

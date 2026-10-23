@@ -31,7 +31,8 @@ function read(stdout: string) {
   for (const line of stdout.split("\n")) {
     const at = line.indexOf(": ");
     if (at < 0) continue;
-    if (line.startsWith("#")) errors.set(line.slice(1, at), [...(errors.get(line.slice(1, at)) ?? []), line.slice(at + 2)]);
+    if (line.startsWith("#"))
+      errors.set(line.slice(1, at), [...(errors.get(line.slice(1, at)) ?? []), line.slice(at + 2)]);
     else answers.set(line.slice(0, at), line.slice(at + 2));
   }
   return { answers, errors };
@@ -48,12 +49,26 @@ describe.concurrent("compile/aot/doors to typed objects", () => {
         slot(async () => {
           const folder = join(root, String(part));
           mkdirSync(folder, { recursive: true });
-          const written = spawnSync({ cmd: [python, "-B", join(import.meta.dir, "generated", "python", "external-sources-of-typed-objects.py"), String(part)], stderr: "pipe" });
+          const written = spawnSync({
+            cmd: [
+              python,
+              "-B",
+              join(import.meta.dir, "generated", "python", "external-sources-of-typed-objects.py"),
+              String(part),
+            ],
+            stderr: "pipe",
+          });
           if (written.exitCode !== 0) throw new Error(String(written.stderr));
           writeFileSync(join(folder, "main.ts"), written.stdout);
           const executable = join(folder, isWindows ? "program.exe" : "program");
           try {
-            built(await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], folder, bunEnv));
+            built(
+              await spawned(
+                [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+                folder,
+                bunEnv,
+              ),
+            );
             const compiled = await spawned([executable], folder, bunEnv);
             const plain = await spawned([bunExe(), "run", "main.ts"], folder, bunEnv);
             expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
@@ -64,7 +79,9 @@ describe.concurrent("compile/aot/doors to typed objects", () => {
             for (const [name, answer] of theirs.answers) {
               if (verdicts[name]) expected[name] = verdicts[name];
               if (ours.answers.get(name) === answer) continue;
-              const isRefused = ours.errors.get(name)?.some(error => error.startsWith("TypeError") && !theirs.errors.get(name)?.includes(error));
+              const isRefused = ours.errors
+                .get(name)
+                ?.some(error => error.startsWith("TypeError") && !theirs.errors.get(name)?.includes(error));
               found[name] = isRefused ? "TypeError" : "differs";
             }
             if (updates) {

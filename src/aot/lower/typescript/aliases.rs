@@ -15,8 +15,14 @@ pub(super) fn lower_import_equals(
     if data.flags.contains(Flags::TYPE_ONLY) {
         return;
     }
-    let symbol = lowering.file.bound.declared_symbol(Decl::ImportEquals(declaration));
-    debug_assert!(symbol.is_some(), "an import alias with a value declares a symbol");
+    let symbol = lowering
+        .file
+        .bound
+        .declared_symbol(Decl::ImportEquals(declaration));
+    debug_assert!(
+        symbol.is_some(),
+        "an import alias with a value declares a symbol"
+    );
     let value = match data.target {
         ImportEqualsTarget::Require(_) => {
             module::lower_import_equals_require(lowering, declaration)
@@ -28,7 +34,12 @@ pub(super) fn lower_import_equals(
         return;
     };
     // A holder holds nothing of the type that the name has.
-    match lowering.file.inputs.modules.holder(lowering.file.file, symbol) {
+    match lowering
+        .file
+        .inputs
+        .modules
+        .holder(lowering.file.file, symbol)
+    {
         Some(_) => scope::initialize_converted_symbol(lowering, symbol, data.name, value),
         None => scope::initialize_binding(lowering, Binding::Symbol(symbol), data.name, value),
     }

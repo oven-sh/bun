@@ -227,9 +227,6 @@ pub(in crate::lower) fn try_lower_export_assignment(
     exports::try_lower_export_assignment(lowering, value)
 }
 
-pub(in crate::lower) fn is_erased(
-    file: &FileLowering<'_, '_, '_, '_>,
-    statement: StmtId,
-) -> bool {
+pub(in crate::lower) fn is_erased(file: &FileLowering<'_, '_, '_, '_>, statement: StmtId) -> bool {
     exports::is_erased(file, statement)
 }

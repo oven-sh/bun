@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { deriveFeatureEdges, findNativeEntries, type EdgeInput } from "../../../scripts/build/trim/edges.ts";
-import { EdgeKind, stubKinds, type EdgeStrength, type FeatureEdge, type StubKind } from "../../../scripts/build/trim/types.ts";
+import {
+  EdgeKind,
+  stubKinds,
+  type EdgeStrength,
+  type FeatureEdge,
+  type StubKind,
+} from "../../../scripts/build/trim/types.ts";
 import {
   A,
   B,
@@ -17,7 +23,12 @@ import {
   type Section,
 } from "./toy-graph.ts";
 
-const edge = (from: number, to: number, strength: EdgeStrength, isFollowed: boolean): FeatureEdge => ({ from, to, strength, isFollowed });
+const edge = (from: number, to: number, strength: EdgeStrength, isFollowed: boolean): FeatureEdge => ({
+  from,
+  to,
+  strength,
+  isFollowed,
+});
 
 function inputOf(result: Partitioned): EdgeInput {
   const folded = new Set(result.foldedEntryPoints.map(record => record.entry));
@@ -83,7 +94,10 @@ describe("the strength of an edge", () => {
   };
 
   test("of two guards the one that aborts decides", () => {
-    for (const stubs of [["Throw", "Abort"], ["Abort", "Throw"]] as const) {
+    for (const stubs of [
+      ["Throw", "Abort"],
+      ["Abort", "Throw"],
+    ] as const) {
       const result = partitioned(twoSites, [...guardsOf({}, stubs[0]), ["moreOfA", "entryC", C, { stub: stubs[1] }]]);
       expect(result.failures).toEqual([]);
       expect(result.edges).toEqual([edge(A, C, "AbortingGuard", true)]);
@@ -117,17 +131,25 @@ describe("whether a guard's edge is followed", () => {
   });
 
   test("it is when native code enters the same entry point through a guard", () => {
-    const result = partitioned({ ...enteredFromA, main: { root: true, to: ["guardA", "guardC", "nativeGuardA"] }, nativeGuardA: { to: ["entryA"] } }, [
-      ...guardsOf(asBuiltin),
-      ["nativeGuardA", "entryA", A],
-    ]);
+    const result = partitioned(
+      {
+        ...enteredFromA,
+        main: { root: true, to: ["guardA", "guardC", "nativeGuardA"] },
+        nativeGuardA: { to: ["entryA"] },
+      },
+      [...guardsOf(asBuiltin), ["nativeGuardA", "entryA", A]],
+    );
     expect(result.failures).toEqual([]);
     expect(nativeEntriesOf(result)).toEqual(nodesOf(result, "entryA", "entryC"));
     expect(result.edges).toEqual([edge(A, C, "RecoverableGuard", true)]);
   });
 
   test("it is when the entry point is exported: an addon calls it", () => {
-    const result = partitioned({ ...enteredFromA, entryA: { exported: true, to: ["entryC"] } }, guardsOf(asBuiltin), abcWith(B, { exports: true }));
+    const result = partitioned(
+      { ...enteredFromA, entryA: { exported: true, to: ["entryC"] } },
+      guardsOf(asBuiltin),
+      abcWith(B, { exports: true }),
+    );
     expect(result.failures).toEqual([]);
     expect(result.exactFeatures("entryA")).toEqual([A, B]);
     expect(nativeEntriesOf(result)).toEqual(nodesOf(result, "entryA", "entryC"));
@@ -136,7 +158,12 @@ describe("whether a guard's edge is followed", () => {
 
   test("it is below an exported symbol that is no entry point", () => {
     const result = partitioned(
-      { main: { root: true, to: ["guardC"] }, guardC: { to: ["entryC"] }, api: { exported: true, to: ["entryC"] }, entryC: {} },
+      {
+        main: { root: true, to: ["guardC"] },
+        guardC: { to: ["entryC"] },
+        api: { exported: true, to: ["entryC"] },
+        entryC: {},
+      },
       [
         ["guardC", "entryC", C],
         ["api", "entryC", C, { stub: "ReturnDefault" }],
@@ -150,7 +177,12 @@ describe("whether a guard's edge is followed", () => {
 
   test("it is when another feature's code refers to the entry point without a guard", () => {
     const result = partitioned(
-      { ...enteredFromA, main: { root: true, to: ["guardA", "guardB", "guardC"] }, guardB: { to: ["entryB"] }, entryB: { to: ["entryA"] } },
+      {
+        ...enteredFromA,
+        main: { root: true, to: ["guardA", "guardB", "guardC"] },
+        guardB: { to: ["entryB"] },
+        entryB: { to: ["entryA"] },
+      },
       [...guardsOf(asBuiltin), ["guardB", "entryB", B, { builtin: 8 }]],
     );
     expect(result.failures).toEqual([]);
@@ -214,7 +246,10 @@ describe("whether a guard's edge is followed", () => {
     test("a guard in its code is not followed, and neither is a guard of it: the setting's own requirement answers", () => {
       const result = partitioned(startup, [...startupGuards, ["entryS", "entryC", C], ["entryA", "entryS", Startup]]);
       expect(result.failures).toEqual([]);
-      expect(result.edges).toEqual([edge(A, Startup, "AbortingGuard", false), edge(Startup, C, "AbortingGuard", false)]);
+      expect(result.edges).toEqual([
+        edge(A, Startup, "AbortingGuard", false),
+        edge(Startup, C, "AbortingGuard", false),
+      ]);
     });
 
     test("its references are followed", () => {
@@ -258,7 +293,13 @@ describe("whether a guard's edge is followed", () => {
 
   test("a guard of a feature that only the command line enters is not followed from a feature of the program", () => {
     const result = partitioned(
-      { main: { root: true, to: ["guardA", "guardT"] }, guardA: { to: ["entryA"] }, guardT: { to: ["entryT"] }, entryA: { to: ["entryT"] }, entryT: {} },
+      {
+        main: { root: true, to: ["guardA", "guardT"] },
+        guardA: { to: ["entryA"] },
+        guardT: { to: ["entryT"] },
+        entryA: { to: ["entryT"] },
+        entryT: {},
+      },
       [
         ["guardA", "entryA", A],
         ["guardT", "entryT", Tools],
@@ -271,7 +312,13 @@ describe("whether a guard's edge is followed", () => {
 
   test("a guard in the code of a feature that only the command line enters is followed", () => {
     const result = partitioned(
-      { main: { root: true, to: ["guardT", "guardC"] }, guardT: { to: ["entryT"] }, guardC: { to: ["entryC"] }, entryT: { to: ["entryC"] }, entryC: {} },
+      {
+        main: { root: true, to: ["guardT", "guardC"] },
+        guardT: { to: ["entryT"] },
+        guardC: { to: ["entryC"] },
+        entryT: { to: ["entryC"] },
+        entryC: {},
+      },
       [
         ["guardT", "entryT", Tools],
         ["guardC", "entryC", C],
@@ -315,7 +362,10 @@ describe("no edge", () => {
   test("to an entry point that is folded with other code, which is not removable", () => {
     const result = partitioned({ ...enteredFromA, entryC: { foldedWith: ["alias"] } }, guardsOf({}));
     expect(result.failures).toEqual([]);
-    expect(result.foldedEntryPoints.map(record => record.entry)).toEqual([result.node("entryC"), result.node("entryC")]);
+    expect(result.foldedEntryPoints.map(record => record.entry)).toEqual([
+      result.node("entryC"),
+      result.node("entryC"),
+    ]);
     expect(result.edges).toEqual([]);
   });
 

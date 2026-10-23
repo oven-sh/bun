@@ -3,7 +3,9 @@ use super::*;
 use crate::hir::{ExportId, ExprId, ImportEqualsId, ImportId, StmtId};
 use crate::module_format::DeclaredModuleType::{CommonJs, Esm, Unknown};
 use crate::resolve::code::memory_host::{format_resolution, resolve_in};
-use crate::resolve::code::search::{is_directory_specifier, join_unrooted, preserve_trailing_slash};
+use crate::resolve::code::search::{
+    is_directory_specifier, join_unrooted, preserve_trailing_slash,
+};
 
 const MODULE_NOT_FOUND: &str = "NotFound(ModuleNotFound)";
 const PACKAGE_NOT_FOUND: &str = "NotFound(PackageNotFound)";
@@ -32,9 +34,11 @@ fn external(specifier: &str, kind: ExternalKind) -> HostResolution {
 }
 
 fn external_kind(host: &MemoryHost, request: &CodeRequest<'_>) -> (String, ExternalKind) {
-    with_resolver(host, &bun_run(), |resolver| match resolver.resolve_code(request) {
-        CodeResolution::External { specifier, kind } => (text(specifier), kind),
-        answer => panic!("{request:?} answers {answer:?}"),
+    with_resolver(host, &bun_run(), |resolver| {
+        match resolver.resolve_code(request) {
+            CodeResolution::External { specifier, kind } => (text(specifier), kind),
+            answer => panic!("{request:?} answers {answer:?}"),
+        }
     })
 }
 
@@ -104,7 +108,10 @@ fn external_and_erased_claims_pass_through() {
 fn claimed_external_kind_is_unchanged() {
     let host = empty_files(&[])
         .claim("react", external("react", ExternalKind::UncompiledCode))
-        .claim("./addon.node", external("/p/addon.node", ExternalKind::HostValue));
+        .claim(
+            "./addon.node",
+            external("/p/addon.node", ExternalKind::HostValue),
+        );
     let kind_of = |specifier| external_kind(&host, &import_request("/p/main.ts", specifier));
     let uncompiled = ("react".to_owned(), ExternalKind::UncompiledCode);
     assert_eq!(kind_of("react"), uncompiled);
@@ -114,7 +121,10 @@ fn claimed_external_kind_is_unchanged() {
 
 #[test]
 fn external_kind_of_imports_target_is_unchanged() {
-    let manifest = ("/p/package.json", r##"{"imports": {"#omitted": "node:omitted"}}"##);
+    let manifest = (
+        "/p/package.json",
+        r##"{"imports": {"#omitted": "node:omitted"}}"##,
+    );
     let omitted = external("node:omitted", ExternalKind::HostValue);
     let host = MemoryHost::new(&[manifest]).runtime_module("node:omitted", omitted);
     let found = external_kind(&host, &import_request("/p/main.ts", "#omitted"));
@@ -351,7 +361,10 @@ fn loader_request_passes_kind_and_attributes() {
         let (sqlite, embed): (&[u8], &[u8]) = (b"sqlite", b"true");
         let typed = resolver.loader_request(b"/p/a.js", Require, Some(sqlite), None);
         assert_eq!(typed.kind, Require);
-        assert_eq!((typed.type_attribute, typed.embed_attribute), (Some(sqlite), None));
+        assert_eq!(
+            (typed.type_attribute, typed.embed_attribute),
+            (Some(sqlite), None)
+        );
 
         let embedded = resolver.loader_request(b"/p/a.js", Import, Some(sqlite), Some(embed));
         assert_eq!(embedded.kind, Import);
@@ -385,7 +398,11 @@ fn paths_substitution_preserves_trailing_slash() {
         assert_eq!(import(&host, file), "/p/src/lib.ts", "{file}");
     }
     for directory in ["@/lib/", "rooted/lib/"] {
-        assert_eq!(import(&host, directory), "/p/src/lib/index.ts", "{directory}");
+        assert_eq!(
+            import(&host, directory),
+            "/p/src/lib/index.ts",
+            "{directory}"
+        );
     }
 }
 
@@ -495,10 +512,24 @@ fn resolve_code_requires_for_compile() {
 
 #[test]
 fn typescript_file_names_end_in_typescript_extensions() {
-    for path in ["/p/a.ts", "/p/a.tsx", "/p/a.mts", "/p/a.cts", "/p/a.d.ts", "/p/A.TS"] {
+    for path in [
+        "/p/a.ts",
+        "/p/a.tsx",
+        "/p/a.mts",
+        "/p/a.cts",
+        "/p/a.d.ts",
+        "/p/A.TS",
+    ] {
         assert!(is_typescript_file_name(path.as_bytes()), "{path}");
     }
-    for path in ["/p/a.js", "/p/a.jsx", "/p/a.mjs", "/p/a.json", "/p/ts", "/p/a.ts.txt"] {
+    for path in [
+        "/p/a.js",
+        "/p/a.jsx",
+        "/p/a.mjs",
+        "/p/a.json",
+        "/p/ts",
+        "/p/a.ts.txt",
+    ] {
         assert!(!is_typescript_file_name(path.as_bytes()), "{path}");
     }
 }

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use super::ModuleRef;
 use super::bindings::{
     AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,
     ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule, SyntheticExport,
@@ -16,7 +17,6 @@ use super::order::SiteKey;
 use super::plan::{Member, Plan, PlanParts, StoredSite};
 use super::unread_exports::remove_unread_data_exports;
 use super::wrapped::WrappedModules;
-use super::ModuleRef;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::InParallel;
@@ -198,7 +198,11 @@ fn add_seen_namespaces(file: &FileParts, seen: &mut Vec<ModuleRef>) {
         match (site, answer) {
             (ImportSiteKind::ImportCall(_), StoredSiteAnswer::Module(module)) => seen.push(*module),
             (ImportSiteKind::ImportCall(_), StoredSiteAnswer::Candidates(range)) => {
-                seen.extend(slice(&file.spellings, range).iter().map(|spelled| spelled.module));
+                seen.extend(
+                    slice(&file.spellings, range)
+                        .iter()
+                        .map(|spelled| spelled.module),
+                );
             }
             _ => {}
         }
@@ -318,10 +322,12 @@ impl ModuleGraph {
     /// A member of a namespace.
     pub fn member_binding(&self, file: FileId, member: ExprId) -> Option<ImportBinding> {
         let members = self.bound_members(file);
-        let index = members.binary_search_by_key(&member, |&(member, _)| member).ok()?;
+        let index = members
+            .binary_search_by_key(&member, |&(member, _)| member)
+            .ok()?;
         let accessed = self.accessed_modules(file)[index].1;
-        let is_namespace = accessed.is_imported
-            || self.interop(accessed.module).kind != ModuleKind::CommonJs;
+        let is_namespace =
+            accessed.is_imported || self.interop(accessed.module).kind != ModuleKind::CommonJs;
         is_namespace.then_some(members[index].1)
     }
 
@@ -352,7 +358,10 @@ impl ModuleGraph {
 
     /// By symbol. One that is needed as a value is an ordinary binding that holds the object. Final behind `finish_plan`.
     pub fn holders(&self, file: FileId) -> &[Holder] {
-        debug_assert!(self.is_plan_finished(), "a shape has changed since the plan was finished");
+        debug_assert!(
+            self.is_plan_finished(),
+            "a shape has changed since the plan was finished"
+        );
         slice(&self.holders, &self.entry(file).holders)
     }
 
@@ -405,8 +414,12 @@ impl ModuleGraph {
             }
         };
         for entry in entries {
-            retain_in(exports, &mut entry.exports, |export| !leads_to_left_out_file(export.binding));
-            retain_in(required_names, &mut entry.required_names, |name| !is_left_out(name.module));
+            retain_in(exports, &mut entry.exports, |export| {
+                !leads_to_left_out_file(export.binding)
+            });
+            retain_in(required_names, &mut entry.required_names, |name| {
+                !is_left_out(name.module)
+            });
         }
         record_files.retain(|file| files.binary_search(file).is_err());
         // Each importer has a module of its own for what the build does not compile.
@@ -430,9 +443,12 @@ impl ModuleGraph {
         for (file, entry) in (0..).map(FileId).zip(entry_index_by_file.iter()) {
             if let Some(entry) = *entry {
                 let range = &mut entries[entry as usize].requests;
-                retain_in(requests, range, |request| keeps(ModuleRef::File(file), &request));
+                retain_in(requests, range, |request| {
+                    keeps(ModuleRef::File(file), &request)
+                });
             }
         }
+        #[allow(clippy::needless_collect)] // ends the borrow of `plan`
         let inner_modules: Vec<ModuleRef> = plan
             .inner_modules()
             .iter()
@@ -454,7 +470,9 @@ impl ModuleGraph {
             .collect();
         left_out.shared_sort_unstable();
         self.limit_requests(|_, request| match request.target {
-            ModuleRef::Inner { file, callback } => left_out.binary_search(&(file, callback)).is_err(),
+            ModuleRef::Inner { file, callback } => {
+                left_out.binary_search(&(file, callback)).is_err()
+            }
             _ => true,
         });
         self.left_out_inner_modules = left_out;
@@ -472,7 +490,12 @@ impl ModuleGraph {
         for written in of_files.chain(&self.plan.inner_requests) {
             let start = to_u32(passed_on.len());
             seen.clear();
-            pending.extend(slice(&self.requests, written).iter().rev().map(|&request| (request, true)));
+            pending.extend(
+                slice(&self.requests, written)
+                    .iter()
+                    .rev()
+                    .map(|&request| (request, true)),
+            );
             while let Some((request, is_written_here)) = pending.pop() {
                 match request.target {
                     // No site of it is left.
@@ -495,7 +518,9 @@ impl ModuleGraph {
                             earlier.target == request.target && earlier.kind == request.kind
                         };
                         match passed_on[start as usize..].iter_mut().find(is_same) {
-                            Some(earlier) => earlier.is_dynamic_star_export |= request.is_dynamic_star_export,
+                            Some(earlier) => {
+                                earlier.is_dynamic_star_export |= request.is_dynamic_star_export
+                            }
                             None => passed_on.push(request),
                         }
                     }
@@ -525,7 +550,10 @@ impl ModuleGraph {
     pub fn is_left_out(&self, module: ModuleRef) -> bool {
         match module {
             ModuleRef::Inner { file, callback }
-                if self.left_out_inner_modules.binary_search(&(file, callback)).is_ok() =>
+                if self
+                    .left_out_inner_modules
+                    .binary_search(&(file, callback))
+                    .is_ok() =>
             {
                 true
             }
@@ -543,7 +571,9 @@ impl ModuleGraph {
                 continue;
             };
             let range = &mut self.entries[entry as usize].exports;
-            retain_in(&mut self.exports, range, |export| find_use(file, &export) != ExportUse::None);
+            retain_in(&mut self.exports, range, |export| {
+                find_use(file, &export) != ExportUse::None
+            });
             for export in &mut self.exports[range.start as usize..range.end as usize] {
                 export.is_read_from_object = find_use(file, export) == ExportUse::ReadFromObject;
             }
@@ -566,12 +596,7 @@ impl ModuleGraph {
         slice(&self.unread_exports, &self.entry(file).unread_exports)
     }
 
-    pub fn find_export(
-        &self,
-        module: ModuleRef,
-        name: Atom,
-        atoms: &Interner<'_>,
-    ) -> ExportLookup {
+    pub fn find_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> ExportLookup {
         let entry = match module {
             ModuleRef::File(file) => self.entry(file),
             ModuleRef::Inner { .. }
@@ -622,7 +647,10 @@ impl ModuleGraph {
 
     /// What the load of the module ends with: an import of it, or of a module that it imports, names nothing.
     pub fn load_failure(&self, file: FileId) -> Option<ModuleFailureId> {
-        let index = self.load_failures.binary_search_by_key(&file, |&(file, _)| file).ok()?;
+        let index = self
+            .load_failures
+            .binary_search_by_key(&file, |&(file, _)| file)
+            .ok()?;
         Some(self.load_failures[index].1)
     }
 
@@ -727,7 +755,13 @@ impl ModuleGraph {
         debug_assert!(last_file.is_none_or(|&last| last < parts.file));
         debug_assert!(parts.imports.is_sorted_by(|a, b| a.0 < b.0));
         debug_assert!(parts.members.is_sorted_by(|a, b| a.0 < b.0));
-        debug_assert!(parts.members.iter().map(|it| it.0).eq(parts.accessed.iter().map(|it| it.0)));
+        debug_assert!(
+            parts
+                .members
+                .iter()
+                .map(|it| it.0)
+                .eq(parts.accessed.iter().map(|it| it.0))
+        );
         debug_assert!(parts.evaluating_sites.is_sorted_by(|a, b| a.0 < b.0));
         debug_assert!(parts.holders.is_sorted_by(|a, b| a.symbol < b.symbol));
         debug_assert!(parts.exports.is_empty() || parts.interop.has_export_table());

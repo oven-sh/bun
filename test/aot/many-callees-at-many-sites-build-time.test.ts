@@ -18,7 +18,9 @@ const timeout = isSlowBuild ? 480_000 : 90_000;
 
 function modulesInOneFile(count: number) {
   const lines = [`var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);`];
-  lines.push(`var require_m0 = __commonJS((exports) => {\n  exports.c = 1;\n  exports.f = function (x) { return x + exports.c; };\n});`);
+  lines.push(
+    `var require_m0 = __commonJS((exports) => {\n  exports.c = 1;\n  exports.f = function (x) { return x + exports.c; };\n});`,
+  );
   for (let index = 1; index < count; index++) {
     lines.push(
       `var require_m${index} = __commonJS((exports) => {\n  var a = require_m${index - 1}();\n  exports.c = a.c + 1;\n` +
@@ -51,8 +53,15 @@ async function buildsAndPrints(source: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [buildOutput, buildErrors, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-  expect({ output: buildExitCode ? buildOutput + buildErrors : "", exitCode: buildExitCode }).toEqual({ output: "", exitCode: 0 });
+  const [buildOutput, buildErrors, buildExitCode] = await Promise.all([
+    build.stdout.text(),
+    build.stderr.text(),
+    build.exited,
+  ]);
+  expect({ output: buildExitCode ? buildOutput + buildErrors : "", exitCode: buildExitCode }).toEqual({
+    output: "",
+    exitCode: 0,
+  });
   await using run = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
@@ -74,7 +83,9 @@ test(
   async () => {
     const count = isSlowBuild ? 200 : 1_000;
     // Each of count * count calls answers 1 + v + index.
-    expect(await buildsAndPrints(classesWithOneMethodName(count))).toBe(String((count * count + count * count * (count - 1)) | 0));
+    expect(await buildsAndPrints(classesWithOneMethodName(count))).toBe(
+      String((count * count + count * count * (count - 1)) | 0),
+    );
   },
   timeout,
 );

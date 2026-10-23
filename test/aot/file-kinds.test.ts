@@ -28,7 +28,11 @@ function written(folder: string, { file, text, files }: { file: string; text: st
 async function compiled(folder: string, file: string, flags: string[]) {
   const executable = join(folder, isWindows ? "program.exe" : "program");
   try {
-    const build = await spawned([bunExe(), "build", "--compile", ...flags, file, "--outfile", executable], folder, bunEnv);
+    const build = await spawned(
+      [bunExe(), "build", "--compile", ...flags, file, "--outfile", executable],
+      folder,
+      bunEnv,
+    );
     if (build.exitCode) return { stdout: "", exitCode: build.exitCode, signal: build.signal, stderr: build.stderr };
     return await spawned([executable], folder, bunEnv);
   } finally {
@@ -47,18 +51,37 @@ describe.concurrent("compile/aot/kinds of files", () => {
           slot(async () => {
             const folder = join(root, role, setting);
             // What plain Bun refuses would stop the build of the whole program.
-            const all = await spawned([bunExe(), "run", written(folder, asLibraries(setting, role, texts))], folder, bunEnv);
-            const taken = all.stdout.split("\n").flatMap(line => (line && !line.includes(" FAILS ") ? [line.split(" ")[0]] : []));
+            const all = await spawned(
+              [bunExe(), "run", written(folder, asLibraries(setting, role, texts))],
+              folder,
+              bunEnv,
+            );
+            const taken = all.stdout
+              .split("\n")
+              .flatMap(line => (line && !line.includes(" FAILS ") ? [line.split(" ")[0]] : []));
             expect(taken.length).toBeGreaterThan(50);
             const file = written(folder, asLibraries(setting, role, taken));
             const plain = await spawned([bunExe(), "run", file], folder, bunEnv);
-            expect({ signal: plain.signal, exitCode: plain.exitCode, lines: plain.stdout.split("\n").length }).toEqual({ signal: null, exitCode: 0, lines: taken.length + 1 });
+            expect({ signal: plain.signal, exitCode: plain.exitCode, lines: plain.stdout.split("\n").length }).toEqual({
+              signal: null,
+              exitCode: 0,
+              lines: taken.length + 1,
+            });
             const bundle = await compiled(folder, file, []);
             const aot = await compiled(folder, file, ["--aot"]);
             const [ours, theirs, bundled] = [aot, plain, bundle].map(run => run.stdout.split("\n"));
             const known = alone[`${role}: ${setting}`] ?? [];
-            const found = theirs.flatMap((line, i) => (ours[i] === line || ours[i] === bundled[i] ? [] : [known.includes(taken[i]) ? taken[i] : `--aot: ${ours[i]}\nplain: ${line}\n--compile: ${bundled[i]}`]));
-            expect({ alone: found, signal: aot.signal, exitCode: aot.exitCode, stderr: aot.exitCode ? aot.stderr : "" }).toEqual({ alone: known, signal: null, exitCode: 0, stderr: "" });
+            const found = theirs.flatMap((line, i) =>
+              ours[i] === line || ours[i] === bundled[i]
+                ? []
+                : [known.includes(taken[i]) ? taken[i] : `--aot: ${ours[i]}\nplain: ${line}\n--compile: ${bundled[i]}`],
+            );
+            expect({
+              alone: found,
+              signal: aot.signal,
+              exitCode: aot.exitCode,
+              stderr: aot.exitCode ? aot.stderr : "",
+            }).toEqual({ alone: known, signal: null, exitCode: 0, stderr: "" });
           }),
         600_000,
       );
@@ -77,7 +100,11 @@ describe.concurrent("compile/aot/kinds of files", () => {
             // `import "node:os"; typeof module` is an ES module to the language and to Node.
             if (plain.exitCode ? aot.exitCode : aot.stdout === plain.stdout && aot.exitCode === 0) return;
             const bundle = await compiled(folder, file, []);
-            expect({ stdout: aot.stdout, exitCode: aot.exitCode, signal: aot.signal }).toEqual({ stdout: bundle.stdout, exitCode: bundle.exitCode, signal: bundle.signal });
+            expect({ stdout: aot.stdout, exitCode: aot.exitCode, signal: aot.signal }).toEqual({
+              stdout: bundle.stdout,
+              exitCode: bundle.exitCode,
+              signal: bundle.signal,
+            });
           }),
         600_000,
       );

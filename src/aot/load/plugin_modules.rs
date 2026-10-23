@@ -5,10 +5,10 @@ use crate::load::source_provider::{
     SourceProvider,
 };
 use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_ast::{ImportKind, Loader};
 use bun_core::fmt::hex_byte_lower;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
@@ -61,6 +61,7 @@ struct StoredModule {
 }
 
 impl StoredModule {
+    #[allow(clippy::ptr_arg)] // a borrowed text is kept without a copy
     fn new(contents: &Cow<'static, [u8]>, loader: Loader, is_from_plugin: bool) -> StoredModule {
         StoredModule {
             loader,
@@ -193,7 +194,9 @@ impl<'a> PluginModules<'a> {
             return answer;
         }
         let answer = self.provider.has_load_plugin(self.module_name(path));
-        *self.paths_asked_for_load_plugin.insert_ref(path.to_vec(), answer)
+        *self
+            .paths_asked_for_load_plugin
+            .insert_ref(path.to_vec(), answer)
     }
 
     pub(crate) fn was_read(&self, path: &[u8]) -> bool {
@@ -288,7 +291,10 @@ impl<'a> PluginModules<'a> {
             default_loader,
             read_file: &read_file,
         };
-        match self.messages.with_log(|log| self.provider.load(&request, log)) {
+        match self
+            .messages
+            .with_log(|log| self.provider.load(&request, log))
+        {
             Ok(Loaded::Source {
                 contents,
                 loader,
@@ -398,7 +404,9 @@ fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {
         (CodeImportKind::EntryPoint, _) => ImportKind::EntryPointBuild,
         (_, CodeImportForm::ResolveOnly) => ImportKind::RequireResolve,
         (_, CodeImportForm::Dynamic) => ImportKind::Dynamic,
-        (CodeImportKind::Import, CodeImportForm::Static | CodeImportForm::Macro) => ImportKind::Stmt,
+        (CodeImportKind::Import, CodeImportForm::Static | CodeImportForm::Macro) => {
+            ImportKind::Stmt
+        }
         (CodeImportKind::Require, CodeImportForm::Static | CodeImportForm::Macro) => {
             ImportKind::Require
         }

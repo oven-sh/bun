@@ -19,7 +19,9 @@ impl TreeWriter<'_, '_> {
         // The compiler declares its cache before the directives of the function.
         let is_directive = |statement: &&Stmt| matches!(statement.data, StmtData::SDirective(_));
         let directives = statements.iter().filter(is_directive);
-        let others = statements.iter().filter(|statement| !is_directive(statement));
+        let others = statements
+            .iter()
+            .filter(|statement| !is_directive(statement));
         let mut ids = Vec::with_capacity(statements.len());
         for statement in directives.chain(others) {
             ids.push(self.write_statement(statement)?);
@@ -273,7 +275,10 @@ impl TreeWriter<'_, '_> {
                     Some(binding) => self.write_catch_parameter(binding)?,
                     None => VarDeclId::NONE,
                 };
-                (param, self.write_block_statement(catch.body.slice(), catch.body_loc)?)
+                (
+                    param,
+                    self.write_block_statement(catch.body.slice(), catch.body_loc)?,
+                )
             }
             None => (VarDeclId::NONE, StmtId::NONE),
         };

@@ -81,7 +81,10 @@ pub fn emit_with_external_bodies(
     mut remap: BodyRemap,
     in_parallel: InParallel<'_>,
 ) -> Result<ProgramBytes, EmitError> {
-    assert!(program.functions.is_empty(), "the functions are with the ids of their units");
+    assert!(
+        program.functions.is_empty(),
+        "the functions are with the ids of their units"
+    );
     let mut functions = remap.take_functions();
     let bodies = ExternalBodies::take_from(&mut functions, remap, in_parallel);
     let tasks = functions::create_tasks_for_shared_functions(functions);

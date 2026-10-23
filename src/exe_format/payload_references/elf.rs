@@ -38,7 +38,7 @@ pub(super) fn check(file: &mut Image<'_>, payload: Payload) -> Checked {
     let ehdr: Elf64_Ehdr = file.struct_at(0)?;
     let table_size = u64::from(ehdr.e_shnum) * size_of::<Elf64_Shdr>() as u64;
     let headers = table_bytes(file, ehdr.e_shoff, table_size)?;
-    for header in headers.chunks_exact(size_of::<Elf64_Shdr>()) {
+    for header in headers.as_chunks::<{ size_of::<Elf64_Shdr>() }>().0 {
         let header: Elf64_Shdr = read_struct(header);
         if header.sh_flags & SHF_ALLOC == 0 {
             continue;
@@ -77,7 +77,7 @@ fn check_relocations<const ENTRY_SIZE: usize>(
     payload: Payload,
 ) -> Checked {
     let entries = entries_of::<ENTRY_SIZE>(file, header)?;
-    for entry in entries.chunks_exact(ENTRY_SIZE) {
+    for entry in entries.as_chunks::<ENTRY_SIZE>().0 {
         payload.check_relocation(first_word(entry), POINTER_SIZE)?;
     }
     Ok(())
@@ -91,7 +91,7 @@ fn check_relative_relocations(
 ) -> Checked {
     let entries = entries_of::<{ POINTER_SIZE as usize }>(file, header)?;
     let mut next_address: u64 = 0;
-    for entry in entries.chunks_exact(POINTER_SIZE as usize) {
+    for entry in entries.as_chunks::<{ POINTER_SIZE as usize }>().0 {
         let entry = first_word(entry);
         if entry & 1 == 0 {
             payload.check_relocation(entry, POINTER_SIZE)?;
@@ -111,7 +111,7 @@ fn check_relative_relocations(
 
 fn check_dynamic_symbols(file: &mut Image<'_>, header: &Elf64_Shdr, payload: Payload) -> Checked {
     let entries = entries_of::<{ size_of::<DynamicSymbol>() }>(file, header)?;
-    for entry in entries.chunks_exact(size_of::<DynamicSymbol>()) {
+    for entry in entries.as_chunks::<{ size_of::<DynamicSymbol>() }>().0 {
         let symbol: DynamicSymbol = read_struct(entry);
         let has_address = symbol.section_index != SHN_UNDEF
             && symbol.section_index != SHN_ABS

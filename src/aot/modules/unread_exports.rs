@@ -226,13 +226,15 @@ pub(super) fn remove_unread_data_exports(files: &mut [FileParts]) {
             })
             .collect();
         let mut unread_exports = Vec::new();
-        parts.exports.retain(|export| match reads.is_unread(module, export) {
-            Some(symbol) if !kept_symbols.contains(&symbol) => {
-                unread_exports.push(symbol);
-                false
-            }
-            Some(_) | None => true,
-        });
+        parts
+            .exports
+            .retain(|export| match reads.is_unread(module, export) {
+                Some(symbol) if !kept_symbols.contains(&symbol) => {
+                    unread_exports.push(symbol);
+                    false
+                }
+                Some(_) | None => true,
+            });
         unread_exports.sort_unstable();
         unread_exports.dedup();
         parts.unread_exports = unread_exports;

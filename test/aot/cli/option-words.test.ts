@@ -8,7 +8,8 @@ import { describe, test } from "../supported";
 const env = { ...bunEnv, NO_COLOR: "1" };
 const bun = (cwd: string, ...args: string[]) => spawned([bunExe(), ...args], cwd, env);
 const executable = (folder: string, name: string) => join(folder, isWindows ? name + ".exe" : name);
-const compile = (folder: string, entry: string, name: string, ...flags: string[]) => bun(folder, "build", "--compile", "--aot", ...flags, entry, "--outfile", name);
+const compile = (folder: string, entry: string, name: string, ...flags: string[]) =>
+  bun(folder, "build", "--compile", "--aot", ...flags, entry, "--outfile", name);
 const run = (folder: string, name: string) => spawned([executable(folder, name)], folder, env);
 
 const nm = isWindows ? null : (Bun.which("nm") ?? Bun.which("llvm-nm"));
@@ -113,67 +114,111 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
 
   test("--aot-validate requires --aot", async () => {
     using dir = tempDir("aot-flag-without-aot", invalidProgram);
-    const { stdout, stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot-validate", "wrong.ts", "--outfile", "out");
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "error: --aot-validate requires --aot\n", exitCode: 1 });
+    const { stdout, stderr, exitCode } = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--aot-validate",
+      "wrong.ts",
+      "--outfile",
+      "out",
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: "error: --aot-validate requires --aot\n",
+      exitCode: 1,
+    });
   });
 
-  test("the build summary lists the flags that changed the code", () =>
-    slot(async () => {
-      using dir = tempDir("aot-flags-in-summary", pointsProgram);
-      const folder = String(dir);
-      const words = [
-        "validate",
-        "check=validate-back-end,validate-references",
-        "disable=flow:ProvenLayoutSets",
-        "disable-in=0:1",
-        "limit=RegExpPatternLengthWithCode:4",
-        "heat=everything-is-cold",
-        "testing=ignore-branch-hints",
-        "count-branches",
-        "layout-seed=7",
-      ];
-      const changed = await compile(folder, "app.ts", "changed", ...words.map(word => "--aot-" + word), "--aot-verify-each-pass");
-      built(changed);
-      expect((changed.stdout + changed.stderr).split("\n")).toContain("Built with developer options: " + [...words, "check=verify-each-pass"].map(word => "--aot-" + word).join(" "));
-      expect(await run(folder, "changed")).toMatchObject({ stdout: "1,3,5 true\n", exitCode: 0, signal: null });
+  test(
+    "the build summary lists the flags that changed the code",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-flags-in-summary", pointsProgram);
+        const folder = String(dir);
+        const words = [
+          "validate",
+          "check=validate-back-end,validate-references",
+          "disable=flow:ProvenLayoutSets",
+          "disable-in=0:1",
+          "limit=RegExpPatternLengthWithCode:4",
+          "heat=everything-is-cold",
+          "testing=ignore-branch-hints",
+          "count-branches",
+          "layout-seed=7",
+        ];
+        const changed = await compile(
+          folder,
+          "app.ts",
+          "changed",
+          ...words.map(word => "--aot-" + word),
+          "--aot-verify-each-pass",
+        );
+        built(changed);
+        expect((changed.stdout + changed.stderr).split("\n")).toContain(
+          "Built with developer options: " +
+            [...words, "check=verify-each-pass"].map(word => "--aot-" + word).join(" "),
+        );
+        expect(await run(folder, "changed")).toMatchObject({ stdout: "1,3,5 true\n", exitCode: 0, signal: null });
 
-      const unchanged = await compile(folder, "app.ts", "unchanged", "--aot-threads=1", "--aot-symbols", "--aot-report=report.json");
-      built(unchanged);
-      expect(unchanged.stdout + unchanged.stderr).not.toMatch(/^Built with developer options/m);
-      expect(await run(folder, "unchanged")).toMatchObject({ stdout: "1,3,5 true\n", exitCode: 0, signal: null });
-    }), 300_000);
+        const unchanged = await compile(
+          folder,
+          "app.ts",
+          "unchanged",
+          "--aot-threads=1",
+          "--aot-symbols",
+          "--aot-report=report.json",
+        );
+        built(unchanged);
+        expect(unchanged.stdout + unchanged.stderr).not.toMatch(/^Built with developer options/m);
+        expect(await run(folder, "unchanged")).toMatchObject({ stdout: "1,3,5 true\n", exitCode: 0, signal: null });
+      }),
+    300_000,
+  );
 
-  test("--aot-out writes the emitted program", () =>
-    slot(async () => {
-      using dir = tempDir("aot-out", pointsProgram);
-      const folder = String(dir);
-      built(await compile(folder, "app.ts", "out", "--aot-out=program.bin"));
-      expect(statSync(join(folder, "program.bin")).size).toBeGreaterThan(0);
-    }), 300_000);
+  test(
+    "--aot-out writes the emitted program",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-out", pointsProgram);
+        const folder = String(dir);
+        built(await compile(folder, "app.ts", "out", "--aot-out=program.bin"));
+        expect(statSync(join(folder, "program.bin")).size).toBeGreaterThan(0);
+      }),
+    300_000,
+  );
 
-  test("a value of another type than declared is computed with as in plain Bun, with and without --aot-erase-types", () =>
-    slot(async () => {
-      using dir = tempDir("aot-erase-types", mistypedArgumentProgram);
-      const folder = String(dir);
-      const expected = { stdout: "8\n", stderr: "", exitCode: 0, signal: null };
-      built(await compile(folder, "app.ts", "typed"));
-      expect(await run(folder, "typed")).toEqual(expected);
+  test(
+    "a value of another type than declared is computed with as in plain Bun, with and without --aot-erase-types",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-erase-types", mistypedArgumentProgram);
+        const folder = String(dir);
+        const expected = { stdout: "8\n", stderr: "", exitCode: 0, signal: null };
+        built(await compile(folder, "app.ts", "typed"));
+        expect(await run(folder, "typed")).toEqual(expected);
 
-      built(await compile(folder, "app.ts", "erased", "--aot-erase-types"));
-      expect(await run(folder, "erased")).toEqual(expected);
-    }), 300_000);
+        built(await compile(folder, "app.ts", "erased", "--aot-erase-types"));
+        expect(await run(folder, "erased")).toEqual(expected);
+      }),
+    300_000,
+  );
 
-  test.skipIf(!nm)("--aot-symbols adds a symbol for a compiled function", () =>
-    slot(async () => {
-      using dir = tempDir("aot-symbols", recursiveProgram);
-      const folder = String(dir);
-      built(await compile(folder, "app.ts", "named", "--aot-symbols"));
-      expect(await hasSymbol(executable(folder, "named"), "fibonacci")).toBe(true);
-      expect(await run(folder, "named")).toMatchObject({ stdout: "55\n", exitCode: 0, signal: null });
+  test.skipIf(!nm)(
+    "--aot-symbols adds a symbol for a compiled function",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-symbols", recursiveProgram);
+        const folder = String(dir);
+        built(await compile(folder, "app.ts", "named", "--aot-symbols"));
+        expect(await hasSymbol(executable(folder, "named"), "fibonacci")).toBe(true);
+        expect(await run(folder, "named")).toMatchObject({ stdout: "55\n", exitCode: 0, signal: null });
 
-      built(await compile(folder, "app.ts", "unnamed"));
-      expect(await hasSymbol(executable(folder, "unnamed"), "fibonacci")).toBe(false);
-    }), 300_000);
+        built(await compile(folder, "app.ts", "unnamed"));
+        expect(await hasSymbol(executable(folder, "unnamed"), "fibonacci")).toBe(false);
+      }),
+    300_000,
+  );
 
   test.each([
     [[], "--aot-log-type-mismatches"],

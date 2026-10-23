@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -30,6 +30,9 @@ test("freezing a function that nothing has touched does not make its prototype o
   using dir = tempDir("aot-freezing-a-function", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir));
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
   expect(await run([executable], String(dir))).toEqual({ stdout: "true few\ntrue true 6\n", stderr: "", exitCode: 0 });
 });

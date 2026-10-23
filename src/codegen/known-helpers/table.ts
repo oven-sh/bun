@@ -53,7 +53,13 @@ export function mergeTrees(read: readonly VersionRead[]): Map<string, Tree> {
     for (const one of found) {
       let tree = trees.get(one.tree);
       if (tree === undefined) {
-        tree = { tree: one.tree, text: one.text, unsupported: one.unsupported, references: one.references, occurrences: [] };
+        tree = {
+          tree: one.tree,
+          text: one.text,
+          unsupported: one.unsupported,
+          references: one.references,
+          occurrences: [],
+        };
         trees.set(one.tree, tree);
       }
       tree.occurrences.push({
@@ -82,8 +88,11 @@ export function originOf(tree: Tree, versionsRead: ReadonlyMap<string, readonly 
     .map(tool => {
       const versions = versionsRead.get(tool)!;
       const namesMinors = hasOneReleaseOfEachMinor(versions);
-      const short = (version: string) => (namesMinors && isRelease(parseVersion(version)!) ? minorOf(version)! : version);
-      const has = new Set(tree.occurrences.filter(occurrence => occurrence.tool === tool).map(occurrence => occurrence.version));
+      const short = (version: string) =>
+        namesMinors && isRelease(parseVersion(version)!) ? minorOf(version)! : version;
+      const has = new Set(
+        tree.occurrences.filter(occurrence => occurrence.tool === tool).map(occurrence => occurrence.version),
+      );
       const ranges: string[][] = [];
       let open: string[] | undefined;
       for (const version of versions) {
@@ -91,7 +100,9 @@ export function originOf(tree: Tree, versionsRead: ReadonlyMap<string, readonly 
         else if (open) open[1] = version;
         else ranges.push((open = [version, version]));
       }
-      const written = ranges.map(([first, last]) => (first === last ? short(first) : `${short(first)} to ${short(last)}`));
+      const written = ranges.map(([first, last]) =>
+        first === last ? short(first) : `${short(first)} to ${short(last)}`,
+      );
       return `${tool} ${written.join(", ")}`;
     })
     .join("; ");
@@ -148,7 +159,8 @@ export function buildTable(read: readonly VersionRead[], lines: readonly NamedSh
   const helperOfShape = new Map<string, string>();
   for (const line of lines) {
     const known = helperOfShape.get(line.shape);
-    if (known !== undefined && known !== line.helper) complaints.push(`${line.shape} is listed under ${known} and under ${line.helper}`);
+    if (known !== undefined && known !== line.helper)
+      complaints.push(`${line.shape} is listed under ${known} and under ${line.helper}`);
     helperOfShape.set(line.shape, line.helper);
     const publication = publicationOf(line);
     if (!versionsRead.get(publication.tool)?.includes(publication.version)) {
@@ -156,8 +168,11 @@ export function buildTable(read: readonly VersionRead[], lines: readonly NamedSh
       continue;
     }
     const candidates: (readonly [Tree, Occurrence])[] = [];
-    for (const [tree, occurrences] of treesByPlace.get(placeOf(publication, line.publishedName, line.part ?? 1)) ?? []) {
-      const occurrence = occurrences.find(occurrence => line.where === undefined || occurrence.where.includes(line.where));
+    for (const [tree, occurrences] of treesByPlace.get(placeOf(publication, line.publishedName, line.part ?? 1)) ??
+      []) {
+      const occurrence = occurrences.find(
+        occurrence => line.where === undefined || occurrence.where.includes(line.where),
+      );
       if (occurrence !== undefined) candidates.push([tree, occurrence]);
     }
     if (candidates.length !== 1) {
@@ -176,7 +191,9 @@ export function buildTable(read: readonly VersionRead[], lines: readonly NamedSh
     }
     const first = tree.occurrences[0];
     if (first.tool !== publication.tool || first.version !== publication.version) {
-      complaints.push(`${describeLine(line)} was first published in ${first.tool}@${first.version} as ${first.publishedName}`);
+      complaints.push(
+        `${describeLine(line)} was first published in ${first.tool}@${first.version} as ${first.publishedName}`,
+      );
     }
     if (tree.unsupported !== undefined) {
       complaints.push(`${describeLine(line)} has ${tree.unsupported}, which the comparison does not read`);
@@ -210,12 +227,15 @@ export function buildTable(read: readonly VersionRead[], lines: readonly NamedSh
     }
     if (isComplete) entries.push({ line, tree, references, origin: originOf(tree, versionsRead) });
   }
-  for (let count = -1; count !== entries.length; ) {
+  for (let count = -1; count !== entries.length;) {
     count = entries.length;
     const helpers = new Set(entries.map(entry => entry.line.helper));
     entries = entries.filter(entry => {
-      const missing = entry.references.find(([, reference]) => reference.kind === "helper" && !helpers.has(reference.helper));
-      if (missing !== undefined) complaints.push(`${describeLine(entry.line)} refers to ${missing[0]}, none of whose trees is in the table`);
+      const missing = entry.references.find(
+        ([, reference]) => reference.kind === "helper" && !helpers.has(reference.helper),
+      );
+      if (missing !== undefined)
+        complaints.push(`${describeLine(entry.line)} refers to ${missing[0]}, none of whose trees is in the table`);
       return missing === undefined;
     });
   }

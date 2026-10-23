@@ -64,7 +64,8 @@ const boundToSomethingElse = {
   "validate-of-its-own.ts": `export default <T,>(value: unknown) => ("a default export given " + value) as T;`,
 };
 
-const refusal = "--trim removed the type checker from this executable, so validate<T>() and JSON.parse<T>() don't work in code loaded at run time";
+const refusal =
+  "--trim removed the type checker from this executable, so validate<T>() and JSON.parse<T>() don't work in code loaded at run time";
 const compiledIn = "compiled in: 1 2\ncompiled in: TypeError\n";
 const otherBindings = "other-bindings.ts: its own parse of text its own validate of 1 a default export given 2 3\n";
 const names = [...Object.keys(validating), "other-bindings.ts"];
@@ -73,29 +74,52 @@ describe.skipIf(!canTrim || !!unsupported)("JSON.parse<T> and validate<T> in fil
   async function runs(flags: string[]) {
     using dir = tempDir("compile-trim-runtime-validation", { "program.ts": program, "cwd/empty": "" });
     const folder = String(dir);
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", "--compile-inspector", ...flags, "program.ts", "--outfile", "program"], folder, bunEnv);
+    const build = await spawned(
+      [bunExe(), "build", "--compile", "--aot", "--compile-inspector", ...flags, "program.ts", "--outfile", "program"],
+      folder,
+      bunEnv,
+    );
     expect(build.stderr).not.toMatch(/^error\b/m);
     expect(build.exitCode).toBe(0);
-    for (const [name, text] of Object.entries({ ...validating, ...boundToSomethingElse })) writeFileSync(join(folder, "cwd", name), text);
+    for (const [name, text] of Object.entries({ ...validating, ...boundToSomethingElse }))
+      writeFileSync(join(folder, "cwd", name), text);
     return await spawned([join(folder, "program"), ...names], join(folder, "cwd"), bunEnv);
   }
 
   // TODO: validate<T>() and JSON.parse<T>() validate in code that is compiled. In a file that is only transpiled, as these are, nothing makes the validators yet.
   const whereNothingIsCompiled = test.todoIf(true);
 
-  whereNothingIsCompiled("a whole executable validates them", async () => {
-    expect(await runs([])).toMatchObject({
-      stdout: compiledIn + Object.keys(validating).map(name => `${name}: 1 TypeError\n`).join("") + otherBindings,
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 600_000);
+  whereNothingIsCompiled(
+    "a whole executable validates them",
+    async () => {
+      expect(await runs([])).toMatchObject({
+        stdout:
+          compiledIn +
+          Object.keys(validating)
+            .map(name => `${name}: 1 TypeError\n`)
+            .join("") +
+          otherBindings,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    600_000,
+  );
 
-  whereNothingIsCompiled("a trimmed executable has no type checker: loading them throws, and what was compiled in validates", async () => {
-    expect(await runs(["--trim"])).toMatchObject({
-      stdout: compiledIn + Object.keys(validating).map(name => `${name}: caught ${refusal}\n`).join("") + otherBindings,
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 600_000);
+  whereNothingIsCompiled(
+    "a trimmed executable has no type checker: loading them throws, and what was compiled in validates",
+    async () => {
+      expect(await runs(["--trim"])).toMatchObject({
+        stdout:
+          compiledIn +
+          Object.keys(validating)
+            .map(name => `${name}: caught ${refusal}\n`)
+            .join("") +
+          otherBindings,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    600_000,
+  );
 });

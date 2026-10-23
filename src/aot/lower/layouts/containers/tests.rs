@@ -30,7 +30,11 @@ fn describe_exports(fragment: &Fragment) -> Vec<(String, FieldForm)> {
     assert!(layouts.next().is_none(), "a module has one exports object");
     let fields = layout.fields.iter().map(|field| {
         let key = field.key.expect("a field of an exports object has a name");
-        let text = fragment.property_keys.get(key).text.expect("the name is a text");
+        let text = fragment
+            .property_keys
+            .get(key)
+            .text
+            .expect("the name is a text");
         let name = String::from_utf8_lossy(fragment.strings.get(text)).into_owned();
         (name, field.form)
     });
@@ -40,13 +44,16 @@ fn describe_exports(fragment: &Fragment) -> Vec<(String, FieldForm)> {
 #[track_caller]
 fn names_of(source: &str) -> Vec<String> {
     let fragment = lower_module(source);
-    describe_exports(&fragment).into_iter().map(|it| it.0).collect()
+    describe_exports(&fragment)
+        .into_iter()
+        .map(|it| it.0)
+        .collect()
 }
 
 fn find_fragment(lowered: &[(FileId, LoweredFile)], defines_exports_layout: bool) -> &Fragment {
     let mut fragments = lowered.iter().map(|(_, file)| &file.fragment);
-    let fragment = fragments
-        .find(|fragment| describe_exports(fragment).is_empty() != defines_exports_layout);
+    let fragment =
+        fragments.find(|fragment| describe_exports(fragment).is_empty() != defines_exports_layout);
     fragment.expect("one of the two files defines the layout of its exports object")
 }
 
@@ -76,7 +83,10 @@ const later = () => { exports.later = 2; };
 exports.third = [late, later];
 ",
     );
-    assert_eq!(names, ["first", "second", "third", "late", "later", "afterAwait"]);
+    assert_eq!(
+        names,
+        ["first", "second", "third", "late", "later", "afterAwait"]
+    );
 }
 
 #[test]
@@ -93,10 +103,19 @@ Object.defineProperty(exports, \"plain\", { enumerable: false });
     );
     let expected = [
         ("marker", FIXED),
-        ("getter", FieldForm::IS_ACCESSOR | FieldForm::IS_NOT_CONFIGURABLE),
-        ("method", FieldForm::IS_ACCESSOR | FieldForm::IS_NOT_ENUMERABLE),
+        (
+            "getter",
+            FieldForm::IS_ACCESSOR | FieldForm::IS_NOT_CONFIGURABLE,
+        ),
+        (
+            "method",
+            FieldForm::IS_ACCESSOR | FieldForm::IS_NOT_ENUMERABLE,
+        ),
         ("open", PLAIN),
-        ("shown", FieldForm::IS_READ_ONLY | FieldForm::IS_NOT_CONFIGURABLE),
+        (
+            "shown",
+            FieldForm::IS_READ_ONLY | FieldForm::IS_NOT_CONFIGURABLE,
+        ),
         ("plain", PLAIN),
     ];
     let expected = expected.map(|(name, form)| (name.to_owned(), form));
@@ -195,8 +214,10 @@ fn names_over_the_limit_are_no_fields() {
     limits.lower(LimitId::FieldsInKeyOrder, 2);
     let files = [("main.cjs", "exports.a = 1; exports.b = 2; exports.c = 3;")];
     let lowered = lower_program_with_limits(&files, limits);
-    let names: Vec<String> =
-        describe_exports(&lowered[0].1.fragment).into_iter().map(|it| it.0).collect();
+    let names: Vec<String> = describe_exports(&lowered[0].1.fragment)
+        .into_iter()
+        .map(|it| it.0)
+        .collect();
     assert_eq!(names, ["a", "b"]);
 }
 
@@ -204,7 +225,10 @@ fn names_over_the_limit_are_no_fields() {
 fn whoever_requires_a_module_names_its_layout() {
     let files = [
         // Somebody looks at the object, so the module has one.
-        ("main.cjs", "module.exports = Object.keys(require(\"./names.cjs\"));"),
+        (
+            "main.cjs",
+            "module.exports = Object.keys(require(\"./names.cjs\"));",
+        ),
         ("names.cjs", "exports.a = 1;"),
     ];
     let lowered = lower_program_with_limits(&files, LimitValues::for_host());
@@ -222,6 +246,12 @@ fn whoever_requires_a_module_names_its_layout() {
         | LayoutKey::Environment { .. } => false,
     };
     assert!(requirer.layout_keys.iter().any(names_layout_of_module));
-    let mut defined_keys = requirer.layouts.iter().map(|(id, _)| &requirer.layout_keys[id.index()]);
-    assert!(!defined_keys.any(names_layout_of_module), "only its own file defines the layout");
+    let mut defined_keys = requirer
+        .layouts
+        .iter()
+        .map(|(id, _)| &requirer.layout_keys[id.index()]);
+    assert!(
+        !defined_keys.any(names_layout_of_module),
+        "only its own file defines the layout"
+    );
 }

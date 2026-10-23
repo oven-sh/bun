@@ -34,8 +34,6 @@ pub(crate) fn find_expected_result(
     expected_result::find_expected_result(lowering.file, call)
 }
 
-pub(in crate::lower) fn report_misused_compiler_functions(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-) {
+pub(in crate::lower) fn report_misused_compiler_functions(file: &mut FileLowering<'_, '_, '_, '_>) {
     misuse::report_misused_compiler_functions(file);
 }

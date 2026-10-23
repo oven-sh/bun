@@ -242,7 +242,9 @@ pub enum OperandShape {
     /// An object literal as `ObjectDemand::Literal` describes it.
     ObjectLiteral,
     /// An array literal without holes and spread elements.
-    ArrayLiteral { holds_only_literals: bool },
+    ArrayLiteral {
+        holds_only_literals: bool,
+    },
     /// Any other object.
     Object,
 }
@@ -273,7 +275,9 @@ impl OperandDemand {
             OperandShape::ObjectLiteral => {
                 return matches!(self.objects, ObjectDemand::Literal | ObjectDemand::Any);
             }
-            OperandShape::ArrayLiteral { holds_only_literals } => {
+            OperandShape::ArrayLiteral {
+                holds_only_literals,
+            } => {
                 return match self.objects {
                     ObjectDemand::None => false,
                     ObjectDemand::Literal | ObjectDemand::ArrayLiteral | ObjectDemand::Any => true,
@@ -315,7 +319,9 @@ impl RemovableCall {
             .enumerate()
             .all(|(position, demand)| demand.is_met_by(arguments.get(position).copied()))
             && match rest {
-                Some(demand) => further.iter().all(|&argument| demand.is_met_by(Some(argument))),
+                Some(demand) => further
+                    .iter()
+                    .all(|&argument| demand.is_met_by(Some(argument))),
                 None => further.is_empty(),
             }
     }

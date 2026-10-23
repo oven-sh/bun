@@ -32,7 +32,8 @@ function parseUse(value: unknown, owner: string, path: string): BuiltinFeatureUs
   const feature = value.feature;
   const isConditional = value.isConditional ?? false;
   if (typeof feature !== "string") fail(`${owner} has a use without a feature`, path);
-  if (typeof isConditional !== "boolean") fail(`${owner} uses ${feature} with an isConditional that is not a boolean`, path);
+  if (typeof isConditional !== "boolean")
+    fail(`${owner} uses ${feature} with an isConditional that is not a boolean`, path);
   return { feature, isConditional };
 }
 
@@ -45,7 +46,8 @@ function parseEntry(value: unknown, position: number, path: string): BuiltinEntr
   if (!isBuiltinKind(kind)) fail(`${owner}.kind is unknown: ${String(kind)}`, path);
   if (!Array.isArray(uses) || uses.length === 0) fail(`${owner}.uses is not a list with a member`, path);
   if (!isStringList(nativeSymbols)) fail(`${owner}.nativeSymbols is not a list of strings`, path);
-  if (creationSymbol !== undefined && typeof creationSymbol !== "string") fail(`${owner}.creationSymbol is not a string`, path);
+  if (creationSymbol !== undefined && typeof creationSymbol !== "string")
+    fail(`${owner}.creationSymbol is not a string`, path);
   if (typeof hasHiddenRoot !== "boolean") fail(`${owner}.hasHiddenRoot is not a boolean`, path);
   return {
     id,
@@ -82,7 +84,11 @@ const isNamedByPrograms = ({ kind, hasHiddenRoot }: BuiltinEntry) =>
 export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: string): void {
   const known = new Set(model.features.map(feature => feature.name));
   // `Feature::all_outside_compiled_programs`: an executable that lacks only these does not look up the native code of its built-ins in the removed ranges.
-  const outsidePrograms = new Set(model.features.filter(({ name, enteredFrom }) => enteredFrom === "command-line" || name === "JIT").map(({ name }) => name));
+  const outsidePrograms = new Set(
+    model.features
+      .filter(({ name, enteredFrom }) => enteredFrom === "command-line" || name === "JIT")
+      .map(({ name }) => name),
+  );
   let previousId = -1;
   for (const entry of uses.entries) {
     if (entry.id <= previousId) fail(`the id of ${entry.path} does not ascend`, path);
@@ -90,7 +96,8 @@ export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: s
     const seen = new Set<string>();
     for (const { feature } of entry.uses) {
       if (!known.has(feature)) fail(`${entry.path} uses ${feature}, which src/trim/features does not declare`, path);
-      if (outsidePrograms.has(feature) && isNamedByPrograms(entry)) fail(`${entry.path} uses ${feature}, which no executable compiled ahead of time has`, path);
+      if (outsidePrograms.has(feature) && isNamedByPrograms(entry))
+        fail(`${entry.path} uses ${feature}, which no executable compiled ahead of time has`, path);
       if (seen.has(feature)) fail(`${entry.path} uses ${feature} twice`, path);
       seen.add(feature);
     }
@@ -98,15 +105,17 @@ export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: s
 }
 
 export function serializeBuiltinUses(uses: BuiltinUses): string {
-  const entries = uses.entries.map(({ id, path, kind, uses: entryUses, nativeSymbols, creationSymbol, hasHiddenRoot }) => ({
-    id,
-    path,
-    kind,
-    uses: entryUses.map(({ feature, isConditional }) => (isConditional ? { feature, isConditional } : { feature })),
-    ...(nativeSymbols.length > 0 ? { nativeSymbols } : {}),
-    ...(creationSymbol === undefined ? {} : { creationSymbol }),
-    ...(hasHiddenRoot ? { hasHiddenRoot } : {}),
-  }));
+  const entries = uses.entries.map(
+    ({ id, path, kind, uses: entryUses, nativeSymbols, creationSymbol, hasHiddenRoot }) => ({
+      id,
+      path,
+      kind,
+      uses: entryUses.map(({ feature, isConditional }) => (isConditional ? { feature, isConditional } : { feature })),
+      ...(nativeSymbols.length > 0 ? { nativeSymbols } : {}),
+      ...(creationSymbol === undefined ? {} : { creationSymbol }),
+      ...(hasHiddenRoot ? { hasHiddenRoot } : {}),
+    }),
+  );
   return JSON.stringify({ version: builtinUsesVersion, entries }, null, 2) + "\n";
 }
 

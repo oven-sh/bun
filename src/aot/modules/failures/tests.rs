@@ -5,15 +5,30 @@ use bun_sema::hir::{ExportId, ExprId, ImportEqualsId, ImportId, StmtId};
 const UNRESOLVED_SITE_EFFECTS: [(ImportSiteKind, FailureEffect); 12] = [
     (ImportSiteKind::JsxRuntime, FailureEffect::StopsBuild),
     (ImportSiteKind::JsxPackage, FailureEffect::StopsBuild),
-    (ImportSiteKind::Import(ImportId(0)), FailureEffect::StopsBuild),
-    (ImportSiteKind::ExportFrom(ExportId(0)), FailureEffect::StopsBuild),
-    (ImportSiteKind::ExportStar(StmtId(0)), FailureEffect::StopsBuild),
+    (
+        ImportSiteKind::Import(ImportId(0)),
+        FailureEffect::StopsBuild,
+    ),
+    (
+        ImportSiteKind::ExportFrom(ExportId(0)),
+        FailureEffect::StopsBuild,
+    ),
+    (
+        ImportSiteKind::ExportStar(StmtId(0)),
+        FailureEffect::StopsBuild,
+    ),
     (
         ImportSiteKind::ImportEquals(ImportEqualsId(0)),
         FailureEffect::ThrowsAtSite,
     ),
-    (ImportSiteKind::ImportCall(ExprId(0)), FailureEffect::ThrowsAtSite),
-    (ImportSiteKind::Require(ExprId(0)), FailureEffect::ThrowsAtSite),
+    (
+        ImportSiteKind::ImportCall(ExprId(0)),
+        FailureEffect::ThrowsAtSite,
+    ),
+    (
+        ImportSiteKind::Require(ExprId(0)),
+        FailureEffect::ThrowsAtSite,
+    ),
     (
         ImportSiteKind::RequireResolve(ExprId(0)),
         FailureEffect::ThrowsAtSite,
@@ -200,8 +215,14 @@ fn errors_take_no_ids() {
     let only_errors = pending_list(1, &[specifier_order(0)], failed_import);
     let last = pending_list(2, &[specifier_order(0)], failed_require);
     let numbered = number_failures(3, vec![last, (first, first_list), only_errors]);
-    assert_eq!(numbered.id_of(first, specifier_order(1)), ModuleFailureId(0));
-    assert_eq!(numbered.id_of(first, specifier_order(3)), ModuleFailureId(1));
+    assert_eq!(
+        numbered.id_of(first, specifier_order(1)),
+        ModuleFailureId(0)
+    );
+    assert_eq!(
+        numbered.id_of(first, specifier_order(3)),
+        ModuleFailureId(1)
+    );
     assert_eq!(
         numbered.id_of(FileId(2), specifier_order(0)),
         ModuleFailureId(2)

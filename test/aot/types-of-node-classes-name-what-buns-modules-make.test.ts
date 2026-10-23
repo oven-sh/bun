@@ -52,13 +52,22 @@ describe("compile/aot/types of node's classes", () => {
         const folder = String(dir);
         const executable = join(folder, isWindows ? "app.exe" : "app");
         const reportPath = join(folder, "report.json");
-        built(await spawned([bunExe(), ...compileCommand, ...withReport(reportPath, "functions"), "main.ts", "--outfile", executable], folder, bunEnv));
+        built(
+          await spawned(
+            [bunExe(), ...compileCommand, ...withReport(reportPath, "functions"), "main.ts", "--outfile", executable],
+            folder,
+            bunEnv,
+          ),
+        );
         const report = readBuildReport(reportPath);
         // TODO: `tell` and `feed`. A class with a dozen classes below it is still read by name.
         for (const name of ["answer"]) {
           const records = functionsNamed(report, name).filter(record => record.role === "Source");
           expect(records).not.toEqual([]);
-          expect({ name, byName: records.map(record => record.accesses.byName) }).toEqual({ name, byName: records.map(() => 0) });
+          expect({ name, byName: records.map(record => record.accesses.byName) }).toEqual({
+            name,
+            byName: records.map(() => 0),
+          });
         }
         const plain = await spawned([bunExe(), "main.ts"], folder, bunEnv);
         expect(await spawned([executable], folder, bunEnv)).toEqual(plain);

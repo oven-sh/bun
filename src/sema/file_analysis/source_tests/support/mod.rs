@@ -37,9 +37,8 @@ const DECLARATION_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
 pub(crate) const TYPESCRIPT_EXTENSIONS: [&str; 4] = [".ts", ".tsx", ".mts", ".cts"];
 pub(crate) const JAVASCRIPT_EXTENSIONS: [&str; 4] = [".js", ".jsx", ".mjs", ".cjs"];
-pub(crate) const SOURCE_EXTENSIONS: [&str; 8] = [
-    ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
-];
+pub(crate) const SOURCE_EXTENSIONS: [&str; 8] =
+    [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
 #[derive(Copy, Clone)]
 pub(crate) struct Workspace<'s> {

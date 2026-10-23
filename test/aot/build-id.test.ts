@@ -9,13 +9,23 @@ import { describe, test } from "./supported";
 setDefaultTimeout(120_000);
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = {}) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...bunEnv, ...env },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 const named = (name: string) => (isWindows ? name + ".exe" : name);
 async function build(cwd: string, outfile: string, ...flags: string[]) {
-  const built = await run([bunExe(), "build", "--compile", "--aot", ...flags, "main.js", "--outfile", named(outfile)], cwd);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "main.js", "--outfile", named(outfile)],
+    cwd,
+  );
   expect(built.stderr).not.toMatch(/^error\b/m);
   expect(built.exitCode).toBe(0);
   const ids = [...built.stdout.matchAll(/^ +build id  ([0-9a-f]{32})$/gm)].map(match => match[1]);
@@ -28,7 +38,8 @@ function readFromFile(path: string) {
   const file = readFileSync(path);
   const head = Buffer.from([4, 0, 0, 0, 16, 0, 0, 0, 1, 0, 0, 0, 0x42, 0x75, 0x6e, 0]);
   const found: string[] = [];
-  for (let at = file.indexOf(head); at >= 0; at = file.indexOf(head, at + 1)) found.push(file.subarray(at + 16, at + 32).toString("hex"));
+  for (let at = file.indexOf(head); at >= 0; at = file.indexOf(head, at + 1))
+    found.push(file.subarray(at + 16, at + 32).toString("hex"));
   return found;
 }
 function readGnuBuildId(path: string) {
@@ -54,9 +65,14 @@ describe("where it shows", () => {
     expect(JSON.parse(readFileSync(join(String(dir), "report.json"), "utf8")).buildId).toBe(id);
   });
   test.skipIf(isASAN)("a crash report has it in a line of its own", async () => {
-    using dir = tempDir("aot-build-id", { "main.js": `import { read } from "bun:ffi";\nfunction peek() { return read.u8(8, 0); }\nconsole.log(peek());\n` });
+    using dir = tempDir("aot-build-id", {
+      "main.js": `import { read } from "bun:ffi";\nfunction peek() { return read.u8(8, 0); }\nconsole.log(peek());\n`,
+    });
     const id = await build(String(dir), "app");
-    const { stderr } = await run([join(String(dir), named("app"))], String(dir), { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" });
+    const { stderr } = await run([join(String(dir), named("app"))], String(dir), {
+      BUN_CRASH_REPORT_URL: "",
+      BUN_ENABLE_CRASH_REPORTING: "0",
+    });
     expect(stderr).toContain("Compiled JavaScript on the stack:\n");
     expect(stderr.split("\n")).toContain("Build ID: " + id);
   });
@@ -84,9 +100,11 @@ describe("where it shows", () => {
 });
 
 describe.skipIf(isASAN)("the link of a crash report", () => {
-  const crashes = (name: string) => `import { read } from "bun:ffi";\nfunction ${name}() { return read.u8(8, 0); }\nconsole.log(${name}());\n`;
+  const crashes = (name: string) =>
+    `import { read } from "bun:ffi";\nfunction ${name}() { return read.u8(8, 0); }\nconsole.log(${name}());\n`;
   const quiet = { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
-  const decoded = (executable: string, cwd: string, link: string) => run([executable], cwd, { BUN_OPTIONS: "--aot-decode-crash-report=" + link });
+  const decoded = (executable: string, cwd: string, link: string) =>
+    run([executable], cwd, { BUN_OPTIONS: "--aot-decode-crash-report=" + link });
   async function crash(cwd: string) {
     const id = await build(cwd, "app");
     const app = join(cwd, named("app"));
@@ -128,7 +146,11 @@ describe("what it follows", () => {
   test("the same sources and options give the same id: in another folder, into another folder, with another number of threads", async () => {
     using first = tempDir("aot-build-id-first", { "main.js": main, "out/keep": "" });
     using second = tempDir("aot-build-id-in-another-folder", { "main.js": main });
-    const ids = await Promise.all([build(String(first), "app", "--aot-threads=1"), build(String(second), "app", "--aot-threads=8"), build(String(first), join("out", "app"))]);
+    const ids = await Promise.all([
+      build(String(first), "app", "--aot-threads=1"),
+      build(String(second), "app", "--aot-threads=8"),
+      build(String(first), join("out", "app")),
+    ]);
     expect(new Set(ids).size).toBe(1);
   });
   test("a file that is renamed keeps its id", async () => {
@@ -156,7 +178,11 @@ describe("what it follows", () => {
 });
 
 describe("who has none", () => {
-  const refusal = { stdout: "", stderr: "error: --aot-build-id: this executable holds no compiled program\n", exitCode: 1 };
+  const refusal = {
+    stdout: "",
+    stderr: "error: --aot-build-id: this executable holds no compiled program\n",
+    exitCode: 1,
+  };
   test("Bun itself", async () => {
     using dir = tempDir("aot-build-id", {});
     expect(await run([bunExe(), "--aot-build-id"], String(dir))).toEqual(refusal);

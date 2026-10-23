@@ -93,11 +93,15 @@ fn emit_pending_await(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, state
     let done = lowering.create_block();
 
     let needs_await = lowering.builder.read_variable(state.needs_await);
-    lowering.builder.branch(needs_await, Edge::to(check), Edge::to(done));
+    lowering
+        .builder
+        .branch(needs_await, Edge::to(check), Edge::to(done));
 
     lowering.continue_in(check);
     let has_awaited = lowering.builder.read_variable(state.has_awaited);
-    lowering.builder.branch(has_awaited, Edge::to(done), Edge::to(wait));
+    lowering
+        .builder
+        .branch(has_awaited, Edge::to(done), Edge::to(wait));
 
     lowering.continue_in(wait);
     let undefined = lowering.builder.undefined();

@@ -103,7 +103,10 @@ pub struct ThisPositions(Box<[u32]>);
 
 impl ThisPositions {
     pub fn of(hir: &File<'_>) -> ThisPositions {
-        let all = hir.exprs.iter().filter(|expr| matches!(expr.kind, ExprKind::This));
+        let all = hir
+            .exprs
+            .iter()
+            .filter(|expr| matches!(expr.kind, ExprKind::This));
         let mut positions: Vec<u32> = all.map(|expr| expr.pos).collect();
         positions.sort_unstable();
         ThisPositions(positions.into_boxed_slice())
@@ -119,7 +122,10 @@ impl ThisPositions {
         // Without one, what the parameters say lies somewhere behind the start.
         let end = last_statement.map_or(u32::MAX, |statement| hir[statement].loc.end);
         let first_inside = self.0.partition_point(|&position| position < start);
-        let has_this_in_its_text = self.0.get(first_inside).is_some_and(|&position| position < end);
+        let has_this_in_its_text = self
+            .0
+            .get(first_inside)
+            .is_some_and(|&position| position < end);
         has_this_in_its_text && evaluates_own_this(hir, function)
     }
 }

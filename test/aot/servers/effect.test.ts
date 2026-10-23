@@ -29,12 +29,23 @@ async function sendRequest(origin: string, route: Route) {
     body: route.request,
     headers: route.request === undefined ? {} : { "Content-Type": "application/json" },
   });
-  return { status: response.status, type: response.headers.get("Content-Type")?.split(";")[0]!.trim().toLowerCase(), body: await response.text() };
+  return {
+    status: response.status,
+    type: response.headers.get("Content-Type")?.split(";")[0]!.trim().toLowerCase(),
+    body: await response.text(),
+  };
 }
 
-const expectedResponse = (route: Route) => ({ status: route.status ?? 200, type: route.type, body: route.expectedBody });
+const expectedResponse = (route: Route) => ({
+  status: route.status ?? 200,
+  type: route.type,
+  body: route.expectedBody,
+});
 
-if (!isRequested) console.error("SKIPPED: test/aot/servers/effect.test.ts: it installs packages from npm. Set AOT_SERVERS=effect to run it");
+if (!isRequested)
+  console.error(
+    "SKIPPED: test/aot/servers/effect.test.ts: it installs packages from npm. Set AOT_SERVERS=effect to run it",
+  );
 
 describe.skipIf(!isRequested || !!unsupported)("compile/aot/servers/effect", () => {
   const folder = String(tempDir("aot-servers-effect", {}));
@@ -63,17 +74,27 @@ describe.skipIf(!isRequested || !!unsupported)("compile/aot/servers/effect", () 
     ["bun.ts, Effect from its TypeScript sources", "bun", sourcesFolder],
   ])("%s", (_, name, folder) => {
     const executable = join(folder, `${name}-compiled${isWindows ? ".exe" : ""}`);
-    const startCompiled = (env: Record<string, string> = {}) => startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
+    const startCompiled = (env: Record<string, string> = {}) =>
+      startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
 
     beforeAll(async () => {
       const flags = ["--define", 'process.env.NODE_ENV="production"', "--target=bun"];
-      built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, `./${name}.ts`, "--outfile", executable], folder, bunEnv));
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", ...flags, `./${name}.ts`, "--outfile", executable],
+          folder,
+          bunEnv,
+        ),
+      );
     }, 120_000);
 
     test("serves every route", async () => {
       using server = await startCompiled();
       for (const route of effectRoutes) {
-        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, ...expectedResponse(route) });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+          route: route.name,
+          ...expectedResponse(route),
+        });
       }
       expect((await fetch(server.origin + "/nothing")).status).toBe(404);
     });
@@ -91,22 +112,29 @@ describe.skipIf(!isRequested || !!unsupported)("compile/aot/servers/effect", () 
     test.each([
       ["serves every route after a few thousand requests", {}],
       ["serves every route with the GC running continuously", { BUN_JSC_collectContinuously: "1" }],
-      ["serves every route in zombie mode", { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" }],
-    ])("%s", async (_, env) => {
-      using server = await startCompiled(env);
-      for (const route of effectRoutes) {
-        const expected = expectedResponse(route);
-        let mismatch: unknown;
-        await Promise.all(
-          Array.from({ length: 16 }, async () => {
-            for (let n = 0; n < 100 && !mismatch; n++) {
-              const response = await sendRequest(server.origin, route);
-              if (!Bun.deepEquals(response, expected)) mismatch = response;
-            }
-          }),
-        );
-        expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
-      }
-    }, 240_000);
+      [
+        "serves every route in zombie mode",
+        { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" },
+      ],
+    ])(
+      "%s",
+      async (_, env) => {
+        using server = await startCompiled(env);
+        for (const route of effectRoutes) {
+          const expected = expectedResponse(route);
+          let mismatch: unknown;
+          await Promise.all(
+            Array.from({ length: 16 }, async () => {
+              for (let n = 0; n < 100 && !mismatch; n++) {
+                const response = await sendRequest(server.origin, route);
+                if (!Bun.deepEquals(response, expected)) mismatch = response;
+              }
+            }),
+          );
+          expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
+        }
+      },
+      240_000,
+    );
   });
 });

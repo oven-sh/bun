@@ -146,7 +146,9 @@ impl RoleDecision {
     }
 
     pub fn has_early_error(&self, file: FileId) -> bool {
-        let first = self.demoted.partition_point(|demotion| demotion.file < file);
+        let first = self
+            .demoted
+            .partition_point(|demotion| demotion.file < file);
         let demotions = self.demoted[first..].iter();
         demotions
             .take_while(|demotion| demotion.file == file)

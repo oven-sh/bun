@@ -96,10 +96,11 @@ pub(crate) fn freeze_sources(
 pub(crate) fn check_unique_paths_across_projects(
     projects: PerProject<(&Files<'_>, &Sources)>,
 ) -> Result<(), InternalError> {
-    let [application, runtime] = [projects.application, projects.runtime].map(|(files, sources)| {
-        let compiled_files = files.compiled_files().iter();
-        compiled_files.map(move |&file| (file, sources.module_paths(file)))
-    });
+    let [application, runtime] =
+        [projects.application, projects.runtime].map(|(files, sources)| {
+            let compiled_files = files.compiled_files().iter();
+            compiled_files.map(move |&file| (file, sources.module_paths(file)))
+        });
     check_unique_public_paths(application.chain(runtime))
 }
 
@@ -143,10 +144,13 @@ impl FrozenLists {
     fn append(&mut self, mut following: FrozenLists) {
         self.diagnostics.append(following.diagnostics);
         self.counters.merge(following.counters);
-        self.runtime_module_files.append(&mut following.runtime_module_files);
-        self.web_assembly_files.append(&mut following.web_assembly_files);
+        self.runtime_module_files
+            .append(&mut following.runtime_module_files);
+        self.web_assembly_files
+            .append(&mut following.web_assembly_files);
         self.pages.append(&mut following.pages);
-        self.evaluated_functions.append(&mut following.evaluated_functions);
+        self.evaluated_functions
+            .append(&mut following.evaluated_functions);
     }
 
     fn add_compiled_file(
@@ -203,7 +207,10 @@ impl FrozenLists {
         for &site in &payload.evaluated_text_sites {
             let Some(text_file) = evaluated_text_file(compiled, site) else {
                 let file_name = files.module(file).file_name();
-                return Err(create_load_error(b"no file for evaluated text in ", file_name));
+                return Err(create_load_error(
+                    b"no file for evaluated text in ",
+                    file_name,
+                ));
             };
             let text = parsed_source(files, text_file);
             if let Some(function) = text.and_then(|text| text.evaluated_function) {
@@ -281,7 +288,10 @@ fn freeze_file(
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => {
             let native_path = to_native(files.diagnostic_path(file));
             let project_root = &input.options.load.project_root;
-            (native_path.into(), compute_display_path(project_root, native_path))
+            (
+                native_path.into(),
+                compute_display_path(project_root, native_path),
+            )
         }
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, Some(_))
         | (

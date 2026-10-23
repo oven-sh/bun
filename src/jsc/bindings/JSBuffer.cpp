@@ -3555,8 +3555,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
 /* Hash table for prototype */
 
 // The columns of JSBufferAccessors.def. An 8-byte Signed or Unsigned accessor reads or writes a BigInt.
-enum class BufferAccessorDirection : bool { Read, Write };
-enum class BufferAccessorEndianness : bool { Little, Big };
+enum class BufferAccessorDirection : bool { Read,
+    Write };
+enum class BufferAccessorEndianness : bool { Little,
+    Big };
 template<size_t byteCount> using BufferAccessorUnsigned = typename WTF::SizedUnsignedTrait<byteCount>::Type;
 template<size_t byteCount> using BufferAccessorSigned = std::make_signed_t<BufferAccessorUnsigned<byteCount>>;
 template<size_t byteCount>

@@ -96,7 +96,11 @@ fn store_reaches_every_enclosing_loop() {
         assert_eq!(walk.loops[0].statement, first_statement(hir, is_while));
         assert_eq!(walk.loops[0].parent, None);
         assert_eq!(walk.loops[1].parent, Some(0));
-        assert!(walk.loops.iter().all(|walked_loop| walked_loop.stored == [binding]));
+        assert!(
+            walk.loops
+                .iter()
+                .all(|walked_loop| walked_loop.stored == [binding])
+        );
     });
 }
 
@@ -108,7 +112,11 @@ fn store_in_nested_function_is_outside_loop() {
         let symbol = symbol_named(hir, bound, "x");
         assert_eq!(walk.loops.len(), 1);
         assert!(walk.loops[0].stored.is_empty());
-        assert!(has_symbol_use(walk, walked(walk, only_function(hir, FnKind::Arrow)), symbol));
+        assert!(has_symbol_use(
+            walk,
+            walked(walk, only_function(hir, FnKind::Arrow)),
+            symbol
+        ));
     });
 }
 
@@ -144,7 +152,11 @@ fn commonjs_variable_store_is_recorded() {
     with_walk(&[("main.cjs", stored)], |hir, bound, walk| {
         let scope = file_scope(hir, bound);
         assert_eq!(walk.stored_slots, [(scope, EXPORTS)]);
-        assert!(walk.loops[0].stored.contains(&BindingRef::Slot(scope, EXPORTS)));
+        assert!(
+            walk.loops[0]
+                .stored
+                .contains(&BindingRef::Slot(scope, EXPORTS))
+        );
     });
     let read = format!("{KEEPS_WRAPPER} var i = 0; while (i < 2) {{ exports.n = i; i++; }}");
     with_walk(&[("main.cjs", read.as_str())], |hir, bound, walk| {
@@ -169,7 +181,11 @@ fn the_five_names_are_slots_only_where_the_wrapper_is_kept() {
         assert!(walk.has_wrapper_parameters);
         let function = walked(walk, only_function(hir, FnKind::Expr));
         for slot in [REQUIRE, MODULE, EXPORTS] {
-            assert!(has_use(walk, function, BindingRef::Slot(file_scope(hir, bound), slot)));
+            assert!(has_use(
+                walk,
+                function,
+                BindingRef::Slot(file_scope(hir, bound), slot)
+            ));
         }
     });
 }
@@ -182,26 +198,40 @@ fn callee_of_a_bound_module_call_is_no_use() {
          function through() {{ return module.require('./other.cjs'); }} \
          function value() {{ return [require, module]; }}"
     );
-    with_walk(&[("main.cjs", source.as_str()), ("other.cjs", "")], |hir, bound, walk| {
-        let scope = file_scope(hir, bound);
-        let uses = |name: &str, slot: ScopeSlot| {
-            has_use(walk, walked(walk, function_named(hir, name)), BindingRef::Slot(scope, slot))
-        };
-        assert!(!uses("lazy", REQUIRE));
-        assert!(!uses("resolved", REQUIRE));
-        assert!(!uses("through", MODULE));
-        assert!(uses("value", REQUIRE));
-        assert!(uses("value", MODULE));
-    });
+    with_walk(
+        &[("main.cjs", source.as_str()), ("other.cjs", "")],
+        |hir, bound, walk| {
+            let scope = file_scope(hir, bound);
+            let uses = |name: &str, slot: ScopeSlot| {
+                has_use(
+                    walk,
+                    walked(walk, function_named(hir, name)),
+                    BindingRef::Slot(scope, slot),
+                )
+            };
+            assert!(!uses("lazy", REQUIRE));
+            assert!(!uses("resolved", REQUIRE));
+            assert!(!uses("through", MODULE));
+            assert!(uses("value", REQUIRE));
+            assert!(uses("value", MODULE));
+        },
+    );
 }
 
 #[test]
 fn callee_of_a_require_that_may_be_replaced_is_a_use() {
     let source = "require = require; function lazy() { return require('./other.cjs'); }";
-    with_walk(&[("main.cjs", source), ("other.cjs", "")], |hir, bound, walk| {
-        let require = BindingRef::Slot(file_scope(hir, bound), REQUIRE);
-        assert!(has_use(walk, walked(walk, only_function(hir, FnKind::Decl)), require));
-    });
+    with_walk(
+        &[("main.cjs", source), ("other.cjs", "")],
+        |hir, bound, walk| {
+            let require = BindingRef::Slot(file_scope(hir, bound), REQUIRE);
+            assert!(has_use(
+                walk,
+                walked(walk, only_function(hir, FnKind::Decl)),
+                require
+            ));
+        },
+    );
 }
 
 #[test]
@@ -211,9 +241,8 @@ fn initialization_under_a_branch_is_conditional() {
         switch (plain) { case 1: var chosen = 6; } while (plain) { var repeated = 7; } \
         if (plain) { (function () { var inner = 8; return inner; })(); }";
     with_walk(&[("main.cjs", source)], |hir, bound, walk| {
-        let is_conditional = |name: &str| {
-            walk.is_initialized_conditionally[symbol_named(hir, bound, name).idx()]
-        };
+        let is_conditional =
+            |name: &str| walk.is_initialized_conditionally[symbol_named(hir, bound, name).idx()];
         for name in ["plain", "block", "inner"] {
             assert!(!is_conditional(name), "{name}");
         }
@@ -234,12 +263,20 @@ fn callback_of_an_inner_module_is_a_body() {
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {
         let callback = walked(walk, functions_of_kind(hir, FnKind::Arrow)[2]);
         assert_eq!(creator_of(walk, callback), None);
-        assert!(has_symbol_use(walk, callback, symbol_named(hir, bound, "shared")));
+        assert!(has_symbol_use(
+            walk,
+            callback,
+            symbol_named(hir, bound, "shared")
+        ));
         let holder = symbol_named(hir, bound, "require_a");
         assert!(!has_symbol_use(walk, WalkedFunctionId::MODULE_BODY, holder));
         let function = walked(walk, only_function(hir, FnKind::Expr));
         assert_eq!(creator_of(walk, function), Some(callback));
-        assert!(!has_symbol_use(walk, function, symbol_named(hir, bound, "exports")));
+        assert!(!has_symbol_use(
+            walk,
+            function,
+            symbol_named(hir, bound, "exports")
+        ));
     });
 }
 
@@ -263,8 +300,12 @@ fn redeclared_commonjs_variable_uses_no_slot() {
             used_slots(walk).contains(&MODULE)
         })
     };
-    assert!(!uses_module_slot("var module = module || {}; module.a = 1;"));
-    assert!(uses_module_slot("var exports; var other = module || {}; other.a = 1;"));
+    assert!(!uses_module_slot(
+        "var module = module || {}; module.a = 1;"
+    ));
+    assert!(uses_module_slot(
+        "var exports; var other = module || {}; other.a = 1;"
+    ));
 }
 
 #[test]
@@ -289,7 +330,9 @@ fn import_equals_uses_entity_root() {
             has_symbol_use(walk, WalkedFunctionId::MODULE_BODY, namespace)
         })
     };
-    assert!(uses_namespace("import alias = Box.inner; console.log(alias); export {};"));
+    assert!(uses_namespace(
+        "import alias = Box.inner; console.log(alias); export {};"
+    ));
     assert!(!uses_namespace("console.log(1); export {};"));
 }
 
@@ -301,7 +344,10 @@ fn is_arrow_walked(imports: &str, test: &str, yes: &str, no: &str) -> bool {
     with_walk(&[("main.ts", source.as_str())], |hir, bound, walk| {
         let symbol = symbol_named(hir, bound, "x");
         let arrow = walk.function_of_fn[only_function(hir, FnKind::Arrow).idx()];
-        let users = walk.uses.iter().filter(|entry| entry.1 == BindingRef::Symbol(symbol));
+        let users = walk
+            .uses
+            .iter()
+            .filter(|entry| entry.1 == BindingRef::Symbol(symbol));
         assert_eq!(users.count(), 1 + usize::from(arrow.is_some()));
         arrow.is_some_and(|arrow| has_symbol_use(walk, arrow, symbol))
     })
@@ -333,9 +379,8 @@ fn switch_binding_is_never_initialized() {
     let source = "export function g(v, f) { let y = 1; \
         switch (v) { case 0: let x = y; case 1: f(() => x); } }";
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {
-        let initialization = |name: &str| {
-            walk.symbol_initializations[symbol_named(hir, bound, name).idx()]
-        };
+        let initialization =
+            |name: &str| walk.symbol_initializations[symbol_named(hir, bound, name).idx()];
         assert_eq!(initialization("x"), None);
         assert!(initialization("y").is_some());
     });
@@ -354,10 +399,16 @@ fn scopes_at_module_level() {
                 unreachable!();
             };
             assert!(!is_repeated(file_scope(hir, bound)), "{file}");
-            assert!(!is_repeated(bound.own_scope(first_statement(hir, is_block))), "{file}");
+            assert!(
+                !is_repeated(bound.own_scope(first_statement(hir, is_block))),
+                "{file}"
+            );
             assert!(is_repeated(bound.own_scope(counted)), "{file}");
             assert!(is_repeated(bound.own_scope(body)), "{file}");
-            assert!(is_repeated(top_scope(bound, only_function(hir, FnKind::Decl))), "{file}");
+            assert!(
+                is_repeated(top_scope(bound, only_function(hir, FnKind::Decl))),
+                "{file}"
+            );
         });
     }
 }
@@ -369,8 +420,16 @@ fn with_object_is_used_by_dynamic_lookups() {
         with_walk(&[("main.cjs", source.as_str())], |hir, bound, walk| {
             let statement = first_statement(hir, |kind| matches!(kind, StmtKind::With { .. }));
             let object = BindingRef::Slot(bound.own_scope(statement), ScopeSlot::WithObject);
-            assert!(has_use(walk, walked(walk, only_function(hir, FnKind::Decl)), object));
-            has_use(walk, walked(walk, only_function(hir, FnKind::Arrow)), object)
+            assert!(has_use(
+                walk,
+                walked(walk, only_function(hir, FnKind::Decl)),
+                object
+            ));
+            has_use(
+                walk,
+                walked(walk, only_function(hir, FnKind::Arrow)),
+                object,
+            )
         })
     };
     assert!(uses_of_arrow("return () => x;"));

@@ -15,12 +15,17 @@ fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
     let hash_of_name = |&name: &BuiltinName| StringTable::hash_of(text_of_name(name));
     let names = NAMES.get_or_init(|| {
         let mut names = hashbrown::HashTable::new();
-        for name in (0..).map(BuiltinName).take_while(|&name| !is_symbol_name(name)) {
+        for name in (0..)
+            .map(BuiltinName)
+            .take_while(|&name| !is_symbol_name(name))
+        {
             names.insert_unique(hash_of_name(&name), name, hash_of_name);
         }
         names
     });
-    names.find(hash, |&name| text_of_name(name) == bytes).copied()
+    names
+        .find(hash, |&name| text_of_name(name) == bytes)
+        .copied()
 }
 
 #[derive(Default)]
@@ -157,15 +162,20 @@ impl StringTable {
         let hashes = own.hashes.chunks_mut(STRINGS_IN_A_TASK);
         let name_classes = own.name_classes.chunks_mut(STRINGS_IN_A_TASK);
         let builtin_names = own.builtin_names.chunks_mut(STRINGS_IN_A_TASK);
-        let lists = ends.zip(hashes).zip(name_classes.zip(builtin_names)).enumerate();
+        let lists = ends
+            .zip(hashes)
+            .zip(name_classes.zip(builtin_names))
+            .enumerate();
         let mut tasks: Vec<Descriptions<'_>> = lists
-            .map(|(task, ((ends, hashes), (name_classes, builtin_names)))| Descriptions {
-                first: task * STRINGS_IN_A_TASK,
-                ends,
-                hashes,
-                name_classes,
-                builtin_names,
-            })
+            .map(
+                |(task, ((ends, hashes), (name_classes, builtin_names)))| Descriptions {
+                    first: task * STRINGS_IN_A_TASK,
+                    ends,
+                    hashes,
+                    name_classes,
+                    builtin_names,
+                },
+            )
             .collect();
         for_each_mut(&mut tasks, in_parallel, &|task| {
             for offset in 0..task.ends.len() {
@@ -205,7 +215,9 @@ impl StringTable {
         });
         let mut ids = hashbrown::HashTable::with_capacity(count);
         for (index, &hash) in own.hashes.iter().enumerate() {
-            ids.insert_unique(hash, StringId::new(index), |&id: &StringId| own.hashes[id.index()]);
+            ids.insert_unique(hash, StringId::new(index), |&id: &StringId| {
+                own.hashes[id.index()]
+            });
         }
         StringTable {
             strings: StringList::Own(own),
@@ -221,7 +233,8 @@ impl StringTable {
         let known = StringsOfAllTables::current();
         let mut start = 0;
         let strings = (0..own.ends.len()).map(|index| {
-            let bytes = &own.bytes[core::mem::replace(&mut start, own.ends[index])..own.ends[index]];
+            let bytes =
+                &own.bytes[core::mem::replace(&mut start, own.ends[index])..own.ends[index]];
             let describe = || (own.name_classes[index], own.builtin_names[index]);
             known.intern(own.hashes[index], bytes, describe)
         });
@@ -245,7 +258,9 @@ impl StringTable {
         debug_assert!(join_surrogate_pairs(bytes).is_none());
         match self.find_hashed(hash, bytes) {
             Some(id) => id,
-            None => self.add(hash, bytes, || (classify_name(bytes), find_builtin_name(hash, bytes))),
+            None => self.add(hash, bytes, || {
+                (classify_name(bytes), find_builtin_name(hash, bytes))
+            }),
         }
     }
 
@@ -266,7 +281,9 @@ impl StringTable {
         let (hash, bytes) = (other.hash(id), other.get(id));
         match self.find_hashed(hash, bytes) {
             Some(id) => id,
-            None => self.add(hash, bytes, || (other.name_class(id), other.builtin_name(id))),
+            None => self.add(hash, bytes, || {
+                (other.name_class(id), other.builtin_name(id))
+            }),
         }
     }
 
@@ -381,7 +398,8 @@ impl StringTable {
             }
         }
         let strings = &self.strings;
-        self.ids.insert_unique(hash, id, |&id| strings.hash(id.index()));
+        self.ids
+            .insert_unique(hash, id, |&id| strings.hash(id.index()));
         id
     }
 
@@ -408,13 +426,20 @@ mod tests {
     #[test]
     fn table_of_distinct_strings_is_the_table_that_interning_them_gives() {
         let mut sources = [StringTable::default(), StringTable::sharing_strings()];
-        let texts: Vec<String> = (0..5000).map(|index| "x".repeat(index % 7) + &index.to_string()).collect();
+        let texts: Vec<String> = (0..5000)
+            .map(|index| "x".repeat(index % 7) + &index.to_string())
+            .collect();
         let mut places = Vec::new();
-        for (index, text) in texts.iter().chain([&"length".to_string(), &String::new()]).enumerate() {
+        for (index, text) in texts
+            .iter()
+            .chain([&"length".to_string(), &String::new()])
+            .enumerate()
+        {
             places.push((index % 2, sources[index % 2].intern(text.as_bytes())));
         }
         let string_at = |index: usize| (&sources[places[index].0], places[index].1);
-        let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| (0..count).rev().for_each(work);
+        let in_reverse =
+            |count: usize, work: &(dyn Fn(usize) + Sync)| (0..count).rev().for_each(work);
         let table = StringTable::of_distinct_strings(places.len(), &string_at, &in_reverse);
         let mut interned = StringTable::default();
         for index in 0..places.len() {
@@ -437,7 +462,9 @@ mod tests {
     #[test]
     fn builtin_name_is_the_one_that_the_table_finds() {
         let mut strings = StringTable::default();
-        let names = (0..).map(BuiltinName).take_while(|&name| !is_symbol_name(name));
+        let names = (0..)
+            .map(BuiltinName)
+            .take_while(|&name| !is_symbol_name(name));
         for name in names {
             let id = strings.intern(text_of_name(name));
             assert_eq!(strings.builtin_name(id), find_name(text_of_name(name)));

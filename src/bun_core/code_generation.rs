@@ -126,9 +126,9 @@ mod level {
 
 pub use level::{
     code_generation_from_strings, code_generation_from_strings_by_flags,
-    disallow_code_generation_for_compiled_program, disallow_code_generation_for_removed_interpreter,
-    disallow_code_generation_from_strings, is_code_generation_disallowed_by_compiled_program,
-    is_code_generation_disallowed_by_trimming,
+    disallow_code_generation_for_compiled_program,
+    disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
+    is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
 };
 
 #[cfg(all(test, not(bun_disallow_code_generation_from_strings)))]
@@ -137,34 +137,70 @@ mod tests {
 
     #[test]
     fn level_only_rises_and_flags_are_not_trimming() {
-        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Allowed);
-        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::Allowed);
+        assert_eq!(
+            code_generation_from_strings(),
+            CodeGenerationFromStrings::Allowed
+        );
+        assert_eq!(
+            code_generation_from_strings_by_flags(),
+            CodeGenerationFromStrings::Allowed
+        );
         assert!(!is_code_generation_disallowed_by_trimming());
 
         disallow_code_generation_from_strings(CodeGenerationFromStrings::DisallowedLikeNode);
-        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::DisallowedLikeNode);
-        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(
+            code_generation_from_strings(),
+            CodeGenerationFromStrings::DisallowedLikeNode
+        );
+        assert_eq!(
+            code_generation_from_strings_by_flags(),
+            CodeGenerationFromStrings::DisallowedLikeNode
+        );
         assert!(!is_code_generation_disallowed_by_trimming());
 
         disallow_code_generation_from_strings(CodeGenerationFromStrings::Allowed);
-        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::DisallowedLikeNode);
-        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(
+            code_generation_from_strings(),
+            CodeGenerationFromStrings::DisallowedLikeNode
+        );
+        assert_eq!(
+            code_generation_from_strings_by_flags(),
+            CodeGenerationFromStrings::DisallowedLikeNode
+        );
 
         assert!(!is_code_generation_disallowed_by_compiled_program());
         disallow_code_generation_for_compiled_program();
         assert!(is_code_generation_disallowed_by_compiled_program());
-        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Strict);
-        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(
+            code_generation_from_strings(),
+            CodeGenerationFromStrings::Strict
+        );
+        assert_eq!(
+            code_generation_from_strings_by_flags(),
+            CodeGenerationFromStrings::DisallowedLikeNode
+        );
         assert!(!is_code_generation_disallowed_by_trimming());
 
         disallow_code_generation_for_removed_interpreter();
-        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Strict);
-        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(
+            code_generation_from_strings(),
+            CodeGenerationFromStrings::Strict
+        );
+        assert_eq!(
+            code_generation_from_strings_by_flags(),
+            CodeGenerationFromStrings::DisallowedLikeNode
+        );
         assert!(is_code_generation_disallowed_by_trimming());
 
         disallow_code_generation_from_strings(CodeGenerationFromStrings::Strict);
-        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Strict);
-        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::Strict);
+        assert_eq!(
+            code_generation_from_strings(),
+            CodeGenerationFromStrings::Strict
+        );
+        assert_eq!(
+            code_generation_from_strings_by_flags(),
+            CodeGenerationFromStrings::Strict
+        );
         assert!(!is_code_generation_disallowed_by_trimming());
     }
 }

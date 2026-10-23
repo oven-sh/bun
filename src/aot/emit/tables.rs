@@ -115,7 +115,10 @@ where
     Table<'p, R>: RecordTable,
 {
     for records in records.chunks(RECORDS_PER_TASK) {
-        tasks.push(create_task(Source::Table(Box::new(Table { list, records }))));
+        tasks.push(create_task(Source::Table(Box::new(Table {
+            list,
+            records,
+        }))));
     }
 }
 

@@ -83,7 +83,9 @@ impl<S: Storage> FileIn<S> {
             return false;
         };
         match statement.kind {
-            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::ExportAsNamespace(_) => true,
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::ExportAsNamespace(_) => {
+                true
+            }
             StmtKind::Import(import) => self.is_type_only_import(import),
             StmtKind::ExportNamed(export) => self.is_type_only_export(export),
             StmtKind::ExportStar { type_only, .. } => type_only,
@@ -96,9 +98,9 @@ impl<S: Storage> FileIn<S> {
             }
             StmtKind::Class(class) => self[class].flags.contains(Flags::AMBIENT),
             StmtKind::Enum(enumeration) => self[enumeration].flags.contains(Flags::AMBIENT),
-            StmtKind::Module(module) => {
-                self[module].flags.intersects(Flags::AMBIENT | Flags::REPARSED)
-            }
+            StmtKind::Module(module) => self[module]
+                .flags
+                .intersects(Flags::AMBIENT | Flags::REPARSED),
             StmtKind::Empty
             | StmtKind::Debugger
             | StmtKind::Expr(_)
@@ -172,7 +174,9 @@ impl File<'_> {
             return None;
         };
         let mut directives = self.directives(statements);
-        directives.find(|directive| directive.1 == known::use_strict).map(|directive| directive.0)
+        directives
+            .find(|directive| directive.1 == known::use_strict)
+            .map(|directive| directive.0)
     }
 
     pub fn set_strict(&mut self) {
@@ -218,9 +222,9 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
             !is_declaration_only && hir.fns.get(node.func.idx()).is_some_and(has_body)
         }
-        MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature => false,
+        MemberKind::CallSignature | MemberKind::ConstructSignature | MemberKind::IndexSignature => {
+            false
+        }
     }
 }
 
@@ -267,7 +271,10 @@ fn can_move_class(hir: &File, class: ClassId) -> bool {
     let node = hir[class];
     node.extends.is_none()
         && !has_decorator(hir, node.modifiers)
-        && node.members.iter().all(|member| can_move_member(hir, member))
+        && node
+            .members
+            .iter()
+            .all(|member| can_move_member(hir, member))
 }
 
 fn can_move_member(hir: &File, member: MemberId) -> bool {
@@ -278,11 +285,16 @@ fn can_move_member(hir: &File, member: MemberId) -> bool {
     if !has_runtime_member(hir, member) {
         return true;
     }
-    let parameters = node.func.some().map_or(Span::EMPTY, |function| hir[function].params);
+    let parameters = node
+        .func
+        .some()
+        .map_or(Span::EMPTY, |function| hir[function].params);
     let has_bracketed_name = hir.text.get(node.name_pos as usize) == Some(&b'[');
     if node.kind == MemberKind::StaticBlock
         || has_bracketed_name
-        || parameters.iter().any(|parameter| has_decorator(hir, hir.param_modifiers(parameter)))
+        || parameters
+            .iter()
+            .any(|parameter| has_decorator(hir, hir.param_modifiers(parameter)))
     {
         return false;
     }
@@ -335,5 +347,7 @@ fn can_move_expression(hir: &File, expression: ExprId) -> bool {
 }
 
 fn has_decorator(hir: &File, modifiers: Span<ModifierId>) -> bool {
-    modifiers.iter().any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)))
+    modifiers
+        .iter()
+        .any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)))
 }

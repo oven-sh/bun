@@ -9,7 +9,8 @@ pub(in crate::lower) fn type_parameter_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     parameter: TypeParameterRef,
 ) -> LayoutId {
-    file.fragment.declare_layout(LayoutKey::TypeParameter(parameter))
+    file.fragment
+        .declare_layout(LayoutKey::TypeParameter(parameter))
 }
 
 fn record_type_arguments(
@@ -110,8 +111,14 @@ create<A>();
 choose<A>();
 ",
         );
-        assert_eq!(collect_classes_below_type_parameters(&fragment), [(0, 0), (0, 1), (1, 2)]);
-        assert_eq!(collect_type_parameters_with_members_without_layout(&fragment), NO_PARAMETERS);
+        assert_eq!(
+            collect_classes_below_type_parameters(&fragment),
+            [(0, 0), (0, 1), (1, 2)]
+        );
+        assert_eq!(
+            collect_type_parameters_with_members_without_layout(&fragment),
+            NO_PARAMETERS
+        );
     }
 
     #[test]
@@ -134,7 +141,10 @@ class Pair<L, R> { left: L | undefined = undefined; right: R | undefined = undef
 export function read(pair: Pair<A, B>, same: Pair<A, B>) {}
 ",
         );
-        assert_eq!(collect_classes_below_type_parameters(&fragment), [(0, 0), (1, 1)]);
+        assert_eq!(
+            collect_classes_below_type_parameters(&fragment),
+            [(0, 0), (1, 1)]
+        );
     }
 
     #[test]
@@ -145,7 +155,10 @@ create<number>();
 ",
         );
         assert_eq!(collect_classes_below_type_parameters(&fragment), NO_PAIRS);
-        assert_eq!(collect_type_parameters_with_members_without_layout(&fragment), [0]);
+        assert_eq!(
+            collect_type_parameters_with_members_without_layout(&fragment),
+            [0]
+        );
     }
 
     #[test]
@@ -163,6 +176,9 @@ create();
 ",
         );
         assert_eq!(collect_classes_below_type_parameters(&fragment), NO_PAIRS);
-        assert_eq!(collect_type_parameters_with_members_without_layout(&fragment), NO_PARAMETERS);
+        assert_eq!(
+            collect_type_parameters_with_members_without_layout(&fragment),
+            NO_PARAMETERS
+        );
     }
 }

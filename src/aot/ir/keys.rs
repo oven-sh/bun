@@ -22,9 +22,18 @@ pub enum FunctionKey {
     ImplicitConstructor(ClassRef),
     InstanceInitializer(ClassRef),
     StaticInitializer(ClassRef),
-    AccessorGetter { file: FileId, member: MemberId },
-    AccessorSetter { file: FileId, member: MemberId },
-    PrivateNameTest { file: FileId, member: MemberId },
+    AccessorGetter {
+        file: FileId,
+        member: MemberId,
+    },
+    AccessorSetter {
+        file: FileId,
+        member: MemberId,
+    },
+    PrivateNameTest {
+        file: FileId,
+        member: MemberId,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -76,11 +85,20 @@ pub enum VariableKey {
     ModuleExports(FileId),
     /// The same for the callback of `__commonJS(cb)`.
     InnerModuleExports(FunctionRef),
-    ClassSlot { class: ClassRef, slot: ClassSlot },
+    ClassSlot {
+        class: ClassRef,
+        slot: ClassSlot,
+    },
     /// `__filename` or `__dirname` of an ES module that stores to it.
-    ModulePath { file: FileId, variable: CommonJsVariable },
+    ModulePath {
+        file: FileId,
+        variable: CommonJsVariable,
+    },
     /// What the program keeps for a variable whose `WeakMap` or `WeakSet` is private state of a class.
-    PrivateState { state: Sym, part: PrivateStatePart },
+    PrivateState {
+        state: Sym,
+        part: PrivateStatePart,
+    },
 }
 
 impl FunctionKey {
@@ -255,7 +273,10 @@ mod tests {
         }
         assert_eq!(VariableKey::Symbol(SYMBOL).home_file(), Some(FILE));
         assert_eq!(VariableKey::ModuleExports(FILE).home_file(), Some(FILE));
-        assert_eq!(VariableKey::InnerModuleExports(FUNCTION).home_file(), Some(FILE));
+        assert_eq!(
+            VariableKey::InnerModuleExports(FUNCTION).home_file(),
+            Some(FILE)
+        );
         let synthetic_export = VariableKey::SyntheticExport(SyntheticExportId(9));
         assert_eq!(synthetic_export.home_file(), None);
         assert_eq!(VariableKey::Copy(SyntheticExportId(9)).home_file(), None);

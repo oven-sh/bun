@@ -7,7 +7,11 @@ pub(super) fn check_flags(file: &File<'_>) -> CheckResult {
     for (index, expr) in file.exprs.iter().enumerate() {
         let id = ExprId(index as u32);
         let mut has_parens = false;
-        while file.parens.get(next_paren).is_some_and(|paren| paren.0 == id) {
+        while file
+            .parens
+            .get(next_paren)
+            .is_some_and(|paren| paren.0 == id)
+        {
             has_parens = true;
             next_paren += 1;
         }
@@ -29,7 +33,10 @@ fn required_and_optional_flags(file: &File<'_>, kind: &ExprKind) -> (ExprFlags, 
     match *kind {
         ExprKind::Index { chain, .. } => (ExprFlags::BRACKET_ACCESS | chain_flags(chain), none),
         ExprKind::Dot { chain, .. } => (chain_flags(chain), ExprFlags::PRIVATE_NAME),
-        ExprKind::Call(call) => (chain_flags(file[call].chain), ExprFlags::RESOLVED_AT_RUNTIME),
+        ExprKind::Call(call) => (
+            chain_flags(file[call].chain),
+            ExprFlags::RESOLVED_AT_RUNTIME,
+        ),
         ExprKind::PrivateIdentifier(_) => (ExprFlags::PRIVATE_NAME, none),
         ExprKind::String(_) => (none, ExprFlags::TEMPLATE_LITERAL),
         ExprKind::Missing

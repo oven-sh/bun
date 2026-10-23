@@ -25,20 +25,21 @@ pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, 
 pub use self::registry::{is_optional_pass, operation_names};
 use self::sections::check_sections;
 pub use self::shared::{
-    EngineModuleId, ExecutableIdentity, RejectedOptionWord, has_compiler, image_alignment,
-    relocate_image,
+    EngineModuleId, ExecutableIdentity, RejectedOptionWord, describe_difference_of_runtime,
+    has_compiler, image_alignment, relocate_image,
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
-use crate::ir::generated::{
-    AdmittedCode, CompileAction, CompileOptions, ExcludedCode, LimitId, MismatchPolicy, OutputOptions,
-    ReferenceWidth, ReportSet, ResultSection,
-};
 pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, ArrivalLayoutFieldRecord,
     ArrivalLayoutRecord, ArrivalSiteRecord, BuiltinUseRecord, DeclineRecord, FeatureUseRecord,
-    FunctionReportRecord, InternalErrorRecord, LocaleUseRecord, LossRecord, ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord, RemainingCheckRecord,
-    SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
+    FunctionReportRecord, InternalErrorRecord, LocaleUseRecord, LossRecord, ObfuscatedSiteRecord,
+    OperationCountRecord, PassTimeRecord, RemainingCheckRecord, SourceLocation, TextRange,
+    TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
+};
+use crate::ir::generated::{
+    AdmittedCode, CompileAction, CompileOptions, ExcludedCode, LimitId, MismatchPolicy,
+    OutputOptions, ReferenceWidth, ReportSet, ResultSection,
 };
 use crate::statistics::LimitValues;
 
@@ -178,7 +179,8 @@ impl EngineOptions {
         let mut record = self.record;
         if self.fits_threads_to_program {
             let useful = program_bytes / PROGRAM_BYTES_PER_THREAD + 1;
-            record.thread_count = (record.thread_count).min(u32::try_from(useful).unwrap_or(u32::MAX));
+            record.thread_count =
+                (record.thread_count).min(u32::try_from(useful).unwrap_or(u32::MAX));
         }
         record
     }
@@ -208,7 +210,9 @@ pub fn check_option_word(
 pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
     let record = options.record_for(program.size_with_external_bodies());
     let bytes = BunAOTBytes::from_slice(program.as_slice());
-    let external_bodies = program.external_bodies().map(ExternalBodies::as_engine_argument);
+    let external_bodies = program
+        .external_bodies()
+        .map(ExternalBodies::as_engine_argument);
     let mut owner = ProgramOwner {
         program: Some(program),
         frees_on_pool_thread: record.thread_count > 1,
@@ -218,7 +222,9 @@ pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
     unsafe {
         let result = Bun__AOT__compile(
             bytes,
-            external_bodies.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
+            external_bodies
+                .as_ref()
+                .map_or(core::ptr::null(), core::ptr::from_ref),
             release_program,
             (&raw mut owner).cast::<c_void>(),
             &raw const record,
@@ -505,7 +511,11 @@ result_record!(AccessRecord, Accesses, []);
 result_record!(RemainingCheckRecord, RemainingChecks, []);
 result_record!(TypeTestRecord, TypeTests, []);
 result_record!(DeclineRecord, Declines, []);
-result_record!(AllocationRemarkRecord, AllocationRemarks, [forcing_operation]);
+result_record!(
+    AllocationRemarkRecord,
+    AllocationRemarks,
+    [forcing_operation]
+);
 result_record!(LossRecord, Losses, []);
 result_record!(FunctionReportRecord, Functions, [role]);
 result_record!(OperationCountRecord, OperationCounts, [name]);

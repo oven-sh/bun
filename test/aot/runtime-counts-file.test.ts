@@ -74,18 +74,26 @@ describe("compile/aot/runtime-counts-file", () => {
     expect(lines.pop()).toBe("");
     const isCount = (line: string) => /^\d+\t(counter|exit|limit|operation|branch):\S+$/.test(line);
     // Behind the counts: what was made and learned, by its description, and the places that allocate.
-    const isDescribed = (line: string) => /^\d+\t(structures|plans dropped by collections|keys of plans|pairs of layouts|named):\S.*$/.test(line);
-    const isAllocation = (line: string) => /^(allocation|refill|made) \S+ \S+ \S+ \d+ \d+$|^slow-allocation \S+ \d+$/.test(line);
+    const isDescribed = (line: string) =>
+      /^\d+\t(structures|plans dropped by collections|keys of plans|pairs of layouts|named):\S.*$/.test(line);
+    const isAllocation = (line: string) =>
+      /^(allocation|refill|made) \S+ \S+ \S+ \d+ \d+$|^slow-allocation \S+ \d+$/.test(line);
     expect(lines.filter(line => !isCount(line) && !isDescribed(line) && !isAllocation(line))).toEqual([]);
 
-    const entries = lines.filter(isCount).map(line => line.split("\t")).map(([count, name]) => ({ name, count: Number(count) }));
-    const namesOf = (kind: string) => entries.filter(entry => entry.name.startsWith(kind + ":")).map(entry => entry.name.slice(kind.length + 1));
+    const entries = lines
+      .filter(isCount)
+      .map(line => line.split("\t"))
+      .map(([count, name]) => ({ name, count: Number(count) }));
+    const namesOf = (kind: string) =>
+      entries.filter(entry => entry.name.startsWith(kind + ":")).map(entry => entry.name.slice(kind.length + 1));
     const { runtimeCounters, limits } = registry();
     const exits = namesOf("exit");
     expect(exits).not.toEqual([]);
     expect(exits).toEqual(runtimeCounters.filter(name => exits.includes(name)));
     expect(namesOf("counter")).toEqual(runtimeCounters.filter(name => !exits.includes(name)));
-    expect(namesOf("limit")).toEqual(expect.arrayContaining(limits.filter(limit => limit.stage === "RunTime").map(limit => limit.name)));
+    expect(namesOf("limit")).toEqual(
+      expect.arrayContaining(limits.filter(limit => limit.stage === "RunTime").map(limit => limit.name)),
+    );
     expect(namesOf("branch")).toEqual([]);
     expect(entries.filter(entry => entry.name.startsWith("operation:operationAOT") && entry.count > 0)).not.toEqual([]);
 

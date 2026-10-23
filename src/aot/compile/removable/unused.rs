@@ -54,6 +54,7 @@ impl Removable<'_, '_> {
         simplified
     }
 
+    #[allow(clippy::unnecessary_fold)] // every expression is simplified, also behind one that stays
     fn simplify_all_unused(
         &self,
         expressions: impl Iterator<Item = ExprId>,

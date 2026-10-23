@@ -444,7 +444,10 @@ fn first_checks() {
 
 #[test]
 fn version_and_feature_list_errors_share_reason() {
-    for error in [TableError::UnsupportedVersion, TableError::FeatureListMismatch] {
+    for error in [
+        TableError::UnsupportedVersion,
+        TableError::FeatureListMismatch,
+    ] {
         assert!(matches!(
             convert_table_error(error),
             TrimError::Unsupported(UnsupportedReason::FeatureListMismatch)

@@ -511,7 +511,8 @@ export default b.declarations(
   b.class("%S3File%", {
     extends: "Blob",
     instanceCppClass: b.cppClass("Bun::JSS3File", "JSS3File.h"),
-    prototypeCppExpression: "globalObject->m_JSS3FileStructure.getInitializedOnMainThread(globalObject)->storedPrototypeObject()",
+    prototypeCppExpression:
+      "globalObject->m_JSS3FileStructure.getInitializedOnMainThread(globalObject)->storedPrototypeObject()",
     instanceStructureCppExpression: "globalObject->m_JSS3FileStructure.getConcurrently()",
     hasConstructor: false,
     proto: {

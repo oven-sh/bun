@@ -64,11 +64,7 @@ fn external(kind: ExternalKind) -> CodeResolution<'static> {
     }
 }
 
-fn with_finished_file<R>(
-    path: &[u8],
-    text: &str,
-    then: impl FnOnce(&Fixture<'_, '_>) -> R,
-) -> R {
+fn with_finished_file<R>(path: &[u8], text: &str, then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
     let names = BuiltinNames::new(&atoms);
@@ -103,7 +99,10 @@ fn with_finished_file<R>(
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     assert!(!hir.has_errors, "syntax error in: {text}");
-    assert!(analysis.import_sites.is_empty(), "the fixture resolves no import: {text}");
+    assert!(
+        analysis.import_sites.is_empty(),
+        "the fixture resolves no import: {text}"
+    );
     then(&Fixture {
         input: BuiltinUseInput {
             names: &names,
@@ -160,7 +159,12 @@ fn builtin_use_implies_runtime_module() {
     let mut loaded_modules = loads.iter().map(|load| load.module);
     assert!(loaded_modules.any(|module| module == RuntimeModule::NodeTty));
     for load in loads {
-        assert_eq!(count_answers(&finished, &module_by_id(load.module)), 1, "{:?}", load.module);
+        assert_eq!(
+            count_answers(&finished, &module_by_id(load.module)),
+            1,
+            "{:?}",
+            load.module
+        );
     }
 }
 
@@ -175,7 +179,10 @@ fn file_without_builtin_use_implies_nothing() {
 fn two_uses_imply_one_file() {
     let once = finish_application(STDOUT_USE);
     let twice = finish_application("process.stdout.write('a'); process.stdout.write('b');");
-    assert_eq!(count_answers(&twice, &module_by_id(RuntimeModule::NodeTty)), 1);
+    assert_eq!(
+        count_answers(&twice, &module_by_id(RuntimeModule::NodeTty)),
+        1
+    );
     assert_eq!(twice.answers, once.answers);
 
     let once = finish_runtime(STDOUT_USE);
@@ -236,7 +243,10 @@ fn payload_holds_the_resolved_builtins() {
         let mentioned = finished.source.builtins.mentioned();
         assert!(mentioned.contains(&BuiltinId::ProcessStdout));
     }
-    for finished in [finish_application("export {};"), finish_runtime("export {};")] {
+    for finished in [
+        finish_application("export {};"),
+        finish_runtime("export {};"),
+    ] {
         assert!(finished.source.builtins.mentioned().is_empty());
     }
 }
@@ -277,7 +287,9 @@ const NO_CANDIDATES: ComputedResolution<'static> = ComputedResolution::Candidate
 
 #[test]
 fn computed_site_is_no_import_target() {
-    let candidates = [ComputedCandidate::HostModule(host_module_id(RuntimeModule::NodeFs))];
+    let candidates = [ComputedCandidate::HostModule(host_module_id(
+        RuntimeModule::NodeFs,
+    ))];
     let resolutions = [
         ComputedResolution::Candidates {
             candidates: &candidates,
@@ -356,8 +368,12 @@ fn implied_paths_are_sorted_and_unique() {
     let functions = reversed_functions.chain(STARTUP_FUNCTIONS).copied();
     let answers = collect_implied_answers(&runtime, modules.into_iter(), functions, PROGRAM_PATH);
 
-    let mut ids = [RuntimeModule::NodeTty, RuntimeModule::BunJsc, RuntimeModule::NodeFs]
-        .map(host_module_id);
+    let mut ids = [
+        RuntimeModule::NodeTty,
+        RuntimeModule::BunJsc,
+        RuntimeModule::NodeFs,
+    ]
+    .map(host_module_id);
     ids.sort_unstable();
     let expected_modules = ids.map(|id| runtime.module_resolution(id));
     let (module_answers, function_files) = answers.split_at(expected_modules.len());
@@ -383,9 +399,8 @@ fn own_path_is_not_implied() {
 
     let function = STARTUP_FUNCTIONS[0];
     let own_file = runtime.function_file_path(function).unwrap();
-    let implied_from = |path: &[u8]| {
-        collect_implied_answers(&runtime, iter::empty(), iter::once(function), path)
-    };
+    let implied_from =
+        |path: &[u8]| collect_implied_answers(&runtime, iter::empty(), iter::once(function), path);
     assert!(implied_from(&own_file).is_empty());
     assert_eq!(implied_from(own_path), [HostResolution::Path(own_file)]);
 }
@@ -448,7 +463,9 @@ fn loader_keeps_implied_answer_order() {
         };
         let compiled = input.files.compiled(main);
         let compiled = compiled.expect("the entry point is compiled");
-        let (modules, others) = compiled.implied_answers.split_at(site.implied_answer as usize);
+        let (modules, others) = compiled
+            .implied_answers
+            .split_at(site.implied_answer as usize);
         assert!(!modules.is_empty());
         for answer in modules {
             assert!(matches!(answer, CodeAnswer::HostModule(_)), "{answer:?}");
@@ -467,7 +484,11 @@ fn forbidden_text_evaluation_compiles_no_text() {
         let (input, request) = (&fixture.input, &fixture.request);
         let answers = finish_application_file(input, None, false, request, &mut source);
         assert!(source.evaluated_text_sites.is_empty());
-        assert!(!answers.iter().any(|answer| matches!(answer, HostResolution::Path(_))));
+        assert!(
+            !answers
+                .iter()
+                .any(|answer| matches!(answer, HostResolution::Path(_)))
+        );
     });
 }
 
@@ -479,7 +500,13 @@ fn react_declarations_come_last() {
         let finish = |needs_react_declarations: bool| {
             let mut source = ParsedSource::new(SourceKind::Program, Loader::Ts);
             let texts = EvaluatedTexts::new();
-            finish_application_file(input, Some(&texts), needs_react_declarations, request, &mut source)
+            finish_application_file(
+                input,
+                Some(&texts),
+                needs_react_declarations,
+                request,
+                &mut source,
+            )
         };
         let without_declarations = finish(false);
         let with_declarations = finish(true);
@@ -496,7 +523,10 @@ fn react_declarations_come_last() {
 fn evaluated_function_is_recorded_for_text_files_only() {
     let text = "(function anonymous(\n) {\nreturn this\n})";
     with_finished_file(TEXT_PATH, text, |fixture| {
-        let cases = [(SourceKind::EvaluatedText, true), (SourceKind::Program, false)];
+        let cases = [
+            (SourceKind::EvaluatedText, true),
+            (SourceKind::Program, false),
+        ];
         for (kind, is_recorded) in cases {
             let mut source = ParsedSource::new(kind, Loader::Js);
             let (input, request) = (&fixture.input, &fixture.request);

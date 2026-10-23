@@ -106,7 +106,11 @@ pub(super) fn find_linked_function(
     let function = function.ok_or((identifier, Misuse::UnknownLinkedFunction))?;
     if function.file == lowering.file.file {
         let source = function.function;
-        return Ok(function::declare_source_function(lowering.file, source, None));
+        return Ok(function::declare_source_function(
+            lowering.file,
+            source,
+            None,
+        ));
     }
     let key = FunctionKey::Source(function);
     Ok(lowering.file.reference_function(key))
@@ -313,5 +317,11 @@ fn emit_return_method_call(
     let method = member::emit_get(lowering, iterator, PropertyName::Constant(key));
     let method = condition::branch_if_nullish(lowering, method, if_absent);
     let arguments = Arguments::Values(SmallVec::new());
-    emit_call(lowering, method, Some(iterator), arguments, CallSite::default())
+    emit_call(
+        lowering,
+        method,
+        Some(iterator),
+        arguments,
+        CallSite::default(),
+    )
 }

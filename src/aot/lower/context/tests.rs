@@ -73,7 +73,10 @@ fn lower_file(name: &str, source: &str) -> LoweredFile {
 
 fn lower_in_both_projects(source: &str) -> Vec<(FileId, LoweredFile)> {
     lower(&[
-        ("main.ts", "import \"node:os\";\nimport \"./application\";\n"),
+        (
+            "main.ts",
+            "import \"node:os\";\nimport \"./application\";\n",
+        ),
         ("application.ts", source),
         (LIBRARY_MODULE_PATH, source),
     ])
@@ -83,7 +86,11 @@ fn lower_in_both_projects(source: &str) -> Vec<(FileId, LoweredFile)> {
 fn lower_library_module(source: &str) -> LoweredFile {
     let importer = ("main.ts", "import \"node:os\";\n");
     let mut lowered = lower(&[importer, (LIBRARY_MODULE_PATH, source)]);
-    assert_eq!(lowered.len(), 2, "the entry point and the module of the library");
+    assert_eq!(
+        lowered.len(),
+        2,
+        "the entry point and the module of the library"
+    );
     lowered.remove(1).1
 }
 
@@ -131,7 +138,9 @@ fn find_module_body(fragment: &Fragment) -> &Function {
     let body = fragment.module.body.expect("the module has a body");
     let mut functions = fragment.functions.iter();
     let found = functions.find(|(function, _)| *function == body);
-    &found.expect("the fragment defines the body of its module").1
+    &found
+        .expect("the fragment defines the body of its module")
+        .1
 }
 
 #[track_caller]
@@ -156,10 +165,15 @@ fn parameter(function: &Function, index: u32) -> ValueId {
 
 fn operands(value: ValueView<'_>) -> Vec<ValueId> {
     let mut operands = Vec::new();
-    visit_value_fields(value.opcode, value.fields, 0, &mut |field, at| match field {
-        FieldWord::Operand => operands.push(ValueId::from_word(value.fields[at])),
-        FieldWord::Reference(_) => {}
-    });
+    visit_value_fields(
+        value.opcode,
+        value.fields,
+        0,
+        &mut |field, at| match field {
+            FieldWord::Operand => operands.push(ValueId::from_word(value.fields[at])),
+            FieldWord::Reference(_) => {}
+        },
+    );
     operands
 }
 
@@ -172,7 +186,9 @@ fn opcodes(function: &Function) -> Vec<Opcode> {
 }
 
 fn count_operations(function: &Function, opcode: Opcode) -> usize {
-    values(function).filter(|value| value.opcode == opcode).count()
+    values(function)
+        .filter(|value| value.opcode == opcode)
+        .count()
 }
 
 #[track_caller]
@@ -190,7 +206,10 @@ fn names_builtin(function: &Function, value: ValueId, builtin: BuiltinId) -> boo
 
 #[track_caller]
 fn find_block(function: &Function, block: BlockId) -> BlockView<'_> {
-    let found = function.body.blocks().find(|candidate| candidate.id == block);
+    let found = function
+        .body
+        .blocks()
+        .find(|candidate| candidate.id == block);
     found.expect("the function has the block")
 }
 
@@ -206,10 +225,15 @@ fn skip_conversions(function: &Function, value: ValueId) -> ValueId {
 fn find_call_block<'a>(function: &'a Function, call_operands: &[ValueId]) -> BlockView<'a> {
     let is_matching_call = |value: ValueView<'_>| {
         let passed = operands(value).into_iter();
-        let passed: Vec<ValueId> = passed.map(|operand| skip_conversions(function, operand)).collect();
+        let passed: Vec<ValueId> = passed
+            .map(|operand| skip_conversions(function, operand))
+            .collect();
         value.opcode == Opcode::Call && passed == call_operands
     };
-    let found = function.body.blocks().find(|block| block.values().any(is_matching_call));
+    let found = function
+        .body
+        .blocks()
+        .find(|block| block.values().any(is_matching_call));
     found.expect("the function has the call")
 }
 
@@ -220,9 +244,14 @@ fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> 
         let (Opcode::PropSet, &[_, _, key, mode, _]) = (value.opcode, value.fields) else {
             return None;
         };
-        let text = fragment.property_keys.get(PropertyKeyId::from_word(key)).text?;
+        let text = fragment
+            .property_keys
+            .get(PropertyKeyId::from_word(key))
+            .text?;
         let is_matching_store = fragment.strings.get(text) == property.as_bytes();
-        is_matching_store.then(|| ECMAMode::from_wire(mode)).flatten()
+        is_matching_store
+            .then(|| ECMAMode::from_wire(mode))
+            .flatten()
     });
     let modes: Vec<ECMAMode> = modes.collect();
     assert_eq!(modes.len(), 1, "one store to {property}");
@@ -253,13 +282,21 @@ fn find_loss(lowered: &LoweredFile, limit: LimitId) -> Option<Loss> {
 #[test]
 fn source_kind_decides_dialect_and_role() {
     let kinds = [
-        (SourceKind::Program, SourceDialect::Program, FunctionRole::Source),
+        (
+            SourceKind::Program,
+            SourceDialect::Program,
+            FunctionRole::Source,
+        ),
         (
             SourceKind::RuntimeModule(RuntimeModule::default()),
             SourceDialect::Runtime,
             FunctionRole::Library,
         ),
-        (SourceKind::RuntimeFunctions, SourceDialect::Runtime, FunctionRole::Library),
+        (
+            SourceKind::RuntimeFunctions,
+            SourceDialect::Runtime,
+            FunctionRole::Library,
+        ),
     ];
     for (kind, dialect, role) in kinds {
         assert_eq!(kind.dialect(), dialect, "{kind:?}");
@@ -273,7 +310,10 @@ fn library_module_checks_types_as_application_code_does() {
     let lowered = lower_in_both_projects(KEYED_STATE);
     for (_, function) in find_definitions(&lowered, "setState") {
         let role = function.role;
-        assert!(function.flags.contains(FunctionFlags::IS_CHECKED), "{role:?}");
+        assert!(
+            function.flags.contains(FunctionFlags::IS_CHECKED),
+            "{role:?}"
+        );
         let [holder, state] = function.parameters[..] else {
             panic!("{role:?}: {} parameters", function.parameters.len());
         };
@@ -313,10 +353,18 @@ fn constant_of_library_module_is_module_variable() {
         assert_eq!(variable.flags, VariableFlags::IS_IMMUTABLE, "{role:?}");
         assert!(!variable.declared.is_expected(), "{role:?}");
         let primitives = fragment.types.get(variable.declared.ty).primitives;
-        assert_eq!(primitives.contains(Primitives::ABSENT), has_dead_zone, "{role:?}");
+        assert_eq!(
+            primitives.contains(Primitives::ABSENT),
+            has_dead_zone,
+            "{role:?}"
+        );
         let values = primitives.without(Primitives::ABSENT | Primitives::NULLISH);
         assert_eq!(values, Primitives::SYMBOL, "{role:?}");
-        assert_eq!(count_operations(function, Opcode::GetModuleVariable), 1, "{role:?}");
+        assert_eq!(
+            count_operations(function, Opcode::GetModuleVariable),
+            1,
+            "{role:?}"
+        );
         assert_eq!(count_operations(function, Opcode::ElemSet), 1, "{role:?}");
     }
 }
@@ -338,7 +386,11 @@ fn symbol_of_library_module_is_created_by_call_of_builtin() {
         let [_, description] = operands(creation)[..] else {
             panic!("{role:?}: the call passes the description and nothing else");
         };
-        assert_eq!(find_value(body, description).opcode, Opcode::String, "{role:?}");
+        assert_eq!(
+            find_value(body, description).opcode,
+            Opcode::String,
+            "{role:?}"
+        );
     }
 }
 
@@ -367,7 +419,10 @@ export {};
 ";
     let fragment = lower_file("main.ts", source).fragment;
     let body = fragment.functions[0].0;
-    assert_eq!(key_of(&fragment, body), FunctionKey::ModuleBody(fragment.file));
+    assert_eq!(
+        key_of(&fragment, body),
+        FunctionKey::ModuleBody(fragment.file)
+    );
     let functions = fragment.functions.iter();
     let positions: Vec<u32> = functions.map(|(_, function)| function.position).collect();
     let declared = ["function a", "function c", "function b"].map(|text| offset_of(source, text));
@@ -426,8 +481,13 @@ fn entry_block_ends_in_jump() {
     let fragment = lower_file("main.ts", VARIED_PROGRAM).fragment;
     let entry = BlockId::new(0);
     let functions = fragment.functions.iter();
-    for (id, function) in functions.filter(|(_, function)| function.role != FunctionRole::Signature) {
-        let first = function.body.blocks().next().expect("a function has an entry block");
+    for (id, function) in functions.filter(|(_, function)| function.role != FunctionRole::Signature)
+    {
+        let first = function
+            .body
+            .blocks()
+            .next()
+            .expect("a function has an entry block");
         assert_eq!(first.id, entry);
         assert_eq!(first.terminator().kind, TerminatorKind::Jump, "{id}");
         for block in function.body.blocks() {
@@ -471,7 +531,11 @@ fn nesting_limit_is_reported_once_per_function() {
 #[test]
 fn deep_code_in_two_functions_is_reported_twice() {
     let depth = nesting_limit() + 100;
-    let source = [nested_function("first", depth), nested_function("second", depth)].concat();
+    let source = [
+        nested_function("first", depth),
+        nested_function("second", depth),
+    ]
+    .concat();
     let lowered = lower_file("main.js", &source);
     assert_eq!(nesting_reports(&lowered).len(), 2);
     let loss = find_loss(&lowered, LimitId::MaxNestingDepth);
@@ -532,12 +596,17 @@ fn block_created_under_handler_names_handler() {
     let [g, h, k, m] = [0, 1, 2, 3].map(|index| parameter(probe, index));
 
     let protected = find_call_block(probe, &[g]);
-    let handler = protected.handler().expect("a block of the try statement has a handler");
+    let handler = protected
+        .handler()
+        .expect("a block of the try statement has a handler");
     let second = find_call_block(probe, &[h]).handler();
     assert_eq!(second.map(|it| it.block), Some(handler.block));
     let handler = find_block(probe, handler.block);
     assert_eq!(handler.role, BlockRole::CatchHandler);
-    let caught = handler.values().next().expect("the handler block takes the thrown value");
+    let caught = handler
+        .values()
+        .next()
+        .expect("the handler block takes the thrown value");
     assert_eq!(caught.opcode, Opcode::CatchValue);
 
     assert!(find_call_block(probe, &[k, caught.id]).handler().is_none());
@@ -554,6 +623,12 @@ fn store_mode_is_strictness_of_innermost_scope() {
 ";
     let fragment = lower_file("main.cjs", source).fragment;
     let probe = find_function(&fragment, "probe");
-    assert_eq!(find_store_mode(&fragment, probe, "outside"), ECMAMode::Sloppy);
-    assert_eq!(find_store_mode(&fragment, probe, "inside"), ECMAMode::Strict);
+    assert_eq!(
+        find_store_mode(&fragment, probe, "outside"),
+        ECMAMode::Sloppy
+    );
+    assert_eq!(
+        find_store_mode(&fragment, probe, "inside"),
+        ECMAMode::Strict
+    );
 }

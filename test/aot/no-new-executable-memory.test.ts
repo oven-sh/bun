@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const program = `class Point {
   constructor(public x: number, public y: number) {}

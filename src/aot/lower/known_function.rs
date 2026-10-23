@@ -170,7 +170,10 @@ fn emit_live_binding(
             builtin: BuiltinId::ObjectDefineProperty,
         },
     ];
-    if !builtins.iter().all(|&named| names_builtin(lowering.file, named)) {
+    if !builtins
+        .iter()
+        .all(|&named| names_builtin(lowering.file, named))
+    {
         return;
     }
     let Some(name) = find_property_name(lowering.file, getter) else {
@@ -193,13 +196,9 @@ fn emit_live_binding(
     let source_key = get_parameter(lowering, source_key);
     let target_key = get_parameter(lowering, target_key);
     let getter = function::lower_function_expression(lowering, getter, Some(name));
-    let is_defined = lowering.builder.try_define_live_binding(
-        target,
-        module,
-        source_key,
-        target_key,
-        getter,
-    );
+    let is_defined = lowering
+        .builder
+        .try_define_live_binding(target, module, source_key, target_key, getter);
     require(lowering, is_defined, written_body);
     control::emit_empty_return(lowering);
     lowering.continue_in(written_body);

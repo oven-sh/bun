@@ -1,6 +1,6 @@
-use super::support::{TestProgram, check_only, from_bun_check, with_conditions, with_program};
 #[cfg(unix)]
 use super::support::{TemporaryDirectory, disk, with_host};
+use super::support::{TestProgram, check_only, from_bun_check, with_conditions, with_program};
 use bun_sema::program::{CodeAnswer, FileId, FileRole, Files};
 use bun_sema::util::SharedSort;
 
@@ -95,8 +95,14 @@ fn program_resolves_what_governing_project_cannot() {
         let files = program.files();
         let read = program.file("tools/read.ts");
         assert!(!std::ptr::eq(files.module_options(read), files.options));
-        assert_eq!(imported_files(files, read, "shared"), [program.file("shared/index.ts")]);
-        assert_eq!(imported_files(files, read, "@/a"), [program.file("tools/own/a.ts")]);
+        assert_eq!(
+            imported_files(files, read, "shared"),
+            [program.file("shared/index.ts")]
+        );
+        assert_eq!(
+            imported_files(files, read, "@/a"),
+            [program.file("tools/own/a.ts")]
+        );
         assert!(imported_files(files, read, "nowhere").is_empty());
         assert_eq!(files_with_unresolved_import(program), [read]);
     });
@@ -168,7 +174,10 @@ fn uncompiled_javascript_root_resolves_like_bun_check() {
         assert_eq!(files.compiled_files(), [program.file("main.ts")]);
         files.modules.len()
     });
-    assert_eq!(file_count, from_bun_check(&files, |files| files.modules.len()));
+    assert_eq!(
+        file_count,
+        from_bun_check(&files, |files| files.modules.len())
+    );
 }
 
 #[test]
@@ -210,7 +219,11 @@ const JAVASCRIPT_DEPENDENCY: (&str, &str) = (
 
 fn assert_sees_shapes(program: &TestProgram<'_, '_>, typed: &str, other: &str, shapes: &str) {
     let files = program.files();
-    let (typed, other, shapes) = (program.file(typed), program.file(other), program.file(shapes));
+    let (typed, other, shapes) = (
+        program.file(typed),
+        program.file(other),
+        program.file(shapes),
+    );
     assert_eq!(files.role(typed), FileRole::Inferred);
     assert_eq!(files.role(shapes), FileRole::TypesOnly);
     assert_eq!(imported_files(files, typed, "./shapes"), [shapes]);
@@ -266,7 +279,10 @@ fn name_that_runs_keeps_code_answer_in_jsdoc() {
             export function run(options) { return options; }"#,
         ),
         ("node_modules/dep/lib.js", "export {};"),
-        ("node_modules/dep/lib.d.ts", "export interface Options { depth: number }"),
+        (
+            "node_modules/dep/lib.d.ts",
+            "export interface Options { depth: number }",
+        ),
     ];
     with_program(&files, &["./main.js"], 1, |program| {
         let index = program.file("node_modules/dep/index.js");
@@ -282,8 +298,14 @@ const SOURCES_UNDER_CONDITION: &str = r#"{ "name": "lib", "version": "1.0.0", "e
 
 const LIBRARY_WITH_SOURCES: [(&str, &str); 4] = [
     ("node_modules/lib/package.json", SOURCES_UNDER_CONDITION),
-    ("node_modules/lib/src/index.ts", "export const value: number = 1;"),
-    ("node_modules/lib/dist/index.d.ts", "export declare const value: number;"),
+    (
+        "node_modules/lib/src/index.ts",
+        "export const value: number = 1;",
+    ),
+    (
+        "node_modules/lib/dist/index.d.ts",
+        "export declare const value: number;",
+    ),
     ("node_modules/lib/dist/index.js", "export const value = 1;"),
 ];
 
@@ -320,7 +342,10 @@ fn conditions_of_build_answer_both_questions() {
 #[test]
 fn conditions_of_build_reach_governing_projects_and_dependencies() {
     let files = [
-        ("main.ts", r#"export * from "./tools/read.ts"; export * from "dep";"#),
+        (
+            "main.ts",
+            r#"export * from "./tools/read.ts"; export * from "dep";"#,
+        ),
         (
             "tools/tsconfig.json",
             r#"{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler" } }"#,
@@ -330,11 +355,18 @@ fn conditions_of_build_reach_governing_projects_and_dependencies() {
             "node_modules/dep/package.json",
             r#"{ "name": "dep", "version": "1.0.0", "main": "./index.ts", "types": "./index.ts" }"#,
         ),
-        ("node_modules/dep/index.ts", r#"export { value as other } from "lib";"#),
+        (
+            "node_modules/dep/index.ts",
+            r#"export { value as other } from "lib";"#,
+        ),
     ];
     with_library(&files, &["source"], |program| {
         assert_both_answers(program, "tools/read.ts", "node_modules/lib/src/index.ts");
-        assert_both_answers(program, "node_modules/dep/index.ts", "node_modules/lib/src/index.ts");
+        assert_both_answers(
+            program,
+            "node_modules/dep/index.ts",
+            "node_modules/lib/src/index.ts",
+        );
         assert_eq!(program.find("node_modules/lib/dist/index.d.ts"), None);
     });
 }
@@ -343,12 +375,18 @@ fn conditions_of_build_reach_governing_projects_and_dependencies() {
 fn import_found_only_under_condition_of_build_is_resolved() {
     let files = [
         ("main.ts", r#"export { value } from "only";"#),
-        ("node_modules/@types/bun/package.json", r#"{ "name": "@types/bun", "version": "1.0.0" }"#),
+        (
+            "node_modules/@types/bun/package.json",
+            r#"{ "name": "@types/bun", "version": "1.0.0" }"#,
+        ),
         (
             "node_modules/only/package.json",
             r#"{ "name": "only", "version": "1.0.0", "exports": { ".": { "source": "./index.ts" } } }"#,
         ),
-        ("node_modules/only/index.ts", "export const value: number = 1;"),
+        (
+            "node_modules/only/index.ts",
+            "export const value: number = 1;",
+        ),
     ];
     with_conditions(&files, &["./main.ts"], &["source"], |program| {
         assert!(files_with_unresolved_import(program).is_empty());

@@ -9,7 +9,16 @@ get(({ path }) => path);
 
 const files = {
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", moduleDetection: "force", strict: true, noEmit: true, lib: ["esnext", "dom"], types: [] },
+    compilerOptions: {
+      target: "esnext",
+      module: "preserve",
+      moduleResolution: "bundler",
+      moduleDetection: "force",
+      strict: true,
+      noEmit: true,
+      lib: ["esnext", "dom"],
+      types: [],
+    },
   }),
   "library.ts": `export interface Context {
   body: unknown;
@@ -50,7 +59,9 @@ async function run(cmd: string[], cwd: string) {
 }
 
 async function runExecutable(cwd: string, entry: string) {
-  expect(await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], cwd)).toMatchObject({ exitCode: 0 });
+  expect(await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], cwd)).toMatchObject({
+    exitCode: 0,
+  });
   const { stdout, exitCode } = await run([join(cwd, "program")], cwd);
   return { stdout, exitCode };
 }
@@ -61,17 +72,14 @@ describe("a typed handler that generated code calls with part of its context (th
 
   test("plain Bun prints the path in all four programs", async () => {
     using dir = tempDir("aot-untyped-company", files);
-    for (const entry of entries) expect(await run([bunExe(), "run", entry], String(dir))).toMatchObject({ stdout: "/\n", exitCode: 0 });
+    for (const entry of entries)
+      expect(await run([bunExe(), "run", entry], String(dir))).toMatchObject({ stdout: "/\n", exitCode: 0 });
   });
 
-  test(
-    "all four programs build",
-    async () => {
-      using dir = tempDir("aot-untyped-company", files);
-      for (const entry of entries) executables.set(entry, await runExecutable(String(dir), entry));
-    },
-    240_000,
-  );
+  test("all four programs build", async () => {
+    using dir = tempDir("aot-untyped-company", files);
+    for (const entry of entries) executables.set(entry, await runExecutable(String(dir), entry));
+  }, 240_000);
 
   for (const entry of entries)
     test(`the executable of ${entry} prints the path`, () => {

@@ -99,7 +99,7 @@ function processTicksAndRejections() {
         tick.first = undefined;
         callback(first);
       } else if (count > 4) {
-        "unlikely";
+        ("unlikely");
         const list = tick.list!;
         tick.list = undefined;
         callback(...list);
@@ -140,7 +140,7 @@ function processTicksAndRejections() {
     drainMicrotasks();
   } while (ring.read !== ring.write);
   if (ring.size > kMaxSize && ran * 4 < ring.size) {
-    "unlikely";
+    ("unlikely");
     newRing();
   }
   $putInternalField(nextTickQueue, 0, 0);

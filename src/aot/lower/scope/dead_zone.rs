@@ -80,7 +80,11 @@ pub(super) fn get_checked(
 ) -> ValueId {
     let binding = BindingRef::Symbol(symbol);
     let Some(local) = lowering.scopes.find_local(binding) else {
-        if lowering.file.scopes.is_initialized_holder(lowering.key, symbol) {
+        if lowering
+            .file
+            .scopes
+            .is_initialized_holder(lowering.key, symbol)
+        {
             return lowering.builder.boolean(true);
         }
         let value = bindings::get_stored(lowering, binding);

@@ -1368,19 +1368,19 @@ impl<'s> Checker<'_, 's> {
         // `checkGrammarStatementInAmbientContext`, for the statements that continue regardless of
         // its result.
         if self.has_ambient_context
-            && match hir[s].kind {
+            && matches!(
+                hir[s].kind,
                 StmtKind::Empty
-                | StmtKind::Debugger
-                | StmtKind::Expr(_)
-                | StmtKind::Directive { .. }
-                | StmtKind::Block(_)
-                | StmtKind::If { .. }
-                | StmtKind::While { .. }
-                | StmtKind::DoWhile { .. }
-                | StmtKind::Switch { .. }
-                | StmtKind::Try { .. } => true,
-                _ => false,
-            }
+                    | StmtKind::Debugger
+                    | StmtKind::Expr(_)
+                    | StmtKind::Directive { .. }
+                    | StmtKind::Block(_)
+                    | StmtKind::If { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::DoWhile { .. }
+                    | StmtKind::Switch { .. }
+                    | StmtKind::Try { .. }
+            )
         {
             self.check_grammar_statement_in_ambient_context(file, s);
         }

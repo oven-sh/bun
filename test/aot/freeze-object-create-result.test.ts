@@ -1,13 +1,23 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { test } from "./supported";
 import { mutatedTypesFlags } from "./open-types";
+import { test } from "./supported";
 
 // `aot: mutation: field-deleted at main.ts:10:25, 6 accesses, types 'Counter', why object-changed`
-const mutationLine = /^aot: mutation: ([a-z-]+) at .+?:\d+:\d+, [\d,]+ access(?:es)?, types ('.+?'(?:, '.+?')*)(?:, why [a-z-]+)?$/;
+const mutationLine =
+  /^aot: mutation: ([a-z-]+) at .+?:\d+:\d+, [\d,]+ access(?:es)?, types ('.+?'(?:, '.+?')*)(?:, why [a-z-]+)?$/;
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, types: [] },
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+  },
 });
 
 async function check(body: string) {
@@ -49,7 +59,11 @@ ${body}
     })
     .filter(type => (type.name === "Point" || type.name === "Counter") && type.reason !== "store-after-creation")
     .map(type => `${type.name}: ${type.reason}`);
-  return { exitCode, errors: output.split("\n").filter(line => /error TS|panic/.test(line)), mutations: [...new Set(mutations)] };
+  return {
+    exitCode,
+    errors: output.split("\n").filter(line => /error TS|panic/.test(line)),
+    mutations: [...new Set(mutations)],
+  };
 }
 
 function expectNoMutation(bodies: Record<string, string>) {
@@ -100,7 +114,11 @@ make(JSON.parse("{}"));`,
 
 describe("control", () => {
   test("a deleted field lists its class", async () => {
-    expect(await check(`const counter = new Counter();\ndelete (counter as any).count;\nexport const reached = counter.step();`)).toEqual({
+    expect(
+      await check(
+        `const counter = new Counter();\ndelete (counter as any).count;\nexport const reached = counter.step();`,
+      ),
+    ).toEqual({
       exitCode: 0,
       errors: [],
       mutations: ["Counter: field-deleted"],

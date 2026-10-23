@@ -30,7 +30,7 @@ interface JSON {
    * const user = JSON.parse<User>(text);
    * ```
    */
-  parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
+  parse<T = any>(text: string, reviver?: (this: any, key: string, value: any, context: { source?: string }) => any): T;
 }
 
 // Kept apart: TypeScript tries a later declaration's overloads first and infers (`ReturnType`, `.then(JSON.parse)`) from the last one, so `JSON.parse(text)` stays `any`.
@@ -42,5 +42,5 @@ interface JSON {
    * If a member contains nested objects, the nested objects are transformed before the parent object is.
    * @throws {SyntaxError} If `text` is not valid JSON.
    */
-  parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;
+  parse(text: string, reviver?: (this: any, key: string, value: any, context: { source?: string }) => any): any;
 }

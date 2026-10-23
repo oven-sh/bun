@@ -69,7 +69,9 @@ function isInside(inner: TypeExpression, outer: TypeExpression): boolean {
   const holdsIntegers =
     inner.integers === null ||
     outer.primitives.includes("Number") ||
-    (outer.integers !== null && outer.integers.minimum <= inner.integers.minimum && inner.integers.maximum <= outer.integers.maximum);
+    (outer.integers !== null &&
+      outer.integers.minimum <= inner.integers.minimum &&
+      inner.integers.maximum <= outer.integers.maximum);
   return (
     holdsIntegers &&
     inner.primitives.every(primitive => outer.primitives.includes(primitive)) &&
@@ -86,7 +88,9 @@ function classTuples(arity: number): OperandClass[][] {
 }
 
 function typePickedFor(table: NaturalTable, classes: readonly OperandClass[]): TypeExpression {
-  const row = table.rows.find(candidate => candidate.classes.every((wanted, index) => wanted === "Any" || wanted === classes[index]));
+  const row = table.rows.find(candidate =>
+    candidate.classes.every((wanted, index) => wanted === "Any" || wanted === classes[index]),
+  );
   return row?.type ?? table.otherwise;
 }
 
@@ -127,7 +131,10 @@ function checkNaturalRule(entry: Entry, natural: NaturalResult, context: Context
     case "SameAs":
       // Whoever follows pointers asks the uses, not the rule of the type.
       if (natural.operand.uses.uses.some(member => member.name === "Returns")) return;
-      context.errors.add(natural.operand.location, `${entry.name} answers its operand ${natural.operand.name}, which does not say returns`);
+      context.errors.add(
+        natural.operand.location,
+        `${entry.name} answers its operand ${natural.operand.name}, which does not say returns`,
+      );
       return;
     case "Table": {
       const { arity, location, name } = natural.table;

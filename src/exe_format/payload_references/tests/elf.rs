@@ -49,12 +49,21 @@ fn toy_with_payload_name(tables: &[Table], payload_name: &[u8]) -> Vec<u8> {
     let mut offset = TABLES_OFFSET;
     for table in tables {
         put(&mut file, offset, &table.bytes);
-        let extent = (0x20_0000 + offset as u64, offset as u64, table.bytes.len() as u64);
+        let extent = (
+            0x20_0000 + offset as u64,
+            offset as u64,
+            table.bytes.len() as u64,
+        );
         add(b".table", table.kind, table.flags, extent);
         offset += table.bytes.len().next_multiple_of(8);
     }
     assert!(offset <= PAYLOAD_OFFSET);
-    add(payload_name, SHT_PROGBITS, SHF_ALLOC, (START, PAYLOAD_OFFSET as u64, SIZE));
+    add(
+        payload_name,
+        SHT_PROGBITS,
+        SHF_ALLOC,
+        (START, PAYLOAD_OFFSET as u64, SIZE),
+    );
     add(b".shstrtab", SHT_STRTAB, 0, (0, NAMES_OFFSET as u64, 0x100));
     assert!(names.len() <= 0x100 && size_of::<Elf64_Ehdr>() + headers.len() * 64 <= NAMES_OFFSET);
 
@@ -101,7 +110,11 @@ fn defined_symbol(value: u64, size: u64) -> DynamicSymbol {
 }
 
 fn symbols(kind: u32, symbol: DynamicSymbol) -> Table {
-    let entries = [zeroed::<DynamicSymbol>(), defined_symbol(START - 0x100, 8), symbol];
+    let entries = [
+        zeroed::<DynamicSymbol>(),
+        defined_symbol(START - 0x100, 8),
+        symbol,
+    ];
     loaded(kind, entries.iter().flat_map(bytes_of).collect())
 }
 
@@ -146,7 +159,10 @@ fn packed_relative_relocations_are_expanded() {
         assert_eq!(check_words(&[START - 16, 0b101]), relocation_at(START));
         // A second bitmap goes on 63 words after the first.
         let first_bitmap_start = START - 63 * 8;
-        assert_eq!(check_words(&[first_bitmap_start - 8, 1, 0b011]), relocation_at(START));
+        assert_eq!(
+            check_words(&[first_bitmap_start - 8, 1, 0b011]),
+            relocation_at(START)
+        );
         assert_eq!(check_words(&[first_bitmap_start - 16, 1, 0b011]), Ok(()));
     }
 }
@@ -161,7 +177,13 @@ fn unknown_packing_is_unsupported() {
 
 #[test]
 fn dynamic_symbol_in_payload_is_refused() {
-    let extents = [(START + 1, 0), (START, 8), (END - 1, 0), (START - 16, 17), (START - 1, SIZE)];
+    let extents = [
+        (START + 1, 0),
+        (START, 8),
+        (END - 1, 0),
+        (START - 16, 17),
+        (START - 1, SIZE),
+    ];
     for (value, size) in extents {
         let table = symbols(SHT_DYNSYM, defined_symbol(value, size));
         assert_eq!(check(&toy(&[table])), dynamic_symbol_at(value));
@@ -170,7 +192,13 @@ fn dynamic_symbol_in_payload_is_refused() {
 
 #[test]
 fn dynamic_symbol_beside_payload_is_accepted() {
-    for (value, size) in [(START - 1, 0), (START, 0), (START - 16, 16), (END, 0), (END, 64)] {
+    for (value, size) in [
+        (START - 1, 0),
+        (START, 0),
+        (START - 16, 16),
+        (END, 0),
+        (END, 64),
+    ] {
         let table = symbols(SHT_DYNSYM, defined_symbol(value, size));
         assert_eq!(check(&toy(&[table])), Ok(()));
     }

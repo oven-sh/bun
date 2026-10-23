@@ -5,14 +5,22 @@ import { test } from "./supported";
 
 async function build(directory: string, entryPoint: string) {
   const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile],
+    cwd: directory,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
   if (exitCode) return { said, exitCode, stdout: "" };
   await using ran = Bun.spawn({ cmd: [outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout] = await Promise.all([ran.stdout.text(), ran.exited]);
   return { said, exitCode, stdout };
 }
-const exact = JSON.stringify({ compilerOptions: { strict: true, exactOptionalPropertyTypes: true, typeRoots: ["./no-types-here"] } });
+const exact = JSON.stringify({
+  compilerOptions: { strict: true, exactOptionalPropertyTypes: true, typeRoots: ["./no-types-here"] },
+});
 
 const shipped = `export interface Settings { retries?: number }
 export const settings: Settings = { retries: undefined };
@@ -32,7 +40,11 @@ console.log(described, describe(settings), describe(full), describe({}), next(se
 reset(full);
 console.log(describe(full), next(full));
 `,
-    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/package.json": JSON.stringify({
+      name: "ships-typescript",
+      main: "index.ts",
+      types: "index.ts",
+    }),
     "node_modules/ships-typescript/index.ts": shipped,
   });
   const { said, exitCode, stdout } = await build(String(dir), "./main.ts");

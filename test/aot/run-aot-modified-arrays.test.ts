@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const programs = {
   "a-class-that-extends-array-fills-itself.js": `
@@ -48,9 +48,14 @@ async function run(cwd: string, cmd: string[]) {
   return { stdout, stderr: exitCode ? stderr : "", exitCode, signal: ran.signalCode };
 }
 
-test.concurrent.each(Object.keys(programs))("%s answers under bun run --aot and --debug-aot as under plain Bun", async name => {
-  using dir = tempDir("aot-arrays-not-as-made", programs);
-  const plain = await run(String(dir), [bunExe(), "run", name]);
-  expect({ exitCode: plain.exitCode, isSilent: plain.stdout === "" }).toEqual({ exitCode: 0, isSilent: false });
-  for (const flag of ["--aot", "--debug-aot"]) expect({ flag, ...(await run(String(dir), [bunExe(), "run", flag, name])) }).toEqual({ flag, ...plain });
-}, 120_000);
+test.concurrent.each(Object.keys(programs))(
+  "%s answers under bun run --aot and --debug-aot as under plain Bun",
+  async name => {
+    using dir = tempDir("aot-arrays-not-as-made", programs);
+    const plain = await run(String(dir), [bunExe(), "run", name]);
+    expect({ exitCode: plain.exitCode, isSilent: plain.stdout === "" }).toEqual({ exitCode: 0, isSilent: false });
+    for (const flag of ["--aot", "--debug-aot"])
+      expect({ flag, ...(await run(String(dir), [bunExe(), "run", flag, name])) }).toEqual({ flag, ...plain });
+  },
+  120_000,
+);

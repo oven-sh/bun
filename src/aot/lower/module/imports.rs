@@ -98,7 +98,8 @@ fn emit_synthetic_read(
         Shape::Names | Shape::Value => {}
     }
     if modules.settled(synthetic.module, synthetic.name)
-        && let Some(value) = commonjs::read_imported_name(lowering, synthetic.module, synthetic.name)
+        && let Some(value) =
+            commonjs::read_imported_name(lowering, synthetic.module, synthetic.name)
     {
         return value;
     }
@@ -198,10 +199,7 @@ pub(super) fn lower_namespace_receiver(
 }
 
 // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in `require("./m.mjs").f()`, which the read of the member has evaluated.
-fn find_required_namespace(
-    file: &FileLowering<'_, '_, '_, '_>,
-    name: ExprId,
-) -> Option<ModuleRef> {
+fn find_required_namespace(file: &FileLowering<'_, '_, '_, '_>, name: ExprId) -> Option<ModuleRef> {
     if let ExprKind::Call(_) = file.hir[name].kind {
         return match file.inputs.modules.site(file.file, name)? {
             Site::Evaluate { target, .. } => {
@@ -229,7 +227,10 @@ pub(super) fn lower_namespace_member(
     let name = match file.hir.member_key(access) {
         Some((_, MemberKey::Name(name))) => file.intern_atom(name),
         Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => {
-            debug_assert!(false, "module binding binds member accesses with a constant name");
+            debug_assert!(
+                false,
+                "module binding binds member accesses with a constant name"
+            );
             return None;
         }
     };

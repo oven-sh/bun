@@ -29,7 +29,10 @@ fn close<const COUNT: usize>(
 
 fn merged(prepared: &Prepared, identity: u64) -> u32 {
     let key = in_application(test_object_type_key(identity));
-    prepared.layouts.find(&key).expect("a unit declares the layout")
+    prepared
+        .layouts
+        .find(&key)
+        .expect("a unit declares the layout")
 }
 
 fn identity_of(prepared: &Prepared, layout: u32) -> u64 {
@@ -40,9 +43,14 @@ fn identity_of(prepared: &Prepared, layout: u32) -> u64 {
 }
 
 fn supertypes_of(prepared: &Prepared, identity: u64) -> Vec<u64> {
-    let supertypes = prepared.definitions.supertypes.of(merged(prepared, identity)).iter();
-    let mut identities: Vec<u64> =
-        supertypes.map(|&supertype| identity_of(prepared, supertype)).collect();
+    let supertypes = prepared
+        .definitions
+        .supertypes
+        .of(merged(prepared, identity))
+        .iter();
+    let mut identities: Vec<u64> = supertypes
+        .map(|&supertype| identity_of(prepared, supertype))
+        .collect();
     identities.sort_unstable();
     identities
 }

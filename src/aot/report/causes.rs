@@ -258,7 +258,10 @@ fn write_ill_typed_cause(out: &mut Vec<u8>, cause: IllTypedCause) {
 }
 
 fn no_cause_sentence(totals: &ProgramTotals, families: ExplainSet) -> &'static [u8] {
-    match (families.is_empty(), totals.combined().access_costs.not_free()) {
+    match (
+        families.is_empty(),
+        totals.combined().access_costs.not_free(),
+    ) {
         (false, _) => b"No causes of this kind.",
         (true, 0) => b"Every property access is typed. Nothing to fix.",
         (true, _) => b"The compiler recorded no cause for the untyped property accesses.",

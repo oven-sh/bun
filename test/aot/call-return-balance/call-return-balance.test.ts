@@ -45,7 +45,8 @@ function nameLookup(map: string, maps: string, executable: string) {
 async function traceRows(mode: string[]) {
   using dir = tempDir("call-return-balance", {});
   const folder = String(dir);
-  for (const file of ["main.ts", "untyped-rows.js", "typed-rows.ts", "exception-rows.ts"]) cpSync(join(import.meta.dir, file), join(folder, file));
+  for (const file of ["main.ts", "untyped-rows.js", "typed-rows.ts", "exception-rows.ts"])
+    cpSync(join(import.meta.dir, file), join(folder, file));
   const executable = join(folder, "main");
   const built = Bun.spawnSync({
     cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
@@ -53,7 +54,10 @@ async function traceRows(mode: string[]) {
     env: { ...bunEnv, BUN_JSC_aotMapFilePath: join(folder, "main.map") },
     stderr: "pipe",
   });
-  expect({ stderr: built.exitCode ? built.stderr.toString() : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect({ stderr: built.exitCode ? built.stderr.toString() : "", exitCode: built.exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+  });
 
   const plain = Bun.spawnSync({ cmd: [executable, ...mode], env: bunEnv, stderr: "pipe" });
   expect({ stderr: plain.stderr.toString(), exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
@@ -71,7 +75,9 @@ async function traceRows(mode: string[]) {
     expect(window.calls).toBeGreaterThan(0);
     for (const call of window.callsChangingCalleeSavedRegisters)
       if (nameOf(call.site) === "native code")
-        changedRegisters.push(`${names[index]}: a call from native code to ${nameOf(call.target)} returned with other callee-saved registers`);
+        changedRegisters.push(
+          `${names[index]}: a call from native code to ${nameOf(call.target)} returned with other callee-saved registers`,
+        );
   });
   return { names, windows: traced.windows, nameOf, changedRegisters };
 }
@@ -89,7 +95,8 @@ test.skipIf(!!reason || isASAN || isDebug)(
       if (names[index] in knownUnbalanced) return;
       for (const call of window.callsWithoutReturn)
         unexpected.push(`${names[index]}: the call from ${nameOf(call.site)} to ${nameOf(call.target)} never returned`);
-      for (const at of window.returnsWithoutCall) unexpected.push(`${names[index]}: ${nameOf(at)} returned without a matching call`);
+      for (const at of window.returnsWithoutCall)
+        unexpected.push(`${names[index]}: ${nameOf(at)} returned without a matching call`);
     });
     expect(unexpected).toEqual([]);
     expect(unbalanced).toEqual(knownUnbalanced);

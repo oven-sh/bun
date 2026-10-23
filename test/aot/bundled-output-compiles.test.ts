@@ -35,10 +35,19 @@ describe.concurrent("compile/aot/the output of bun build --target=bun", () => {
           const folder = String(dir);
           built(await spawned([bunExe(), "build", "--target=bun", entry, "--outfile", "bundle.js"], folder, bunEnv));
           const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
-          built(await spawned([bunExe(), "build", "--compile", "--aot", "bundle.js", "--outfile", executable], folder, bunEnv));
+          built(
+            await spawned(
+              [bunExe(), "build", "--compile", "--aot", "bundle.js", "--outfile", executable],
+              folder,
+              bunEnv,
+            ),
+          );
           const expected = { stdout: prints, exitCode: 0, signal: null };
           for (const command of [[bunExe(), "run", entry], [bunExe(), "run", "bundle.js"], [executable]]) {
-            const ran = await spawned(command, folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: command.length === 1 ? "1" : undefined });
+            const ran = await spawned(command, folder, {
+              ...bunEnv,
+              BUN_JSC_crashIfInterpreterIsUsed: command.length === 1 ? "1" : undefined,
+            });
             expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual(expected);
           }
         }),

@@ -164,7 +164,13 @@ fn constant_site_is_answered_with_written_specifier() {
     let mut targets = TargetFiles(target_files.iter());
     let mut answer = || {
         let specifier = ImportSpecifier::Constant(written);
-        answer_of(&atoms, arena, specifier, &SiteResolution::Constant(FILE), &mut targets)
+        answer_of(
+            &atoms,
+            arena,
+            specifier,
+            &SiteResolution::Constant(FILE),
+            &mut targets,
+        )
     };
     assert_eq!(answer(), CodeAnswer::File(FileId(2)));
     let expected = CodeAnswer::External {
@@ -193,14 +199,23 @@ fn computed_answer_is_sorted_and_unique() {
         candidates: &candidates,
         spellings: &[spelling(b"./a", 2), spelling(b"./b", 0), spelling(b"c", 3)],
     });
-    let answer = answer_of(&atoms, arena, ImportSpecifier::Unknown, &resolution, &mut targets);
+    let answer = answer_of(
+        &atoms,
+        arena,
+        ImportSpecifier::Unknown,
+        &resolution,
+        &mut targets,
+    );
     let expected = ComputedTargets::Modules {
         files: &[FileId(2), FileId(8)],
         host_modules: &[HostModuleId(4), HostModuleId(9)],
         spellings: &[
             (atoms.intern(b"./a"), ComputedTarget::File(FileId(2))),
             (atoms.intern(b"./b"), ComputedTarget::File(FileId(8))),
-            (atoms.intern(b"c"), ComputedTarget::HostModule(HostModuleId(4))),
+            (
+                atoms.intern(b"c"),
+                ComputedTarget::HostModule(HostModuleId(4)),
+            ),
         ],
     };
     assert_eq!(answer, CodeAnswer::Computed(expected));
@@ -217,7 +232,13 @@ fn computed_answer_without_candidate_is_empty_set() {
         candidates: &[],
         spellings: &[],
     });
-    let answer = answer_of(&atoms, arena, ImportSpecifier::Unknown, &resolution, &mut targets);
+    let answer = answer_of(
+        &atoms,
+        arena,
+        ImportSpecifier::Unknown,
+        &resolution,
+        &mut targets,
+    );
     let expected = ComputedTargets::Modules {
         files: &[],
         host_modules: &[],
@@ -241,7 +262,13 @@ fn unknown_answer_keeps_cause_and_advances_past_file_candidates() {
         cause: ComputedUnknown::NoConstantPrefix,
         host_modules: &host_modules,
     });
-    let answer = answer_of(&atoms, arena, ImportSpecifier::Unknown, &resolution, &mut targets);
+    let answer = answer_of(
+        &atoms,
+        arena,
+        ImportSpecifier::Unknown,
+        &resolution,
+        &mut targets,
+    );
     let expected = ComputedTargets::All {
         cause: ComputedUnknown::NoConstantPrefix,
         host_modules: &[HostModuleId(4), HostModuleId(9)],
@@ -344,7 +371,10 @@ fn edges_to_files_outside_types_program_are_removed() {
         assert_eq!(module.imports.len(), 2);
         assert_eq!(module.imports.get(&(a, ResolutionMode::None)), Some(&first));
         assert_eq!(module.imports.get(&(b, ResolutionMode::None)), None);
-        assert_eq!(module.imports.get(&(b, ResolutionMode::Require)), Some(&last));
+        assert_eq!(
+            module.imports.get(&(b, ResolutionMode::Require)),
+            Some(&last)
+        );
     });
 }
 
@@ -380,7 +410,10 @@ fn file_without_code_entry_is_not_compiled() {
 #[test]
 fn type_edges_come_before_code_edges() {
     let host = host_of(&[
-        ("/main.ts", "import type t from \"./types\"\nimport \"./a.js\""),
+        (
+            "/main.ts",
+            "import type t from \"./types\"\nimport \"./a.js\"",
+        ),
         ("/types.ts", ""),
         ("/a.js", ""),
     ]);
@@ -397,7 +430,10 @@ fn type_edges_come_before_code_edges() {
 #[test]
 fn file_is_ordered_after_referenced_files() {
     let host = host_of(&[
-        ("/main.ts", "import \"./a.js\"\nimport type t from \"./types\""),
+        (
+            "/main.ts",
+            "import \"./a.js\"\nimport type t from \"./types\"",
+        ),
         ("/a.js", "import \"./b.js\""),
         ("/b.js", "import \"./a.js\""),
         ("/types.ts", ""),

@@ -29,14 +29,14 @@ mod united_layouts;
 mod unused_records;
 
 pub use beside::Beside;
-pub use body_remap::BodyRemap;
-pub use state::UnitIds;
 pub(crate) use beside::{run_beside, run_one_after_the_other};
+pub use body_remap::BodyRemap;
 pub use names::{ModuleOrigin, ProgramKeys, ProgramNames};
 pub use program_keys::{
     InProject, KeyContext, ProgramFunctionKey, ProgramKey, ProgramLayoutKey, ProgramModule,
     ProgramVariableKey, compare_program_modules,
 };
+pub use state::UnitIds;
 pub use unit::LinkUnit;
 
 use crate::builtins::RuntimeFunction;
@@ -50,7 +50,8 @@ use bun_sema::atom::Interner;
 use bun_sema::program::FileId;
 use bun_sema_driver::LoadedProgram;
 use definitions::{
-    MergeInput, choose_definitions, forget_library_layouts_without_definition, synthetic_export_keys,
+    MergeInput, choose_definitions, forget_library_layouts_without_definition,
+    synthetic_export_keys,
 };
 use keys::{MergedKeys, merge_keys};
 use marks::{MarkInput, mark};
@@ -64,8 +65,8 @@ use state::{Definitions, ModuleRecords, ModuleTable, ProgramTables, Retained};
 use step_times::StepTimes;
 use strings::merge_strings;
 use types::{
-    TypeTableInput, collision_between, intern_prepared_types, merge_types,
-    order_types_by_contents, prepare_types,
+    TypeTableInput, collision_between, intern_prepared_types, merge_types, order_types_by_contents,
+    prepare_types,
 };
 use unit::KeyList;
 use united_layouts::{add_views_of_literals, unite_layout_definitions};
@@ -213,14 +214,26 @@ pub fn link_while(
         },
     );
     let mut strings = merged_strings.table;
-    let merged_ids = merged_strings.local_to_program.into_iter().zip(merged_types.types);
+    let merged_ids = merged_strings
+        .local_to_program
+        .into_iter()
+        .zip(merged_types.types);
     for (ids, (string_ids, type_ids)) in numbering.units.iter_mut().zip(merged_ids) {
         ids.strings = string_ids;
         ids.types = type_ids;
     }
     let mut type_representatives = merged_types.type_representatives;
-    order_types_by_contents(&units, &mut numbering.units, &mut type_representatives, in_parallel);
-    for_each_mut(&mut units, in_parallel, &LinkUnit::release_hashes_of_strings_and_types);
+    order_types_by_contents(
+        &units,
+        &mut numbering.units,
+        &mut type_representatives,
+        in_parallel,
+    );
+    for_each_mut(
+        &mut units,
+        in_parallel,
+        &LinkUnit::release_hashes_of_strings_and_types,
+    );
     times.end_step(StatisticId::LinkMergeStringsAndTypesNanoseconds);
 
     // No type names a property key.
@@ -272,8 +285,8 @@ pub fn link_while(
             )
         },
     );
-    let mut types = types
-        .map_err(|places| vec![collision_between(&units, &type_representatives, places)])?;
+    let mut types =
+        types.map_err(|places| vec![collision_between(&units, &type_representatives, places)])?;
     let unit_marks = core::mem::take(&mut retained.units);
     // The records of the modules name no layout and no type, and the layouts are united without a look at a unit or a string.
     let (views, records) = run_beside(
@@ -281,7 +294,8 @@ pub fn link_while(
         || {
             let defined = &mut tables.layouts;
             let other_definitions = core::mem::take(&mut tables.other_layout_definitions);
-            let views = unite_layout_definitions(defined, other_definitions, &mut types, in_parallel);
+            let views =
+                unite_layout_definitions(defined, other_definitions, &mut types, in_parallel);
             fields_of_base_functions::take_fields_of_base_functions(defined, &keys.layouts);
             views
         },
@@ -391,7 +405,10 @@ fn resolve_keys(
         || {
             let functions = collect_key_lists(&units, |unit| &unit.functions);
             let layouts = collect_key_lists(&units, |unit| &unit.layouts);
-            (merge_keys(&functions, in_parallel), merge_keys(&layouts, in_parallel))
+            (
+                merge_keys(&functions, in_parallel),
+                merge_keys(&layouts, in_parallel),
+            )
         },
     );
     forget_library_layouts_without_definition(&mut units, &layouts);
@@ -483,8 +500,7 @@ fn order_units(
 ) -> Result<Vec<LinkUnit>, Vec<LinkError>> {
     units.sort_unstable_by_key(|unit| unit.file);
     let mut errors = Vec::new();
-    let has_unit =
-        |file: ProgramFile| units.binary_search_by_key(&file, |unit| unit.file).is_ok();
+    let has_unit = |file: ProgramFile| units.binary_search_by_key(&file, |unit| unit.file).is_ok();
     let expected_files = compiled_files(projects).into_iter();
     let expected_files =
         expected_files.filter(|&file| !is_unit_optional(projects, file) || has_unit(file));
@@ -548,9 +564,9 @@ fn count_module_forms(
     let (mut with_names, mut with_value, mut faces) = (0, 0, 0);
     for &module in &modules.modules {
         let (project, own) = match module {
-            ProgramModule::File(_) | ProgramModule::Inner { .. } => {
-                module.in_own_project().expect("the module has its text in a file")
-            }
+            ProgramModule::File(_) | ProgramModule::Inner { .. } => module
+                .in_own_project()
+                .expect("the module has its text in a file"),
             ProgramModule::Face(_) => {
                 faces += 1;
                 continue;
@@ -572,10 +588,12 @@ fn count_module_forms(
 
 fn count_definitions(definitions: &Definitions, retained: &Retained, counters: &mut Counters) {
     let functions = definitions.functions.iter().zip(&retained.functions);
-    let dropped_functions = functions.filter(|(definition, is_retained)| {
-        definition.is_some() && !**is_retained
-    });
-    counters.count(StatisticId::FunctionsDroppedByLink, dropped_functions.count() as u64);
+    let dropped_functions =
+        functions.filter(|(definition, is_retained)| definition.is_some() && !**is_retained);
+    counters.count(
+        StatisticId::FunctionsDroppedByLink,
+        dropped_functions.count() as u64,
+    );
     counters.count(
         StatisticId::ConversionsOutsideFamily,
         definitions.conversions_outside_family.len() as u64,

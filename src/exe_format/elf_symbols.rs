@@ -239,8 +239,9 @@ fn read_own_symbols(
     let table = read_section_header(headers, index);
     let strings_index = table.sh_link as usize;
     // New symbols move the ones behind them, so nothing else may number the symbols of this table.
-    let is_numbered_elsewhere = (0..count)
-        .any(|other| other != index && read_section_header(headers, other).sh_link as usize == index);
+    let is_numbered_elsewhere = (0..count).any(|other| {
+        other != index && read_section_header(headers, other).sh_link as usize == index
+    });
     if is_numbered_elsewhere || strings_index >= count || strings_index == sections.names_index {
         return None;
     }
@@ -480,7 +481,9 @@ pub fn symbols_tail(
     let code_bytes = symbols.code_size as u64;
 
     let symtab_size = SYMBOL_ENTRY_SIZE * (count + 1);
-    let own_size = own_symbols.as_ref().map_or(0, |own| own.entries.len() + own.strings.len());
+    let own_size = own_symbols
+        .as_ref()
+        .map_or(0, |own| own.entries.len() + own.strings.len());
     let mut tail = TailBuilder {
         offset: align_up(file_size, 8),
         bytes: Vec::with_capacity(
@@ -516,7 +519,9 @@ pub fn symbols_tail(
             )?);
         }
     }
-    new_sections.push(append_debug_frame(&mut tail, frame_name, registers, code, code_bytes));
+    new_sections.push(append_debug_frame(
+        &mut tail, frame_name, registers, code, code_bytes,
+    ));
 
     let section_headers_offset = tail.next_aligned_offset();
     tail.bytes.extend_from_slice(&headers);
@@ -813,15 +818,22 @@ pub(crate) mod tests {
                 (b"Parser.parse", GLOBAL_FUNCTION, code + 0x180),
             ];
             let found = symbols_of(&new);
-            let found: Vec<(&[u8], u8, u64)> =
-                found.iter().map(|(name, info, value)| (&name[..], *info, *value)).collect();
+            let found: Vec<(&[u8], u8, u64)> = found
+                .iter()
+                .map(|(name, info, value)| (&name[..], *info, *value))
+                .collect();
             assert_eq!(found, expected);
 
             let headers = section_headers(&new);
-            let tables = headers.iter().filter(|section| section.sh_type == SHT_SYMTAB);
+            let tables = headers
+                .iter()
+                .filter(|section| section.sh_type == SHT_SYMTAB);
             assert_eq!(tables.count(), 1);
             let symtab = find_section(&new, b".symtab");
-            assert_eq!(section_index(&new, b".symtab"), section_index(&old, b".symtab"));
+            assert_eq!(
+                section_index(&new, b".symtab"),
+                section_index(&old, b".symtab")
+            );
             assert_eq!(symtab.sh_link, find_section(&old, b".symtab").sh_link);
             assert_eq!(symtab.sh_info, 4);
             assert_eq!(symtab.sh_offset % 8, 0);
@@ -912,7 +924,9 @@ pub(crate) mod tests {
             let without_pointer = [
                 other_stored_address,
                 edit_section(&old, previous_index, |section| section.sh_type = SHT_NOBITS),
-                edit_section(&old, previous_index, |section| section.sh_flags &= !SHF_ALLOC),
+                edit_section(&old, previous_index, |section| {
+                    section.sh_flags &= !SHF_ALLOC
+                }),
             ];
             for (index, file) in without_pointer.iter().enumerate() {
                 let new = append_symbols(file, &toy_table()).unwrap();
@@ -984,17 +998,28 @@ pub(crate) mod tests {
         let bun_index = section_index(&with_symbols, b".bun").unwrap();
         let names_index = read_ehdr(&with_symbols).e_shstrndx as u32;
         let section_count = read_ehdr(&with_symbols).e_shnum as u32;
-        let edit_symtab = |edit: fn(&mut Elf64_Shdr)| edit_section(&with_symbols, symtab_index, edit);
+        let edit_symtab =
+            |edit: fn(&mut Elf64_Shdr)| edit_section(&with_symbols, symtab_index, edit);
         let unsupported = [
             edit_symtab(|section| section.sh_entsize = 16),
             edit_symtab(|section| section.sh_size -= 1),
             edit_symtab(|section| section.sh_info = 0),
             edit_symtab(|section| section.sh_info += 1),
-            edit_section(&with_symbols, symtab_index, |section| section.sh_link = names_index),
-            edit_section(&with_symbols, symtab_index, |section| section.sh_link = section_count),
-            edit_section(&with_symbols, symtab_index, |section| section.sh_link = bun_index as u32),
-            edit_section(&with_symbols, bun_index, |section| section.sh_link = symtab_index as u32),
-            edit_section(&with_symbols, strtab_index, |section| section.sh_type = SHT_SYMTAB),
+            edit_section(&with_symbols, symtab_index, |section| {
+                section.sh_link = names_index
+            }),
+            edit_section(&with_symbols, symtab_index, |section| {
+                section.sh_link = section_count
+            }),
+            edit_section(&with_symbols, symtab_index, |section| {
+                section.sh_link = bun_index as u32
+            }),
+            edit_section(&with_symbols, bun_index, |section| {
+                section.sh_link = symtab_index as u32
+            }),
+            edit_section(&with_symbols, strtab_index, |section| {
+                section.sh_type = SHT_SYMTAB
+            }),
             edit_section(&with_symbols, strtab_index, |section| section.sh_size -= 1),
             without_bun,
             elf[..size_of::<Elf64_Ehdr>() - 1].to_vec(),

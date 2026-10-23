@@ -71,7 +71,11 @@ fn apply_calls_original_function() {
     let original = Reference::Builtin(BuiltinId::FunctionPrototypeApply);
     assert_eq!(apply.references(), [original], "{probe}");
     let [f, t, a] = [0, 1, 2].map(|index| probe.parameter(index));
-    assert_eq!(probe.only(Opcode::Call).operands(), [apply.id(), f, t, a], "{probe}");
+    assert_eq!(
+        probe.only(Opcode::Call).operands(),
+        [apply.id(), f, t, a],
+        "{probe}"
+    );
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
 }
 
@@ -85,9 +89,18 @@ fn builtin_function_is_called_on_holder() {
     let [function, this] = probe.all(Opcode::Builtin)[..] else {
         panic!("expected the function and its holder:\n{probe}");
     };
-    assert_eq!(function.references(), [Reference::Builtin(BuiltinId::MathMin)], "{probe}");
+    assert_eq!(
+        function.references(),
+        [Reference::Builtin(BuiltinId::MathMin)],
+        "{probe}"
+    );
     assert_eq!(this.references(), [Reference::Builtin(holder)], "{probe}");
-    let expected = [function.id(), this.id(), probe.parameter(0), probe.parameter(1)];
+    let expected = [
+        function.id(),
+        this.id(),
+        probe.parameter(0),
+        probe.parameter(1),
+    ];
     assert_eq!(probe.only(Opcode::Call).operands(), expected, "{probe}");
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
 }
@@ -98,9 +111,17 @@ fn builtin_is_constructed_with_one_argument() {
         lower_runtime_module("export function probe(n: any) { return $newArrayWithSize(n); }");
     let probe = module.function("probe");
     let constructor = probe.only(Opcode::Builtin);
-    assert_eq!(constructor.references(), [Reference::Builtin(BuiltinId::Array)], "{probe}");
+    assert_eq!(
+        constructor.references(),
+        [Reference::Builtin(BuiltinId::Array)],
+        "{probe}"
+    );
     let expected = [constructor.id(), probe.parameter(0)];
-    assert_eq!(probe.only(Opcode::Construct).operands(), expected, "{probe}");
+    assert_eq!(
+        probe.only(Opcode::Construct).operands(),
+        expected,
+        "{probe}"
+    );
 }
 
 #[test]
@@ -108,7 +129,11 @@ fn private_global_is_read_from_global_object() {
     let module = lower_runtime_module("export function probe() { return $createFIFO(); }");
     let probe = module.function("probe");
     let global = probe.only(Opcode::Builtin);
-    assert_eq!(global.references(), [Reference::Builtin(BuiltinId::GlobalThis)], "{probe}");
+    assert_eq!(
+        global.references(),
+        [Reference::Builtin(BuiltinId::GlobalThis)],
+        "{probe}"
+    );
     let read = probe.only(Opcode::PropGet);
     assert_eq!(read.operands(), [global.id()], "{probe}");
     assert_eq!(read.keys(), [probe.private_key("createFIFO")], "{probe}");
@@ -124,9 +149,18 @@ export function probeReadInChain(o: any) { return o?.$fastPath.n; }
 export function probeCallInChain(o: any) { return o?.$fastPath().n; }
 ",
     );
-    for name in ["probeRead", "probeCall", "probeReadInChain", "probeCallInChain"] {
+    for name in [
+        "probeRead",
+        "probeCall",
+        "probeReadInChain",
+        "probeCallInChain",
+    ] {
         let probe = module.function(name);
-        assert_eq!(probe.terminators(TerminatorKind::Branch).len(), 1, "{probe}");
+        assert_eq!(
+            probe.terminators(TerminatorKind::Branch).len(),
+            1,
+            "{probe}"
+        );
         let receiver = probe.value_unless_nullish(probe.parameter(0));
         let read = read_of(probe, probe.private_key("fastPath"));
         assert_eq!(read.operands(), [receiver], "{probe}");
@@ -136,16 +170,28 @@ export function probeCallInChain(o: any) { return o?.$fastPath().n; }
         let receiver = probe.value_unless_nullish(probe.parameter(0));
         let key = probe.private_key("fastPath");
         let call = probe.only(Opcode::Call);
-        assert_eq!(call.operands(), [read_of(probe, key).id(), receiver], "{probe}");
+        assert_eq!(
+            call.operands(),
+            [read_of(probe, key).id(), receiver],
+            "{probe}"
+        );
         assert_eq!(call.keys(), [key], "{probe}");
     }
     let probe = module.function("probeReadInChain");
     let base = read_of(probe, probe.private_key("fastPath"));
-    assert_eq!(read_of(probe, probe.text_key("n")).operands(), [base.id()], "{probe}");
+    assert_eq!(
+        read_of(probe, probe.text_key("n")).operands(),
+        [base.id()],
+        "{probe}"
+    );
 
     let probe = module.function("probeCallInChain");
     let base = probe.only(Opcode::Call);
-    assert_eq!(read_of(probe, probe.text_key("n")).operands(), [base.id()], "{probe}");
+    assert_eq!(
+        read_of(probe, probe.text_key("n")).operands(),
+        [base.id()],
+        "{probe}"
+    );
 }
 
 #[test]
@@ -156,13 +202,21 @@ export function probeApply(f: any, t: any, a: any) { return f?.$apply(t, a); }
 ",
     );
     let probe = module.function("probeCall");
-    assert_eq!(probe.terminators(TerminatorKind::Branch).len(), 1, "{probe}");
+    assert_eq!(
+        probe.terminators(TerminatorKind::Branch).len(),
+        1,
+        "{probe}"
+    );
     let function = probe.value_unless_nullish(probe.parameter(0));
     let expected = [function, probe.parameter(1)];
     assert_eq!(probe.only(Opcode::Call).operands(), expected, "{probe}");
 
     let probe = module.function("probeApply");
-    assert_eq!(probe.terminators(TerminatorKind::Branch).len(), 1, "{probe}");
+    assert_eq!(
+        probe.terminators(TerminatorKind::Branch).len(),
+        1,
+        "{probe}"
+    );
     let function = probe.value_unless_nullish(probe.parameter(0));
     let apply = probe.only(Opcode::Builtin);
     let expected = [apply.id(), function, probe.parameter(1), probe.parameter(2)];
@@ -178,8 +232,16 @@ fn spread_after_this_argument_is_list_call() {
     let [f, t, a] = [0, 1, 2].map(|index| probe.parameter(index));
     let list = probe.only(Opcode::NewArray);
     assert!(list.operands().is_empty(), "{probe}");
-    assert_eq!(probe.only(Opcode::AppendSpread).operands(), [list.id(), a], "{probe}");
-    assert_eq!(probe.only(Opcode::CallList).operands(), [f, t, list.id()], "{probe}");
+    assert_eq!(
+        probe.only(Opcode::AppendSpread).operands(),
+        [list.id(), a],
+        "{probe}"
+    );
+    assert_eq!(
+        probe.only(Opcode::CallList).operands(),
+        [f, t, list.id()],
+        "{probe}"
+    );
     assert_eq!(probe.count(Opcode::Call), 0, "{probe}");
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
 }
@@ -191,14 +253,26 @@ fn spread_after_prepended_argument_is_gathered() {
     );
     let probe = module.function("probe");
     let function = probe.only(Opcode::PropGet);
-    assert_eq!(function.keys(), [probe.private_key("makeErrorWithCode")], "{probe}");
+    assert_eq!(
+        function.keys(),
+        [probe.private_key("makeErrorWithCode")],
+        "{probe}"
+    );
     let prepended = probe.only(Opcode::Integer);
     let list = probe.only(Opcode::NewArray);
     assert_eq!(list.operands(), [prepended.id()], "{probe}");
     let spread = probe.only(Opcode::AppendSpread);
     assert_eq!(spread.operands()[0], list.id(), "{probe}");
-    assert_eq!(probe.skip_requests(spread.operands()[1]), probe.parameter(0), "{probe}");
-    assert_eq!(probe.only(Opcode::CallList).operands(), [function.id(), list.id()], "{probe}");
+    assert_eq!(
+        probe.skip_requests(spread.operands()[1]),
+        probe.parameter(0),
+        "{probe}"
+    );
+    assert_eq!(
+        probe.only(Opcode::CallList).operands(),
+        [function.id(), list.id()],
+        "{probe}"
+    );
 }
 
 #[test]
@@ -279,7 +353,10 @@ fn linked_function_of_same_file_is_called_directly() {
     let library_path = find_library_path("flatIntoArray");
     let files = lower_files(&[
         MODULE_IMPORTER,
-        (MODULE_PATH, "export function load(a: any) { return $flatIntoArray(a); }"),
+        (
+            MODULE_PATH,
+            "export function load(a: any) { return $flatIntoArray(a); }",
+        ),
         (
             library_path.as_str(),
             "$linkTimeConstant;

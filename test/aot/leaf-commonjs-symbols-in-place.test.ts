@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "keys.cjs": `"use strict";\nconst keys = { kState: Symbol("state"), kCount: Symbol("count") };\nmodule.exports = keys;\n`,
@@ -19,7 +19,13 @@ const files = {
 };
 
 async function run(cwd: string, args: string[], env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -31,23 +37,32 @@ function operationsByFunction(map: string) {
     const fields = lines[i].split("\t");
     if (fields[0] !== "F") continue;
     const operations = lines.slice(i + 1, i + 4).find(line => line.startsWith("O\t"));
-    if (operations) found.push({ name: fields[7], operations: operations.split("\t").filter(field => /^[A-Z][A-Za-z]+$/.test(field)) });
+    if (operations)
+      found.push({
+        name: fields[7],
+        operations: operations.split("\t").filter(field => /^[A-Z][A-Za-z]+$/.test(field)),
+      });
   }
   return found;
 }
 
-test(
-  "bun run --aot: the symbols that a CommonJS module that only makes values exports are names",
-  async () => {
-    using dir = tempDir("aot-symbols-of-a-leaf-module-in-place", files);
-    const mapPath = join(String(dir), "main.map");
-    const plain = await run(String(dir), ["run", "./main.cjs"]);
-    const compiled = await run(String(dir), ["run", "--debug-aot", "./main.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotMapFilePath: mapPath });
-    expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    const bodies = operationsByFunction(readFileSync(mapPath, "utf8")).filter(body => body.name === "" || body.name.startsWith("Thing"));
-    expect(bodies.map(body => body.name)).toContain("Thing");
-    expect(bodies.filter(body => body.operations.includes("ElemGet") || body.operations.includes("ElemSet")).map(body => body.name)).toEqual([]);
-  },
-  120_000,
-);
+test("bun run --aot: the symbols that a CommonJS module that only makes values exports are names", async () => {
+  using dir = tempDir("aot-symbols-of-a-leaf-module-in-place", files);
+  const mapPath = join(String(dir), "main.map");
+  const plain = await run(String(dir), ["run", "./main.cjs"]);
+  const compiled = await run(String(dir), ["run", "--debug-aot", "./main.cjs"], {
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+    BUN_JSC_aotMapFilePath: mapPath,
+  });
+  expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");
+  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  const bodies = operationsByFunction(readFileSync(mapPath, "utf8")).filter(
+    body => body.name === "" || body.name.startsWith("Thing"),
+  );
+  expect(bodies.map(body => body.name)).toContain("Thing");
+  expect(
+    bodies
+      .filter(body => body.operations.includes("ElemGet") || body.operations.includes("ElemSet"))
+      .map(body => body.name),
+  ).toEqual([]);
+}, 120_000);

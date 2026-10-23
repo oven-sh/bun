@@ -104,7 +104,10 @@ function findObject(path: string, archives: ArchiveCache): { file: string; offse
   return { file: inArchive.archive, offset: members[0]!.offset };
 }
 
-function readLoadCommands(readFrom: ReadBytes, header: Buffer): { sections: Section[]; symbolTable: SymbolTable | undefined } {
+function readLoadCommands(
+  readFrom: ReadBytes,
+  header: Buffer,
+): { sections: Section[]; symbolTable: SymbolTable | undefined } {
   const commands = readFrom(headerSize, header.readUInt32LE(20));
   const sections: Section[] = [];
   let symbolTable: SymbolTable | undefined;
@@ -155,7 +158,10 @@ function readSymbols({ entries, strings }: SymbolTable, sections: Section[], res
       names.set(symbol.value, names.has(symbol.value) ? names.get(symbol.value) + "\x01" + symbol.name : symbol.name);
     } else alternateEntries.push(symbol);
     if (symbol.type & N_EXT) result.externals.push(symbol.name);
-    if (description & N_NO_DEAD_STRIP) (sections[symbol.section - 1]?.name === "__text" ? result.liveWithoutReference : result.retained).push(symbol.name);
+    if (description & N_NO_DEAD_STRIP)
+      (sections[symbol.section - 1]?.name === "__text" ? result.liveWithoutReference : result.retained).push(
+        symbol.name,
+      );
   }
   const atoms = namesByAddress.map(names => [...names].sort((a, b) => a[0] - b[0]));
   return { symbols, alternateEntries, atoms };
@@ -174,7 +180,8 @@ function createObjectLookup(readFrom: ReadBytes, sections: Section[], atoms: Ato
     }
     return low > 0 ? list[low - 1]![1] : undefined;
   };
-  const sectionNumberAt = (address: number) => sections.findIndex(other => other.address <= address && address < other.address + other.size) + 1;
+  const sectionNumberAt = (address: number) =>
+    sections.findIndex(other => other.address <= address && address < other.address + other.size) + 1;
   const sectionType = (section: number) => (sections[section - 1]?.flags ?? 0) & SECTION_TYPE;
   const isCStringSection = (section: number) => sectionType(section) === S_CSTRING_LITERALS;
   const literalSize = (section: number) => literalSizes.get(sectionType(section));
@@ -223,7 +230,8 @@ function readRecordSection({ readFrom, symbols, lookup }: ObjectFile, section: S
   for (let entry = 0; entry < relocations.length; entry += 8) {
     const word = relocations.readUInt32LE(entry + 4);
     const field = relocations.readInt32LE(entry);
-    const isPointer = relocationType(word) === RELOC_UNSIGNED && relocationLength(word) === LENGTH_QUAD && !isPCRelative(word);
+    const isPointer =
+      relocationType(word) === RELOC_UNSIGNED && relocationLength(word) === LENGTH_QUAD && !isPCRelative(word);
     if (!isPointer || field < 0 || field + 8 > bytes.length) return undefined;
     const value = signed64At(bytes, field);
     if (!isExtern(word)) {
@@ -234,12 +242,20 @@ function readRecordSection({ readFrom, symbols, lookup }: ObjectFile, section: S
     const symbol = symbols[symbolNumber(word)];
     if (symbol === undefined) return undefined;
     if ((symbol.type & N_TYPE) !== N_SECT) references.set(field, "G" + symbol.name);
-    else references.set(field, "L" + (atomAt(symbol.section, symbol.value + value) ?? atomAt(symbol.section, symbol.value) ?? symbol.name));
+    else
+      references.set(
+        field,
+        "L" + (atomAt(symbol.section, symbol.value + value) ?? atomAt(symbol.section, symbol.value) ?? symbol.name),
+      );
   }
   return { bytes, references };
 }
 
-function readSectionReferences({ isX64, readFrom, sections, symbols, atoms, lookup }: ObjectFile, index: number, result: MachOReferences): void {
+function readSectionReferences(
+  { isX64, readFrom, sections, symbols, atoms, lookup }: ObjectFile,
+  index: number,
+  result: MachOReferences,
+): void {
   const { atomAt, sectionNumberAt, isCStringSection, literalSize, literalAt, enclosingString } = lookup;
   const section = sections[index]!;
   const addLiteralReference = (from: string, literalSection: number, address: number) => {
@@ -248,13 +264,15 @@ function readSectionReferences({ isX64, readFrom, sections, symbols, atoms, look
     else addReference(result, from, "W" + literal);
   };
   const runsBeforeMain = sectionsRunBeforeMain.includes(section.name);
-  if (runsBeforeMain || (section.flags & S_ATTR_NO_DEAD_STRIP && section.name !== "__bun_builtins")) for (const [, name] of atoms[index]!) result.retained.push(name);
+  if (runsBeforeMain || (section.flags & S_ATTR_NO_DEAD_STRIP && section.name !== "__bun_builtins"))
+    for (const [, name] of atoms[index]!) result.retained.push(name);
   if (section.count === 0) return;
   const relocations = readFrom(section.relocations, section.count * 8);
   let contents: Buffer | undefined;
   const readContents = () => (contents ??= readFrom(section.offset, section.size));
   const embeddedAddend = (word: number, field: number) => {
-    if (relocationLength(word) === LENGTH_QUAD) return relocationType(word) === RELOC_UNSIGNED ? signed64At(readContents(), field) : 0;
+    if (relocationLength(word) === LENGTH_QUAD)
+      return relocationType(word) === RELOC_UNSIGNED ? signed64At(readContents(), field) : 0;
     if (relocationLength(word) !== LENGTH_LONG || !isX64) return 0;
     return readContents().readInt32LE(field) + (x64BytesAfterField.get(relocationType(word)) ?? 0);
   };
@@ -300,7 +318,9 @@ function readSectionReferences({ isX64, readFrom, sections, symbols, atoms, look
       continue;
     }
     const address =
-      bytesAfterField === undefined ? Number(readContents().readBigUInt64LE(field)) : section.address + field + 4 + readContents().readInt32LE(field) + bytesAfterField;
+      bytesAfterField === undefined
+        ? Number(readContents().readBigUInt64LE(field))
+        : section.address + field + 4 + readContents().readInt32LE(field) + bytesAfterField;
     const targetSection = sectionNumberAt(address);
     if (isCStringSection(targetSection)) {
       addReference(result, from, "S" + enclosingString(targetSection, address)!);
@@ -321,13 +341,27 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
   const isX64 = header.readUInt32LE(4) === CPU_TYPE_X86_64;
   const hasSubsectionsViaSymbols = (header.readUInt32LE(24) & MH_SUBSECTIONS_VIA_SYMBOLS) !== 0;
   const { sections, symbolTable } = readLoadCommands(readFrom, header);
-  const result: MachOReferences = { references: new Map(), externals: [], retained: [], liveWithoutReference: [], unreadStrings: 0, unreadLiterals: 0, textOfExternalName: new Map(), recordSections: [] };
+  const result: MachOReferences = {
+    references: new Map(),
+    externals: [],
+    retained: [],
+    liveWithoutReference: [],
+    unreadStrings: 0,
+    unreadLiterals: 0,
+    textOfExternalName: new Map(),
+    recordSections: [],
+  };
   if (symbolTable === undefined) return result;
   const { symbols, alternateEntries, atoms } = readSymbols(symbolTable, sections, result);
   const lookup = createObjectLookup(readFrom, sections, atoms);
   const object: ObjectFile = { isX64, readFrom, sections, symbols, atoms, lookup };
   for (const symbol of symbols) {
-    if ((symbol.type & N_STAB) !== 0 || (symbol.type & (N_TYPE | N_EXT)) !== (N_SECT | N_EXT) || !lookup.isCStringSection(symbol.section)) continue;
+    if (
+      (symbol.type & N_STAB) !== 0 ||
+      (symbol.type & (N_TYPE | N_EXT)) !== (N_SECT | N_EXT) ||
+      !lookup.isCStringSection(symbol.section)
+    )
+      continue;
     const text = lookup.enclosingString(symbol.section, symbol.value);
     if (text === undefined) result.unreadStrings++;
     else result.textOfExternalName.set(symbol.name, text);

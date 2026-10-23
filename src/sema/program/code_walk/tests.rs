@@ -38,7 +38,10 @@ struct Walked {
 
 impl Walked {
     fn paths(&self) -> Vec<&str> {
-        self.entries.iter().map(|entry| entry.path.as_str()).collect()
+        self.entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect()
     }
 
     fn entry(&self, path: &str) -> &WalkedEntry {
@@ -130,13 +133,19 @@ fn imported_file_comes_before_importer() {
 #[test]
 fn file_imported_twice_has_one_entry() {
     let host = host_of(&[
-        ("/main.ts", "import \"./left\"\nimport \"./right\"\nimport \"./left\""),
+        (
+            "/main.ts",
+            "import \"./left\"\nimport \"./right\"\nimport \"./left\"",
+        ),
         ("/left.ts", "import \"./shared\""),
         ("/right.ts", "import \"./shared\""),
         ("/shared.ts", ""),
     ]);
     let walked = walk(&host, &["/main.ts"]);
-    assert_eq!(walked.paths(), ["/shared.ts", "/left.ts", "/right.ts", "/main.ts"]);
+    assert_eq!(
+        walked.paths(),
+        ["/shared.ts", "/left.ts", "/right.ts", "/main.ts"]
+    );
     assert_eq!(walked.entry("/main.ts").targets, [1, 2, 1]);
     assert_eq!(walked.entry("/right.ts").targets, [0]);
     assert_eq!(count(&host.events(), &read("/shared.ts")), 1);
@@ -194,7 +203,12 @@ fn order_does_not_depend_on_threads() {
         host_of(GRAPH).with_process_io_pool(4),
     ];
     for host in &hosts {
-        assert_eq!(walk(host, &["/main.ts"]), expected, "{} threads", host.threads);
+        assert_eq!(
+            walk(host, &["/main.ts"]),
+            expected,
+            "{} threads",
+            host.threads
+        );
     }
 }
 
@@ -215,12 +229,24 @@ fn loader_is_part_of_identity() {
         ])
     };
     let walked = walk(&host, &["/main.ts"]);
-    let paths = ["/only-code.ts", "/data.ts", "/data.ts", "/again.ts", "/main.ts"];
+    let paths = [
+        "/only-code.ts",
+        "/data.ts",
+        "/data.ts",
+        "/again.ts",
+        "/main.ts",
+    ];
     assert_eq!(walked.paths(), paths);
     let (as_code, as_text) = (&walked.entries[1], &walked.entries[2]);
-    assert_eq!((as_code.loader, as_code.role), (HostLoader::default(), FileRole::Checked));
+    assert_eq!(
+        (as_code.loader, as_code.role),
+        (HostLoader::default(), FileRole::Checked)
+    );
     assert_eq!(as_code.targets, [0]);
-    assert_eq!((as_text.loader, as_text.role), (TEXT_LOADER, FileRole::Inferred));
+    assert_eq!(
+        (as_text.loader, as_text.role),
+        (TEXT_LOADER, FileRole::Inferred)
+    );
     assert!(as_text.targets.is_empty());
     assert_eq!(walked.entry("/again.ts").targets, [2]);
     assert_eq!(walked.entry("/main.ts").targets, [1, 2, 3]);
@@ -267,10 +293,16 @@ fn deferred_read_is_finished_after_every_other_file() {
         assert_eq!(count(&events, &HostEvent::FinishedDeferredReads), 1);
         let finished = position(&events, &HostEvent::FinishedDeferredReads);
         for path in ["/main.ts", "/a.ts", "/b.ts"] {
-            assert!(position(&events, &parsed(path)) < finished, "{path}, {threads} threads");
+            assert!(
+                position(&events, &parsed(path)) < finished,
+                "{path}, {threads} threads"
+            );
         }
         for path in ["/late.ts", "/after.ts"] {
-            assert!(finished < position(&events, &parsed(path)), "{path}, {threads} threads");
+            assert!(
+                finished < position(&events, &parsed(path)),
+                "{path}, {threads} threads"
+            );
         }
     }
 }
@@ -278,7 +310,10 @@ fn deferred_read_is_finished_after_every_other_file() {
 #[test]
 fn no_file_waits_behind_a_read_by_plugin() {
     let files: &[(&str, &str)] = &[
-        ("/main.ts", "import \"./slow\"\nimport \"./slower\"\nimport \"./slowest\"\nimport \"./a\""),
+        (
+            "/main.ts",
+            "import \"./slow\"\nimport \"./slower\"\nimport \"./slowest\"\nimport \"./a\"",
+        ),
         ("/slow.ts", ""),
         ("/slower.ts", ""),
         ("/slowest.ts", "import \"./after\""),
@@ -286,8 +321,11 @@ fn no_file_waits_behind_a_read_by_plugin() {
         ("/b.ts", ""),
         ("/after.ts", ""),
     ];
-    let read_by_plugin: &[(&str, &str)] =
-        &[("/slow.ts", "/b.ts"), ("/slower.ts", "/b.ts"), ("/slowest.ts", "/b.ts")];
+    let read_by_plugin: &[(&str, &str)] = &[
+        ("/slow.ts", "/b.ts"),
+        ("/slower.ts", "/b.ts"),
+        ("/slowest.ts", "/b.ts"),
+    ];
     let hosts = [
         StatementsHost {
             read_by_plugin,
@@ -303,8 +341,15 @@ fn no_file_waits_behind_a_read_by_plugin() {
     for host in hosts {
         let walked = walk(&host, &["/main.ts"]);
         assert!(!host.has_waited_in_vain.load(Ordering::Relaxed));
-        let paths =
-            ["/slow.ts", "/slower.ts", "/after.ts", "/slowest.ts", "/b.ts", "/a.ts", "/main.ts"];
+        let paths = [
+            "/slow.ts",
+            "/slower.ts",
+            "/after.ts",
+            "/slowest.ts",
+            "/b.ts",
+            "/a.ts",
+            "/main.ts",
+        ];
         assert_eq!(walked.paths(), paths);
         let events = host.events();
         for path in paths {
@@ -315,7 +360,10 @@ fn no_file_waits_behind_a_read_by_plugin() {
 }
 
 const WITH_ASSETS: &[(&str, &str)] = &[
-    ("/main.ts", "import \"./first.bin\"\nimport \"./slow\"\nimport \"./a\"\nimport \"./second.bin\""),
+    (
+        "/main.ts",
+        "import \"./first.bin\"\nimport \"./slow\"\nimport \"./a\"\nimport \"./second.bin\"",
+    ),
     ("/first.bin", "import \"./never\""),
     ("/second.bin", "import \"./never\""),
     ("/slow.ts", "import \"./after\""),
@@ -324,8 +372,11 @@ const WITH_ASSETS: &[(&str, &str)] = &[
     ("/after.ts", ""),
     ("/never.ts", ""),
 ];
-const ASSETS_READ_BY_PLUGIN: &[(&str, &str)] =
-    &[("/first.bin", "/b.ts"), ("/second.bin", "/b.ts"), ("/slow.ts", "/b.ts")];
+const ASSETS_READ_BY_PLUGIN: &[(&str, &str)] = &[
+    ("/first.bin", "/b.ts"),
+    ("/second.bin", "/b.ts"),
+    ("/slow.ts", "/b.ts"),
+];
 const ASSETS: &[&str] = &["/first.bin", "/second.bin"];
 
 fn started_background_reads() -> HostEvent {
@@ -352,8 +403,15 @@ fn assets_are_read_in_background_after_all_other_files() {
     for host in hosts_with_assets(|host| host) {
         let walked = walk(&host, &["/main.ts"]);
         assert!(!host.has_waited_in_vain.load(Ordering::Relaxed));
-        let paths =
-            ["/first.bin", "/after.ts", "/slow.ts", "/b.ts", "/a.ts", "/second.bin", "/main.ts"];
+        let paths = [
+            "/first.bin",
+            "/after.ts",
+            "/slow.ts",
+            "/b.ts",
+            "/a.ts",
+            "/second.bin",
+            "/main.ts",
+        ];
         assert_eq!(walked.paths(), paths);
         let events = host.events();
         let started = position(&events, &started_background_reads());
@@ -364,7 +422,11 @@ fn assets_are_read_in_background_after_all_other_files() {
         }
         for &path in ASSETS {
             assert_eq!(count(&events, &read(path)), 0, "{path}");
-            assert_eq!(count(&events, &HostEvent::BackgroundRead(path.into())), 1, "{path}");
+            assert_eq!(
+                count(&events, &HostEvent::BackgroundRead(path.into())),
+                1,
+                "{path}"
+            );
             assert_eq!(count(&events, &parsed(path)), 1, "{path}");
             assert!(started < position(&events, &parsed(path)), "{path}");
         }
@@ -381,7 +443,14 @@ fn assets_are_read_normally_if_host_rejects_background_reads() {
         let walked = walk(&host, &["/main.ts"]);
         assert!(!host.has_waited_in_vain.load(Ordering::Relaxed));
         let paths = [
-            "/never.ts", "/first.bin", "/after.ts", "/slow.ts", "/b.ts", "/a.ts", "/second.bin", "/main.ts",
+            "/never.ts",
+            "/first.bin",
+            "/after.ts",
+            "/slow.ts",
+            "/b.ts",
+            "/a.ts",
+            "/second.bin",
+            "/main.ts",
         ];
         assert_eq!(walked.paths(), paths);
         let events = host.events();
@@ -389,7 +458,11 @@ fn assets_are_read_normally_if_host_rejects_background_reads() {
         for path in paths {
             assert_eq!(count(&events, &read(path)), 1, "{path}");
             assert_eq!(count(&events, &parsed(path)), 1, "{path}");
-            assert_eq!(count(&events, &HostEvent::BackgroundRead(path.into())), 0, "{path}");
+            assert_eq!(
+                count(&events, &HostEvent::BackgroundRead(path.into())),
+                0,
+                "{path}"
+            );
         }
     }
 }
@@ -422,7 +495,10 @@ fn deferred_reads_are_finished_together() {
             ("/later.ts", ""),
         ])
     };
-    assert_eq!(walk(&host, &["/main.ts"]).paths(), ["/late.ts", "/later.ts", "/main.ts"]);
+    assert_eq!(
+        walk(&host, &["/main.ts"]).paths(),
+        ["/late.ts", "/later.ts", "/main.ts"]
+    );
     let events = host.events();
     assert_eq!(count(&events, &HostEvent::FinishedDeferredReads), 1);
     assert_eq!(count(&events, &parsed("/late.ts")), 1);
@@ -489,14 +565,20 @@ fn declaration_file_is_types_only_and_not_read() {
 #[test]
 fn type_only_import_is_predicted_and_not_walked() {
     let host = host_of(&[
-        ("/main.ts", "import type t from \"./only-types\"\nimport \"./a\""),
+        (
+            "/main.ts",
+            "import type t from \"./only-types\"\nimport \"./a\"",
+        ),
         ("/only-types.ts", ""),
         ("/a.ts", ""),
     ]);
     with_code_files(&host, &["/main.ts"], |files| {
         assert_eq!(files.entries.len(), 2);
         let predicted = &find_entry(files, "/main.ts").predicted_type_files;
-        assert_eq!(predicted[..], [(&b"/only-types.ts"[..], false), (&b"/a.ts"[..], false)]);
+        assert_eq!(
+            predicted[..],
+            [(&b"/only-types.ts"[..], false), (&b"/a.ts"[..], false)]
+        );
     });
     assert_eq!(count(&host.events(), &read("/only-types.ts")), 0);
 }
@@ -506,7 +588,10 @@ fn package_depth_counts_steps_into_packages() {
     let host = host_of(&[
         ("/main.ts", "import \"./a\""),
         ("/a.ts", "import \"pkg\""),
-        ("/node_modules/pkg/index.js", "import \"./b.js\"\nimport \"nested\""),
+        (
+            "/node_modules/pkg/index.js",
+            "import \"./b.js\"\nimport \"nested\"",
+        ),
         ("/node_modules/pkg/b.js", ""),
         ("/node_modules/nested/index.js", ""),
     ]);
@@ -522,7 +607,10 @@ fn package_depth_counts_steps_into_packages() {
 #[test]
 fn package_depth_is_lowest_of_all_ways() {
     let host = host_of(&[
-        ("/main.ts", "import \"pkg\"\nimport \"./node_modules/pkg/b.js\""),
+        (
+            "/main.ts",
+            "import \"pkg\"\nimport \"./node_modules/pkg/b.js\"",
+        ),
         ("/node_modules/pkg/index.js", "import \"./b.js\""),
         ("/node_modules/pkg/b.js", "import \"./c.js\""),
         ("/node_modules/pkg/c.js", ""),
@@ -613,7 +701,10 @@ fn host_module_does_not_depend_on_importer_order() {
         };
         let walked = walk(&host, &["/main.ts"]);
         assert_eq!(walked.paths(), ["/bun/fs.ts", "/main.ts"]);
-        assert_eq!(walked.entry("/bun/fs.ts").host_module, Some(HostModuleId(3)));
+        assert_eq!(
+            walked.entry("/bun/fs.ts").host_module,
+            Some(HostModuleId(3))
+        );
         assert_eq!(walked.entry("/main.ts").host_module, None);
     }
 }
@@ -632,7 +723,11 @@ fn case_insensitive_host_has_one_entry_per_file() {
             ..host_of(files)
         };
         let walked = walk(&host, &["/main.ts"]);
-        assert_eq!(walked.paths(), ["/a.ts", "/x.ts", "/main.ts"], "{threads} threads");
+        assert_eq!(
+            walked.paths(),
+            ["/a.ts", "/x.ts", "/main.ts"],
+            "{threads} threads"
+        );
         assert_eq!(walked.entry("/main.ts").targets, [1, 0]);
     }
 }
@@ -644,13 +739,19 @@ fn case_sensitive_host_has_one_entry_per_spelling() {
         ("/a.ts", ""),
         ("/A.ts", ""),
     ]);
-    assert_eq!(walk(&host, &["/main.ts"]).paths(), ["/a.ts", "/A.ts", "/main.ts"]);
+    assert_eq!(
+        walk(&host, &["/main.ts"]).paths(),
+        ["/a.ts", "/A.ts", "/main.ts"]
+    );
 }
 
 #[test]
 fn equal_settings_are_copied_once() {
     let host = host_of(&[
-        ("/main.ts", "import \"./x/a\"\nimport \"./y/b\"\nimport \"./z/c\""),
+        (
+            "/main.ts",
+            "import \"./x/a\"\nimport \"./y/b\"\nimport \"./z/c\"",
+        ),
         ("/x/tsconfig.json", ""),
         ("/x/a.ts", ""),
         ("/y/tsconfig.json", ""),
@@ -661,14 +762,23 @@ fn equal_settings_are_copied_once() {
     let build = TestBuild::new(&host, &["/main.ts"]);
     with_compile_context(&build, |context| {
         let of_resolver = |path: &[u8]| context.resolver.transpile_settings(path);
-        assert!(!std::ptr::eq(of_resolver(b"/x/a.ts"), of_resolver(b"/y/b.ts")));
+        assert!(!std::ptr::eq(
+            of_resolver(b"/x/a.ts"),
+            of_resolver(b"/y/b.ts")
+        ));
         assert_eq!(of_resolver(b"/x/a.ts"), of_resolver(b"/y/b.ts"));
 
         let files = context.load_code_files(&|_| {}, &Default::default(), &mut || {});
         let settings_of = |path| find_entry(&files, path).settings.expect("a file with code");
         assert!(std::ptr::eq(settings_of("/x/a.ts"), settings_of("/y/b.ts")));
-        assert!(std::ptr::eq(settings_of("/x/a.ts"), settings_of("/main.ts")));
-        assert!(!std::ptr::eq(settings_of("/x/a.ts"), settings_of("/z/c.ts")));
+        assert!(std::ptr::eq(
+            settings_of("/x/a.ts"),
+            settings_of("/main.ts")
+        ));
+        assert!(!std::ptr::eq(
+            settings_of("/x/a.ts"),
+            settings_of("/z/c.ts")
+        ));
         assert!(!settings_of("/x/a.ts").experimental_decorators);
         assert!(settings_of("/z/c.ts").experimental_decorators);
     });

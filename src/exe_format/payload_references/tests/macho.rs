@@ -68,7 +68,8 @@ impl Builder {
     fn add_linkedit(&mut self, bytes: &[u8]) -> (u32, u32) {
         let offset = LINKEDIT_OFFSET + self.linkedit.len() as u32;
         self.linkedit.extend_from_slice(bytes);
-        self.linkedit.resize(self.linkedit.len().next_multiple_of(8), 0);
+        self.linkedit
+            .resize(self.linkedit.len().next_multiple_of(8), 0);
         (offset, bytes.len() as u32)
     }
 
@@ -85,12 +86,24 @@ impl Builder {
     fn add_segments(&mut self) {
         for (index, (name, first_page, page_count)) in SEGMENTS.into_iter().enumerate() {
             let has_payload = index == usize::from(BUN);
-            let sections_size = if has_payload { size_of::<section_64>() } else { 0 };
+            let sections_size = if has_payload {
+                size_of::<section_64>()
+            } else {
+                0
+            };
             let mut segment: segment_command_64 = zeroed();
             segment.cmd = LC::SEGMENT_64;
             segment.cmdsize = (size_of::<segment_command_64>() + sections_size) as u32;
-            segment.vmaddr = if page_count == 0 { 0 } else { BASE + first_page * PAGE };
-            segment.vmsize = if page_count == 0 { BASE } else { page_count * PAGE };
+            segment.vmaddr = if page_count == 0 {
+                0
+            } else {
+                BASE + first_page * PAGE
+            };
+            segment.vmsize = if page_count == 0 {
+                BASE
+            } else {
+                page_count * PAGE
+            };
             segment.fileoff = first_page * PAGE;
             segment.filesize = page_count * PAGE;
             segment.nsects = u32::from(has_payload);
@@ -226,8 +239,14 @@ fn executable_without_fixups_or_symbols_is_accepted() {
 #[test]
 fn chained_fixup_in_page_of_payload_is_refused() {
     assert_eq!(check_chained(&[(BUN, &[0x10])]), relocation_at(START));
-    assert_eq!(check_chained(&[(BUN, &[NONE, 0x3ff8])]), relocation_at(START + PAGE));
-    assert_eq!(check_chained(&[(DATA, &[0]), (BUN, &[0])]), relocation_at(START));
+    assert_eq!(
+        check_chained(&[(BUN, &[NONE, 0x3ff8])]),
+        relocation_at(START + PAGE)
+    );
+    assert_eq!(
+        check_chained(&[(DATA, &[0]), (BUN, &[0])]),
+        relocation_at(START)
+    );
 }
 
 #[test]
@@ -278,11 +297,28 @@ fn rebase_at(segment: u8, offset: u64) -> Vec<u8> {
 fn rebase_in_payload_is_refused() {
     use rebase_opcode::*;
     let once = [DO_REBASE_IMM_TIMES | 1];
-    assert_eq!(check_rebases(&[&rebase_at(BUN, 0), &once]), relocation_at(START));
-    assert_eq!(check_rebases(&[&rebase_at(BUN, SIZE - 1), &once]), relocation_at(END - 1));
-    assert_eq!(check_rebases(&[&rebase_at(DATA, PAGE - 7), &once]), relocation_at(START - 7));
-    let moved = [&[ADD_ADDR_ULEB][..], &uleb(PAGE - 16), &[ADD_ADDR_IMM_SCALED | 2]].concat();
-    assert_eq!(check_rebases(&[&rebase_at(DATA, 0), &moved, &once]), relocation_at(START));
+    assert_eq!(
+        check_rebases(&[&rebase_at(BUN, 0), &once]),
+        relocation_at(START)
+    );
+    assert_eq!(
+        check_rebases(&[&rebase_at(BUN, SIZE - 1), &once]),
+        relocation_at(END - 1)
+    );
+    assert_eq!(
+        check_rebases(&[&rebase_at(DATA, PAGE - 7), &once]),
+        relocation_at(START - 7)
+    );
+    let moved = [
+        &[ADD_ADDR_ULEB][..],
+        &uleb(PAGE - 16),
+        &[ADD_ADDR_IMM_SCALED | 2],
+    ]
+    .concat();
+    assert_eq!(
+        check_rebases(&[&rebase_at(DATA, 0), &moved, &once]),
+        relocation_at(START)
+    );
 }
 
 #[test]
@@ -300,32 +336,64 @@ fn run_of_rebases_is_checked_as_a_whole() {
     let words_in_page = PAGE / 8;
     let times = |count: u64| [&[DO_REBASE_ULEB_TIMES][..], &uleb(count)].concat();
     let start_of_data = rebase_at(DATA, 0);
-    assert_eq!(check_rebases(&[&start_of_data, &times(words_in_page)]), Ok(()));
-    assert_eq!(check_rebases(&[&start_of_data, &times(words_in_page + 1)]), relocation_at(START));
-    assert_eq!(check_rebases(&[&start_of_data, &times(u64::MAX / 8)]), relocation_at(START));
+    assert_eq!(
+        check_rebases(&[&start_of_data, &times(words_in_page)]),
+        Ok(())
+    );
+    assert_eq!(
+        check_rebases(&[&start_of_data, &times(words_in_page + 1)]),
+        relocation_at(START)
+    );
+    assert_eq!(
+        check_rebases(&[&start_of_data, &times(u64::MAX / 8)]),
+        relocation_at(START)
+    );
 
     let skipping = |count: u64, skip: u64| {
-        [&[DO_REBASE_ULEB_TIMES_SKIPPING_ULEB][..], &uleb(count), &uleb(skip)].concat()
+        [
+            &[DO_REBASE_ULEB_TIMES_SKIPPING_ULEB][..],
+            &uleb(count),
+            &uleb(skip),
+        ]
+        .concat()
     };
     let last_word_of_data = rebase_at(DATA, PAGE - 8);
-    assert_eq!(check_rebases(&[&last_word_of_data, &skipping(2, 3 * PAGE)]), Ok(()));
+    assert_eq!(
+        check_rebases(&[&last_word_of_data, &skipping(2, 3 * PAGE)]),
+        Ok(())
+    );
     let into_last_word = skipping(2, SIZE - 8);
-    assert_eq!(check_rebases(&[&last_word_of_data, &into_last_word]), relocation_at(END - 8));
-    assert_eq!(check_rebases(&[&start_of_data, &skipping(3, PAGE)]), relocation_at(START + 8));
+    assert_eq!(
+        check_rebases(&[&last_word_of_data, &into_last_word]),
+        relocation_at(END - 8)
+    );
+    assert_eq!(
+        check_rebases(&[&start_of_data, &skipping(3, PAGE)]),
+        relocation_at(START + 8)
+    );
 
     // What follows a run starts where the run ended.
     let then_skip = [&[DO_REBASE_ADD_ADDR_ULEB][..], &uleb(PAGE - 16)].concat();
     let once = [DO_REBASE_IMM_TIMES | 1];
     assert_eq!(check_rebases(&[&start_of_data, &then_skip, &once]), Ok(()));
-    assert_eq!(check_rebases(&[&start_of_data, &then_skip, &once, &once]), relocation_at(START));
+    assert_eq!(
+        check_rebases(&[&start_of_data, &then_skip, &once, &once]),
+        relocation_at(START)
+    );
 }
 
 #[test]
 fn unreadable_rebases_are_told_apart() {
     use rebase_opcode::*;
     assert_eq!(check_rebases(&[&[0x90]]), Err(UnsupportedRelocations));
-    assert_eq!(check_rebases(&[&[SET_SEGMENT_AND_OFFSET_ULEB | 9, 0]]), Err(MalformedExecutable));
-    assert_eq!(check_rebases(&[&[ADD_ADDR_ULEB, 0x80]]), Err(MalformedExecutable));
+    assert_eq!(
+        check_rebases(&[&[SET_SEGMENT_AND_OFFSET_ULEB | 9, 0]]),
+        Err(MalformedExecutable)
+    );
+    assert_eq!(
+        check_rebases(&[&[ADD_ADDR_ULEB, 0x80]]),
+        Err(MalformedExecutable)
+    );
 }
 
 fn bind_at(segment: u8, offset: u64) -> Vec<u8> {
@@ -333,9 +401,20 @@ fn bind_at(segment: u8, offset: u64) -> Vec<u8> {
     let symbol = [
         &[SET_DYLIB_ORDINAL_IMM | 1, SET_SYMBOL_TRAILING_FLAGS_IMM][..],
         b"_malloc\0",
-        &[SET_TYPE_IMM | 1, SET_ADDEND_SLEB, 0x7f, SET_DYLIB_ORDINAL_ULEB, 0x81, 0x01],
+        &[
+            SET_TYPE_IMM | 1,
+            SET_ADDEND_SLEB,
+            0x7f,
+            SET_DYLIB_ORDINAL_ULEB,
+            0x81,
+            0x01,
+        ],
     ];
-    [symbol.concat(), at_offset(SET_SEGMENT_AND_OFFSET_ULEB, segment, offset)].concat()
+    [
+        symbol.concat(),
+        at_offset(SET_SEGMENT_AND_OFFSET_ULEB, segment, offset),
+    ]
+    .concat()
 }
 
 #[test]
@@ -365,25 +444,53 @@ fn check_binds(parts: &[&[u8]]) -> Checked {
 fn every_bind_opcode_advances() {
     use bind_opcode::*;
     let two_words_below = bind_at(DATA, PAGE - 16);
-    assert_eq!(check_binds(&[&two_words_below, &[DO_BIND, DO_BIND]]), Ok(()));
+    assert_eq!(
+        check_binds(&[&two_words_below, &[DO_BIND, DO_BIND]]),
+        Ok(())
+    );
     let three_binds = [DO_BIND, DO_BIND, DO_BIND];
-    assert_eq!(check_binds(&[&two_words_below, &three_binds]), relocation_at(START));
+    assert_eq!(
+        check_binds(&[&two_words_below, &three_binds]),
+        relocation_at(START)
+    );
     let scaled = [DO_BIND_ADD_ADDR_IMM_SCALED | 1, DO_BIND];
-    assert_eq!(check_binds(&[&two_words_below, &scaled]), relocation_at(START));
+    assert_eq!(
+        check_binds(&[&two_words_below, &scaled]),
+        relocation_at(START)
+    );
     let added = [DO_BIND_ADD_ADDR_ULEB, 16, DO_BIND];
-    assert_eq!(check_binds(&[&two_words_below, &added]), relocation_at(START + 8));
+    assert_eq!(
+        check_binds(&[&two_words_below, &added]),
+        relocation_at(START + 8)
+    );
     let moved = [ADD_ADDR_ULEB, 24, DO_BIND];
-    assert_eq!(check_binds(&[&two_words_below, &moved]), relocation_at(START + 8));
+    assert_eq!(
+        check_binds(&[&two_words_below, &moved]),
+        relocation_at(START + 8)
+    );
     let skipping = [DO_BIND_ULEB_TIMES_SKIPPING_ULEB, 3, 0];
-    assert_eq!(check_binds(&[&two_words_below, &skipping]), relocation_at(START));
-    let over_payload = [&[DO_BIND_ADD_ADDR_ULEB][..], &uleb(8 + 3 * PAGE), &[DO_BIND]].concat();
+    assert_eq!(
+        check_binds(&[&two_words_below, &skipping]),
+        relocation_at(START)
+    );
+    let over_payload = [
+        &[DO_BIND_ADD_ADDR_ULEB][..],
+        &uleb(8 + 3 * PAGE),
+        &[DO_BIND],
+    ]
+    .concat();
     assert_eq!(check_binds(&[&two_words_below, &over_payload]), Ok(()));
 }
 
 #[test]
 fn done_does_not_end_stream_of_binds() {
     use bind_opcode::*;
-    let entries = [bind_at(DATA, 0), vec![DO_BIND, DONE], bind_at(BUN, 0), vec![DO_BIND, DONE]];
+    let entries = [
+        bind_at(DATA, 0),
+        vec![DO_BIND, DONE],
+        bind_at(BUN, 0),
+        vec![DO_BIND, DONE],
+    ];
     assert_eq!(check_binds(&[&entries.concat()]), relocation_at(START));
 }
 
@@ -430,23 +537,44 @@ fn check_exports(exports: &[(u64, &[u64])]) -> Checked {
 #[test]
 fn export_in_payload_is_refused() {
     let outside = (0, &[PAGE][..]);
-    assert_eq!(check_exports(&[outside, (0, &[START - BASE])]), dynamic_symbol_at(START));
-    assert_eq!(check_exports(&[(0, &[END - 1 - BASE]), outside]), dynamic_symbol_at(END - 1));
+    assert_eq!(
+        check_exports(&[outside, (0, &[START - BASE])]),
+        dynamic_symbol_at(START)
+    );
+    assert_eq!(
+        check_exports(&[(0, &[END - 1 - BASE]), outside]),
+        dynamic_symbol_at(END - 1)
+    );
     let resolver_in_payload = (EXPORT_STUB_AND_RESOLVER, &[PAGE, START - BASE + 4][..]);
-    assert_eq!(check_exports(&[resolver_in_payload]), dynamic_symbol_at(START + 4));
+    assert_eq!(
+        check_exports(&[resolver_in_payload]),
+        dynamic_symbol_at(START + 4)
+    );
 }
 
 #[test]
 fn export_beside_payload_is_accepted() {
     assert_eq!(check_exports(&[]), Ok(()));
-    assert_eq!(check_exports(&[(0, &[START - 1 - BASE]), (0, &[END - BASE])]), Ok(()));
-    assert_eq!(check_exports(&[(EXPORT_STUB_AND_RESOLVER, &[PAGE, END - BASE])]), Ok(()));
+    assert_eq!(
+        check_exports(&[(0, &[START - 1 - BASE]), (0, &[END - BASE])]),
+        Ok(())
+    );
+    assert_eq!(
+        check_exports(&[(EXPORT_STUB_AND_RESOLVER, &[PAGE, END - BASE])]),
+        Ok(())
+    );
 }
 
 #[test]
 fn export_without_address_is_accepted() {
-    assert_eq!(check_exports(&[(EXPORT_KIND_ABSOLUTE, &[START - BASE])]), Ok(()));
-    assert_eq!(check_exports(&[(EXPORT_REEXPORT, &[START - BASE, 0])]), Ok(()));
+    assert_eq!(
+        check_exports(&[(EXPORT_KIND_ABSOLUTE, &[START - BASE])]),
+        Ok(())
+    );
+    assert_eq!(
+        check_exports(&[(EXPORT_REEXPORT, &[START - BASE, 0])]),
+        Ok(())
+    );
 }
 
 #[test]
@@ -480,7 +608,10 @@ fn symbol(n_type: u8, n_value: u64) -> nlist_64 {
 fn defined_external_symbol_in_payload_is_refused() {
     let toy = Toy {
         local_symbols: vec![symbol(N_SECT, BASE)],
-        defined_symbols: vec![symbol(N_SECT | N_EXT, START - 1), symbol(N_SECT | N_EXT, START)],
+        defined_symbols: vec![
+            symbol(N_SECT | N_EXT, START - 1),
+            symbol(N_SECT | N_EXT, START),
+        ],
         ..Toy::default()
     };
     assert_eq!(check(&toy.build()), dynamic_symbol_at(START));

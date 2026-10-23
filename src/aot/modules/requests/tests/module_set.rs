@@ -28,7 +28,10 @@ fn every_compiled_file_has_a_record() {
             "import './es.js'; import './legacy.cjs'; import './data.json'; import('./lazy.js');",
         ),
         ("es.js", "export {};"),
-        ("legacy.cjs", r#"exports.add = new Function("a", "b", "return a + b");"#),
+        (
+            "legacy.cjs",
+            r#"exports.add = new Function("a", "b", "return a + b");"#,
+        ),
         ("data.json", "{}"),
         ("lazy.js", "export {};"),
     ];
@@ -60,7 +63,10 @@ fn declaration_file_target_gets_a_record() {
         let mut expected = [main, types];
         expected.sort_unstable();
         assert_eq!(modules.record_files, expected);
-        assert_eq!(modules.interop(ModuleRef::File(types)).kind, ModuleKind::SourceText);
+        assert_eq!(
+            modules.interop(ModuleRef::File(types)).kind,
+            ModuleKind::SourceText
+        );
     });
 }
 
@@ -74,7 +80,9 @@ fn candidates_are_modules_of_the_set() {
         let (main, home) = (program.file("main.cjs"), program.file("pages/home.js"));
         assert_eq!(scans.of(main).candidates, [ModuleRef::File(home)]);
         let runtime = ModuleRef::Runtime(RuntimeModule::NodeFs);
-        scan_of(&mut scans, main).candidates.extend([runtime, runtime]);
+        scan_of(&mut scans, main)
+            .candidates
+            .extend([runtime, runtime]);
         let modules = collect_modules(program.input, &scans);
         assert!(modules.record_files.contains(&home));
         assert_eq!(modules.other_modules, [runtime]);
@@ -110,9 +118,8 @@ fn two_kinds_join_to_uncompiled_code() {
 
 #[test]
 fn kind_belongs_to_importer_and_specifier() {
-    let both = format!(
-        "import '{UNCOMPILED_MODULE}'; import '{HOST_VALUE_MODULE}'; import './a.js';"
-    );
+    let both =
+        format!("import '{UNCOMPILED_MODULE}'; import '{HOST_VALUE_MODULE}'; import './a.js';");
     let other = format!("import '{UNCOMPILED_MODULE}';");
     let files = [("main.js", both.as_str()), ("a.js", other.as_str())];
     with_module_set(&files, |modules, program| {
@@ -143,7 +150,11 @@ fn only_modules_with_export_table_are_table_files() {
     with_module_set(&files, |modules, program| {
         for name in ["main.js", "data.json"] {
             let file = program.file(name);
-            assert_eq!(modules.table_file(ModuleRef::File(file)), Some(file), "{name}");
+            assert_eq!(
+                modules.table_file(ModuleRef::File(file)),
+                Some(file),
+                "{name}"
+            );
         }
         assert_eq!(modules.table_file(program.module("legacy.cjs")), None);
         assert!(!modules.other_modules.is_empty());
@@ -159,9 +170,8 @@ fn other_modules_are_sorted_and_unique() {
     let main = format!(
         "import '{UNCOMPILED_MODULE}'; import 'node:path'; import 'node:fs'; import './a.js';"
     );
-    let other = format!(
-        "import 'node:fs'; import '{UNCOMPILED_MODULE}'; import 'data:text/javascript,';"
-    );
+    let other =
+        format!("import 'node:fs'; import '{UNCOMPILED_MODULE}'; import 'data:text/javascript,';");
     let files = [("main.js", main.as_str()), ("a.js", other.as_str())];
     with_module_set(&files, |modules, program| {
         let atoms = &program.input.files.atoms;

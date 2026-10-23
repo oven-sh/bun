@@ -230,7 +230,8 @@ impl CodeHost for MemoryHost {
     }
 
     fn typed_version(&self, path: &[u8], package: Option<EnclosingPackage<'_>>) -> Option<Vec<u8>> {
-        self.typed_version_calls.fetch_add(1, MemoryOrdering::Relaxed);
+        self.typed_version_calls
+            .fetch_add(1, MemoryOrdering::Relaxed);
         if let Some(package) = package {
             assert!(contains_path(package.directory, path, true));
             assert!(self.is_file(&inside(package.directory, b"package.json")));
@@ -582,7 +583,10 @@ mod tests {
                 kind: Import,
                 form: CodeImportForm::Static,
             };
-            (host.resolve_code(&request), host.resolve_runtime_module(specifier))
+            (
+                host.resolve_code(&request),
+                host.resolve_runtime_module(specifier),
+            )
         };
         let module = HostResolution::Module(HostModuleId(7));
         assert_eq!(claim(b"node:fs"), (module.clone(), module));
@@ -616,7 +620,10 @@ mod tests {
         assert!(find(b"bun:", b"").is_empty());
 
         let repeated = MemoryHost::new(&[]).module("fs", 1).module("fs", 2);
-        assert_eq!(repeated.find_runtime_modules(b"f", b""), [module(1), module(1)]);
+        assert_eq!(
+            repeated.find_runtime_modules(b"f", b""),
+            [module(1), module(1)]
+        );
     }
 
     #[test]
@@ -645,7 +652,10 @@ mod tests {
     #[test]
     fn typed_versions_follow_links() {
         let manifest = r#"{"name": "pkg", "version": "1.0.0"}"#;
-        let files = [("/real/pkg/package.json", manifest), ("/real/pkg/index.js", "")];
+        let files = [
+            ("/real/pkg/package.json", manifest),
+            ("/real/pkg/index.js", ""),
+        ];
         let host = MemoryHost::new(&files)
             .link("/p/node_modules/pkg", "/real/pkg")
             .typed("/p/node_modules/pkg/index.js", "/p/.sound/pkg/index.ts");
@@ -661,7 +671,10 @@ mod tests {
         assert_eq!(host.typed_version(b"/real/pkg/index.js", real), typed);
         assert_eq!(host.typed_version(b"/real/pkg/index.js", None), typed);
         let linked = package(b"/p/node_modules/pkg");
-        assert_eq!(host.typed_version(b"/p/node_modules/pkg/index.js", linked), typed);
+        assert_eq!(
+            host.typed_version(b"/p/node_modules/pkg/index.js", linked),
+            typed
+        );
         assert_eq!(host.typed_version(b"/real/pkg/other.js", real), None);
         assert_eq!(host.typed_version_calls(), 4);
     }

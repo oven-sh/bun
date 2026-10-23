@@ -23,11 +23,13 @@ export function readArchive(path: string): Map<string, ArchiveMember[]> {
     const end = fstatSync(fd).size;
     if (end < 8 || readAt(fd, 0, 8).toString("latin1") !== "!<arch>\n") return members;
     let longNames: Buffer = Buffer.alloc(0);
-    for (let at = 8; at + 60 <= end; ) {
+    for (let at = 8; at + 60 <= end;) {
       const header = readAt(fd, at, 60).toString("latin1");
       const size = Number(header.slice(48, 58));
       if (!(at + 60 + size <= end)) {
-        throw new BuildError("an archive member runs past the end of the file, or its size is not a number", { file: path });
+        throw new BuildError("an archive member runs past the end of the file, or its size is not a number", {
+          file: path,
+        });
       }
       const field = header.slice(0, 16).trimEnd();
       if (field === "//") longNames = readAt(fd, at + 60, size);
@@ -37,8 +39,11 @@ export function readArchive(path: string): Map<string, ArchiveMember[]> {
         if (/^\/\d+$/.test(field)) name = longName(longNames, Number(field.slice(1)));
         else if (/^#1\/\d+$/.test(field)) {
           nameLength = Number(field.slice(3));
-          if (nameLength > size) throw new BuildError("the name of an archive member is longer than the member", { file: path });
-          name = readAt(fd, at + 60, nameLength).toString("latin1").replace(/\0+$/, "");
+          if (nameLength > size)
+            throw new BuildError("the name of an archive member is longer than the member", { file: path });
+          name = readAt(fd, at + 60, nameLength)
+            .toString("latin1")
+            .replace(/\0+$/, "");
         } else name = field.replace(/\/$/, "");
         const member = { archive: path, offset: at + 60 + nameLength, size: size - nameLength };
         const list = members.get(name);

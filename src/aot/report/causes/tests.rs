@@ -152,7 +152,10 @@ fn names() -> ProgramNames {
 }
 
 fn layouts(words: &[u32]) -> Vec<LayoutId> {
-    words.iter().map(|&word| LayoutId::from_word(word)).collect()
+    words
+        .iter()
+        .map(|&word| LayoutId::from_word(word))
+        .collect()
 }
 
 fn written(write: impl FnOnce(&mut Vec<u8>)) -> BString {
@@ -171,7 +174,10 @@ fn note_texts(entry: &ReportEntry) -> Vec<BString> {
 }
 
 fn list_and_json_entries(ill_typed_cause: IllTypedCause) -> (String, String) {
-    let (level, kind) = (KnowledgeLevel::Unknown, UnprovenCause::ReachesUnknownJavaScript);
+    let (level, kind) = (
+        KnowledgeLevel::Unknown,
+        UnprovenCause::ReachesUnknownJavaScript,
+    );
     let records = [AccessRecord {
         ill_typed_cause,
         ..access(PROGRAM, 0, level, kind, LINE_2_COLUMN_14)
@@ -191,7 +197,13 @@ fn list_and_json_entries(ill_typed_cause: IllTypedCause) -> (String, String) {
 
 fn text_entries(cause_count: u32) -> Vec<ReportEntry> {
     let causes: Vec<Cause> = (0..cause_count)
-        .map(|offset| cause(UnprovenCause::UnknownObject, at(PROGRAM, offset), counts(1, 0)))
+        .map(|offset| {
+            cause(
+                UnprovenCause::UnknownObject,
+                at(PROGRAM, offset),
+                counts(1, 0),
+            )
+        })
         .collect();
     let totals = totals([cause_count, 0, 0], [0; 3]);
     let mut entries = Vec::new();
@@ -203,10 +215,34 @@ fn text_entries(cause_count: u32) -> Vec<ReportEntry> {
 fn one_access_has_one_cause() {
     let records = [
         unknown_object(PROGRAM, 0, 100),
-        access(PROGRAM, 4, KnowledgeLevel::Expected, UnprovenCause::UnknownObject, 100),
-        access(PROGRAM, 8, KnowledgeLevel::Expected, UnprovenCause::FieldDeleted, 200),
-        access(DEPENDENCY, 0, KnowledgeLevel::Unknown, UnprovenCause::UnknownCallee, 300),
-        access(PROGRAM, 12, KnowledgeLevel::Proven, UnprovenCause::Unknown, 0),
+        access(
+            PROGRAM,
+            4,
+            KnowledgeLevel::Expected,
+            UnprovenCause::UnknownObject,
+            100,
+        ),
+        access(
+            PROGRAM,
+            8,
+            KnowledgeLevel::Expected,
+            UnprovenCause::FieldDeleted,
+            200,
+        ),
+        access(
+            DEPENDENCY,
+            0,
+            KnowledgeLevel::Unknown,
+            UnprovenCause::UnknownCallee,
+            300,
+        ),
+        access(
+            PROGRAM,
+            12,
+            KnowledgeLevel::Proven,
+            UnprovenCause::Unknown,
+            0,
+        ),
     ];
     let mut accesses = LevelCounts::default();
     for record in &records {
@@ -232,9 +268,17 @@ fn accesses_with_one_witness_share_cause() {
 
 #[test]
 fn witness_separates_causes() {
-    let records = [unknown_object(PROGRAM, 0, 100), unknown_object(PROGRAM, 4, 200)];
-    let expected = [100, 200]
-        .map(|offset| cause(UnprovenCause::UnknownObject, at(PROGRAM, offset), counts(1, 0)));
+    let records = [
+        unknown_object(PROGRAM, 0, 100),
+        unknown_object(PROGRAM, 4, 200),
+    ];
+    let expected = [100, 200].map(|offset| {
+        cause(
+            UnprovenCause::UnknownObject,
+            at(PROGRAM, offset),
+            counts(1, 0),
+        )
+    });
     assert_eq!(collect(&records), expected);
 }
 
@@ -242,7 +286,13 @@ fn witness_separates_causes() {
 fn limit_separates_causes() {
     let reached = |offset, limit| AccessRecord {
         limit,
-        ..access(PROGRAM, offset, KnowledgeLevel::Unknown, UnprovenCause::LimitReached, 100)
+        ..access(
+            PROGRAM,
+            offset,
+            KnowledgeLevel::Unknown,
+            UnprovenCause::LimitReached,
+            100,
+        )
     };
     let records = [
         reached(0, LimitId::MaxTypeNodes),
@@ -253,7 +303,13 @@ fn limit_separates_causes() {
         .iter()
         .map(|cause| (cause.limit, cause.accesses.program))
         .collect();
-    assert_eq!(found, [(LimitId::MaxTypeNodes, 2), (LimitId::MaxValueFlowEdgesLogged, 1)]);
+    assert_eq!(
+        found,
+        [
+            (LimitId::MaxTypeNodes, 2),
+            (LimitId::MaxValueFlowEdgesLogged, 1)
+        ]
+    );
 }
 
 #[test]
@@ -290,7 +346,11 @@ fn free_access_has_no_cause() {
             ..unknown_object(PROGRAM, 0, 100)
         };
         let is_untyped = cost != AccessCost::Free;
-        assert_eq!(collect(&[record]).len(), usize::from(is_untyped), "{cost:?}");
+        assert_eq!(
+            collect(&[record]).len(),
+            usize::from(is_untyped),
+            "{cost:?}"
+        );
     }
 }
 
@@ -309,14 +369,20 @@ fn calls_have_no_cause() {
 
 #[test]
 fn runtime_accesses_are_not_counted() {
-    let records = [unknown_object(RUNTIME, 0, 100), unknown_object(PROGRAM, 0, 100)];
+    let records = [
+        unknown_object(RUNTIME, 0, 100),
+        unknown_object(PROGRAM, 0, 100),
+    ];
     let counted = cause(UnprovenCause::UnknownObject, at(PROGRAM, 100), counts(1, 0));
     assert_eq!(collect(&records), [counted]);
 }
 
 #[test]
 fn cause_seen_only_from_runtime_modules_is_absent() {
-    let records = [unknown_object(RUNTIME, 0, 100), unknown_object(RUNTIME, 4, 100)];
+    let records = [
+        unknown_object(RUNTIME, 0, 100),
+        unknown_object(RUNTIME, 4, 100),
+    ];
     assert!(collect(&records).is_empty());
 }
 
@@ -353,8 +419,14 @@ fn copies_count_once() {
 #[test]
 fn family_bits_are_distinct() {
     let expected = [
-        (UnprovenCauseFamily::UnprovenType, ExplainSet::ONLY_UNPROVEN_TYPE),
-        (UnprovenCauseFamily::UnknownCode, ExplainSet::ONLY_UNKNOWN_CODE),
+        (
+            UnprovenCauseFamily::UnprovenType,
+            ExplainSet::ONLY_UNPROVEN_TYPE,
+        ),
+        (
+            UnprovenCauseFamily::UnknownCode,
+            ExplainSet::ONLY_UNKNOWN_CODE,
+        ),
         (UnprovenCauseFamily::Mutation, ExplainSet::ONLY_MUTATION),
         (UnprovenCauseFamily::Limit, ExplainSet::ONLY_LIMIT),
     ];
@@ -373,8 +445,15 @@ fn families_filter() {
         UnprovenCause::LimitReached,
     ];
     assert_eq!(kinds.map(UnprovenCause::family), UnprovenCauseFamily::ALL);
-    let records = [0, 1, 2, 3]
-        .map(|index| access(PROGRAM, 0, KnowledgeLevel::Unknown, kinds[index], index as u32));
+    let records = [0, 1, 2, 3].map(|index| {
+        access(
+            PROGRAM,
+            0,
+            KnowledgeLevel::Unknown,
+            kinds[index],
+            index as u32,
+        )
+    });
 
     assert_eq!(collected_kinds(&records, EVERY_FAMILY), kinds);
     for kind in kinds {
@@ -426,7 +505,11 @@ fn rank_is_total() {
     };
     let mut records = [
         one(UnprovenCause::FieldDeleted, LimitId::None, 10),
-        one(UnprovenCause::LimitReached, LimitId::MaxValueFlowEdgesLogged, 10),
+        one(
+            UnprovenCause::LimitReached,
+            LimitId::MaxValueFlowEdgesLogged,
+            10,
+        ),
         one(UnprovenCause::UnknownObject, LimitId::None, 10),
         one(UnprovenCause::LimitReached, LimitId::MaxTypeNodes, 10),
         one(UnprovenCause::UnknownObject, LimitId::None, 5),
@@ -438,7 +521,9 @@ fn rank_is_total() {
     let rank = |records: &[AccessRecord]| -> Vec<Rank> {
         let causes = collect(records);
         let ranks = causes.iter();
-        ranks.map(|it| (it.position, it.cause, it.limit, it.ill_typed_cause)).collect()
+        ranks
+            .map(|it| (it.position, it.cause, it.limit, it.ill_typed_cause))
+            .collect()
     };
     let ranked = rank(&records);
     let mut ascending = ranked.clone();
@@ -490,7 +575,10 @@ fn share_has_three_forms() {
         written(|out| write_share(out, &cause, &totals))
     };
     assert_eq!(share(counts(2, 0)), "2 of 1,204 untyped accesses");
-    assert_eq!(share(counts(0, 3)), "3 of 40 untyped accesses in dependencies");
+    assert_eq!(
+        share(counts(0, 3)),
+        "3 of 40 untyped accesses in dependencies"
+    );
     assert_eq!(
         share(counts(2, 3)),
         "2 of 1,204 untyped accesses, and 3 of 40 in dependencies"
@@ -501,7 +589,10 @@ fn share_has_three_forms() {
 fn share_of_one_access_is_singular() {
     let cause = cause(UnprovenCause::UnknownObject, None, counts(1, 0));
     let totals = totals([1, 0, 5], [0; 3]);
-    assert_eq!(written(|out| write_share(out, &cause, &totals)), "1 of 1 untyped access");
+    assert_eq!(
+        written(|out| write_share(out, &cause, &totals)),
+        "1 of 1 untyped access"
+    );
 }
 
 #[test]
@@ -519,15 +610,25 @@ fn text_entry_orders_notes() {
 
     assert_eq!(entry.kind, ExplainSet::TEXT);
     assert_eq!(entry.position, at(PROGRAM, 12));
-    assert_eq!(text_of(&entry), format!("3. limit-reached: {}", wording.message));
+    assert_eq!(
+        text_of(&entry),
+        format!("3. limit-reached: {}", wording.message)
+    );
     assert_eq!(
         note_texts(&entry),
         [
             "2 of 10 untyped accesses".to_owned(),
             "in function 'render'".to_owned(),
             "types: 'Item', 'Order'".to_owned(),
-            format!("limit {} = 4,096 (limits {})", limit.name(), limit.purpose()),
-            format!("why (unsound-cast): {}", why(IllTypedCause::Assertion).message),
+            format!(
+                "limit {} = 4,096 (limits {})",
+                limit.name(),
+                limit.purpose()
+            ),
+            format!(
+                "why (unsound-cast): {}",
+                why(IllTypedCause::Assertion).message
+            ),
             format!("fix: {}", wording.fix),
             "https://bun.com/docs/bundler/aot-explain#limit-reached".to_owned(),
         ]
@@ -555,9 +656,16 @@ fn text_entry_prints_code_of_wording() {
         let cause = cause(kind, at(PROGRAM, 12), counts(1, 0));
         let entry = text_entry(&cause, 1, &totals([1, 0, 0], [0; 3]), &names(), 0);
         let code = cause_code(kind);
-        assert!(entry.text.starts_with(format!("1. {code}: ").as_bytes()), "{kind:?}");
+        assert!(
+            entry.text.starts_with(format!("1. {code}: ").as_bytes()),
+            "{kind:?}"
+        );
         let url = note_texts(&entry).pop().expect("the link is the last note");
-        assert_eq!(url, format!("https://bun.com/docs/bundler/aot-explain#{code}"), "{kind:?}");
+        assert_eq!(
+            url,
+            format!("https://bun.com/docs/bundler/aot-explain#{code}"),
+            "{kind:?}"
+        );
     }
     let untyped_code = cause(UnprovenCause::ReachesUnknownJavaScript, None, counts(1, 0));
     let entry = text_entry(&untyped_code, 2, &totals([1, 0, 0], [0; 3]), &names(), 0);
@@ -567,12 +675,21 @@ fn text_entry_prints_code_of_wording() {
 #[test]
 fn list_and_json_entries_print_code_of_wording() {
     let (list, json) = list_and_json_entries(IllTypedCause::None);
-    assert_eq!(list, "unknown-code: passed-to-untyped-code at src/a.ts:2:14, 1 access");
+    assert_eq!(
+        list,
+        "unknown-code: passed-to-untyped-code at src/a.ts:2:14, 1 access"
+    );
 
     let url = r#""url":"https://bun.com/docs/bundler/aot-explain#passed-to-untyped-code""#;
-    assert!(json.starts_with(r#"{"rank":1,"reason":"passed-to-untyped-code","#), "{json}");
+    assert!(
+        json.starts_with(r#"{"rank":1,"reason":"passed-to-untyped-code","#),
+        "{json}"
+    );
     assert!(json.contains(url), "{json}");
-    assert!(json.ends_with(r#""family":"unknown-code","why":null}"#), "{json}");
+    assert!(
+        json.ends_with(r#""family":"unknown-code","why":null}"#),
+        "{json}"
+    );
 }
 
 #[test]
@@ -601,26 +718,34 @@ fn unnamed_and_repeated_types_are_listed_once() {
 #[test]
 fn named_types_are_capped() {
     let type_names: [&[u8]; 10] = [b"A", b"B", b"C", b"D", b"E", b"F", b"G", b"H", b"I", b"J"];
-    let list = |count: usize| {
-        written(|out| write_type_names(out, b"types: ", &type_names[..count]))
-    };
+    let list =
+        |count: usize| written(|out| write_type_names(out, b"types: ", &type_names[..count]));
     assert_eq!(list(0), "");
     assert_eq!(list(1), "types: 'A'");
     assert_eq!(list(8), "types: 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'");
-    assert_eq!(list(10), "types: 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H' and 2 more");
+    assert_eq!(
+        list(10),
+        "types: 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H' and 2 more"
+    );
 }
 
 #[test]
 fn twenty_causes_are_shown() {
     let entries = text_entries(20);
     assert_eq!(entries.len(), 21);
-    assert_eq!(text_of(&entries[0]), "Untyped code works, but runs slower. 20 causes:");
+    assert_eq!(
+        text_of(&entries[0]),
+        "Untyped code works, but runs slower. 20 causes:"
+    );
     assert!(entries[1].text.starts_with(b"1. unknown-object: "));
     assert!(entries[20].text.starts_with(b"20. unknown-object: "));
 
     let entries = text_entries(22);
     assert_eq!(entries.len(), 22);
-    assert_eq!(text_of(&entries[0]), "Untyped code works, but runs slower. 22 causes:");
+    assert_eq!(
+        text_of(&entries[0]),
+        "Untyped code works, but runs slower. 22 causes:"
+    );
     assert!(entries[20].text.starts_with(b"20. unknown-object: "));
     assert_eq!(
         text_of(&entries[21]),
@@ -643,13 +768,23 @@ fn heading_and_footer_count_one_cause_in_singular() {
 fn limit_value_is_asked_per_cause() {
     let reached = |limit, offset| Cause {
         limit,
-        ..cause(UnprovenCause::LimitReached, at(PROGRAM, offset), counts(1, 0))
+        ..cause(
+            UnprovenCause::LimitReached,
+            at(PROGRAM, offset),
+            counts(1, 0),
+        )
     };
     let causes = [
         reached(LimitId::MaxTypeNodes, 0),
         reached(LimitId::MaxValueFlowEdgesLogged, 4),
     ];
-    let value_of = |limit| if limit == LimitId::MaxTypeNodes { 3 } else { 70 };
+    let value_of = |limit| {
+        if limit == LimitId::MaxTypeNodes {
+            3
+        } else {
+            70
+        }
+    };
     let mut entries = Vec::new();
     let totals = totals([2, 0, 0], [0; 3]);
     collect_text_entries(&causes, &totals, &names(), value_of, &mut entries);
@@ -690,7 +825,10 @@ fn ranked_entries_are_created_by_position_and_listed_by_rank() {
         created.push(cause.position);
         ReportEntry::line(ExplainSet::JSON, rank.to_string().into_bytes())
     });
-    assert_eq!(created, [None, at(PROGRAM, 2), at(PROGRAM, 9), at(DEPENDENCY, 0)]);
+    assert_eq!(
+        created,
+        [None, at(PROGRAM, 2), at(PROGRAM, 9), at(DEPENDENCY, 0)]
+    );
     let ranks: Vec<BString> = entries.iter().map(text_of).collect();
     assert_eq!(ranks, ["1", "2", "3", "4"]);
 }
@@ -700,12 +838,18 @@ fn no_cause_sentences() {
     let sentence = |totals, families| BString::from(no_cause_sentence(totals, families));
     let typed = totals([0, 0, 7], [0, 0, 2]);
     let untyped_dependency = totals([0, 0, 7], [0, 1, 0]);
-    assert_eq!(sentence(&typed, EVERY_FAMILY), "Every property access is typed. Nothing to fix.");
+    assert_eq!(
+        sentence(&typed, EVERY_FAMILY),
+        "Every property access is typed. Nothing to fix."
+    );
     assert_eq!(
         sentence(&untyped_dependency, EVERY_FAMILY),
         "The compiler recorded no cause for the untyped property accesses."
     );
     for totals in [&typed, &untyped_dependency] {
-        assert_eq!(sentence(totals, ExplainSet::ONLY_MUTATION), "No causes of this kind.");
+        assert_eq!(
+            sentence(totals, ExplainSet::ONLY_MUTATION),
+            "No causes of this kind."
+        );
     }
 }

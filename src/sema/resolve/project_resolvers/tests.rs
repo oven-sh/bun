@@ -91,7 +91,10 @@ fn program_options_return_program() {
     let app = project(b"/p/app", Paths::new());
     let program = Resolver::new(&session, &host, &app);
     let resolvers = ProjectResolvers::new();
-    assert!(std::ptr::eq(resolvers.resolver_for(&program, &app), &program));
+    assert!(std::ptr::eq(
+        resolvers.resolver_for(&program, &app),
+        &program
+    ));
     assert!(resolvers.0.index_by_key.lock().is_empty());
 }
 
@@ -252,13 +255,21 @@ fn project_links_reach_program_when_added() {
     let program = Resolver::new(&session, &host, &app);
     let resolvers = ProjectResolvers::new();
     let of_lib = resolvers.resolver_for(&program, &lib);
-    assert_resolves(of_lib, "pkg", "/p/lib/y.ts", Some("/p/store/pkg/index.d.ts"));
+    assert_resolves(
+        of_lib,
+        "pkg",
+        "/p/lib/y.ts",
+        Some("/p/store/pkg/index.d.ts"),
+    );
     assert!(program.links.lock().is_empty());
     assert!(program.linked_directories(std::iter::empty()).is_empty());
 
     resolvers.add_links_to(&program);
     let directories = program.linked_directories(std::iter::empty());
-    let expected = (b"/p/store/pkg".to_vec(), b"/p/lib/node_modules/pkg".to_vec());
+    let expected = (
+        b"/p/store/pkg".to_vec(),
+        b"/p/lib/node_modules/pkg".to_vec(),
+    );
     assert_eq!(directories, [expected]);
 }
 

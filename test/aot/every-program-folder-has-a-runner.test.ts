@@ -19,7 +19,8 @@ function* testFilesUnder(folder: string): Generator<string> {
   for (const name of entriesOf(folder)) {
     const path = folder ? `${folder}/${name}` : name;
     if (name.endsWith(".test.ts")) yield path;
-    else if (name.endsWith("/") && name !== "node_modules/" && path !== "programs/") yield* testFilesUnder(path.slice(0, -1));
+    else if (name.endsWith("/") && name !== "node_modules/" && path !== "programs/")
+      yield* testFilesUnder(path.slice(0, -1));
   }
 }
 
@@ -32,7 +33,11 @@ const foldersRun = new Set<string>();
 
 for (const [file, text] of testFiles) {
   // Only a function that the file imports from a file near it: many tests hold the text of whole programs.
-  const imported = new Set(Array.from(text.matchAll(/^import \{([^}]*)\} from "\.[^"]*";$/gm), ([, names]) => names.split(",").map(name => name.trim())).flat());
+  const imported = new Set(
+    Array.from(text.matchAll(/^import \{([^}]*)\} from "\.[^"]*";$/gm), ([, names]) =>
+      names.split(",").map(name => name.trim()),
+    ).flat(),
+  );
   const add = (callee: string, before: string, part: number, parts: number) => {
     if (!imported.has(callee)) return;
     // The parts of a variant have its label in common: each part may be built with a switch of its own.
@@ -40,7 +45,10 @@ for (const [file, text] of testFiles) {
     const shared = `${dirname(file) === "." ? "" : dirname(file) + "/: "}${callee}(${common}`;
     splitCalls.set(shared, [...(splitCalls.get(shared) ?? []), { file, part, parts }]);
   };
-  for (const [, callee, before, part, parts] of text.matchAll(/^(?:await |if \(.*\) )?(\w+)\((.*?)(\d+), (\d+)(?:, (?:"[^"]*"|\[[^\]]*\]|\d+))*\);$/gm)) add(callee, before, Number(part), Number(parts));
+  for (const [, callee, before, part, parts] of text.matchAll(
+    /^(?:await |if \(.*\) )?(\w+)\((.*?)(\d+), (\d+)(?:, (?:"[^"]*"|\[[^\]]*\]|\d+))*\);$/gm,
+  ))
+    add(callee, before, Number(part), Number(parts));
   if (dirname(file) !== ".") continue;
   for (const [, folder] of text.matchAll(/^programs\("([^"]+)"\);$/gm)) add("programs", `"${folder}", `, 1, 1);
   for (const [, folder] of text.matchAll(/^programs\("([^"]+)"[,)]/gm)) foldersRun.add(folder);
@@ -71,9 +79,14 @@ test("what is split into parts has every part once", () => {
     const first = calls.some(call => call.part === 0) ? 0 : 1;
     for (let part = first; part < first + totals[0]; part++) {
       const files = calls.filter(call => call.part === part).map(call => call.file);
-      if (files.length !== 1) wrong.push(`${shared}${part}, ${totals[0]}) is in ${files.length === 0 ? "no test file" : files.join(" and in ")}`);
+      if (files.length !== 1)
+        wrong.push(
+          `${shared}${part}, ${totals[0]}) is in ${files.length === 0 ? "no test file" : files.join(" and in ")}`,
+        );
     }
-    for (const call of calls) if (call.part < first || call.part >= first + totals[0]) wrong.push(`${shared}${call.part}, ${call.parts}) in ${call.file} is no part`);
+    for (const call of calls)
+      if (call.part < first || call.part >= first + totals[0])
+        wrong.push(`${shared}${call.part}, ${call.parts}) in ${call.file} is no part`);
   }
   expect(wrong).toEqual([]);
 });
@@ -90,14 +103,44 @@ const namedOneByOne: { folder: string; entry: RegExp; named: (name: string) => s
   { folder: "packages", entry: /^(?!run-packages\.ts$)(.+)\.ts$/, named: name => `\npackages("${name}", ` },
   { folder: "three-ways/made", entry: /^(.+)\.py$/, named: name => `\nmadeCases("${name}"` },
   { folder: "frameworks/apps", entry: /^(.+)\/$/, named: name => `\ntestFramework("${name}");` },
-  { folder: "generated/python", entry: /^(?!external-sources-of-typed-objects\.py$)(.+)\.py$/, named: name => `"${name}"`, by: ["generated/python-generators.ts"] },
-  { folder: "generated/python", entry: /^(external-sources-of-typed-objects\.py)$/, named: name => `"${name}"`, by: ["external-sources-of-typed-objects.test.ts"] },
-  { folder: "impostors-keep-their-fast-paths", entry: /^(.+)\/$/, named: name => `folder: "${name}"`, by: ["impostors-keep-their-fast-paths/rows.ts"] },
-  { folder: "react-compiler", entry: /^(?!react-stand-in\/$)(.+)\/$/, named: name => `"${name}"`, by: ["react-compiler.test.ts"] },
-  { folder: "real-apps/programs", entry: /^(.+\.ts)$/, named: name => `file: "${name}"`, by: ["real-apps/programs.test.ts"] },
+  {
+    folder: "generated/python",
+    entry: /^(?!external-sources-of-typed-objects\.py$)(.+)\.py$/,
+    named: name => `"${name}"`,
+    by: ["generated/python-generators.ts"],
+  },
+  {
+    folder: "generated/python",
+    entry: /^(external-sources-of-typed-objects\.py)$/,
+    named: name => `"${name}"`,
+    by: ["external-sources-of-typed-objects.test.ts"],
+  },
+  {
+    folder: "impostors-keep-their-fast-paths",
+    entry: /^(.+)\/$/,
+    named: name => `folder: "${name}"`,
+    by: ["impostors-keep-their-fast-paths/rows.ts"],
+  },
+  {
+    folder: "react-compiler",
+    entry: /^(?!react-stand-in\/$)(.+)\/$/,
+    named: name => `"${name}"`,
+    by: ["react-compiler.test.ts"],
+  },
+  {
+    folder: "real-apps/programs",
+    entry: /^(.+\.ts)$/,
+    named: name => `file: "${name}"`,
+    by: ["real-apps/programs.test.ts"],
+  },
   { folder: "open-layouts", entry: /^(.+\.ts)$/, named: name => `"${name}"`, by: ["open-layouts.test.ts"] },
   { folder: "napi-addon", entry: /^(.+)(?<!\.d)\.ts$/, named: name => `"${name}"`, by: ["napi-addon.test.ts"] },
-  { folder: "repeated-builds", entry: /^(.+\.ts)$/, named: name => `"repeated-builds/${name}"`, by: ["repeated-builds.test.ts"] },
+  {
+    folder: "repeated-builds",
+    entry: /^(.+\.ts)$/,
+    named: name => `"repeated-builds/${name}"`,
+    by: ["repeated-builds.test.ts"],
+  },
 ];
 
 for (const { folder, entry, named, by } of namedOneByOne) {

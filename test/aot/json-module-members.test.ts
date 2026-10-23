@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { describe, test } from "./supported";
 
 // What a JSON module exports beside `default`. Each key of the object is an export of its own, which holds the value the key had when
 // the file was loaded: a later store into the `default` object does not change it. The namespace is a module namespace object.
@@ -86,7 +86,11 @@ console.log(Object.keys(held).join(), held[10], held["2"], 10 in held, 3 in held
 const all = { ...programs, ...notInAnExecutable };
 
 describe.concurrent.each(Object.keys(all))("%s", entry => {
-  const tree = { ...files, [entry]: all[entry], "tsconfig.json": `{ "compilerOptions": { "resolveJsonModule": true, "module": "preserve", "moduleResolution": "bundler" } }` };
+  const tree = {
+    ...files,
+    [entry]: all[entry],
+    "tsconfig.json": `{ "compilerOptions": { "resolveJsonModule": true, "module": "preserve", "moduleResolution": "bundler" } }`,
+  };
 
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("json-module-members", tree);

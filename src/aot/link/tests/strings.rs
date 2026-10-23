@@ -3,9 +3,7 @@ use crate::ir::{Id, StringId, StringTable};
 use crate::link::LinkUnit;
 use crate::link::state::{MergedStrings, UnitMarks};
 use crate::link::strings::merge_strings;
-use crate::link::testing::{
-    Projects, forward, mark_everything, reverse, unit_in, with_test_files,
-};
+use crate::link::testing::{Projects, forward, mark_everything, reverse, unit_in, with_test_files};
 use crate::load::ProjectId;
 use crate::lower::{FragmentBuilder, ModuleFragment};
 use bun_sema::program::FileId;
@@ -28,7 +26,10 @@ fn mark_all(units: &[LinkUnit]) -> Vec<UnitMarks> {
 }
 
 fn find_local_id(units: &[LinkUnit], unit: usize, text: &[u8]) -> StringId {
-    units[unit].strings.find(text).expect("the unit has no such string")
+    units[unit]
+        .strings
+        .find(text)
+        .expect("the unit has no such string")
 }
 
 fn clear_mark(marks: &mut [UnitMarks], units: &[LinkUnit], unit: usize, text: &[u8]) {
@@ -152,12 +153,19 @@ fn unmarked_string_is_dropped() {
 #[test]
 fn name_class_and_builtin_name_carry_over() {
     with_test_files(|projects, _| {
-        let units = [create_unit(projects, 0, &[b"7", b"length", b"ordinary text"])];
+        let units = [create_unit(
+            projects,
+            0,
+            &[b"7", b"length", b"ordinary text"],
+        )];
         let merged = merge_strings(&units, &mark_all(&units), &forward);
         assert_contents_match(&units, &merged);
         let index = merged.table.find(b"7").expect("the string is retained");
         assert_eq!(merged.table.name_class(index), NameClass::Index);
-        let length = merged.table.find(b"length").expect("the string is retained");
+        let length = merged
+            .table
+            .find(b"length")
+            .expect("the string is retained");
         assert!(merged.table.builtin_name(length).is_some());
         let text = merged.table.find(b"ordinary text");
         let text = text.expect("the string is retained");

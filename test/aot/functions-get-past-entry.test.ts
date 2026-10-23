@@ -61,8 +61,21 @@ console.log("got", run());`,
 async function build(name: string, source: string, ...flags: string[]) {
   const file = name.startsWith("TypeScript") ? "main.ts" : "main.js";
   using folder = tempDir("aot-functions-get-past-entry", { [file]: source });
-  const result = await slot(() => spawned([bunExe(), "build", "--compile", "--aot", ...flags, "./" + file, "--outfile", join(String(folder), "main")], String(folder), bunEnv));
-  return { exitCode: result.exitCode, names: [...result.stderr.matchAll(/FunctionEndsInFirstBlock: .*; (it ends behind \w+|it ends at once) in function .* at .*main\.[jt]s:(\d+):\d+/g)].map(([, how, line]) => `${how}, line ${line}`) };
+  const result = await slot(() =>
+    spawned(
+      [bunExe(), "build", "--compile", "--aot", ...flags, "./" + file, "--outfile", join(String(folder), "main")],
+      String(folder),
+      bunEnv,
+    ),
+  );
+  return {
+    exitCode: result.exitCode,
+    names: [
+      ...result.stderr.matchAll(
+        /FunctionEndsInFirstBlock: .*; (it ends behind \w+|it ends at once) in function .* at .*main\.[jt]s:(\d+):\d+/g,
+      ),
+    ].map(([, how, line]) => `${how}, line ${line}`),
+  };
 }
 
 test.concurrent.each(Object.keys(named))("is named: %s", async name => {

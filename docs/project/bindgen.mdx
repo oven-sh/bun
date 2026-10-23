@@ -776,13 +776,13 @@ argument is one that needs no conversion (`b.any`, `b.any.variadic`, `b.bool`, `
 
 A few things a schema cannot say with bindgen's own keys:
 
-| In a schema                                  | What it says                                                                                     |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `b.any.returning("Promise", "Error")`        | what a result or a getter that the body makes itself can be                                      |
-| `pure: true` on a getter                     | the getter may be entered without a frame                                                        |
-| `lockedObjects: ["prototype"]` on a class    | under `--aot` no member of the prototype can be replaced, added or deleted                       |
-| `types`, `slots`, `stateHeap` on a class     | the TypeScript types that denote the class, its internal slots, the heap of its other state      |
-| any other key                                | a column of the table: `SignatureColumns`, `EntryColumns` in `src/codegen/builtins/vocabulary.ts` |
+| In a schema                               | What it says                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `b.any.returning("Promise", "Error")`     | what a result or a getter that the body makes itself can be                                       |
+| `pure: true` on a getter                  | the getter may be entered without a frame                                                         |
+| `lockedObjects: ["prototype"]` on a class | under `--aot` no member of the prototype can be replaced, added or deleted                        |
+| `types`, `slots`, `stateHeap` on a class  | the TypeScript types that denote the class, its internal slots, the heap of its other state       |
+| any other key                             | a column of the table: `SignatureColumns`, `EntryColumns` in `src/codegen/builtins/vocabulary.ts` |
 
 `b.any.returning(..)` is still `b.any` to Rust. Each word is `"string"`, `"number"`, `"int32"`, `"bigint"`, `"boolean"`,
 `"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself), the name of a class of a schema, or one

@@ -73,13 +73,19 @@ function rawStruct(record: SchemaRecord): string[] {
   const name = record.name;
   const isAbi = record.form === "abi";
   const fields = isAbi ? record.fields : record.wireFields;
-  const members = fields.map(field => `${rawTypeOf(field, record.form)} ${field.name}${rawInitializerOf(field, record.form)};`);
-  const comparison = isAbi ? ["", `${indentation}friend bool operator==(const ${name}&, const ${name}&) = default;`] : [];
+  const members = fields.map(
+    field => `${rawTypeOf(field, record.form)} ${field.name}${rawInitializerOf(field, record.form)};`,
+  );
+  const comparison = isAbi
+    ? ["", `${indentation}friend bool operator==(const ${name}&, const ${name}&) = default;`]
+    : [];
   const oneLine = `struct ${name} { ${members.join(" ")} };`;
   const fitsOneLine = !isAbi && oneLine.length <= lineWidth;
   const definition = fitsOneLine ? [oneLine] : [`struct ${name} {`, ...pack(members, indentation), ...comparison, "};"];
   const layout = layoutOf(record);
-  const offsetAssertions = fields.map((field, index) => `static_assert(offsetof(${name}, ${field.name}) == ${layout.offsets[index]});`);
+  const offsetAssertions = fields.map(
+    (field, index) => `static_assert(offsetof(${name}, ${field.name}) == ${layout.offsets[index]});`,
+  );
   return [...definition, layoutAssertion(name, layout.size, layout.alignment), ...pack(offsetAssertions, "")];
 }
 
@@ -146,8 +152,14 @@ function wireHeader(schema: Schema, hash: bigint): string[] {
 }
 
 function wireSectionsHeader(schema: Schema): string[] {
-  const lists = schema.lists.map(list => ({ name: list.name, type: sectionElementTypeOf(list.element), member: programListMemberName(list.name) }));
-  const recordLists = schema.lists.filter(holdsRecords).map(list => ({ name: list.name, type: sectionElementTypeOf(list.element) }));
+  const lists = schema.lists.map(list => ({
+    name: list.name,
+    type: sectionElementTypeOf(list.element),
+    member: programListMemberName(list.name),
+  }));
+  const recordLists = schema.lists
+    .filter(holdsRecords)
+    .map(list => ({ name: list.name, type: sectionElementTypeOf(list.element) }));
   const body = blocks(
     [
       "struct Sections {",
@@ -158,7 +170,10 @@ function wireSectionsHeader(schema: Schema): string[] {
       ...lists.map(list => `    std::span<const ${list.type}> ${list.name};`),
       "};",
     ],
-    recordLists.map(list => `template<> inline std::span<const ${list.type}> Sections::listOf<${list.type}>() const { return ${list.name}; }`),
+    recordLists.map(
+      list =>
+        `template<> inline std::span<const ${list.type}> Sections::listOf<${list.type}>() const { return ${list.name}; }`,
+    ),
     [
       "struct SectionVectors {",
       "    template<typename WireRecord> Vector<WireRecord>& listOf();",
@@ -167,18 +182,24 @@ function wireSectionsHeader(schema: Schema): string[] {
       ...lists.map(list => `    Vector<${list.type}> ${list.name};`),
       "};",
     ],
-    recordLists.map(list => `template<> inline Vector<${list.type}>& SectionVectors::listOf<${list.type}>() { return ${list.name}; }`),
+    recordLists.map(
+      list => `template<> inline Vector<${list.type}>& SectionVectors::listOf<${list.type}>() { return ${list.name}; }`,
+    ),
     [
       "template<typename Functor>",
       "void SectionVectors::forEachList(const Functor& functor) const",
       "{",
       ...lists.map(
-        list => `    functor(Typed::ProgramList::${list.member}, asByteSpan(${list.name}.span()), static_cast<uint32_t>(${list.name}.size()));`,
+        list =>
+          `    functor(Typed::ProgramList::${list.member}, asByteSpan(${list.name}.span()), static_cast<uint32_t>(${list.name}.size()));`,
       ),
       "}",
     ],
   );
-  return cppHeader(['"AOTWire.h"', "<expected>", "<span>", "<wtf/StdLibExtras.h>", "<wtf/Vector.h>"], inNamespace("Wire", body));
+  return cppHeader(
+    ['"AOTWire.h"', "<expected>", "<span>", "<wtf/StdLibExtras.h>", "<wtf/Vector.h>"],
+    inNamespace("Wire", body),
+  );
 }
 
 function abiHeader(schema: Schema): string[] {

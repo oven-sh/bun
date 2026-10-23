@@ -6,12 +6,18 @@ const virtual = `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path
 
 buildBothWays("compile/aot/aliases and odd names from the plugins of Bun.build", {
   "an alias for a built-in module, external": {
-    files: { "main.ts": `// @ts-nocheck\nimport { basename } from "my-path"; import os from "my-os"; const fs = require("my-fs"); console.log(basename("/a/b.txt"), typeof os.cpus, typeof fs.readFileSync);` },
-    plugins: [`build.onResolve({ filter: /^my-(path|os|fs)$/ }, (args: any) => ({ path: "node:" + args.path.slice(3), external: true }));`],
+    files: {
+      "main.ts": `// @ts-nocheck\nimport { basename } from "my-path"; import os from "my-os"; const fs = require("my-fs"); console.log(basename("/a/b.txt"), typeof os.cpus, typeof fs.readFileSync);`,
+    },
+    plugins: [
+      `build.onResolve({ filter: /^my-(path|os|fs)$/ }, (args: any) => ({ path: "node:" + args.path.slice(3), external: true }));`,
+    ],
     prints: "b.txt function function\n",
   },
   "an alias for a module of Bun, external": {
-    files: { "main.ts": `// @ts-nocheck\nimport { Database } from "my-sqlite"; const db = new Database(":memory:"); console.log(JSON.stringify(db.query("select 1 as one").get()));` },
+    files: {
+      "main.ts": `// @ts-nocheck\nimport { Database } from "my-sqlite"; const db = new Database(":memory:"); console.log(JSON.stringify(db.query("select 1 as one").get()));`,
+    },
     plugins: [`build.onResolve({ filter: /^my-sqlite$/ }, () => ({ path: "bun:sqlite", external: true }));`],
     prints: `{"one":1}\n`,
   },
@@ -27,7 +33,9 @@ buildBothWays("compile/aot/aliases and odd names from the plugins of Bun.build",
       "node_modules/picked/inner.js": `exports.inner = "inner";`,
       "node_modules/picked/deep.js": `exports.deep = "picked deep";`,
     },
-    plugins: [`build.onResolve({ filter: /^written(\\/|$)/ }, (args: any) => ({ path: join(folder, "node_modules/picked", args.path === "written" ? "index.js" : args.path.slice(8) + ".js") }));`],
+    plugins: [
+      `build.onResolve({ filter: /^written(\\/|$)/ }, (args: any) => ({ path: join(folder, "node_modules/picked", args.path === "written" ? "index.js" : args.path.slice(8) + ".js") }));`,
+    ],
     prints: "picked inner picked deep\n",
   },
   "a query string that a plugin takes": {
@@ -42,7 +50,9 @@ build.onLoad({ filter: /.*/, namespace: "raw" }, async (args: any) => { tell("on
     prints: `"export const value: number = 1;" 1 true\n`,
   },
   "the loader of a module in a namespace goes by the extension in its path": {
-    files: { "main.ts": `// @ts-nocheck\nimport json from "virtual:data.json"; import text from "virtual:note.txt"; import { typed } from "virtual:code.ts"; import toml from "virtual:nested/settings.toml"; console.log(json.n, text, typed, toml.n);` },
+    files: {
+      "main.ts": `// @ts-nocheck\nimport json from "virtual:data.json"; import text from "virtual:note.txt"; import { typed } from "virtual:code.ts"; import toml from "virtual:nested/settings.toml"; console.log(json.n, text, typed, toml.n);`,
+    },
     plugins: [
       `${virtual}
 const contents: Record<string, string> = { "data.json": '{ "n": 1 }', "note.txt": "text", "code.ts": "export const typed: string = 'typed';", "nested/settings.toml": "n = 2" };
@@ -56,12 +66,18 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => { tell("onLo
 import a from "virtual:with space"; import b from "virtual:UPPER/lower"; import c from "virtual:upper/LOWER"; import d from "virtual:ünï/código"; import e from "virtual:a%2fb"; import f from "virtual:a/b"; import g from "virtual:.."; import h from "virtual:a//b"; import i from "virtual:#hash?query"; import j from "virtual:C:\\\\x";
 console.log([a, b, c, d, e, f, g, h, i, j].join("|"));`,
     },
-    plugins: [`${virtual}\nbuild.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => { tell("onLoad", args); return { contents: "export default " + JSON.stringify(args.path) + ";", loader: "js" }; });`],
+    plugins: [
+      `${virtual}\nbuild.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => { tell("onLoad", args); return { contents: "export default " + JSON.stringify(args.path) + ";", loader: "js" }; });`,
+    ],
     prints: "with space|UPPER/lower|upper/LOWER|ünï/código|a%2fb|a/b|..|a//b|#hash?query|C:\\x\n",
   },
   "a very long name": {
-    files: { "main.ts": `// @ts-nocheck\nimport length from "virtual:${"long/".repeat(200)}${"x".repeat(400)}"; console.log(length);` },
-    plugins: [`${virtual}\nbuild.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents: "export default " + args.path.length + ";", loader: "js" }));`],
+    files: {
+      "main.ts": `// @ts-nocheck\nimport length from "virtual:${"long/".repeat(200)}${"x".repeat(400)}"; console.log(length);`,
+    },
+    plugins: [
+      `${virtual}\nbuild.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents: "export default " + args.path.length + ";", loader: "js" }));`,
+    ],
     prints: "1400\n",
   },
   "every way to import and to export again a module in a namespace": {
@@ -71,10 +87,14 @@ import fallback, { a, b as renamed } from "virtual:lib"; import * as all from "v
 const key = "a"; console.log(fallback, a, renamed, all[key], Object.keys(all).sort().join(), again, other, everything.b, required.a, late.default, late === all);`,
       "again.ts": `// @ts-nocheck\nexport * from "virtual:lib"; export { default as other } from "virtual:lib"; export * as everything from "virtual:lib";`,
     },
-    plugins: [`${virtual}\nlet loads = 0; build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "export const a = 'a" + ++loads + "', b = 'b'; export default 'fallback';", loader: "js" }));`],
+    plugins: [
+      `${virtual}\nlet loads = 0; build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "export const a = 'a" + ++loads + "', b = 'b'; export default 'fallback';", loader: "js" }));`,
+    ],
   },
   "a data: URL": {
-    files: { "main.ts": `// @ts-nocheck\nimport text from "data:text/plain,plain"; import { n } from "data:text/javascript,export const n = 1;"; console.log(text, n);` },
+    files: {
+      "main.ts": `// @ts-nocheck\nimport text from "data:text/plain,plain"; import { n } from "data:text/javascript,export const n = 1;"; console.log(text, n);`,
+    },
     plugins: [`build.onResolve({ filter: /^data:/ }, (args: any) => void tell("onResolve", args));`],
     interprets: true,
   },

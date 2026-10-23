@@ -219,12 +219,7 @@ function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
   }
 }
 
-function handleNumberResult(
-  stream: NativeReadable,
-  result: number,
-  chunk: Buffer | undefined,
-  isClosed: boolean,
-) {
+function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {
   if (result > 0) {
     const slice = chunk!.subarray(0, result);
     chunk = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;

@@ -91,6 +91,7 @@ fn write_layout_list(
         let optional = fields
             .iter()
             .filter(|field| field.flags.contains(ArrivalFieldFlags::IS_OPTIONAL));
+        #[allow(clippy::disallowed_methods)] // a word of the engine's, in ASCII
         let kind = String::from_utf8_lossy(engine.text(layout.kind));
         let base = layout.base_id().map(|base| u64::from(base.to_word()));
         json.begin_element();
@@ -98,7 +99,10 @@ fn write_layout_list(
         json.string("name", engine.text(layout.name));
         json.string("kind", &lower_camel_case(&kind));
         json.optional_number("base", base);
-        json.boolean("isDerived", layout.flags.contains(ArrivalLayoutFlags::IS_DERIVED));
+        json.boolean(
+            "isDerived",
+            layout.flags.contains(ArrivalLayoutFlags::IS_DERIVED),
+        );
         write_position(json, "position", position.as_ref());
         json.strings("fields", fields.iter().map(|field| engine.text(field.name)));
         json.strings("optional", optional.map(|field| engine.text(field.name)));
@@ -265,7 +269,8 @@ mod tests {
             site(1, NO_LOCATION, ABSENT_WORD),
         ];
         let document = written_sites(&sites, &[]);
-        let of_function = r#"{"number":0,"file":"src/a.ts","line":0,"column":0,"offset":0,"function":1,"#;
+        let of_function =
+            r#"{"number":0,"file":"src/a.ts","line":0,"column":0,"offset":0,"function":1,"#;
         let of_nothing = r#"{"number":1,"file":"","line":0,"column":0,"offset":0,"function":null,"#;
         assert!(document.find(of_function).is_some(), "{document}");
         assert!(document.find(of_nothing).is_some(), "{document}");

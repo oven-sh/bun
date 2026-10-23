@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -33,11 +33,18 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("reads under names made at run time evict each other until the table has grown, and no longer", async () => {
   using dir = tempDir("aot-hot-names-made-at-run-time", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
   expect(built.exitCode, built.stderr).toBe(0);
   const counted = async (shapes: number, namesPerShape: number, rounds: number) => {
     const path = join(String(dir), `counts-${shapes}-${namesPerShape}-${rounds}`);
-    const ran = await run([executable, String(shapes), String(namesPerShape), String(rounds)], String(dir), { ...bunEnv, BUN_JSC_aotCountsPath: path });
+    const ran = await run([executable, String(shapes), String(namesPerShape), String(rounds)], String(dir), {
+      ...bunEnv,
+      BUN_JSC_aotCountsPath: path,
+    });
     expect(ran).toEqual({ stdout: shapes * namesPerShape * rounds + "\n", stderr: "", exitCode: 0 });
     const counts = { evictions: 0, growths: 0 };
     for (const line of readFileSync(path, "utf8").split("\n")) {

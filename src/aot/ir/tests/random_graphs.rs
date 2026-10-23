@@ -375,7 +375,11 @@ fn run_body(body: &Body, walk: &[Choice]) -> Observation {
             BlockExit::WalkEnded => break,
             BlockExit::Threw => {
                 run.observation.throw_count += 1;
-                Some(block.handler().expect("a block with a throwing step is covered"))
+                Some(
+                    block
+                        .handler()
+                        .expect("a block with a throwing step is covered"),
+                )
             }
             BlockExit::ReachedTerminator => run.find_target(block.terminator()),
         };

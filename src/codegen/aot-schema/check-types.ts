@@ -211,7 +211,8 @@ function checkRecordShape(type: SchemaType, errors: ErrorList): void {
     if (variantCase.number === 0 && variantCase.fields.length > 0) {
       errors.add(variantCase.location, `${description} is the zero case and has fields`);
     }
-    if (variantCase.fields.some(field => field.isEngine)) errors.add(variantCase.location, `${description} has engine fields`);
+    if (variantCase.fields.some(field => field.isEngine))
+      errors.add(variantCase.location, `${description} has engine fields`);
     checkUniqueNames(variantCase.fields, description, errors);
   }
 }

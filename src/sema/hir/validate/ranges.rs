@@ -180,7 +180,12 @@ fn check_node_vectors(file: &File<'_>) -> CheckResult {
     check_vector(file, &file.params, NodeData::Param, check_param)?;
     let param_modifiers = &file.modifiers_of_params;
     check_vector(file, param_modifiers, NodeData::Param, check_modifier_list)?;
-    check_vector(file, &file.type_params, NodeData::TypeParam, check_type_param)?;
+    check_vector(
+        file,
+        &file.type_params,
+        NodeData::TypeParam,
+        check_type_param,
+    )?;
     check_vector(file, &file.members, NodeData::Member, check_member)?;
     check_vector(file, &file.props, NodeData::Prop, check_prop)?;
     for &(prop, modifiers) in file.modifiers_of_props.iter() {
@@ -190,10 +195,30 @@ fn check_node_vectors(file: &File<'_>) -> CheckResult {
     }
     check_vector(file, &file.var_decls, NodeData::VarDecl, check_var_decl)?;
     check_vector(file, &file.cases, NodeData::Case, check_case)?;
-    check_vector(file, &file.enum_members, NodeData::EnumMember, check_enum_member)?;
-    check_vector(file, &file.import_specs, NodeData::ImportSpec, check_import_spec)?;
-    check_vector(file, &file.export_specs, NodeData::ExportSpec, check_export_spec)?;
-    check_vector(file, &file.tuple_elems, NodeData::TupleElem, check_tuple_elem)?;
+    check_vector(
+        file,
+        &file.enum_members,
+        NodeData::EnumMember,
+        check_enum_member,
+    )?;
+    check_vector(
+        file,
+        &file.import_specs,
+        NodeData::ImportSpec,
+        check_import_spec,
+    )?;
+    check_vector(
+        file,
+        &file.export_specs,
+        NodeData::ExportSpec,
+        check_export_spec,
+    )?;
+    check_vector(
+        file,
+        &file.tuple_elems,
+        NodeData::TupleElem,
+        check_tuple_elem,
+    )?;
     check_vector(file, &file.modifiers, NodeData::Modifier, check_modifier)
 }
 
@@ -358,7 +383,10 @@ fn check_stmt(checker: RangeChecker<'_, '_>, stmt: &Stmt) -> CheckResult {
             checker.check_optional_id(update)?;
             checker.check_id(body)
         }
-        StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
+        StmtKind::ForIn { left, expr, body }
+        | StmtKind::ForOf {
+            left, expr, body, ..
+        } => {
             checker.check_id(left)?;
             checker.check_id(expr)?;
             checker.check_id(body)
@@ -467,6 +495,7 @@ fn check_param(checker: RangeChecker<'_, '_>, param: &Param) -> CheckResult {
     checker.check_optional_id(param.default)
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // what `check_vector` calls
 fn check_modifier_list(checker: RangeChecker<'_, '_>, modifiers: &Span<ModifierId>) -> CheckResult {
     checker.check_span(*modifiers)
 }

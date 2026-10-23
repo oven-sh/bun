@@ -21,16 +21,36 @@ describe.skipIf(!!unsupported)("compile/aot/assembled-patterns-in-code", () => {
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   // TODO: the source that the build puts together is in the executable as one text.
-  test.todo("the constants of a run of characters do not spell a source that only the running program spells", async () => {
-    await slot(async () => {
-      const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--minify", "--no-compile-function-source", "./entry.ts", "--outfile", executable], folder, bunEnv));
-      const run = await spawned([executable], folder, bunEnv);
-      const bytes = readFileSync(executable);
-      rmSync(executable);
-      expect(run.stdout).toBe("true false true true\n");
-      expect(bytes.includes("thisOneIsSpelled", 0, "latin1")).toBe(true);
-      expect(bytes.includes("sixteenLettersAb", 0, "latin1")).toBe(false);
-    });
-  }, 600_000);
+  test.todo(
+    "the constants of a run of characters do not spell a source that only the running program spells",
+    async () => {
+      await slot(async () => {
+        const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
+        built(
+          await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              "--minify",
+              "--no-compile-function-source",
+              "./entry.ts",
+              "--outfile",
+              executable,
+            ],
+            folder,
+            bunEnv,
+          ),
+        );
+        const run = await spawned([executable], folder, bunEnv);
+        const bytes = readFileSync(executable);
+        rmSync(executable);
+        expect(run.stdout).toBe("true false true true\n");
+        expect(bytes.includes("thisOneIsSpelled", 0, "latin1")).toBe(true);
+        expect(bytes.includes("sixteenLettersAb", 0, "latin1")).toBe(false);
+      });
+    },
+    600_000,
+  );
 });

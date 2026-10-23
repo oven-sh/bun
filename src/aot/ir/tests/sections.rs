@@ -39,7 +39,10 @@ fn push_records_returns_span_and_advances_by_count() {
         count: 2,
     };
     assert_eq!(first, first_span);
-    assert_eq!(writer.next_index(ProgramList::Strings), FIRST_STRING as u32 + 2);
+    assert_eq!(
+        writer.next_index(ProgramList::Strings),
+        FIRST_STRING as u32 + 2
+    );
     assert_eq!(writer.count_of(ProgramList::Strings), 2);
 
     let second = writer.push_records(ProgramList::Strings, &string_records(1), 1);
@@ -75,7 +78,10 @@ fn lists_do_not_disturb_each_other() {
     assert_eq!(writer.words_of(ProgramList::Words), [11, 12, 13, 14]);
     assert_eq!(writer.words_of(ProgramList::Strings), string_records(1));
     assert_eq!(writer.next_index(ProgramList::Words), 4);
-    assert_eq!(writer.next_index(ProgramList::Strings), FIRST_STRING as u32 + 1);
+    assert_eq!(
+        writer.next_index(ProgramList::Strings),
+        FIRST_STRING as u32 + 1
+    );
     assert_eq!(writer.count_of(ProgramList::Code), 0);
     assert_eq!(writer.next_index(ProgramList::Bytes), FIRST_BYTE as u32);
 }
@@ -94,7 +100,10 @@ fn push_bytes_borrows_and_counts_bytes() {
     assert_eq!(first_span, span(0, first.len()));
     assert_eq!(empty_span, span(first.len(), 0));
     assert_eq!(second_span, span(first.len(), second.len()));
-    assert_eq!(writer.count_of(ProgramList::Bytes), (first.len() + second.len()) as u64);
+    assert_eq!(
+        writer.count_of(ProgramList::Bytes),
+        (first.len() + second.len()) as u64
+    );
     assert!(writer.words_of(ProgramList::Bytes).is_empty());
 
     let blobs = writer.blobs();

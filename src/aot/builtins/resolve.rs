@@ -8,9 +8,9 @@ mod module_values;
 mod paths;
 mod resolver;
 mod runtime_dialect;
-mod walked_texts;
 #[cfg(test)]
 mod tests;
+mod walked_texts;
 
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
@@ -139,7 +139,9 @@ impl ImportTargets {
     }
 
     fn has_site(&self, site: ImportSiteKind) -> bool {
-        self.targets.binary_search_by_key(&site, |target| target.0).is_ok()
+        self.targets
+            .binary_search_by_key(&site, |target| target.0)
+            .is_ok()
     }
 
     fn iter(&self) -> impl Iterator<Item = (ImportSiteKind, RuntimeModule)> + '_ {
@@ -250,7 +252,9 @@ impl ResolvedBuiltins {
 
     pub fn module_object_mention(&self, expr: ExprId) -> Option<ModuleObjectMention> {
         let mentions = &self.module_object_mentions;
-        let at = mentions.binary_search_by_key(&expr, |mention| mention.expr).ok()?;
+        let at = mentions
+            .binary_search_by_key(&expr, |mention| mention.expr)
+            .ok()?;
         Some(mentions[at])
     }
 

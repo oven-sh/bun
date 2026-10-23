@@ -60,7 +60,11 @@ pub(crate) fn lower_condition(
         return;
     }
     lowering.set_position(position);
-    if lowering.file.decisions().is_truthy_without_effects(expression) {
+    if lowering
+        .file
+        .decisions()
+        .is_truthy_without_effects(expression)
+    {
         // `if (module)`: nothing is read, so that the test makes no module object.
         let value = lowering.builder.boolean(true);
         branch_on_truthiness(lowering, None, value, if_true, if_false);
@@ -160,7 +164,9 @@ pub(in crate::lower) fn try_lower_test_value(
             })
         }
         LeafTest::TypeofObject { .. } => Some(lower_condition_as_value(lowering, expression)),
-        LeafTest::Truthiness | LeafTest::NumberQuestion { .. } | LeafTest::Comparison { .. } => None,
+        LeafTest::Truthiness | LeafTest::NumberQuestion { .. } | LeafTest::Comparison { .. } => {
+            None
+        }
     }
 }
 
@@ -599,7 +605,8 @@ pub(in crate::lower) fn jump_by_typeof(
     let mut remaining = value;
     if let Some(on_object) = find_target(known::object) {
         let on_function = find_target(known::function).unwrap_or(otherwise);
-        let split = split_expression_on_type(lowering, Some(operand), remaining, TypeTable::FUNCTION);
+        let split =
+            split_expression_on_type(lowering, Some(operand), remaining, TypeTable::FUNCTION);
         remaining = jump_if_taken(lowering, split, on_function);
         let types = &mut lowering.file.fragment.types;
         let object_or_null = types.union(TypeTable::OBJECT, TypeTable::NULL);

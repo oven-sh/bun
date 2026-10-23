@@ -110,12 +110,14 @@ function recordSite(state: ParseState, key: string, site: string) {
 
 function argumentsOf(line: Line, minimum: number, maximum = Infinity): string[] {
   const count = line.words.length - 1;
-  if (line.text !== undefined || count < minimum || count > maximum) fail(`wrong number of words after ${line.words[0]}`, line.site);
+  if (line.text !== undefined || count < minimum || count > maximum)
+    fail(`wrong number of words after ${line.words[0]}`, line.site);
   return line.words.slice(1);
 }
 
 function parseText(line: Line, wordCount: number): string {
-  if (line.text === undefined || line.words.length !== wordCount) fail(`wrong number of words in ${line.words[0]}`, line.site);
+  if (line.text === undefined || line.words.length !== wordCount)
+    fail(`wrong number of words in ${line.words[0]}`, line.site);
   let text: unknown;
   try {
     text = JSON.parse(line.text);
@@ -146,13 +148,15 @@ function setForFormats(values: NumberByFormat, value: number, format: string | u
 
 function parseMinimum(feature: Feature, line: Line) {
   const [bytes, format] = argumentsOf(line, 1, 2);
-  if (!/^\d+$/.test(bytes!) || !Number.isSafeInteger(Number(bytes))) fail(`minimum is not a byte count: ${bytes}`, line.site);
+  if (!/^\d+$/.test(bytes!) || !Number.isSafeInteger(Number(bytes)))
+    fail(`minimum is not a byte count: ${bytes}`, line.site);
   setForFormats(feature.minimumBytes, Number(bytes), format, line);
 }
 
 function parseCxxFunction(feature: Feature, line: Line) {
   const [hint, pattern] = argumentsOf(line, 2, 2);
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(hint!)) fail(`cxx-function starts with an identifier that every symbol it means contains: ${hint}`, line.site);
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(hint!))
+    fail(`cxx-function starts with an identifier that every symbol it means contains: ${hint}`, line.site);
   try {
     new RegExp(pattern!);
   } catch {
@@ -172,7 +176,14 @@ function parseCFunctions(feature: Feature, line: Line) {
   }
 }
 
-function addMembers(state: ParseState, list: FeatureName[], attribute: string, owner: string, words: string[], site: string) {
+function addMembers(
+  state: ParseState,
+  list: FeatureName[],
+  attribute: string,
+  owner: string,
+  words: string[],
+  site: string,
+) {
   for (const word of words) {
     list.push(word);
     recordSite(state, `${attribute}\0${owner}\0${word}`, site);
@@ -207,7 +218,8 @@ function parseFeatureAttribute(feature: Feature, seen: Set<string>, line: Line) 
 
 function parseSaves(trimFeature: TrimFeature, line: Line) {
   const [linux, macos] = argumentsOf(line, 2, 2) as [string, string];
-  for (const size of [linux, macos]) if (!/^\d+(\.\d+)?$/.test(size)) fail(`saves is not a decimal number: ${size}`, line.site);
+  for (const size of [linux, macos])
+    if (!/^\d+(\.\d+)?$/.test(size)) fail(`saves is not a decimal number: ${size}`, line.site);
   trimFeature.saves = { linux: Number(linux), macos: Number(macos) };
 }
 
@@ -233,7 +245,8 @@ function parseProfileAttribute(profile: Profile, line: Line) {
   const keyword = line.words[0];
   if (keyword !== "minimum-cut-ratio") fail(`unknown profile attribute: ${keyword ?? line.text}`, line.site);
   const [percent, format] = argumentsOf(line, 1, 2);
-  if (!/^\d+$/.test(percent!) || Number(percent) > 100) fail(`minimum-cut-ratio is not a percentage: ${percent}`, line.site);
+  if (!/^\d+$/.test(percent!) || Number(percent) > 100)
+    fail(`minimum-cut-ratio is not a percentage: ${percent}`, line.site);
   setForFormats(profile.minimumCutRatio, Number(percent), format, line);
 }
 
@@ -255,7 +268,8 @@ function parseAttribute(state: ParseState, line: Line) {
 
 function nextFeatureIndex(state: ParseState, file: FeatureFile, line: Line): number {
   if (file !== "engine.def") return firstEmbedderFeatureIndex + state.embedderFeatureCount++;
-  if (state.engineFeatureCount === firstEmbedderFeatureIndex) fail(`more than ${firstEmbedderFeatureIndex} engine features`, line.site);
+  if (state.engineFeatureCount === firstEmbedderFeatureIndex)
+    fail(`more than ${firstEmbedderFeatureIndex} engine features`, line.site);
   return state.engineFeatureCount++;
 }
 
@@ -287,7 +301,13 @@ function parseTrimFeatureDeclaration(state: ParseState, file: FeatureFile, line:
   const [name, colon, ...members] = argumentsOf(line, 3);
   checkName(name, trimFeatureNamePattern, line);
   if (colon !== ":") fail("trim-feature needs a colon after its name", line.site);
-  const trimFeature: TrimFeature = { name: name!, features: [], about: "", also: [], rustName: trimFeatureRustName(name!) };
+  const trimFeature: TrimFeature = {
+    name: name!,
+    features: [],
+    about: "",
+    also: [],
+    rustName: trimFeatureRustName(name!),
+  };
   addMembers(state, trimFeature.features, "trim-feature", trimFeature.name, members, line.site);
   state.trimFeatures.push(trimFeature);
   recordSite(state, `trim-feature\0${trimFeature.name}`, line.site);
@@ -303,7 +323,8 @@ function parseIcuDataDeclaration(state: ParseState, file: FeatureFile, line: Lin
   if (exceptWindows) colon++;
   const byLocale = words[colon] === "by-locale";
   if (byLocale) colon++;
-  if (words[colon] !== ":") fail("icu-data takes its class, except-windows, by-locale and a colon, in that order", line.site);
+  if (words[colon] !== ":")
+    fail("icu-data takes its class, except-windows, by-locale and a colon, in that order", line.site);
   const icuDataLine: IcuDataLine = { itemClass, exceptWindows, byLocale, features: [] };
   addMembers(state, icuDataLine.features, "icu-data", itemClass, words.slice(colon + 1), line.site);
   state.icuData.push(icuDataLine);
@@ -399,13 +420,18 @@ function checkLimits(features: Feature[], trimFeatures: TrimFeature[], origin: O
   const indexes = new Set<number>();
   for (const { name, index, isEngine } of features) {
     const site = siteOf(origin, `feature\0${name}`);
-    if (index < 0 || index >= featureIndexLimit) fail(`feature ${name} has index ${index}, limit ${featureIndexLimit}`, site);
+    if (index < 0 || index >= featureIndexLimit)
+      fail(`feature ${name} has index ${index}, limit ${featureIndexLimit}`, site);
     if (indexes.has(index)) fail(`two features have index ${index}`, site);
-    if (isEngine !== index < firstEmbedderFeatureIndex) fail(`isEngine of feature ${name} disagrees with index ${index}`, site);
+    if (isEngine !== index < firstEmbedderFeatureIndex)
+      fail(`isEngine of feature ${name} disagrees with index ${index}`, site);
     indexes.add(index);
   }
   if (trimFeatures.length > trimFeatureLimit) {
-    fail(`more than ${trimFeatureLimit} trim features`, siteOf(origin, `trim-feature\0${trimFeatures[trimFeatureLimit]!.name}`));
+    fail(
+      `more than ${trimFeatureLimit} trim features`,
+      siteOf(origin, `trim-feature\0${trimFeatures[trimFeatureLimit]!.name}`),
+    );
   }
 }
 
@@ -426,7 +452,8 @@ function checkDeclaredOnce({ features, trimFeatures, icuData, profiles }: Featur
 function checkLanguageGroups(groups: string[][], origin: Origin) {
   const seen = new Set<string>();
   for (const language of groups.flat()) {
-    if (seen.has(language)) fail(`icu-language-group lists ${language} twice`, siteOf(origin, `icu-language\0${language}`, 1));
+    if (seen.has(language))
+      fail(`icu-language-group lists ${language} twice`, siteOf(origin, `icu-language\0${language}`, 1));
     seen.add(language);
   }
 }
@@ -435,12 +462,19 @@ function checkRustNames(items: { name: string; rustName: string }[], kind: strin
   const names = new Map<string, string>();
   for (const { name, rustName } of items) {
     const first = names.get(rustName);
-    if (first !== undefined) fail(`${first} and ${name} have the same Rust name, ${rustName}`, siteOf(origin, `${kind}\0${name}`));
+    if (first !== undefined)
+      fail(`${first} and ${name} have the same Rust name, ${rustName}`, siteOf(origin, `${kind}\0${name}`));
     names.set(rustName, name);
   }
 }
 
-function checkMembers(members: FeatureName[], attribute: string, owner: string, known: Map<FeatureName, number>, origin: Origin) {
+function checkMembers(
+  members: FeatureName[],
+  attribute: string,
+  owner: string,
+  known: Map<FeatureName, number>,
+  origin: Origin,
+) {
   const seen = new Set<FeatureName>();
   for (const member of members) {
     const key = `${attribute}\0${owner}\0${member}`;
@@ -468,7 +502,10 @@ function computeHash({ features, trimFeatures, icuData, icuLanguageGroups }: Fea
   return hash;
 }
 
-function finishModel({ features, trimFeatures, icuData, icuLanguageGroups, profiles }: FeatureLists, origin: Origin): FeatureModel {
+function finishModel(
+  { features, trimFeatures, icuData, icuLanguageGroups, profiles }: FeatureLists,
+  origin: Origin,
+): FeatureModel {
   const lists: FeatureLists = { features, trimFeatures, icuData, icuLanguageGroups, profiles };
   features.sort((a, b) => a.index - b.index);
   checkLimits(features, trimFeatures, origin);
@@ -530,7 +567,8 @@ interface JsonContext {
   owner: string;
 }
 
-const isRecord = (value: unknown): value is JsonRecord => typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 const isString = (value: unknown): value is string => typeof value === "string";
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
 const isInteger = (value: unknown): value is number => Number.isInteger(value);
@@ -541,13 +579,22 @@ const isCxxFunctionList = (value: unknown): value is CxxFunctionPattern[] =>
 const isLanguageGroupList = (value: unknown): value is string[][] => isArray(value) && value.every(isStringList);
 const isNumberByFormat = (value: unknown, limit: number): value is NumberByFormat =>
   isRecord(value) &&
-  Object.entries(value).every(([format, number]) => isObjectFormat(format) && isInteger(number) && number >= 0 && number <= limit);
-const isMinimumBytes = (value: unknown): value is Feature["minimumBytes"] => isNumberByFormat(value, Number.MAX_SAFE_INTEGER);
+  Object.entries(value).every(
+    ([format, number]) => isObjectFormat(format) && isInteger(number) && number >= 0 && number <= limit,
+  );
+const isMinimumBytes = (value: unknown): value is Feature["minimumBytes"] =>
+  isNumberByFormat(value, Number.MAX_SAFE_INTEGER);
 const isMinimumCutRatio = (value: unknown): value is Profile["minimumCutRatio"] => isNumberByFormat(value, 100);
 const isSaves = (value: unknown): value is NonNullable<TrimFeature["saves"]> =>
   isRecord(value) && typeof value.linux === "number" && typeof value.macos === "number";
 
-function readMember<T>(record: JsonRecord, member: string, context: JsonContext, isValid: (value: unknown) => value is T, fallback?: T): T {
+function readMember<T>(
+  record: JsonRecord,
+  member: string,
+  context: JsonContext,
+  isValid: (value: unknown) => value is T,
+  fallback?: T,
+): T {
   const value = record[member];
   if (value === undefined && fallback !== undefined) return fallback;
   if (!isValid(value)) fail(`${context.owner}.${member} is missing or has the wrong type`, context.path);
@@ -573,7 +620,9 @@ function readFeature(value: unknown, context: JsonContext): Feature {
     minimumBytes: readMember(record, "minimumBytes", context, isMinimumBytes, {}),
     exports: readMember(record, "exports", context, isBoolean, false),
     ...(record.cFunctions === undefined ? {} : { cFunctions: readMember(record, "cFunctions", context, isStringList) }),
-    ...(record.cxxFunctions === undefined ? {} : { cxxFunctions: readMember(record, "cxxFunctions", context, isCxxFunctionList) }),
+    ...(record.cxxFunctions === undefined
+      ? {}
+      : { cxxFunctions: readMember(record, "cxxFunctions", context, isCxxFunctionList) }),
   };
 }
 
@@ -609,7 +658,12 @@ function readProfile(value: unknown, context: JsonContext): Profile {
   };
 }
 
-function readList<T>(json: JsonRecord, member: string, path: string, readItem: (value: unknown, context: JsonContext) => T): T[] {
+function readList<T>(
+  json: JsonRecord,
+  member: string,
+  path: string,
+  readItem: (value: unknown, context: JsonContext) => T,
+): T[] {
   const items = readMember(json, member, { path, owner: "model" }, isArray, []);
   return items.map((item, index) => readItem(item, { path, owner: `${member}[${index}]` }));
 }
@@ -636,7 +690,8 @@ export function readFeatureModel(path: string): FeatureModel {
   const model = finishModel(lists, { path, sites: new Map() });
   if (json.hash !== undefined) {
     const written = readMember(json, "hash", context, isString);
-    if (written !== hashText(model.hash)) fail(`hash ${written} does not match the model, ${hashText(model.hash)}`, path);
+    if (written !== hashText(model.hash))
+      fail(`hash ${written} does not match the model, ${hashText(model.hash)}`, path);
   }
   return model;
 }

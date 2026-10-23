@@ -3854,6 +3854,7 @@ pub(crate) mod __gated_printer {
                         if let Some(inlined) =
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
+                            self.add_source_mapping(expr.loc);
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
@@ -3916,6 +3917,7 @@ pub(crate) mod __gated_printer {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
+                                    self.add_source_mapping(expr.loc);
                                     self.print_inlined_enum(value, str.slice8(), level);
                                     return;
                                 }

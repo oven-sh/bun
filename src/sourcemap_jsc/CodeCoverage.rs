@@ -892,7 +892,7 @@ impl ByteRangeMapping {
             };
             let reached = count_at(decision.offset);
             // genhtml rejects a `BRDA` on a line with no `DA`, such as a lone `{` of a pattern.
-            lines.add_if_not_listed(line as usize, reached);
+            lines.add(line as usize, reached);
 
             let mut index = 0;
             let mut push = |hits: u32| {
@@ -923,7 +923,7 @@ impl ByteRangeMapping {
         branches
     }
 
-    /// For a `// @bun` file with a source map. `None`: the source does not have the decision.
+    /// For a `// @bun` file with a source map. `None`: the map does not say where the decision is.
     fn original_line_of_decision(
         &self,
         source_map: &ParsedSourceMap,
@@ -933,17 +933,15 @@ impl ByteRangeMapping {
         let position = |at: bun_sourcemap::LineColumnOffset| (at.lines, at.columns);
         let mapping_at = |(line, column)| source_map.find_mapping(line, column);
         let start = self.line_and_column_of(decision);
+        let before = mapping_at(start)?;
+        // In the `E ||= {}` that `bun build` makes of an `enum`, `{}` has the position of `E`.
         let branch = mapping_at(self.line_and_column_of(first_branch))
             .filter(|mapping| position(mapping.generated) > start)?;
-        // The `{` of a pattern has no mapping, and the one before it is of other code.
-        let line = match mapping_at(start).filter(|mapping| position(mapping.generated) == start) {
-            Some(decision) if position(branch.original) <= position(decision.original) => {
-                return None;
-            }
-            Some(decision) => decision.original.lines,
-            None => branch.original.lines,
-        };
-        u32::try_from(line.zero_based()).ok()
+        // The `{` of a pattern has no mapping. It is between these two, so on a line they share.
+        if position(before.generated) != start && before.original.lines != branch.original.lines {
+            return None;
+        }
+        u32::try_from(before.original.lines.zero_based()).ok()
     }
 
     /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: the `{`
@@ -1200,20 +1198,11 @@ impl ExecutionCounts {
 struct LineCounts(Vec<Option<u32>>);
 
 impl LineCounts {
-    fn hits_of(&mut self, line: usize) -> &mut Option<u32> {
+    fn add(&mut self, line: usize, count: u32) {
         if line >= self.0.len() {
             self.0.resize(line + 1, None);
         }
-        &mut self.0[line]
-    }
-
-    fn add(&mut self, line: usize, count: u32) {
-        let hits = self.hits_of(line);
-        *hits = (*hits).max(Some(count));
-    }
-
-    fn add_if_not_listed(&mut self, line: usize, count: u32) {
-        self.hits_of(line).get_or_insert(count);
+        self.0[line] = self.0[line].max(Some(count));
     }
 
     /// Executable lines, and those of them that ran.

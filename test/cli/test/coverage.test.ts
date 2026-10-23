@@ -1447,7 +1447,7 @@ export function never(v) {
   });
 
   test.concurrent.each(["transpiled", "// @bun", "// @bun with a source map"] as const)(
-    "a pattern with a default is on its own line: %s",
+    "a pattern with a default does not count for the code before it: %s",
     async mode => {
       const { record, above, exitCode } = await coverageOfLib(
         mode,
@@ -1459,21 +1459,33 @@ export function never(v) {
 ) {
   return b;
 }
+export function g(never = () => {
+  return 1; }, {
+  b } = {}) {
+  return b;
+}
 `,
         `
           import { test } from "bun:test";
-          import { f } from "./lib.js";
+          import { f, g } from "./lib.js";
           test("lib", () => {
             f(null);
             f(null, { b: 2 });
+            g(null);
+            g(null, { b: 2 });
           });
         `,
       );
+      // A source map has no mapping for the { of a pattern. What is before it and after it is on other lines.
+      const withSourceMap = mode === "// @bun with a source map";
       expect(decisionsOf(record)).toEqual([
         [2 + above, [0, 2]],
-        [5 + above, [1, 1]],
+        ...(withSourceMap ? [] : [[5 + above, [1, 1]]]),
+        [9 + above, [0, 2]],
+        ...(withSourceMap ? [] : [[10 + above, [1, 1]]]),
       ]);
       expect(record).toContain(`DA:${3 + above},0\n`);
+      expect(record).toContain(`DA:${10 + above},${withSourceMap ? 0 : 2}\n`);
       expect(exitCode).toBe(0);
     },
   );
@@ -1550,6 +1562,58 @@ export function inlined(v, o, t = M) { // [3,0]
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent.each(["", "--minify-syntax"])(
+    "a bundle with a source map has the decisions of its sources: bun build %s",
+    async flag => {
+      using dir = tempDir("cov-branches-bundle", {
+        "src/level.ts": `export enum Level { Info, Warn }\n`,
+        "src/lib.ts": `import { Level } from "./level.ts";
+export function imported(level = Level.Info) {
+  return level;
+}
+export function both(v: boolean) {
+  return v ? Level.Info : Level["Warn"];
+}
+export function local(ok: boolean, value: number) {
+  const list = [value];
+  return ok ? list : null;
+}
+export const levels = Level;
+`,
+        "lib.test.ts": `
+          import { test } from "bun:test";
+          import { imported, both, local } from "./lib.js";
+          test("lib", () => { imported(); imported(1); both(true); both(false); local(true, 1); local(false, 1); });
+        `,
+      });
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/lib.ts", "--target=bun", "--sourcemap=linked", "--outdir=.", flag].filter(
+          Boolean,
+        ),
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      expect(await build.exited).toBe(0);
+      expect(readFileSync(path.join(String(dir), "lib.js"), "utf-8")).toContain("Level ||= {}");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      expect(decisionsOf(recordOf(String(dir), "lib.js"))).toEqual([
+        [2, [1, 1]],
+        [6, [1, 1]],
+        [10, [1, 1]],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent.each(["lib.tsx", "bundle.js"])(
     "code that the transpiler generates adds no branches: %s",

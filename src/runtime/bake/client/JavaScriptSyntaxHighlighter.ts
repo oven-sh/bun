@@ -397,63 +397,56 @@ export class DraculaSyntaxHighlighter {
 
   private lexString(): Token | null {
     const quote = this.peek();
-    if (quote !== '"' && quote !== "'" && quote !== "`") return null;
-
-    if (quote === "`") {
-      return this.lexTemplateString();
-    }
+    if (quote !== '"' && quote !== "'") return null;
 
     const value = this.consumeString(quote);
     return this.createToken(TokenType.String, value, TokenClass.String);
   }
 
-  private lexTemplateString(): Token | null {
-    const tokens: Token[] = [];
+  private *lexTemplateString(): Generator<Token> {
     let str = this.consume(); // Initial backtick
 
     while (this.pos < this.text.length) {
       const char = this.peek();
-      const prevChar = this.peek(-1);
 
-      if (char === "`" && prevChar !== "\\") {
+      if (char === "\\") {
+        str += this.consume(2);
+        continue;
+      }
+
+      if (char === "`") {
         str += this.consume();
-        tokens.push(this.createToken(TokenType.TemplateString, str, TokenClass.String));
         break;
       }
 
-      if (char === "$" && this.peek(1) === "{" && prevChar !== "\\") {
+      if (char === "$" && this.peek(1) === "{") {
         if (str) {
-          tokens.push(this.createToken(TokenType.TemplateString, str, TokenClass.String));
+          yield this.createToken(TokenType.TemplateString, str, TokenClass.String);
           str = "";
         }
+        yield this.createToken(TokenType.TemplateInterpolation, this.consume(2), TokenClass.Operator);
 
-        const interpStart = this.consume(2);
-        tokens.push(this.createToken(TokenType.TemplateInterpolation, interpStart, TokenClass.Operator));
-
-        let braceCount = 1;
-        while (this.pos < this.text.length && braceCount > 0) {
+        // `{` and `}` always lex as single-character punctuators.
+        let braceDepth = 1;
+        while (this.pos < this.text.length) {
           const c = this.peek();
-          if (c === "{") braceCount++;
-          if (c === "}") braceCount--;
-
-          if (braceCount === 0) {
-            tokens.push(this.createToken(TokenType.TemplateInterpolation, this.consume(), TokenClass.Operator));
-          } else {
-            const token = this.nextToken();
-            if (token) tokens.push(token);
+          if (c === "{") {
+            braceDepth++;
+          } else if (c === "}" && --braceDepth === 0) {
+            yield this.createToken(TokenType.TemplateInterpolation, this.consume(), TokenClass.Operator);
+            break;
           }
+          yield* this.lexToken();
         }
         continue;
       }
 
-      if (char === "\\") {
-        str += this.consume(2);
-      } else {
-        str += this.consume();
-      }
+      str += this.consume();
     }
 
-    return tokens[0]; // Return first token, others will be picked up in next iterations
+    if (str) {
+      yield this.createToken(TokenType.TemplateString, str, TokenClass.String);
+    }
   }
 
   private lexComment(): Token | null {
@@ -494,8 +487,13 @@ export class DraculaSyntaxHighlighter {
     return null;
   }
 
-  private nextToken(): Token | null {
-    if (this.pos >= this.text.length) return null;
+  private *lexToken(): Generator<Token> {
+    if (this.pos >= this.text.length) return;
+
+    if (this.peek() === "`") {
+      yield* this.lexTemplateString();
+      return;
+    }
 
     const token =
       this.lexWhitespace() ||
@@ -509,17 +507,16 @@ export class DraculaSyntaxHighlighter {
       this.createToken(TokenType.Operator, this.consume(), TokenClass.Operator);
 
     // Reset extends/implements state after non-whitespace tokens
-    if (token?.type !== TokenType.Whitespace && token?.type !== TokenType.Newline) {
+    if (token.type !== TokenType.Whitespace && token.type !== TokenType.Newline) {
       this.isAfterExtendsOrImplements = false;
     }
 
-    return token;
+    yield token;
   }
 
   private *tokenize(): Generator<Token> {
     while (this.pos < this.text.length) {
-      const token = this.nextToken();
-      if (token) yield token;
+      yield* this.lexToken();
     }
   }
 

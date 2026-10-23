@@ -1957,17 +1957,29 @@ pub mod bv2_impl {
             }
         }
 
-        /// An error is also in the log of the build, and the build fails on it.
-        fn ensure_client_transpiler(&mut self) -> Result<(), Error> {
+        /// An error is also in the log of the build, and the build fails on it. The caller skips `html`.
+        fn ensure_client_transpiler(
+            &mut self,
+            html: &[u8],
+            import: Option<(&bun_ast::Source, bun_ast::Range)>,
+        ) -> Result<(), Error> {
             if self.client_transpiler.is_none() {
                 if let Err(err) = self.initialize_client_transpiler() {
-                    self.transpiler.log_mut().add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
+                    let (source, range) = match import {
+                        Some((source, range)) => (Some(source), range),
+                        None => (None, bun_ast::Range::NONE),
+                    };
+                    self.transpiler.log_mut().add_range_error_fmt_with_note(
+                        source,
+                        range,
                         format_args!(
-                            "Failed to bundle an HTML file for the browser: {}",
-                            err.name()
+                            "Could not bundle \"{}\" for the browser: a \"define\" value did not parse for its scripts",
+                            bstr::BStr::new(html)
                         ),
+                        format_args!(
+                            "The scripts of an HTML file get a define table of their own. Each value is parsed again for it, with less stack than the first time. Use a value with less nesting."
+                        ),
+                        range,
                     );
                     return Err(err);
                 }
@@ -3582,7 +3594,7 @@ pub mod bv2_impl {
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            for entry_point in data {
+            'entry_points: for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                     entry_point,
@@ -3618,7 +3630,9 @@ pub mod bv2_impl {
                         if let Some(path) = resolved.path_const() {
                             if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
                                 if loader == Loader::Html {
-                                    self.ensure_client_transpiler()?;
+                                    if self.ensure_client_transpiler(entry_point, None).is_err() {
+                                        continue 'entry_points;
+                                    }
                                     break 'brk Target::Browser;
                                 }
                             }
@@ -7319,7 +7333,9 @@ pub mod bv2_impl {
                 }
 
                 if is_html_entrypoint {
-                    if let Err(err) = self.ensure_client_transpiler() {
+                    let import = Some((source, import_record.range));
+                    if let Err(err) = self.ensure_client_transpiler(import_record.path.text, import)
+                    {
                         last_error = Some(err);
                         continue;
                     }
@@ -7413,7 +7429,7 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
-                if is_html_entrypoint && self.ensure_client_transpiler().is_err() {
+                if is_html_entrypoint && self.ensure_client_transpiler(key, None).is_err() {
                     continue;
                 }
                 // Select map and perform get_or_put, capturing the slot as a raw ptr

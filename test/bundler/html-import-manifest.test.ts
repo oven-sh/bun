@@ -1241,8 +1241,8 @@ console.log("✓ Both import types work correctly");
     expect(exitCode).toBe(0);
   });
 
-  // The define table of the page is built deeper in the stack than the table of the server. A
-  // nested value that the server still parses can be too deep there, and then the build fails.
+  // The define table of the page is built deeper in the stack than the table of the server. So
+  // the deepest value that the server parses is too deep for the page, and the build fails.
   test("html-import/browser-chunk-define-too-deep-for-the-page-fails-the-build", async () => {
     using dir = tempDir("html-import-deep-define", {
       "plain.js": `console.log("no page");`,
@@ -1253,17 +1253,17 @@ console.log("✓ Both import types work correctly");
         const build = async (entry, depth) => {
           const DEEP = "[".repeat(depth) + "1" + "]".repeat(depth);
           const result = await Bun.build({ entrypoints: [entry], target: "bun", define: { DEEP }, throw: false });
-          return result.success ? "ok" : result.logs.map(log => log.message).join("\\n");
+          return result.logs.map(log => [log.message, ...log.notes.map(note => note.message)]);
         };
         // The deepest value that a build without a page accepts.
         let low = 1;
-        let high = 1 << 14;
+        let high = 1 << 16;
         while (low < high) {
           const middle = (low + high + 1) >> 1;
-          if ((await build("./plain.js", middle)) === "ok") low = middle;
+          if ((await build("./plain.js", middle)).length === 0) low = middle;
           else high = middle - 1;
         }
-        console.log(await build("./server.js", low));
+        console.log(JSON.stringify(await build("./server.js", low)));
       `,
     });
     await using build = Bun.spawn({
@@ -1274,11 +1274,15 @@ console.log("✓ Both import types work correctly");
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    // Where the stack of the bundler is not what limits the depth, the page builds.
-    expect({ stdout, stderr }).toEqual({
-      stdout: expect.stringMatching(
-        /^(ok|JSON document is too deeply nested\nFailed to bundle an HTML file for the browser: StackOverflow)\n$/,
-      ),
+    expect({ logs: stdout && JSON.parse(stdout), stderr }).toEqual({
+      logs: [
+        ["JSON document is too deeply nested"],
+        [
+          `Could not bundle "./client.html" for the browser: a "define" value did not parse for its scripts`,
+          "The scripts of an HTML file get a define table of their own. Each value is parsed again for it, " +
+            "with less stack than the first time. Use a value with less nesting.",
+        ],
+      ],
       stderr: "",
     });
     expect(exitCode).toBe(0);

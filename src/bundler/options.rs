@@ -1480,7 +1480,7 @@ impl TargetOptions {
         entry_points: EntryPointFlags<'_>,
         external_paths: ExternalPaths<'_>,
         log: &mut bun_ast::Log,
-    ) -> Result<TargetOptions, crate::Error> {
+    ) -> Result<TargetOptions, bun_alloc::AllocError> {
         Ok(TargetOptions {
             target,
             loaders: loaders_from_transform_options(transform.loaders.as_ref(), target)?,
@@ -1607,7 +1607,7 @@ impl<'a> BundleOptions<'a> {
         &self,
         target: Target,
         log: &mut bun_ast::Log,
-    ) -> Result<BundleOptions<'a>, crate::Error> {
+    ) -> Result<BundleOptions<'a>, bun_alloc::AllocError> {
         // `--main-fields`, `--conditions` and node addons are for the graph that the user builds.
         let entry_points = EntryPointFlags {
             main_fields: &[],

@@ -246,6 +246,8 @@ impl<'a> Transpiler<'a> {
     }
 
     /// [`Self::for_worker`] for another graph of the same bundle. SAFETY: the same contract.
+    ///
+    /// An error is a `define` value that does not parse for `target`. `log` has its messages.
     pub(crate) unsafe fn for_target(
         from: &Transpiler<'_>,
         target: options::Target,
@@ -254,12 +256,16 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<Transpiler<'a>> {
         // `from` reported what is wrong with the user's flags when it read them.
         let mut repeated = bun_ast::Log::init();
-        let mut options = from.options.for_target(target, &mut repeated)?;
-        if let Err(err) = options.load_defines(arena, Some(from.env()), &mut repeated) {
-            // The stack is deeper here than where `from` parsed the same values, so a nested one can fail.
-            // SAFETY: `log` is live and nothing else borrows it here (see fn doc).
-            repeated.append_to_with_recycled(unsafe { &mut *log }, false);
-            return Err(err);
+        let mut options = bun_core::handle_oom(from.options.for_target(target, &mut repeated));
+        match options.load_defines(arena, Some(from.env()), &mut repeated) {
+            Ok(()) => {}
+            Err(crate::Error::Alloc(err)) => bun_core::handle_oom(Err(err)),
+            Err(err) => {
+                // The stack is deeper here than where `from` parsed the same values, so a nested one can fail.
+                // SAFETY: `log` is live and nothing else borrows it here (see fn doc).
+                repeated.append_to_with_recycled(unsafe { &mut *log }, false);
+                return Err(err);
+            }
         }
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_target: log is non-null");
         // SAFETY: see fn doc.

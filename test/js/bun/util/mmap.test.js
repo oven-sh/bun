@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
-import { chmodSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
+import { mkfifo } from "mkfifo";
+import { chmodSync, closeSync, openSync, readSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -125,35 +126,62 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     // even by root. A private mapping only needs a readable file.
     it("shared: false maps a running executable", () => {
       const map = Bun.mmap(process.execPath, { shared: false, size: 4096 });
-      expect(map.length).toBe(4096);
-      expect(Buffer.from(map).equals(readFileSync(process.execPath).subarray(0, 4096))).toBe(true);
-    });
-
-    // Root bypasses the mode bits, so these two only prove anything as a user.
-    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-
-    it.skipIf(isRoot)("shared: false maps a 0444 file and keeps writes private", () => {
-      using dir = tempDir("mmap-readonly", {});
-      const file = join(String(dir), "readonly.bin");
-      writeFileSync(file, new Uint8Array([1, 2, 3, 4]));
-      chmodSync(file, 0o444);
-
-      const map = Bun.mmap(file, { shared: false });
-      expect(Array.from(map)).toEqual([1, 2, 3, 4]);
-      map[0] = 9;
-      expect(map[0]).toBe(9);
-      expect(Array.from(readFileSync(file))).toEqual([1, 2, 3, 4]);
-    });
-
-    it.skipIf(isRoot)("shared: true still needs a writable file", () => {
-      using dir = tempDir("mmap-readonly-shared", {});
-      const file = join(String(dir), "readonly.bin");
-      writeFileSync(file, new Uint8Array([1, 2, 3, 4]));
-      chmodSync(file, 0o444);
-
-      for (const options of [undefined, { shared: true }]) {
-        expect(() => Bun.mmap(file, options)).toThrow(expect.objectContaining({ code: "EACCES", syscall: "open" }));
+      const head = Buffer.alloc(4096);
+      const fd = openSync(process.execPath, "r");
+      try {
+        readSync(fd, head, 0, 4096, 0);
+      } finally {
+        closeSync(fd);
       }
+      expect(map.length).toBe(4096);
+      expect(Buffer.from(map).equals(head)).toBe(true);
+    });
+
+    // Root bypasses the mode bits, so the child runs as an unprivileged user.
+    it("shared: false maps a 0444 file and keeps writes private, shared: true still needs write access", async () => {
+      using dir = tempDir("mmap-readonly", {
+        "readonly.bin": new Uint8Array([1, 2, 3, 4]),
+        "map.js": `
+          const file = process.argv[2];
+          const out = {};
+          const map = Bun.mmap(file, { shared: false });
+          out.private = Array.from(map);
+          map[0] = 9;
+          out.privateAfterWrite = Array.from(map);
+          out.fileAfterWrite = Array.from(require("fs").readFileSync(file));
+          for (const [name, options] of [["default", undefined], ["shared", { shared: true }]]) {
+            try {
+              Bun.mmap(file, options);
+              out[name] = "mapped";
+            } catch (e) {
+              out[name] = { code: e.code, syscall: e.syscall };
+            }
+          }
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const file = join(String(dir), "readonly.bin");
+      chmodSync(file, 0o444);
+      using unprivileged = unprivilegedSpawnOptions(String(dir));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "map.js"), file],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+        out: {
+          private: [1, 2, 3, 4],
+          privateAfterWrite: [9, 2, 3, 4],
+          fileAfterWrite: [1, 2, 3, 4],
+          default: { code: "EACCES", syscall: "open" },
+          shared: { code: "EACCES", syscall: "open" },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("a directory throws EISDIR from open in both modes", () => {
@@ -162,6 +190,15 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
         expect(() => Bun.mmap(String(dir), options)).toThrow(
           expect.objectContaining({ code: "EISDIR", syscall: "open", path: String(dir) }),
         );
+      }
+    });
+
+    it("a FIFO with no writer throws EINVAL from mmap at once in both modes", () => {
+      using dir = tempDir("mmap-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+      for (const options of [{ shared: false }, { shared: true }]) {
+        expect(() => Bun.mmap(fifo, options)).toThrow(expect.objectContaining({ code: "EINVAL", syscall: "mmap" }));
       }
     });
   });

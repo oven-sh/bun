@@ -13,7 +13,6 @@ use bun_paths::fs as PFs;
 use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
 use bun_sys::Fd;
-use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
@@ -304,7 +303,6 @@ impl Linker {
         &mut self,
         file_path: &Fs::Path<'_>,
         result: &mut ParseResult,
-        origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> crate::Result<()> {
         // Copy out the two scalar config values we read so the `&self` borrow
@@ -348,10 +346,6 @@ impl Linker {
                             let relative_name =
                                 bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
                             import_record.path = match import_path_format {
-                                ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
-                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
-                                    b"bun",
-                                ),
                                 ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(
                                     RUNTIME_SOURCE_PATH,
                                     dupe(relative_name),

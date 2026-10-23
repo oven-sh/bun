@@ -2889,19 +2889,16 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if !self.options.transform_only {
-                    let origin = self.options.origin.url();
                     if !self.options.target.is_bun() {
                         self.linker.link::<false, false>(
                             &file_path,
                             &mut result,
-                            &origin,
                             import_path_format,
                         )?;
                     } else {
                         self.linker.link::<false, true>(
                             &file_path,
                             &mut result,
-                            &origin,
                             import_path_format,
                         )?;
                     }

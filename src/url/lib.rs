@@ -467,7 +467,7 @@ impl<'a> URL<'a> {
         last_at
     }
 
-    pub fn display_hostname(&self) -> &[u8] {
+    fn display_hostname(&self) -> &[u8] {
         if !self.hostname.is_empty() {
             self.hostname
         } else {
@@ -559,10 +559,6 @@ impl<'a> URL<'a> {
 
     pub fn has_valid_port(&self) -> bool {
         self.get_port().unwrap_or(0) > 0
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.href.is_empty()
     }
 
     pub fn is_absolute(&self) -> bool {
@@ -661,30 +657,6 @@ impl<'a> URL<'a> {
         writer.write_all(b"/")?;
         writer.write_all(normalized_path)?;
         Ok(())
-    }
-
-    pub fn join_alloc(
-        &self,
-        prefix: &[u8],
-        dirname: &[u8],
-        basename: &[u8],
-        extname: &[u8],
-        absolute_path: &[u8],
-    ) -> crate::Result<Box<[u8]>> {
-        let has_uplevels = strings::index_of(dirname, b"../").is_some();
-
-        if has_uplevels {
-            let mut v = Vec::with_capacity(self.origin.len() + 5 + absolute_path.len());
-            v.extend_from_slice(self.origin);
-            v.extend_from_slice(b"/abs:");
-            v.extend_from_slice(absolute_path);
-            Ok(v.into_boxed_slice())
-        } else {
-            let needed = Self::join_needed(prefix, dirname, basename, extname);
-            let mut v = Vec::with_capacity(self.origin.len() + 1 + needed);
-            self.join_write(&mut v, prefix, dirname, basename, extname)?;
-            Ok(v.into_boxed_slice())
-        }
     }
 
     /// Reads the authority as `new URL()` reads it. See [`URL::parse_single_reader`] for the other rule.
@@ -1835,10 +1807,6 @@ mod tests {
         let mut out = Vec::new();
         url.join_write(&mut out, prefix, dirname, basename, extname)
             .expect("Vec<u8> writes cannot fail");
-        let boxed = url
-            .join_alloc(prefix, dirname, basename, extname, b"/abs/unused")
-            .expect("Vec<u8> writes cannot fail");
-        assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
         out
     }
 
@@ -1937,15 +1905,6 @@ mod tests {
             b"http://localhost:3000/a/d"
         );
         assert_eq!(join(b"", b"", b"", b""), b"http://localhost:3000/");
-    }
-
-    #[test]
-    fn join_alloc_uplevel_dirname_uses_the_absolute_path() {
-        let url = URL::parse(b"http://localhost:3000/");
-        let boxed = url
-            .join_alloc(b"", b"../pages", b"index", b".js", b"/srv/pages/index.js")
-            .expect("Vec<u8> writes cannot fail");
-        assert_eq!(&*boxed, b"http://localhost:3000/abs:/srv/pages/index.js");
     }
 
     #[test]

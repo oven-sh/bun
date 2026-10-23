@@ -1423,7 +1423,7 @@ pub(crate) fn ipc_child_singleton_deinit() {
 
 // ────────────────────────────────────────────────────────────────────────────
 // VmLoaderVTable — supplies the high-tier bodies for
-// `bun_bundler::options::{normalize_specifier, get_loader_and_virtual_source}`.
+// `bun_bundler::options::get_loader_and_virtual_source`.
 // The low-tier `VirtualMachine::fetch_without_on_load_plugins` constructs a
 // `VmLoaderCtx { vm: vm.cast(), vtable: hooks.vm_loader_vtable }` and threads
 // it through; every fn pointer here recovers the concrete `*const
@@ -1456,8 +1456,6 @@ mod vm_loader_ctx {
     // single call, which never spans the re-entrant path.
     bun_bundler::link_impl_VmLoaderCtx! {
         Runtime for extern VirtualMachine => |this| {
-            origin_host() => (*this).origin.host,
-            origin_path() => (*this).origin.path,
             loaders() => &raw const (*this).transpiler.options.loaders,
             eval_source() => (*this)
                 .module_loader
@@ -3002,12 +3000,11 @@ fn transpile_source_code_of_any_provenance(
 
                 // Link import records.
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
-                // `origin` is read-only and `linker` is JS-thread-exclusive.
+                // `linker` is JS-thread-exclusive.
                 unsafe {
                     (*jsc_vm).transpiler.linker.link::<false, true>(
                         path,
                         &mut parse_result,
-                        &(*jsc_vm).origin,
                         options::ImportPathFormat::AbsolutePath,
                     )?;
                 }
@@ -3466,33 +3463,8 @@ fn transpile_source_code_of_any_provenance(
                     ..Default::default()
                 });
             }
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            let value = if !unsafe { &*jsc_vm }.origin.is_empty() {
-                // Rewrite `specifier` against `vm.origin` so
-                // importing an asset via the file loader yields the public URL,
-                // not the absolute filesystem path.
-                let mut public_path: Vec<u8> = Vec::new();
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                // `URL<'static>` is a view struct; borrow it in place — no
-                // `&mut *jsc_vm` aliases through the call below, so there is no
-                // need to copy the ~12 borrowed slices out (perf: was a
-                // per-asset-import `url::URL::clone`).
-                let origin = unsafe { &(*jsc_vm).origin };
-                let top_level_dir = Fs::FileSystem::get().top_level_dir();
-                crate::api::bun_object::get_public_path_with_asset_prefix(
-                    specifier,
-                    top_level_dir,
-                    origin,
-                    b"",
-                    &mut public_path,
-                    bun_paths::Platform::Loose,
-                );
-                bun_string_jsc::create_utf8_for_js(global_object, &public_path)
-                    .map_err(|_| crate::Error::JSError)?
-            } else {
-                bun_string_jsc::create_utf8_for_js(global_object, path.text)
-                    .map_err(|_| crate::Error::JSError)?
-            };
+            let value = bun_string_jsc::create_utf8_for_js(global_object, path.text)
+                .map_err(|_| crate::Error::JSError)?;
             Ok(ResolvedSource {
                 jsvalue_for_export: value,
                 source_url: input_specifier.create_if_different(path.text),
@@ -3906,15 +3878,8 @@ pub(crate) fn loader_for_path(
     result
 }
 
-/// `options.normalizeSpecifier(jsc_vm, slice)` — strip the VM's origin
-/// host/path prefix and split off the `?query`.
-///
-/// # Safety
-/// `jsc_vm` is the live per-thread VM.
-unsafe fn normalize_specifier_for_loader<'a>(
-    jsc_vm: *mut VirtualMachine,
-    slice_: &'a [u8],
-) -> (&'a [u8], &'a [u8], &'a [u8]) {
+/// Splits the `?query` off a module specifier: `(path, specifier, query)`.
+fn normalize_specifier_for_loader(slice_: &[u8]) -> (&[u8], &[u8], &[u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
         return (slice, slice, b"");
@@ -3923,16 +3888,6 @@ unsafe fn normalize_specifier_for_loader<'a>(
     // part of the data, not a query string.
     if bun_core::strings::has_prefix_comptime(slice, b"data:") {
         return (slice, slice, b"");
-    }
-    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-    let host = unsafe { &*jsc_vm }.origin.host;
-    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-    let opath = unsafe { &*jsc_vm }.origin.path;
-    if slice.starts_with(host) {
-        slice = &slice[host.len()..];
-    }
-    if opath.len() > 1 && slice.starts_with(opath) {
-        slice = &slice[opath.len()..];
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
@@ -3969,8 +3924,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     type_attribute_str: Option<&[u8]>,
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
-        // SAFETY: per fn contract.
-        unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
+        normalize_specifier_for_loader(specifier_str);
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.

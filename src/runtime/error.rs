@@ -126,6 +126,8 @@ pub enum Error {
     AsyncModule,
     #[error("BlobNotFound")]
     BlobNotFound,
+    #[error("BlobNotInMemory")]
+    BlobNotInMemory,
     #[error("InvalidRoutePattern")]
     InvalidRoutePattern,
     #[error("InvalidRequest")]
@@ -401,6 +403,7 @@ impl Error {
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",
+            Self::BlobNotInMemory => "BlobNotInMemory",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
             Self::FailedToCreateCoreFoudationSourceLoop => "FailedToCreateCoreFoudationSourceLoop",

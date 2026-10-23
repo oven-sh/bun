@@ -4943,6 +4943,33 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
+// A mitigation, not an exact fix: zeroes a fixed amount of dead stack between the heap iteration and the collection in
+// JSC__VM__runGC. Zeroing dead stack cannot free anything live; the worst it can do is not help.
+//
+// What it is for: deleteAllUnlinkedCodeBlocks() stops the allocators to iterate the heap, and prologues under
+// MarkedBlock::Handle::stopAllocating() spill a register holding a free list's sentinel (the address of the first cell
+// allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
+// every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
+// Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
+// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
+//
+// The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
+// stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
+// few times that and nothing derives them from the collector's frames. If such a test fails again after the collector's
+// call path grows, measure again. The fix without a constant is to capture the stack before
+// deleteAllUnlinkedCodeBlocks() and have the collection use that capture as its conservative roots.
+static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
+{
+#if ASAN_ENABLED || ASSERT_ENABLED
+    constexpr size_t size = 16 * 1024;
+#else
+    constexpr size_t size = 2 * 1024;
+#endif
+    volatile char dead[size];
+    for (size_t i = 0; i < size; ++i)
+        dead[i] = 0;
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
@@ -4960,12 +4987,15 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+        // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
+        clearStackBelowCaller();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+        clearStackBelowCaller();
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 

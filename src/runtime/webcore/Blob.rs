@@ -4352,11 +4352,13 @@ pub(crate) fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
+            // The copy starts at the source's offset and is at most as long as the source's and
+            // the destination's windows (the destination's offset does not shorten it).
             return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
+                source_blob.offset.get(),
+                source_blob.size.get().min(destination_blob.size.get()),
                 cx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

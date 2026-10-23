@@ -183,6 +183,8 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// `uv_queue_work` requests whose `after_work_cb` has not returned. JS thread only.
+    work_in_flight: Cell<u32>,
 }
 
 const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
@@ -278,6 +280,7 @@ impl UvLoop {
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            work_in_flight: Cell::new(0),
         }
     }
 
@@ -1334,8 +1337,13 @@ impl JobContext for UvWorkJob {
     fn then(req: JsPtr<UvWork>, _: (), cx: &JsThread<'_>) -> JsResult<()> {
         let req = req.as_ptr();
         // SAFETY: same as `run`. `state` doesn't change after the job is posted.
-        let (state, after_work_cb) =
-            unsafe { ((*req).state.load(Ordering::SeqCst), (*req).after_work_cb) };
+        let (state, after_work_cb, loop_) = unsafe {
+            (
+                (*req).state.load(Ordering::SeqCst),
+                (*req).after_work_cb,
+                (*req).loop_,
+            )
+        };
         let status = if state == WorkState::Cancelled as u32 {
             UV_ECANCELED
         } else {
@@ -1348,6 +1356,10 @@ impl JobContext for UvWorkJob {
             // SAFETY: calls the addon's callback on the loop thread.
             unsafe { after_work_cb(req, status) };
         }
+        // Read before the callback, which usually frees the request. The loop lives as long as its VM.
+        // SAFETY: `loop_` was a live loop when the work was queued (fn contract of `uv_queue_work`).
+        let loop_ = unsafe { &*loop_ };
+        loop_.work_in_flight.set(loop_.work_in_flight.get() - 1);
         if cx.global().has_exception() {
             return Err(JsError::Thrown);
         }
@@ -1390,9 +1402,25 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     let cx = unsafe { loop_ref.as_ref() }
         .global()
         .js_thread_of_caller_no_frame();
+    let loop_ = unsafe { loop_ref.as_ref() };
+    loop_.work_in_flight.set(loop_.work_in_flight.get() + 1);
     // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
     Job::<UvWorkJob>::schedule(&cx, unsafe { JsPtr::new(req_ref) }, ());
     0
+}
+
+/// Whether a `uv_queue_work` request of `vm`'s loop is still in flight. JS thread only.
+///
+/// # Safety
+/// Same as [`UvLoop::of_vm`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__VirtualMachine__uvWorkInFlight(
+    vm: *const VirtualMachine,
+) -> bool {
+    // SAFETY: fn contract.
+    let loop_ = unsafe { UvLoop::of_vm(vm) };
+    // SAFETY: `of_vm` returns null or the VM's live loop.
+    !loop_.is_null() && unsafe { (*loop_).work_in_flight.get() } != 0
 }
 
 /// Implements `int uv_cancel(uv_req_t*)`. Like in libuv, it runs on the loop thread,

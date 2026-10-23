@@ -2075,6 +2075,10 @@ extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* gl
     return JSValue::encode(object);
 }
 
+#if !OS(WINDOWS)
+extern "C" bool Bun__VirtualMachine__uvWorkInFlight(void* vm);
+#endif
+
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
 {
     return globalObject->makeNapiEnvForFFI();
@@ -4653,9 +4657,16 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 {
     if (oldGlobal->m_napiEnvs.isEmpty())
         return;
+    // A uv_queue_work job has no env; its callbacks may use what any env's refs pin. Windows runs libuv itself.
+#if OS(WINDOWS)
+    const bool uvWorkInFlight = false;
+#else
+    const bool uvWorkInFlight = Bun__VirtualMachine__uvWorkInFlight(bunVM());
+#endif
     for (auto& env : oldGlobal->m_napiEnvs) {
         env->retargetGlobalObject(this);
-        env->releaseRealmRoots();
+        if (!uvWorkInFlight)
+            env->releaseRealmRoots();
     }
     // Ref<NapiEnv> is move-only; the rvalue appendVector overload moves each
     // element out, and we make the source explicitly empty afterwards so

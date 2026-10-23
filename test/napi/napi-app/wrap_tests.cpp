@@ -173,40 +173,46 @@ static napi_value unref_wrapped_value(const Napi::CallbackInfo &info) {
   return undefined;
 }
 
-static napi_ref retained_ref = nullptr;
+static napi_ref retained_refs[8] = {};
 
-// retain(value): undefined. Keeps value in a static ref with count 1. An
-// earlier ref is left in place (never deleted), so each call roots on its own.
+static napi_ref &retained_slot(const Napi::CallbackInfo &info, size_t arg) {
+  size_t slot = info.Length() > arg ? info[arg].As<Napi::Number>().Uint32Value() : 0;
+  return retained_refs[slot % 8];
+}
+
+// retain(value, slot = 0): undefined. Keeps value in a static ref with count 1.
+// An earlier ref in the slot is left in place (never deleted), so each call
+// roots on its own.
 static napi_value retain(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  NODE_API_CALL(env, napi_create_reference(env, info[0], 1, &retained_ref));
+  NODE_API_CALL(env, napi_create_reference(env, info[0], 1, &retained_slot(info, 1)));
   return info.Env().Undefined();
 }
 
-// retained(): the retained value, or undefined once the ref reads empty.
+// retained(slot = 0): the retained value, or undefined once the ref reads empty.
 static napi_value retained(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value value;
-  NODE_API_CALL(env, napi_get_reference_value(env, retained_ref, &value));
+  NODE_API_CALL(env, napi_get_reference_value(env, retained_slot(info, 0), &value));
   if (!value) {
     NODE_API_CALL(env, napi_get_undefined(env, &value));
   }
   return value;
 }
 
-// ref_retained(): number, the count napi_reference_ref reports.
+// ref_retained(slot = 0): number, the count napi_reference_ref reports.
 static napi_value ref_retained(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   uint32_t count;
-  NODE_API_CALL(env, napi_reference_ref(env, retained_ref, &count));
+  NODE_API_CALL(env, napi_reference_ref(env, retained_slot(info, 0), &count));
   return Napi::Number::New(env, count);
 }
 
-// unref_retained(): number, the count napi_reference_unref reports.
+// unref_retained(slot = 0): number, the count napi_reference_unref reports.
 static napi_value unref_retained(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   uint32_t count;
-  NODE_API_CALL(env, napi_reference_unref(env, retained_ref, &count));
+  NODE_API_CALL(env, napi_reference_unref(env, retained_slot(info, 0), &count));
   return Napi::Number::New(env, count);
 }
 

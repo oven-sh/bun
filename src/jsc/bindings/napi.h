@@ -915,7 +915,7 @@ public:
     // Node's Reference with a reset persistent handle. A symbol or primitive (no weak handle) has no realm to root.
     void releaseRealm()
     {
-        if (m_released || m_isEternal || weakValueRef.isClear()) {
+        if (m_released || m_isEternal || weakValueRef.isClear() || value().isSymbol()) {
             return;
         }
         m_released = true;

@@ -580,13 +580,19 @@ describe("bun create <component> and a file behind an unused re-export of a barr
     "lib/server.ts": `import page from "./page.html"; export const routes = { "/": page };`,
     "lib/page.html": `<!doctype html><p>hi</p>`,
   };
+  // The registry has no packages, so a run that reaches the install step fails there.
   async function create(packageJson: object) {
     using dir = tempDir("create-barrel", { ...files, "package.json": JSON.stringify(packageJson) });
+    using registry = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
     await using proc = spawn({
       cmd: [bunExe(), "create", "./App.tsx"],
       cwd: String(dir),
-      // The registry is unreachable, so the install fails at once.
-      env: { ...env, BUN_CONFIG_REGISTRY: "http://localhost:1/" },
+      env: {
+        ...env,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        // `bun create` exits without freeing the bundler. The ASAN lane would turn that into exit code 134.
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -605,10 +611,10 @@ describe("bun create <component> and a file behind an unused re-export of a barr
   // Windows: `bun create` never prints the "--only-missing install" line this asserts on, so the
   // dependency detection cannot be observed there.
   it.todoIf(isWindows)("picks the template and the packages from the files that the bundle loads", async () => {
-    const { install, errors } = await create({ name: "foo", sideEffects: false });
-    expect({ install, errors }).toEqual({
+    expect(await create({ name: "foo", sideEffects: false })).toEqual({
       install: "$ bun --only-missing install -- react-dom@19 react@19",
       errors: [],
+      exitCode: 1,
     });
   });
 

@@ -5951,13 +5951,29 @@ impl VirtualMachine {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
-                    fs.top_level_dir(),
-                    &mut rollback,
-                ));
-                return bun_sys::Result::Err(err);
+            // The chdir succeeded, so the process cwd changed even though
+            // getcwd cannot name it: ENOENT when the new cwd was unlinked
+            // (e.g. `chdir("..")` out of a directory that was `rm -rf`'d) or
+            // ERANGE when it has grown past PATH_MAX. Node does not treat a
+            // failed cwd lookup as a chdir failure, so fall back to the
+            // logical path (old cwd joined with the target) instead of rolling
+            // the chdir back and throwing.
+            bun_sys::Result::Err(_) => {
+                let prev = fs.top_level_dir();
+                let mut resolve_buf = bun_paths::path_buffer_pool::get();
+                match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                    bun_paths::platform::Auto,
+                >(prev, &mut resolve_buf[..], &[to.as_bytes()])
+                {
+                    Some(resolved) => {
+                        let n = resolved.len();
+                        buf[..n].copy_from_slice(resolved);
+                        n
+                    }
+                    // The logical path does not fit in PATH_MAX either; keep
+                    // the previously cached cwd, which is already interned.
+                    None => return Ok(()),
+                }
             }
         };
         if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {

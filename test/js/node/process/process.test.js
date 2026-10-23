@@ -360,6 +360,77 @@ it("process.chdir() on root dir", () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: only on Linux does chdir("..") succeed while getcwd() then fails
+// for an unlinked cwd. On macOS/BSD the chdir("..") syscall itself fails, so
+// (like Node) Bun throws and there is no divergence to exercise.
+it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", async () => {
+  using dir = tempDir("process-chdir-deleted", {
+    "index.js": `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const base = process.cwd();
+      fs.mkdirSync(path.join(base, "parent", "child"), { recursive: true });
+      process.chdir(path.join(base, "parent", "child"));
+      // Delete the directory tree we are currently inside of.
+      fs.rmSync(path.join(base, "parent"), { recursive: true, force: true });
+      // chdir("..") must not throw even though getcwd() now fails for the
+      // unlinked directory: the chdir syscall itself still succeeds and Node
+      // returns normally here.
+      process.chdir("..");
+      // Recovering to a live absolute directory still works.
+      process.chdir(base);
+      console.log(process.cwd() === base ? "RECOVERED" : "WRONG:" + process.cwd());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("RECOVERED");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: the process cwd can grow past PATH_MAX via repeated relative
+// chdir, after which getcwd fails with ERANGE. The logical-path fallback must
+// not throw or crash the process.
+it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH_MAX", async () => {
+  using dir = tempDir("process-chdir-long", {
+    "index.js": `
+      const fs = require("node:fs");
+      const seg = Buffer.alloc(200, "d").toString();
+      // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
+      // with ERANGE partway down, but each short relative chdir still succeeds.
+      for (let i = 0; i < 40; i++) {
+        fs.mkdirSync(seg);
+        process.chdir(seg);
+      }
+      console.log("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
 it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);

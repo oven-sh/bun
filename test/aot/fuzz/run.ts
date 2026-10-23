@@ -14,10 +14,13 @@
 //   --sources a,b:8       of mutation, grammar, protocols, new-targets, object-mutations, typed-object-mutations, unsound-types (default: all). A number is a weight: b is drawn eight times as often as a
 //   --flags "<flags>"     added to every build on the product bed; --engine-flags the same for the engine bed
 //   --validate            also builds each program in validate mode
-//   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, and five that run only when named here:
-//                         erased-and-hot, nothing-inlined, hot-and-nothing-inlined, no-flow-results, hot-without-flow-results
+//   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, and those that run only when named here:
+//                         erased-and-hot, nothing-inlined, hot-and-nothing-inlined, no-flow-results, hot-without-flow-results, all-code-direct, every-function-cold, counts-as-very-large,
+//                         erased-and-cold, direct-and-validated, direct-and-proofs-checked, allocations-leave-the-fast-path
 //   --collector-stress 1,2,3,5,7,11   the executable runs with a collection at every n-th allocation that leaves the fast path, freed cells overwritten and never reused;
 //                         n and whether the collections are full or young are drawn anew for every batch and stand among the flags of a finding as --in-the-run=<variable>
+//                         (0 among them: no collections but the program's own); --fenced: half of the batches with every write barrier on its fenced road
+//   --fail-predictions 1,2,7   one time in n compiled code takes the general road behind a test though the value would have passed; n and the seed are drawn anew for every batch
 //   --workers <n>         n workers run each program at once, each for itself, in place of the main thread; lines are compared in any order
 //   --as-a-user           the compiler's verifiers stay off, as in a user's build: what they would refuse is built and run
 //   --environment "A=1 B=2"      set for every process; --run-environment the same for the run of the executable alone (the collector's options, say)
@@ -57,7 +60,7 @@ const beds: { bed: Bed; jobs: number }[] = [];
 const productJobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const engineJobs = Number(option("engine-jobs") ?? 0);
 if (replay ? option("bed") !== "engine" : productJobs > 0)
-  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number) }) }); // prettier-ignore
+  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number) }) }); // prettier-ignore
 if (option("engine") && (replay ? option("bed") === "engine" : engineJobs > 0))
   beds.push({ jobs: engineJobs, bed: new EngineBed(option("engine")!, { baseFlags: words(option("engine-flags")), validate: has("validate"), buildSeconds: 60, runSeconds: 10 }) });
 

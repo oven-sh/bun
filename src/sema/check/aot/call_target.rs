@@ -14,10 +14,10 @@ const UNTYPED: PositionTypes = PositionTypes {
 };
 
 fn is_construct_signature(kind: FnKind) -> bool {
-    match kind {
-        FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType
+    )
 }
 
 fn promises_nothing(written_form: TypeId) -> bool {

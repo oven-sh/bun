@@ -334,10 +334,7 @@ fn is_plain_assignment_target(
     let Ok(index) = stores.binary_search_by_key(&identifier, |store| store.target) else {
         return false;
     };
-    match stores[index].kind {
-        StoreKind::Assign => true,
-        _ => false,
-    }
+    matches!(stores[index].kind, StoreKind::Assign)
 }
 
 fn find_locked_global(

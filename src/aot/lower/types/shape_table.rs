@@ -306,10 +306,10 @@ fn names_field(file: &FileLowering<'_, '_, '_, '_>, name: MemberName) -> bool {
         MemberName::String(name) => name,
         MemberName::Symbol(_) | MemberName::Private(_) => return false,
     };
-    match classify_name(file.queries.atom_bytes(name)) {
-        NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto => false,
-        _ => true,
-    }
+    !matches!(
+        classify_name(file.queries.atom_bytes(name)),
+        NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto
+    )
 }
 
 // A layout tells objects apart by their fields. Every object is of a type that requires none, so its layout is only expected.

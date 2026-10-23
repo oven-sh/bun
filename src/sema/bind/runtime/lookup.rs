@@ -123,15 +123,15 @@ impl Lookup<'_, '_> {
 
     pub(super) fn is_var(&self, local: SymbolId) -> bool {
         let decls = &self.bound.symbols[local.idx()].decls[..];
-        decls
-            .iter()
-            .all(|&decl| match declaration_kind(self.hir, self.bound, decl) {
+        decls.iter().all(|&decl| {
+            matches!(
+                declaration_kind(self.hir, self.bound, decl),
                 DeclarationKind::NoBinding
-                | DeclarationKind::ImplicitBlockFunction
-                | DeclarationKind::BlockScopedRequire
-                | DeclarationKind::Var => true,
-                _ => false,
-            })
+                    | DeclarationKind::ImplicitBlockFunction
+                    | DeclarationKind::BlockScopedRequire
+                    | DeclarationKind::Var
+            )
+        })
     }
 
     fn find_exported_member(&self, at: ScopeId, scope: &Scope, name: Atom) -> Option<SymbolId> {

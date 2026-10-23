@@ -39,10 +39,7 @@ pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) 
 
 /// The loader takes the names from the object that the CommonJS file exports, as it does for a module of the library.
 pub(super) fn is_filled_by_loader(graph: &ModuleGraph, face: ModuleRef) -> bool {
-    match graph.interop(face).export_rule {
-        SyntheticExportRule::None => false,
-        _ => true,
-    }
+    !matches!(graph.interop(face).export_rule, SyntheticExportRule::None)
 }
 
 impl Marker<'_> {

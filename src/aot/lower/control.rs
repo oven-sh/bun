@@ -184,14 +184,14 @@ fn emit_function_return(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, val
 
 pub(crate) fn allows_tail_call(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     let function = lowering.builder.function();
-    let has_ordinary_return = match function.kind {
+    let has_ordinary_return = matches!(
+        function.kind,
         FunctionKind::Plain
-        | FunctionKind::Arrow
-        | FunctionKind::Method
-        | FunctionKind::Getter
-        | FunctionKind::Setter => true,
-        _ => false,
-    };
+            | FunctionKind::Arrow
+            | FunctionKind::Method
+            | FunctionKind::Getter
+            | FunctionKind::Setter
+    );
     let suspends = FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR;
     has_ordinary_return
         && !function.flags.intersects(suspends)

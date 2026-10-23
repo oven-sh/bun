@@ -183,10 +183,10 @@ impl File<'_> {
 
 /// ECMAScript's isProtoSetter: `{ __proto__: v }` and `{ "__proto__": v }` set the prototype.
 pub fn is_proto_setter(property: &Prop) -> bool {
-    let is_literal_name = match property.name_kind {
-        NameKind::Identifier | NameKind::StringLiteral => true,
-        _ => false,
-    };
+    let is_literal_name = matches!(
+        property.name_kind,
+        NameKind::Identifier | NameKind::StringLiteral
+    );
     is_literal_name
         && property.kind == PropKind::Init
         && property.key == PropKey::Name(known::__proto__)

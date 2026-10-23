@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-2c3495a9";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-4ba5c62a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -70,6 +70,15 @@ function prebuiltSuffix(cfg: Config): string {
     if (cfg.fuzzilli) s += "-coverage";
   }
   if (cfg.hardened) s += "-hardened";
+  // What ships (release, lto, lto-hardened) is built twice: without the ahead-of-time compiler and the run time of its
+  // programs, and with both under "-aot". Every other variant has both (`variants` in lanes.mjs).
+  const hasTwin = !cfg.debug && !cfg.asan && !/-assertions|-coverage/.test(s) && (!cfg.hardened || cfg.lto);
+  if (hasTwin && cfg.aot) s += "-aot";
+  if (!hasTwin && !cfg.aot) {
+    throw new BuildError(`There is no prebuilt WebKit${s} without the ahead-of-time compiler`, {
+      hint: "Build with --aot=on, or with a local WebKit checkout (--webkit=local)",
+    });
+  }
   return s;
 }
 

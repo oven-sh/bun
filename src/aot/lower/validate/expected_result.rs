@@ -185,10 +185,10 @@ fn is_imported_json(file: &FileLowering<'_, '_, '_, '_>, callee: ExprId) -> bool
     let Binding::Symbol(symbol) = file.bound.binding(object) else {
         return false;
     };
-    match file.inputs.modules.import_binding(file.file, symbol) {
-        ImportBinding::Builtin(_) | ImportBinding::CapturedBuiltin { .. } => true,
-        _ => false,
-    }
+    matches!(
+        file.inputs.modules.import_binding(file.file, symbol),
+        ImportBinding::Builtin(_) | ImportBinding::CapturedBuiltin { .. }
+    )
 }
 
 pub(super) fn result_type(

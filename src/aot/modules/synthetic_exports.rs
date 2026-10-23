@@ -189,10 +189,10 @@ fn is_known_member(
         }
         _ => return false,
     };
-    match find_module_export(input.builtin_names, runtime_module, name, input.platform) {
-        ModuleExport::Absent | ModuleExport::Unknown => false,
-        _ => true,
-    }
+    !matches!(
+        find_module_export(input.builtin_names, runtime_module, name, input.platform),
+        ModuleExport::Absent | ModuleExport::Unknown
+    )
 }
 
 #[cfg(test)]

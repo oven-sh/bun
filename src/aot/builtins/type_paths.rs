@@ -86,13 +86,13 @@ pub struct BuiltinValuePaths {
 }
 
 fn can_have_call_signatures(kind: BuiltinKind) -> bool {
-    match kind {
+    !matches!(
+        kind,
         BuiltinKind::Namespace
-        | BuiltinKind::Prototype
-        | BuiltinKind::Constant
-        | BuiltinKind::NativeBinding => false,
-        _ => true,
-    }
+            | BuiltinKind::Prototype
+            | BuiltinKind::Constant
+            | BuiltinKind::NativeBinding
+    )
 }
 
 struct PublishedPath {

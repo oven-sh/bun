@@ -126,6 +126,7 @@ export const generators: Record<string, () => Generator> = {
   "host-classes": () => require("./generate/host-classes"),
   "impostors": () => require("./generate/impostors"),
   "impostors-typed": () => require("./generate/impostors-typed"),
+  "initializers-run-at-the-first-read": () => require("./generate/initializers-run-at-the-first-read"),
   "inner-objects": () => require("./generate/inner-objects"),
   "kept-attacks": () => require("./generate/kept-attacks"),
   "language": () => require("./generate/language"),

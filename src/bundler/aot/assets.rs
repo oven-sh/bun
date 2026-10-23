@@ -220,10 +220,10 @@ fn same_name_order(file: &OutputFile) -> (bool, u8, &[u8]) {
 }
 
 fn is_runtime_require_loader(loader: Loader) -> bool {
-    match loader {
-        Loader::Napi | Loader::Sqlite | Loader::SqliteEmbedded => true,
-        _ => false,
-    }
+    matches!(
+        loader,
+        Loader::Napi | Loader::Sqlite | Loader::SqliteEmbedded
+    )
 }
 
 fn retain_distinct_names(

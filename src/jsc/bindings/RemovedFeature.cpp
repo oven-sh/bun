@@ -70,10 +70,12 @@ static WTF::String messageOfRemovedFeature(const WTF::String& api, uint16_t feat
     return WTF::makeString(removed, " was removed by --trim because your code never uses it. To keep it, add \""_s, name, "\" to compile.trim.allow in Bun.build()."_s);
 }
 
+#if ENABLE(AOT)
 static bool hasPublicPath(const JSC::AOT::BuiltinTable& table, JSC::AOT::BuiltinID builtin)
 {
     return table.contains(builtin) && table.at(builtin).kind != JSC::AOT::BuiltinKind::NativeBinding;
 }
+#endif
 
 static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalObject, const WTF::String& message)
 {
@@ -126,11 +128,16 @@ extern "C" JSC::EncodedJSValue Bun__throwForRemovedFunction(JSC::JSGlobalObject*
 
 extern "C" JSC::EncodedJSValue Bun__throwForRemovedBuiltin(JSC::JSGlobalObject* globalObject, uint16_t feature, uint32_t builtin)
 {
+#if ENABLE(AOT)
     const auto& table = JSC::AOT::BuiltinTable::singleton();
     JSC::AOT::BuiltinID id { builtin };
     if (!Bun::hasPublicPath(table, id))
         return Bun__throwForRemovedFeature(globalObject, feature);
     return Bun::throwFeatureRemovedError(globalObject, Bun::messageOfRemovedFeature(table.textOf(id), feature));
+#else
+    UNUSED_PARAM(builtin);
+    return Bun__throwForRemovedFeature(globalObject, feature);
+#endif
 }
 
 extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)

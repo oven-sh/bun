@@ -411,11 +411,13 @@ impl Build<'_> {
             ProjectId::Application => &[],
             ProjectId::Runtime => &self.unreached_runtime_files,
         };
-        let is_in_dependency = |file: &FileId| match loaded_project.loaded.origin(*file) {
-            FileOrigin::DependencySource
-            | FileOrigin::DependencyJavaScript
-            | FileOrigin::ProjectTypedVersion => true,
-            _ => false,
+        let is_in_dependency = |file: &FileId| {
+            matches!(
+                loaded_project.loaded.origin(*file),
+                FileOrigin::DependencySource
+                    | FileOrigin::DependencyJavaScript
+                    | FileOrigin::ProjectTypedVersion
+            )
         };
         let mut files_of_dependencies: Vec<FileId> = files
             .compiled_files()

@@ -17,7 +17,7 @@ import { expect, test } from "bun:test";
 import { isASAN, isDebug, isLinux } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { partInShare, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
+import { inPrograms, partInShare, pathOfWrittenProgram, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
 import { run } from "../harness/run";
 
@@ -47,11 +47,14 @@ export function collectorStressOn(collections: "full" | "young", every: 1 | 2 | 
   const skipReason =
     scriptSkipReason ?? (!isLinux || process.arch !== "x64" ? "it is run on Linux x64, which shows the most" : isASAN || isDebug ? "this build is too slow for a collection at every allocation" : undefined);
   if (skipReason && !unsupported) console.error(`SKIPPED: ${programs.length} programs with a ${collections} collection at ${frequency}: ${skipReason}`);
+  // A script writes some of them, and they lie nowhere until somebody asks.
+  const [written] = skipReason ? [] : programs.flatMap(name => pathOfWrittenProgram(name) ?? []);
+  const folderOfWritten = written?.slice(0, -inPrograms(written).length - 1);
 
   test.skipIf(!!skipReason)(
     `${programs.length} programs answer the same with a ${collections} collection at ${frequency}`,
     async () => {
-      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs], undefined, scriptEnvironment());
+      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs], undefined, { ...scriptEnvironment(), WRITTEN: folderOfWritten });
       expect(stderr).toBe("");
       expect(stdout.split("\n").filter(line => line !== "")).toEqual([`${programs.length} programs, 0 fail under stress alone, 0 run out of time`]);
       expect(exitCode).toBe(0);

@@ -145,16 +145,16 @@ pub(crate) fn script_loader(kind: ScriptKind) -> Loader {
 }
 
 pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
-    match loader {
+    matches!(
+        loader,
         Loader::File
-        | Loader::Wasm
-        | Loader::Napi
-        | Loader::Base64
-        | Loader::Dataurl
-        | Loader::Sqlite
-        | Loader::SqliteEmbedded => true,
-        _ => false,
-    }
+            | Loader::Wasm
+            | Loader::Napi
+            | Loader::Base64
+            | Loader::Dataurl
+            | Loader::Sqlite
+            | Loader::SqliteEmbedded
+    )
 }
 
 pub(crate) fn loader_name(loader: Loader) -> &'static str {

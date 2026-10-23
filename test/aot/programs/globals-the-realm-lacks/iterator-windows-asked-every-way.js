@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is function", () => typeof Iterator.prototype.windows === "function");
   attempt("typeof is undefined", () => (typeof Iterator.prototype.windows === "undefined" ? "absent" : "present"));
   attempt("truth", () => (Iterator.prototype.windows ? "with" : "without"));
-  attempt("used behind a test", () => (Iterator.prototype.windows ? typeof Iterator.prototype.windows.name : "went around"));
+  attempt("used behind a test", () => {
+    if (!Iterator.prototype.windows) return "went around";
+    return typeof Iterator.prototype.windows.name;
+  });
   attempt("in", () => "windows" in Iterator.prototype);
   attempt("hasOwn", () => Object.hasOwn(Iterator.prototype, "windows"));
   attempt("by a key that is made", () => typeof Iterator.prototype[key]);

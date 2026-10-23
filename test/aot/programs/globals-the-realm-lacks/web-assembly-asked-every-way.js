@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is not undefined", () => typeof WebAssembly !== "undefined");
   attempt("typeof is undefined", () => (typeof WebAssembly === "undefined" ? "absent" : "present"));
   attempt("typeof is the kind", () => typeof WebAssembly === "object");
-  attempt("used behind typeof", () => (typeof WebAssembly !== "undefined" ? typeof WebAssembly.validate : "went around"));
+  attempt("used behind typeof", () => {
+    if (typeof WebAssembly === "undefined") return "went around";
+    return typeof WebAssembly.validate;
+  });
   attempt("bare read", () => WebAssembly === undefined);
   attempt("bare read that is kept", () => {
     const held = WebAssembly;

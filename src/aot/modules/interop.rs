@@ -65,10 +65,7 @@ impl Interop {
     }
 
     pub fn has_export_table(self) -> bool {
-        match self.kind {
-            ModuleKind::SourceText | ModuleKind::Data => true,
-            _ => false,
-        }
+        matches!(self.kind, ModuleKind::SourceText | ModuleKind::Data)
     }
 }
 

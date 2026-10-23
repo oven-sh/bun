@@ -80,29 +80,26 @@ fn is_read_without_code(builtin: BuiltinId, is_global: bool) -> bool {
 }
 
 fn is_arithmetic(op: BinOp) -> bool {
-    match op {
+    matches!(
+        op,
         BinOp::Add
-        | BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor => true,
-        _ => false,
-    }
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::Pow
+            | BinOp::Shl
+            | BinOp::Shr
+            | BinOp::UShr
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor
+    )
 }
 
 // A key that the bundler's parser holds as a string and does not mark as computed: `a`, `"a"`.
 fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
-    let is_written_name = match name_kind {
-        NameKind::Identifier | NameKind::StringLiteral => true,
-        _ => false,
-    };
+    let is_written_name = matches!(name_kind, NameKind::Identifier | NameKind::StringLiteral);
     match key {
         PropKey::Name(name) if is_written_name => Some(name),
         PropKey::Name(_) | PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => None,
@@ -466,10 +463,7 @@ impl<'a, 's> Removable<'a, 's> {
             PropKey::None | PropKey::Name(_) | PropKey::Private(_) => true,
             PropKey::Computed(key) => self.literal(key).is_some(),
         };
-        let copies_nothing = match node.kind {
-            PropKind::Spread => false,
-            _ => true,
-        };
+        let copies_nothing = !matches!(node.kind, PropKind::Spread);
         has_plain_key && copies_nothing && self.expression(node.value)
     }
 

@@ -3470,7 +3470,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let declaration_name = self.declaration_name_to_string(file, right);
                     let args = [Arg::Bytes(&namespace), Arg::Bytes(&declaration_name)];
                     let subject = (merged_resolved_symbol.symbol())
-                        .map_or(Default::default(), |symbol| self.member_container(symbol));
+                        .map_or_else(Default::default, |symbol| self.member_container(symbol));
                     self.error(file, current, 2694, &args).subject = subject;
                 }
                 return None;

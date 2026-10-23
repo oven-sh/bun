@@ -4,6 +4,7 @@
 
 #include "BunAOTCompile.h"
 #include "BunClientData.h"
+#include "CodeGenerationFromStrings.h"
 #include "ErrorCode.h"
 #include "ImportMetaObject.h"
 #include "JSCommonJSExtensions.h"
@@ -20,6 +21,8 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
+
+#if ENABLE(AOT)
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
@@ -383,8 +386,11 @@ ASCIILiteral adviceToKeepFunctionSource()
     return image ? image->header().options.adviceToKeepFunctionSource() : ""_s;
 }
 
-JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path)
+JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
 {
+    // --disallow-code-generation-from-strings=strict refuses code from the disk in an executable built without --aot too. Whoever set the flag expects its error.
+    if (what == NotInExecutable::Code && isCodeGenerationFromStringsStrictByFlags())
+        return createCodeGenerationFromStringsError(globalObject);
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external."_s, adviceToKeepFunctionSource()));
 }
 
@@ -401,7 +407,7 @@ JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject* globalObject, Err
 {
     if (!hasCompiledModules() || !AOT::refusesHostObjectsOutsideImage(globalObject))
         return {};
-    return createNotInExecutableError(globalObject, code, path);
+    return createNotInExecutableError(globalObject, code, path, NotInExecutable::HostObject);
 }
 
 JSValue parentSeenBy(Zig::GlobalObject* globalObject, JSString* id, JSValue parent)
@@ -504,3 +510,45 @@ extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(
 {
     return JSC::JSValue::encode(Bun::errorIfHostObjectOutsideImageIsRefused(globalObject, code, path->toWTFString(BunString::ZeroCopy)));
 }
+
+#else // ENABLE(AOT)
+
+// The answers of the functions above where no image is registered.
+namespace Bun {
+using namespace JSC;
+
+const AOT::ModuleHost compiledModuleHost { };
+
+std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
+JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
+JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, bool, int64_t) { return nullptr; }
+bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
+JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return { }; }
+bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
+String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return { }; }
+ASCIILiteral adviceToKeepFunctionSource() { return ""_s; }
+JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path)
+{
+    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable."_s));
+}
+JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return { }; }
+JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return { }; }
+JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
+bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }
+JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
+JSValue parentSeenBy(Zig::GlobalObject*, JSString*, JSValue parent) { return parent; }
+JSValue errorIfUnseenCodeIsRefused(JSGlobalObject*, ASCIILiteral) { return { }; }
+bool isDebuggerAdmitted() { return true; }
+JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return { }; }
+void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) { }
+
+}
+
+extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return false; }
+extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
+extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
+extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
+extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({ }); }
+extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({ }); }
+
+#endif // ENABLE(AOT)

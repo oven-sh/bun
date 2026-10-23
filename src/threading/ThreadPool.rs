@@ -841,6 +841,24 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
+/// Set in a process that runs an ahead-of-time compiled program, which starts
+/// its threads late, when a limit on threads may have been reached.
+pub static EXITS_WITHOUT_ANY_THREAD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// A refused thread is the environment's limit, not a bug: no crash reporter.
+#[cold]
+#[inline(never)]
+fn exit_spawn_failed(err: &std::io::Error) -> ! {
+    bun_core::err_generic!("Failed to start a thread of the thread pool: {}", err);
+    if err.raw_os_error() == Some(libc::EAGAIN) {
+        bun_core::note!(
+            "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
+        );
+    }
+    bun_core::Global::crash()
+}
+
 // NOTE: a `prewarm_mimalloc_numa()` helper was tried here to call
 // `_mi_os_numa_node_count()` once on the spawning thread so workers don't race
 // the `/sys/devices/system/node/node%u` slow path, but mimalloc is built as
@@ -952,7 +970,13 @@ impl ThreadPool {
                                 Ok(_handle) => {
                                     // detach by dropping
                                 }
-                                Err(_) => {
+                                Err(err) => {
+                                    // The threads there are take the task. With none it would wait forever.
+                                    if new_sync.spawned() == 1
+                                        && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed)
+                                    {
+                                        exit_spawn_failed(&err);
+                                    }
                                     // SAFETY: `&self` keeps the pool live; `null` thread makes
                                     // `unregister` return right after undoing the `spawned`
                                     // increment CAS'd above (no per-thread wait past notify).

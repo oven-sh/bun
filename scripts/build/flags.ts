@@ -459,6 +459,11 @@ export const globalFlags: Flag[] = [
     desc: "No stack protector (pin the toolchain-independent default)",
   },
   {
+    flag: "-DENABLE_AOT=0",
+    when: c => !c.aot,
+    desc: "No ahead-of-time compiler and no run time for its programs (wtf/PlatformEnable.h turns it on wherever the FTL is on)",
+  },
+  {
     flag: computeHardeningFlags,
     when: c => c.hardened,
     desc: "Stack protector, checked libc calls (in an optimized build without ASan), stack clash protection, zeroed locals up to 4 KB, no assumptions from undefined behavior, traps on an index outside a fixed-size array, libstdc++ assertions, position-independent code",

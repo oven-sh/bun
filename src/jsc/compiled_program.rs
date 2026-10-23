@@ -368,6 +368,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         }
         program.set_module_lookup(find_module_path);
         bun_crash_handler::report_aborts();
+        bun_threading::thread_pool::EXITS_WITHOUT_ANY_THREAD.store(true, Ordering::Relaxed);
         if is_verbose {
             print_image_summary(program.image.len());
         }

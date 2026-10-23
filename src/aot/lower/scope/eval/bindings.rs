@@ -79,10 +79,10 @@ fn compute_scope_depths(hir: &hir::File<'_>, bound: &Bound<'_>, innermost: Scope
 }
 
 fn is_lexical_declaration(kind: BindingKind) -> bool {
-    match kind {
-        BindingKind::Let | BindingKind::Const | BindingKind::Class => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        BindingKind::Let | BindingKind::Const | BindingKind::Class
+    )
 }
 
 fn class_slot(scope: ScopeId, slot: ClassSlot) -> BindingRef {

@@ -12,13 +12,12 @@ impl Resolver<'_, '_> {
     fn is_stable(&self, symbol: SymbolId) -> bool {
         let input = self.input;
         let is_dead_store = |target: ExprId| input.decisions.is_dead_expr(target);
-        match input
-            .bound
-            .binding_stability_ignoring(symbol, &is_dead_store)
-        {
-            BindingStability::Stable => true,
-            _ => false,
-        }
+        matches!(
+            input
+                .bound
+                .binding_stability_ignoring(symbol, &is_dead_store),
+            BindingStability::Stable
+        )
     }
 
     fn find_alias_source(&self, symbol: SymbolId) -> Option<AliasSource> {
@@ -159,10 +158,10 @@ impl Resolver<'_, '_> {
     // Every read of the binding is written in what is resolved of this file and is found by the binding.
     pub(super) fn can_hold_builtin(&self, symbol: SymbolId) -> bool {
         let bound = self.input.bound;
-        let is_plain_binding = match bound.binding_stability_ignoring(symbol, &|_| true) {
-            BindingStability::Stable | BindingStability::NotInitializedOnce => true,
-            _ => false,
-        };
+        let is_plain_binding = matches!(
+            bound.binding_stability_ignoring(symbol, &|_| true),
+            BindingStability::Stable | BindingStability::NotInitializedOnce
+        );
         is_plain_binding
             && !self.exported_symbols.contains(&symbol)
             && !bound.is_visible_to_eval(symbol)

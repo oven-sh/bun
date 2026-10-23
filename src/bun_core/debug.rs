@@ -302,7 +302,7 @@ fn caller_of_faulting_stub(
     const WORD: usize = core::mem::size_of::<usize>();
     const WORDS_SEARCHED: usize = 64;
     const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
-    if sp % WORD != 0 {
+    if !sp.is_multiple_of(WORD) {
         return None;
     }
     for place in (0..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {

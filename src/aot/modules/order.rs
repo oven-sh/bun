@@ -835,10 +835,7 @@ pub(super) fn compute_order(
         .sources
         .entry_points()
         .iter()
-        .filter(|entry| match entry.kind {
-            EntryPointKind::Main | EntryPointKind::Library => false,
-            _ => true,
-        });
+        .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library));
     let late_targets = late_targets.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
     let late_targets = late_targets.filter_map(|target| Some(numbers.number_of(target)? as u32));
     let is_exposed = find_reached(&edges.all, late_targets.collect());

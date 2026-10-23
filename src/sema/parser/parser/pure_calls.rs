@@ -36,16 +36,16 @@ fn annotated_token_starts(comments: &[Comment], text: &[u8]) -> Vec<u32> {
 }
 
 fn is_chain_link(kind: &ExprKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. } => true,
-        _ => false,
-    }
+            | ExprKind::Index { .. }
+            | ExprKind::Call(_)
+            | ExprKind::New(_)
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+    )
 }
 
 fn previous_link(file: &FileBuilder, link: ExprId) -> Option<ExprId> {

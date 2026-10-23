@@ -334,15 +334,15 @@ fn returns_created_object(hir: &hir::File<'_>, statement: StmtId) -> bool {
     let Some(value) = value.some() else {
         return false;
     };
-    match hir[hir.skip_type_assertions(value)].kind {
+    matches!(
+        hir[hir.skip_type_assertions(value)].kind,
         ExprKind::Regex { .. }
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::New(_) => true,
-        _ => false,
-    }
+            | ExprKind::Array(_)
+            | ExprKind::Object(_)
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_)
+            | ExprKind::New(_)
+    )
 }
 
 fn stored_value_kind(hir: &hir::File<'_>, value: ExprId) -> ObjectMemberKind {

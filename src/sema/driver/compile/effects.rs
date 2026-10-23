@@ -207,10 +207,10 @@ impl ProgramOrigins<'_, '_> {
             .zip(compiled.code_answers);
         sites.into_iter().any(|(site, answer)| {
             site.specifier == ImportSpecifier::Constant(specifier)
-                && match answer {
-                    CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_) => false,
-                    _ => true,
-                }
+                && !matches!(
+                    answer,
+                    CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_)
+                )
         })
     }
 

@@ -21,12 +21,12 @@ pub(super) enum DeclarationKind {
 
 impl DeclarationKind {
     pub(super) fn binds_in_table_scope(self) -> bool {
-        match self {
+        !matches!(
+            self,
             DeclarationKind::NoBinding
-            | DeclarationKind::ImplicitBlockFunction
-            | DeclarationKind::BlockScopedRequire => false,
-            _ => true,
-        }
+                | DeclarationKind::ImplicitBlockFunction
+                | DeclarationKind::BlockScopedRequire
+        )
     }
 }
 

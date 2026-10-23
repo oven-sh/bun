@@ -75,10 +75,7 @@ pub(super) fn is_listed_at_allocation(
             InitialState::Undefined => true,
             InitialState::Initialized => is_simple_parameter(file, symbol),
         },
-        BindingRef::Slot(_, slot) => match slot {
-            ScopeSlot::Class(_) => false,
-            _ => true,
-        },
+        BindingRef::Slot(_, slot) => !matches!(slot, ScopeSlot::Class(_)),
     }
 }
 

@@ -13,9 +13,11 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
     sources
         .entry_points()
         .iter()
-        .filter(|entry_point| match entry_point.kind {
-            EntryPointKind::Main | EntryPointKind::Additional => true,
-            _ => false,
+        .filter(|entry_point| {
+            matches!(
+                entry_point.kind,
+                EntryPointKind::Main | EntryPointKind::Additional
+            )
         })
         .map(|entry_point| EntryPointPaths {
             public_path: sources.module_paths(entry_point.file).public_path.to_vec(),

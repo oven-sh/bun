@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is not undefined", () => typeof ShadowRealm !== "undefined");
   attempt("typeof is undefined", () => (typeof ShadowRealm === "undefined" ? "absent" : "present"));
   attempt("typeof is the kind", () => typeof ShadowRealm === "function");
-  attempt("used behind typeof", () => (typeof ShadowRealm !== "undefined" ? typeof ShadowRealm.prototype : "went around"));
+  attempt("used behind typeof", () => {
+    if (typeof ShadowRealm === "undefined") return "went around";
+    return typeof ShadowRealm.prototype;
+  });
   attempt("bare read", () => ShadowRealm === undefined);
   attempt("bare read that is kept", () => {
     const held = ShadowRealm;

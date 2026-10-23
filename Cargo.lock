@@ -191,6 +191,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_aot_absent"
+version = "0.0.0"
+dependencies = [
+ "bun_aot_interface",
+ "bun_ast",
+ "bun_options_types",
+ "bun_sema",
+ "bun_trim",
+]
+
+[[package]]
 name = "bun_aot_builtins"
 version = "0.0.0"
 dependencies = [
@@ -642,6 +653,7 @@ name = "bun_executable"
 version = "0.0.0"
 dependencies = [
  "bun_aot",
+ "bun_aot_absent",
  "bun_runtime",
 ]
 

@@ -319,6 +319,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     profile,
     "--locked",
   ];
+  if (!cfg.aot) args.push("--no-default-features", "--features", "without_aot");
   // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each crate's rlib
   // as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like the
   // rest; the toolchain's prebuilt std is not. It also gives:

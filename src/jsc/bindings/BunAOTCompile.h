@@ -5,10 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#if !ENABLE(AOT)
-#error "Bun needs a JavaScriptCore built with ENABLE(AOT)"
-#endif
-
 namespace JSC {
 class JSGlobalObject;
 namespace AOT {
@@ -29,6 +25,7 @@ struct BunAOTImageFile {
 
 struct BunAOTResult;
 
+#if ENABLE(AOT)
 // BunAOTCompile.cpp
 extern "C" void Bun__AOT__initializeOptions(JSC::AOT::Wire::CompileOptions*);
 extern "C" size_t Bun__AOT__applyOptionWord(JSC::AOT::Wire::CompileOptions*, BunAOTBytes word, uint8_t* message, size_t capacity);
@@ -41,6 +38,7 @@ extern "C" JSC::AOT::ImageAddressPlaces Bun__AOT__addressPlacesOfImage(BunAOTByt
 extern "C" size_t Bun__AOT__operationCount();
 extern "C" BunAOTBytes Bun__AOT__operationName(size_t index);
 extern "C" bool Bun__AOT__isOptionalPass(JSC::AOT::Wire::PassID);
+#endif
 
 // BunCompilers.cpp
 extern "C" bool Bun__AOT__hasCompiler();
@@ -49,8 +47,10 @@ extern "C" bool Bun__AOT__hasCompiler();
 extern "C" void Bun__AOT__registerHostBindings();
 
 // BunAOTRuntime.cpp
+#if ENABLE(AOT)
 extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16]);
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes image, JSC::AOT::Wire::AdmittedCode* admitted);
+#endif
 extern "C" BunAOTBytes Bun__AOT__imageCode();
 extern "C" void Bun__AOT__setMismatchLog(intptr_t descriptor, bool isJSON);
 extern "C" void Bun__AOT__setMismatchLogFormat(bool isJSON);

@@ -59,10 +59,7 @@ impl Cause {
 }
 
 pub(super) fn is_property_access(kind: AccessKind) -> bool {
-    match kind {
-        AccessKind::Call | AccessKind::Construct => false,
-        _ => true,
-    }
+    !matches!(kind, AccessKind::Call | AccessKind::Construct)
 }
 
 fn is_untyped_access(record: &AccessRecord) -> bool {

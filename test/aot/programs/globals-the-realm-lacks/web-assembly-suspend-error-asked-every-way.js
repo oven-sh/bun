@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is function", () => typeof WebAssembly.SuspendError === "function");
   attempt("typeof is undefined", () => (typeof WebAssembly.SuspendError === "undefined" ? "absent" : "present"));
   attempt("truth", () => (WebAssembly.SuspendError ? "with" : "without"));
-  attempt("used behind a test", () => (WebAssembly.SuspendError ? typeof WebAssembly.SuspendError.name : "went around"));
+  attempt("used behind a test", () => {
+    if (!WebAssembly.SuspendError) return "went around";
+    return typeof WebAssembly.SuspendError.name;
+  });
   attempt("in", () => "SuspendError" in WebAssembly);
   attempt("hasOwn", () => Object.hasOwn(WebAssembly, "SuspendError"));
   attempt("by a key that is made", () => typeof WebAssembly[key]);

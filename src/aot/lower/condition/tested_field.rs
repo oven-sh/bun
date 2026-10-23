@@ -47,15 +47,15 @@ pub(super) fn has_unit_type(file: &mut FileLowering<'_, '_, '_, '_>, expression:
     let Ok(shape) = file.queries.type_shape(ty) else {
         return false;
     };
-    match shape.kind {
+    matches!(
+        shape.kind,
         ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::StringLiteral(_) => true,
-        _ => false,
-    }
+            | ShapeKind::Null
+            | ShapeKind::BooleanLiteral(_)
+            | ShapeKind::NumberLiteral(_)
+            | ShapeKind::NumericEnumMember(_)
+            | ShapeKind::StringLiteral(_)
+    )
 }
 
 pub(in crate::lower) fn is_holder_unchanged(

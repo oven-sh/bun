@@ -147,7 +147,11 @@ async function inParallel<T, R>(items: T[], width: number, work: (item: T, index
 
 function unusable(bed: Bed, plain: Run): Verdict | undefined {
   if (plain.timedOut) return { kind: "skipped", why: "plain run too slow" };
-  if (plain.signal) return { kind: "skipped", why: "plain run crashed" };
+  // Plain Bun is the same binary: its death is a finding as well.
+  if (plain.signal) {
+    const said = plain.stderr.split("\n").find(line => /panic|Segmentation|Illegal|Trap|ASSERT|AddressSanitizer/.test(line)) ?? "";
+    return { kind: "crash", detail: `plain Bun died of ${plain.signal}: ${said.slice(0, 160)}`, signature: `plain ${plain.signal}` };
+  }
   // The shell reports an uncaught exception of a module in other words than that of a compiled entry point.
   if (bed.name === "engine" && plain.exitCode !== 0) return { kind: "skipped", why: "uncaught exception" };
 }
@@ -178,6 +182,10 @@ export class ProductBed implements Bed {
       modes?: string[];
       /** The executable runs with a collection at every n-th allocation that leaves the fast path, n drawn from these, full or young; freed cells are overwritten and never reused. */
       collectorStress?: number[];
+      /** Half of the batches run with every write barrier on its fenced road. */
+      isFenced?: boolean;
+      /** One time in n, n drawn from these, compiled code takes the general road behind a test though the value would have passed. */
+      failPredictions?: number[];
       /** So many workers run the program at once, each for itself, in place of the main thread. */
       workers?: number;
     },
@@ -193,20 +201,30 @@ export class ProductBed implements Bed {
     return true;
   }
 
-  // Several --aot-disable flags do not add up, so the lists are merged into one flag.
+  // Several --aot-disable flags do not add up, nor do several --aot-testing flags, so the lists are merged into one flag each.
   #merged(flags: string[]): string[] {
-    const disabled = flags.filter(flag => flag.startsWith("--aot-disable=")).flatMap(flag => flag.slice("--aot-disable=".length).split(","));
-    const rest = flags.filter(flag => !flag.startsWith("--aot-disable="));
-    return disabled.length ? [...rest, "--aot-disable=" + [...new Set(disabled)].join(",")] : rest;
+    let merged = flags;
+    for (const list of ["--aot-disable=", "--aot-testing="]) {
+      const listed = merged.filter(flag => flag.startsWith(list)).flatMap(flag => flag.slice(list.length).split(","));
+      if (listed.length) merged = [...merged.filter(flag => !flag.startsWith(list)), list + [...new Set(listed)].join(",")];
+    }
+    return merged;
   }
 
   // One interval is blind to what another sees, so each batch gets its own. The draw rides in the flags of the mode: what confirms and reduces a finding runs under the same one, and the finding records it.
   #drawnStress(): string[] {
-    const intervals = this.options.collectorStress;
-    if (!intervals?.length) return [];
-    const drawn = Math.floor(Math.random() * intervals.length * 2);
-    const set = [`BUN_JSC_slowPathAllocsBetweenGCs=${intervals[drawn >> 1]}`, "BUN_JSC_scribbleFreeCells=1", "BUN_JSC_useZombieMode=1", ...(drawn & 1 ? ["BUN_JSC_useEdenCollectionsAtSlowPathAllocs=1"] : [])];
-    return set.map(each => inTheRun + each);
+    const below = (limit: number) => Math.floor(Math.random() * limit);
+    const set: string[] = [];
+    const intervals = this.options.collectorStress ?? [];
+    const drawn = below(intervals.length * 2);
+    let interval = intervals[drawn >> 1];
+    // Full collections at every first to third such allocation take a hundred times as long as at every fifth: four in five of those draws take a wider interval. Young ones stay.
+    if (interval && interval < 5 && !(drawn & 1) && below(5)) interval = [5, 7, 11][below(3)];
+    // 0 stands for no collections but the program's own.
+    if (interval) set.push(`BUN_JSC_slowPathAllocsBetweenGCs=${interval}`, "BUN_JSC_scribbleFreeCells=1", "BUN_JSC_useZombieMode=1", ...(drawn & 1 ? ["BUN_JSC_useEdenCollectionsAtSlowPathAllocs=1"] : []));
+    if (this.options.isFenced && below(2)) set.push("BUN_JSC_forceFencedBarrier=1");
+    const failing = this.options.failPredictions ?? [];
+    return [...set.map(each => inTheRun + each), ...(failing.length ? [`--aot-testing=FailPredictions:${failing[below(failing.length)]}:${below(65536)}`] : [])];
   }
 
   modes(program: Program): Mode[] {
@@ -230,6 +248,14 @@ export class ProductBed implements Bed {
     modes.push({ name: "hot-and-nothing-inlined", flags: ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"] });
     modes.push({ name: "no-flow-results", flags: ["--aot-disable=flow-results"] });
     modes.push({ name: "hot-without-flow-results", flags: ["--aot-heat=everything-is-hot", "--aot-disable=flow-results"] });
+    // In a very large program what is neither hot nor warm is generated directly, without the optimizing back end. A small program never takes that road by itself. Three ways onto it.
+    modes.push({ name: "all-code-direct", flags: ["--aot-testing=GenerateAllCodeDirectly"] });
+    modes.push({ name: "every-function-cold", flags: ["--aot-heat=everything-is-cold"] });
+    modes.push({ name: "counts-as-very-large", flags: ["--aot-limit=MaxWarmCodeValues:1"] });
+    if (program.extension === "ts") modes.push({ name: "erased-and-cold", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold"] });
+    modes.push({ name: "direct-and-validated", flags: ["--aot-testing=GenerateAllCodeDirectly", "--aot-validate"] });
+    modes.push({ name: "direct-and-proofs-checked", flags: ["--aot-testing=GenerateAllCodeDirectly,CheckProofsAtRunTime"] });
+    modes.push({ name: "allocations-leave-the-fast-path", flags: ["--aot-testing=ForceGCSlowPaths"] });
     return modes.filter(mode => this.options.modes!.includes(mode.name));
   }
 

@@ -2,6 +2,7 @@ use bun_aot::load::source_provider::{
     Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
 };
 use bun_ast::{Kind, Loader, Log, Msg, Range};
+use bun_core::strings;
 use bun_ptr::ParentRef;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_threading::{Condvar, Guarded};
@@ -409,7 +410,7 @@ impl PluginRequests {
 
 // The compiler writes `C:/a/b.ts`. The bundler tells a plugin `C:\a\b.ts`, and a filter may be written for that.
 fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
-    if !is_windows || !path.contains(&b'/') {
+    if !is_windows || !strings::contains_char(path, b'/') {
         return Cow::Borrowed(path);
     }
     let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };

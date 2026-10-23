@@ -105,10 +105,10 @@ pub(super) fn can_hold_family(file: &mut FileLowering<'_, '_, '_, '_>, ty: Check
     let Ok(shape) = file.queries.type_shape(ty) else {
         return false;
     };
-    match classify_shape(&shape.kind) {
-        ComparedShape::Primitive | ComparedShape::NoValue | ComparedShape::Loose => false,
-        _ => true,
-    }
+    !matches!(
+        classify_shape(&shape.kind),
+        ComparedShape::Primitive | ComparedShape::NoValue | ComparedShape::Loose
+    )
 }
 
 fn find_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Option<LayoutId> {
@@ -1038,10 +1038,7 @@ fn compare_objects(
 }
 
 fn is_read_through(kind: ObjectMemberKind) -> bool {
-    match kind {
-        ObjectMemberKind::Setter => false,
-        _ => true,
-    }
+    !matches!(kind, ObjectMemberKind::Setter)
 }
 
 fn compare_members(

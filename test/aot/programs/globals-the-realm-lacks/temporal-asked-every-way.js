@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is not undefined", () => typeof Temporal !== "undefined");
   attempt("typeof is undefined", () => (typeof Temporal === "undefined" ? "absent" : "present"));
   attempt("typeof is the kind", () => typeof Temporal === "object");
-  attempt("used behind typeof", () => (typeof Temporal !== "undefined" ? typeof Temporal.Now : "went around"));
+  attempt("used behind typeof", () => {
+    if (typeof Temporal === "undefined") return "went around";
+    return typeof Temporal.Now;
+  });
   attempt("bare read", () => Temporal === undefined);
   attempt("bare read that is kept", () => {
     const held = Temporal;

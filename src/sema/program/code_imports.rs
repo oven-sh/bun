@@ -155,10 +155,7 @@ fn resolve_site<'r>(
 }
 
 fn is_get_builtin_module(kind: ImportSiteKind) -> bool {
-    match kind {
-        ImportSiteKind::GetBuiltinModule(_) => true,
-        _ => false,
-    }
+    matches!(kind, ImportSiteKind::GetBuiltinModule(_))
 }
 
 fn builtin_module_or_erased(resolution: CodeResolution<'_>) -> CodeResolution<'_> {

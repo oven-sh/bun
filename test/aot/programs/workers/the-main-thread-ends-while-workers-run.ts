@@ -27,7 +27,7 @@ if (!Bun.isMainThread) {
   const start = (kind: number) => {
     const worker = new Worker(new URL(import.meta.url), { env: { ...process.env, KIND: String(kind) } as any });
     worker.onmessage = () => {
-      if (++running !== 8 || way === "exit while they start and end") return;
+      if (++running !== 8 || way === "exit while they start and end" || way === "ends with unref'd workers") return;
       console.log("all run");
       if (way === "exit when all run") setTimeout(() => process.exit(0), 5);
       else if (way === "exit 7 in a message listener") process.exit(7);

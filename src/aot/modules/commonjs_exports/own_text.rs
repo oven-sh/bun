@@ -461,14 +461,14 @@ impl Scan<'_, '_, '_> {
         };
         let is_declared_at_top = self.drafts[index].body == CodeUnit::File
             && text.bound.symbol_scope(symbol) == text.bound.top_scope(text.hir, CodeUnit::File);
-        let has_variable = match text.bound.binding_kind(symbol) {
+        let has_variable = matches!(
+            text.bound.binding_kind(symbol),
             BindingKind::Var
-            | BindingKind::Let
-            | BindingKind::Const
-            | BindingKind::Class
-            | BindingKind::Function => true,
-            _ => false,
-        };
+                | BindingKind::Let
+                | BindingKind::Const
+                | BindingKind::Class
+                | BindingKind::Function
+        );
         // An ES importer holds what the getter answered when the file was linked. Nobody can tell where nothing stores again.
         let is_stable = text.bound.is_stable_binding(symbol);
         (is_declared_at_top && has_variable && is_stable && text.bound.has_runtime_value(symbol))

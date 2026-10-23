@@ -568,6 +568,29 @@ function show(r, depth = 0) {
 }
 `;
 
+const typedHead = (
+  [
+    ["function count() {", "function count(...all: any[]): number {"],
+    ["function gather(first, ...rest) {", "function gather(first: any, ...rest: any[]): any[] {"],
+    ["function withLength(a, length) {", "function withLength<T>(a: T[], length: number): T[] {"],
+    ["function pushed(...all) { const a = [];", "function pushed<T>(...all: T[]): T[] { const a: T[] = [];"],
+    ["function shifted(a) {", "function shifted<T>(a: T[]): T[] {"],
+    ["function filledBytes(a) {", "function filledBytes<T extends Uint8Array>(a: T): T {"],
+    ["function resizable(length, most) {", "function resizable(length: number, most: number): ArrayBuffer {"],
+    ["function resized(a, length) { a.buffer.resize(length);", "function resized<T extends ArrayBufferView>(a: T, length: number): T { (a.buffer as ArrayBuffer).resize(length);"],
+    ["function grown(a, length) { filledBytes(a); a.buffer.grow(length);", "function grown<T extends Uint8Array>(a: T, length: number): T { filledBytes(a); (a.buffer as SharedArrayBuffer).grow(length);"],
+    ["function detached(a) { a.buffer.transfer();", "function detached<T extends ArrayBufferView>(a: T): T { (a.buffer as ArrayBuffer).transfer();"],
+    ["function withoutKey(c, k) {", "function withoutKey<T extends { delete(k: any): boolean }>(c: T, k: any): T {"],
+    ["function cleared(c) {", "function cleared<T extends { clear(): void }>(c: T): T {"],
+    ["function started(it, steps = 1) {", "function started<T extends { next(): any }>(it: T, steps = 1): T {"],
+    ["function counter(most, hasReturn) { let n = 0; const it = {", "function counter(most: number, hasReturn?: boolean) { let n = 0; const it: { next(): { done: boolean; value: number | undefined }; [Symbol.iterator](): any; return?(): {} } = {"],
+    ["function showList(r, depth) {", "function showList(r: any, depth: number): string {"],
+    ["function show(r, depth = 0) {", "function show(r: any, depth = 0): string {"],
+    ['"length").get;', '"length")!.get!;'],
+    ['"size").get;', '"size")!.get!;'],
+  ] as const
+).reduce((text, [untyped, typed]) => text.replace(untyped, typed), head).replaceAll(/^(?!$)/gm, "// @ts-ignore\n");
+
 // How the value gets from its birth to its use. `@` is the number of the site, A and B are the two births, USE the body of the use.
 const given = `let last@ = ""; for (let n = 0; n < 20; n++) last@ = attempt@(A);
 console.log("NAME, hot:", last@);
@@ -579,50 +602,50 @@ console.log("NAME, hot:", last@);
 for (let n = 0; n < 3; n++) console.log("NAME, then:", attempt@(1));
 console.log("NAME, again:", attempt@(0));
 `;
-const attempt = (call: string) => `function attempt@(v) { try { return show(${call}); } catch (e) { return "threw " + e.name; } }\n`;
+const attempt = (call: string, argument = "Both@") => `function attempt@(v«: ${argument}») { try { return show(${call}); } catch (e) { return "threw " + e.name; } }\n`;
 export const roads: Record<string, { text: string; onlyWalks?: boolean; needs?: string }> = {
   // The value is an argument of the function that uses it.
-  handed: { text: "function use@(v) { USE }\n" + attempt("use@(v)") + given },
+  handed: { text: "function use@(v«: Both@») { USE }\n" + attempt("use@(v)") + given },
   // The value is a member of an object that the caller of the use is given.
-  member: { text: "class Holder@ { constructor(held) { this.held = held; } }\nfunction use@(v) { USE }\nfunction ask@(holder) { return use@(holder.held); }\n" + attempt("ask@(new Holder@(v))") + given },
+  member: { text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nfunction use@(v«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.held); }\n" + attempt("ask@(new Holder@(v))") + given },
   // The function that uses it reads it from what it is given.
-  ownMember: { text: "class Holder@ { constructor(held) { this.held = held; } }\nfunction use@(holder) { const v = holder.held; USE }\n" + attempt("use@(new Holder@(v))") + given },
+  ownMember: { text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nfunction use@(holder«: Holder@») { const v = holder.held; USE }\n" + attempt("use@(new Holder@(v))") + given },
   // The value is born on one of two paths of the function that holds it in a variable.
-  held: { text: "function use@(v) { USE }\nfunction ask@(which) { let v; if (which === 0) v = A; else v = B; return use@(v); }\n" + attempt("ask@(v)") + chosen },
+  held: { text: "function use@(v«: Both@») { USE }\nfunction ask@(which«: number») { let v«: Both@»; if (which === 0) v = A; else v = B; return use@(v); }\n" + attempt("ask@(v)", "number") + chosen },
   // The same, and the use is written in that function.
-  heldAndUsed: { text: "function ask@(which) { const v = which === 0 ? A : B; USE }\n" + attempt("ask@(v)") + chosen },
+  heldAndUsed: { text: "function ask@(which«: number») { const v = which === 0 ? A : B; USE }\n" + attempt("ask@(v)", "number") + chosen },
   // One kind is born in the function that uses it, the other is given to it.
-  bornOrGiven: { text: "function ask@(which, given) { const v = which === 0 ? A : given; USE }\n" + attempt("ask@(v, B)") + chosen },
-  givenOrBorn: { text: "function ask@(which, given) { const v = which === 0 ? given : B; USE }\n" + attempt("ask@(v, A)") + chosen },
+  bornOrGiven: { text: "function ask@(which«: number», given«: Both@») { const v = which === 0 ? A : given; USE }\n" + attempt("ask@(v, B)", "number") + chosen },
+  givenOrBorn: { text: "function ask@(which«: number», given«: Both@») { const v = which === 0 ? given : B; USE }\n" + attempt("ask@(v, A)", "number") + chosen },
   // A variable holds nothing, then one kind, then the other, around a loop.
-  heldAroundLoop: { text: "function use@(v) { USE }\nfunction ask@(turns) { let v = null; const r = []; for (let i = 0; i < turns; i++) { if (v !== null) r.push(show(use@(v))); v = i % 3 === 0 ? A : i % 3 === 1 ? B : null; } return r; }\n" + attempt("ask@(v + 4)") + chosen },
+  heldAroundLoop: { text: "function use@(v«: Both@») { USE }\nfunction ask@(turns«: number») { let v«: Both@ | null» = null; const r«: string[]» = []; for (let i = 0; i < turns; i++) { if (v !== null) r.push(show(use@(v))); v = i % 3 === 0 ? A : i % 3 === 1 ? B : null; } return r; }\n" + attempt("ask@(v + 4)", "number") + chosen },
   // The value is what a function answers.
-  answered: { text: "function make@(which) { return which === 0 ? A : B; }\nfunction use@(v) { USE }\nfunction ask@(which) { return use@(make@(which)); }\n" + attempt("ask@(v)") + chosen },
+  answered: { text: "function make@(which«: number»)«: Both@» { return which === 0 ? A : B; }\nfunction use@(v«: Both@») { USE }\nfunction ask@(which«: number») { return use@(make@(which)); }\n" + attempt("ask@(v)", "number") + chosen },
   // The value is an element of a list that the caller of the use is given.
-  element: { text: "function use@(v) { USE }\nfunction ask@(list) { return use@(list[0]); }\n" + attempt("ask@([v])") + given },
+  element: { text: "function use@(v«: Both@») { USE }\nfunction ask@(list«: Both@[]») { return use@(list[0]); }\n" + attempt("ask@([v])") + given },
   // The value is in a variable of an enclosing function.
-  enclosed: { text: "function keeper@() { let enclosedValue; return { keep(v) { enclosedValue = v; }, ask() { const v = enclosedValue; USE } }; }\nconst theKeeper@ = keeper@();\n" + attempt("(theKeeper@.keep(v), theKeeper@.ask())") + given },
+  enclosed: { text: "function keeper@() { let enclosedValue«: Both@»; return { keep(v«: Both@») { enclosedValue = v; }, ask() { const v = enclosedValue; USE } }; }\nconst theKeeper@ = keeper@();\n" + attempt("(theKeeper@.keep(v), theKeeper@.ask())") + given },
   // The value is what a Map of the caller holds.
-  valueOfMap: { text: "function use@(v) { USE }\nfunction ask@(table) { return use@(table.get(\"k\")); }\n" + attempt('ask@(new Map([["k", v]]))') + given },
+  valueOfMap: { text: "function use@(v«: Both@») { USE }\nfunction ask@(table«: Map<string, Both@>») { return use@(table.get(\"k\")); }\n" + attempt('ask@(new Map([["k", v]]))') + given },
   // Both kinds are elements of one list, and one loop uses each.
-  eachOfList: { text: "function use@(v) { USE }\nfunction ask@(which) { const r = []; for (const v of which === 0 ? [A, A] : [A, B, A]) r.push(show(use@(v))); return r; }\n" + attempt("ask@(v)") + chosen },
+  eachOfList: { text: "function use@(v«: Both@») { USE }\nfunction ask@(which«: number») { const r«: string[]» = []; for (const v of which === 0 ? [A, A] : [A, B, A]) r.push(show(use@(v))); return r; }\n" + attempt("ask@(v)", "number") + chosen },
   // One kind is what a parameter is when nothing is given.
-  defaulted: { text: "function use@(v = A) { USE }\nfunction ask@(which) { return which === 0 ? use@() : use@(B); }\n" + attempt("ask@(v)") + chosen },
+  defaulted: { text: "function use@(v«: Both@» = A) { USE }\nfunction ask@(which«: number») { return which === 0 ? use@() : use@(B); }\n" + attempt("ask@(v)", "number") + chosen },
   // One kind stands in for nothing.
-  orElse: { text: "function use@(given) { const v = given ?? A; USE }\nfunction ask@(which) { return use@(which === 0 ? undefined : B); }\n" + attempt("ask@(v)") + chosen },
+  orElse: { text: "function use@(given«?: Both@») { const v«: Both@» = given ?? A; USE }\nfunction ask@(which«: number») { return use@(which === 0 ? undefined : B); }\n" + attempt("ask@(v)", "number") + chosen },
   // A field starts as one kind and is stored into.
-  field: { text: "class Holder@ { held = A; replace(v) { this.held = v; return this; } }\nfunction use@(v) { USE }\nfunction ask@(holder) { return use@(holder.held); }\n" + attempt("ask@(v === 0 ? new Holder@() : new Holder@().replace(B))") + chosen },
+  field: { text: "class Holder@ { held«: Both@» = A; replace(v«: Both@») { this.held = v; return this; } }\nfunction use@(v«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.held); }\n" + attempt("ask@(v === 0 ? new Holder@() : new Holder@().replace(B))", "number") + chosen },
   // A variable of the module holds one kind and then the other.
-  variableOfModule: { text: "let current@ = null;\nfunction use@() { const v = current@; USE }\n" + attempt("(current@ = v, use@())") + given },
+  variableOfModule: { text: "let current@«: Both@ | null» = null;\nfunction use@() { const v = current@; USE }\n" + attempt("(current@ = v, use@())") + given },
   // The value waits in a generator that has stopped.
-  acrossYield: { text: "function* use@(v) { yield 0; USE }\nfunction ask@(v) { const steps = use@(v); steps.next(); return steps.next().value; }\n" + attempt("ask@(v)") + given },
+  acrossYield: { text: "function* use@(v«: Both@») { yield 0; USE }\nfunction ask@(v«: Both@») { const steps = use@(v); steps.next(); return steps.next().value; }\n" + attempt("ask@(v)") + given },
   // The value is what a callback of a built-in is given.
-  callback: { text: "function ask@(list) { return list.map(v => { USE })[0]; }\n" + attempt("ask@([v])") + given },
+  callback: { text: "function ask@(list«: Both@[]») { return list.map(v => { USE })[0]; }\n" + attempt("ask@([v])") + given },
   // What is walked is what a method of a member answers.
-  entriesOfMember: { onlyWalks: true, needs: "LTMSH", text: "class Holder@ { constructor(held) { this.held = held; } }\nfunction use@(v) { USE }\nfunction ask@(holder) { return use@(holder.held.entries()); }\n" + attempt("ask@(new Holder@(v))") + given },
-  keysOfMember: { onlyWalks: true, needs: "LTMSH", text: "class Holder@ { constructor(held) { this.held = held; } }\nfunction use@(v) { USE }\nfunction ask@(holder) { return use@(holder.held.keys()); }\n" + attempt("ask@(new Holder@(v))") + given },
-  valuesOfMember: { onlyWalks: true, needs: "LTMSH", text: "class Holder@ { constructor(held) { this.held = held; } }\nfunction use@(v) { USE }\nfunction ask@(holder) { return use@(holder.held.values()); }\n" + attempt("ask@(new Holder@(v))") + given },
-  walkOfMember: { onlyWalks: true, needs: "LTMSHI", text: "class Holder@ { constructor(held) { this.held = held; } }\nfunction use@(v) { USE }\nfunction ask@(holder) { return use@(holder.held[Symbol.iterator]()); }\n" + attempt("ask@(new Holder@(v))") + given },
+  entriesOfMember: { onlyWalks: true, needs: "LTMSH", text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nfunction use@(v«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.held.entries()); }\n" + attempt("ask@(new Holder@(v))") + given },
+  keysOfMember: { onlyWalks: true, needs: "LTMSH", text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nfunction use@(v«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.held.keys()); }\n" + attempt("ask@(new Holder@(v))") + given },
+  valuesOfMember: { onlyWalks: true, needs: "LTMSH", text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nfunction use@(v«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.held.values()); }\n" + attempt("ask@(new Holder@(v))") + given },
+  walkOfMember: { onlyWalks: true, needs: "LTMSHI", text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nfunction use@(v«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.held[Symbol.iterator]()); }\n" + attempt("ask@(new Holder@(v))") + given },
 };
 
 // The kinds that differ for the compiler or for a fast path of the run time. A sweep by hand may choose among all of them.
@@ -647,17 +670,20 @@ function usesThatFit(r: string, a: string, b: string, among: string[]) {
 
 // How hot a function is held to be is its place among the program's own code: the hottest fifth is hot. A site that shares its program with others is among the hottest, as it is when it is alone, only beside
 // enough code that runs once. Without it a fault that shows at every one of 24 sites alone shows at none of them.
-function textOf(r: string, a: string, b: string, sites: string[], sumsOfASite: number) {
-  let text = head;
+function textOf(r: string, a: string, b: string, sites: string[], sumsOfASite: number, isTyped?: boolean) {
+  let text = isTyped ? typedHead : head;
   const sums = "  x = (x * 3 + 1) | 0;\n".repeat(sumsOfASite);
-  if (sums) for (let n = 1; n <= sites.length; n++) text += `function runsOnce${n}(x) {\n${sums}  return x;\n}\nrunsOnce${n}(process.argv.length);\n`;
+  if (sums) for (let n = 1; n <= sites.length; n++) text += `function runsOnce${n}(x${isTyped ? ": number" : ""}) {\n${sums}  return x;\n}\nrunsOnce${n}(process.argv.length);\n`;
   sites.forEach((u, index) => {
-    text += roads[r].text.replaceAll("NAME", u).replaceAll(/\bA\b/g, () => kinds[a][1]).replaceAll(/\bB\b/g, () => kinds[b][1]).replaceAll("@", () => String(index + 1)).replaceAll("USE", () => uses[u][1]);
+    // What is declared is that the value is of one of its two kinds. Most uses make sense for one of them only: TypeScript's complaint about that is silenced, line by line.
+    const road = isTyped ? ("const first@ = A;\nconst second@ = B;\ntype Both@ = typeof first@ | typeof second@;\n" + roads[r].text).replaceAll(/[«»]/g, "") : roads[r].text.replaceAll(/«[^»]*»/g, "");
+    const site = road.replaceAll("NAME", u).replaceAll(/\bA\b/g, () => kinds[a][1]).replaceAll(/\bB\b/g, () => kinds[b][1]).replaceAll("@", () => String(index + 1)).replaceAll("USE", () => uses[u][1]);
+    text += isTyped ? site.replaceAll(/^(?!$)/gm, "// @ts-ignore\n") : site;
   });
-  return text;
+  return text + (isTyped ? "export {};\n" : "");
 }
 
-const title = "two kinds of list or collection at one use";
+const title = (isTyped?: boolean) => (isTyped ? "typed " : "") + "two kinds of list or collection at one use";
 
 /** How few of the programs every run of the tests takes: a program of two hundred sites takes as long to build as ten small ones. */
 export const oneIn = 160;
@@ -668,23 +694,23 @@ export const oneIn = 160;
  */
 export function programs(isTyped?: boolean, choice: Choice = {}): Program[] {
   const { sitesOfAProgram = 1000, sumsOfASite = sitesOfAProgram === 1 ? 0 : 200, oneIn = 1, which = 0 } = choice;
-  const differs = Object.keys(choice.alone ? {} : ((known as Record<string, Record<string, string>>)[title] ?? {}));
-  const alone = new Set([...differs, ...(choice.alone ?? (onceWrong as Record<string, string[]>)[title] ?? [])]);
+  const differs = Object.keys(choice.alone ? {} : ((known as Record<string, Record<string, string>>)[title(isTyped)] ?? {}));
+  const alone = new Set([...differs, ...(choice.alone ?? (onceWrong as Record<string, string[]>)[title(isTyped)] ?? [])]);
   const made: Program[] = [];
   // The arguments of a function that is not strict are tied to its parameters, and such a function cannot stand in a module.
-  const fileOf = (a: string, b: string) => (/^given(?!Strict)/.test(a) || /^given(?!Strict)/.test(b) ? "program.cjs" : "program.mjs");
+  const fileOf = (a: string, b: string) => (isTyped ? "program.ts" : /^given(?!Strict)/.test(a) || /^given(?!Strict)/.test(b) ? "program.cjs" : "program.mjs");
   for (const r of choice.roads ?? Object.keys(roads)) for (const a of choice.first ?? usualFirst) for (const b of choice.second ?? usualSecond) {
     const fitting = usesThatFit(r, a, b, choice.uses ?? Object.keys(uses)).filter(u => !differs.includes(`${r}-${a}-${b}-${u}`));
     for (let from = 0, part = 1; from < fitting.length; from += sitesOfAProgram, part++) {
       const name = `${r}-${a}-${b}` + (sitesOfAProgram === 1 ? "-" + fitting[from] : fitting.length > sitesOfAProgram ? "-" + part : "");
       if (oneIn !== 1 && Number(BigInt(Bun.hash(name)) % BigInt(oneIn)) !== which) continue;
       const sites = fitting.slice(from, from + sitesOfAProgram);
-      made.push({ name, file: fileOf(a, b), get text() { return textOf(r, a, b, sites, sumsOfASite); } });
+      made.push({ name, file: fileOf(a, b), get text() { return textOf(r, a, b, sites, sumsOfASite, isTyped); } });
     }
   }
   for (const name of alone) {
     const [r, a, b, u] = name.split("-");
-    made.push({ name, file: fileOf(a, b), get text() { return textOf(r, a, b, [u], 0); } });
+    made.push({ name, file: fileOf(a, b), get text() { return textOf(r, a, b, [u], 0, isTyped); } });
   }
   return made;
 }

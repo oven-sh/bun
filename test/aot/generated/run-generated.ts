@@ -36,6 +36,8 @@ export type Generated = {
   plainEnv?: Record<string, string>;
   /** More flags for the build of this program. */
   flags?: string[];
+  /** The executable runs once more under each of these and prints the same. */
+  alsoUnder?: Record<string, string>[];
   /** How the program departs from plain Bun today. It is listed as a todo and not run. */
   failsToday?: string;
   /** How `bun run --aot` departs from the executable today. That run is listed as a todo and left out. The executable is compared with plain Bun all the same. */
@@ -107,6 +109,10 @@ export function generated(title: string, programs: Generated[]) {
                 if (ours[i] !== theirs[i]) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
               }
               expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode, lines: theirs.length });
+              for (const under of program.alsoUnder ?? []) {
+                const again = await spawned([executable], folder, { ...bunEnv, ...under });
+                expect({ under, stdout: again.stdout, signal: again.signal, exitCode: again.exitCode }).toEqual({ under, stdout: plain.stdout, signal: null, exitCode });
+              }
             } finally {
               rmSync(executable, { force: true });
             }

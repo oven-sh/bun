@@ -9,7 +9,7 @@
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { inPrograms, isGroup, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
 
@@ -185,7 +185,7 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   describe.concurrent(`compile/aot/joined/${label}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
-    if ((isWindows || isASAN) && flags.includes("--aot-testing=GenerateAllCodeDirectly")) return void test.skip("no code is generated directly on Windows or by a Bun built with AddressSanitizer", () => {});
+    if (isWindows && flags.includes("--aot-testing=GenerateAllCodeDirectly")) return void test.skip("no code is generated directly on Windows", () => {});
     const groups = groupsOf(programsOfOneFile());
     const carrier = withoutDebugInformation();
     const [first, step] = partInShare(part, parts, Math.max(1, Math.ceil(groups.length / parts / groupsInShare))).split("/").map(Number);

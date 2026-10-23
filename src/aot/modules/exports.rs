@@ -57,13 +57,13 @@ pub(super) enum Resolution {
 
 impl Resolution {
     fn is_binding(self) -> bool {
-        match self {
+        !matches!(
+            self,
             Resolution::DynamicStar { .. }
-            | Resolution::Unloadable { .. }
-            | Resolution::NotFound
-            | Resolution::Ambiguous => false,
-            _ => true,
-        }
+                | Resolution::Unloadable { .. }
+                | Resolution::NotFound
+                | Resolution::Ambiguous
+        )
     }
 }
 

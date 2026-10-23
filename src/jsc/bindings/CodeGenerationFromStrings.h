@@ -11,6 +11,7 @@
 extern "C" uint8_t Bun__codeGenerationFromStrings();
 extern "C" bool Bun__isCodeGenerationDisallowedByTrimming();
 extern "C" bool Bun__isCodeGenerationDisallowedByCompiledProgram();
+extern "C" bool Bun__isCodeGenerationFromStringsStrictByFlags();
 #endif
 
 namespace Bun {
@@ -58,6 +59,16 @@ inline ASCIILiteral codeGenerationFromStringsDisallowedMessage()
 inline bool isCodeGenerationFromStringsStrict()
 {
     return codeGenerationFromStrings() == CodeGenerationFromStrings::Strict;
+}
+
+// The flag or the build asks for "strict", whatever else refuses text in this process.
+inline bool isCodeGenerationFromStringsStrictByFlags()
+{
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    return true;
+#else
+    return Bun__isCodeGenerationFromStringsStrictByFlags();
+#endif
 }
 
 // No flag set the level: the program was compiled ahead of time to run nothing but its own code.

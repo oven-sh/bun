@@ -242,10 +242,10 @@ impl<'h> Resolver<'h> {
 }
 
 fn is_runtime_module(claim: &HostResolution) -> bool {
-    match claim {
-        HostResolution::Unclaimed | HostResolution::Path(_) | HostResolution::Erased => false,
-        _ => true,
-    }
+    !matches!(
+        claim,
+        HostResolution::Unclaimed | HostResolution::Path(_) | HostResolution::Erased
+    )
 }
 
 #[cfg(test)]

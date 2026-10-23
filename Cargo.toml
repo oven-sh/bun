@@ -20,6 +20,7 @@ members = [
   "src/resolver",
   "src/safety",
   "src/aot",
+  "src/aot/absent",
   "src/aot/builtins",
   "src/aot/interface",
   "src/sema",
@@ -395,6 +396,7 @@ bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
 bun_aot = { path = "src/aot" }
+bun_aot_absent = { path = "src/aot/absent" }
 bun_aot_builtins = { path = "src/aot/builtins" }
 bun_aot_interface = { path = "src/aot/interface" }
 bun_builtin_sources = { path = "src/builtin_sources" }

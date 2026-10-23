@@ -306,9 +306,11 @@ fn push_member_types(
     members: Span<MemberId>,
     mapper: MapperId,
 ) {
-    let holds_data = |member: &MemberId| match hir[*member].kind {
-        MemberKind::Property | MemberKind::IndexSignature => true,
-        _ => false,
+    let holds_data = |member: &MemberId| {
+        matches!(
+            hir[*member].kind,
+            MemberKind::Property | MemberKind::IndexSignature
+        )
     };
     let types = members
         .iter()

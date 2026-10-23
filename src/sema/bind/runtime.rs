@@ -103,13 +103,13 @@ pub enum BindingKind {
 
 impl BindingKind {
     pub fn is_immutable(self) -> bool {
-        match self {
+        matches!(
+            self,
             BindingKind::Import
-            | BindingKind::Const
-            | BindingKind::ClassInnerName
-            | BindingKind::FunctionName => true,
-            _ => false,
-        }
+                | BindingKind::Const
+                | BindingKind::ClassInnerName
+                | BindingKind::FunctionName
+        )
     }
 }
 

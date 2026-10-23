@@ -282,10 +282,7 @@ impl EntryCollector<'_, '_> {
         let site_of = |&(container, statement): &(SymbolId, StmtId)| {
             let kind = ImportSiteKind::ExportStar(statement);
             let site = self.analysis.import_site_index(kind)?;
-            let is_loaded = match self.scan.sites[site] {
-                ScannedSite::Module(_) => true,
-                _ => false,
-            };
+            let is_loaded = matches!(self.scan.sites[site], ScannedSite::Module(_));
             (is_loaded && container == self.bound.file_symbol).then_some(site as u32)
         };
         let stars = self.bound.export_stars.iter();

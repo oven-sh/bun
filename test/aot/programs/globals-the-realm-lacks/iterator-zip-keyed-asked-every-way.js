@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is function", () => typeof Iterator.zipKeyed === "function");
   attempt("typeof is undefined", () => (typeof Iterator.zipKeyed === "undefined" ? "absent" : "present"));
   attempt("truth", () => (Iterator.zipKeyed ? "with" : "without"));
-  attempt("used behind a test", () => (Iterator.zipKeyed ? typeof Iterator.zipKeyed.name : "went around"));
+  attempt("used behind a test", () => {
+    if (!Iterator.zipKeyed) return "went around";
+    return typeof Iterator.zipKeyed.name;
+  });
   attempt("in", () => "zipKeyed" in Iterator);
   attempt("hasOwn", () => Object.hasOwn(Iterator, "zipKeyed"));
   attempt("by a key that is made", () => typeof Iterator[key]);

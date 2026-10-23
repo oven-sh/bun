@@ -25,7 +25,9 @@ const calls: Record<string, () => unknown> = {
     const text = "abc ".repeat(200_000);
     for (;;) text.replace(/[a-c]+/g, found => found.toUpperCase());
   },
-  "a slow pattern": () => /^(a+)+$/.test("a".repeat(40) + "b"),
+  "a slow pattern": () => {
+    for (;;) /^(a+)+$/.test("a".repeat(24) + "b");
+  },
   structuredClone: () => {
     const list = items(50_000);
     for (;;) structuredClone(list);

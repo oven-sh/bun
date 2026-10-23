@@ -159,13 +159,13 @@ fn find_unchanging_local(
         return None;
     };
     let symbol = scope::find_tested_local(lowering, node)?;
-    let has_no_value_before = match bound.binding_kind(symbol) {
+    let has_no_value_before = matches!(
+        bound.binding_kind(symbol),
         BindingKind::Const
-        | BindingKind::Let
-        | BindingKind::Parameter
-        | BindingKind::SimpleCatchParameter => true,
-        _ => false,
-    };
+            | BindingKind::Let
+            | BindingKind::Parameter
+            | BindingKind::SimpleCatchParameter
+    );
     (has_no_value_before && bound.is_stable_binding(symbol)).then_some(symbol)
 }
 

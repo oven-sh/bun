@@ -365,6 +365,42 @@ export function programOf(combinations: Combination[]) {
   return `${head}${before}\n${combinations.map((each, at) => caseOf(each, at + 1)).join("\n")}\n${combinations.map((_, at) => `await case${at + 1}();`).join("\n")}\nawait new Promise(resolve => setTimeout(resolve, 5));\nconsole.log(trail.join("\\n"));\n`;
 }
 
+export interface Large {
+  kind: Kind;
+  disturbance: (typeof disturbances)[number];
+  heat: (typeof heats)[number];
+  parts: { birth: Birth; holder: Holder; suspension: Suspension; place: (typeof places)[number] }[];
+}
+
+export function pickLarge(pick: <T>(items: readonly T[]) => T, count: number): Large {
+  const kind = pick(kinds);
+  const ways = suspensions.filter(each => each.for === (kind.isGenerator ? (kind.isAsync ? "async-generator" : "generator") : "async"));
+  const fitting = holders.filter(holder => !holder.parameters);
+  return { kind, disturbance: pick(disturbances), heat: pick(heats), parts: Array.from({ length: count }, () => ({ birth: pick(births), holder: pick(fitting), suspension: pick(ways), place: pick(places) })) };
+}
+
+export const nameOfLarge = ({ kind, disturbance, heat, parts }: Large) => [`${parts.length}-in-one`, kind.name, disturbance.name, heat, ...parts.map(part => `${part.birth.name}.${part.holder.name}.${part.suspension.name}`)].join("--");
+
+export function largeProgramOf(large: Large) {
+  const { kind, disturbance, heat, parts } = large;
+  const before = [...new Set(parts.map(each => each.birth.before).filter(Boolean))].join("\n");
+  const beside: string[] = [];
+  const blocks = parts.map(({ birth, holder, suspension, place }, at) => {
+    const id = at + 2;
+    const type = `Held${id}`;
+    const V = place === "here" ? `(${birth.text})` : `born${id}(seed)`;
+    beside.push(`function born${id}(seed: number) {\n  return ${birth.text};\n}\nconst again${id} = born${id};\ntype ${type} = ReturnType<typeof born${id}>;`, holder.beside?.({ V, type, id }) ?? "");
+    const body = holder
+      .body({ V: "BORN_HERE", W: `again${id}(seed + 1)`, S: suspension.text, type, id })
+      .replace(/\breturn ([^\n]*);$/gm, `{\n  texts.push($1);\n  break part${id};\n}`)
+      .replaceAll("BORN_HERE", () => V);
+    return `part${id}: {\n${indented(body)}\n}`;
+  });
+  const whole = `const texts: string[] = [];\n${blocks.join("\n")}\nreturn texts.join("|");`;
+  const one: Combination = { birth: parts[0].birth, holder: { name: "large", body: () => whole }, kind, suspension: parts[0].suspension, disturbance, heat, place: "in-a-function" };
+  return `${head}${before}\n${beside.filter(Boolean).join("\n")}\n${caseOf(one, 1)}\nawait case1();\nawait new Promise(resolve => setTimeout(resolve, 5));\nconsole.log(trail.join("\\n"));\n`;
+}
+
 export const tsconfig = JSON.stringify({ compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, strict: true, types: [] } });
 
 export function testPrograms() {
@@ -378,6 +414,11 @@ export function testPrograms() {
   }
   const programs: { name: string; text: string }[] = [];
   for (let at = 0; at < cases.length; at += 4) programs.push({ name: cases.slice(at, at + 4).map(each => `${each.birth.name} as ${each.holder.name}`).join(", "), text: programOf(cases.slice(at, at + 4)) }); // prettier-ignore
+  for (let at = 0; at < kinds.length; at++) {
+    let turn = at * 7;
+    const large = pickLarge(items => items[turn++ % items.length], 12 + at * 4);
+    programs.push({ name: `${large.parts.length} values held in one ${large.kind.name}`, text: largeProgramOf({ ...large, kind: kinds[at], parts: large.kind === kinds[at] ? large.parts : pickLarge(items => (items === (kinds as readonly unknown[]) ? (kinds[at] as never) : items[turn++ % items.length]), 12 + at * 4).parts }) });
+  }
   return programs;
 }
 

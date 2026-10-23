@@ -226,6 +226,7 @@ const guards: { name: string; text(recurse: string, id: number): string }[] = [
     text: (recurse, id) => `let below = 0;\nif (level % 64) below = ${recurse};\nelse\n  try {\n    below = ${recurse};\n  } catch (error) {\n    atTheEnd${id}();\n    if (!(error instanceof RangeError)) throw error;\n  }`,
   },
   { name: "counted-in-finally", text: (recurse, id) => `let below = 0;\nentered${id}++;\ntry {\n  below = ${recurse};\n} finally {\n  left${id}++;\n}` },
+  { name: "counted-in-catch", text: (recurse, id) => `let below = 0;\nentered${id}++;\ntry {\n  below = ${recurse};\n  left${id}++;\n} catch (error) {\n  left${id}++;\n  throw error;\n}` },
   { name: "a-call-in-finally", text: (recurse, id) => `let below = 0;\nentered${id}++;\ntry {\n  below = ${recurse};\n} finally {\n  left${id}++;\n  atTheEnd${id}();\n}` },
 ];
 

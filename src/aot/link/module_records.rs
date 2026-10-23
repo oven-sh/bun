@@ -538,10 +538,9 @@ fn create_record(interop: Interop, path: StringId, display_path: StringId) -> ge
 // Code of Bun's that is loaded like a file of the program: what the bundler imports for the constructs it lowers, as "bun:wrap" is.
 fn is_bundler_helper(source: SourceKind, kind: ModuleKind) -> bool {
     match source {
-        SourceKind::RuntimeModule(_) => match kind {
-            ModuleKind::SourceText | ModuleKind::CommonJs => true,
-            _ => false,
-        },
+        SourceKind::RuntimeModule(_) => {
+            matches!(kind, ModuleKind::SourceText | ModuleKind::CommonJs)
+        }
         _ => false,
     }
 }

@@ -246,7 +246,7 @@ impl<'a> Directory<'a> {
 }
 
 impl FeatureEdge {
-    fn may_follow(&self, previous: Option<&FeatureEdge>, _: &Context<'_>) -> bool {
+    fn may_follow(self, previous: Option<&FeatureEdge>, _: &Context<'_>) -> bool {
         self.from != self.to
             && previous.is_none_or(|previous| (previous.from, previous.to) < (self.from, self.to))
             && (self.is_followed || self.strength != EdgeStrength::Reference)
@@ -254,7 +254,7 @@ impl FeatureEdge {
 }
 
 impl IcuLanguage {
-    fn may_follow(&self, previous: Option<&IcuLanguage>, _: &Context<'_>) -> bool {
+    fn may_follow(self, previous: Option<&IcuLanguage>, _: &Context<'_>) -> bool {
         previous.is_none_or(|previous| previous.name < self.name)
             && u32::from(self.group.0) < LOCALE_GROUP_LIMIT
     }

@@ -54,10 +54,7 @@ fn name_initialized_holders(
 }
 
 fn is_stored_form(form: BindingForm) -> bool {
-    match form {
-        BindingForm::Stored => true,
-        _ => false,
-    }
+    matches!(form, BindingForm::Stored)
 }
 
 fn has_slot(placements: &Placements, scope: ScopeId, slot: ScopeSlot) -> bool {

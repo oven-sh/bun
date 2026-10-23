@@ -197,10 +197,10 @@ impl<'a, 's> Resolver<'a, 's> {
     }
 
     pub(super) fn is_resolved(&self, expr: ExprId) -> bool {
-        match self.state(expr) {
-            ExprState::Builtin(_) | ExprState::Held(_) | ExprState::Intrinsic(_) => true,
-            _ => false,
-        }
+        matches!(
+            self.state(expr),
+            ExprState::Builtin(_) | ExprState::Held(_) | ExprState::Intrinsic(_)
+        )
     }
 
     fn is_unvisited(&self, expr: ExprId) -> bool {

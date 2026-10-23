@@ -18,7 +18,7 @@ const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
   b.class(path, { hasPrototype: false, ...options });
 
 const startedWorker = {
-  returns: b.instance("Worker"),
+  returns: b.instance("Worker").fresh,
   capability: "js",
   throws: true,
   implementation: b.hostCall,

@@ -716,10 +716,7 @@ fn record_heritage_flows(
 }
 
 fn can_be_constructor_function(node: &hir::Func) -> bool {
-    let is_ordinary_function = match node.kind {
-        FnKind::Decl | FnKind::Expr => true,
-        _ => false,
-    };
+    let is_ordinary_function = matches!(node.kind, FnKind::Decl | FnKind::Expr);
     is_ordinary_function
         && hir::has_body(node)
         && !node.flags.intersects(Flags::ASYNC | Flags::GENERATOR)

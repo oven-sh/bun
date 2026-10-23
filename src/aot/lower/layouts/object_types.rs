@@ -131,10 +131,10 @@ struct UntypedMember {
 }
 
 fn is_field_name(class: NameClass) -> bool {
-    match class {
-        NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto => false,
-        _ => true,
-    }
+    !matches!(
+        class,
+        NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto
+    )
 }
 
 fn member_flags(kind: ObjectMemberKind, is_optional: bool) -> FieldFlags {
@@ -149,10 +149,7 @@ fn member_flags(kind: ObjectMemberKind, is_optional: bool) -> FieldFlags {
 }
 
 fn is_object_shape(kind: ShapeKind<'_>) -> bool {
-    match kind {
-        ShapeKind::Object => true,
-        _ => false,
-    }
+    matches!(kind, ShapeKind::Object)
 }
 
 pub(super) fn can_be_field(file: &FileLowering<'_, '_, '_, '_>, key: PropertyKeyId) -> bool {

@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is function", () => typeof Iterator.concat === "function");
   attempt("typeof is undefined", () => (typeof Iterator.concat === "undefined" ? "absent" : "present"));
   attempt("truth", () => (Iterator.concat ? "with" : "without"));
-  attempt("used behind a test", () => (Iterator.concat ? typeof Iterator.concat.name : "went around"));
+  attempt("used behind a test", () => {
+    if (!Iterator.concat) return "went around";
+    return typeof Iterator.concat.name;
+  });
   attempt("in", () => "concat" in Iterator);
   attempt("hasOwn", () => Object.hasOwn(Iterator, "concat"));
   attempt("by a key that is made", () => typeof Iterator[key]);

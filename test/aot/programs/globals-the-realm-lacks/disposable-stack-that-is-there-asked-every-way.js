@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is not undefined", () => typeof DisposableStack !== "undefined");
   attempt("typeof is undefined", () => (typeof DisposableStack === "undefined" ? "absent" : "present"));
   attempt("typeof is the kind", () => typeof DisposableStack === "function");
-  attempt("used behind typeof", () => (typeof DisposableStack !== "undefined" ? typeof DisposableStack.prototype : "went around"));
+  attempt("used behind typeof", () => {
+    if (typeof DisposableStack === "undefined") return "went around";
+    return typeof DisposableStack.prototype;
+  });
   attempt("bare read", () => DisposableStack === undefined);
   attempt("bare read that is kept", () => {
     const held = DisposableStack;

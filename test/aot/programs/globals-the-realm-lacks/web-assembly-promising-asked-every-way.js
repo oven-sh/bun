@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is function", () => typeof WebAssembly.promising === "function");
   attempt("typeof is undefined", () => (typeof WebAssembly.promising === "undefined" ? "absent" : "present"));
   attempt("truth", () => (WebAssembly.promising ? "with" : "without"));
-  attempt("used behind a test", () => (WebAssembly.promising ? typeof WebAssembly.promising.name : "went around"));
+  attempt("used behind a test", () => {
+    if (!WebAssembly.promising) return "went around";
+    return typeof WebAssembly.promising.name;
+  });
   attempt("in", () => "promising" in WebAssembly);
   attempt("hasOwn", () => Object.hasOwn(WebAssembly, "promising"));
   attempt("by a key that is made", () => typeof WebAssembly[key]);

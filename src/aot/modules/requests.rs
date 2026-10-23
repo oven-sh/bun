@@ -338,10 +338,10 @@ fn site_form(site: ImportSiteKind) -> SiteForm {
 }
 
 fn is_jsx_site(site: ImportSiteKind) -> bool {
-    match site {
-        ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage => true,
-        _ => false,
-    }
+    matches!(
+        site,
+        ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage
+    )
 }
 
 fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {

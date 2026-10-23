@@ -71,14 +71,15 @@ impl Quiet<'_, '_> {
 
     /// A locked path that leads to an object, which is truthy.
     pub fn names_locked_object(&self, expression: ExprId) -> bool {
-        self.find_locked_builtin(expression)
-            .is_some_and(|found| match table::entry(found).kind {
+        self.find_locked_builtin(expression).is_some_and(|found| {
+            !matches!(
+                table::entry(found).kind,
                 BuiltinKind::Accessor
-                | BuiltinKind::DataProperty
-                | BuiltinKind::Constant
-                | BuiltinKind::NativeBinding => false,
-                _ => true,
-            })
+                    | BuiltinKind::DataProperty
+                    | BuiltinKind::Constant
+                    | BuiltinKind::NativeBinding
+            )
+        })
     }
 
     fn enclosing_statement(&self, expression: ExprId) -> Option<StmtId> {

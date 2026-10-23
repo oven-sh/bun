@@ -403,8 +403,8 @@ function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
 }
 
 // The check of references reads what B3's road leaves behind, so a build with it generates no code directly: a program that is here for the direct code generators is built without.
-// There are none on Windows, and a Bun built with AddressSanitizer sends every function through B3, which puts the checks of the shadow memory into the code.
-const generatesAllCodeDirectly = (program: CompiledProgram) => !isWindows && !isASAN && program.buildFlags.includes("--aot-testing=GenerateAllCodeDirectly");
+// There are none on Windows.
+const generatesAllCodeDirectly = (program: CompiledProgram) => !isWindows && program.buildFlags.includes("--aot-testing=GenerateAllCodeDirectly");
 
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");

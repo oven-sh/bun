@@ -9,10 +9,10 @@ fn find_parameter_class(bound: &Bound<'_>, parameter: ParamId) -> Option<ClassId
 }
 
 fn is_variable_scope(kind: ScopeKind) -> bool {
-    match kind {
-        ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_) => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_)
+    )
 }
 
 pub(super) fn collect_eval_variable_scopes(

@@ -89,6 +89,23 @@ struct UnusableOption {
 }
 
 impl UnusableOption {
+    /// `--preload` and its kin. `--disallow-code-generation-from-strings=strict` refuses their file in an executable
+    /// built without `--aot` too.
+    fn loads_file_before_program(&self) -> bool {
+        let names_file = match &self.origin {
+            OptionOrigin::Flag(label) => {
+                matches!(&label[..], b"--preload" | b"--require" | b"--import")
+            }
+            OptionOrigin::EnvironmentVariable(name) => *name == "BUN_INSPECT_PRELOAD",
+            OptionOrigin::BunfigKey(_) => false,
+        };
+        names_file
+            && matches!(
+                self.obstacle,
+                Obstacle::RunsOnlyCompiledCode | Obstacle::BuiltWithoutFunctionSource
+            )
+    }
+
     fn write_message(&self, out: &mut Vec<u8>) {
         self.write_sentence(b" can't be used with this executable", out);
     }
@@ -331,10 +348,7 @@ fn find_ignored_options(
 }
 
 fn uses_package_manager(cache: GlobalCache) -> bool {
-    match cache {
-        GlobalCache::auto | GlobalCache::disable => false,
-        _ => true,
-    }
+    !matches!(cache, GlobalCache::auto | GlobalCache::disable)
 }
 
 // The arguments are checked before the file is read, so an unusable setting comes from the file.
@@ -399,6 +413,16 @@ pub(crate) fn read_exec_argv(exec_argv: &[u8]) -> ExecArgvOptions {
 }
 
 fn exit_for(option: &UnusableOption) -> ! {
+    // Whoever set the flag expects its error, as the engine words it and as an uncaught error is printed.
+    if option.loads_file_before_program()
+        && bun_core::code_generation_from_strings_by_flags() == CodeGenerationFromStrings::Strict
+    {
+        bun_core::pretty_errorln!(
+            "<r><red>EvalError<r><d>:<r> <b>Code generation from strings disallowed for this context<r>"
+        );
+        bun_core::pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string);
+        Global::exit(1)
+    }
     let mut message = Vec::new();
     option.write_message(&mut message);
     Output::err_generic("{}", (BStr::new(&message),));
@@ -456,6 +480,10 @@ pub(crate) fn may_refuse_options() -> bool {
 #[inline(never)]
 pub(crate) fn reject_unusable_arguments() {
     let words: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
+    // The parser raises the level behind this. What is refused here is refused in the words of the level.
+    if words.contains(&&b"--disallow-code-generation-from-strings=strict"[..]) {
+        bun_core::disallow_code_generation_from_strings(CodeGenerationFromStrings::Strict);
+    }
     exit_if_unusable(find_unusable_option(&words, obstacle_in_this_executable));
     warn_of_ignored_options(&words);
 }

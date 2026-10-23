@@ -1,6 +1,6 @@
 # The fuzzer
 
-`run.ts` draws small programs from ten sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
+`run.ts` draws small programs from eleven sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
 result of the flow analysis without which it goes away. `../fuzzer-fixed-seeds.test.ts` runs a small, fixed part of it in CI.
 
 ```sh
@@ -13,6 +13,9 @@ Lanes that look elsewhere than the default one. Several at once find more than o
 
 ```sh
 stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 60"   # a collection at every n-th allocation that leaves the fast path, full or young, drawn anew for every batch: one interval is blind to what another sees
+.. --as-a-user --no-attribution --modes every-function-cold,erased-and-cold,counts-as-very-large $stress --fenced   # the code of the direct generator, which a small program never gets by itself: in a very large one it is most of the code
+.. --validate --modes all-code-direct,direct-and-proofs-checked,direct-and-validated                                  # the same with the verifiers on
+.. --modes default,every-function-hot,all-code-direct --fail-predictions 1,2,7   # the general road behind every test, taken though the value would have passed: the answer must not change
 .. --as-a-user --no-attribution --modes every-function-hot,erased-and-hot $stress   # what a user builds, everything hot, under collector stress
 .. --as-a-user --no-attribution --modes nothing-inlined $stress
 .. --workers 4 --modes default,every-function-hot        # four workers run each program at once: compiled code and its tables are shared by all threads
@@ -30,7 +33,7 @@ stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 6
 | --- | --- |
 | `run.ts` | the command line; its header lists every option and the files written to `--out` |
 | `fuzzer.ts` | the driver: draw, judge, confirm, reduce, attribute, tell findings apart |
-| `grammar.ts`, `protocols.ts`, `new-targets.ts`, `object-mutations.ts`, `typed-object-mutations.ts`, `held-across-suspensions.ts`, `where-the-stack-ends.ts`, `changing-buffers.ts`, `unsound-types.ts`, `mutate.ts`, `sources.ts` | the ten sources: programs made from a grammar, objects that answer the language's protocols, constructors that run for another `new.target`, objects that are changed behind the code that uses them, the same behind a reference of a declared type, values that nothing holds but a function that waits at an `await` or a `yield`, recursions that reach the end of the stack, typed arrays whose memory is detached, shrinks, grows or moves while they are in use, values that reach a place their type excludes without a cast, and mutants of `../programs` |
+| `grammar.ts`, `protocols.ts`, `new-targets.ts`, `object-mutations.ts`, `typed-object-mutations.ts`, `held-across-suspensions.ts`, `where-the-stack-ends.ts`, `many-of-one-thing.ts`, `changing-buffers.ts`, `unsound-types.ts`, `mutate.ts`, `sources.ts` | the eleven sources: programs made from a grammar, objects that answer the language's protocols, constructors that run for another `new.target`, objects that are changed behind the code that uses them, the same behind a reference of a declared type, values that nothing holds but a function that waits at an `await` or a `yield`, recursions that reach the end of the stack, programs with thousands of one thing, typed arrays whose memory is detached, shrinks, grows or moves while they are in use, values that reach a place their type excludes without a cast, and mutants of `../programs` |
 | `type-check.ts` | TypeScript's own checker, for the source whose programs it has to accept |
 | `beds.ts`, `engine-probes.ts` | where a program runs: `bun build --compile --aot`, or the engine's test binaries, which are asked first which built-ins they lack |
 | `reduce.ts` | makes a failing program small |

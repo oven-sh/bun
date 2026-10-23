@@ -362,10 +362,7 @@ fn evaluate_loose_equality(left: Operand<'_>, right: Operand<'_>) -> Value {
 }
 
 fn is_string(operand: Operand<'_>) -> bool {
-    match operand {
-        Operand::String(_) => true,
-        _ => false,
-    }
+    matches!(operand, Operand::String(_))
 }
 
 fn is_strictly_equal(left: Operand<'_>, right: Operand<'_>) -> bool {

@@ -123,10 +123,7 @@ impl<'c> TypeShape<'c> {
     }
 
     pub fn has_members(self) -> bool {
-        match self.kind {
-            ShapeKind::Object | ShapeKind::Class(_) => true,
-            _ => false,
-        }
+        matches!(self.kind, ShapeKind::Object | ShapeKind::Class(_))
     }
 
     pub(super) fn builtin_denotation(self) -> Option<Denotation> {
@@ -145,9 +142,9 @@ impl<'c> TypeShape<'c> {
     }
 
     pub fn can_accept_primitives(self) -> bool {
-        match self.kind {
-            ShapeKind::Object | ShapeKind::Class(_) | ShapeKind::Builtin { .. } => true,
-            _ => false,
-        }
+        matches!(
+            self.kind,
+            ShapeKind::Object | ShapeKind::Class(_) | ShapeKind::Builtin { .. }
+        )
     }
 }

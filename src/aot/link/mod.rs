@@ -485,10 +485,7 @@ fn is_unit_optional(projects: &PerProject<LinkProject<'_, '_>>, file: ProgramFil
     if project.unreached_files.binary_search(&file.file).is_ok() {
         return true;
     }
-    match project.sources.kind(file.file) {
-        SourceKind::EvaluatedText => true,
-        _ => false,
-    }
+    matches!(project.sources.kind(file.file), SourceKind::EvaluatedText)
 }
 
 fn order_units(

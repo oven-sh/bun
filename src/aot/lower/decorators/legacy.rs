@@ -16,10 +16,10 @@ use crate::lower::{FunctionLowering, call, expression};
 type DecoratorList = SmallVec<[ValueId; 8]>;
 
 fn is_method_or_accessor(kind: MemberKind) -> bool {
-    match kind {
-        MemberKind::Method | MemberKind::Getter | MemberKind::Setter => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+    )
 }
 
 fn is_moved_field(hir: &hir::File<'_>, member: MemberId) -> bool {

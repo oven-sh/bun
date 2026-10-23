@@ -141,12 +141,12 @@ pub(crate) fn resolve_loads_through_imported_loaders(application: &Files<'_>) {
 impl Scan<'_, '_> {
     fn visit_import_sites(&mut self) {
         for site in self.request.analysis.import_sites {
-            let loads = match site.kind {
+            let loads = matches!(
+                site.kind,
                 ImportSiteKind::ImportCall(_)
-                | ImportSiteKind::Require(_)
-                | ImportSiteKind::ImportMetaRequire(_) => true,
-                _ => false,
-            };
+                    | ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+            );
             let is_one_name = match site.specifier {
                 ImportSpecifier::Constant(_) => true,
                 ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,

@@ -16,7 +16,10 @@ function ask() {
   attempt("typeof is not undefined", () => typeof SharedArrayBuffer !== "undefined");
   attempt("typeof is undefined", () => (typeof SharedArrayBuffer === "undefined" ? "absent" : "present"));
   attempt("typeof is the kind", () => typeof SharedArrayBuffer === "function");
-  attempt("used behind typeof", () => (typeof SharedArrayBuffer !== "undefined" ? typeof SharedArrayBuffer.prototype : "went around"));
+  attempt("used behind typeof", () => {
+    if (typeof SharedArrayBuffer === "undefined") return "went around";
+    return typeof SharedArrayBuffer.prototype;
+  });
   attempt("bare read", () => SharedArrayBuffer === undefined);
   attempt("bare read that is kept", () => {
     const held = SharedArrayBuffer;

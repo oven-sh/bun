@@ -41,20 +41,17 @@ impl UnseenCodeCause {
     ];
 
     pub fn lets_unseen_code_run(self) -> bool {
-        match self {
-            UnseenCodeCause::LoadsModuleByName => false,
-            _ => true,
-        }
+        !matches!(self, UnseenCodeCause::LoadsModuleByName)
     }
 
     pub fn admits_library_text(self) -> bool {
-        match self {
+        !matches!(
+            self,
             UnseenCodeCause::FlowGaveUp
-            | UnseenCodeCause::EvaluatesText
-            | UnseenCodeCause::LoadsModuleByName
-            | UnseenCodeCause::RunsUnseenCode => false,
-            _ => true,
-        }
+                | UnseenCodeCause::EvaluatesText
+                | UnseenCodeCause::LoadsModuleByName
+                | UnseenCodeCause::RunsUnseenCode
+        )
     }
 }
 

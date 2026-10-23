@@ -7,10 +7,7 @@ use crate::types::{Origin, SigId, TypeData, TypeId};
 use smallvec::SmallVec;
 
 fn is_constructible_function(function: &Func) -> bool {
-    let is_ordinary_function = match function.kind {
-        FnKind::Decl | FnKind::Expr => true,
-        _ => false,
-    };
+    let is_ordinary_function = matches!(function.kind, FnKind::Decl | FnKind::Expr);
     is_ordinary_function
         && has_body(function)
         && !function.flags.intersects(Flags::ASYNC | Flags::GENERATOR)

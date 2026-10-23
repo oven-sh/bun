@@ -1,5 +1,7 @@
 #include "root.h"
 
+#if ENABLE(AOT)
+
 #include "BunAOTCompile.h"
 
 #include "AOTSchemaHash.h"
@@ -486,3 +488,15 @@ extern "C" bool Bun__AOT__isOptionalPass(Wire::PassID pass)
 {
     return static_cast<uint32_t>(pass) < JSC::AOT::numberOfPasses && JSC::AOT::isOptionalPass(pass);
 }
+
+#else // ENABLE(AOT)
+
+#include <cstddef>
+#include <cstdint>
+
+// What src/aot/engine/shared.rs asks. Nothing else of this file has a caller in a Bun without the compiler.
+extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
+extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) { }
+extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
+
+#endif // ENABLE(AOT)

@@ -19,8 +19,10 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
+#if ENABLE(AOT)
 static_assert(sizeof(JSC::AOT::Wire::ImageVerdict) == sizeof(uint32_t));
 static_assert(sizeof(JSC::AOT::Wire::AdmittedCode) == sizeof(uint32_t));
+#endif
 static_assert(sizeof(size_t) == sizeof(void*));
 
 namespace Bun {
@@ -60,11 +62,13 @@ void initializeCellCage()
 
 void requireCellCage()
 {
+#if ENABLE(AOT)
     const JSC::AOT::Image* image = JSC::AOT::Image::current();
     if (!image || image->header().options.useWideReferences())
         return;
     if (auto result = JSC::MarkedBlockCage::require(); !result)
         exitForCageError(result.error());
+#endif
 }
 
 // B3 and Air take every knob from the policy of the build. The WebAssembly front end sets this one from the process.
@@ -83,6 +87,8 @@ void discardBackEndOptionsOfEnvironment()
 }
 
 } // namespace Bun
+
+#if ENABLE(AOT)
 
 extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
 {
@@ -201,3 +207,27 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
         memcpy(buffer, bytes.data(), length);
     return length;
 }
+
+#else // ENABLE(AOT)
+
+// ImageVerdict::Unsupported.
+extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
+extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
+extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
+extern "C" BunAOTBytes Bun__AOT__imageCode() { return { nullptr, 0 }; }
+extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) { }
+extern "C" void Bun__AOT__setMismatchLogFormat(bool) { }
+extern "C" void Bun__AOT__listRefusedChanges() { }
+extern "C" void Bun__AOT__setVerbose(bool) { }
+extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }
+extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void*) { return -1; }
+extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset) { return offset; }
+extern "C" size_t Bun__AOT__describeAddresses(const size_t*, size_t, uint8_t*, size_t) { return 0; }
+
+// JavaScriptCore's aot/runtime/AOTExpectedRows.cpp, where the realm runs no compiled program. src/sql_jsc/shared/RowDecoder.rs decodes the row itself then.
+extern "C" uint32_t JSC__AOT__expectedResultType(JSC::JSGlobalObject*, JSC::EncodedJSValue) { return 0; }
+extern "C" void* JSC__AOT__ObjectBuilderPlan__create(JSC::JSGlobalObject*, uint32_t, const void*, uint32_t) { return nullptr; }
+extern "C" void JSC__AOT__ObjectBuilderPlan__destroy(void*) { }
+extern "C" JSC::EncodedJSValue JSC__AOT__ObjectBuilderPlan__createObject(JSC::JSGlobalObject*, const void*, const void*) { return JSC::JSValue::encode({ }); }
+
+#endif // ENABLE(AOT)

@@ -105,14 +105,14 @@ fn is_function_of_key(answer: Result<TypeId, GaveUp>) -> bool {
 }
 
 fn is_undeclared_intrinsic(intrinsic: Intrinsic) -> bool {
-    match intrinsic {
+    matches!(
+        intrinsic,
         Intrinsic::String
-        | Intrinsic::Number
-        | Intrinsic::BigInt
-        | Intrinsic::Symbol
-        | Intrinsic::Object => true,
-        _ => false,
-    }
+            | Intrinsic::Number
+            | Intrinsic::BigInt
+            | Intrinsic::Symbol
+            | Intrinsic::Object
+    )
 }
 
 /// One symbol holds all meanings of a name.

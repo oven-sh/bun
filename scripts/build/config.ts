@@ -134,6 +134,11 @@ export interface Config {
    */
   trimmable: boolean;
   /**
+   * The ahead-of-time compiler and what its programs need at run time. Off: JavaScriptCore and Bun's bindings are compiled
+   * with ENABLE_AOT=0, the crate `bun_aot` stays out of the link, and `--aot` answers that this build has no compiler.
+   */
+  aot: boolean;
+  /**
    * Linux with glibc: the relative relocations of the executable are packed (DT_RELR). Smaller, and faster to load.
    * Only glibc 2.36 and later load such a file, so it is for a build whose users are known.
    */
@@ -389,6 +394,7 @@ export interface PartialConfig {
   mode?: Mode;
   lto?: boolean;
   trimmable?: boolean;
+  aot?: boolean;
   relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
@@ -1388,6 +1394,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       !valgrind &&
       linksWithLld({ darwin, crossTarget }) &&
       host.os !== "windows",
+    aot: partial.aot ?? true,
     relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
@@ -1789,6 +1796,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
   if (cfg.trimmable) features.push("trimmable");
+  if (!cfg.aot) features.push("no-aot");
   if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");

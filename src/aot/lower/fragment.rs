@@ -140,10 +140,10 @@ fn sort_and_dedup<T: Ord>(mut list: Vec<T>) -> Vec<T> {
 }
 
 fn is_function_type(key: FunctionKey) -> bool {
-    match key {
-        FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) => true,
-        _ => false,
-    }
+    matches!(
+        key,
+        FunctionKey::Signature(_) | FunctionKey::ClassSignature(_)
+    )
 }
 
 pub(crate) struct FragmentBuilder {

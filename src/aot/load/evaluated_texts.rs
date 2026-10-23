@@ -263,19 +263,19 @@ fn has_unsupported_syntax(hir: &File<'_>) -> bool {
 }
 
 fn is_supported_expression(kind: ExprKind) -> bool {
-    match kind {
+    !matches!(
+        kind,
         ExprKind::Regex { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportMeta
-        | ExprKind::JsxText(_) => false,
-        _ => true,
-    }
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+            | ExprKind::Jsx(_)
+            | ExprKind::ImportMeta
+            | ExprKind::JsxText(_)
+    )
 }
 
 fn has_early_redeclaration(bound: &Bound<'_>) -> bool {

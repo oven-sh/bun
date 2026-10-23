@@ -1199,6 +1199,7 @@ impl NodeHTTPResponse {
     }
 }
 
+#[derive(Clone, Copy)]
 enum WholeBody<'a, 'b> {
     InPlace(&'a [u8]),
     Converted(Option<&'a StringOrJsBytes<'b>>),

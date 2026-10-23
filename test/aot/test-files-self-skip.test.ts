@@ -42,6 +42,7 @@ const needNoCompiler = [
   "aot/spies-on-builtins.test.ts",
   "aot/static-tls-size.test.ts",
   "aot/abort-is-reported.test.ts",
+  "aot/address-sanitizer-sees-wtf-allocations.test.ts",
   "aot/a-prototype-object-is-no-instance.test.ts",
   "aot/backend/memory.test.ts",
   "aot/builtins/native-contract.test.ts",

@@ -117,21 +117,21 @@ fn is_default(constraint: &SchemaConstraint) -> bool {
 
 /// An arm of a primitive kind gives back the value it accepts, so it makes no difference which of several takes it.
 fn is_primitive_kind(kind: ShapeKind<'_>) -> bool {
-    match kind {
+    !matches!(
+        kind,
         ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => false,
-        _ => true,
-    }
+            | ShapeKind::TypeVariable { .. }
+            | ShapeKind::AnyObject
+            | ShapeKind::Function(_)
+            | ShapeKind::ClassConstructor(_)
+            | ShapeKind::Array { .. }
+            | ShapeKind::Tuple { .. }
+            | ShapeKind::Builtin { .. }
+            | ShapeKind::Class(_)
+            | ShapeKind::Object
+            | ShapeKind::Union(_)
+            | ShapeKind::Constrained { .. }
+    )
 }
 
 fn undeclared_without_signature(is_deep_strict: bool) -> UndeclaredMembers {

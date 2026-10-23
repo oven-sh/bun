@@ -416,13 +416,8 @@ pub(in crate::lower) fn emit_brand_definition(
 fn fails_at_first_private_field(file: &FileLowering<'_, '_, '_, '_>, class: ClassId) -> bool {
     let mut names = file.bound.private_names_of_class(class);
     class::is_derived_class(file.hir, class)
-        && !names.any(|(_, name)| {
-            !name.is_static
-                && match name.members {
-                    PrivateMembers::Field(_) => false,
-                    _ => true,
-                }
-        })
+        && !names
+            .any(|(_, name)| !name.is_static && !matches!(name.members, PrivateMembers::Field(_)))
 }
 
 pub(in crate::lower) fn emit_field_definition(

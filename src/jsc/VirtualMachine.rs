@@ -4392,6 +4392,13 @@ impl VirtualMachine {
                 == bun_core::CodeGenerationFromStrings::Allowed
     }
 
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationFromStringsStrictByFlags")]
+    pub(crate) extern "C" fn is_code_generation_from_strings_strict_by_flags_for_cpp() -> bool {
+        bun_core::code_generation_from_strings_by_flags()
+            == bun_core::CodeGenerationFromStrings::Strict
+    }
+
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi_cc(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;

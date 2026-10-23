@@ -259,8 +259,5 @@ fn warn_function_introspection(
 }
 
 fn is_function_shape(kind: ShapeKind<'_>) -> bool {
-    match kind {
-        ShapeKind::Function(_) => true,
-        _ => false,
-    }
+    matches!(kind, ShapeKind::Function(_))
 }

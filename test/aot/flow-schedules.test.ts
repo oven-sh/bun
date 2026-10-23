@@ -10,6 +10,7 @@ import { bunExe, tempDir } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "node:path";
 import { buildUnderEachSchedule, run } from "./harness/flow-schedules";
+import { run as runCommand } from "./harness/run";
 import { pathOfWrittenProgram } from "./run-programs";
 import { test } from "./supported";
 
@@ -64,7 +65,7 @@ server.listen(0, async () => {
 for (const program of [
   "the-exports-of-library-modules-beside-a-hidden-value-are-called-under-hidden-keys",
   "the-exports-of-library-modules-arrive-late-beside-a-hidden-value-and-are-called-under-hidden-keys",
-  "members-of-process-are-stored-where-process-stands-beside-a-hidden-value",
+  "the-object-behind-a-namespace-object-has-escaped-before-its-exports-are-called-under-hidden-keys",
   "evaluators-and-a-loader-beside-a-hidden-value-are-called",
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
 ]) {
@@ -78,7 +79,26 @@ for (const program of [
   });
 }
 
-// An object of the host is not followed that far: where `process` comes late, the store to one of its members is refused, as the page says of built-in objects. It is refused under every schedule.
+// An object of the host is not followed that far. Where `process` and the value nobody knows come at once, which is first is the schedule's: the stores go through, or the first of them is refused, as the page says of
+// built-in objects. Nothing else happens, and under the usual schedule they go through.
+test("members-of-process-are-stored-where-process-stands-beside-a-hidden-value: as plain Bun, or refused, under every schedule", async () => {
+  using dir = tempDir("aot-flow-schedules-listed", {});
+  const directory = String(dir);
+  cpSync(
+    join(import.meta.dir, "programs", "soundness", "members-of-process-are-stored-where-process-stands-beside-a-hidden-value.mjs"),
+    join(directory, "program.mjs"),
+  );
+  const plain = await run([bunExe(), "program.mjs"], directory);
+  const built = await buildUnderEachSchedule("program", directory, "program.mjs");
+  const answers = await Promise.all(built.map(it => runCommand([it.executable], directory)));
+  expect({ stdout: answers[0].stdout, exitCode: answers[0].exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  for (const { stdout, stderr, exitCode } of answers) {
+    const isRefused = stdout === "" && exitCode === 1 && stderr.includes("built-in objects are read-only in a compiled executable");
+    expect({ stdout, exitCode, isRefused }).toEqual(isRefused ? { stdout: "", exitCode: 1, isRefused } : { stdout: plain.stdout, exitCode: 0, isRefused });
+  }
+});
+
+// Where `process` comes late, the store is refused under every schedule.
 test("members-of-process-are-stored-where-process-arrives-late-beside-a-hidden-value: one answer under every schedule", async () => {
   using dir = tempDir("aot-flow-schedules-listed", {});
   const directory = String(dir);

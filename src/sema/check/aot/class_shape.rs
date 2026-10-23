@@ -124,9 +124,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut members = Vec::new();
         let names_stored_in_prototype = self.names_stored_in_prototype(&candidates);
         self.add_stores(file, &mut members, candidates);
-        let is_constructor = members.iter().any(|member| match member.source {
-            ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_) => true,
-            _ => false,
+        let is_constructor = members.iter().any(|member| {
+            matches!(
+                member.source,
+                ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_)
+            )
         });
         if !is_constructor {
             return None;
@@ -392,10 +394,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 }
 
 fn can_merge_with_class(decl: Decl) -> bool {
-    match decl {
-        Decl::Class(_) | Decl::Interface(_) | Decl::Module(_) => true,
-        _ => false,
-    }
+    matches!(decl, Decl::Class(_) | Decl::Interface(_) | Decl::Module(_))
 }
 
 fn can_be_constructor_function(function: &hir::Func) -> bool {

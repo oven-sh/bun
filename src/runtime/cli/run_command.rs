@@ -2094,7 +2094,12 @@ impl RunCommand {
             ));
             new_path.push(DELIMITER);
 
-            new_path.extend_from_slice(&path);
+            // A trailing delimiter is an empty segment, which execvp reads as the cwd.
+            if path.is_empty() {
+                new_path.pop();
+            } else {
+                new_path.extend_from_slice(&path);
+            }
         }
 
         Ok(new_path)
@@ -2748,11 +2753,13 @@ impl RunCommand {
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
             if bin_dirs_only {
-                if original_path.len() < path.len() {
-                    path_for_which = &path[..path.len() - (original_path.len() + 1)];
+                path_for_which = if original_path.is_empty() {
+                    path
+                } else if original_path.len() < path.len() {
+                    &path[..path.len() - (original_path.len() + 1)]
                 } else {
-                    path_for_which = b"";
-                }
+                    b""
+                };
             }
 
             if !path_for_which.is_empty() {

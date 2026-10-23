@@ -60,7 +60,9 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
 /// `which()` for spawn-style executable resolution. Windows resolves bare
 /// names against the working directory before `$PATH` (CreateProcessW search
 /// order; libuv and Node.js spawn behave the same), unlike `which()` which is
-/// `$PATH`-only for bare names on every platform.
+/// `$PATH`-only for bare names on every platform. On POSIX an empty `$PATH`
+/// segment (`""`, `":/bin"`, `"/bin:"`) is the working directory, as in
+/// execvp, where `which()` skips it.
 pub fn which_for_spawn<'a>(
     buf: &'a mut PathBuffer,
     path: &[u8],
@@ -117,8 +119,20 @@ pub fn which_for_spawn<'a>(
             posix_to_platform_in_place(found);
             return Some(utf16_result_into(buf, found));
         }
+        which(buf, path, cwd, bin)
     }
-    which(buf, path, cwd, bin)
+    #[cfg(not(windows))]
+    which_posix(buf, path, cwd, bin, EmptySegment::Cwd)
+}
+
+/// What an empty `$PATH` segment means in [`which_posix`].
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EmptySegment {
+    /// `which()`: a segment with no directory names nothing.
+    Skip,
+    /// execvp: a segment with no directory is the working directory.
+    Cwd,
 }
 
 /// Writes `result` into `buf` as NUL-terminated UTF-8.
@@ -137,7 +151,36 @@ fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if bin.len() >= MAX_PATH_BYTES {
+    #[cfg(windows)]
+    {
+        if bin.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+        bun_core::scoped_log!(
+            which_log,
+            "path={} cwd={} bin={}",
+            BStr::new(path),
+            BStr::new(cwd),
+            BStr::new(bin)
+        );
+        let mut convert_buf = w_path_buffer_pool::get();
+        let result = which_win(&mut *convert_buf, path, cwd, bin)?;
+        Some(utf16_result_into(buf, result))
+    }
+
+    #[cfg(not(windows))]
+    which_posix(buf, path, cwd, bin, EmptySegment::Skip)
+}
+
+#[cfg(not(windows))]
+fn which_posix<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+    empty_segment: EmptySegment,
+) -> Option<&'a ZStr> {
+    if bin.is_empty() || bin.len() >= MAX_PATH_BYTES {
         return None;
     }
     bun_core::scoped_log!(
@@ -148,70 +191,59 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         BStr::new(bin)
     );
 
-    #[cfg(windows)]
-    {
-        let mut convert_buf = w_path_buffer_pool::get();
-        let result = which_win(&mut *convert_buf, path, cwd, bin)?;
-        return Some(utf16_result_into(buf, result));
+    // handle absolute paths
+    if is_absolute(bin) {
+        buf[..bin.len()].copy_from_slice(bin);
+        buf[bin.len()] = 0;
+        // SAFETY: buf[bin.len()] == 0 written above
+        let bin_z = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), bin.len()) };
+        if bun_sys::is_executable_file_path(&*bin_z) {
+            return Some(&*bin_z);
+        }
+        // Do not look absolute paths in $PATH
+        return None;
     }
 
-    #[cfg(not(windows))]
-    {
-        if bin.is_empty() {
-            return None;
-        }
+    // Strip trailing SEP bytes from cwd, keeping a bare "/".
+    let mut cwd_trimmed = cwd;
+    while cwd_trimmed.len() > 1 && cwd_trimmed.last() == Some(&SEP) {
+        cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
+    }
 
-        // handle absolute paths
-        if is_absolute(bin) {
-            buf[..bin.len()].copy_from_slice(bin);
-            buf[bin.len()] = 0;
-            // SAFETY: buf[bin.len()] == 0 written above
-            let bin_z = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), bin.len()) };
-            if bun_sys::is_executable_file_path(&*bin_z) {
-                return Some(&*bin_z);
-            }
-            // Do not look absolute paths in $PATH
-            return None;
-        }
-
-        // Strip trailing SEP bytes from cwd, keeping a bare "/".
-        let mut cwd_trimmed = cwd;
-        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == Some(&SEP) {
-            cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
-        }
-
-        if strings::index_of_char(bin, b'/').is_some() {
-            if !cwd.is_empty() {
-                if let Some(len) = is_valid(
-                    buf,
-                    b"",
-                    cwd_trimmed,
-                    strings::without_prefix_comptime(bin, b"./"),
-                ) {
-                    // SAFETY: is_valid wrote NUL at buf[len]
-                    return Some(ZStr::from_buf(&buf[..], len as usize));
-                }
-            }
-            // Do not lookup paths with slashes in $PATH
-            return None;
-        }
-
-        let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
-        for segment in strings::tokenize(path, &[DELIMITER]) {
-            // execvp resolves relative $PATH entries after the child's chdir.
-            let cwd_prefix: &[u8] = if is_absolute(segment) {
-                b""
-            } else {
-                cwd_for_relative_segment
-            };
-            if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
+    if strings::index_of_char(bin, b'/').is_some() {
+        if !cwd.is_empty() {
+            if let Some(len) = is_valid(
+                buf,
+                b"",
+                cwd_trimmed,
+                strings::without_prefix_comptime(bin, b"./"),
+            ) {
                 // SAFETY: is_valid wrote NUL at buf[len]
                 return Some(ZStr::from_buf(&buf[..], len as usize));
             }
         }
-
-        None
+        // Do not lookup paths with slashes in $PATH
+        return None;
     }
+
+    let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
+    for segment in strings::split(path, &[DELIMITER]) {
+        if segment.is_empty() && empty_segment == EmptySegment::Skip {
+            continue;
+        }
+        // execvp resolves relative $PATH entries after the child's chdir.
+        let cwd_prefix: &[u8] = if is_absolute(segment) {
+            b""
+        } else {
+            cwd_for_relative_segment
+        };
+        if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
+            // SAFETY: is_valid wrote NUL at buf[len]
+            return Some(ZStr::from_buf(&buf[..], len as usize));
+        }
+    }
+
+    None
 }
 
 #[cfg(windows)]

@@ -63,6 +63,13 @@ describe.concurrent("toMatchNodeModulesAt", () => {
         "but node_modules/one-fixed-dep is one-fixed-dep@1.0.0",
     ]);
 
+    // The lockfile has no package for a dependency.
+    const unresolved = parseLockfile(dir);
+    unresolved.dependencies.find((dep: any) => dep.name === "no-deps" && dep.literal === "2.0.0").package_id = null;
+    expect(problems(dir, unresolved)).toEqual([
+      "the root package depends on no-deps@2.0.0, but the lockfile has no package for it",
+    ]);
+
     // A package on disk is another version than the one the lockfile resolves.
     const aliased = join(nodeModules, "aliased", "package.json");
     editJson(aliased, json => (json.version = "1.0.2"));
@@ -91,8 +98,12 @@ describe.concurrent("toMatchNodeModulesAt", () => {
   });
 
   test("follows the links of an isolated install", async () => {
+    // This linker gives packages/a no link in the node_modules of the root.
     const dir = await install(
-      { "package.json": { name: "foo", dependencies: { "one-fixed-dep": "1.0.0" } } },
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { "one-fixed-dep": "1.0.0" } },
+        "packages/a/package.json": { name: "a" },
+      },
       { linker: "isolated", globalStore: false },
     );
     expect(problems(dir)).toEqual([]);
@@ -164,6 +175,22 @@ describe.concurrent("toMatchNodeModulesAt", () => {
       "the root package has the workspace package b (lockfile: b@workspace:packages/b), " +
         "but node_modules/b is not packages/b",
     ]);
+
+    // A workspace package without its folder.
+    rmSync(join(dir, "packages", "b"), { recursive: true });
+    expect(problems(dir).sort()).toEqual([
+      "packages/a depends on b@workspace:* (lockfile: b@workspace:packages/b), but node_modules/b is not packages/b",
+      "packages/a depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
+      "the root package has the workspace package a (lockfile: a@workspace:packages/a), but there is no node_modules/a",
+      "the root package has the workspace package b (lockfile: b@workspace:packages/b), but there is no packages/b",
+    ]);
+  });
+
+  test("does not follow a bundled dependency", async () => {
+    // The tarball of bundled-range-host has bundled-range-inner in it, with a-dep@1.0.1 and no-deps@1.0.0 for its
+    // ranges. The lockfile resolves those ranges to a-dep@1.0.10 and no-deps@1.1.0, which are not installed.
+    const dir = await install({ "package.json": { name: "foo", dependencies: { "bundled-range-host": "1.0.0" } } });
+    expect(problems(dir)).toEqual([]);
   });
 
   test("accepts what an install leaves out or shares", async () => {
@@ -197,16 +224,18 @@ describe.concurrent("toMatchNodeModulesAt", () => {
     }
     expect(problems(dir)).toEqual([]);
 
-    // peer-deps-fixed loads the root's no-deps@2.0.0, whichever no-deps the lockfile gives its peer dependency.
+    // peer-deps-fixed loads the root's no-deps@2.0.0, whichever no-deps the lockfile gives its peer dependency, and
+    // also when the lockfile gives it none.
     const lockfile = parseLockfile(dir);
     const peer = lockfile.dependencies.find((dep: any) => dep.behavior.peer);
     expect(peer).toMatchObject({ name: "no-deps", literal: "^1.0.0" });
     const noDeps = (version: string) =>
       lockfile.packages.find((pkg: any) => pkg.name === "no-deps" && pkg.resolution.value === version).id;
-    for (const version of ["1.0.0", "2.0.0"]) {
-      peer.package_id = noDeps(version);
+    for (const id of [noDeps("1.0.0"), noDeps("2.0.0"), null]) {
+      peer.package_id = id;
       expect(problems(dir, lockfile)).toEqual([]);
     }
+    peer.package_id = noDeps("2.0.0");
 
     // A peer dependency still needs a copy to load.
     rmSync(join(nodeModules, "no-deps"), { recursive: true });

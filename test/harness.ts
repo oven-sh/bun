@@ -1178,6 +1178,15 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
     }
   }
 
+  function report(folder: string, dep: any, target: any, what: string) {
+    const dependent = folder === root ? "the root package" : where(folder);
+    const wanted = dep.behavior.workspace
+      ? `has the workspace package ${dep.name}`
+      : `depends on ${dep.name}@${dep.literal}`;
+    const locked = target ? ` (lockfile: ${target.name}@${target.resolution.value})` : "";
+    problems.push(`${dependent} ${wanted}${locked}, but ${what}`);
+  }
+
   // Each folder that is known to hold a package, with the id of that package.
   const visited = new Map<string, number>([[root, 0]]);
   const queue: [pkg: any, folder: string][] = [[lockfile.packages[0], root]];
@@ -1191,30 +1200,36 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
     for (const id of pkg.dependencies) {
       const dep = lockfile.dependencies[id];
       const target = lockfile.packages[dep.package_id];
-      if (!target || !runsHere(target) || dep.behavior.bundled) continue;
+      if (dep.behavior.bundled) continue;
+      if (!target) {
+        // Only an optional or a peer dependency can be without a package.
+        const required = !dep.behavior.optional && !dep.behavior.peer;
+        if (required) report(folder, dep, target, "the lockfile has no package for it");
+        continue;
+      }
+      if (!runsHere(target)) continue;
 
       // The root lists every workspace package, and the dependencies of one are followed from its own folder. Only
       // the hoisted linker links it into the root's `node_modules`, unless another dependency of the root has its name.
       if (dep.behavior.workspace && target.resolution.tag === "workspace") {
-        visit(target, fs.realpathSync(memberFolder(target)));
+        const member = memberFolder(target);
+        if (!fs.existsSync(member)) {
+          report(folder, dep, target, `there is no ${where(member)}`);
+          continue;
+        }
+        visit(target, fs.realpathSync(member));
         if (isolated || lockfile.trees[0]?.dependencies[dep.name]?.id !== id) continue;
       }
 
       const found = lookup(dep.name, folder);
-      if (found !== undefined && visited.get(found) === target.id) continue;
-      const wrong = found === undefined ? `there is no node_modules/${dep.name}` : mismatch(target, found);
-      if (found !== undefined && wrong === undefined) {
-        visit(target, found);
-      } else if (found === undefined ? !dep.behavior.optional : !dep.behavior.peer) {
-        const dependent = folder === root ? "the root package" : where(folder);
-        const wanted = dep.behavior.workspace
-          ? `has the workspace package ${dep.name}`
-          : `depends on ${dep.name}@${dep.literal}`;
-        problems.push(
-          `${dependent} ${wanted} (lockfile: ${target.name}@${target.resolution.value}), ` +
-            `but ${found === undefined ? wrong : `${where(found)} ${wrong}`}`,
-        );
+      if (found === undefined) {
+        if (!dep.behavior.optional) report(folder, dep, target, `there is no node_modules/${dep.name}`);
+        continue;
       }
+      if (visited.get(found) === target.id) continue;
+      const wrong = mismatch(target, found);
+      if (wrong === undefined) visit(target, found);
+      else if (!dep.behavior.peer) report(folder, dep, target, `${where(found)} ${wrong}`);
     }
   }
 

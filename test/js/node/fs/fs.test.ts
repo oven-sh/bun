@@ -3088,13 +3088,18 @@ describe("open/mkdir mode string validation matches node", () => {
   });
 
   // Node range-checks the parsed octal string with validateUint32, so a value
-  // past u32::MAX is ERR_OUT_OF_RANGE, not ERR_INVALID_ARG_VALUE.
-  it.each(["40000000000", "777777777777"])("openSync rejects octal mode string %p as out of range", mode => {
-    using dir = tempDir("fs-mode-oor", {});
-    const file = join(String(dir), "f.txt");
-    expect(() => openSync(file, "w", mode)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-    expect(existsSync(file)).toBe(false);
-  });
+  // past u32::MAX is ERR_OUT_OF_RANGE, not ERR_INVALID_ARG_VALUE. The last two
+  // are u64::MAX and 2^64 in octal: the last value the mode parser's u64 holds
+  // and the first one it does not.
+  it.each(["40000000000", "777777777777", "1777777777777777777777", "2000000000000000000000"])(
+    "openSync rejects octal mode string %p as out of range",
+    mode => {
+      using dir = tempDir("fs-mode-oor", {});
+      const file = join(String(dir), "f.txt");
+      expect(() => openSync(file, "w", mode)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+      expect(existsSync(file)).toBe(false);
+    },
+  );
 
   it.each(invalidModes)("mkdirSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
     using dir = tempDir("fs-mode-invalid-mkdir", {});

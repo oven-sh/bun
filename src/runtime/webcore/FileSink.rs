@@ -1812,7 +1812,7 @@ impl FileSink {
             }
             readable_stream::NativeWireResult::NotNative => {
                 let result = self
-                    .assign_to_js_stream(stream, controller, global_this)
+                    .assign_to_js_stream(stream, controller, false, global_this)
                     .inspect_err(|_| {
                         self.stream_bytes.set(None);
                         // The caller gets the throw, not the done-promise that a close(error) inside pull() rejected.
@@ -1880,14 +1880,16 @@ impl FileSink {
             readable_stream::NativeWireResult::NotNative => {}
         }
 
-        self.assign_to_js_stream(stream, controller, global_this)
+        self.assign_to_js_stream(stream, controller, true, global_this)
     }
 
     /// Pump a JS `stream` in through the pipe's `controller`; the writer is ended when the pump settles.
+    /// `keep_process_alive`: a child's stdin holds the process while the pump waits for its source. For `Bun.write`, what can feed the stream does.
     fn assign_to_js_stream(
         &mut self,
         stream: &mut ReadableStream,
         controller: JSValue,
+        keep_process_alive: bool,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         // No +1 for the controller: `release_pipe` detaches it before this sink is freed.
@@ -1920,8 +1922,10 @@ impl FileSink {
         };
         match promise.status() {
             bun_jsc::js_promise::Status::Pending => {
-                self.writer
-                    .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                if keep_process_alive {
+                    self.writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                }
                 self.ref_();
                 self.pump_promise_ref.set(true);
                 promise_result.then(

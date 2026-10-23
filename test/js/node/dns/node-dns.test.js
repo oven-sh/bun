@@ -1104,6 +1104,116 @@ describe("pending cache", () => {
   });
 });
 
+// Node sends a query for every resolve*() call: it disables the c-ares query
+// cache. The fake server below answers a TXT query with NODATA (NOERROR, no
+// answer, SOA in authority) until `live` is set, then with a TXT record. With
+// the cache on, a resolver that saw the NODATA answer keeps returning it
+// without sending a query (#44777).
+describe("query cache", () => {
+  function encodeName(name) {
+    return Buffer.concat([
+      ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
+      Buffer.from([0]),
+    ]);
+  }
+  const u16 = n => Buffer.from([(n >> 8) & 0xff, n & 0xff]);
+  const u32 = n => Buffer.from([(n >>> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]);
+
+  async function startFakeServer() {
+    const socket = dgram.createSocket("udp4");
+    const state = { live: false, queries: 0 };
+    socket.on("message", (query, rinfo) => {
+      state.queries += 1;
+      let off = 12;
+      while (query[off] !== 0) off += query[off] + 1;
+      const qtype = query.readUInt16BE(off + 1);
+      const question = query.subarray(12, off + 5);
+      const soaRdata = Buffer.concat([
+        encodeName("ns1.example.test"),
+        encodeName("hostmaster.example.test"),
+        u32(1),
+        u32(3600),
+        u32(300),
+        u32(2419200),
+        u32(5),
+      ]);
+      const soa = Buffer.concat([encodeName("example.test"), u16(6), u16(1), u32(5), u16(soaRdata.length), soaRdata]);
+      const rdata = qtype === 16 ? Buffer.concat([Buffer.from([5]), Buffer.from("token")]) : Buffer.from([10, 0, 0, 1]);
+      const answer = Buffer.concat([Buffer.from([0xc0, 0x0c]), u16(qtype), u16(1), u32(5), u16(rdata.length), rdata]);
+      const header = Buffer.concat([
+        query.subarray(0, 2),
+        Buffer.from([0x84, 0x00]),
+        u16(1),
+        u16(state.live ? 1 : 0),
+        u16(state.live ? 0 : 1),
+        u16(0),
+      ]);
+      socket.send(Buffer.concat([header, question, state.live ? answer : soa]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    return { socket, state, resolver };
+  }
+
+  test.concurrent("resolveTxt() sends a query after a NODATA answer", async () => {
+    const { socket, state, resolver } = await startFakeServer();
+    try {
+      const name = "_challenge.app.example.test";
+      // Bun reports a NODATA answer as ENOTFOUND. A timeout would be ETIMEOUT.
+      await expect(resolver.resolveTxt(name)).rejects.toMatchObject({ code: "ENOTFOUND" });
+      expect(state.queries).toBe(1);
+      state.live = true;
+      expect(await resolver.resolveTxt(name)).toEqual([["token"]]);
+      expect(state.queries).toBe(2);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("resolve4() sends a query for every call", async () => {
+    const { socket, state, resolver } = await startFakeServer();
+    try {
+      state.live = true;
+      expect(await resolver.resolve4("a.example.test")).toEqual(["10.0.0.1"]);
+      expect(await resolver.resolve4("a.example.test")).toEqual(["10.0.0.1"]);
+      expect(state.queries).toBe(2);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // The c-ares backend of Bun.dns.lookup shares the default resolver's channel.
+  // Point that resolver at the fake server in a child process. The trailing dot
+  // keeps c-ares from also trying the host's search domains.
+  test.concurrent("c-ares lookup() sends a query for every call", async () => {
+    const { socket, state } = await startFakeServer();
+    try {
+      state.live = true;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("node:dns").setServers(["127.0.0.1:" + process.argv[1]]);
+           const lookup = () => Bun.dns.lookup("a.example.test.", { backend: "c-ares", family: 4 });
+           lookup().then(lookup).then(r => console.log(JSON.stringify(r.map(({ address }) => address))));`,
+          String(socket.address().port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["10.0.0.1"]);
+      expect(exitCode).toBe(0);
+      expect(state.queries).toBe(2);
+    } finally {
+      socket.close();
+    }
+  });
+});
+
 // The socket never answers. The QTYPE that reaches it and the syscall the
 // cancelled query reports pin resolve()'s rrtype dispatch to the query that
 // resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.

@@ -10,8 +10,10 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isMusl,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -2011,6 +2013,127 @@ describe("paused socket whose peer sends RST", () => {
       server.close();
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// #43381: the events of a socket teardown. Node reports only 'close' after destroy(),
+// and a peer reset with a write in flight surfaces the read error, also when no
+// 'error' listener turns it into a handled one (it is an uncaught exception then).
+// The fixture runs on both runtimes so the expected reports are pinned to node.
+describe("socket teardown events (#43381)", () => {
+  // Prints the events of `holder` (the client or the accepted socket), in order, up to 'close'.
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const { SIDE, SCENARIO } = process.env;
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const events = [];
+    process.on("uncaughtException", err => events.push("uncaught " + shape(err)));
+    let client, accepted, ready = 0;
+    // A write made inside the 'connect' or 'connection' dispatch is flushed on another native path.
+    const onReady = () => ++ready === 2 && setImmediate(run);
+    const server = net.createServer(socket => {
+      accepted = socket;
+      onReady();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      client = net.connect(server.address().port, "127.0.0.1", onReady);
+    });
+    function run() {
+      const [holder, peer] = SIDE === "client" ? [client, accepted] : [accepted, client];
+      // "peer reset, handled": an 'error' listener takes the reset. The report ends with how
+      // often the callback of each write and of end() ran by the check phase after 'close'.
+      const handled = SCENARIO === "peer reset, handled";
+      const calls = { write: 0, queued: 0, end: 0 };
+      peer.on("error", () => {});
+      if (handled) holder.on("error", err => events.push("error " + shape(err)));
+      holder.on("end", () => events.push("end"));
+      holder.on("close", hadError => {
+        events.push("close " + hadError);
+        setImmediate(() => {
+          if (handled) events.push("calls " + JSON.stringify(calls));
+          console.log(JSON.stringify(events));
+          peer.destroy();
+          server.close();
+        });
+      });
+      if (SCENARIO === "destroy") return holder.destroy();
+      // Write until the kernel stops taking the bytes, so one write is in flight, and queue
+      // one more behind it. The order of the callbacks is recorded on the client only: an
+      // accepted socket has no handle left when it is destroyed, so its 'close' comes on the
+      // next tick, before the canceled write reports. #43250 moves the cancel into _destroy.
+      const record = SIDE === "client" && !handled;
+      const chunk = Buffer.alloc(1024 * 1024, "a");
+      let writes = 0;
+      while (writes < 256 && holder.writableLength === 0) {
+        const nth = ++writes;
+        holder.write(chunk, err => {
+          if (nth !== writes) return;
+          calls.write++;
+          if (record) events.push("write " + shape(err));
+        });
+      }
+      if (holder.writableLength === 0) {
+        console.error("no write stayed in flight");
+        process.exit(1);
+      }
+      holder.write("b", err => {
+        calls.queued++;
+        if (record) events.push("queued " + shape(err));
+      });
+      if (handled) holder.end(() => calls.end++);
+      peer.resetAndDestroy();
+    }
+  `;
+
+  describe.each([
+    ["bun", bunExe()],
+    ["node", nodeExe()],
+  ])("%s", (_runtime, exe) => {
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [exe!, "-e", fixture],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+    }
+    const reports = (events: string[]) => ({ events, stderr: "", exitCode: 0 });
+
+    describe.each(["client", "server"])("%s", SIDE => {
+      it.concurrent.skipIf(!exe)("destroy() emits 'close' and no 'end'", async () => {
+        expect(await run({ SIDE, SCENARIO: "destroy" })).toEqual(reports(["close false"]));
+      });
+
+      // Linux only: a loopback RST arrives before the close() that sends it returns, so the
+      // reset is seen as a read error. On Windows a writable event wins and settles the write,
+      // and on macOS kqueue reports the failed send first. Those sequences are not pinned here.
+      it.concurrent.skipIf(!exe || !isLinux)(
+        "a peer reset with a write in flight and no 'error' listener throws the read error",
+        async () => {
+          expect(await run({ SIDE, SCENARIO: "peer reset" })).toEqual(
+            reports(
+              SIDE === "client"
+                ? ["uncaught ECONNRESET read", "write ECANCELED write", "queued ECONNRESET read", "close true"]
+                : ["uncaught ECONNRESET read", "close true"],
+            ),
+          );
+        },
+      );
+
+      // The same reset with an 'error' listener: the write in flight, the write queued
+      // behind it and end() each get their callback once. Their place in the order is
+      // pinned by the test above.
+      it.concurrent.skipIf(!exe || !isLinux)(
+        "a peer reset with a write in flight calls the callback of each write and of end() once",
+        async () => {
+          expect(await run({ SIDE, SCENARIO: "peer reset, handled" })).toEqual(
+            reports(["error ECONNRESET read", "close true", 'calls {"write":1,"queued":1,"end":1}']),
+          );
+        },
+      );
+    });
   });
 });
 

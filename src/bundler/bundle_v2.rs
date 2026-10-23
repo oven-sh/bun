@@ -26,8 +26,8 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerReads,
+    DependenciesScannerResult, OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -4328,6 +4328,16 @@ pub mod bv2_impl {
         pub entry_points: Box<[Box<[u8]>]>,
         pub(crate) on_fetch:
             fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
+        pub(crate) reads: DependenciesScannerReads,
+    }
+
+    /// What the callback of a [`DependenciesScanner`] reads.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum DependenciesScannerReads {
+        /// The import records of every file the runtime loads. Nothing is linked.
+        ImportRecords,
+        /// The resolved exports of the entry point too. The bundle is linked first.
+        LinkedExports,
     }
 
     pub struct DependenciesScannerResult<'r, 'a> {
@@ -4340,6 +4350,8 @@ pub mod bv2_impl {
     /// `Analyzer` struct implements this; [`DependenciesScanner::new`] erases the
     /// concrete type behind a monomorphized trampoline.
     pub trait OnDependenciesAnalyze {
+        const READS: DependenciesScannerReads;
+
         fn on_analyze(
             &mut self,
             result: &mut DependenciesScannerResult<'_, '_>,
@@ -4368,15 +4380,45 @@ pub mod bv2_impl {
                 ctx: core::ptr::from_mut(analyzer).cast::<()>(),
                 entry_points,
                 on_fetch: trampoline::<A>,
+                reads: A::READS,
             }
         }
     }
 
     impl<'a> BundleV2<'a> {
+        /// Parse the files behind the re-exports that barrel optimization deferred: the runtime loads every
+        /// file a barrel names. Returns the source index of the first of them. A bundle never reads these
+        /// files, so their diagnostics do not fail the scan.
+        fn parse_files_behind_deferred_re_exports(&mut self) -> u32 {
+            let first = u32::try_from(self.graph.ast.len()).expect("int cast");
+            let log = self.transpiler.log();
+            let (msgs, errors, warnings) = (log.msgs.len(), log.errors, log.warnings);
+
+            let mut parsed = 0;
+            loop {
+                let end = self.graph.ast.len();
+                let scheduled = barrel_imports::schedule_deferred_records(self, parsed..end);
+                if scheduled == 0 {
+                    break;
+                }
+                self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
+                self.wait_for_parse();
+                parsed = end;
+            }
+
+            let log = self.transpiler.log_mut();
+            log.msgs.truncate(msgs);
+            log.errors = errors;
+            log.warnings = warnings;
+            first
+        }
+
+        /// `first_file_behind_deferred_re_export`: see `parse_files_behind_deferred_re_exports`.
         pub(crate) fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
             fetcher: &DependenciesScanner,
+            first_file_behind_deferred_re_export: u32,
         ) -> Result<(), Error> {
             // Find all external dependencies from reachable files
             let mut external_deps = bun_collections::StringSet::new();
@@ -4409,9 +4451,17 @@ pub mod bv2_impl {
                     )
                     .and_then(|dir| dir.enclosing_package_json)
                     .map_or(&b""[..], |package_json| &*package_json.name);
+                let is_behind_deferred_re_export =
+                    source_index.get() >= first_file_behind_deferred_re_export;
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
+                        // The program runs without a guarded import, and a package that the registry
+                        // lacks fails the whole install. The install never asked for this one before.
+                        && !(is_behind_deferred_re_export
+                            && record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS))
                     {
                         let path: &[u8] = record.path.text;
                         // Record the package name only: `lodash/debounce` is part of `lodash`.
@@ -4486,12 +4536,33 @@ pub mod bv2_impl {
                 this.fail_if_no_entry_points()?;
                 this.type_check()?;
 
+                let import_records_scanner =
+                    fetcher.filter(|fetch| fetch.reads == DependenciesScannerReads::ImportRecords);
+                let first_file_behind_deferred_re_export = if import_records_scanner.is_some() {
+                    this.parse_files_behind_deferred_re_exports()
+                } else {
+                    u32::MAX
+                };
+
                 this.scan_for_secondary_paths();
 
                 this.process_server_component_manifest_files()?;
 
                 let reachable_files = this.find_reachable_files()?;
                 *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
+
+                if let Some(fetch) = import_records_scanner {
+                    this.get_all_dependencies(
+                        &reachable_files,
+                        fetch,
+                        first_file_behind_deferred_re_export,
+                    )?;
+                    return Ok(BuildResult {
+                        output_files: Vec::new(),
+                        metafile: None,
+                        metafile_markdown: None,
+                    });
+                }
 
                 this.process_files_to_copy(&reachable_files)?;
 
@@ -4525,7 +4596,11 @@ pub mod bv2_impl {
 
                 // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
                 if let Some(fetch) = fetcher {
-                    this.get_all_dependencies(&reachable_files, fetch)?;
+                    this.get_all_dependencies(
+                        &reachable_files,
+                        fetch,
+                        first_file_behind_deferred_re_export,
+                    )?;
                     return Ok(BuildResult {
                         output_files: Vec::new(),
                         metafile: None,

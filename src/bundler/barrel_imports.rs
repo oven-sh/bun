@@ -408,6 +408,29 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
     scheduled
 }
 
+/// Make every record that `apply_barrel_optimization` deferred in `files` live again, and schedule
+/// the modules behind them. Returns the number of newly scheduled parse tasks.
+pub(crate) fn schedule_deferred_records(
+    this: &mut BundleV2,
+    files: core::ops::Range<usize>,
+) -> i32 {
+    let mut scheduled = 0;
+    let mut un_deferred: Vec<u32> = Vec::new();
+    for idx in files {
+        un_deferred.clear();
+        let records = &mut this.graph.ast.items_import_records_mut()[idx];
+        for record_idx in 0..records.len() {
+            if un_defer_record(records, record_idx) {
+                un_deferred.push(record_idx as u32);
+            }
+        }
+        if !un_deferred.is_empty() {
+            scheduled += resolve_barrel_records(this, idx as u32, &un_deferred);
+        }
+    }
+    scheduled
+}
+
 /// After a new file's import records are patched with source_indices,
 /// record what this file requests from each target in requested_exports
 /// (eagerly, before barrels are known), then BFS through barrel chains

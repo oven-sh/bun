@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::StreamBuffer;
 use bun_threading::Mutex;
@@ -11,10 +12,10 @@ pub struct ThreadSafeStreamBuffer {
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
     /// Called by the http thread when the buffer drains; guarded by `mutex`, like `buffer`.
     callback: Option<Callback>,
-    /// The producer wrote its last byte; guarded by `mutex`.
-    ended: bool,
-    /// The producer's byte count missed the declared `Content-Length`; guarded by `mutex`.
-    length_mismatch: bool,
+    /// The producer wrote its last byte. Set once, after that byte is in `buffer`.
+    ended: AtomicBool,
+    /// The producer's byte count missed the declared `Content-Length`. Set once.
+    length_mismatch: AtomicBool,
 }
 
 pub struct Callback {
@@ -46,8 +47,8 @@ impl Default for ThreadSafeStreamBuffer {
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
-            ended: false,
-            length_mismatch: false,
+            ended: AtomicBool::new(false),
+            length_mismatch: AtomicBool::new(false),
         }
     }
 }
@@ -94,7 +95,7 @@ impl ThreadSafeStreamBuffer {
         // The mutex stays locked until `release()`. Prefer `lock()` (RAII
         // guard) for simple critical sections; this split form remains for
         // callers that interleave release with disjoint `self` access.
-        (&mut self.buffer, self.ended)
+        (&mut self.buffer, self.ended.load(Ordering::Acquire))
     }
 
     pub(crate) fn release(&mut self) {
@@ -130,23 +131,20 @@ impl ThreadSafeStreamBuffer {
 
     /// Main thread: the body is complete once `trailer` (a chunked terminator, or nothing) is sent.
     pub fn end(&mut self, trailer: &[u8]) {
-        let _guard = self.mutex.lock_guard();
         if !trailer.is_empty() {
-            let _ = self.buffer.write(trailer); // OOM/capacity: fire-and-forget
+            let _ = self.lock().write(trailer); // OOM/capacity: fire-and-forget
         }
-        self.ended = true;
+        self.ended.store(true, Ordering::Release);
     }
 
     /// Main thread: the bytes written do not add up to the declared `Content-Length`.
-    pub fn fail_length_mismatch(&mut self) {
-        let _guard = self.mutex.lock_guard();
-        self.length_mismatch = true;
+    pub fn fail_length_mismatch(&self) {
+        self.length_mismatch.store(true, Ordering::Release);
     }
 
     /// Http thread.
-    pub(crate) fn has_length_mismatch(&mut self) -> bool {
-        let _guard = self.mutex.lock_guard();
-        self.length_mismatch
+    pub(crate) fn has_length_mismatch(&self) -> bool {
+        self.length_mismatch.load(Ordering::Acquire)
     }
 
     /// This is exclusively called from the http thread.

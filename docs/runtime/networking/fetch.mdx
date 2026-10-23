@@ -573,6 +573,7 @@ await write("output.txt", response);
   - On macOS, only regular files (not pipes, sockets, or devices) can use `sendfile`
   - When these conditions aren't met, or when using S3/streaming uploads, Bun falls back to reading the file into memory
   - Bun only uses this optimization for HTTP (not HTTPS) requests, where the file can be sent directly from the kernel to the network stack; Bun does not use it on Windows
+  - When a redirect keeps the request body (`307` and `308`), Bun sends the file again from its start. If the redirected request cannot use `sendfile` (HTTPS or a proxy tunnel), Bun streams the file and does not read it into memory
 - S3 operations automatically handle signing requests and merging authentication headers
 
 Many of these features are Bun-specific extensions to the standard fetch API.

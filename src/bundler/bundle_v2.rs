@@ -132,6 +132,9 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// Set by `scan_module_graph_from_cli`: the import graph is the result, and nothing is printed.
+    pub(crate) scan_only: bool,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -2700,6 +2703,16 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    if Self::has_sqlite_extension(&path_primary)
+                        && self.leave_declined_sqlite_import_to_runtime(
+                            import_record,
+                            &path_primary,
+                            target,
+                            transpiler,
+                        )
+                    {
+                        return;
+                    }
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2942,6 +2955,17 @@ pub mod bv2_impl {
                 return;
             }
 
+            if Self::has_sqlite_extension(&path)
+                && self.leave_declined_sqlite_import_to_runtime(
+                    import_record,
+                    &path,
+                    target,
+                    transpiler,
+                )
+            {
+                return;
+            }
+
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
@@ -3144,6 +3168,127 @@ pub mod bv2_impl {
             })
         }
 
+        /// The sqlite loader does not copy the database: a module could only name its build path.
+        #[inline]
+        fn leaves_sqlite_import_to_runtime(
+            &self,
+            loader: Loader,
+            path: &Fs::Path<'_>,
+            kind: ImportKind,
+            target: options::Target,
+        ) -> bool {
+            loader == Loader::Sqlite && self.sqlite_import_stays_external(path, kind, target)
+        }
+
+        #[cold]
+        fn sqlite_import_stays_external(
+            &self,
+            path: &Fs::Path<'_>,
+            kind: ImportKind,
+            target: options::Target,
+        ) -> bool {
+            // A framework build runs the bundle where it was built. The scan needs the graph edge.
+            target.is_bun()
+                && self.framework.is_none()
+                && !self.scan_only
+                && matches!(
+                    kind,
+                    ImportKind::Stmt
+                        | ImportKind::Require
+                        | ImportKind::Dynamic
+                        | ImportKind::RequireResolve
+                )
+                // A loader-map name would need a `type` on the import as printed.
+                && Self::has_sqlite_extension(path)
+                // A plugin that loads the file goes first, as for every other loader.
+                && !self.plugins_ref().is_some_and(|plugins| {
+                    plugins.has_any_matches(path, true) || plugins.has_on_before_parse_plugins()
+                })
+        }
+
+        /// The runtime picks the sqlite loader for this name, as `Loader::from_string` does.
+        #[inline]
+        fn has_sqlite_extension(path: &Fs::Path<'_>) -> bool {
+            const EXT: &[u8] = b".sqlite";
+            path.text.len() >= EXT.len()
+                && path.text[path.text.len() - EXT.len()..].eq_ignore_ascii_case(EXT)
+        }
+
+        /// False for `export * from` and for the require of a `module.exports = require(x)` shim.
+        #[inline]
+        fn import_prints_as_written(
+            import_record_index: u32,
+            export_star_import_records: &[u32],
+            redirect_import_record_index: u32,
+        ) -> bool {
+            import_record_index != redirect_import_record_index
+                && !export_star_import_records.contains(&import_record_index)
+        }
+
+        fn keep_sqlite_import_external(
+            transpiler: &Transpiler<'_>,
+            import_record: &mut ImportRecord,
+            source: &bun_ast::Source,
+        ) {
+            import_record
+                .flags
+                .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+            let relative_to = if transpiler.options.compile_mode.is_executable() {
+                "the working directory"
+            } else {
+                "the bundle"
+            };
+            transpiler.log_mut().add_range_warning_fmt_with_note(
+                Some(source),
+                import_record.range,
+                format_args!(
+                    "{} is not bundled: the program opens it at run time, relative to {}",
+                    bun_core::fmt::quote(import_record.path.text),
+                    relative_to,
+                ),
+                format_args!(
+                    "add with {{ type: \"sqlite\" }} to this import to state that, or with {{ type: \"sqlite\", embed: \"true\" }} to embed the database"
+                ),
+                import_record.range,
+            );
+        }
+
+        /// For `run_resolver`: it computes a loader only after `path` has a place in the graph.
+        #[cold]
+        fn leave_declined_sqlite_import_to_runtime(
+            &mut self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+            path: &Fs::Path<'_>,
+            target: options::Target,
+            transpiler: *mut Transpiler<'a>,
+        ) -> bool {
+            let importer = import_record.importer_source_index as usize;
+            let index = import_record.import_record_index;
+            let loader = self.graph.ast.items_import_records()[importer].as_slice()[index as usize]
+                .loader
+                .unwrap_or_else(|| {
+                    // SAFETY: see the `transpiler` note in `run_resolver`.
+                    path.loader(unsafe { &(*transpiler).options.loaders })
+                        .unwrap_or(Loader::File)
+                });
+            if !self.leaves_sqlite_import_to_runtime(loader, path, import_record.kind, target)
+                || !Self::import_prints_as_written(
+                    index,
+                    &self.graph.ast.items_export_star_import_records()[importer],
+                    self.graph.ast.items_redirect_import_record_index()[importer],
+                )
+            {
+                return false;
+            }
+            Self::keep_sqlite_import_external(
+                self.transpiler,
+                &mut self.graph.ast.items_import_records_mut()[importer].as_mut_slice()
+                    [index as usize],
+                &self.graph.input_files.items_source()[importer],
+            );
+            true
+        }
+
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
@@ -3314,6 +3459,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                scan_only: false,
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -4596,6 +4742,7 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            this.scan_only = true;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
@@ -6571,6 +6718,8 @@ pub mod bv2_impl {
             let target = result.ast.target;
             let mut resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
                 import_records: &mut result.ast.import_records,
+                export_star_import_records: &result.ast.export_star_import_records,
+                redirect_import_record_index: result.ast.redirect_import_record_index,
                 source: &result.source,
                 loader: result.loader,
                 target,
@@ -6640,6 +6789,10 @@ pub mod bv2_impl {
 
     pub(crate) struct ResolveImportRecordCtx<'a> {
         pub(crate) import_records: &'a mut [ImportRecord],
+        /// The records of the `export * from` statements of the file.
+        pub(crate) export_star_import_records: &'a [u32],
+        /// The record of `module.exports = require(x)` when the file is only that, or `u32::MAX`.
+        pub(crate) redirect_import_record_index: u32,
         pub(crate) source: &'a bun_ast::Source,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
@@ -6673,6 +6826,8 @@ pub mod bv2_impl {
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
             let only_records = ctx.only_records;
+            let export_star_import_records = ctx.export_star_import_records;
+            let redirect_import_record_index = ctx.redirect_import_record_index;
             debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;
             for import_record in ctx.import_records.iter_mut() {
@@ -6909,6 +7064,23 @@ pub mod bv2_impl {
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
+                        if self.leaves_sqlite_import_to_runtime(
+                            import_record_loader,
+                            &path_primary,
+                            import_record.kind,
+                            target,
+                        ) && Self::import_prints_as_written(
+                            i as u32,
+                            export_star_import_records,
+                            redirect_import_record_index,
+                        ) {
+                            Self::keep_sqlite_import_external(
+                                self.transpiler,
+                                import_record,
+                                source,
+                            );
+                            continue;
+                        }
                         import_record.loader = Some(import_record_loader);
 
                         if let Some(id) =
@@ -7296,6 +7468,19 @@ pub mod bv2_impl {
                     }
                     break 'brk resolved_loader;
                 };
+                if self.leaves_sqlite_import_to_runtime(
+                    import_record_loader,
+                    path,
+                    import_record.kind,
+                    target,
+                ) && Self::import_prints_as_written(
+                    i as u32,
+                    export_star_import_records,
+                    redirect_import_record_index,
+                ) {
+                    Self::keep_sqlite_import_external(self.transpiler, import_record, source);
+                    continue;
+                }
                 import_record.loader = Some(import_record_loader);
 
                 let is_html_entrypoint = import_record_loader == Loader::Html

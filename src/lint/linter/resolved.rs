@@ -1,5 +1,6 @@
 //! The resolved config of one file.
 
+use super::config::Written;
 use super::instances::Instance;
 use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
 use crate::ast::File;
@@ -68,6 +69,8 @@ pub struct ConfiguredRule {
     pub(super) options_error: OnceLock<Option<Arc<[u8]>>>,
     /// See [`ConfiguredRule::reported_as`].
     reported_as: &'static Meta,
+    /// See [`ConfiguredRule::written_options`].
+    written: Option<Written>,
     /// See [`ConfiguredRule::name`].
     name: Option<Arc<[u8]>>,
     /// See [`ConfiguredRule::or_else`].
@@ -84,6 +87,7 @@ impl ConfiguredRule {
             instance: OnceLock::new(),
             options_error: OnceLock::new(),
             reported_as: entry.meta,
+            written: None,
             name: None,
             or_else: None,
         }
@@ -95,24 +99,23 @@ impl ConfiguredRule {
         self.reported_as
     }
 
-    /// The options without the mark of a rule that runs under its old name.
+    /// The options that the config itself has for the rule.
     pub fn written_options(&self) -> &[Json] {
-        match &self.options[..] {
-            [Json::Object(first), _] if self.has_old_name() && first.is_empty() => &[],
-            [first @ .., _] if self.has_old_name() => first,
-            all => all,
+        match &self.written {
+            Some(Written::Options(options)) => options,
+            Some(Written::Nothing) => &[],
+            None => &self.options,
         }
     }
 
-    fn has_old_name(&self) -> bool {
-        self.name.is_some() && !self.defaults.is_empty()
+    /// True if the config says nothing about the rule.
+    pub(crate) fn is_only_implied(&self) -> bool {
+        matches!(self.written, Some(Written::Nothing))
     }
 
-    /// True if it's off and only there for its default options.
-    pub(crate) fn is_only_defaults(&self) -> bool {
-        self.severity == Severity::Off
-            && !self.defaults.is_empty()
-            && self.options[..] == self.defaults[..]
+    pub(crate) fn written(mut self, written: Option<Written>) -> Self {
+        self.written = written;
+        self
     }
 
     pub(crate) fn with_defaults(mut self, defaults: Vec<Json>) -> Self {

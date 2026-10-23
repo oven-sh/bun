@@ -4854,6 +4854,19 @@ export const p = \`a\${/* c */ 'x'}\`;
       expect(await rules(project("7.18.0", { [name]: "error" }))).toEqual({ [name]: [2] });
       const strict = { allowThrowingAny: false };
       expect(await rules(project("7.18.0", { [name]: ["warn", strict] }))).toEqual({ [name]: [1, strict] });
+      expect(await rules(project("7.18.0", { [name]: "off" }))).toEqual({ [name]: [0] });
+      // The old names aren't this run's.
+      const withPackage = await lint(project("7.18.0", {}), ["--no-native-plugin-rules", "--print-config", "a.ts"]);
+      expect(JSON.parse(withPackage.raw).rules).toEqual({});
+      const own = `{ meta: { name: "mine" }, rules: { "no-throw-literal": { create: () => ({}) }, other: { create: () => ({}) } } }`;
+      const another = await lint(
+        {
+          "eslint.config.js": `module.exports = [{ plugins: { "@typescript-eslint": ${own} }, rules: { "@typescript-eslint/other": "error" } }];`,
+          "a.js": "",
+        },
+        ["--print-config", "a.js"],
+      );
+      expect(JSON.parse(another.raw).rules).toEqual({ "@typescript-eslint/other": [2] });
     });
 
     test("typescript-eslint 8 doesn't have them", async () => {

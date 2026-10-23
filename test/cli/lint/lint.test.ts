@@ -6909,9 +6909,14 @@ h();
           [],
         ],
       ];
-      test("--print-config doesn't list the rules that nothing turns on", async () => {
-        const { raw } = await lint(project("8.57.1", `{ "no-var": "error" }`), ["--print-config", "a.js"]);
-        expect(JSON.parse(raw).rules).toEqual({ "no-var": [2] });
+      test("--print-config shows what the config says, and nothing else", async () => {
+        const printed = async (rules: object) =>
+          JSON.parse((await lint(project("8.57.1", JSON.stringify(rules)), ["--print-config", "a.js"])).raw).rules;
+        expect(await printed({ "no-var": "error" })).toEqual({ "no-var": [2] });
+        expect(await printed({ "no-unused-vars": "off" })).toEqual({ "no-unused-vars": [0] });
+        expect(await printed({ "no-implicit-coercion": ["error", { boolean: false }] })).toEqual({
+          "no-implicit-coercion": [2, { boolean: false }],
+        });
       });
 
       test.each(routes)("%s", async (_, files, flags) => {

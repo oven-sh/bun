@@ -87,6 +87,7 @@ pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions
 pub use flat::{ConfigError, LoadLocatedPlugin, NamedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
+pub(crate) use merge::Written;
 pub use rc::{
     LoadPlugin, is_missing_in_oxlint, is_oxlint_plugin, oxlint_category, oxlint_runs_on, strings_of,
 };
@@ -1439,7 +1440,11 @@ impl Config {
             id: &[u8],
         ) -> Option<&'r mut RuleSetting> {
             let at = rules.iter().position(|it| *it.id == *id).or_else(|| {
-                rules.extend(RuleSetting::new(id, &Json::Number(0.0)));
+                let off = RuleSetting::new(id, &Json::Number(0.0));
+                rules.extend(off.map(|it| RuleSetting {
+                    written: Some(Written::Nothing),
+                    ..it
+                }));
                 rules.len().checked_sub(1)
             });
             rules.get_mut(at?)
@@ -1452,7 +1457,9 @@ impl Config {
             let all = eslintrc::default_options_of_eslint_8();
             for (id, defaults) in all.as_object().unwrap_or_default() {
                 if let Some(setting) = setting_of(rules, id) {
-                    setting.options = eslintrc::migrate_options(all, id, &setting.options);
+                    let merged = eslintrc::migrate_options(all, id, &setting.options);
+                    let written = std::mem::replace(&mut setting.options, merged);
+                    setting.written.get_or_insert(Written::Options(written));
                     setting.defaults = defaults.as_array().unwrap_or_default().to_vec();
                 }
             }
@@ -1800,7 +1807,12 @@ impl Config {
                 // No schema allows a second option. It tells the rule which name it runs under.
                 let mark = Json::Object(vec![(b"hasOldName".to_vec(), Json::Bool(true))]);
                 setting.defaults = vec![Json::Object(Vec::new()), mark];
-                setting.options = schema::deep_merge_arrays(&setting.defaults, &setting.options);
+                let marked = schema::deep_merge_arrays(&setting.defaults, &setting.options);
+                let written = std::mem::replace(&mut setting.options, marked);
+                setting.written.get_or_insert(Written::Options(written));
+            } else if native.is_none() && matches!(setting.written, Some(Written::Nothing)) {
+                // The old name isn't this config's to run under.
+                continue;
             }
             let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
             let entry = match (native.or(base), js) {
@@ -1858,6 +1870,7 @@ impl Config {
             config.rules.push(
                 ConfiguredRule::new(entry, setting.severity, options)
                     .with_defaults(defaults)
+                    .written(setting.written)
                     .report_as(reported_as)
                     .named(name)
                     .or(or_else),

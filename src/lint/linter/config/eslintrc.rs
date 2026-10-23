@@ -2123,8 +2123,7 @@ impl ResolvedConfig {
         let id = RuleId::Known(rule.entry.meta).to_vec();
         let eslint_8 = self.language.eslint_8.as_ref();
         let defaults = eslint_8.and_then(|it| it.defaults.get(&id)?.as_array());
-        let is_implied = rule.name().is_some() || self.language.eslint_major == 8;
-        is_implied && rule.is_only_defaults()
+        rule.is_only_implied()
             || matches!(rule.severity, Severity::Off)
                 && defaults.is_some_and(|it| *it == *rule.options)
     }

@@ -618,7 +618,10 @@ const FAMILIES: Record<string, Entry[]> = {
     {
       name: "EventTarget dispatch",
       phases: ["inside", "after"],
-      worker: `const et = new EventTarget(); et.addEventListener("x", () => hit(() => et.dispatchEvent(new Event("x")))); setImmediate(() => et.dispatchEvent(new Event("x")));`,
+      // The re-arm is a later dispatch, like the other entries' follow-on completions. A synchronous
+      // re-dispatch from inside the listener recursed until the stack overflowed; that uncaught
+      // RangeError stops the worker, so it never reached the "after" point.
+      worker: `const et = new EventTarget(); et.addEventListener("x", () => hit(() => setImmediate(() => et.dispatchEvent(new Event("x"))))); setImmediate(() => et.dispatchEvent(new Event("x")));`,
     },
     {
       name: "process.on('exit') handlers",

@@ -7251,6 +7251,311 @@ it("connectionListener applies the server's joinDuplicateHeaders option like the
   }
 });
 
+describe("connectionListener requireHostHeader", () => {
+  // What Node's parserOnIncoming writes: res.writeHead(400, ["Connection", "close"]); res.end().
+  const refused = "HTTP/1.1 400 Bad Request\r\n";
+  const missingHostReply = `${refused}Connection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`;
+  const host = "Host: example.test";
+  const close = "Connection: close";
+  const request = (path: string, ...fields: string[]) =>
+    `GET ${path} HTTP/1.1\r\n${fields.map(field => `${field}\r\n`).join("")}\r\n`;
+  const otherFields = Array.from({ length: 40 }, (_, i) => `X-${i}: ${i}`);
+  const servedKeepAlive = (body: string) =>
+    `HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${body.length}\r\n\r\n${body}`;
+
+  // `endCalls`: what ends the server's socket after a response with Connection: close, as in Node's resOnFinish.
+  type Connection = { client: Duplex; serverSocket: Duplex; endCalls: string[]; [Symbol.dispose](): void };
+
+  // The sockets a server gets through server.emit("connection", ...): a plain Duplex, or a net.Socket.
+  const connections: [string, () => Promise<Connection>][] = [
+    [
+      "a duplexPair half",
+      async () => {
+        const [client, serverSocket] = duplexPair();
+        return {
+          client,
+          serverSocket,
+          endCalls: ["socket.end"],
+          [Symbol.dispose]() {
+            client.destroy();
+            serverSocket.destroy();
+          },
+        };
+      },
+    ],
+    [
+      "a net.Socket",
+      async () => {
+        const accepted = Promise.withResolvers<Duplex>();
+        const netServer = createNetServer(socket => accepted.resolve(socket));
+        netServer.listen(0, "127.0.0.1");
+        await once(netServer, "listening");
+        const client = connect((netServer.address() as AddressInfo).port, "127.0.0.1");
+        await once(client, "connect");
+        const serverSocket = await accepted.promise;
+        return {
+          client,
+          serverSocket,
+          // net.Socket#destroySoon() calls end() itself.
+          endCalls: ["socket.destroySoon", "socket.end"],
+          [Symbol.dispose]() {
+            client.destroy();
+            serverSocket.destroy();
+            netServer.close();
+          },
+        };
+      },
+    ],
+  ];
+
+  // Hands the connection to `server`, writes `rawRequest`, and resolves with everything the server wrote until it
+  // ended the connection (Date masked). Rejects when the connection fails or closes without that end. With
+  // `firstStatus` it also rejects as soon as the first response starts with something else: a server that serves a
+  // request it must refuse keeps the connection open, and the end would never come.
+  function exchange(server: Server, { client, serverSocket }: Connection, rawRequest: string, firstStatus?: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    client.on("data", (chunk: Buffer) => {
+      received += chunk.toString("latin1");
+      if (firstStatus !== undefined && received.length >= firstStatus.length && !received.startsWith(firstStatus)) {
+        reject(new Error(`expected ${JSON.stringify(firstStatus)} first; received ${JSON.stringify(received)}`));
+      }
+    });
+    client.on("end", () => resolve(received.replace(/^Date: .*$/gm, "Date: <date>")));
+    client.on("error", reject);
+    client.on("close", () =>
+      reject(new Error(`the connection closed without an end; received ${JSON.stringify(received)}`)),
+    );
+    server.emit("connection", serverSocket);
+    client.write(rawRequest);
+    return promise;
+  }
+
+  // A server that records every event a request can be routed to.
+  function recordingServer(options: http.ServerOptions = {}) {
+    const events: string[] = [];
+    const server = createServer(options, (req, res) => {
+      events.push(`request ${req.url}`);
+      res.end(`served ${req.url}`);
+    });
+    for (const name of ["checkContinue", "checkExpectation"]) {
+      server.on(name, (req: IncomingMessage, res: ServerResponse) => {
+        events.push(`${name} ${req.url}`);
+        res.end(name);
+      });
+    }
+    server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+    server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    return { server, events };
+  }
+
+  describe.each(connections)("on %s", (_kind, open) => {
+    it.each([
+      ["a GET without Host", request("/"), missingHostReply],
+      // A response to HEAD has no body, so there is no chunk framing.
+      ["a HEAD without Host", "HEAD / HTTP/1.1\r\n\r\n", `${refused}Connection: close\r\nDate: <date>\r\n\r\n`],
+      ["a POST with a body and no Host", "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello", missingHostReply],
+      ["40 header fields, none of them Host", request("/", ...otherFields), missingHostReply],
+      // Only a field name counts.
+      ["Host as a field value only", request("/", "X-Field: Host"), missingHostReply],
+      ["Expect: 100-continue without Host", request("/", "Expect: 100-continue"), missingHostReply],
+      ["an unknown Expect value without Host", request("/", "Expect: something"), missingHostReply],
+      [
+        "an Upgrade without Host that no 'upgrade' listener takes",
+        request("/", "Upgrade: test", "Connection: Upgrade"),
+        missingHostReply,
+      ],
+    ])("answers %s with 400 and ends the connection", async (_name, rawRequest, reply) => {
+      const { server, events } = recordingServer();
+      using connection = await open();
+      expect({ received: await exchange(server, connection, rawRequest, refused), events }).toEqual({
+        received: reply,
+        events: [],
+      });
+    });
+
+    it("writes no 100 Continue and no 417 for a request without Host", async () => {
+      // Without 'checkContinue' and 'checkExpectation' listeners the Expect routing writes to the socket itself.
+      for (const expectation of ["100-continue", "something"]) {
+        const onRequest = mock((req: IncomingMessage, res: ServerResponse) => res.end("served"));
+        const server = createServer(onRequest);
+        using connection = await open();
+        expect(await exchange(server, connection, request("/", `Expect: ${expectation}`), refused)).toBe(
+          missingHostReply,
+        );
+        expect(onRequest).not.toHaveBeenCalled();
+      }
+    });
+
+    it("still hands an Upgrade or a CONNECT without Host to its listener", async () => {
+      const { server, events } = recordingServer();
+      const switching = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n";
+      const established = "HTTP/1.1 200 Connection Established\r\n\r\n";
+      server.on("upgrade", (req, socket) => {
+        events.push(`upgrade ${req.url}`);
+        socket.end(switching);
+      });
+      server.on("connect", (req, socket) => {
+        events.push(`connect ${req.url}`);
+        socket.end(established);
+      });
+      const received: string[] = [];
+      for (const rawRequest of [
+        request("/ws", "Upgrade: test", "Connection: Upgrade"),
+        "CONNECT example.test:443 HTTP/1.1\r\n\r\n",
+      ]) {
+        using connection = await open();
+        received.push(await exchange(server, connection, rawRequest));
+      }
+      expect({ received, events }).toEqual({
+        received: [switching, established],
+        events: ["upgrade /ws", "connect example.test:443"],
+      });
+    });
+
+    it.each([
+      ["an HTTP/1.0 request without Host", {}, "GET / HTTP/1.0\r\n\r\n"],
+      // The rule is for HTTP/1.1 alone. The lenient parser lets the other versions in.
+      ["an HTTP/1.2 request without Host", { insecureHTTPParser: true }, `GET / HTTP/1.2\r\n${close}\r\n\r\n`],
+      ["an HTTP/2.1 request without Host", { insecureHTTPParser: true }, `GET / HTTP/2.1\r\n${close}\r\n\r\n`],
+      ["a Host field with an empty value", {}, request("/", "Host:", close)],
+      ["a Host field name in another case", {}, request("/", "hOsT: example.test", close)],
+      // The parser hands over 32 fields at a time, so this Host arrives in the second batch.
+      ["Host as the last of 42 header fields", {}, request("/", ...otherFields, close, host)],
+      ["a request without Host when requireHostHeader is false", { requireHostHeader: false }, request("/", close)],
+    ])("serves %s", async (_name, options, rawRequest) => {
+      const { server, events } = recordingServer(options);
+      using connection = await open();
+      const received = await exchange(server, connection, rawRequest);
+      expect({ status: received.slice(0, received.indexOf("\r\n")), events }).toEqual({
+        status: "HTTP/1.1 200 OK",
+        events: ["request /"],
+      });
+    });
+
+    it("answers each pipelined request by its own header fields, and writes nothing after the 400", async () => {
+      {
+        // Node dispatches the request behind the refused one, then ends the connection before its response.
+        const { server, events } = recordingServer();
+        using connection = await open();
+        const rawRequests = request("/a") + request("/b", host);
+        expect({ received: await exchange(server, connection, rawRequests, refused), events }).toEqual({
+          received: missingHostReply,
+          events: ["request /b"],
+        });
+      }
+      {
+        // The last request asks to close, so a server that serves all three ends the connection too.
+        const { server, events } = recordingServer();
+        using connection = await open();
+        const rawRequests = request("/a", host) + request("/b") + request("/c", host, close);
+        expect({ received: await exchange(server, connection, rawRequests), events }).toEqual({
+          received: servedKeepAlive("served /a") + missingHostReply,
+          events: ["request /a", "request /c"],
+        });
+      }
+    });
+
+    it("queues the 400 behind a response that has not finished", async () => {
+      const held = Promise.withResolvers<ServerResponse>();
+      const onRequest = mock((req: IncomingMessage, res: ServerResponse) => {
+        if (req.url === "/held") held.resolve(res);
+        else res.end("served");
+      });
+      const server = createServer(onRequest);
+      using connection = await open();
+      const received = exchange(server, connection, request("/held", host) + request("/", close));
+      (await held.promise).end("late");
+      expect(await received).toBe(servedKeepAlive("late") + missingHostReply);
+      expect(onRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it("answers a request without Host before it counts it against maxRequestsPerSocket", async () => {
+      const { server, events } = recordingServer();
+      server.maxRequestsPerSocket = 1;
+      using connection = await open();
+      // The first request uses up the limit. The second gets the 400: no 503, no 'dropRequest'.
+      const rawRequests = request("/a", host) + request("/b", close);
+      expect({ received: await exchange(server, connection, rawRequests), events }).toEqual({
+        received: `HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\nContent-Length: 9\r\n\r\nserved /a${missingHostReply}`,
+        events: ["request /a"],
+      });
+    });
+
+    it("reads server.requireHostHeader for each request, as a truthy or falsy value", async () => {
+      const served: (string | undefined)[] = [];
+      const server = createServer({ requireHostHeader: false }, (req, res) => {
+        served.push(req.url);
+        // Assigned while the second request of the connection is not parsed yet.
+        Object.assign(server, { requireHostHeader: "yes" });
+        res.end("served");
+      });
+      using connection = await open();
+      expect({ received: await exchange(server, connection, request("/1") + request("/2", close)), served }).toEqual({
+        received: servedKeepAlive("served") + missingHostReply,
+        served: ["/1"],
+      });
+    });
+
+    it("answers through the response object and ends the socket once, after 'finish'", async () => {
+      const calls: unknown[] = [];
+      class RecordingResponse extends ServerResponse {
+        constructor(req: IncomingMessage) {
+          super(req);
+          this.on("finish", () => calls.push("finish"));
+        }
+        writeHead(...args: any[]) {
+          calls.push(["writeHead", ...args]);
+          return super.writeHead(...(args as [number]));
+        }
+        end(...args: any[]) {
+          calls.push(["end", ...args]);
+          return super.end(...args);
+        }
+      }
+      const server = createServer({ ServerResponse: RecordingResponse }, (req, res) => res.end("served"));
+      using connection = await open();
+      const serverSocket = connection.serverSocket as Duplex & Record<string, unknown>;
+      for (const method of ["end", "destroySoon"]) {
+        const original = serverSocket[method];
+        if (typeof original !== "function") continue;
+        serverSocket[method] = function (this: Duplex, ...args: unknown[]) {
+          calls.push(`socket.${method}`);
+          return original.apply(this, args);
+        };
+      }
+      expect({ received: await exchange(server, connection, request("/"), refused), calls }).toEqual({
+        received: missingHostReply,
+        calls: [["writeHead", 400, ["Connection", "close"]], ["end"], "finish", ...connection.endCalls],
+      });
+    });
+
+    it("decides by the header fields on the wire, whatever req.headers returns", async () => {
+      // Node 26.11 and later scan the raw field names (hasRequestHeader): a `headers` accessor cannot switch the rule.
+      const results: Record<string, unknown> = {};
+      for (const [name, headers, rawRequest] of [
+        ["req.headers invents host", { host: "invented" }, request("/", close)],
+        ["req.headers hides host", {}, request("/", host, close)],
+      ] as const) {
+        class LyingRequest extends IncomingMessage {}
+        Object.defineProperty(LyingRequest.prototype, "headers", { get: () => headers });
+        const onRequest = mock((req: IncomingMessage, res: ServerResponse) => res.end("served"));
+        const server = createServer({ IncomingMessage: LyingRequest }, onRequest);
+        using connection = await open();
+        const received = await exchange(server, connection, rawRequest);
+        results[name] = { status: received.slice(0, received.indexOf("\r\n")), requests: onRequest.mock.calls.length };
+      }
+      expect(results).toEqual({
+        "req.headers invents host": { status: "HTTP/1.1 400 Bad Request", requests: 0 },
+        "req.headers hides host": { status: "HTTP/1.1 200 OK", requests: 1 },
+      });
+    });
+  });
+});
+
 describe("req.headers and req.rawHeaders", () => {
   type Entries = [string, string | string[]][];
 

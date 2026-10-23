@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, DescribeScope, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -111,6 +111,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     pub(crate) failure_skip_to: usize,
+    /// `ProcessAutoKiller` scope when the group started. Every attempt of its sequences spawns in a later scope.
+    pub(crate) auto_kill_mark: u32,
 }
 
 impl ConcurrentGroup {
@@ -122,6 +124,7 @@ impl ConcurrentGroup {
             remaining_incomplete_entries: sequence_end - sequence_start,
             failure_skip_to: next_index,
             next_sequence_index: 0,
+            auto_kill_mark: 0,
         }
     }
 
@@ -190,6 +193,23 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
+    }
+
+    /// `entry` runs after the test callback of this sequence: afterEach, onTestFinished.
+    fn runs_after_test(&self, entry: &ExecutionEntry) -> bool {
+        let Some(test_entry) = self.test_entry else {
+            return false;
+        };
+        // SAFETY: arena-owned entries, alive for the lifetime of BunTest which owns Execution
+        let mut next = unsafe { test_entry.as_ref() }.next;
+        while let Some(after) = next {
+            if core::ptr::eq(after, entry) {
+                return true;
+            }
+            // SAFETY: see above
+            next = unsafe { (*after).next };
+        }
+        false
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -295,23 +315,50 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    /// Wakes the runner. `step_sequence_one` decides that an entry timed out, and kills its processes on that decision. `timer_fired` is false when `spawnSync` reports a deadline that passed in its own loop.
+    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject, timer_fired: bool) -> JsResult<()> {
         let _g = group_begin!();
-        self.kill_dangling_processes_on_timeout(global_this);
         let buntest = self.bun_test();
+        // SAFETY: `in_run_loop` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
+        if unsafe { (*buntest).in_run_loop } {
+            self.handle_timeout_under_callback(global_this, timer_fired);
+        }
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
     }
 
-    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    /// A callback is on the stack of `run`, so the runner does not step until it returns. A timer that fires there past the deadline finds a callback that waits in place (`expect().resolves`): it returns only when what it waits for ends, so every tracked process is killed. Otherwise the timer is armed for that deadline, which `run` does only after the callback returns.
+    fn handle_timeout_under_callback(&mut self, global_this: &JSGlobalObject, timer_fired: bool) {
+        let Some(entry) = self.on_stack_entry.get() else {
+            return;
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let deadline = unsafe { entry.as_ref() }.timespec;
+        if deadline.eql(&Timespec::EPOCH) {
+            return;
+        }
+        if !timer_fired || deadline.order(&Timespec::now_force_real_time()) != core::cmp::Ordering::Less {
+            // SAFETY: deref parent at point-of-use; `update_min_timeout` touches the timer of `BunTest`, not `self`.
+            unsafe { (*self.bun_test()).update_min_timeout(global_this, &deadline) };
+            return;
+        }
+        // As at any timeout, a group of concurrent sequences gets no kill.
+        if self.active_group_ref().is_some_and(|group| group.sequence_end - group.sequence_start == 1) {
+            // SAFETY: bun_vm() returns the live per-thread VM.
+            report_killed_processes(global_this.bun_vm().as_mut().auto_killer.kill().processes);
+        }
+    }
+
+    /// Reaps what the entry that timed out leaves without a cleanup. It does not touch the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill any dangling processes
+        //   kill the dangling processes that entry spawned
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = self.active_group() {
             // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
+            let group_mark = current_group.auto_kill_mark;
             let sequences = &self.sequences[start..end];
             if sequences.len() == 1 {
                 let sequence = &sequences[0];
@@ -321,19 +368,43 @@ impl Execution {
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                        let auto_killer = &mut global_this.bun_vm().as_mut().auto_killer;
+                        // A cleanup hook that times out leaves what its test or its scope started without a cleanup.
+                        let kill_count = if sequence.runs_after_test(entry) {
+                            auto_killer.kill_since(group_mark)
+                        } else if let Some(scope) = after_all_scope(entry) {
+                            match self.scope_start_mark(scope) {
+                                Some(mark) => auto_killer.kill_since(mark),
+                                None => auto_killer.kill(),
+                            }
+                        } else {
+                            auto_killer.kill_scope()
+                        };
+                        report_killed_processes(kill_count.processes);
                     }
                 }
             }
         }
+    }
+
+    /// The mark of the first group with a hook or a test inside `scope`. `None` for the preload scope, whose beforeAll hooks ran with the first file.
+    fn scope_start_mark(&self, scope: &DescribeScope) -> Option<u32> {
+        scope.base.parent?;
+        let is_inside = |sequence: &ExecutionSequence| {
+            let entry = sequence.test_entry.or(sequence.first_entry);
+            // SAFETY: arena-owned entries and scopes, alive for the lifetime of BunTest which owns Execution
+            let mut parent = entry.and_then(|entry| unsafe { entry.as_ref() }.base.parent);
+            while let Some(ancestor) = parent {
+                if core::ptr::eq(ancestor, scope) {
+                    return true;
+                }
+                // SAFETY: see above
+                parent = unsafe { (*ancestor).base.parent };
+            }
+            false
+        };
+        let first_group = self.groups.iter().find(|group| group.sequences(self).iter().any(&is_inside))?;
+        Some(first_group.auto_kill_mark)
     }
 
     pub(crate) fn step(
@@ -566,9 +637,12 @@ impl Execution {
         }
     }
 
-    fn on_group_started(global_this: &JSGlobalObject) {
+    /// Returns the group's `auto_kill_mark`.
+    fn on_group_started(global_this: &JSGlobalObject) -> u32 {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.enable();
+        let auto_killer = &mut global_this.bun_vm().as_mut().auto_killer;
+        auto_killer.enable();
+        auto_killer.scope()
     }
 
     fn on_group_completed(global_this: &JSGlobalObject) {
@@ -831,7 +905,7 @@ fn step_group(
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
             let group = unsafe { &mut *group_ptr.as_ptr() };
             if !group.executing {
-                Execution::on_group_started(global_this);
+                group.auto_kill_mark = Execution::on_group_started(global_this);
                 group.executing = true;
             }
         }
@@ -948,6 +1022,24 @@ fn step_sequence(
     }
 }
 
+/// The scope that registered `entry` as an afterAll hook.
+fn after_all_scope(entry: &ExecutionEntry) -> Option<&DescribeScope> {
+    // SAFETY: parent backrefs point into the scope tree, which outlives its entries
+    let scope = unsafe { &*entry.base.parent? };
+    scope.after_all.iter().any(|hook| core::ptr::eq(&raw const **hook, entry)).then_some(scope)
+}
+
+pub(crate) fn report_killed_processes(count: u32) {
+    if count > 0 {
+        bun_core::pretty_errorln!(
+            "<d>killed {} dangling process{}<r>",
+            count,
+            if count != 1 { "es" } else { "" },
+        );
+        bun_core::Output::flush();
+    }
+}
+
 /// returns None if the while loop should continue
 fn step_sequence_one(
     buntest_strong: &BunTestPtr,
@@ -979,6 +1071,7 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
+            this.kill_dangling_processes_on_timeout(global_this);
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -1027,6 +1120,9 @@ fn step_sequence_one(
             (*on_stack_cell).set(prev_on_stack);
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
+
+        // One auto-kill scope per callback: a timeout kills only what this entry spawned.
+        global_this.bun_vm().as_mut().auto_killer.begin_scope();
 
         if BunTest::run_test_callback(
             buntest_strong,

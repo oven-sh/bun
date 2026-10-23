@@ -8244,6 +8244,143 @@ describe("css tests", () => {
       );
     });
 
+    describe("hwb()", () => {
+      const color = (input: string, expected: string) => minify_test(`.foo{color:${input}}`, `.foo{color:${expected}}`);
+
+      // WPT css/css-color/parsing/color-computed-hwb.html. The rows with `none` or with sign() of a font unit have no static color.
+      describe("wpt color-computed-hwb", () => {
+        color("hwb(120 30% 50%)", "#4d804d");
+        color("hwb(120 60% 60%)", "gray");
+        color("hwb(0 60% 60%)", "gray");
+        color("hwb(0 100% 0%)", "#fff");
+        color("hwb(0 0% 100%)", "#000");
+        color("hwb(120 30% 50% / 0.5)", "#4d804d80");
+        color("hwb(120 30% 50% / 50%)", "#4d804d80");
+        color("hwb(0 0% 0%)", "red");
+        color("hwb(0 0% 0% / 0)", "#f000");
+        color("hwb(120 0% 0%)", "#0f0");
+        color("hwb(120 80% 0%)", "#cfc");
+        color("hwb(120 0% 50%)", "green");
+        color("hwb(150 20% 10%)", "#33e68c");
+        color("hwb(45 40% 80%)", "#555");
+        color("hwb(120 30% 50% / 0)", "#4d804d00");
+        color("hwb(120 30% 50% / 0%)", "#4d804d00");
+        color("hwb(0 100% 50% / 0)", "#aaa0");
+
+        // Test `w` or `b` components >= 100%.
+        color("hwb(0 100% 100%)", "gray");
+        color("hwb(0 70% 60%)", "#898989");
+        color("hwb(0 260% 260%)", "gray");
+        color("hwb(0 200% 100%)", "#aaa");
+        color("hwb(0 100% 200%)", "#555");
+        color("hwb(0 150% 50%)", "#bfbfbf");
+        color("hwb(0 50% 150%)", "#404040");
+        color("hwb(0 180% 120%)", "#999");
+
+        for (const hue of ["0", "30", "60", "90", "120", "180", "210", "240", "270", "300", "330", "360", "90deg"]) {
+          color(`hwb(${hue} 50% 50%)`, "gray");
+        }
+        color("hwb(90 0% 50%)", "#408000");
+        color("hwb(90 12.5% 50%)", "#508020");
+        color("hwb(90 25% 50%)", "#608040");
+        color("hwb(90 37.5% 50%)", "#708060");
+        color("hwb(90 62.5% 50%)", "#8e8e8e");
+        color("hwb(90 75% 50%)", "#999");
+        color("hwb(90 87.5% 50%)", "#a2a2a2");
+        color("hwb(90 100% 50%)", "#aaa");
+        color("hwb(90 50% 0%)", "#bfff80");
+        color("hwb(90 50% 12.5%)", "#afdf80");
+        color("hwb(90 50% 25%)", "#9fbf80");
+        color("hwb(90 50% 37.5%)", "#8f9f80");
+        color("hwb(90 50% 62.5%)", "#717171");
+        color("hwb(90 50% 75%)", "#666");
+        color("hwb(90 50% 87.5%)", "#5d5d5d");
+        color("hwb(90 50% 100%)", "#555");
+        color("hwb(90 50% 50% / 0)", "#80808000");
+        color("hwb(90 50% 50% / 0.2)", "#80808033");
+        color("hwb(90 50% 50% / 1)", "gray");
+      });
+
+      // From 100% in sum, whiteness and blackness make the gray W / (W + B). Each value is what Chrome 153 computes.
+      describe("whiteness and blackness above 100%", () => {
+        color("hwb(210 150% 40%)", "#c9c9c9");
+        color("hwb(210 20% 140%)", "#202020");
+        color("hwb(210 150% 140%)", "#848484");
+        color("hwb(210 1000% 10%)", "#fcfcfc");
+        color("hwb(210 150% 40% / 0.5)", "#c9c9c980");
+        color("hwb(none 150% 40%)", "#c9c9c9");
+        color("hwb(90 150% none)", "#fff");
+        color("hwb(90 none 150%)", "#000");
+        color("hwb(210 calc(100% + 50%) 40%)", "#c9c9c9");
+
+        color("hwb(from #336699 h 150% b)", "#c9c9c9");
+        color("hwb(from #336699 h w 150%)", "#1e1e1e");
+        color("hwb(from #336699 h 150% 140%)", "#848484");
+        color("hwb(from #336699 h calc(w * 8) b)", "#ccc");
+        color("hwb(from hwb(210 150% 40%) h w b)", "#c9c9c9");
+        color("hwb(from hwb(none 150% 40%) h w b)", "#c9c9c9");
+        color("rgb(from hwb(210 150% 40%) r g b)", "#c9c9c9");
+        color("color-mix(in hwb, hwb(none 150% 40%), red)", "#ccbfbf");
+        color("color-mix(in srgb, hwb(210 150% 40%), red)", "#e46565");
+        color("light-dark(hwb(210 150% 40%), hwb(210 20% 140%))", "light-dark(#c9c9c9,#202020)");
+
+        minify_test(".foo{--x:hwb(210 150% 40%)}", ".foo{--x:#c9c9c9}");
+        minify_test(".foo{border:1px solid hwb(210 150% 40%)}", ".foo{border:1px solid #c9c9c9}");
+        minify_test(
+          ".foo{background:linear-gradient(hwb(210 150% 40%),hwb(210 20% 140%))}",
+          ".foo{background:linear-gradient(#c9c9c9,#202020)}",
+        );
+        minify_test(
+          "@property --c{syntax:'<color>';inherits:false;initial-value:hwb(210 150% 40%)}",
+          '@property --c{syntax:"<color>";inherits:false;initial-value:#c9c9c9}',
+        );
+        // Two different grays are two rules.
+        minify_test(".a{color:hwb(0 200% 100%)}.b{color:hwb(0 100% 200%)}", ".a{color:#aaa}.b{color:#555}");
+      });
+
+      // An infinity does not leave a calculation: it is the largest value that the channel keeps (css-values-4 #calc-ieee).
+      // Chrome 153 computes rgb(NaN, NaN, NaN) for the first and the last row.
+      describe("infinite whiteness and blackness", () => {
+        color("hwb(210 calc(infinity * 1%) 40%)", "#fff");
+        color("hwb(210 40% calc(infinity * 1%))", "#000");
+        color("hwb(210 calc(infinity * 1%) calc(infinity * 1%))", "gray");
+        // The sum of the two channels is also finite after an interpolation rounds them up.
+        color(
+          "color-mix(in hwb, hwb(none calc(infinity * 1%) calc(infinity * 1%) / 0.8), hwb(none calc(infinity * 1%) calc(infinity * 1%)))",
+          "#808080e6",
+        );
+      });
+
+      // Below 100% in sum, and below 0%, nothing changes.
+      describe("in range", () => {
+        color("hwb(210 20% 40%)", "#369");
+        color("hwb(210 99% 0.5%)", "#fcfdfe");
+        color("hwb(210 -20% 40%)", "#004d99");
+        color("hwb(210 20% -40%)", "#39f");
+        minify_test(".foo{color:hwb(210 20% 40% / var(--a))}", ".foo{color:hwb(210 20% 40%/var(--a))}");
+      });
+
+      // hsl() is read by the same function, and nothing changes for it. It keeps the clamp at 100%:
+      // Firefox clamps the space-separated syntax too, Chrome and WebKit do not.
+      describe("hsl() is unchanged", () => {
+        color("hsl(210 50% 40%)", "#369");
+        color("hsl(210 -50% 40%)", "#666");
+        color("hsl(210 150% 40%)", "#06c");
+        color("hsl(210 50% 120%)", "#fff");
+        color("hsl(210, 150%, 40%)", "#06c");
+        color("hsla(210, 150%, 40%, 0.5)", "#0066cc80");
+        color("hsl(210, 150%, 120%)", "#fff");
+        color("hsl(from #336699 h 150% l)", "#06c");
+        minify_test(".foo{color:hsl(210 50% 40% / var(--a))}", ".foo{color:hsl(210 50% 40%/var(--a))}");
+        minify_test(".foo{color:hsl(210 150% 40% / var(--a))}", ".foo{color:hsl(210 100% 40%/var(--a))}");
+        // The comma syntax takes its alpha after a comma. With a slash the value is not a color and stays as written.
+        minify_test(".foo{color:hsl(210, 50%, 40%, var(--a))}", ".foo{color:hsl(210,50%,40%,var(--a))}");
+        minify_test(".foo{color:hsl(210,50%,40%/var(--a))}", ".foo{color:hsl(210,50%,40%/var(--a))}");
+        minify_test(".foo{--x:hsl(210,50%,40%/var(--a))}", ".foo{--x:hsl(210,50%,40%/var(--a))}");
+        minify_test(".foo{color:hsl(210,50%,40%/.5)}", ".foo{color:hsl(210,50%,40%/.5)}");
+      });
+    });
+
     // Deeply nested @keyframes with invalid percentages
     describe("nested keyframes", () => {
       cssTest(

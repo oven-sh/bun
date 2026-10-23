@@ -1379,12 +1379,12 @@ pub(crate) fn parse_hsl_hwb<
 >(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    allows_legacy: bool,
+    is_hsl: bool,
     func: fn(f32, f32, f32, f32) -> CssColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
-            let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
+            let (h, a, b, is_legacy) = parse_hsl_hwb_components(i, p, is_hsl)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
             } else {
@@ -1396,25 +1396,31 @@ pub(crate) fn parse_hsl_hwb<
     })
 }
 
-pub(crate) fn parse_hsl_hwb_components<T>(
+/// An infinite whiteness or blackness is read as this (css-values-4 #calc-ieee). The sum of two stays finite through the rounding of an interpolation.
+const HWB_MAX: f32 = f32::MAX / 4.0;
+
+/// Only `hsl()` has the legacy comma syntax.
+pub(crate) fn parse_hsl_hwb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    allows_legacy: bool,
+    is_hsl: bool,
 ) -> CssResult<(f32, f32, f32, bool)> {
-    let _ = core::marker::PhantomData::<T>; // autofix
     let h = parse_angle_or_number(input, parser)?;
-    let is_legacy_syntax = allows_legacy
+    let is_legacy_syntax = is_hsl
         && parser.from.is_none()
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    // Whiteness and blackness have no upper bound: from 100% in sum the color is the gray W / (W + B) (w3c/csswg-drafts#8444).
+    let max = if is_hsl { 1.0 } else { HWB_MAX };
+
+    let a = parser.parse_percentage(input)?.clamp(0.0, max);
 
     if is_legacy_syntax {
         input.expect_comma()?;
     }
 
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let b = parser.parse_percentage(input)?.clamp(0.0, max);
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
@@ -1595,7 +1601,7 @@ macro_rules! define_colorspace {
             }
         }
     };
-    (@gamut hsl_hwb $name:ident { $h:ident, $a:ident, $b:ident }) => {
+    (@gamut hsl $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl ColorGamut for $name {
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0 && self.$b >= 0.0 && self.$b <= 1.0
@@ -1605,6 +1611,22 @@ macro_rules! define_colorspace {
                 result.$h = self.$h.rem_euclid(360.0);
                 result.$a = self.$a.clamp(0.0, 1.0);
                 result.$b = self.$b.clamp(0.0, 1.0);
+                result.alpha = self.alpha.clamp(0.0, 1.0);
+                result
+            }
+        }
+    };
+    (@gamut hwb $name:ident { $h:ident, $w:ident, $b:ident }) => {
+        impl ColorGamut for $name {
+            // Every whiteness and blackness of 0 or more is a color in sRGB (`From<HWB> for SRGB`).
+            fn in_gamut(&self) -> bool {
+                self.$w >= 0.0 && self.$b >= 0.0
+            }
+            fn clip(&self) -> Self {
+                let mut result = *self;
+                result.$h = self.$h.rem_euclid(360.0);
+                result.$w = self.$w.clamp(0.0, HWB_MAX);
+                result.$b = self.$b.clamp(0.0, HWB_MAX);
                 result.alpha = self.alpha.clamp(0.0, 1.0);
                 result
             }
@@ -1759,7 +1781,7 @@ define_colorspace! {
     /// A color in the [`hsl`](https://www.w3.org/TR/css-color-4/#the-hsl-notation) color space.
     HSL { h, s, l }
     types = (CT_ANG, CT_PCT, CT_PCT);
-    gamut = hsl_hwb;
+    gamut = hsl;
     premultiply = polar;
     powerless = hsl;
     into_css = |c: &HSL| CssColor::Rgba(RGBA::from(*c));
@@ -1769,7 +1791,7 @@ define_colorspace! {
     /// A color in the [`hwb`](https://www.w3.org/TR/css-color-4/#the-hwb-notation) color space.
     HWB { h, w, b }
     types = (CT_ANG, CT_PCT, CT_PCT);
-    gamut = hsl_hwb;
+    gamut = hwb;
     premultiply = polar;
     powerless = hwb;
     into_css = |c: &HWB| CssColor::Rgba(RGBA::from(*c));

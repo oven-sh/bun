@@ -239,7 +239,6 @@ impl Watcher {
     }
 
     /// kqueue reports a truncation as `NOTE_ATTRIB` alone, like `chmod`: a changed size is a write.
-    /// Not a new size of 0, which is the `open(O_TRUNC)` before the `write()` of most saves.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn report_truncations(&mut self, event_count: usize) {
         for event in &mut self.watch_events[..event_count] {
@@ -257,6 +256,7 @@ impl Watcher {
             let sizes = self.watchlist.items_mut::<"size", u64>();
             if sizes[index] != size {
                 sizes[index] = size;
+                // 0 is the `open(O_TRUNC)` of a save: its `write()` follows and is reported.
                 if size != 0 {
                     event.op |= Op::WRITE;
                 }

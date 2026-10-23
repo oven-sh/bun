@@ -3192,9 +3192,9 @@ const stringGlobals =
     .map(name => `interface ${name} {}\n`)
     .join("") + "declare var Promise: { new <T>(): Promise<T> };\n";
 
-// A syntax error ends a program before anything is checked, and an error in a JSDoc comment doesn't. So the files with
-// a syntax error are one program, and the others are another. `referenced`: another project parses the declaration
-// file that is emitted for each file.
+// A syntax error ends a program before anything is checked, so the files with one are one program and the others are
+// another. A literal that isn't closed is a syntax error, but not in a comment that is closed. `referenced`: another
+// project parses the declaration file that is emitted for each file, and that file has the literal of the comment.
 differential.each([...product(["plain", "referenced"], [true, false])])(
   "matches tsc on where a module specifier or a string name ends: %s, with a syntax error %p",
   async (layout, stops) => {
@@ -3204,9 +3204,11 @@ differential.each([...product(["plain", "referenced"], [true, false])])(
       const [name, extension, before, content, rest, ...after] = use;
       const [endingName, lineBreak, end, closed] = ending;
       const inComment = before.startsWith("/**");
-      // Only a literal in a comment can end at a `*/`. One that isn't closed is a syntax error outside of a comment.
-      if ((endingName.startsWith("comment-end") && !inComment) || (!closed && !inComment) !== stops) continue;
-      if (cells++ % everyThird !== 0) continue;
+      // Only a literal in a comment can end at a `*/`.
+      if (endingName.startsWith("comment-end") && !inComment) continue;
+      // Without a line break the comment isn't closed either.
+      const isBroken = !closed && (layout === "referenced" || !inComment || lineBreak === "");
+      if (isBroken !== stops || cells++ % everyThird !== 0) continue;
       const first = before + quote + content + end(quote) + (closed ? rest : "");
       const text = lineBreak ? [first, ...after].join(lineBreak) + lineBreak : first;
       sources[`${name}.${quote === `"` ? "double" : "single"}.${endingName}.${extension}`] = text;
@@ -3242,7 +3244,8 @@ differential.each([...product(["plain", "referenced"], [true, false])])(
     ]);
     // tsc runs last, because `tsc -b` writes files.
     const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], root, root);
-    expect(theirs.join("\n")).toContain(stops ? "error TS1002" : layout === "plain" ? "Imported via" : "error TS");
+    // Without a syntax error the planted error is reported.
+    expect(theirs.join("\n")).toContain(stops ? "error TS1002" : "error TS2322");
     expect({ ours, onOneThread }).toEqual({ ours: theirs, onOneThread: theirs });
   },
 );

@@ -22730,9 +22730,9 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         `);
         expect(exitCode).toBe(1);
         // Without `-b`, `app` still reads what `lib` emits. This is the line of `tsc -p app` after `tsc -b lib`.
-        expect((await check(dir, ["-p", "app"])).stdout).toBe(
-          `app/main.ts(6,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
-        );
+        const app = await check(dir, ["-p", "app"]);
+        expect(app.stdout).toBe(`app/main.ts(6,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+        expect(app.exitCode).toBe(1);
       });
 
       // `export * from "./m;`: the `;` that the declaration gets is on the line of the literal. In `decorator.ts` the

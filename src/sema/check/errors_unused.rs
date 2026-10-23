@@ -195,6 +195,7 @@ impl Checker<'_, '_> {
             parameters,
         };
         self.note_identifiers(file, &mut u);
+        self.note_type_references_that_an_instantiation_resolves(file, &mut u);
         u.note_exports();
         let reported = self.reported.len();
         self.report_unused_declarations(&u, &renamed);
@@ -338,6 +339,68 @@ impl Checker<'_, '_> {
             let diagnostic = self.error_at(node, 2842, &args);
             if let Some(related) = related {
                 diagnostic.add_related_info(related);
+            }
+        }
+    }
+
+    /// `isTypeParameterPossiblyReferenced`: `getSymbolFromTypeReference` of a type reference without type arguments.
+    /// `getObjectTypeInstantiation` calls it the first time `instantiateType` gets to an anonymous type, for each
+    /// type parameter in scope there, and `checkSourceFile` has resolved every name it finds, except below the type
+    /// arguments of an import type. `instantiate` doesn't get to every type that `instantiateType` gets to. So below
+    /// those type arguments, a name in a type literal, a function type or a mapped type that has a type parameter in
+    /// scope counts as a reference.
+    fn note_type_references_that_an_instantiation_resolves(
+        &mut self,
+        file: FileId,
+        u: &mut Unused,
+    ) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let below = hir.type_arguments_of_import_types();
+        if below.is_empty() {
+            return;
+        }
+        let is_anonymous_type = |node: Node| {
+            matches!(hir.data(node), NodeData::Type(t) if matches!(
+                hir[t].kind,
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_)
+            ))
+        };
+        for (i, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Ref { name, args } = node.kind else {
+                continue;
+            };
+            if !args.is_empty() || !below.contain(node.pos) || bound.is_unchecked_type(i) {
+                continue;
+            }
+            let reference = hir.node(TypeNodeId(i as u32));
+            let around = hir.find_ancestor(hir.parent(reference), is_anonymous_type);
+            let NodeData::Type(around) = hir.data(around) else {
+                continue;
+            };
+            // `getTypeFromImportTypeNode` returns the error type before it gets to the type arguments. Then there is no
+            // type below them to instantiate, unless the import type is in the syntax of one.
+            let Some(import_type) = below.import_type_at(hir[around].pos) else {
+                continue;
+            };
+            let ty = self.p.type_node_types.get(&self.task, &(file, import_type));
+            if !ty.is_some_and(|ty| !self.is_error_type(ty))
+                && !self.is_in_instantiated_type(file, import_type)
+            {
+                continue;
+            }
+            // `tp.isThisType`: a `this` type is no reason to resolve a type reference.
+            let type_parameters = self.type_params_in_scope(file, bound.type_scope[around.idx()]);
+            if !(type_parameters.iter()).any(|&tp| matches!(self.data(tp), TypeData::TypeParam(..)))
+            {
+                continue;
+            }
+            let Some(first) = hir.texts(name).next() else {
+                continue;
+            };
+            // `resolveEntityName`: the first name of `a.b` is a namespace.
+            match name.len() {
+                1 => u.note_name(bound.type_scope[i], first, SymFlags::TYPE),
+                _ => u.note_namespace(bound.type_scope[i], first),
             }
         }
     }

@@ -39,13 +39,14 @@ export declare function f<T>(x: T): T;
 
 /**
  * `order`: the files in the order in which `tsc --singleThreaded` checks them, if it isn't that of their names.
- * `errors`: what `bun check` and `tsc` 7.1 print.
+ * `errors`: what `bun check` prints, which is what `tsc` 7.1 prints unless `tsc` has something else.
  */
 type Program = {
   options?: object;
   order?: string[];
   files: Record<string, string>;
   errors: string[];
+  tsc?: string[];
 };
 const programs: Record<string, Program> = {
   "reports nothing below type arguments that nothing reads": {
@@ -176,6 +177,62 @@ export const is = guard.value.is;
       "use.ts(4,6): error TS6196: 'Unread' is declared but never used.",
       "use.ts(6,6): error TS6196: 'Lazy' is declared but never used.",
       "use.ts(7,6): error TS6196: 'Predicate' is declared but never used.",
+    ],
+  },
+  "where a type parameter is in scope, a name below type arguments counts as used": {
+    options: { noUnusedLocals: true, noUnusedParameters: true },
+    files: {
+      "use.ts": `type Outer = string;
+type Inner = string;
+type Mapped = string;
+type This = string;
+export type Alias<T> = import("./box").Box<{ value: T; local: Outer }>;
+export type Generic = import("./box").Box<<U>(x: U) => { a: Inner }>;
+export type Keys = import("./box").Box<{ [K in "k"]: { a: Mapped } }>;
+export interface Members { p: import("./box").Box<{ a: This }> }
+declare const generic: Generic;
+export const called = generic.value(1);
+declare const keys: Keys;
+export const key = keys.value.k;
+`,
+    },
+    errors: ["use.ts(4,6): error TS6196: 'This' is declared but never used."],
+    tsc: [
+      "use.ts(1,6): error TS6196: 'Outer' is declared but never used.",
+      "use.ts(4,6): error TS6196: 'This' is declared but never used.",
+      "use.ts(5,19): error TS6196: 'T' is declared but never used.",
+    ],
+  },
+  "where a type parameter is in scope, reports a name that does not resolve when it checks the import type": {
+    files: {
+      "use.ts": `type Unread<T> = import("./box").Box<{ a: MissingA }>;
+type Read<T> = import("./box").Box<{ a: MissingB }>;
+export declare const read: Read<string>;
+type Later<T> = import("./box").Box<{ a: MissingC; b: T; c: MissingD }>;
+export declare const later: Later<string>;
+class This { p!: import("./box").Box<{ a: MissingE; b: typeof missingF }> }
+export const ofThis = new This().p;
+type Inner = import("./box").Box<<U>(x: U) => { a: MissingG }>;
+declare const inner: Inner;
+export const called = inner.value(1);
+type Failed<T> = import("./nope").Box<{ a: MissingH }>;
+export type { Unread, Failed };
+`,
+    },
+    errors: [
+      "use.ts(1,43): error TS2304: Cannot find name 'MissingA'.",
+      "use.ts(2,41): error TS2304: Cannot find name 'MissingB'.",
+      "use.ts(4,42): error TS2304: Cannot find name 'MissingC'.",
+      "use.ts(4,61): error TS2304: Cannot find name 'MissingD'.",
+      "use.ts(6,63): error TS2304: Cannot find name 'missingF'.",
+      "use.ts(11,25): error TS2307: Cannot find module './nope' or its corresponding type declarations.",
+    ],
+    tsc: [
+      "use.ts(2,41): error TS2304: Cannot find name 'MissingB'.",
+      "use.ts(4,42): error TS2304: Cannot find name 'MissingC'.",
+      "use.ts(6,63): error TS2304: Cannot find name 'missingF'.",
+      "use.ts(8,52): error TS2304: Cannot find name 'MissingG'.",
+      "use.ts(11,25): error TS2307: Cannot find module './nope' or its corresponding type declarations.",
     ],
   },
   "an earlier file that reads reports, a later file does not": {
@@ -383,7 +440,7 @@ describe("bun check, below the type arguments of an `import()` type", () => {
       using dir = tempDir("bun-check-import-type", written(program));
       const root = String(dir);
       const errors = await linesOf([tsc!, "--pretty", "false", "--singleThreaded"], root, root);
-      expect({ title, errors }).toEqual({ title, errors: program.errors });
+      expect({ title, errors }).toEqual({ title, errors: program.tsc ?? program.errors });
     }
   });
 });

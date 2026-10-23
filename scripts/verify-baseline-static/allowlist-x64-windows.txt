@@ -969,7 +969,7 @@ wcsnlen                     [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# MSVC CRT strspn family. Data-in-.text false positive, NOT a gate.
+# MSVC CRT inline switch tables. Data-in-.text false positive, NOT a gate.
 #
 # ucrt/string/amd64/strspn.c (compiled 3x for strspn/strcspn/strpbrk) is
 # SSE2-only; its `switch (shift)` over _mm_srli_si128/_mm_slli_si128 lowers
@@ -981,8 +981,19 @@ wcsnlen                     [AVX, AVX2]
 # decode as stray VEX/EVEX/XOP. Blanket-pass: the source has no post-SSE2
 # path to grow past, so a ceiling here just means the next layout that
 # decodes as FMA/BMI2/AVX512* re-flakes.
-# (3 symbols)
+#
+# _powf_special (libucrt pow_special.obj) is powf's special-case handler (a
+# NaN operand, a zero or infinite result). Its code is SSE2-only too, and
+# one such table, the 9 RVAs of its `switch`, follows its `ret`. Each table
+# lies inside its function's symbol range, so the decoder's restart at
+# symbol starts does not skip it.
+#
+# The PDB marks the first byte of each of these tables with an unnamed
+# S_LDATA32 record inside the function's S_GPROC32. The scan does not read
+# those records, so the four functions need this group.
+# (4 symbols)
 # ----------------------------------------------------------------------------
+_powf_special
 strcspn
 strpbrk
 strspn

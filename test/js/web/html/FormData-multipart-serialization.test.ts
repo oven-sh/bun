@@ -665,6 +665,117 @@ describe("multipart serialization of S3-backed entries", () => {
       expect(await endpoint.settle()).toEqual([]);
     });
 
+    test("a read that waits for the object survives a collection", async () => {
+      // The endpoint gets every request before it answers one.
+      const readers = 4;
+      let waiting = 0;
+      const allWaiting = Promise.withResolvers<void>();
+      const answer = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        async fetch() {
+          if (++waiting === readers) allWaiting.resolve();
+          await answer.promise;
+          return new Response(object);
+        },
+      });
+      const s3 = new S3Client({
+        endpoint: server.url.href,
+        bucket: "bucket",
+        accessKeyId: "access-key",
+        secretAccessKey: "secret-key",
+      });
+      // Only the promise refers to each body.
+      const pending = Promise.all([
+        new Response(formDataWith(s3.file(key))).text(),
+        new Response(formDataWith(s3.file(key))).bytes(),
+        new Response(formDataWith(s3.file(key))).blob(),
+        new Response(formDataWith(s3.file(key))).formData(),
+      ]);
+
+      await allWaiting.promise;
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      answer.resolve();
+
+      const [text, bytes, blob, parsed] = await pending;
+      const part = `filename="2026.csv"\r\nContent-Type: application/octet-stream\r\n\r\n${object}\r\n`;
+      expect(text).toContain(part);
+      expect(new TextDecoder().decode(bytes)).toContain(part);
+      expect(await blob.text()).toContain(part);
+      expect(await (parsed.get("report") as File).text()).toBe(object);
+    });
+
+    // A download that is in flight ends when its context stops.
+    test("a worker that is terminated while it reads the body exits cleanly", async () => {
+      const worker = /* js */ `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const s3 = new Bun.S3Client({
+          endpoint: workerData.endpoint,
+          bucket: "bucket",
+          accessKeyId: "access-key",
+          secretAccessKey: "secret-key",
+        });
+        const formData = new FormData();
+        formData.append("first", s3.file("first"), "first");
+        formData.append("second", s3.file("second"), "second");
+        const response = new Response(formData);
+        if (workerData.mode === "text") {
+          response.text().catch(() => {});
+        } else if (workerData.mode === "reader") {
+          const reader = response.body.getReader();
+          (async () => {
+            for (;;) await reader.read();
+          })().catch(() => {});
+        }
+        globalThis.response = response;
+        parentPort.postMessage("started");
+      `;
+      const host = /* js */ `
+        const { Worker } = require("node:worker_threads");
+        // The endpoint sends the start of an object and then nothing more.
+        let requests = 0;
+        const reading = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch() {
+            if (++requests === 2) reading.resolve();
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("start of the object"));
+                },
+              }),
+            );
+          },
+        });
+        const workers = ["text", "reader", "unread"].map(mode => {
+          const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: { endpoint: server.url.href, mode } });
+          return new Promise((resolve, reject) => {
+            w.once("message", () => resolve(w));
+            w.once("error", reject);
+          });
+        });
+        const started = await Promise.all(workers);
+        await reading.promise;
+        await Promise.all(started.map(w => w.terminate()));
+        server.stop(true);
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", host],
+        env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, ALL_PROXY: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    });
+
     test("a body whose reader cancels in the middle of an object is collected", async () => {
       // The endpoint sends the start of the object and then nothing more.
       const requests: string[] = [];

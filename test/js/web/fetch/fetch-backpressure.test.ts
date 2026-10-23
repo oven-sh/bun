@@ -1735,6 +1735,68 @@ describe.concurrent("S3 receive backpressure", () => {
     expect(bucket.sent()).toBeLessThan(BODY);
   });
 
+  // A FormData body with an S3 entry is a stream that the same kind of download feeds, one
+  // download for each S3 part. The part headers come first, then the object.
+  describe("a FormData body with an S3 part", () => {
+    function bodyOf(s3: S3Client): ReadableStream<Uint8Array> {
+      const formData = new FormData();
+      formData.append("file", s3.file("big"), "big");
+      return new Response(formData).body!;
+    }
+
+    test("a reader that stalls and comes back drains the object; cancel() closes the connection", async () => {
+      await using bucket = await fakeBucket();
+      const reader = bodyOf(bucket.s3).getReader() as ReadableStreamDefaultReader<Uint8Array>;
+      const head = await reader.read();
+      expect(new TextDecoder().decode(head.value)).toEndWith("Content-Type: application/octet-stream\r\n\r\n");
+      const stalled = await bucket.settled();
+      expect(stalled).toBeLessThan(BODY);
+      const { total, foreign, ended } = await readUntilResumed(reader, bucket, stalled);
+      expect({ ended, foreign, took: total > 0 && total <= bucket.sent() }).toEqual({
+        ended: false,
+        foreign: 0,
+        took: true,
+      });
+      await bucket.closed;
+    });
+
+    test("an unread body does not hold the process", async () => {
+      await using bucket = await fakeBucket();
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const s3 = new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: ${JSON.stringify(bucket.url)}, bucket: "b" });
+           const formData = new FormData();
+           formData.append("file", s3.file("k"), "k");
+           globalThis.keep = new Response(formData);
+           const r = globalThis.keep.body.getReader(); await r.read(); r.releaseLock();`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      // The download started, and the process did not wait for the rest of it.
+      expect(bucket.sent()).toBeGreaterThan(0);
+      expect(bucket.sent()).toBeLessThan(BODY);
+    });
+
+    test("a collected body aborts the download", async () => {
+      await using bucket = await fakeBucket();
+      // Its own frame: after it returns nothing refers to the stream.
+      await (async () => {
+        const r = bodyOf(bucket.s3).getReader();
+        await r.read();
+        r.releaseLock();
+      })();
+      await bucket.settled();
+      await collectUntil(bucket.closed);
+      expect(bucket.sent()).toBeLessThan(BODY);
+    });
+  });
+
   // An error body is collected whole for the error message; the mark must not pause it.
   test("a non-2xx response larger than the mark rejects instead of stalling", async () => {
     const message = Buffer.alloc(400 * 1024, "e").toString();

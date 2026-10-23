@@ -1469,7 +1469,7 @@ impl Run<'_> {
                 else {
                     return Ok(());
                 };
-                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+                // SAFETY: `as_` returns a live payload pointer owned by the JS
                 // wrapper; accessed here under the API lock.
                 unsafe { &*client }.do_connect(global, redis)?;
                 Ok(())

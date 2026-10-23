@@ -1423,7 +1423,7 @@ it.skipIf(isWindows)("throws on invalid writer options instead of crashing", asy
     if (fileSinkInternals.liveCount() <= baseline) break;
     await Bun.sleep(10);
   }
-  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // Each early return in Blob::writer must release the sink's +1 ref; a missing
   // deref leaks one native FileSink per failed call.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });

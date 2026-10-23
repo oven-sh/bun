@@ -18,7 +18,6 @@ public:
     ~DOMClientIsoSubspaces();
 
     /* --- bun --- */
-    GCClient::IsoSubspace* m_clientSubspaceForBunClassConstructor { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWrappingFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiClass { nullptr };
@@ -78,7 +77,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForWasmStreamingCompiler { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
-#include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /* --- bun --- */
 

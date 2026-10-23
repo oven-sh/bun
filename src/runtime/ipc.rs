@@ -109,10 +109,10 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
+        // owner's JS wrapper and write `self.cb` / `self.worker` /
         // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
         // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration

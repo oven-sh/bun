@@ -1,18 +1,15 @@
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_ast::ImportKind;
 use bun_core::strings;
 
+use crate::bindgen::{JsLocal, JsScope};
 use crate::build_message::LogKindJsc as _;
 use crate::bun_string_jsc;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
-// `referrer` are read-only after construction; only `logged` is mutated
-// post-wrap (by `VirtualMachine::print_error_like_object` via the JSCell ptr),
-// so it gets `Cell<bool>`.
-#[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: bun_ast::Msg,
     // Note: fields own their allocations and free on Drop / finalize.
@@ -20,7 +17,7 @@ pub struct ResolveMessage {
     // Note: only the referrer path's `.text` is ever read;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
-    pub(crate) referrer: Option<Box<[u8]>>,
+    pub(crate) referrer: Box<[u8]>,
     pub(crate) logged: Cell<bool>,
 }
 
@@ -76,20 +73,11 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
 }
 
 impl ResolveMessage {
-    // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
-    pub fn constructor(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<*mut ResolveMessage> {
-        Err(global.throw_illegal_constructor())
-    }
-
-    #[crate::host_fn(getter)]
-    pub fn get_code(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &this.msg.metadata {
+    pub fn get_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        match &self.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
                 let code: &'static [u8] = 'brk: {
-                    let specifier = resolve.specifier.slice(&this.msg.data.text);
+                    let specifier = resolve.specifier.slice(&self.msg.data.text);
 
                     break 'brk match resolve.import_kind {
                         // Match Node.js error codes. CommonJS is historic
@@ -122,29 +110,25 @@ impl ResolveMessage {
                     };
                 };
 
-                bun_core::String::create_atom(code).into_js(global)
+                bun_core::String::create_atom(code).into_js(cx.global())
             }
             _ => Ok(JSValue::UNDEFINED),
         }
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
-    #[crate::host_fn(getter)]
-    pub fn get_column(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(location) = &this.msg.data.location {
-            return Ok(JSValue::from((location.column - 1).max(0)));
+    pub fn get_column(&self) -> i32 {
+        match &self.msg.data.location {
+            Some(location) => (location.column - 1).max(0),
+            None => 0,
         }
-
-        Ok(JSValue::from(0_i32))
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_line(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(location) = &this.msg.data.location {
-            return Ok(JSValue::from((location.line - 1).max(0)));
+    pub fn get_line(&self) -> i32 {
+        match &self.msg.data.location {
+            Some(location) => (location.line - 1).max(0),
+            None => 0,
         }
-
-        Ok(JSValue::from(0_i32))
     }
 
     pub fn fmt(
@@ -237,67 +221,57 @@ impl ResolveMessage {
         // Keep `String(err)` consistent with `err.message`/`err.stack`, which
         // route through `node_message()` for the reshaped module-not-found
         // cases.
-        let node_message = self.node_message();
-        let message: &[u8] = node_message.as_deref().unwrap_or(&self.msg.data.text);
         let mut text = Vec::new();
-        write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message))
-            .expect("infallible: in-memory write");
+        write!(
+            &mut text,
+            "ResolveMessage: {}",
+            bstr::BStr::new(&self.get_message())
+        )
+        .expect("infallible: in-memory write");
         bun_string_jsc::owned_utf8_into_js(global, text)
     }
 
-    #[crate::host_fn(method)]
-    pub fn to_string(
-        // this
-        this: &Self,
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.to_string_fn(global)
+    pub fn to_string(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_string_fn(cx.global())
     }
 
-    #[crate::host_fn(method)]
-    pub fn to_primitive(
-        this: &Self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        if !args.is_empty() {
-            if !args[0].is_string() {
-                return Ok(JSValue::NULL);
-            }
+    pub fn to_primitive(&self, cx: &mut JsScope<'_>, hint: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let hint = hint.to_js();
+        if !hint.is_string() {
+            return Ok(JSValue::NULL);
+        }
 
-            let str = args[0].to_bun_string(global)?;
-            if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
-                return this.to_string_fn(global);
-            }
+        let str = hint.to_bun_string(global)?;
+        if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
+            return self.to_string_fn(global);
         }
 
         Ok(JSValue::NULL)
     }
 
-    #[crate::host_fn(method)]
-    pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let utf8 = |bytes: &[u8]| bun_string_jsc::create_utf8_for_js(global, bytes);
         let object = JSValue::create_empty_object(global, 7);
         object.put(
             global,
             b"name",
             bun_core::String::static_("ResolveMessage").to_js(global)?,
         );
-        object.put(global, b"position", Self::get_position(this, global)?);
-        object.put(global, b"message", Self::get_message(this, global)?);
-        object.put(global, b"level", Self::get_level(this, global)?);
-        object.put(global, b"specifier", Self::get_specifier(this, global)?);
-        object.put(global, b"importKind", Self::get_import_kind(this, global)?);
-        object.put(global, b"referrer", Self::get_referrer(this, global)?);
+        object.put(
+            global,
+            b"position",
+            crate::BuildMessage::generate_position_object(&self.msg, global)?,
+        );
+        object.put(global, b"message", utf8(&self.get_message())?);
+        object.put(global, b"level", self.msg.kind.to_js(global)?);
+        object.put(global, b"specifier", utf8(self.get_specifier())?);
+        object.put(global, b"importKind", self.import_kind_to_js(global)?);
+        object.put(global, b"referrer", utf8(&self.referrer)?);
         Ok(object)
     }
 
-    /// Clone `msg` +
-    /// dupe `referrer` into a fresh heap-allocated `ResolveMessage` and wrap it
-    /// in its JSC cell. `JsClass::to_js` boxes `self` and calls the C++-side
-    /// `ResolveMessage__create(global, ptr)`; the resulting `m_ctx` is freed by
-    /// the macro-emitted `ResolveMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
         msg: &bun_ast::Msg,
@@ -305,15 +279,14 @@ impl ResolveMessage {
     ) -> JsResult<JSValue> {
         let resolve_error = ResolveMessage {
             msg: msg.clone(),
-            referrer: Some(Box::<[u8]>::from(referrer)),
+            referrer: Box::<[u8]>::from(referrer),
             logged: Cell::new(false),
         };
         Ok(resolve_error.to_js(global))
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_position(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        crate::BuildMessage::generate_position_object(&this.msg, global)
+    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        crate::BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 
     /// Module-not-found for a runtime import kind whose `.message` /
@@ -345,10 +318,7 @@ impl ResolveMessage {
         if specifier.starts_with(b"node:") && resolve.import_kind != ImportKind::RequireResolve {
             return None;
         }
-        let referrer = self
-            .referrer
-            .as_deref()
-            .filter(|r| !r.is_empty() && *r != b"bun:main");
+        let referrer = Some(&*self.referrer).filter(|r| !r.is_empty() && *r != b"bun:main");
         Some((resolve.import_kind, specifier, referrer))
     }
 
@@ -388,67 +358,49 @@ impl ResolveMessage {
         Some(out)
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(text) = this.node_message() {
-            return bun_string_jsc::create_utf8_for_js(global, &text);
+    pub fn get_message(&self) -> Cow<'_, [u8]> {
+        match self.node_message() {
+            Some(text) => Cow::Owned(text),
+            None => Cow::Borrowed(&self.msg.data.text),
         }
-        bun_string_jsc::create_utf8_for_js(global, &this.msg.data.text)
     }
 
     // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
     // requiring files; Bun tracks only the direct referrer). CJS kinds only.
-    #[crate::host_fn(getter)]
-    pub fn get_require_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some((kind, _, referrer)) = this.node_error_shape() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        if !matches!(kind, ImportKind::Require | ImportKind::RequireResolve) {
-            return Ok(JSValue::UNDEFINED);
-        }
-        let mut entries: Vec<&[u8]> = Vec::new();
-        if let Some(r) = referrer {
-            entries.push(r);
-        }
-        JSValue::create_array_from_iter(global, entries.iter().copied(), |r| {
-            bun_string_jsc::create_utf8_for_js(global, r)
-        })
+    pub fn get_require_stack(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        let (kind, _, referrer) = self.node_error_shape()?;
+        matches!(kind, ImportKind::Require | ImportKind::RequireResolve)
+            .then(|| referrer.into_iter())
     }
 
     // A synthesized `name: message` header; Bun does not capture JS frames at
     // module-resolution time, so there are no `at ...` lines.
-    #[crate::host_fn(getter)]
-    pub fn get_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_stack(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"ResolveMessage: ");
-        match this.node_message() {
-            Some(text) => out.extend_from_slice(&text),
-            None => out.extend_from_slice(&this.msg.data.text),
-        }
-        bun_string_jsc::create_utf8_for_js(global, &out)
+        out.extend_from_slice(&self.get_message());
+        out
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.msg.kind.to_js(global)
+    pub fn get_level(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.msg.kind.to_js(cx.global())
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(match &this.msg.metadata {
-            bun_ast::Metadata::Resolve(resolve) => bun_string_jsc::create_utf8_for_js(
-                global,
-                resolve.specifier.slice(&this.msg.data.text),
-            )?,
+    pub fn get_specifier(&self) -> &[u8] {
+        match &self.msg.metadata {
+            bun_ast::Metadata::Resolve(resolve) => resolve.specifier.slice(&self.msg.data.text),
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata).
-            _ => JSValue::js_empty_string(global),
-        })
+            _ => b"",
+        }
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(match &this.msg.metadata {
+    pub fn get_import_kind(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.import_kind_to_js(cx.global())
+    }
+
+    fn import_kind_to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(match &self.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
                 bun_core::String::static_(import_kind_label(resolve.import_kind)).to_js(global)?
             }
@@ -456,12 +408,7 @@ impl ResolveMessage {
         })
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(if let Some(referrer) = &this.referrer {
-            bun_string_jsc::create_utf8_for_js(global, referrer)?
-        } else {
-            JSValue::NULL
-        })
+    pub fn get_referrer(&self) -> &[u8] {
+        &self.referrer
     }
 }

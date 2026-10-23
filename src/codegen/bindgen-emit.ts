@@ -1056,7 +1056,7 @@ static JSC_DECLARE_HOST_FUNCTION(construct${name});
 JSC_DEFINE_HOST_FUNCTION(construct${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 ${cppPrologue}
-    JSC::Structure* structure = Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
+${cppThrowIfArgumentsMissing(construct)}    JSC::Structure* structure = Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
 ${indent(cppReturnIfFailed("!!structure", "{}"), 4)}
 ${
   type.refCounted && !type.passStructure
@@ -1185,6 +1185,16 @@ const cppLeadingOfFunction = (fn: FunctionDefinition) => [
   ...(fn.passCallee ? ["JSC::JSValue::encode(callFrame->jsCallee())"] : []),
 ];
 
+/** `requiredArguments`. As in Node, the message names every one of them, however many the call has. */
+function cppThrowIfArgumentsMissing(signature: Signature): string {
+  const names = signature.args.slice(0, signature.requiredArguments ?? 0).map(arg => `"${arg.name}"`);
+  if (names.length === 0) return "";
+  const message = `The ${new Intl.ListFormat("en").format(names)} argument${names.length > 1 ? "s" : ""} must be specified`;
+  return `    if (callFrame->argumentCount() < ${names.length}) [[unlikely]]
+        return Bun::ERR::MISSING_ARGS(scope, globalObject, ${asciiLiteral(message)});
+`;
+}
+
 /** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 function cppHostFunction(
   name: string,
@@ -1221,7 +1231,7 @@ function cppHostFunctionBody(
     return `${define}
 {
 ${cppPrologue}
-${takeThis}${cppCallBody(fn.signatures[0], symbol(fn.signatures[0]), leading)}
+${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${cppCallBody(fn.signatures[0], symbol(fn.signatures[0]), leading)}
 }`;
   }
   // An overload reads `this` and the callee from the frame.
@@ -1254,7 +1264,7 @@ ${[...cases.slice(1), cases[0]].join("\n")}
 ${define}
 {
 ${cppPrologue}
-${takeThis}${indent(cppDispatch(fn.dispatch), 4)}
+${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${indent(cppDispatch(fn.dispatch), 4)}
 }`;
 }
 

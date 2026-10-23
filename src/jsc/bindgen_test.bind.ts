@@ -229,7 +229,7 @@ export const TestCounter = b.class({
       { args: { by: b.i32 }, returns: b.i32, rustName: "add_number" },
     ],
     forgetTag: { capability: "heap", passThis: true },
-    listen: { args: { listener: b.any }, capability: "heap", passThis: true },
+    listen: { args: { listener: b.any }, capability: "heap", passThis: true, requiredArguments: 1 },
     /** Calls the listener, which may call back into this object, then returns the count. */
     notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** `other` may be `this`. */
@@ -247,7 +247,7 @@ export const TestCounter = b.class({
 /** `mutates`: `increment` and the setter take `&mut self`. */
 export const TestMutates = b.class({
   rustPath: "crate::bindgen_test::TestMutates",
-  construct: { args: { count: b.i32 } },
+  construct: { args: { count: b.i32 }, requiredArguments: 1 },
   proto: {
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
@@ -427,6 +427,32 @@ export const timeValue = b.fn({ args: { time: b.f64.allowDate }, returns: b.f64 
 /** "none" without the argument. `undefined` is converted, to "undefined". */
 export const textIfPassed = b.fn({ args: { text: b.string.loose.utf8.ifPassed }, returns: b.string.utf8 });
 export const isPassed = b.fn({ args: { first: b.any, second: b.any.ifPassed }, returns: b.bool });
+export const isPassedAfterRequired = b.fn({
+  args: { first: b.any, second: b.any.ifPassed },
+  returns: b.bool,
+  requiredArguments: 1,
+  rustPath: "crate::bindgen_test::is_passed",
+});
+export const requiredPair = b.fn({
+  args: { a: b.f64, b: b.f64 },
+  returns: b.string.utf8,
+  requiredArguments: 2,
+  rustPath: "crate::bindgen_test::overloaded_two_numbers",
+});
+export const requiredOfOverloads = b.overloads(
+  {
+    args: { text: b.string.utf8, upper: b.bool },
+    returns: b.string.utf8,
+    requiredArguments: 1,
+    rustPath: "crate::bindgen_test::overloaded_text_upper",
+  },
+  {
+    args: { number: b.f64 },
+    returns: b.string.utf8,
+    requiredArguments: 1,
+    rustPath: "crate::bindgen_test::overloaded_number",
+  },
+);
 /** `[the text's length, the argument]`. */
 export const lengthWithValue = b.fn({
   args: { text: b.string.loose.utf8.withValue },
@@ -494,6 +520,15 @@ export const finiteLater = b.fn({
   capability: "js",
   throws: true,
   rejects: true,
+});
+export const requiredFiniteLater = b.fn({
+  args: { value: b.f64 },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  rejects: true,
+  requiredArguments: 1,
+  rustPath: "crate::bindgen_test::finite_later",
 });
 
 export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });

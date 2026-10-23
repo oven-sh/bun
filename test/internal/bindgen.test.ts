@@ -170,6 +170,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     ".ifPassed is not for overloads",
   );
   expect(() => b.fn({ returns: b.i32, rejects: true })).toThrow("rejects: the result is a promise");
+  for (const requiredArguments of [0, 2, 0.5])
+    expect(() => b.fn({ args: { a: b.i32 }, requiredArguments })).toThrow(
+      `requiredArguments: ${requiredArguments} is not a count of the arguments`,
+    );
+  expect(() => b.overloads({ args: { a: b.i32 }, requiredArguments: 1 }, { args: { a: b.string } })).toThrow(
+    "every overload gives requiredArguments the same value",
+  );
   const range = b.u8.validateInteger(0, 4);
   for (const size of [range, range.optional, range.default(0), range.optional.withValue, b.u8.enforceRange(0, 4)]) {
     expect(() => b.fn({ args: { size }, expected: { size: ["number"] }, capability: "heap" })).toThrow(
@@ -885,6 +892,38 @@ describe("functions", () => {
     expect(refused).toBeInstanceOf(Promise);
     await expect(thrown).rejects.toThrow("value must be finite");
     await expect(refused).rejects.toThrow("value must be a number");
+  });
+
+  it("requiredArguments: a call with fewer throws, and undefined that was passed is converted", async () => {
+    const missing = (...names: string[]) =>
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_MISSING_ARGS",
+        message: `The ${names.join(" and ")} argument${names.length > 1 ? "s" : ""} must be specified`,
+      });
+    expect(() => bindgen.isPassedAfterRequired()).toThrow(missing('"first"'));
+    expect(bindgen.isPassedAfterRequired(undefined)).toBe(false);
+    expect(bindgen.isPassedAfterRequired(undefined, undefined)).toBe(true);
+
+    expect(() => bindgen.requiredPair()).toThrow(missing('"a"', '"b"'));
+    expect(() => bindgen.requiredPair(1)).toThrow(missing('"a"', '"b"'));
+    expect(() => bindgen.requiredPair(1, undefined)).toThrow("b must be a number");
+    expect(bindgen.requiredPair(1, 2)).toBe("two numbers 1 2");
+
+    expect(() => bindgen.requiredOfOverloads()).toThrow(missing('"text"'));
+    expect(() => bindgen.requiredOfOverloads("a")).toThrow("upper must be a boolean");
+    expect(bindgen.requiredOfOverloads(1)).toBe("number 1");
+
+    const rejected = bindgen.requiredFiniteLater();
+    expect(rejected).toBeInstanceOf(Promise);
+    await expect(rejected).rejects.toEqual(missing('"value"'));
+    expect(await bindgen.requiredFiniteLater(1)).toBe(1);
+
+    const { TestCounter, TestMutates } = bindgen as any;
+    expect(() => new TestCounter().listen()).toThrow(missing('"listener"'));
+    expect(() => TestCounter.prototype.listen.call({})).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+    expect(() => new TestMutates()).toThrow(missing('"count"'));
+    expect(() => new TestMutates(undefined)).toThrow("count must be a number");
   });
 });
 

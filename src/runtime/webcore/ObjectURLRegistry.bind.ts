@@ -3,14 +3,16 @@ import { Blob, BlobOrBuildArtifact } from "./Blob.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::object_url_registry" });
 
-export const createObjectURL = b.fn({ args: { blob: BlobOrBuildArtifact }, returns: b.string });
+export const createObjectURL = b.fn({
+  args: { object: BlobOrBuildArtifact },
+  returns: b.string,
+  requiredArguments: 1,
+});
 
-/** Without an argument it throws `ERR_MISSING_ARGS`, as in Node. */
 export const revokeObjectURL = b.fn({
-  args: { url: b.string.allowStringObject.ifPassed },
+  args: { url: b.string.allowStringObject },
   expected: { url: "revokeObjectURL expects a string" },
-  capability: "heap",
-  throws: true,
+  requiredArguments: 1,
 });
 
 /** `resolveObjectURL` of `node:buffer`. */

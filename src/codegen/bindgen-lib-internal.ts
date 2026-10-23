@@ -2152,6 +2152,8 @@ export interface SignatureOptions {
   throws?: boolean;
   /** The function returns a promise: what the body or the conversion of an argument throws rejects one, and nothing is thrown. */
   rejects?: boolean;
+  /** A call with fewer arguments throws `ERR_MISSING_ARGS`. Without it nothing counts them: one that was not passed is `undefined`. */
+  requiredArguments?: number;
   /** Path of the Rust function. Defaults to the module's path plus the export's name in snake_case. */
   rustPath?: string;
   /** The JS function's `length`. Defaults to the number of required arguments. */
@@ -2179,12 +2181,14 @@ export class Signature {
   readonly capability: Capability;
   readonly throws: boolean;
   readonly rejects: boolean;
+  readonly requiredArguments: number | undefined;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
   /** `hasThisValue`: the body is also handed its own JS object. */
   constructor(options: SignatureOptions, hasThisValue = false) {
     this.length = options.length;
     this.rejects = options.rejects ?? false;
+    this.requiredArguments = options.requiredArguments;
     const { args = {}, expected = {} } = options;
     this.args = Object.entries(args).map(([name, type]) => ({
       name,
@@ -2238,6 +2242,13 @@ export class Signature {
     assert(!(this.returns instanceof DefaultType), "a result has no default");
     refuseOutsideArgument(this.returns);
     assert(!this.rejects || this.returns.holdsJSValue, "rejects: the result is a promise");
+    assert(
+      this.requiredArguments === undefined ||
+        (Number.isInteger(this.requiredArguments) &&
+          this.requiredArguments >= 1 &&
+          this.requiredArguments <= this.args.length),
+      `requiredArguments: ${this.requiredArguments} is not a count of the arguments`,
+    );
     assert(
       !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
       'returning a JS value takes capability: "heap" or "js"',
@@ -2320,10 +2331,11 @@ export class FunctionDefinition {
       this.exportName === undefined || this.signatures.every(signature => signature.length === undefined),
       "length: what makes an exported function gives its length",
     );
-    assert(
-      this.signatures.every(signature => signature.rejects === this.signatures[0].rejects),
-      "every overload gives rejects the same value",
-    );
+    for (const key of ["rejects", "requiredArguments"] as const)
+      assert(
+        this.signatures.every(signature => signature[key] === this.signatures[0][key]),
+        `every overload gives ${key} the same value`,
+      );
     assert(
       this.signatures.length === 1 ||
         !this.signatures.some(signature => signature.args.some(arg => isIfPassed(arg.type))),

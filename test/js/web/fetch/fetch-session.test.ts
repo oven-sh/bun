@@ -739,7 +739,7 @@ describe("session.fetch", () => {
   test("rejects like fetch() does", async () => {
     using session = new Bun.FetchSession();
     expect(await (session.fetch as any)().catch((e: Error) => e.message)).toBe(
-      "fetch() URL must not be a blank string.",
+      'The "input" argument must be specified',
     );
     using dead = await deadPort();
     expect(await session.fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e.code)).toBe("ECONNREFUSED");

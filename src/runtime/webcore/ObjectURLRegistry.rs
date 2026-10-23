@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_jsc::bindgen::{self, JsHeap, JsScope};
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, UUID};
+use bun_jsc::{JSGlobalObject, JSValue, UUID};
 use bun_threading::Guarded;
 
 use crate::generated_bindgen::blob::BlobOrBuildArtifact;
@@ -113,33 +113,23 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-pub(crate) fn create_object_url(blob: BlobOrBuildArtifact<'_>) -> bun_core::String {
+pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get().as_mut(), blob.blob());
+    let uuid = registry.register(VirtualMachine::get().as_mut(), object.blob());
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 
-pub(crate) fn revoke_object_url<'a>(
-    heap: &JsHeap<'a>,
-    url: Option<bun_core::String>,
-) -> bindgen::Result<'a, ()> {
-    let Some(str) = url else {
-        return Err(heap.error_with_code(
-            ErrorCode::MISSING_ARGS,
-            format_args!("Not enough arguments to 'revokeObjectURL'. Expected 1, got 0."),
-        ));
-    };
-    if !str.starts_with_ascii(b"blob:") {
-        return Ok(());
+pub(crate) fn revoke_object_url(url: &bun_core::String) {
+    if !url.starts_with_ascii(b"blob:") {
+        return;
     }
 
-    let slice = str.to_utf8();
+    let slice = url.to_utf8();
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
-        return Ok(());
+        return;
     }
     ObjectURLRegistry::singleton().revoke(&sliced[b"blob:".len()..]);
-    Ok(())
 }
 
 pub(crate) fn resolve_object_url(cx: &mut JsScope<'_>, url: &bun_core::String) -> Option<JSValue> {

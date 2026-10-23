@@ -8204,12 +8204,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// dynamic imports and logs through `P::log()`, which ignores
     /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
     /// on restore; the attempt's arena allocations just become unreachable.
-    /// The legal comments waiting for the next statement are moved out
+    /// The legal comments waiting for the next statement are copied
     /// instead: a block body or `import()` drains them, so a length cannot
-    /// restore them.
+    /// restore them. They stay in the lexer for a parse that is kept.
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
-        let comments_to_preserve_before =
-            core::mem::take(&mut self.lexer.comments_to_preserve_before);
+        let comments_to_preserve_before = self
+            .lexer
+            .comments_to_preserve_before
+            .iter()
+            .map(|comment| js_ast::G::Comment {
+                loc: comment.loc,
+                text: comment.text,
+            })
+            .collect();
         let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
@@ -8242,9 +8249,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
-    pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
+    pub(crate) fn restore_parser_snapshot(&mut self, snapshot: &mut ParserSnapshot<'a>) {
+        self.lexer.comments_to_preserve_before =
+            core::mem::take(&mut snapshot.comments_to_preserve_before);
         self.lexer.restore(&snapshot.lexer);
-        self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);
@@ -8258,7 +8266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             snapshot.has_non_local_export_declare_inside_namespace;
         self.should_fold_typescript_constant_expressions =
             snapshot.should_fold_typescript_constant_expressions;
-        self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
+        self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse.clone();
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;

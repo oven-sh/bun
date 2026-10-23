@@ -3,13 +3,16 @@ use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+    ConditionalArrowFn, DeferredArrowArgErrors, FnOrArrowDataParse, LocList, ParenExprOpts,
+    ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_alloc::ArenaVec as BumpVec;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
+use bun_ast::{Expr, G};
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
@@ -1583,25 +1586,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Whether the ":" after a parenthesized expression that sits between the
-    /// "?" and ":" of a conditional starts an arrow function return type. The
-    /// TypeScript compiler parses the whole arrow function and keeps it only
-    /// when another ":" follows its body:
+    /// Decides what the ":" after a parenthesized expression means when that
+    /// expression sits between the "?" and ":" of a conditional. It can start
+    /// the return type of an arrow function. The TypeScript compiler parses the
+    /// whole arrow function and keeps it only when another ":" follows its body:
     ///
     ///   x = a ? (b) : c => d;      // "(b)" is an expression, ":" pairs with "?"
     ///   y = a ? (b) : c => d : e;  // "(b) : c => d" is an arrow function
     ///
-    /// The body is parsed here and thrown away, then parsed again by the
-    /// caller when this returns true. Parsing an expression mutates parser
-    /// state, so the whole parser is restored from a snapshot. The current
-    /// scope is the arrow's `FunctionArgs` scope; no arguments are declared so
-    /// that its members stay untouched. The outcome is memoized by the offset
-    /// of the ":" in `ts_conditional_arrow_attempts`, so the real parse does not
-    /// repeat the attempts nested inside the body.
-    pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
+    /// The arrow function is parsed here with the arguments from the caller, and
+    /// that parse is kept when another ":" follows. When none follows, the whole
+    /// parser goes back to a snapshot, because parsing an expression mutates
+    /// parser state. The outcome is memoized by the offset of the ":" in
+    /// `ts_conditional_arrow_attempts`, so the parse after a failed attempt does
+    /// not repeat the attempts nested inside the body.
+    ///
+    /// The snapshot does not undo what decorator metadata adds. So with
+    /// `emitDecoratorMetadata` the arrow function is parsed with metadata off and
+    /// without its arguments, thrown away, and parsed again by the caller.
+    // Not inlined: `parse_paren_expr` recurses and the snapshot is large.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_arrow_fn_after_question_and_before_colon(
         &mut self,
+        loc: bun_ast::Loc,
+        opts: ParenExprOpts,
+        spread_range: bun_ast::Range,
+        comma_after_spread: bun_ast::Loc,
+        mut arrow_arg_errors: DeferredArrowArgErrors,
+        mut args: BumpVec<'a, G::Arg>,
         arrow_data: &FnOrArrowDataParse,
-    ) -> Result<bool, Error> {
+    ) -> Result<ConditionalArrowFn<'a>, Error> {
         self.mark_type_script_only();
         debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
         let memo_key = self.lexer.start as u32;
@@ -1609,33 +1624,62 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .ts_conditional_arrow_attempts
             .binary_search_by_key(&memo_key, |&packed| packed >> 1)
         {
-            return Ok(self.ts_conditional_arrow_attempts[i] & 1 == 1);
+            return Ok(if self.ts_conditional_arrow_attempts[i] & 1 == 1 {
+                ConditionalArrowFn::Found(args)
+            } else {
+                ConditionalArrowFn::NotFound
+            });
         }
 
-        let snapshot = self.parser_snapshot();
-        self.lexer.is_log_disabled = true;
-        // Metadata looks up type names, which adds unbound symbols to the module scope.
-        let emit_decorator_metadata =
-            core::mem::take(&mut self.options.features.emit_decorator_metadata);
+        // Most of the time no "=>" follows, and only the lexer has to go back.
+        let mut is_arrow_fn = self.is_type_script_arrow_return_type_before_arrow()?;
+        let mut parsed = None;
+        if is_arrow_fn {
+            let mut snapshot = self.parser_snapshot();
+            // Metadata looks up type names, which adds unbound symbols to the module scope.
+            let emit_decorator_metadata =
+                core::mem::take(&mut self.options.features.emit_decorator_metadata);
+            let backtrack_on_mismatch =
+                core::mem::replace(&mut self.lexer.backtrack_on_mismatch, true);
 
-        let mut data = arrow_data.clone();
-        let result: Result<(), Error> = (|| {
-            self.lexer.expect(T::TColon)?;
-            self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
-            // The ":" that pairs with the "?"
-            self.lexer.expect(T::TColon)?;
-            Ok(())
-        })();
+            let mut data = arrow_data.clone();
+            let result: Result<Option<Expr>, Error> = (|| {
+                self.lexer.next()?;
+                self.skip_typescript_return_type()?;
+                let arrow = if emit_decorator_metadata {
+                    self.parse_arrow_body(&mut [], &mut data)?;
+                    None
+                } else {
+                    Some(self.parse_paren_arrow_fn(
+                        loc,
+                        opts,
+                        spread_range,
+                        comma_after_spread,
+                        &mut arrow_arg_errors,
+                        &LocList::new_in(self.arena),
+                        core::mem::replace(&mut args, BumpVec::new_in(self.arena)),
+                        &mut data,
+                    )?)
+                };
+                // The ":" that pairs with the "?", and a token after it
+                if self.lexer.token != T::TColon || !self.can_read_next_token() {
+                    return Err(Error::Backtrack);
+                }
+                Ok(arrow)
+            })();
+            self.lexer.backtrack_on_mismatch = backtrack_on_mismatch;
 
-        self.restore_parser_snapshot(snapshot);
-        self.options.features.emit_decorator_metadata = emit_decorator_metadata;
-        let is_arrow_fn = match result {
-            Ok(()) => true,
-            // Stack and memory exhaustion are not properties of the attempt
-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
-            Err(_) => false,
-        };
+            if !matches!(result, Ok(Some(_))) {
+                self.restore_parser_snapshot(&mut snapshot);
+            }
+            self.options.features.emit_decorator_metadata = emit_decorator_metadata;
+            match result {
+                Ok(arrow) => parsed = arrow,
+                // Stack and memory exhaustion are not properties of the attempt
+                Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+                Err(_) => is_arrow_fn = false,
+            }
+        }
 
         // Re-search for the insertion point: attempts nested inside this one may
         // have added entries of their own.
@@ -1646,7 +1690,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.ts_conditional_arrow_attempts
                 .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
         }
-        Ok(is_arrow_fn)
+        Ok(match parsed {
+            Some(arrow) => ConditionalArrowFn::Parsed(arrow),
+            None if is_arrow_fn => ConditionalArrowFn::Found(args),
+            None => ConditionalArrowFn::NotFound,
+        })
+    }
+
+    /// Whether the ":" starts a type that "=>" follows. The lexer stays at the ":".
+    #[inline(never)]
+    fn is_type_script_arrow_return_type_before_arrow(&mut self) -> Result<bool, Error> {
+        let mut found = false;
+        self.lexer_backtracker_bool(|p| {
+            p.skip_type_script_arrow_return_type_with_backtracking()?;
+            found = true;
+            // Go back in both cases
+            Err::<(), Error>(Error::Backtrack)
+        })?;
+        Ok(found)
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

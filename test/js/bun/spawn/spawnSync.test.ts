@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
+import { measure } from "./measure-write-requests";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
     expect(() =>
@@ -331,3 +332,18 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
     exitCode: 0,
   });
 });
+
+// TEMPORARY, removed before this PR leaves draft. See measure-write-requests.ts.
+it.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)(
+  "measure: write requests at or under one request's size",
+  async () => {
+    await measure([
+      "10000 x 64 KiB to a file sink",
+      "10000 x 64 KiB to a child's stdin",
+      "10000 x 1 KiB process.stdout.write to a file",
+      "stdin buffer of 2^32 bytes",
+      "stdin buffer of 0x7fff_f001 bytes",
+    ]);
+  },
+  170_000,
+);

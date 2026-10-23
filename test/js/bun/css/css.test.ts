@@ -7414,6 +7414,143 @@ describe("css tests", () => {
       }
       `,
     );
+
+    // The earlier declaration is the fallback for a target that does not support a math
+    // function or a unit of the later one. Chrome 87, Firefox 78 and Safari 14 have no
+    // round(), cqw or dvh. Chrome 125 has all three.
+    const older = { chrome: Some(87 << 16), firefox: Some(78 << 16), safari: Some(14 << 16) };
+    const newer = { chrome: Some(125 << 16) };
+    for (const [property, fallback, value] of [
+      ["transform", "translateX(15px)", "translateX(round(1em, 5px))"],
+      ["transform", "translateY(100vh)", "translateY(100dvh)"],
+      ["transform", "translate(15px, 1px)", "translate(round(1em, 5px), 1px)"],
+      ["transform", "translate(1px, 15px)", "translate(1px, round(1em, 5px))"],
+      ["transform", "translate3d(15px, 2px, 3px)", "translate3d(round(1em, 5px), 2px, 3px)"],
+      ["transform", "translate3d(1px, 15px, 3px)", "translate3d(1px, round(1em, 5px), 3px)"],
+      ["transform", "translate3d(1px, 2px, 15px)", "translate3d(1px, 2px, 1cqw)"],
+      ["transform", "translateZ(15px)", "translateZ(1cqw)"],
+      ["transform", "perspective(15px)", "perspective(1cqw)"],
+      ["transform", "rotate(15deg)", "translateX(round(1em, 5px)) rotate(15deg)"],
+      ["translate", "15px", "round(1em, 5px)"],
+      ["translate", "1px 15px", "1px round(1em, 5px)"],
+      ["translate", "1px 2px 15px", "1px 2px 1cqw"],
+      ["translate", "100vh", "100dvh"],
+    ]) {
+      const source = `.foo { ${property}: ${fallback}; ${property}: ${value} }`;
+      prefix_test(source, `.foo { ${property}: ${fallback}; ${property}: ${value}; }`, older);
+      prefix_test(source, `.foo { ${property}: ${value}; }`, newer);
+      // Every target supports the later value: it replaces the one before it.
+      prefix_test(
+        `.foo { ${property}: ${value}; ${property}: ${fallback} }`,
+        `.foo { ${property}: ${fallback}; }`,
+        older,
+      );
+      // The same value twice is one declaration.
+      prefix_test(`.foo { ${property}: ${value}; ${property}: ${value} }`, `.foo { ${property}: ${value}; }`, older);
+      prefix_test(
+        `.foo { ${property}: ${fallback} !important; ${property}: ${value} !important }`,
+        `.foo { ${property}: ${fallback} !important; ${property}: ${value} !important; }`,
+        older,
+      );
+      // Two rules with the same selector are merged into one.
+      prefix_test(
+        `.foo { ${property}: ${fallback} } .foo { ${property}: ${value} }`,
+        `.foo { ${property}: ${fallback}; ${property}: ${value}; }`,
+        older,
+      );
+    }
+    // calc() is not a reason to keep the declaration before: every target supports it.
+    prefix_test(
+      ".foo { transform: translateX(15px); transform: translateX(calc(1px + 1em)) }",
+      ".foo { transform: translateX(calc(1px + 1em)); }",
+      older,
+    );
+    prefix_test(".foo { translate: 15px; translate: calc(1px + 1em) }", ".foo { translate: calc(1px + 1em); }", older);
+    // No browser targets: nothing is known to lack the later value.
+    minify_test(
+      ".foo { transform: translateX(15px); transform: translateX(round(1em, 5px)) }",
+      ".foo{transform:translate(round(1em,5px))}",
+    );
+    minify_test(".foo { translate: 15px; translate: round(1em, 5px) }", ".foo{translate:round(1em,5px)}");
+    // Three identical rules are merged into one declaration.
+    prefix_test(
+      `.foo { transform: translateX(round(1em, 5px)) }
+       .foo { transform: translateX(round(1em, 5px)) }
+       .foo { transform: translateX(round(1em, 5px)) }`,
+      ".foo { transform: translateX(round(1em, 5px)); }",
+      older,
+    );
+    // A later value that every target supports replaces the ones before it that are still held.
+    prefix_test(
+      `.foo {
+        transform: translateX(15px);
+        transform: translateX(round(1em, 5px));
+        transform: translateX(20px);
+        transform: translateX(round(2em, 5px));
+      }`,
+      `.foo {
+        transform: translateX(15px);
+        transform: translateX(20px);
+        transform: translateX(round(2em, 5px));
+      }`,
+      older,
+    );
+
+    // A prefixed and an unprefixed declaration with the same value stay one value, and the
+    // targets decide which prefixes it needs.
+    prefix_test(
+      ".foo { -webkit-transform: translateX(round(1em, 5px)); transform: translateX(round(1em, 5px)) }",
+      ".foo { transform: translateX(round(1em, 5px)); }",
+      older,
+    );
+    const prefixed_pairs = `.foo {
+      -webkit-transform: translateX(15px);
+      transform: translateX(15px);
+      -webkit-transform: translateX(round(1em, 5px));
+      transform: translateX(round(1em, 5px));
+    }`;
+    prefix_test(
+      prefixed_pairs,
+      `.foo {
+        transform: translateX(15px);
+        transform: translateX(round(1em, 5px));
+      }`,
+      older,
+    );
+    prefix_test(prefixed_pairs, prefixed_pairs, { safari: Some(8 << 16) });
+    // Only the property with the fallback is written early. A `-webkit-transform` that
+    // waits for its `transform` is not.
+    prefix_test(
+      `.foo {
+        -webkit-transform: translateX(1px);
+        translate: 1px;
+        translate: round(1em, 5px);
+        transform: translateX(1px);
+      }`,
+      `.foo {
+        translate: 1px;
+        transform: translateX(1px);
+        translate: round(1em, 5px);
+      }`,
+      older,
+    );
+    prefix_test(
+      `.foo {
+        translate: 1px;
+        rotate: 10deg;
+        transform: translateX(15px);
+        transform: translateX(round(1em, 5px));
+        scale: 2;
+      }`,
+      `.foo {
+        transform: translateX(15px);
+        transform: translateX(round(1em, 5px));
+        translate: 1px;
+        rotate: 10deg;
+        scale: 2;
+      }`,
+      older,
+    );
   });
 
   // https://github.com/parcel-bundler/lightningcss/pull/1340

@@ -7,7 +7,9 @@ use crate::css_values::angle::Angle;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
 use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
+use crate::generics::IsCompatible;
 use crate::prefixes;
+use crate::targets::Browsers;
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, Result, Token, VendorPrefix,
 };
@@ -30,6 +32,12 @@ impl TransformList {
         // with heap variants (`LengthPercentage`/`Length` `Calc(Box<..>)`) clone
         // deeply onto the global heap.
         self.clone()
+    }
+}
+
+impl IsCompatible for TransformList {
+    fn is_compatible(&self, browsers: &Browsers) -> bool {
+        self.v.iter().all(|item| item.is_compatible(browsers))
     }
 }
 
@@ -576,6 +584,35 @@ impl Transform {
     }
 }
 
+impl IsCompatible for Transform {
+    fn is_compatible(&self, browsers: &Browsers) -> bool {
+        match self {
+            Transform::Translate { x, y } => x.is_compatible(browsers) && y.is_compatible(browsers),
+            Transform::TranslateX(v) | Transform::TranslateY(v) => v.is_compatible(browsers),
+            Transform::TranslateZ(z) | Transform::Perspective(z) => z.is_compatible(browsers),
+            Transform::Translate3d { x, y, z } => {
+                x.is_compatible(browsers) && y.is_compatible(browsers) && z.is_compatible(browsers)
+            }
+            // Numbers and angles are always a plain value after the parse.
+            Transform::Scale { .. }
+            | Transform::ScaleX(_)
+            | Transform::ScaleY(_)
+            | Transform::ScaleZ(_)
+            | Transform::Scale3d { .. }
+            | Transform::Rotate(_)
+            | Transform::RotateX(_)
+            | Transform::RotateY(_)
+            | Transform::RotateZ(_)
+            | Transform::Rotate3d { .. }
+            | Transform::Skew { .. }
+            | Transform::SkewX(_)
+            | Transform::SkewY(_)
+            | Transform::Matrix(_)
+            | Transform::Matrix3d(_) => true,
+        }
+    }
+}
+
 /// A 2D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix<T> {
@@ -727,6 +764,17 @@ impl Translate {
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
+    }
+}
+
+impl IsCompatible for Translate {
+    fn is_compatible(&self, browsers: &Browsers) -> bool {
+        match self {
+            Translate::None => true,
+            Translate::Xyz { x, y, z } => {
+                x.is_compatible(browsers) && y.is_compatible(browsers) && z.is_compatible(browsers)
+            }
+        }
     }
 }
 
@@ -959,13 +1007,15 @@ impl TransformHandler {
                 // values, we need to flush what we have immediately to preserve order.
                 // Compute the predicate first, then act, so no borrow of
                 // self.transform is held across self.flush().
-                let needs_flush = if let Some(current) = &self.transform {
-                    current.0 != *transform_val && !current.1.contains(vp)
-                } else {
-                    false
+                let (differs, has_prefix) = match &self.transform {
+                    Some(current) => (current.0 != *transform_val, current.1.contains(vp)),
+                    None => (false, false),
                 };
-                if needs_flush {
+                if differs && !has_prefix {
                     self.flush(dest, context);
+                } else if differs && !context.targets.supports(transform_val) {
+                    // The held value is the fallback for the targets that lack the new one.
+                    self.flush_transform(dest, context);
                 }
 
                 // Otherwise, update the value and add the prefix.
@@ -976,7 +1026,17 @@ impl TransformHandler {
                     self.has_any = true;
                 }
             }
-            Property::Translate(val) => individual_property!(translate, val),
+            Property::Translate(val) => {
+                let keeps_fallback = self
+                    .translate
+                    .as_ref()
+                    .is_some_and(|current| current != val)
+                    && !context.targets.supports(val);
+                if keeps_fallback {
+                    self.flush_translate(dest);
+                }
+                individual_property!(translate, val)
+            }
             Property::Rotate(val) => individual_property!(rotate, val),
             Property::Scale(val) => individual_property!(scale, val),
             Property::Unparsed(unparsed) => {
@@ -1024,19 +1084,11 @@ impl TransformHandler {
 
         self.has_any = false;
 
-        let transform = self.transform.take();
-        let translate = self.translate.take();
         let rotate = self.rotate.take();
         let scale = self.scale.take();
 
-        if let Some(t) = transform {
-            let prefix = context.targets.prefixes(t.1, prefixes::Feature::Transform);
-            dest.push(Property::Transform((t.0, prefix)));
-        }
-
-        if let Some(t) = translate {
-            dest.push(Property::Translate(t));
-        }
+        self.flush_transform(dest, context);
+        self.flush_translate(dest);
 
         if let Some(r) = rotate {
             dest.push(Property::Rotate(r));
@@ -1044,6 +1096,19 @@ impl TransformHandler {
 
         if let Some(s) = scale {
             dest.push(Property::Scale(s));
+        }
+    }
+
+    fn flush_transform(&mut self, dest: &mut DeclarationList, context: &PropertyHandlerContext) {
+        if let Some(t) = self.transform.take() {
+            let prefix = context.targets.prefixes(t.1, prefixes::Feature::Transform);
+            dest.push(Property::Transform((t.0, prefix)));
+        }
+    }
+
+    fn flush_translate(&mut self, dest: &mut DeclarationList) {
+        if let Some(t) = self.translate.take() {
+            dest.push(Property::Translate(t));
         }
     }
 }

@@ -819,11 +819,6 @@ impl From<ForTarballError> for crate::Error {
         }
     }
 }
-impl PartialEq<crate::Error> for ForTarballError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
-    }
-}
 impl bun_core::output::ErrName for ForTarballError {
     fn name(&self) -> &[u8] {
         <&'static str>::from(self).as_bytes()

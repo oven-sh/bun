@@ -8,15 +8,6 @@ pub(crate) enum ObjectPatternLike<'a> {
     ObjectAssignmentTarget(Expr<'a>, List<'a, Prop<'a>>),
 }
 
-impl Spanned for ObjectPatternLike<'_> {
-    fn span(&self) -> Span {
-        match self {
-            Self::ObjectPattern(pat, _) => pat.span(),
-            Self::ObjectAssignmentTarget(e, _) => e.span(),
-        }
-    }
-}
-
 impl<'a> ObjectPatternLike<'a> {
     fn node(&self) -> AstNodes<'a> {
         match self {

@@ -7,6 +7,8 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
+//!    A file that the scan could not read, parse or resolve is a start too:
+//!    what it imports is unknown, so a changed file can be behind it.
 //!
 //! Only those test entry points are returned.
 
@@ -16,11 +18,12 @@ use bstr::BStr;
 
 use bun_alloc::Arena;
 use bun_ast::Index;
+use bun_bundler::Graph::InputFileFlags;
 use bun_bundler::{BundleV2, Transpiler};
-use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
+use bun_collections::{DynamicBitSet, StringHashMap, StringSet, index_sort};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
-use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self, Global, Output, env_var, fmt as bun_fmt, pretty_error};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
 #[cfg(not(windows))]
@@ -190,12 +193,17 @@ pub(crate) fn filter<'a>(
     };
 
     let sources = bundle.graph.input_files.items_source();
+    let loaders = bundle.graph.input_files.items_loader();
+    let flags = bundle.graph.input_files.items_flags();
     let import_records = bundle.graph.ast.items_import_records();
 
     // Map absolute source path -> source index for paths that participate in
     // the graph. This lets us look up changed-file paths quickly.
     let mut path_to_index: StringHashMap<u32> = StringHashMap::new();
     path_to_index.reserve(sources.len());
+
+    // Source indexes of the files the scan could not read, parse or resolve.
+    let mut failed: Vec<u32> = Vec::new();
 
     // Reverse graph: for each source index, the list of source indexes that
     // import it. Built once, then used for a backward BFS from every changed
@@ -206,7 +214,8 @@ pub(crate) fn filter<'a>(
     // list ever needed to grow and failed.
     let mut graph_files: Vec<Box<[u8]>> = Vec::with_capacity(sources.len());
 
-    for (idx, source) in sources.iter().enumerate() {
+    for (idx, ((source, loader), file_flags)) in sources.iter().zip(loaders).zip(flags).enumerate()
+    {
         let index = Index::init(u32::try_from(idx).unwrap());
         if index.is_runtime() {
             continue;
@@ -226,6 +235,11 @@ pub(crate) fn filter<'a>(
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
+        // A stylesheet does not count: the runtime imports one as `{}` and
+        // reads neither it nor the files it imports.
+        if file_flags.contains(InputFileFlags::FAILED) && !loader.is_css() {
+            failed.push(u32::try_from(idx).unwrap());
+        }
     }
 
     for (idx, records) in import_records.iter().enumerate() {
@@ -242,9 +256,9 @@ pub(crate) fn filter<'a>(
         }
     }
 
-    // Map the original test_files slot -> bundler source index. An entry
-    // point that failed to resolve is skipped by enqueueEntryPoints, so
-    // match by absolute path via path_to_index rather than by position.
+    // Map the original test_files slot -> bundler source index. A row holds
+    // the resolved path, and entry points that resolve to one path share a
+    // row, so match by absolute path via path_to_index rather than by position.
     let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for (tf, out) in test_files.iter().zip(slot_to_source.iter_mut()) {
@@ -264,6 +278,21 @@ pub(crate) fn filter<'a>(
                 }
             }
         }
+    }
+
+    // What a failed file imports is unknown, so a changed file can be behind
+    // it. The BFS starts from it too.
+    if !failed.is_empty() {
+        let mut unchanged: Vec<&[u8]> = Vec::new();
+        for &idx in &failed {
+            if affected.is_set(idx as usize) {
+                continue;
+            }
+            affected.set(idx as usize);
+            queue.push(idx);
+            unchanged.push(sources[idx as usize].path.text);
+        }
+        print_failed_files(top_level_dir, bundle.transpiler.log(), unchanged);
     }
 
     while let Some(idx) = queue.pop() {
@@ -313,6 +342,49 @@ pub(crate) fn filter<'a>(
         total_tests: total,
         module_graph_files: graph_files,
     })
+}
+
+/// `print_failed_files` names this many files, then prints how many more there are.
+const MAX_FAILED_FILES_SHOWN: usize = 5;
+
+/// Name each file that counts as changed because the scan failed on it, with
+/// the first error that the scan logged for it.
+#[cold]
+fn print_failed_files(top_level_dir: &[u8], log: &bun_ast::Log, mut paths: Vec<&[u8]>) {
+    // Source indexes depend on the order in which the parse tasks complete.
+    index_sort::sort_slice_unstable(&mut paths);
+    paths.dedup();
+
+    for path in paths.iter().take(MAX_FAILED_FILES_SHOWN) {
+        let error = log.msgs.iter().find(|msg| {
+            msg.kind == bun_ast::Kind::Err
+                && msg
+                    .data
+                    .location
+                    .as_ref()
+                    .is_some_and(|location| &*location.file == *path)
+        });
+        let display_path = bun_fmt::quote(resolve_path::relative(top_level_dir, path));
+        if let Some(error) = error {
+            pretty_error!(
+                "<r><d>--changed:<r> could not scan {}, so it counts as changed: {}\n",
+                display_path,
+                BStr::new(&error.data.text)
+            );
+        } else {
+            pretty_error!(
+                "<r><d>--changed:<r> could not scan {}, so it counts as changed\n",
+                display_path
+            );
+        }
+    }
+
+    if paths.len() > MAX_FAILED_FILES_SHOWN {
+        pretty_error!(
+            "<r><d>--changed:<r> and {} more that could not be scanned\n",
+            paths.len() - MAX_FAILED_FILES_SHOWN
+        );
+    }
 }
 
 #[cfg(not(windows))]

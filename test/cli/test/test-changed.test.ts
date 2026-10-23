@@ -68,6 +68,30 @@ function ranFiles(stderr: string, names: string[]): string[] {
   return names.filter(n => stderr.includes(n + ":")).sort();
 }
 
+/** The `--changed:` lines of a run, in the order it printed them. */
+function changedLines(stderr: string): string[] {
+  return stderr.split(/\r?\n/).filter(line => line.startsWith("--changed:"));
+}
+
+/** The line for a file that the module graph scan could not read, parse or resolve. */
+function couldNotScan(file: string, error: string): string {
+  return `--changed: could not scan "${file}", so it counts as changed: ${error}`;
+}
+
+// price.test.ts -> price.ts -> rates.ts. "Cannot assign to import" is an error
+// only in a bundle: the module graph scan refuses price.ts, the runtime loads it.
+const refusedFixture = {
+  "package.json": JSON.stringify({ name: "changed-refused", type: "module" }),
+  "rates.ts": `export const rate = 1;\n`,
+  "price.ts": `import { rate } from "./rates";\nexport const price = rate * 2;\nexport function never() {\n  rate = 0;\n}\n`,
+  "price.test.ts": `import { test, expect } from "bun:test";\nimport { price } from "./price";\ntest("price", () => expect(price).toBe(2));\n`,
+  "other.ts": `export const other = 9;\n`,
+  "other.test.ts": `import { test, expect } from "bun:test";\nimport { other } from "./other";\ntest("other", () => expect(other).toBe(9));\n`,
+  "README.md": "hello\n",
+};
+const refusedNames = ["other.test.ts", "price.test.ts"];
+const priceRefused = couldNotScan("price.ts", `Cannot assign to import "rate"`);
+
 // The --watch test at the end is the slow one; everything else is independent
 // git repos so run them concurrently.
 describe.concurrent("bun test --changed", () => {
@@ -372,6 +396,285 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // What a file imports is unknown when the scan cannot parse it, so a changed
+  // file can be behind it: every test file that reaches it runs.
+  test.each([
+    {
+      // Plain `bun test` fails here: rates.ts is behind price.ts.
+      title: "an edit of a file that it imports",
+      edit: { "rates.ts": `export const rate = 2;\n` },
+      lines: [priceRefused, "--changed: 1 changed file, running 1/2 test files"],
+      ran: ["price.test.ts"],
+      exitCode: 1,
+    },
+    {
+      title: "an edit of a file that nothing imports",
+      edit: { "README.md": "more\n" },
+      lines: [priceRefused, "--changed: 1 changed file, running 1/2 test files"],
+      ran: ["price.test.ts"],
+      exitCode: 0,
+    },
+    {
+      title: "an edit of a file that another test imports",
+      edit: { "other.ts": `export const other = 9; // touched\n` },
+      lines: [priceRefused, "--changed: 1 changed file, running 2/2 test files"],
+      ran: ["other.test.ts", "price.test.ts"],
+      exitCode: 0,
+    },
+    {
+      // A changed file selects its importers already: there is nothing to say.
+      title: "an edit of the file itself",
+      edit: { "price.ts": refusedFixture["price.ts"] + "// touched\n" },
+      lines: ["--changed: 1 changed file, running 1/2 test files"],
+      ran: ["price.test.ts"],
+      exitCode: 0,
+    },
+    {
+      // A clean tree has no scan.
+      title: "no edit",
+      edit: {},
+      lines: ["--changed: no changed files, nothing to run"],
+      ran: [],
+      exitCode: 0,
+    },
+  ])("a file that the scan refuses counts as changed: $title", async ({ edit, lines, ran, exitCode }) => {
+    using dir = tempDir("test-changed-refused", refusedFixture);
+    initRepo(String(dir));
+    for (const [name, contents] of Object.entries(edit)) writeFileSync(join(String(dir), name), contents);
+
+    const result = await runTestChanged(String(dir));
+    expect({
+      lines: changedLines(result.stderr),
+      ran: ranFiles(result.stderr, refusedNames),
+      exitCode: result.exitCode,
+    }).toEqual({ lines, ran, exitCode });
+  });
+
+  // The bundler's parser refuses this top-level `return`, the runtime accepts it.
+  // The assertions hold whether the scan can parse price.js or not.
+  test("an edit behind a CommonJS file with a top-level return selects its test", async () => {
+    using dir = tempDir("test-changed-top-level-return", {
+      "rates.js": `exports.rate = 1;\n`,
+      "price.js": `exports.rate = require("./rates.js").rate;\nif (process.env.NO_EXTRAS) return;\nexports.extras = true;\n`,
+      "price.test.js": `import { test, expect } from "bun:test";\nimport price from "./price.js";\ntest("the rate", () => {\n  expect(price.rate).toBe(1);\n});\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.js"), `exports.rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ ran: ranFiles(stderr, ["price.test.js"]), exitCode }).toEqual({ ran: ["price.test.js"], exitCode: 1 });
+    expect(stderr).toMatch(/Expected: 1\r?\nReceived: 2/);
+  });
+
+  test("a file with a syntax error counts as changed, and the run reports the error", async () => {
+    using dir = tempDir("test-changed-syntax-error", {
+      ...refusedFixture,
+      "price.ts": `import { rate } from "./rates";\nexport const price = rate * 2;\nconst broken = ;\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "rates.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), ran: ranFiles(stderr, refusedNames), exitCode }).toEqual({
+      lines: [couldNotScan("price.ts", "Unexpected ;"), "--changed: 1 changed file, running 1/2 test files"],
+      ran: ["price.test.ts"],
+      exitCode: 1,
+    });
+    expect(stderr).toContain("error: Unexpected ;");
+  });
+
+  test("a file that only a preload plugin can load counts as changed", async () => {
+    using dir = tempDir("test-changed-plugin", {
+      "package.json": JSON.stringify({ name: "changed-plugin", type: "module" }),
+      "bunfig.toml": `[test]\npreload = ["./plugin.ts"]\n`,
+      "plugin.ts": `import { plugin } from "bun";
+plugin({
+  name: "tpl",
+  setup(build) {
+    build.onLoad({ filter: /\\.tpl\\.js$/ }, async args => {
+      const [, name, from] = /^IMPORT (\\w+) FROM (\\S+)/.exec(await Bun.file(args.path).text())!;
+      return { contents: "export { " + name + " } from " + JSON.stringify(from) + ";", loader: "js" };
+    });
+  },
+});
+`,
+      "rates.js": `export const rate = 1;\n`,
+      "price.tpl.js": `IMPORT rate FROM ./rates.js\n`,
+      "price.test.js": `import { test, expect } from "bun:test";\nimport { rate } from "./price.tpl.js";\ntest("rate", () => expect(rate).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.js"), `export const rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), ran: ranFiles(stderr, ["price.test.js"]), exitCode }).toEqual({
+      lines: [
+        couldNotScan("price.tpl.js", `Expected ";" but found "rate"`),
+        "--changed: 1 changed file, running 1/1 test file",
+      ],
+      ran: ["price.test.js"],
+      exitCode: 1,
+    });
+  });
+
+  test("a test file that the scan refuses counts as changed", async () => {
+    using dir = tempDir("test-changed-refused-test-file", {
+      "package.json": JSON.stringify({ name: "changed-refused-test-file", type: "module" }),
+      "rates.ts": `export const rate = 1;\n`,
+      "price.test.ts": `import { test, expect } from "bun:test";\nimport { rate } from "./rates";\ntest("rate", () => expect(rate).toBe(1));\nexport function never() {\n  rate = 0;\n}\n`,
+      "other.test.ts": `import { test, expect } from "bun:test";\ntest("other", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.ts"), `export const rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), ran: ranFiles(stderr, refusedNames), exitCode }).toEqual({
+      lines: [
+        couldNotScan("price.test.ts", `Cannot assign to import "rate"`),
+        "--changed: 1 changed file, running 1/2 test files",
+      ],
+      ran: ["price.test.ts"],
+      exitCode: 1,
+    });
+  });
+
+  test("a data file that does not parse counts as changed", async () => {
+    using dir = tempDir("test-changed-data-file", {
+      "package.json": JSON.stringify({ name: "changed-data-file", type: "module" }),
+      "data.json": `{ "rate": 1, oops }\n`,
+      "data.test.ts": `import { test, expect } from "bun:test";\ntest("data", () => expect(import("./data.json")).rejects.toThrow("JSON Parse error"));\n`,
+      "other.test.ts": `import { test, expect } from "bun:test";\ntest("other", () => expect(1).toBe(1));\n`,
+      "README.md": "hello\n",
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "README.md"), "more\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({
+      lines: changedLines(stderr),
+      ran: ranFiles(stderr, ["data.test.ts", "other.test.ts"]),
+      exitCode,
+    }).toEqual({
+      lines: [
+        couldNotScan("data.json", `Expected string but found "oops"`),
+        "--changed: 1 changed file, running 1/2 test files",
+      ],
+      ran: ["data.test.ts"],
+      exitCode: 0,
+    });
+  });
+
+  // The runtime imports a stylesheet as `{}`. It reads neither the stylesheet
+  // nor the files the stylesheet imports.
+  test("a stylesheet that the scan refuses does not count as changed", async () => {
+    using dir = tempDir("test-changed-stylesheet", {
+      "package.json": JSON.stringify({ name: "changed-stylesheet", type: "module" }),
+      "app.css": `.app { color: red; *zoom: 1 }\n`,
+      "app.ts": `import "./app.css";\nexport const app = 1;\n`,
+      "app.test.ts": `import { test, expect } from "bun:test";\nimport { app } from "./app";\ntest("app", () => expect(app).toBe(1));\n`,
+      "README.md": "hello\n",
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "README.md"), "more\n");
+
+    // The bundler's CSS parser refuses the stylesheet.
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./app.css", "--outdir", "out"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).toContain("error: Unexpected end of input");
+    expect(buildExitCode).toBe(1);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), ran: ranFiles(stderr, ["app.test.ts"]), exitCode }).toEqual({
+      lines: ["--changed: 1 changed file, but no test files are affected"],
+      ran: [],
+      exitCode: 0,
+    });
+  });
+
+  // MAX_FAILED_FILES_SHOWN in ChangedFilesFilter.rs is 5.
+  test.each([5, 6])("%d files that the scan refuses are named in path order, five at most", async count => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "changed-refused-many", type: "module" }),
+      "rates.ts": `export const rate = 1;\n`,
+      "README.md": "hello\n",
+    };
+    let imports = "";
+    for (let i = 1; i <= count; i++) {
+      files[`m${i}.ts`] =
+        `import { rate } from "./rates";\nexport const m${i} = rate;\nexport function never() {\n  rate = 0;\n}\n`;
+      imports += `import "./m${i}";\n`;
+    }
+    files["many.test.ts"] =
+      `import { test, expect } from "bun:test";\n${imports}test("many", () => expect(1).toBe(1));\n`;
+    using dir = tempDir("test-changed-refused-many", files);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "README.md"), "more\n");
+
+    const lines = [1, 2, 3, 4, 5].map(i => couldNotScan(`m${i}.ts`, `Cannot assign to import "rate"`));
+    if (count > 5) lines.push(`--changed: and ${count - 5} more that could not be scanned`);
+    lines.push("--changed: 1 changed file, running 1/1 test file");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), ran: ranFiles(stderr, ["many.test.ts"]), exitCode }).toEqual({
+      lines,
+      ran: ["many.test.ts"],
+      exitCode: 0,
+    });
+  });
+
+  // The scan holds price.js two times: for the test (target bun) and for the
+  // page (target browser). Both rows are failed rows.
+  test("a file that the scan refuses for two targets is named one time", async () => {
+    using dir = tempDir("test-changed-refused-two-targets", {
+      "package.json": JSON.stringify({ name: "changed-refused-two-targets", type: "module" }),
+      "rates.js": `export const rate = 1;\n`,
+      "price.js": `import { rate } from "./rates.js";\nexport const price = rate * 2;\nexport function never() {\n  rate = 0;\n}\n`,
+      "page.html": `<!doctype html><html><body><script type="module" src="./price.js"></script></body></html>\n`,
+      "price.test.js": `import { test, expect } from "bun:test";\nimport page from "./page.html";\nimport { price } from "./price.js";\ntest("price", () => {\n  expect(page).toBeDefined();\n  expect(price).toBe(2);\n});\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.js"), `export const rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), ran: ranFiles(stderr, ["price.test.js"]), exitCode }).toEqual({
+      lines: [
+        couldNotScan("price.js", `Cannot assign to import "rate"`),
+        "--changed: 1 changed file, running 1/1 test file",
+      ],
+      ran: ["price.test.js"],
+      exitCode: 1,
+    });
+  });
+
+  // The scanner lists `a\b.test.js` as `a/b.test.js`, a path that does not
+  // exist. The module graph scan cannot resolve that entry point, and the run
+  // cannot load it: plain `bun test` exits with code 1.
+  test.skipIf(isWindows)("a test file that the scan cannot resolve counts as changed", async () => {
+    using dir = tempDir("test-changed-unresolved-entry", {
+      "package.json": JSON.stringify({ name: "changed-unresolved-entry", type: "module" }),
+      "rates.js": `export const rate = 1;\n`,
+      "a\\b.test.js": `import { test, expect } from "bun:test";\nimport { rate } from "./rates.js";\ntest("odd", () => expect(rate).toBe(1));\n`,
+      "plain.test.js": `import { test, expect } from "bun:test";\nimport { rate } from "./rates.js";\ntest("plain", () => expect(rate).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "rates.js"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), exitCode }).toEqual({
+      lines: [
+        `--changed: could not scan "a/b.test.js", so it counts as changed`,
+        "--changed: 1 changed file, running 2/2 test files",
+      ],
+      exitCode: 1,
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.
   test("tsconfig paths alias is followed when computing the module graph", async () => {
@@ -572,6 +875,53 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     const triggerPath = JSON.parse(match![1]);
     expect(typeof triggerPath).toBe("string");
     expect(basename(triggerPath)).toMatch(/^\.bun-test-changed-[0-9a-f]{32}\.trigger$/);
+
+    proc.kill();
+    reader.releaseLock();
+  }, 60_000);
+
+  // The scan cannot list what price.ts imports, so it cannot watch rates.ts.
+  // The first run loads price.test.ts, and the module loader watches rates.ts.
+  test("runs the tests that reach a file the scan refuses, then reruns them when a file behind it changes", async () => {
+    using dir = tempDir("test-changed-watch-refused", refusedFixture);
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    // Sync on the end-of-run summary ("Ran N tests across M files.").
+    await waitFor(" across ");
+    expect({ lines: changedLines(buf), ran: ranFiles(buf, refusedNames) }).toEqual({
+      lines: [priceRefused, "--changed: 0 changed files, running 1/2 test files"],
+      ran: ["price.test.ts"],
+    });
+
+    const before = buf.length;
+    appendFileSync(join(String(dir), "rates.ts"), "// touched\n");
+    await waitFor(" across ", before);
+    const after = buf.slice(before);
+    expect({ lines: changedLines(after), ran: ranFiles(after, refusedNames) }).toEqual({
+      lines: [priceRefused, "--changed: 1 changed file, running 1/2 test files"],
+      ran: ["price.test.ts"],
+    });
 
     proc.kill();
     reader.releaseLock();

@@ -132,6 +132,11 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// Set by `scan_module_graph_from_cli`: no code is printed, the caller reads the graph.
+    /// A file that does not parse, or an entry point that does not resolve, is then a row
+    /// with `InputFileFlags::FAILED`, not a module with zero imports.
+    pub(crate) scan_only: bool,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -3314,6 +3319,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                scan_only: false,
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -3603,7 +3609,12 @@ pub mod bv2_impl {
                 // no plugins were matched
                 let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
                     Ok(r) => r,
-                    Err(_) => continue,
+                    Err(_) => {
+                        if self.scan_only {
+                            self.append_failed_entry_point(entry_point)?;
+                        }
+                        continue;
+                    }
                 };
 
                 let target = 'brk: {
@@ -3622,6 +3633,26 @@ pub mod bv2_impl {
                 };
                 let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             }
+            Ok(())
+        }
+
+        /// A scan keeps a row for an entry point that does not resolve, under the path the
+        /// caller gave. The row has no parse task.
+        #[cold]
+        fn append_failed_entry_point(&mut self, entry_point: &[u8]) -> Result<(), Error> {
+            let source_index = Index::source(self.graph.input_files.len() as u32);
+            let path = Fs::Path::init(self.arena().alloc_slice_copy(entry_point));
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            self.graph.input_files.append(crate::Graph::InputFile {
+                source: bun_ast::Source {
+                    path: path_as_static(&path),
+                    contents: std::borrow::Cow::Borrowed(&b""[..]),
+                    index: bun_ast::Index(source_index.get()),
+                    ..Default::default()
+                },
+                flags: crate::Graph::InputFileFlags::FAILED,
+                ..Default::default()
+            })?;
             Ok(())
         }
 
@@ -4581,6 +4612,10 @@ pub mod bv2_impl {
         /// used by `bun test --changed` to walk import records and compute which
         /// test entry points transitively depend on a given set of source files.
         ///
+        /// A file that could not be read or parsed, and an entry point that did
+        /// not resolve, is a row with `InputFileFlags::FAILED`: what it imports
+        /// is unknown. The errors are in the transpiler's log.
+        ///
         /// The caller owns the returned BundleV2. Dupe anything needed out of
         /// the graph and then call `deinit_without_freeing_arena()` — the
         /// AST columns (`Vec<Symbol>` / `Vec<Part>` / …) live on
@@ -4596,6 +4631,7 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            this.scan_only = true;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
@@ -8084,6 +8120,9 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Err(err) => {
+                    this.graph.input_files.items_flags_mut()[err.source_index.get() as usize]
+                        .insert(crate::Graph::InputFileFlags::FAILED);
+
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
                             // Copy out the `'static` path slice so the `input_files`

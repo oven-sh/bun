@@ -2874,9 +2874,12 @@ pub mod parse_worker {
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
                 Ok(ast) => {
-                    // When using HMR, always flag asts with errors as parse failures.
-                    // Not done outside of the dev server out of fear of breaking existing code.
-                    if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
+                    // The dev server and a graph scan read the graph of a bundle that has errors:
+                    // they flag an AST with errors as a parse failure.
+                    // Not done for other bundles out of fear of breaking existing code.
+                    if ast.log.has_errors()
+                        && (ctx.scan_only || ctx.transpiler().options.has_dev_server())
+                    {
                         break 'value ResultValue::Err(ResultError {
                             err: crate::Error::SyntaxError,
                             step: Step::Parse,

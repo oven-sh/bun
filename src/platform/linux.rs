@@ -76,7 +76,7 @@ unsafe fn raw_syscall6(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn sys_epoll_pwait2(
+extern "C" fn sys_epoll_pwait2(
     epfd: i32,
     events: *mut libc::epoll_event,
     maxevents: i32,

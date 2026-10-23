@@ -2,25 +2,22 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{String as BunString, ZigString};
 
-use crate::jsc::JSGlobalObject;
-
-pub struct EVP {
+pub(crate) struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
     // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
-    pub md: *const boringssl::EVP_MD,
-    pub algorithm: Algorithm,
+    md: *const boringssl::EVP_MD,
+    algorithm: Algorithm,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
-// bun_str live below as an extension trait / free fns on the re-exported type.
+// enum here; the higher-tier extras (`lookup`, `tag_cstr`) live below as an
+// extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_sha_hmac::evp::Algorithm;
+pub(crate) use bun_sha_hmac::evp::Algorithm;
 
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
@@ -28,10 +25,6 @@ pub(crate) trait AlgorithmExt: Copy + Sized {
     /// NUL-terminated tag name. Needed for `EVP_get_digestbyname` which reads
     /// a C string.
     fn tag_cstr(self) -> &'static CStr;
-
-    /// `bun.String` view of every algorithm tag name; returned as a flat slice
-    /// since the enum is foreign and cannot derive `enum_map::Enum`.
-    fn names() -> &'static [BunString];
 }
 
 impl AlgorithmExt for Algorithm {
@@ -61,20 +54,11 @@ impl AlgorithmExt for Algorithm {
             _ => unreachable!("unhandled EVP algorithm variant"),
         }
     }
-
-    fn names() -> &'static [BunString] {
-        static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
-        NAMES
-            .get_or_init(|| {
-                core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes()))
-            })
-            .as_slice()
-    }
 }
 
 /// Stable iteration order over every `Algorithm` variant — the lowered enum is
 /// foreign + `#[non_exhaustive]`, so we can't derive an iterator for it.
-const ALL: [Algorithm; 19] = [
+pub(crate) const ALL: [Algorithm; 19] = [
     Algorithm::Blake2b256,
     Algorithm::Blake2b512,
     Algorithm::Blake2s256,
@@ -162,12 +146,14 @@ pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
+    pub(crate) fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+
     /// # Safety
     /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    // Forwards `md`/`engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn init(
+    pub(crate) fn init(
         algorithm: Algorithm,
         md: *const boringssl::EVP_MD,
         engine: *mut boringssl::ENGINE,
@@ -186,9 +172,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
+    pub(crate) fn reset(&mut self, engine: *mut boringssl::ENGINE) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
         // static singleton.
@@ -200,9 +184,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn hash(
+    pub(crate) fn hash(
         &mut self,
         engine: *mut boringssl::ENGINE,
         input: &[u8],
@@ -230,7 +212,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn r#final<'a>(
+    pub(crate) fn r#final<'a>(
         &mut self,
         engine: *mut boringssl::ENGINE,
         output: &'a mut [u8],
@@ -250,7 +232,7 @@ impl EVP {
         &mut output[..outsize as usize]
     }
 
-    pub fn update(&mut self, input: &[u8]) {
+    pub(crate) fn update(&mut self, input: &[u8]) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx is
         // initialized; input.as_ptr() is valid for input.len() bytes.
         unsafe {
@@ -260,7 +242,7 @@ impl EVP {
         }
     }
 
-    pub fn size(&self) -> u16 {
+    pub(crate) fn size(&self) -> u16 {
         // SAFETY: FFI into BoringSSL; self.ctx was initialized in init() and is valid for
         // the lifetime of EVP.
         unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
@@ -268,7 +250,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
+    pub(crate) fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
         // SAFETY: self.md is a static singleton; caller upholds `engine`.
         let mut new = EVP::init(self.algorithm, self.md, engine);
@@ -282,7 +264,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
+    pub(crate) fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
         if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
@@ -304,23 +286,6 @@ impl EVP {
         }
 
         None
-    }
-
-    pub fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
-        let name_str = name.to_slice();
-        // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
-        // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
-        // struct, so cast to the real bindgen type for the FFI call.
-        // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
-        // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-        let engine = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .boring_engine()
-            .cast::<boringssl::ENGINE>();
-        // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
-        Self::by_name_and_engine(engine, name_str.slice())
     }
 }
 

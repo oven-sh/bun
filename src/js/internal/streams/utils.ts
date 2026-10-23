@@ -32,25 +32,21 @@ const kConstructed = 1 << 8;
 
 function isReadableNodeStream(obj, strict = false) {
   return !!(
-    (
-      obj &&
-      typeof obj.pipe === "function" &&
-      typeof obj.on === "function" &&
-      (!strict || (typeof obj.pause === "function" && typeof obj.resume === "function")) &&
-      (!obj._writableState || obj._readableState?.readable !== false) && // Duplex
-      (!obj._writableState || obj._readableState)
-    ) // Writable has .pipe.
+    obj &&
+    typeof obj.pipe === "function" &&
+    typeof obj.on === "function" &&
+    (!strict || (typeof obj.pause === "function" && typeof obj.resume === "function")) &&
+    (!obj._writableState || obj._readableState?.readable !== false) && // Duplex
+    (!obj._writableState || obj._readableState) // Writable has .pipe.
   );
 }
 
 function isWritableNodeStream(obj) {
   return !!(
-    (
-      obj &&
-      typeof obj.write === "function" &&
-      typeof obj.on === "function" &&
-      (!obj._readableState || obj._writableState?.writable !== false)
-    ) // Duplex
+    obj &&
+    typeof obj.write === "function" &&
+    typeof obj.on === "function" &&
+    (!obj._readableState || obj._writableState?.writable !== false) // Duplex
   );
 }
 
@@ -90,7 +86,7 @@ function isWebStream(obj) {
   return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
 }
 
-function isIterable(obj, isAsync) {
+function isIterable(obj, isAsync?) {
   if (obj == null) return false;
   if (isAsync === true) return typeof obj[SymbolAsyncIterator] === "function";
   if (isAsync === false) return typeof obj[SymbolIterator] === "function";
@@ -123,16 +119,6 @@ function isWritableFinished(stream, strict) {
   if (wState?.errored) return false;
   if (typeof wState?.finished !== "boolean") return null;
   return !!(wState.finished || (strict === false && wState.ended === true && wState.length === 0));
-}
-
-// Have been push(null):d.
-function isReadableEnded(stream) {
-  if (!isReadableNodeStream(stream)) return null;
-  if (stream.readableEnded === true) return true;
-  const rState = stream._readableState;
-  if (!rState || rState.errored) return false;
-  if (typeof rState?.ended !== "boolean") return null;
-  return rState.ended;
 }
 
 // Have emitted 'end'.
@@ -282,21 +268,16 @@ export default {
   isDestroyed,
   kIsDestroyed,
   isDisturbed,
-  kIsDisturbed,
   isErrored,
-  kIsErrored,
   isReadable,
-  kIsReadable,
   kIsClosedPromise,
   kControllerErrorFunction,
-  kIsWritable,
   isClosed,
   isDuplexNodeStream,
   isFinished,
   isIterable,
   isReadableNodeStream,
   isReadableStream,
-  isReadableEnded,
   isReadableFinished,
   isReadableErrored,
   isNodeStream,
@@ -308,7 +289,6 @@ export default {
   isWritableFinished,
   isWritableErrored,
   isServerRequest,
-  isServerResponse,
   willEmitClose,
   isTransformStream,
   kState,
@@ -322,4 +302,4 @@ export default {
   kCloseEmitted,
   kErrored,
   kConstructed,
-};
+} as const;

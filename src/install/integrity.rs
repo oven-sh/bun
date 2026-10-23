@@ -11,7 +11,7 @@ const SHA384_DIGEST_LEN: usize = 48;
 const SHA512_DIGEST_LEN: usize = 64;
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Integrity {
     pub tag: Tag,
     /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
@@ -33,7 +33,7 @@ impl Default for Integrity {
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
-pub(crate) const DIGEST_BUF_LEN: usize = {
+const DIGEST_BUF_LEN: usize = {
     let mut m = SHA1_DIGEST_LEN;
     if SHA512_DIGEST_LEN > m {
         m = SHA512_DIGEST_LEN;
@@ -48,7 +48,10 @@ pub(crate) const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
-    pub fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
+    /// `sha512-`, 86 base64 digits, `==`.
+    pub(crate) const MAX_SRI_LEN: usize = 7 + 86 + 2;
+
+    pub(crate) fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
         if buf.is_empty() {
             return Ok(Integrity {
                 tag: Tag::UNKNOWN,
@@ -70,13 +73,6 @@ impl Integrity {
         let mut out_i: usize = 0;
         let mut i: usize = 0;
 
-        // initializer should zero it out
-        if cfg!(debug_assertions) {
-            for c in integrity.value.iter() {
-                debug_assert!(*c == 0);
-            }
-        }
-
         while i < end {
             // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
             // narrows the original over-broad b'g'..=b'z' acceptance.
@@ -89,7 +85,7 @@ impl Integrity {
         Ok(integrity)
     }
 
-    pub fn parse(buf: &[u8]) -> Integrity {
+    pub(crate) fn parse(buf: &[u8]) -> Integrity {
         let mut strongest = Integrity::default();
         for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
             let parsed = Self::parse_entry(entry);
@@ -167,12 +163,12 @@ impl Integrity {
         Integrity { value: out, tag }
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.value[0..self.tag.digest_len()]
     }
 
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
-    pub fn for_bytes(bytes: &[u8]) -> Integrity {
+    pub(crate) fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         // SAFETY: engine is null (default).
@@ -191,12 +187,17 @@ impl Integrity {
         }
     }
 
+    /// Formats it the way bun.lock does. An extracted `file:` or URL tarball has it in `.bun-tag`.
+    pub(crate) fn sri<'a>(&self, buf: &'a mut [u8; Self::MAX_SRI_LEN]) -> &'a [u8] {
+        bun_core::fmt::buf_print_infallible(buf, format_args!("{self}"))
+    }
+
     #[inline]
     pub fn verify(&self, bytes: &[u8]) -> bool {
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 
-    pub fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
+    pub(crate) fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
         let mut digest: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
         match tag {
@@ -243,13 +244,11 @@ impl Integrity {
 
 impl fmt::Display for Integrity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.tag {
-            Tag::SHA1 => f.write_str("sha1-")?,
-            Tag::SHA256 => f.write_str("sha256-")?,
-            Tag::SHA384 => f.write_str("sha384-")?,
-            Tag::SHA512 => f.write_str("sha512-")?,
-            _ => return Ok(()),
-        }
+        let Some(algorithm) = self.tag.name() else {
+            return Ok(());
+        };
+        f.write_str(algorithm)?;
+        f.write_str("-")?;
 
         let mut base64_buf = [0u8; 512];
         let bytes = self.slice();
@@ -278,22 +277,34 @@ pub struct Tag(pub u8);
 unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
-    pub const UNKNOWN: Tag = Tag(0);
+    pub(crate) const UNKNOWN: Tag = Tag(0);
     /// "shasum" in the metadata
-    pub const SHA1: Tag = Tag(1);
+    pub(crate) const SHA1: Tag = Tag(1);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
     pub const SHA256: Tag = Tag(2);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub const SHA384: Tag = Tag(3);
+    pub(crate) const SHA384: Tag = Tag(3);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub const SHA512: Tag = Tag(4);
+    pub(crate) const SHA512: Tag = Tag(4);
 
     #[inline]
     pub fn is_supported(self) -> bool {
         self.0 >= Tag::SHA1.0 && self.0 <= Tag::SHA512.0
     }
 
-    pub fn parse(buf: &[u8]) -> (Tag, usize) {
+    /// Returns the algorithm part of the SRI string (`sha512` in `sha512-...`), or `None` for
+    /// `UNKNOWN`.
+    pub(crate) fn name(self) -> Option<&'static str> {
+        Some(match self {
+            Tag::SHA1 => "sha1",
+            Tag::SHA256 => "sha256",
+            Tag::SHA384 => "sha384",
+            Tag::SHA512 => "sha512",
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn parse(buf: &[u8]) -> (Tag, usize) {
         let Some(i) = strings::index_of_char(&buf[0..buf.len().min(7)], b'-') else {
             return (Tag::UNKNOWN, 0);
         };
@@ -313,7 +324,7 @@ impl Tag {
     }
 
     #[inline]
-    pub fn digest_len(self) -> usize {
+    pub(crate) fn digest_len(self) -> usize {
         match self {
             Tag::SHA1 => SHA1_DIGEST_LEN,
             Tag::SHA512 => SHA512_DIGEST_LEN,

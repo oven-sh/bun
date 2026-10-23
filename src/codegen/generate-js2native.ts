@@ -44,40 +44,36 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // and the Rust crate path (rustTarget). Adding a new $rust() call site
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
-  "bun.rs": "bun.rs",
+  "bake/config/plugins.rs": "runtime/bake/config/plugins.rs",
+  "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
-  "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
-  "Listener.rs": "runtime/socket/Listener.rs",
+  "FrameworkRouter.rs": "runtime/bake/router/js.rs",
+  "JSBundler.rs": "runtime/api/JSBundler.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
+  "SemverObject.rs": "semver_jsc/SemverObject.rs",
   "Stat.rs": "runtime/node/Stat.rs",
-  "bindgen_test.rs": "jsc/bindgen_test.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
-  "dependency.rs": "install/dependency.rs",
+  "BytecodeOrderRecorder.rs": "jsc/BytecodeOrderRecorder.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",
-  "h2_frame_parser.rs": "runtime/api/bun/h2_frame_parser.rs",
   "hosted_git_info.rs": "install/hosted_git_info.rs",
   "http/H2Client.rs": "http/H2Client.rs",
   "http/H3Client.rs": "http/H3Client.rs",
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
-  "ipc.rs": "jsc/ipc.rs",
-  "jest.rs": "runtime/test_runner/jest.rs",
+  "memory_pressure.rs": "runtime/node/memory_pressure.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
-  "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
   "node_cluster_binding.rs": "runtime/node/node_cluster_binding.rs",
   "node_crypto_binding.rs": "runtime/node/node_crypto_binding.rs",
   "node_fs_binding.rs": "runtime/node/node_fs_binding.rs",
   "node_http_binding.rs": "runtime/node/node_http_binding.rs",
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
-  "node_os.rs": "runtime/node/node_os.rs",
   "node_quic_binding.rs": "runtime/node/node_quic_binding.rs",
-  "node_util_binding.rs": "runtime/node/node_util_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
   "npm.rs": "install/npm.rs",
   "pack_command.rs": "runtime/cli/pack_command.rs",
@@ -85,17 +81,16 @@ const rustIdentifierPaths: Record<string, string> = {
   "patch.rs": "patch/patch.rs",
   "postgres.rs": "sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
-  "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
+  "runtime/webcore/fetch.rs": "runtime/webcore/fetch.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
   "subprocess.rs": "runtime/api/bun/subprocess.rs",
   "sys.rs": "sys/sys.rs",
-  "sys/Error.rs": "sys/Error.rs",
-  "udp_socket.rs": "runtime/socket/udp_socket.rs",
   "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
 };
@@ -124,7 +119,7 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
 
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
-    const fnName = call_type === "bind" ? "bindgenFn" : call_type;
+    const fnName = call_type === "bind" ? "bindgen" : call_type;
     throw new Error(`Could not find file ${filename} in $${fnName} call`);
   }
 
@@ -190,10 +185,6 @@ function normalizeSymbolPathPrefix(input: string) {
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
 }
 
-function cppPointer(call: NativeCall) {
-  return `&${symbol(call)}`;
-}
-
 export function getJS2NativeCPP() {
   const files = [
     ...new Set(nativeCalls.filter(x => x.filename.endsWith(".cpp")).map(x => x.filename.replace(/.cpp$/, ".h"))),
@@ -226,15 +217,13 @@ export function getJS2NativeCPP() {
             })});`,
           ),
         "") || "",
-        `static ALWAYS_INLINE JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
-        `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
-          x.display_name,
-        )}_s, ${symbol({
+        `static JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${symbol({
           type: x.type,
           symbol: x.symbol_target,
 
           filename: x.filename,
-        })}, JSC::ImplementationVisibility::Public);`,
+        })});`,
         `}`,
       ].join("\n");
     }
@@ -250,6 +239,10 @@ export function getJS2NativeCPP() {
     "using namespace Bun;",
     "using namespace JSC;",
     "using namespace WebCore;" + "\n",
+    // One out-of-line JSFunction::create for all the `new-function` wrappers below.
+    `static NEVER_INLINE JSC::JSValue js2nativeNewFunction(Zig::GlobalObject* globalObject, unsigned length, ASCIILiteral name, JSC::NativeFunction function) {`,
+    `  return JSC::JSFunction::create(globalObject->vm(), globalObject, length, name, function, JSC::ImplementationVisibility::Public);`,
+    `}` + "\n",
     ...nativeCallStrings,
     ...wrapperCallStrings,
     ...nativeCalls
@@ -297,8 +290,11 @@ export function getJS2NativeRust() {
   // `#[unsafe(export_name = "JS2Rust__…")]`) — skip emitting a thunk for these
   // so the linker doesn't see two definitions.
   const handExported = new Set<string>([
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");
@@ -309,8 +305,7 @@ export function getJS2NativeRust() {
       .replace(/[.\-]/g, "_")
       .toLowerCase();
 
-  // `src/runtime/node/node_util_binding.rs` + `parseEnv`
-  //   → `crate::node::node_util_binding::parse_env`
+  // `src/runtime/node/util/parse_args.rs` + `parseArgs` → `crate::node::util::parse_args::parse_args`
   // `src/ini/ini.rs` + `IniTestingAPIs.parse` (outside bun_runtime)
   //   → `crate::dispatch::js2native::ini_ini_testing_apis_parse` (single
   //   landing pad; still a compile error if missing).
@@ -344,6 +339,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $rust(${path.basename(call.filename)}, ${call.symbol})`,
       `bun_jsc::jsc_host_abi! {`,
+      `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject) -> JSValue {`,
       `        host_fn::host_fn_lazy(global, |g| ${target}(g))`,
@@ -365,6 +361,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $rust(${path.basename(x.filename)}, ${x.symbol_target})`,
       `bun_jsc::jsc_host_abi! {`,
+      `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {`,
       `        host_fn::host_fn_static(global, callframe, |g, cf| ${target}(g, cf))`,
@@ -383,8 +380,9 @@ export function getJS2NativeRust() {
     `// function is a compile error in \`cargo check -p bun_runtime\`.`,
     `//`,
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
-    `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
+    `// Windows-x64 (\`extern "sysv64"\`).`,
     ``,
+    `#[allow(dead_code, unreachable_pub, unused)]`,
     `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,
     `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
     ``,
@@ -396,11 +394,13 @@ export function getJS2NativeRust() {
 
 export function getJS2NativeDTS() {
   return [
-    "declare type NativeFilenameCPP = " +
+    "declare type NativeBasenameCPP = " +
       sourceFiles
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
+    // resolveNativeFileId matches any path suffix of a source file, e.g. "streams/BunStreamConsumers.cpp".
+    "declare type NativeFilenameCPP = NativeBasenameCPP | `${string}/${NativeBasenameCPP}`",
     "declare type NativeFilenameRust = " +
       Object.keys(rustIdentifierPaths)
         .map(x => JSON.stringify(x))

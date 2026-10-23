@@ -36,8 +36,8 @@ static const JSC::HashTableValue JSDiffieHellmanPrototypeTableValues[] = {
 void JSDiffieHellmanPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDiffieHellmanPrototype::info(), JSDiffieHellmanPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSDiffieHellmanPrototype::info(), JSDiffieHellmanPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // Implementation of prototype methods

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("--user-agent flag", () => {
   test("custom user agent is sent in HTTP requests", async () => {
@@ -26,7 +26,7 @@ try {
 }
 `;
 
-    const dir = tempDirWithFiles("user-agent-test", {
+    await using dir = tempDir("user-agent-test", {
       "test.js": testScript,
     });
 
@@ -63,7 +63,7 @@ try {
 }
 `;
 
-    const dir = tempDirWithFiles("user-agent-default-test", {
+    await using dir = tempDir("user-agent-default-test", {
       "test.js": testScript,
     });
 
@@ -75,5 +75,43 @@ try {
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
+  });
+
+  // The value is written into `User-Agent: <value>` as it is, so a CR or LF in it ends that header line and what
+  // follows goes out as more header lines.
+  describe.concurrent("a value that holds a CR or LF is rejected", () => {
+    async function fetchWith(flags: string[], env: Record<string, string> = {}) {
+      const seen: (string | null)[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          seen.push(req.headers.get("x-injected"));
+          return new Response("ok");
+        },
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, "-e", `await fetch("${server.url}")`],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { seen, stdout, stderr, exitCode };
+    }
+
+    test.each<[string, string[], Record<string, string>]>([
+      ["--user-agent with CRLF", ["--user-agent", "abc\r\nX-Injected: 1"], {}],
+      ["--user-agent with a bare LF", ["--user-agent", "abc\ndef"], {}],
+      ["--user-agent with a bare CR", ["--user-agent", "abc\rdef"], {}],
+      ["--user-agent from BUN_OPTIONS", [], { BUN_OPTIONS: "--user-agent='abc\r\nX-Injected: 1'" }],
+    ])("%s", async (_, flags, env) => {
+      expect(await fetchWith(flags, env)).toEqual({
+        seen: [],
+        stdout: "",
+        stderr: "error: Invalid value for --user-agent: must not contain a newline or NUL byte\n",
+        exitCode: 1,
+      });
+    });
   });
 });

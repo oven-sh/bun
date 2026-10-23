@@ -1,9 +1,10 @@
 //! This struct is used by bun.exe to encode `.bunx` files, to be consumed
-//! by the shim 'bun_shim_impl.exe'. The latter exe does not include this code.
+//! by the shim 'bun-shim-impl.exe'. The latter exe does not include this code.
 //!
 //! The format is as follows:
 //!
 //! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
+//! - bin_path starts at the parent of the shim's directory, unless `Flags::is_absolute_target`
 //!
 //! if shebang:
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
@@ -22,28 +23,29 @@
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
-// The encoding is an open-ended 13-bit value, so model it as a transparent u16
+// The encoding is an open-ended 12-bit value, so model it as a transparent u16
 // newtype rather than an exhaustive enum.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct VersionFlag(u16);
 
 impl VersionFlag {
-    pub(crate) const CURRENT: VersionFlag = VersionFlag::V5;
+    const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    pub(crate) const V5: VersionFlag = VersionFlag(5478);
+    /// `2739 << 4` == `5478 << 3`: see the assertions below `Flags`.
+    const V5: VersionFlag = VersionFlag(2739);
 
-    /// Maximum 13-bit value.
-    const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
+    /// Maximum 12-bit value.
+    const MAX: VersionFlag = VersionFlag((1u16 << 12) - 1);
 
     #[inline]
-    pub const fn bits(self) -> u16 {
+    pub(crate) const fn bits(self) -> u16 {
         self.0
     }
 }
 
-// Packed u16 bitfield (three bools + a 13-bit version tag): `#[repr(transparent)]`
+// Packed u16 bitfield (four bools + a 12-bit version tag): `#[repr(transparent)]`
 // newtype with manual shift accessors (LSB first).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -51,61 +53,72 @@ pub struct Flags(u16);
 
 impl Flags {
     #[inline]
-    pub const fn new(
+    pub(crate) const fn new(
         is_node_or_bun: bool,
         is_node: bool,
         has_shebang: bool,
+        is_absolute_target: bool,
         version_tag: VersionFlag,
     ) -> Flags {
         Flags(
             (is_node_or_bun as u16)
                 | ((is_node as u16) << 1)
                 | ((has_shebang as u16) << 2)
-                | (version_tag.0 << 3),
+                | ((is_absolute_target as u16) << 3)
+                | (version_tag.0 << 4),
         )
     }
 
     #[inline]
-    pub const fn bits(self) -> u16 {
+    pub(crate) const fn bits(self) -> u16 {
         self.0
     }
 
     #[inline]
-    pub const fn from_bits(b: u16) -> Flags {
+    pub(crate) const fn from_bits(b: u16) -> Flags {
         Flags(b)
     }
 
     // this is set if the shebang content is "node" or "bun"
     #[inline]
-    pub const fn is_node_or_bun(self) -> bool {
+    pub(crate) const fn is_node_or_bun(self) -> bool {
         (self.0 & 0b001) != 0
     }
     // this is for validation that the shim is not corrupt and to detect offset memory reads
     #[inline]
-    pub const fn is_node(self) -> bool {
+    pub(crate) const fn is_node(self) -> bool {
         (self.0 & 0b010) != 0
     }
     // indicates if a shebang is present
     #[inline]
-    pub const fn has_shebang(self) -> bool {
+    pub(crate) const fn has_shebang(self) -> bool {
         (self.0 & 0b100) != 0
     }
     #[inline]
-    pub const fn version_tag(self) -> VersionFlag {
-        VersionFlag(self.0 >> 3)
+    pub(crate) const fn is_absolute_target(self) -> bool {
+        (self.0 & 0b1000) != 0
+    }
+    #[inline]
+    pub(crate) const fn version_tag(self) -> VersionFlag {
+        VersionFlag(self.0 >> 4)
     }
 
     #[inline]
-    pub fn set_is_node(&mut self, v: bool) {
+    pub(crate) fn set_is_node(&mut self, v: bool) {
         self.0 = (self.0 & !0b010) | ((v as u16) << 1);
     }
 
-    pub fn is_valid(self) -> bool {
-        let mask: u16 = Flags::new(false, false, false, VersionFlag::MAX).bits();
-        let compare_to: u16 = Flags::new(false, false, false, VersionFlag::CURRENT).bits();
+    pub(crate) fn is_valid(self) -> bool {
+        let mask: u16 = Flags::new(false, false, false, false, VersionFlag::MAX).bits();
+        let compare_to: u16 = Flags::new(false, false, false, false, VersionFlag::CURRENT).bits();
         (self.0 & mask) == compare_to
     }
 }
+
+// Older launchers check `bits >> 3 == 5478`, so they accept a relative shim but not an absolute
+// one.
+const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
+const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Host-side encoding / embedding. None of this is compiled into the
@@ -131,15 +144,12 @@ mod host {
         a == b
     }
 
-    // `@embedFile("bun_shim_impl.exe")` — the shim PE is built as a separate
-    // artifact by the Windows build before this crate is compiled, then embedded
-    // here. It is only ever consumed from `#[cfg(windows)]` code paths
-    // (`bin::Linker::create_windows_shim`), so on non-Windows hosts there is no
-    // artifact to embed and the data is never read.
-    #[cfg(windows)]
-    pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
-    #[cfg(not(windows))]
-    pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
+    // `@embedFile` of the shim — the shim PE is built as a separate
+    // artifact by the Windows build before this crate is compiled (into the
+    // codegen directory, like the other generated files crates include), then
+    // embedded here.
+    pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] =
+        include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-shim-impl.exe"));
 
     /// Guard against the placeholder/empty artifact slipping through: a 0-byte
     /// embed would silently make `bun install` write 0-byte `.exe` shims into
@@ -158,10 +168,10 @@ mod host {
     /// fail the *process* fast instead.
     #[inline]
     #[track_caller]
-    pub fn embedded_executable_data() -> &'static [u8] {
+    pub(crate) fn embedded_executable_data() -> &'static [u8] {
         if EMBEDDED_EXECUTABLE_DATA.is_empty() {
             bun_core::pretty_errorln!(
-                "<r><red>error<r>: bun_shim_impl.exe is empty — the Windows shim \
+                "<r><red>error<r>: bun-shim-impl.exe is empty — the Windows shim \
              PE must be built before this crate is compiled (the build is \
              missing the windows-shim step)",
             );
@@ -196,8 +206,9 @@ mod host {
             e if e == w!(".mts") => Some(RunWithBun),
             e if e == w!(".tsx") => Some(RunWithBun),
             e if e == w!(".sh") => Some(RunWithBun),
-            e if e == w!(".cmd") => Some(RunWithCmd),
-            e if e == w!(".bat") => Some(RunWithCmd),
+            // Windows takes any spelling of these two for a batch file.
+            e if strings::eql_case_insensitive_t(e, b".cmd") => Some(RunWithCmd),
+            e if strings::eql_case_insensitive_t(e, b".bat") => Some(RunWithCmd),
             e if e == w!(".ps1") => Some(RunWithPowershell),
             _ => None,
         }
@@ -206,13 +217,13 @@ mod host {
     #[derive(Copy, Clone)]
     pub struct Shebang<'a> {
         // Borrows into the caller's input buffer (see `parse` doc).
-        pub launcher: &'a [u8],
-        pub utf16_len: u32,
-        pub is_node_or_bun: bool,
+        pub(crate) launcher: &'a [u8],
+        pub(crate) utf16_len: u32,
+        pub(crate) is_node_or_bun: bool,
     }
 
     impl<'a> Shebang<'a> {
-        pub fn init(launcher: &'a [u8], is_node_or_bun: bool) -> Shebang<'a> {
+        pub(crate) fn init(launcher: &'a [u8], is_node_or_bun: bool) -> Shebang<'a> {
             Shebang {
                 launcher,
                 // TODO: what if this is invalid utf8?
@@ -223,7 +234,7 @@ mod host {
         }
 
         /// Returns the file extension (including the dot) of a UTF-16 path.
-        pub fn extension_w(path: &[u16]) -> &[u16] {
+        pub(crate) fn extension_w(path: &[u16]) -> &[u16] {
             let filename = strings::basename_windows(path);
             let Some(index) = filename.iter().rposition(|&c| c == b'.' as u16) else {
                 return &path[path.len()..];
@@ -234,7 +245,7 @@ mod host {
             &filename[index..]
         }
 
-        pub fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
+        pub(crate) fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
             if let Some(i) = bun_extensions_get(Self::extension_w(bin_path)) {
                 return Some(match i {
                     // Const-evaluated; the
@@ -262,14 +273,14 @@ mod host {
 
         /// `32766` is taken from `CreateProcessW` docs. One less to account for the null terminator
         /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw#parameters
-        pub const MAX_SHEBANG_INPUT_LENGTH: usize = 32766 + b"#!".len();
+        pub(crate) const MAX_SHEBANG_INPUT_LENGTH: usize = 32766 + b"#!".len();
 
         /// Given the start of a file, parse the shebang
         /// Output contains slices that point into the input buffer
         ///
         /// Since a command line cannot be longer than 32766 characters,
         /// this function does not accept inputs longer than `MAX_SHEBANG_INPUT_LENGTH`
-        pub fn parse(
+        pub(crate) fn parse(
             contents_maybe_overflow: &'a [u8],
             bin_path: &[u16],
         ) -> Result<Option<Shebang<'a>>, bun_core::Error> {
@@ -317,6 +328,13 @@ mod host {
                 while idx < line.len() && line[idx] == b' ' {
                     idx += 1;
                 }
+                // `env -S prog args` and `env -Sprog args`. The launcher is split at spaces anyway.
+                if line[idx..].starts_with(b"-S") {
+                    idx += b"-S".len();
+                    while idx < line.len() && line[idx] == b' ' {
+                        idx += 1;
+                    }
+                }
                 let rest = &line[idx..];
                 // tokenizer.next(): program token
                 let prog_start = idx;
@@ -335,20 +353,21 @@ mod host {
             Ok(Some(Shebang::init(line, false)))
         }
 
-        pub fn encoded_length(&self) -> usize {
+        pub(crate) fn encoded_length(&self) -> usize {
             (b" ".len() + self.utf16_len as usize) * size_of::<u16>() + size_of::<u32>() * 2
         }
     }
 
-    pub struct BinLinkingShim<'a> {
-        /// Relative to node_modules. Do not include slash
-        pub bin_path: &'a [u16],
+    pub(crate) struct BinLinkingShim<'a> {
+        /// Relative to the parent of the shim's directory (no leading slash), or absolute.
+        pub(crate) bin_path: &'a [u16],
+        pub(crate) is_absolute_target: bool,
         /// Information found within the target file's shebang
-        pub shebang: Option<Shebang<'a>>,
+        pub(crate) shebang: Option<Shebang<'a>>,
     }
 
     impl<'a> BinLinkingShim<'a> {
-        pub fn encoded_length(&self) -> usize {
+        pub(crate) fn encoded_length(&self) -> usize {
             let l = ((self.bin_path.len() + b"\" ".len()) * size_of::<u16>())
             + size_of::<u16>() // @sizeOf(Flags)
             + if let Some(s) = &self.shebang {
@@ -362,9 +381,10 @@ mod host {
 
         /// The buffer must be exactly the correct length given by encoded_length.
         ///
-        /// The `Result` is kept only because the caller (`bin.rs`) treats it as
-        /// a fallible API — this always returns `Ok(())`.
-        pub fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
+        /// Returns `Err` when the shebang launcher does not encode to exactly
+        /// `utf16_len` UTF-16 units (invalid UTF-8); the caller (`bin.rs`) reports
+        /// that as an invalid bin.
+        pub(crate) fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
 
@@ -391,6 +411,7 @@ mod host {
                 is_node_or_bun,
                 /* is_node */ false,
                 /* has_shebang */ self.shebang.is_some(),
+                self.is_absolute_target,
                 VersionFlag::CURRENT,
             );
 
@@ -402,11 +423,15 @@ mod host {
                     debug_assert!(flags.is_node_or_bun());
                 }
 
-                let encoded = strings::convert_utf8_to_utf16_in_buffer(
+                let Some(encoded) = strings::try_convert_utf8_to_utf16_in_buffer(
                     &mut wbuf[0..s.utf16_len as usize],
                     s.launcher,
-                );
-                debug_assert!(encoded.len() == s.utf16_len as usize);
+                ) else {
+                    return Err(bun_core::Error::InvalidByteSequence);
+                };
+                if encoded.len() != s.utf16_len as usize {
+                    return Err(bun_core::Error::InvalidByteSequence);
+                }
                 wbuf = &mut wbuf[s.utf16_len as usize..];
 
                 wbuf[0] = b' ' as u16;

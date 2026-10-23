@@ -33,8 +33,10 @@ public:
         return adoptRef(*new WebViewEventTarget(ctx));
     }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(WebCore::EventTargetWithInlineData);
 
 private:
     explicit WebViewEventTarget(WebCore::ScriptExecutionContext& ctx)

@@ -150,6 +150,45 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.expires).toEqual(new Date("Thu, 02 Jan 2031 00:00:00 GMT"));
   });
 
+  test("Cookie.parse lets a later empty or invalid Path/SameSite reset the earlier one", () => {
+    // RFC 6265 5.2.4: an empty or non-absolute Path selects the default-path, and the
+    // last Path attribute wins (5.3 step 7). Browsers store these with path "/".
+    const paths = ["p=1; Path=/first; Path=", "p=1; Path=/first; Path", "p=1; Path=/first; Path=relative"].map(
+      s => Bun.Cookie.parse(s).path,
+    );
+    expect(paths).toEqual(["/", "/", "/"]);
+    expect(Bun.Cookie.parse("p=1; Path=; Path=/second").path).toBe("/second");
+
+    // RFC 6265bis 5.6.7: an unknown or empty SameSite value means "Default" enforcement
+    // rather than being ignored, so it overrides an earlier SameSite=Strict.
+    const sameSites = [
+      "p=1; Secure; SameSite=Strict; SameSite=Whatever",
+      "p=1; Secure; SameSite=Strict; SameSite=",
+      "p=1; Secure; SameSite=Strict; SameSite",
+      "p=1; Secure; SameSite=None; SameSite=Whatever",
+    ].map(s => Bun.Cookie.parse(s).sameSite);
+    expect(sameSites).toEqual(["lax", "lax", "lax", "lax"]);
+    expect(Bun.Cookie.parse("p=1; Secure; SameSite=Whatever; SameSite=Strict").sameSite).toBe("strict");
+
+    // Unlike Path and SameSite, an empty Domain and an unparseable Expires or Max-Age are
+    // ignored entirely (5.2.1-5.2.3), so the earlier value stands.
+    const ignored = Bun.Cookie.parse(
+      "p=1; Domain=example.com; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Max-Age=60; Domain=; Expires=nonsense; Max-Age=abc",
+    );
+    expect(ignored.toJSON()).toEqual({
+      name: "p",
+      value: "1",
+      domain: "example.com",
+      path: "/",
+      expires: new Date("Wed, 01 Jan 2031 00:00:00 GMT"),
+      maxAge: 60,
+      secure: false,
+      sameSite: "lax",
+      httpOnly: false,
+      partitioned: false,
+    });
+  });
+
   test("Cookie.parse reads every attribute in any order", () => {
     const attributes = [
       "Max-Age=3600",

@@ -26,7 +26,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
     // Function that looks up "emit" on "process" and calls it with the provided arguments
-    // Only used by internal code via passing to queueNextTick
+    // Used by internal event dispatch and queueNextTick.
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;
@@ -81,6 +81,7 @@ public:
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
+    void emitEvent(Zig::GlobalObject*, const MarkedArgumentBuffer&);
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
 

@@ -235,6 +235,24 @@ describe("bun <file.md>", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("draws an HTML block in a list item and in a block quote with the indent and the bar of its container", async () => {
+    using dir = tempDir("md-html-block-", {
+      "doc.md": "- para\n  <details>\n  <summary>\n  x\n  </summary>\n- next\n\n> <div>\n",
+    });
+    const env: NodeJS.Dict<string> = { ...bunEnv, NO_COLOR: "1", COLUMNS: "80" };
+    delete env.FORCE_COLOR;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("  * para\n    <details>\n    <summary>\n    x\n    </summary>\n  * next\n\n| <div>\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("renders via `bun run ./file.md`", async () => {
     using dir = tempDir("md-run-", { "doc.md": "# Title\n\nbody\n" });
     await using proc = Bun.spawn({

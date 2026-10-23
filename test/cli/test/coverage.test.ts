@@ -1476,7 +1476,7 @@ export function g(never = () => {
           });
         `,
       );
-      // A source map has no mapping for the { of a pattern. What is before it and after it is on other lines.
+      // A source map has no mapping for the { of a pattern, and what is before it is on another line.
       const withSourceMap = mode === "// @bun with a source map";
       expect(decisionsOf(record)).toEqual([
         [2 + above, [0, 2]],
@@ -1573,7 +1573,7 @@ export function imported(level = Level.Info) {
   return level;
 }
 export function both(v: boolean) {
-  return v ? Level.Info : Level["Warn"];
+  return v ? Level["Warn"] : Level.Info;
 }
 export function local(ok: boolean, value: number) {
   const list = [value];

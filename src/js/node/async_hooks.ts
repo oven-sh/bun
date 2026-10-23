@@ -456,8 +456,10 @@ function createWarning(message, isCreateHook?: boolean) {
       "zx/build/core.js",
       "datadog-core/src/storage/async_resource.js",
     ];
-    const e = new Error().stack!;
-    if (known_supported_modules.some(m => e.includes(m))) return;
+    // Not `new Error().stack`: that is what the user's Error.prepareStackTrace returns, which may not be a string.
+    // Ten frames is what that Error had with the default Error.stackTraceLimit.
+    const stack: string = $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionFormatCurrentStackTrace", 2)(10, 0);
+    if (known_supported_modules.some(m => stack.includes(m))) return;
     if (isCreateHook && arg1) {
       // this block is to specifically filter out react-server, which is often
       // times bundled into a framework or application. Their use defines three

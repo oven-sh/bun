@@ -7,6 +7,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/DeferTermination.h"
+#include "JavaScriptCore/DisallowVMEntry.h"
 #include "JavaScriptCore/FrameTracers.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
@@ -455,6 +456,56 @@ WTF::String formatStackTrace(
         return stackTraceHeaderOnly(name, message);
 
     return sb.toString();
+}
+
+WTF::String formatCurrentStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, size_t framesToSkip, size_t frameLimit)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // Node prints the traces of its own under a DisallowJavascriptExecutionScope.
+    JSC::DisallowVMEntry disallowVMEntry(vm);
+
+    WTF::Vector<JSC::StackFrame> stackTrace;
+    vm.interpreter.getStackTrace(globalObject, stackTrace, framesToSkip, frameLimit);
+    // The frames of an await chain are inserted without a look at the limit.
+    if (stackTrace.size() > frameLimit)
+        stackTrace.shrink(frameLimit);
+
+    OrdinalNumber line;
+    OrdinalNumber column;
+    WTF::String sourceURL;
+    WTF::String frames = formatStackTrace(vm, globalObject, globalObject, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    // With no error object formatStackTrace() runs no JS, as when it runs at the end of a collection.
+    scope.assertNoException();
+
+    constexpr auto internal = "(internal:"_s;
+    WTF::StringView rest = frames;
+    size_t found = rest.find(internal);
+    if (found == notFound)
+        return frames;
+    // The names of functions come from JS: past String::MaxLength the frames keep the URLs of Bun.
+    WTF::StringBuilder nodeFrames { WTF::OverflowPolicy::RecordOverflow };
+    for (; found != notFound; found = rest.find(internal)) {
+        nodeFrames.append(rest.left(found));
+        nodeFrames.append("(node:internal/"_s);
+        rest = rest.substring(found + internal.length());
+    }
+    nodeFrames.append(rest);
+    return nodeFrames.hasOverflowed() ? frames : nodeFrames.toString();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFormatCurrentStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    size_t frameLimit = callFrame->argument(0).toUInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    size_t framesToSkip = callFrame->argument(1).toUInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // + 1: the frame of this function.
+    return JSValue::encode(jsString(vm, formatCurrentStackTrace(vm, globalObject, framesToSkip + 1, frameLimit)));
 }
 
 // error.stack calls this function

@@ -556,13 +556,11 @@ impl JSBundleCompletionTask {
                     );
                     match write_result {
                         Err(err) => {
-                            bun_core::Output::err(
-                                err,
-                                "failed to write sourcemap file '{s}'",
-                                (bstr::BStr::new(write_path),),
-                            );
-                            // current.deinit() — `OutputFile` drops below.
-                            false
+                            return CompileResult::fail_fmt(format_args!(
+                                "{}: writing sourcemap file {}",
+                                bstr::BStr::new(err.msg().unwrap_or_else(|| err.name())),
+                                bun_core::fmt::quote(&sourcemap_full_path),
+                            ));
                         }
                         Ok(()) => {
                             output_files[i].dest_path = sourcemap_full_path;

@@ -124,7 +124,15 @@ impl<'a> Scanner<'a> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
+    /// Sorts what this call appended: listing order differs between file systems and checkouts.
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+        let first = self.test_files.len();
+        let result = self.walk(path_literal);
+        sort_test_files(&mut self.test_files[first..]);
+        result
+    }
+
+    fn walk(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
         let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
@@ -169,17 +177,7 @@ impl<'a> Scanner<'a> {
                 // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
                 // cwd before the scanner runs), so `read_directory_with_iterator`
                 // returned the cached `EntryMap` without invoking `iterator.next`.
-                // Hash-map iteration order is not stable. Sort by (lowercased)
-                // base name so test-file discovery order is deterministic —
-                // regression/issue/26851 relies on `a_*.test` running before
-                // `b_*.test` under `--bail`.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
-                });
+                let entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
@@ -420,6 +418,14 @@ impl<'a> Scanner<'a> {
             }
             fs::EntryKind::Dangling => {}
         }
+    }
+}
+
+/// Puts test files in path order: the byte order of their absolute paths.
+pub(crate) fn sort_test_files(files: &mut [Interned]) {
+    // Most callers pass a list that is already in path order.
+    if !files.is_sorted_by(|a, b| a.as_bytes() <= b.as_bytes()) {
+        index_sort::sort_slice_by(files, |a, b| strings::order(a.as_bytes(), b.as_bytes()));
     }
 }
 

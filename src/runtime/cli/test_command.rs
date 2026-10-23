@@ -2284,9 +2284,7 @@ impl TestCommand {
                 if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
                     write = timings.select_shard(test_files, *shard);
                 } else {
-                    index_sort::sort_slice_by(test_files, |a, b| {
-                        strings::order(a.as_bytes(), b.as_bytes())
-                    });
+                    scanner::sort_test_files(test_files);
                     let total = test_files.len();
                     for i in 0..total {
                         if i % (shard.count as usize) == (shard.index as usize) - 1 {
@@ -2386,6 +2384,8 @@ impl TestCommand {
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
             if let Some(mut rand) = random_instance {
+                // The list keeps the order of path arguments; the order for a seed must not.
+                scanner::sort_test_files(test_files);
                 // `std.Random.shuffle` → Fisher–Yates over `DefaultPrng::next_u64`.
                 let n = test_files.len();
                 if n > 1 {

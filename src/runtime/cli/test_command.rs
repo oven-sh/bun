@@ -3069,6 +3069,7 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
+                reporter.jest.snapshots.note_unfinished_tests(buntest);
                 drop(buntest_strong);
             }
 

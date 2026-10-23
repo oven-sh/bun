@@ -122,11 +122,13 @@ describe("date setters range-check year + floor(month / 12), not each argument",
   test("a year or a month count is exact up to the last safe integer, and NaN beyond it", () => {
     expect(new Date(0).setUTCFullYear(2000 - 750599937895082, 2 ** 53 - 1, 1)).toBe(965088000000); // 2000-08-01
     expect(Date.UTC(2000 - 750599937895082, 2 ** 53 - 1, 1)).toBe(965088000000);
+    expect(new Date(2000 - 750599937895082, 2 ** 53 - 1, 1).getTime()).toBe(localTime(2000, 7, 1));
     expect(new Date(0).setUTCFullYear(2000 + 750599937895083, -(2 ** 53 - 1), 1)).toBe(959817600000); // 2000-06-01
     expect(Date.UTC(2000 + 750599937895083, -(2 ** 53 - 1), 1)).toBe(959817600000);
     // A double cannot split a month count beyond 2^53 exactly: 2 ** 56 months from this year is 2000-05-01.
     expect(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1)).toBeNaN();
     expect(Date.UTC(-6004799503158661, 2 ** 56, 1)).toBeNaN();
+    expect(new Date(-6004799503158661, 2 ** 56, 1).getTime()).toBeNaN();
     expect(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53)).toBeNaN();
     expect(Date.UTC(-750599937893082, 2 ** 53)).toBeNaN();
     expect(new Date(0).setUTCMonth(-(2 ** 53))).toBeNaN();
@@ -136,11 +138,14 @@ describe("date setters range-check year + floor(month / 12), not each argument",
     expect(new Date(0).setUTCFullYear(2 ** 31 - 1, 0, -784353015467)).toBe(-124334438400000);
     expect(Date.UTC(2 ** 31 - 1, 0, -784353015467)).toBe(-124334438400000);
     expect(new Date(0).setUTCFullYear(2 ** 31, 0, -784353015467)).toBeNaN();
+    expect(Date.UTC(2 ** 31, 0, -784353015467)).toBeNaN();
     expect(new Date(0).setUTCFullYear(-(2 ** 31), 0, 784353015833)).toBe(-86400000);
     expect(new Date(0).setUTCFullYear(-(2 ** 31) - 1, 0, 784353015833)).toBeNaN();
     // A year or a month count beyond int32 does not wrap into range.
     expect(new Date(0).setUTCFullYear(2 ** 31 + 2000)).toBeNaN();
     expect(new Date(0).setUTCFullYear(2 ** 32 + 2000)).toBeNaN();
+    expect(Date.UTC(2 ** 32 + 2000, 0, 1)).toBeNaN();
+    expect(new Date(2 ** 32 + 2000, 0, 1).getTime()).toBeNaN();
     expect(new Date(0).setUTCFullYear(2000, 12 * 2 ** 32)).toBeNaN();
     expect(new Date(0).setUTCMonth(12 * 2 ** 32)).toBeNaN();
     expect(new Date(0).setUTCMonth(12 * 2 ** 32 + 5, 6)).toBeNaN();

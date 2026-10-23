@@ -1610,7 +1610,6 @@ macro_rules! define_colorspace {
             }
         }
     };
-    (@gamut none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
     // Interpolate / premultiply / powerless variants
     (@interp rectangular $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {

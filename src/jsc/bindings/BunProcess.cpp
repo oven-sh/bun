@@ -19,6 +19,7 @@
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -1413,6 +1414,21 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
 
+// A string that is a data property of `object` or of one of its prototypes, or the empty string. No script runs.
+static String stringDataProperty(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasProperty = object->getNonIndexPropertySlot(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasProperty || slot.isAccessor() || slot.isCustom())
+        return emptyString();
+    JSValue value = slot.getPureResult();
+    if (!value.isString())
+        return emptyString();
+    RELEASE_AND_RETURN(scope, value.toWTFString(globalObject));
+}
+
 extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1441,6 +1457,15 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
         return JSC::JSValue::encode(decodedReason);
     if (decodedReason.isBigInt())
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject))));
+    // As V8's NoSideEffectsErrorToString(): `name` and `message` count only when they are strings in data properties.
+    if (auto* error = dynamicDowncast<ErrorInstance>(decodedReason)) {
+        String name = stringDataProperty(vm, globalObject, error, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, {});
+        String message = stringDataProperty(vm, globalObject, error, vm.propertyNames->message);
+        RETURN_IF_EXCEPTION(scope, {});
+        String text = tryMakeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, text.isNull() ? message : text)));
+    }
     return JSC::JSValue::encode(vm.smallStrings.objectObjectString());
 }
 
@@ -1455,32 +1480,48 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
                                                   "or by rejecting a promise which was not handled with .catch(). "
                                                   "To terminate the bun process on unhandled promise "
                                                   "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
-    warning->putDirect(vm, vm.propertyNames->name, jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
+    // Node makes the warning under Error.stackTraceLimit = 0. With a trace, the first lookup of `stack` would format it over the property.
+    uncheckedDowncast<ErrorInstance>(warning)->setErrorInfoForEmbedderError({}, {}, String());
+    auto* warningName = jsString(vm, "UnhandledPromiseRejectionWarning"_str);
+    // Own and enumerable, as the `name` field of Node's UnhandledPromiseRejectionWarning class.
+    warning->putDirect(vm, vm.propertyNames->name, warningName, 0);
 
-    JSValue reasonStack {};
+    // Node's emitUnhandledRejectionWarning(), except that reason.stack is read once: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/promises.js#L225-L246
+    JSValue reasonStack;
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
+    if (is_errorlike && !scope.exception()) {
+        JSValue stack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
+        if (!scope.exception())
+            reasonStack = stack;
+    }
     CLEAR_IF_EXCEPTION(scope);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return;
-    if (is_errorlike) {
-        reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
-        CLEAR_IF_EXCEPTION(scope);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return;
-        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
-    }
-    if (!reasonStack) {
-        reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
-        CLEAR_IF_EXCEPTION(scope);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return;
-    }
-    if (!reasonStack) reasonStack = jsUndefined();
 
-    Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
-    CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        return;
+    bool emittedReasonStack = false;
+    if (reasonStack) {
+        warning->putDirect(vm, vm.propertyNames->stack, reasonStack, JSC::PropertyAttribute::DontEnum | 0);
+        Process::emitWarning(globalObject, reasonStack, warningName, jsUndefined(), jsUndefined());
+        emittedReasonStack = !scope.exception();
+        CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
+    } else {
+        // The first read makes the stack of an error with no frames: the header.
+        auto* realm = defaultGlobalObject(globalObject);
+        warning->putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor);
+    }
+    if (!emittedReasonStack) {
+        JSValue reasonText = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
+        CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
+        Process::emitWarning(globalObject, reasonText ? reasonText : jsUndefined(), warningName, jsUndefined(), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
+    }
+
     Process::emitWarningErrorInstance(globalObject, warning);
     CLEAR_IF_EXCEPTION(scope);
 }

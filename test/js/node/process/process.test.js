@@ -3492,6 +3492,177 @@ it.each([false, true])("emitWarning does not read .stack unless tracing (--trace
   expect(exitCode).toBe(0);
 });
 
+// The two warnings of an unhandled rejection, as Node's emitUnhandledRejectionWarning() emits them. The first has the
+// reason's stack, or the reason's text, as its message. The second takes the reason's stack: `warning.stack = reason.stack`.
+// Node v26.3.0 gives the same rows in each of the three modes.
+it.concurrent.each([
+  ["warn", 0],
+  ["warn-with-error-code", 1],
+  ["strict", 0],
+])("--unhandled-rejections=%s: the two warnings have the reason's stack or text", async (mode, code) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--unhandled-rejections=" + mode,
+      "--trace-warnings",
+      "-e",
+      `// In the strict mode a rejection gets its warnings only after this listener took it.
+       process.on("uncaughtException", () => {});
+       const { readFile } = require("node:fs/promises");
+       const missing = process.execPath + ".missing";
+       const framed = new Error("framed");
+       const error = new Error("boom");
+       class ConfigError extends TypeError {}
+       const noStack = new ConfigError("cannot read config");
+       noStack.stack = undefined;
+       const symbolName = new TypeError("symbol name");
+       symbolName.stack = undefined;
+       symbolName.name = Symbol("not a string");
+       Error.prepareStackTrace = (_, callSites) => callSites;
+       const hooked = new TypeError("hooked");
+       const callSites = hooked.stack;
+       Error.prepareStackTrace = undefined;
+       const NONE = Symbol();
+       // [name, reason, the stack that the second warning takes from the reason]
+       const reasons = [
+         ["an Error, reported under a JavaScript frame", framed, framed.stack],
+         ["a string, reported under a JavaScript frame", "framed text", NONE],
+         ["an Error", error, error.stack],
+         ["an instance of a subclass of TypeError whose stack is undefined", noStack, undefined],
+         ["a TypeError whose name is a Symbol and whose stack is undefined", symbolName, undefined],
+         ["a TypeError whose stack is an array of call sites", hooked, callSites],
+         ["an object with no prototype whose stack is 42", { __proto__: null, stack: 42 }, 42],
+         ["an object with no prototype whose stack getter throws", { __proto__: null, get stack() { throw new Error("from the getter"); } }, NONE],
+         ["a string", "text", NONE],
+         ["an error that native code made with no frames"],
+       ];
+       function stackOf(warning, fromReason) {
+         const stack = warning.stack;
+         if (!Object.hasOwn(warning, "stack")) return "none";
+         if (stack === fromReason) return "the reason's";
+         if (stack === warning.name + ": " + warning.message) return "its own header";
+         return "other";
+       }
+       const seen = [];
+       let firstWarning = null;
+       process.on("warning", warning => {
+         if (!warning.message.startsWith("Unhandled promise rejection.")) {
+           firstWarning = warning.message.split("\\n")[0].replace(missing, "<missing>");
+           return;
+         }
+         const [reason, , fromReason] = reasons[seen.length];
+         const row = { reason, firstWarning, keys: Object.keys(warning) };
+         if (seen.length < reasons.length - 1) row.stack = stackOf(warning, fromReason);
+         seen.push(row);
+         firstWarning = null;
+       });
+       let reportedUnderTheFrame;
+       process.on("exit", () => console.log(JSON.stringify({ reportedUnderTheFrame, seen })));
+       Promise.reject(reasons[0][1]);
+       Promise.reject(reasons[1][1]);
+       // A macro that returns a promise makes its caller wait for the event loop. The wait reports the two rejections.
+       (function caller() {
+         new Bun.Transpiler().transformSync('import { sleep } from "bun" with { type: "macro" }; sleep(1);');
+       })();
+       reportedUnderTheFrame = seen.length;
+       for (const [, reason] of reasons.slice(2, -1)) Promise.reject(reason);
+       readFile(missing);`,
+    ],
+    env: { ...bunEnv, NODE_NO_WARNINGS: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const keys = ["name"];
+  // The last line: a debug build also prints each macro call.
+  expect(JSON.parse(stdout.trimEnd().split("\n").at(-1))).toEqual({
+    reportedUnderTheFrame: 2,
+    seen: [
+      {
+        reason: "an Error, reported under a JavaScript frame",
+        firstWarning: "Error: framed",
+        keys,
+        stack: "the reason's",
+      },
+      {
+        reason: "a string, reported under a JavaScript frame",
+        firstWarning: "framed text",
+        keys,
+        stack: "its own header",
+      },
+      { reason: "an Error", firstWarning: "Error: boom", keys, stack: "the reason's" },
+      {
+        reason: "an instance of a subclass of TypeError whose stack is undefined",
+        firstWarning: "TypeError: cannot read config",
+        keys,
+        stack: "the reason's",
+      },
+      {
+        reason: "a TypeError whose name is a Symbol and whose stack is undefined",
+        firstWarning: "symbol name",
+        keys,
+        stack: "the reason's",
+      },
+      {
+        reason: "a TypeError whose stack is an array of call sites",
+        firstWarning: "TypeError: hooked",
+        keys,
+        stack: "the reason's",
+      },
+      {
+        reason: "an object with no prototype whose stack is 42",
+        firstWarning: "[object Object]",
+        keys,
+        stack: "the reason's",
+      },
+      {
+        reason: "an object with no prototype whose stack getter throws",
+        firstWarning: "[object Object]",
+        keys,
+        stack: "its own header",
+      },
+      { reason: "a string", firstWarning: "text", keys, stack: "its own header" },
+      {
+        reason: "an error that native code made with no frames",
+        firstWarning: "Error: ENOENT: no such file or directory, open '<missing>'",
+        keys,
+      },
+    ],
+  });
+  // --trace-warnings prints the stack of the second warning: the reason's.
+  expect(stderr).toMatch(/^\(node:\d+\) Error: framed\n {4}at /m);
+  expect(stderr).toMatch(/^\(node:\d+\) Error: boom\n {4}at /m);
+  expect(exitCode).toBe(code);
+});
+
+it("--unhandled-rejections=throw names an Error reason that has no stack of its own", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--unhandled-rejections=throw",
+      "-e",
+      `process.on("uncaughtException", error => console.log(JSON.stringify({ code: error.code, message: error.message })));
+       const reason = new TypeError("cannot read config");
+       delete reason.stack;
+       Promise.reject(reason);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      code: "ERR_UNHANDLED_REJECTION",
+      message:
+        "This error originated either by throwing inside of an async function without a catch block, or by rejecting " +
+        'a promise which was not handled with .catch(). The promise rejected with the reason "TypeError: cannot read config".',
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.throwDeprecation is per-Worker, not process-global", async () => {
   await using proc = Bun.spawn({
     cmd: [

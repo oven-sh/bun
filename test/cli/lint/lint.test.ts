@@ -6924,6 +6924,29 @@ h();
       });
     });
 
+    // From typescript-eslint 8.71.1 under ESLint 9.39.5 and 10.12.0, and 7.18.0 under ESLint 8.57.1.
+    test.each([
+      ["8.57.1", ["1:5 Variable 'a' should be initialized on declaration."]],
+      ["9.39.5", ["1:5 Variable 'a' should be initialized on declaration."]],
+      ["10.12.0", []],
+    ])("@typescript-eslint/init-declarations without options, with eslint %s", async (version, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{
+            files: ["**/*.ts"],
+            plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+            rules: { "@typescript-eslint/init-declarations": "error" },
+          }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.ts": "let a: number;\nlet b = 1;\nexport { a, b };\n",
+        },
+        ["-f", "json", "a.ts"],
+      );
+      const reports = (JSON.parse(raw)[0].messages as any[]).map(it => `${it.line}:${it.column} ${it.message}`);
+      expect(reports).toEqual(expected);
+    });
+
     // From ESLint 8.57.1 too. In version 9 the location changed with 9.38.
     test.each([
       ["8.57.1", ["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]],

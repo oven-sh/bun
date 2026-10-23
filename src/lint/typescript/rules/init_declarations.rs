@@ -7,7 +7,8 @@ use bun_lint_eslint::rules::init_declarations::{
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
     config: Config,
-    /// Without options, upstream passes its context to ESLint's rule, which then finds no mode and reports nothing.
+    /// Without options, upstream passes its context to ESLint's rule. ESLint 10's then finds no mode and reports nothing.
+    /// Before that, the rule itself falls back to `always`.
     has_mode: bool,
 }
 
@@ -28,7 +29,11 @@ impl Rule for InitDeclarations {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         // oxlint uses ESLint's rule here, which defaults to `always`. Do the same when there's no package to match.
         let language = file.language();
-        if !self.has_mode && !language.is_oxlint && !language.has_no_foreign_config {
+        if !self.has_mode
+            && language.eslint_major >= 10
+            && !language.is_oxlint
+            && !language.has_no_foreign_config
+        {
             return None;
         }
         Some(())

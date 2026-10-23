@@ -1,6 +1,8 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, compileFixture, isWindows, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
+import { totalmem } from "node:os";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
 
@@ -749,5 +751,225 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
       },
     });
+  });
+
+  // Nothing parses a copied asset: its module is one string. The parser's symbol tables were
+  // sized from the length of the file all the same, about 7 bytes for each byte of the asset.
+  test.concurrent("the module of a copied asset reserves no parser tables for the bytes of the asset", async () => {
+    const assetSize = 64 * 1024 * 1024;
+    using dir = tempDir("loader-asset-presize", {
+      "entry-small.js": `import url from "./small.bin"; console.log(url);`,
+      "entry-big.js": `import url from "./big.bin"; console.log(url);`,
+      "small.bin": "x",
+      "big.bin": "HEAD",
+      "build-fixture.ts": `
+        import { heapStats } from "bun:jsc";
+        const build = async (entry: string) => {
+          const result = await Bun.build({ entrypoints: [import.meta.dir + "/" + entry], throw: false });
+          return { success: result.success, size: result.outputs.find(output => output.kind === "asset")?.size };
+        };
+        // The first build starts the thread pool and the allocator's arenas.
+        const small = await build("entry-small.js");
+        const before = heapStats().mimalloc.committed.peak;
+        const big = await build("entry-big.js");
+        const growth = heapStats().mimalloc.committed.peak - before;
+        console.log(JSON.stringify({ small, big, growth }));
+      `,
+    });
+    // A hole: the file takes no disk space.
+    fs.truncateSync(join(String(dir), "big.bin"), assetSize);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { growth, ...builds } = stdout ? JSON.parse(stdout) : {};
+    expect({ ...builds, stderr, exitCode }).toEqual({
+      small: { success: true, size: 1 },
+      big: { success: true, size: assetSize },
+      stderr: "",
+      exitCode: 0,
+    });
+    // The bytes that the build read are in the measure: 1.1 times the asset in an ASAN build,
+    // 2.2 times with the copy for the output file. The tables took it past 9 times the asset.
+    expect(growth).toBeGreaterThan(assetSize / 2);
+    expect(growth).toBeLessThan(5 * assetSize);
+  });
+
+  // The source comes from the native plugin in fixtures/huge-source-plugin.c, which maps it:
+  // a file of this size would be read into memory. `mmap` and a C compiler: not on Windows.
+  const hasHugeSourcePlugin = !isWindows && !!(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc"));
+  describe.skipIf(!hasHugeSourcePlugin)("a source of 4 GiB or more", () => {
+    const FOUR_GIB = 2 ** 32;
+    const HEAD = Buffer.alloc(32, "HEAD").toString();
+
+    // Compiled here and not in a test: a compiler that is not in the page cache takes seconds to start.
+    const addon = hasHugeSourcePlugin
+      ? compileFixture(join(import.meta.dir, "fixtures", "huge-source-plugin.c"), {
+          flags: ["-I" + join(import.meta.dir, "..", "..", "packages", "bun-native-bundler-plugin-api")],
+        })
+      : "";
+
+    // `symbol` names the plugin callback that replaces the source of `big.*`, "" for no plugin.
+    type Case = { entry: string; symbol: string; options?: Partial<Bun.BuildConfig> };
+
+    // Runs each case in its own `Bun.build`.
+    async function build(dir: string, cases: Record<string, Case>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build-fixture.ts", addon, JSON.stringify(cases)],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+
+    const buildFixture = /* ts */ `
+      const addon = { exports: {} };
+      process.dlopen(addon, process.argv[2]);
+      const results: Record<string, unknown> = {};
+      for (const [name, { entry, symbol, options }] of Object.entries<any>(JSON.parse(process.argv[3]))) {
+        const result = await Bun.build({
+          entrypoints: [import.meta.dir + "/" + entry],
+          throw: false,
+          ...options,
+          plugins: symbol
+            ? [
+                {
+                  name: "huge_source",
+                  setup(build) {
+                    build.onBeforeParse({ filter: /big\\.\\w+$/ }, { napiModule: addon.exports, symbol });
+                  },
+                },
+              ]
+            : [],
+        });
+        const asset = result.outputs.find(output => output.kind === "asset");
+        results[name] = {
+          success: result.success,
+          logs: result.logs.map(log => [log.message, ...(log.notes ?? []).map(note => note.message)]),
+          asset: asset && {
+            path: asset.path,
+            size: asset.size,
+            head: await asset.slice(0, 4).text(),
+            tail: await asset.slice(-4).text(),
+          },
+        };
+      }
+      console.log(JSON.stringify(results));
+    `;
+
+    test.concurrent("is a build error unless a loader copies it as-is", async () => {
+      using dir = tempDir("loader-four-gib-error", {
+        "build-fixture.ts": buildFixture,
+        "entry-txt.js": `import text from "./big.txt"; console.log(text.length);`,
+        "entry-json.js": `import json from "./big.json"; console.log(json);`,
+        "entry-js.js": `import "./big.js";`,
+        "entry-css.js": `import "./big.css";`,
+        "entry-bin.js": `import url from "./big.bin"; console.log(url);`,
+        "entry-db.js": `import db from "./big.db"; import "./missing.js"; console.log(db);`,
+        "index.html": `<!doctype html><img src="./big.bin">`,
+        "big.txt": "",
+        "big.json": "{}",
+        "big.js": "",
+        "big.css": "",
+        "big.bin": "",
+        "big.db": "",
+      });
+      const size = `(${FOUR_GIB} bytes, 4 GiB maximum)`;
+      const refused = (...log: string[]) => ({ success: false, logs: [log] });
+      const notCopied = refused(
+        `File is too large ${size}`,
+        `To copy the file to the output directory as-is, import it with { type: "file" }`,
+      );
+      expect(
+        await build(String(dir), {
+          txt: { entry: "entry-txt.js", symbol: "four_gib" },
+          json: { entry: "entry-json.js", symbol: "four_gib" },
+          js: { entry: "entry-js.js", symbol: "four_gib" },
+          css: { entry: "entry-css.js", symbol: "four_gib" },
+          // One byte less is for the parser to refuse.
+          "js, 4 GiB - 1": { entry: "entry-js.js", symbol: "four_gib_less_one" },
+          // Standalone HTML inlines every file, a standalone executable embeds it.
+          "standalone HTML": {
+            entry: "index.html",
+            symbol: "four_gib",
+            options: { compile: true, target: "browser" },
+          },
+          "executable": { entry: "entry-bin.js", symbol: "four_gib", options: { compile: true } },
+          // The module of a database is its path. The build gets as far as the import that does not resolve.
+          "executable, sqlite": {
+            entry: "entry-db.js",
+            symbol: "four_gib",
+            options: { compile: true, loader: { ".db": "sqlite" } },
+          },
+        }),
+      ).toEqual({
+        stdout: {
+          txt: notCopied,
+          json: notCopied,
+          js: notCopied,
+          css: notCopied,
+          "js, 4 GiB - 1": refused("File is too large to parse (2 GiB maximum)"),
+          "standalone HTML": refused(
+            `File is too large to inline into standalone HTML ${size}`,
+            "Without --compile, Bun copies the file to the output directory as-is",
+          ),
+          "executable": refused(
+            `File is too large to embed in a standalone executable ${size}`,
+            "To keep the file out of the executable, read it from disk at run time, for example with Bun.file()",
+          ),
+          "executable, sqlite": refused(`Could not resolve: "./missing.js"`),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The output file is a second copy of the bytes, and that one takes memory.
+    test.skipIf(totalmem() < 12 * 1024 ** 3)(
+      "is copied whole by the file loader",
+      async () => {
+        using dir = tempDir("loader-four-gib-copy", {
+          "build-fixture.ts": buildFixture,
+          "entry-bin.js": `import url from "./big.bin"; console.log(url);`,
+          "big.bin": HEAD,
+        });
+        // The name has the hash of every byte: the second one is not the name of the first 32.
+        expect({
+          first32Bytes: await build(String(dir), { bin: { entry: "entry-bin.js", symbol: "" } }),
+          whole: await build(String(dir), { bin: { entry: "entry-bin.js", symbol: "four_gib_and_markers" } }),
+        }).toEqual({
+          first32Bytes: {
+            stdout: {
+              bin: {
+                success: true,
+                logs: [],
+                asset: { path: "./big-zg8npsdy.bin", size: 32, head: "HEAD", tail: "HEAD" },
+              },
+            },
+            stderr: "",
+            exitCode: 0,
+          },
+          whole: {
+            stdout: {
+              bin: {
+                success: true,
+                logs: [],
+                asset: { path: "./big-wx7e3rrf.bin", size: FOUR_GIB + 32, head: "HEAD", tail: "TAIL" },
+              },
+            },
+            stderr: "",
+            exitCode: 0,
+          },
+        });
+      },
+      120_000,
+    );
   });
 });

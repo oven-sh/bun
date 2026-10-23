@@ -67,25 +67,46 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
   });
 });
 
+// The text loader parses nothing, so it has no 2 GiB limit. Its text is one AST
+// string, and the length of an AST string is a u32: the text of 2**32 bytes was
+// an empty string, with no error. The array is never written or read, so it
+// takes address space and no memory. A small machine can refuse to reserve it.
+test.skipIf(totalmem() < 8 * 1024 ** 3)("Bun.Transpiler reports the limit of the text loader", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      try {
+        const text = new Bun.Transpiler().transformSync(new Uint8Array(2 ** 32), "text");
+        console.log("no error: " + JSON.stringify(text));
+      } catch (e) {
+        console.log(e.name + ": " + e.message);
+      }
+    `,
+  ]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "BuildMessage: File is too large (4294967296 bytes, 4 GiB maximum)",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Each file is sparse: everything past the first line is a hole, so it takes no
 // disk space and reads back as NUL bytes. Reading it costs the child process
-// 2 GiB of memory (and, in debug builds, tens of seconds of allocator
-// bookkeeping), so the block skips on small machines (the gate fs-oom.test.ts
-// uses for its 2 GiB cases) and each entry point gets a single file. `bun build`
-// gets a data-format file because a JS file that fails to parse additionally
-// gets an empty fallback AST whose symbol tables are presized from the source
-// length, which takes over a minute in debug builds.
-describe.skipIf(totalmem() < 10 * 1024 ** 3)("a 2 GiB file", () => {
-  function sparseFile(dir: string, name: string) {
-    const file = join(dir, name);
-    writeFileSync(file, FIRST_LINE);
-    truncateSync(file, SIZE);
-    return file;
-  }
+// the size of the file in memory (and, in debug builds, tens of seconds of
+// allocator bookkeeping), so the blocks skip on small machines (the gate
+// fs-oom.test.ts uses for its 2 GiB cases) and each entry point gets a single file.
+function sparseFile(dir: string, name: string, size: number) {
+  const file = join(dir, name);
+  writeFileSync(file, FIRST_LINE);
+  truncateSync(file, size);
+  return file;
+}
 
+describe.skipIf(totalmem() < 10 * 1024 ** 3)("a 2 GiB file", () => {
   test("is a build error in bun build", async () => {
     using dir = tempDir("source-too-large-build", {});
-    const file = sparseFile(String(dir), "big.xml");
+    const file = sparseFile(String(dir), "big.xml", SIZE);
     const { stdout, stderr, exitCode } = await run([bunExe(), "build", file, "--outdir", join(String(dir), "out")]);
     expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
       "error: XML document is too large to parse (2 GiB maximum)
@@ -97,13 +118,38 @@ describe.skipIf(totalmem() < 10 * 1024 ** 3)("a 2 GiB file", () => {
 
   test("is an error instead of running in bun run", async () => {
     using dir = tempDir("source-too-large-run", {});
-    const file = sparseFile(String(dir), "big.js");
+    const file = sparseFile(String(dir), "big.js", SIZE);
     const { stdout, stderr, exitCode } = await run([bunExe(), file]);
     expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
       "error: File is too large to parse (2 GiB maximum)
           at <dir>/big.js
 
       Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  }, 120_000);
+});
+
+// The bundler reads the whole file from the disk before it refuses it.
+describe.skipIf(totalmem() < 10 * 1024 ** 3)("a 4 GiB text file", () => {
+  test("is a build error in bun build", async () => {
+    using dir = tempDir("source-too-large-text", {
+      "entry.js": `import text from "./big.txt"; console.log(text.length);`,
+    });
+    sparseFile(String(dir), "big.txt", 2 ** 32 + 32);
+    const { stdout, stderr, exitCode } = await run([
+      bunExe(),
+      "build",
+      join(String(dir), "entry.js"),
+      "--outdir",
+      join(String(dir), "out"),
+    ]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: File is too large (4294967328 bytes, 4 GiB maximum)
+          at <dir>/big.txt
+
+      note: To copy the file to the output directory as-is, import it with { type: "file" }"
     `);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);

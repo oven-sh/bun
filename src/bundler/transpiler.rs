@@ -1720,7 +1720,7 @@ impl<'a> Transpiler<'a> {
                 );
             }
             options::Loader::Text => {
-                return parse_text_loader(source, loader, source_backing, arena);
+                return parse_text_loader(source, loader, source_backing, arena, log);
             }
             options::Loader::Md => {
                 return parse_md_loader(source, loader, source_backing, arena, log);
@@ -2030,9 +2030,25 @@ fn parse_text_loader<'a>(
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
+    log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
+    let Some(text) = bun_ast::StoreStr::try_new(&source.contents) else {
+        // Without a position: finding the line of one would scan the whole source.
+        log.add_error_fmt(
+            Some(source),
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "File is too large ({} bytes, 4 GiB maximum)",
+                source.contents.len()
+            ),
+        );
+        return None;
+    };
     let expr = bun_ast::Expr::init(
-        bun_ast::E::EString::init(&source.contents),
+        bun_ast::E::EString {
+            data: text,
+            ..Default::default()
+        },
         bun_ast::Loc::EMPTY,
     );
     let stmt = bun_ast::Stmt::alloc(

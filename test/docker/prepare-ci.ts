@@ -2,19 +2,19 @@
 /**
  * CI preparation script for Docker test services
  *
- * This script pre-pulls and builds all Docker images needed for tests
+ * This script builds all Docker images needed for tests
  * to avoid failures during test execution.
  *
  * Usage: bun test/docker/prepare-ci.ts
  */
 
-import { prepareImages } from "./index";
+import { buildServices } from "./index";
 
 async function main() {
   console.log("Preparing Docker test infrastructure for CI...");
 
   try {
-    await prepareImages();
+    await buildServices();
     console.log("✅ Docker test infrastructure is ready");
     process.exit(0);
   } catch (error) {

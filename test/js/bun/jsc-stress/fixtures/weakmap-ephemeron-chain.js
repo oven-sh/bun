@@ -267,30 +267,34 @@ for (const [name, build] of Object.entries(ephemeronChainShapes(count))) {
 }
 
 // A map that marking reaches only through the last link of a chain, while the program deletes
-// some of its entries, replaces others and adds a few between collections.
+// some of its entries, replaces others and adds a few between collections. The helpers keep
+// the map and its keys out of the frame that runs the collections, so that nothing but the
+// chain reaches the map.
 {
   const chain = new WeakMap();
-  const head = { id: 0 };
-  let tail = head;
-  for (let id = 1; id <= count; id++) {
-    const next = { id };
-    chain.set(tail, next);
-    tail = next;
-  }
-  const late = new WeakMap();
-  const keys = [];
-  for (let i = 0; i < 200; i++) {
-    const key = { i };
-    keys.push(key);
-    late.set(key, { i });
-  }
-  chain.set(tail, { late, keys });
-  tail = null;
-  globalThis.fixture = { head, chain };
   const deleted = new Set();
-  for (let round = 0; round < 3; round++) {
-    fullGC();
-    checkRounds(`mutated late map (round ${round})`);
+
+  function buildMutatedLateMap() {
+    const head = { id: 0 };
+    let tail = head;
+    for (let id = 1; id <= count; id++) {
+      const next = { id };
+      chain.set(tail, next);
+      tail = next;
+    }
+    const late = new WeakMap();
+    const keys = [];
+    for (let i = 0; i < 200; i++) {
+      const key = { i };
+      keys.push(key);
+      late.set(key, { i });
+    }
+    chain.set(tail, { late, keys });
+    return head;
+  }
+  noInline(buildMutatedLateMap);
+
+  function checkAndMutateLateMap(head, round) {
     let node = head;
     while (chain.get(node)?.late === undefined) {
       node = chain.get(node);
@@ -307,6 +311,15 @@ for (const [name, build] of Object.entries(ephemeronChainShapes(count))) {
       held.push(key);
       map.set(key, { added: i });
     }
+  }
+  noInline(checkAndMutateLateMap);
+
+  const head = buildMutatedLateMap();
+  globalThis.fixture = { head, chain };
+  for (let round = 0; round < 3; round++) {
+    fullGC();
+    checkRounds(`mutated late map (round ${round})`);
+    checkAndMutateLateMap(head, round);
   }
   globalThis.fixture = null;
 }

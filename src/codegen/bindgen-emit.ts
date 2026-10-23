@@ -448,9 +448,9 @@ function cppSourceForEnum(type: EnumerationType): string {
   const byLength = new Map<number, string[]>();
   type.spellings.forEach((spellings, index) => {
     for (const spelling of spellings) {
-      const compared = byLength.get(spelling.length) ?? [];
-      byLength.set(spelling.length, compared);
-      compared.push(
+      const tests = byLength.get(spelling.length) ?? [];
+      byLength.set(spelling.length, tests);
+      tests.push(
         `        if (string == ${asciiLiteral(spelling)})\n            return ${type.cpp}::${type.variants[index]};`,
       );
     }
@@ -461,7 +461,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type
     switch (string.length()) {
 ${[...byLength]
   .sort(([a], [b]) => a - b)
-  .map(([length, compared]) => `    case ${length}:\n${compared.join("\n")}\n        break;`)
+  .map(([length, tests]) => `    case ${length}:\n${tests.join("\n")}\n        break;`)
   .join("\n")}
     }
     return std::nullopt;
@@ -1388,13 +1388,16 @@ function rustArgumentName(arg: { name: string }): string {
   return rustIdent(name);
 }
 
-const rustBorrow = (type: Type) => ((type instanceof DefaultType ? type.inner : type).borrowedByBody ? "&" : "");
 const rustExternParameters = (signature: Signature, scope: RustScope) =>
   signature.args.map(
     arg => `${rustArgumentName(arg)}: ${isPassedByPointer(arg.type) ? "*mut " : ""}${arg.type.rustExternType(scope)}`,
   );
 const rustArguments = (signature: Signature) =>
-  signature.args.map(arg => `${rustBorrow(arg.type)}${rustArgumentName(arg)}`);
+  signature.args.map(arg => {
+    const name = rustArgumentName(arg);
+    if (arg.type instanceof OptionalType && arg.type.inner instanceof DictionaryType) return `${name}.as_ref()`;
+    return (arg.type instanceof DefaultType ? arg.type.inner : arg.type).borrowedByBody ? `&${name}` : name;
+  });
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
 function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
   // What can return early comes last: by then Rust owns whatever the other arguments hand over.

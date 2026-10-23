@@ -63,7 +63,7 @@ const argon2Parameters = (bytes: b.Type) => ({
 
 export const crypto = b.namespace({
   pbkdf2: [
-    /** A call of five arguments is this one unless the fifth is a function, so `callback` can be left out. The body reports that. */
+    /** `callback` is optional so that a call without one is this overload and reports `digest` first. The body reports the missing `callback`. */
     {
       args: { ...passwordAndSaltHandles, ...pbkdf2Parameters, digest: b.string.utf8, callback: b.callable.optional },
       expected: { ...passwordAndSaltNames, digest: ["string"], callback: ["function"] },

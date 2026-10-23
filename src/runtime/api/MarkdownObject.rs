@@ -69,7 +69,7 @@ fn parser_err_to_js(
     }
 }
 
-/// `md::Options` of a `MarkdownOptions` or a `ReactOptions`, which have these members in common.
+/// `md::Options` of an `Option<&MarkdownOptions>` or an `Option<&ReactOptions>`, which have these members in common.
 macro_rules! parser_options {
     ($given:expr) => {
         parser_options!(
@@ -90,43 +90,44 @@ macro_rules! parser_options {
         )
     };
     ($given:expr; $($flag:ident),*) => {{
-        let given = $given;
         let mut options = md::Options::default();
-        match &given.autolinks {
-            Some(Autolinks::All(all)) => options.permissive_autolinks |= *all,
-            Some(Autolinks::Each(each)) => {
-                if let Some(url) = each.url {
-                    options.permissive_url_autolinks = url;
+        if let Some(given) = $given {
+            match &given.autolinks {
+                Some(Autolinks::All(all)) => options.permissive_autolinks |= *all,
+                Some(Autolinks::Each(each)) => {
+                    if let Some(url) = each.url {
+                        options.permissive_url_autolinks = url;
+                    }
+                    if let Some(www) = each.www {
+                        options.permissive_www_autolinks = www;
+                    }
+                    if let Some(email) = each.email {
+                        options.permissive_email_autolinks = email;
+                    }
                 }
-                if let Some(www) = each.www {
-                    options.permissive_www_autolinks = www;
-                }
-                if let Some(email) = each.email {
-                    options.permissive_email_autolinks = email;
-                }
+                None => {}
             }
-            None => {}
+            match &given.headings {
+                Some(Headings::All(all)) => {
+                    options.heading_ids |= *all;
+                    options.autolink_headings |= *all;
+                }
+                Some(Headings::Each(each)) => {
+                    if let Some(ids) = each.ids {
+                        options.heading_ids = ids;
+                    }
+                    if let Some(autolink) = each.autolink {
+                        options.autolink_headings = autolink;
+                    }
+                }
+                None => {}
+            }
+            $(
+                if let Some(value) = given.$flag {
+                    options.$flag = value;
+                }
+            )*
         }
-        match &given.headings {
-            Some(Headings::All(all)) => {
-                options.heading_ids |= *all;
-                options.autolink_headings |= *all;
-            }
-            Some(Headings::Each(each)) => {
-                if let Some(ids) = each.ids {
-                    options.heading_ids = ids;
-                }
-                if let Some(autolink) = each.autolink {
-                    options.autolink_headings = autolink;
-                }
-            }
-            None => {}
-        }
-        $(
-            if let Some(value) = given.$flag {
-                options.$flag = value;
-            }
-        )*
         options
     }};
 }
@@ -184,7 +185,7 @@ pub(crate) fn ansi<'a>(
 pub(crate) fn html<'a>(
     cx: &mut JsScope<'a>,
     input: JsBytes<'a>,
-    options: &MarkdownOptions,
+    options: Option<&MarkdownOptions>,
 ) -> JsResult<Box<[u8]>> {
     let input = input.get(&cx.heap);
     let input_len = input.len();
@@ -200,8 +201,8 @@ pub(crate) fn html<'a>(
 pub(crate) fn render<'a>(
     cx: &mut JsScope<'a>,
     input: JsLocal<'a>,
-    callbacks: Option<RenderCallbacks<'a>>,
-    options: &MarkdownOptions,
+    callbacks: Option<&RenderCallbacks<'a>>,
+    options: Option<&MarkdownOptions>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
     let input_value = input.to_js();
@@ -231,7 +232,7 @@ pub(crate) fn render<'a>(
     };
 
     if let Some(callbacks) = callbacks {
-        js_renderer.extract_callbacks(&callbacks);
+        js_renderer.extract_callbacks(callbacks);
     }
 
     // Run parser with the JS callback renderer
@@ -249,11 +250,11 @@ pub(crate) fn render<'a>(
 pub(crate) fn react<'a>(
     cx: &mut JsScope<'a>,
     input: JsLocal<'a>,
-    components: Option<ComponentOverrides<'a>>,
-    options: &ReactOptions,
+    components: Option<&ComponentOverrides<'a>>,
+    options: Option<&ReactOptions>,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
-    let react_version: u8 = match options.react_version {
+    let react_version: u8 = match options.and_then(|options| options.react_version) {
         // react.element (React 18 and older)
         Some(version) if version as i32 <= 18 => 0,
         // react.transitional.element (React 19+)
@@ -285,7 +286,7 @@ unsafe extern "C" {
 fn render_ast(
     global_this: &JSGlobalObject,
     input_value: JSValue,
-    components: Option<ComponentOverrides<'_>>,
+    components: Option<&ComponentOverrides<'_>>,
     options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
@@ -318,7 +319,7 @@ fn render_ast(
     };
 
     if let Some(components) = components {
-        renderer.extract_components(&components);
+        renderer.extract_components(components);
     }
 
     if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {

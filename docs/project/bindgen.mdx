@@ -256,7 +256,7 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
-- `.otherAsNull`: every value of a [kind](#unions-and-kinds) the type does not take means absent; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. A dictionary still reports its members, and an array its elements. It is not for a type that throws for some values of a kind it takes: an integer (`b.f64.otherAsNull` takes every number), an enumeration, a dictionary without `allowArray`. A union writes `ignored: b.any` as its last alternative.
+- `.otherAsNull`: every value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent: what a union would give an `ignored: b.any` written after the type; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.otherAsNull` takes every string), a dictionary without `allowArray` for an array. A union writes `ignored: b.any` as its last alternative.
 - `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. It also goes on a type that takes `undefined`, like `b.any`. It is only for an argument, and not for one of an overload.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
@@ -317,7 +317,7 @@ JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
-The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above but `.default()`.
+The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above except `.default()`.
 
 ### Dictionaries
 
@@ -334,7 +334,7 @@ whose type does not accept `undefined` is required. A member can be written
 a function's `expected` does.
 A dictionary whose members can all be absent implements `Default`. As an argument, with
 `.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
-`options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
+`options: &BracesOptions`, or `Option<&BracesOptions>` with one of the modifiers that make it an `Option`. As a member, or inside a union or an array, it is held by value.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot

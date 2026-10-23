@@ -712,7 +712,7 @@ impl CronRegisterJob {
 }
 
 /// Resolve the `{ tz?: string }` option to a `CronTz`.
-fn resolve_cron_tz(global: &JSGlobalObject, options: Option<CronOptions<'_>>) -> JsResult<CronTz> {
+fn resolve_cron_tz(global: &JSGlobalObject, options: Option<&CronOptions<'_>>) -> JsResult<CronTz> {
     let Some(tz_bytes) = options.and_then(|options| options.tz) else {
         return Ok(CronTz::Local);
     };
@@ -1716,7 +1716,7 @@ impl CronJob {
         cx: &mut JsScope<'a>,
         (schedule, schedule_value): (&[u8], JsLocal<'a>),
         handler: JsLocal<'a, Callable>,
-        options: Option<CronOptions<'a>>,
+        options: Option<&CronOptions<'a>>,
     ) -> JsResult<JSValue> {
         let tz = resolve_cron_tz(cx.global(), options)?;
         let cx = &cx.js_thread();
@@ -1867,7 +1867,7 @@ pub(crate) fn parse(
     cx: &mut JsScope<'_>,
     expression: &[u8],
     from: Option<f64>,
-    options: Option<CronOptions<'_>>,
+    options: Option<&CronOptions<'_>>,
 ) -> JsResult<Option<f64>> {
     let global = cx.global();
 

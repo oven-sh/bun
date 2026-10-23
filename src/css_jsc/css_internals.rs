@@ -22,7 +22,7 @@ pub(crate) fn minify_error_test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<CssParserOptions>,
+    options: Option<&CssParserOptions>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(cx, source, None, parser_flags(options), TestKind::Minify)
 }
@@ -31,7 +31,7 @@ pub(crate) fn minify_test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<CssParserOptions>,
+    options: Option<&CssParserOptions>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(cx, source, None, parser_flags(options), TestKind::Minify)
 }
@@ -40,7 +40,7 @@ pub(crate) fn prefix_test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<CssParserOptions>,
+    options: Option<&CssParserOptions>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(cx, source, None, parser_flags(options), TestKind::Prefix)
 }
@@ -49,7 +49,7 @@ pub(crate) fn test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<CssParserOptions>,
+    options: Option<&CssParserOptions>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(cx, source, None, parser_flags(options), TestKind::Normal)
 }
@@ -58,7 +58,7 @@ pub(crate) fn minify_test<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<BrowserTargets>,
+    options: Option<&BrowserTargets>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(
         cx,
@@ -73,7 +73,7 @@ pub(crate) fn prefix_test<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<BrowserTargets>,
+    options: Option<&BrowserTargets>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(
         cx,
@@ -88,7 +88,7 @@ pub(crate) fn test<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
     _: &[u8],
-    options: Option<BrowserTargets>,
+    options: Option<&BrowserTargets>,
 ) -> JsResult<CssTestOutput<'a>> {
     testing_impl(
         cx,
@@ -102,7 +102,7 @@ pub(crate) fn test<'a>(
 fn testing_impl<'a>(
     cx: &mut JsScope<'a>,
     source: &[u8],
-    targets: Option<BrowserTargets>,
+    targets: Option<&BrowserTargets>,
     flags: ParserFlags,
     test_kind: TestKind,
 ) -> JsResult<CssTestOutput<'a>> {
@@ -190,10 +190,10 @@ fn testing_impl<'a>(
     }
 }
 
-fn parser_flags(options: Option<CssParserOptions>) -> ParserFlags {
+fn parser_flags(options: Option<&CssParserOptions>) -> ParserFlags {
     let mut flags = ParserFlags::default();
     for flag in options
-        .and_then(|options| options.flags)
+        .and_then(|options| options.flags.as_deref())
         .unwrap_or_default()
     {
         match flag {
@@ -203,8 +203,8 @@ fn parser_flags(options: Option<CssParserOptions>) -> ParserFlags {
     flags
 }
 
-impl From<BrowserTargets> for Browsers {
-    fn from(targets: BrowserTargets) -> Self {
+impl From<&BrowserTargets> for Browsers {
+    fn from(targets: &BrowserTargets) -> Self {
         Browsers {
             android: targets.android,
             chrome: targets.chrome,
@@ -224,7 +224,7 @@ pub(crate) fn attr_test<'a>(
     source: &[u8],
     _: &[u8],
     minify: bool,
-    targets: Option<BrowserTargets>,
+    targets: Option<&BrowserTargets>,
 ) -> JsResult<CssTestOutput<'a>> {
     use bun_ast::ImportRecord;
     use bun_css::{

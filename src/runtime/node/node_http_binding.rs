@@ -53,7 +53,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     handshake: &[u8],
     max_payload: u32,
     flags: i32,
-    deflate: Option<DeflateParams>,
+    deflate: Option<&DeflateParams>,
 ) -> JsResult<JSValue> {
     const AUTO_PONG: i32 = 1 << 0;
     const SKIP_UTF8_VALIDATION: i32 = 1 << 1;

@@ -199,7 +199,7 @@ export abstract class Type {
   get emptyStringAsNull(): OptionalType {
     return new OptionalType(this, "emptyStringAsNull");
   }
-  /** Every value of a kind it does not take means absent. */
+  /** Every value of a kind it does not take, or that it refuses, means absent. */
   get otherAsNull(): OptionalType {
     return new OptionalType(this, "otherAsNull");
   }
@@ -237,11 +237,11 @@ export abstract class Type {
   get refuses(): string | null {
     return null;
   }
-  /** It throws for some values of a kind it takes, like `1.5` or an unknown string, so the kind does not tell whether it takes one. */
-  get narrowsItsKinds(): boolean {
-    return false;
+  /** What to write for `.otherAsNull`, if it throws for a value of a kind it takes, like `1.5` or an unknown string. */
+  get narrowsItsKinds(): string | null {
+    return null;
   }
-  /** A C++ condition that is true of the values `.otherAsNull` converts. */
+  /** A C++ condition that is true of the values `.otherAsNull` converts in place. */
   cppTakes(value: string): string {
     if (refusesNonObjects(this)) return `${value}.isObject()`;
     const kinds = this.valueKinds;
@@ -436,9 +436,6 @@ interface IntegerInfo {
 }
 
 export class IntegerType extends PrimitiveType {
-  get narrowsItsKinds(): boolean {
-    return true;
-  }
   readonly info: IntegerInfo;
   readonly #conversion: "Strict" | "Loose" | `${string}::${string}`;
   readonly #allowBigInt: boolean;
@@ -473,6 +470,9 @@ export class IntegerType extends PrimitiveType {
     const [min, max] = this.range;
     assert(typeof value !== "number" || (value >= min && value <= max), `${value} is not in [${min}, ${max}]`);
     return super.toCpp(value);
+  }
+  get narrowsItsKinds(): string {
+    return "b.f64.otherAsNull takes every number";
   }
   /** Also a BigInt that is in range, for an argument whose type is `number | bigint`. */
   get allowBigInt(): IntegerType {
@@ -1349,10 +1349,15 @@ export class OptionalType extends Type {
     assert(!(inner instanceof WithValueType), "put .withValue last");
     if (!inner.passesValue) refuseOutsideArgument(inner);
     if (modifier === "otherAsNull") {
-      const byKind = ".otherAsNull goes by the kind of a value";
       assert(!(inner instanceof UnionType), "a union takes the rest as its last alternative: ignored: b.any");
-      assert(inner.valueKinds !== "any" || refusesNonObjects(inner), `${byKind}: this type takes every kind`);
-      assert(!inner.narrowsItsKinds, `${byKind}: this type throws for some values of a kind it takes`);
+      assert(
+        inner.valueKinds !== "any" || refusesNonObjects(inner),
+        ".otherAsNull goes by the kind of a value: the conversion of this type decides",
+      );
+      assert(
+        !inner.narrowsItsKinds,
+        `.otherAsNull goes by the kind of a value, and this type throws for some of a kind: ${inner.narrowsItsKinds}`,
+      );
     }
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
     if (modifier !== "ifPassed") {
@@ -1392,9 +1397,8 @@ export class OptionalType extends Type {
   get refusalOutsideArgument(): string | null {
     return this.modifier === "ifPassed" ? ".ifPassed is only for an argument" : super.refusalOutsideArgument;
   }
-  /** `.otherAsNull` of a string resolves a rope, and of a dictionary reads its members. */
   get conversionThrows(): boolean {
-    return this.modifier === "otherAsNull" || this.inner.conversionThrows;
+    return this.inner.conversionThrows;
   }
   get valueKinds(): ValueKinds {
     if (this.inner.valueKinds === "any" || !["optional", "nullable", "ifPassed"].includes(this.modifier)) return "any";
@@ -1778,9 +1782,6 @@ export type EnumerationValues =
   readonly (string | readonly string[])[] | Readonly<Record<string, string | readonly string[]>>;
 
 export class EnumerationType extends NamedType {
-  get narrowsItsKinds(): boolean {
-    return true;
-  }
   /** `spellings[i]` all parse to variant `i`; the first is the canonical one. */
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
@@ -1806,6 +1807,9 @@ export class EnumerationType extends NamedType {
   }
   get valueKinds(): ValueKinds {
     return ["string"];
+  }
+  get narrowsItsKinds(): string {
+    return "b.string.otherAsNull takes every string";
   }
   get idlType(): string {
     return `WebCore::IDLEnumeration<${this.cpp}>`;
@@ -1934,8 +1938,8 @@ export class DictionaryType extends NamedType {
   get fromJS(): boolean {
     return !!this.options.fromJS;
   }
-  get narrowsItsKinds(): boolean {
-    return !this.allowArray;
+  get narrowsItsKinds(): string | null {
+    return this.allowArray ? null : "give the dictionary allowArray";
   }
   get allowArray(): boolean {
     return !!this.options.allowArray;

@@ -147,10 +147,16 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.f64.loose.allowDate).toThrow(".allowDate follows b.f64");
   expect(() => b.f64.allowDate.loose).toThrow(".loose follows b.f64");
   for (const type of [b.any, b.string.loose, b.bytes({ from: ["buffer"] }), b.u8.validateInteger(0, 4)]) {
-    expect(() => type.otherAsNull).toThrow(".otherAsNull goes by the kind of a value: this type takes every kind");
+    expect(() => type.otherAsNull).toThrow(
+      ".otherAsNull goes by the kind of a value: the conversion of this type decides",
+    );
   }
-  for (const type of [b.i32, b.enumeration(["a"]), b.dictionary({ x: b.f64 })]) {
-    expect(() => type.otherAsNull).toThrow("this type throws for some values of a kind it takes");
+  for (const [type, remedy] of [
+    [b.i32, "b.f64.otherAsNull takes every number"],
+    [b.enumeration(["a"]), "b.string.otherAsNull takes every string"],
+    [b.dictionary({ x: b.f64 }), "give the dictionary allowArray"],
+  ] as const) {
+    expect(() => type.otherAsNull).toThrow(`this type throws for some of a kind: ${remedy}`);
   }
   expect(() => b.union({ number: b.f64, text: b.string }).otherAsNull).toThrow(
     "a union takes the rest as its last alternative: ignored: b.any",
@@ -821,17 +827,20 @@ describe("functions", () => {
   it(".otherAsNull is absent for every value of a kind the type does not take", () => {
     const { presentArguments } = bindgen;
     expect(presentArguments()).toEqual([]);
-    expect(presentArguments(1.5, "", () => {}, new bindgen.TestCounter(1), {})).toEqual([
+    expect(presentArguments(1.5, "", () => {}, [], [1], new bindgen.TestCounter(1), {})).toEqual([
       "number",
       "text",
       "callback",
+      "object",
+      "numbers",
       "counter",
       "options",
     ]);
-    expect(presentArguments("1", 1, {}, {}, 1)).toEqual([]);
-    expect(presentArguments(null, Symbol(), null, null, null)).toEqual([]);
+    expect(presentArguments("1", 1, {}, 1, {}, {}, 1)).toEqual([]);
+    expect(presentArguments(null, Symbol(), null, null, "1", null, null)).toEqual([]);
     expect(presentArguments(NaN, new String("s"), new Proxy(() => {}, {}))).toEqual(["number", "text", "callback"]);
-    const options = (value: unknown) => presentArguments(0, 0, 0, 0, value).slice(1);
+    expect(() => presentArguments(0, 0, 0, 0, ["1"])).toThrow(TypeError);
+    const options = (value: unknown) => presentArguments(0, 0, 0, 0, 0, 0, value).slice(1);
     expect(options({ size: 1, callback() {} })).toEqual(["options", "options.size", "options.callback"]);
     expect(options({ size: "1", callback: {} })).toEqual(["options"]);
     expect(options([])).toEqual(["options"]);
@@ -874,7 +883,7 @@ describe("functions", () => {
   });
 });
 
-describe("how a dictionary reports its members", () => {
+describe("the members of a dictionary", () => {
   it(".validateInteger can be absent", () => {
     expect(bindgen.nodeOptionsSize({})).toBe(undefined);
     expect(bindgen.nodeOptionsSize({ size: undefined })).toBe(undefined);

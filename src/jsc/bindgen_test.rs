@@ -950,8 +950,10 @@ pub(crate) fn present_arguments(
     number: Option<f64>,
     text: Option<&[u8]>,
     callback: Option<JsLocal<'_, Callable>>,
+    object: Option<JsLocal<'_, crate::JSObject>>,
+    numbers: Option<Vec<f64>>,
     counter: Option<&TestCounter>,
-    options: Option<TestOtherAsNullOptions<'_>>,
+    options: Option<&TestOtherAsNullOptions<'_>>,
 ) -> Vec<bun_core::String> {
     let members = options.map(|options| (options.size, options.callback));
     let (size, callback_member) = members.unwrap_or((None, None));
@@ -959,6 +961,11 @@ pub(crate) fn present_arguments(
         ("number", number.is_some()),
         ("text", text.is_some()),
         ("callback", callback.is_some()),
+        ("object", object.is_some()),
+        (
+            "numbers",
+            numbers.is_some_and(|numbers| !numbers.is_empty()),
+        ),
         ("counter", counter.is_some()),
         ("options", members.is_some()),
         ("options.size", size.is_some()),

@@ -467,6 +467,8 @@ export const presentArguments = b.fn({
     number: b.f64.otherAsNull,
     text: b.string.utf8.otherAsNull,
     callback: b.callable.otherAsNull,
+    object: b.object.otherAsNull,
+    numbers: b.array(b.f64).otherAsNull,
     counter: TestCounter.otherAsNull,
     options: TestOtherAsNullOptions.otherAsNull,
   },

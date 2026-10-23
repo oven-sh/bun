@@ -32,8 +32,8 @@ const options = {
   noHtmlSpans: { type: flag, altNames: ["no_html_spans"] },
   tagFilter: { type: flag, altNames: ["tag_filter"] },
 } as const;
-export const MarkdownOptions = b.dictionary(options, ignoresNonObjects);
-export const ReactOptions = b.dictionary({ reactVersion: b.f64.otherAsNull, ...options }, ignoresNonObjects);
+export const MarkdownOptions = b.dictionary(options, { allowArray: true });
+export const ReactOptions = b.dictionary({ reactVersion: b.f64.otherAsNull, ...options }, { allowArray: true });
 
 export const AnsiTheme = b.dictionary(
   { colors: flag, hyperlinks: flag, kittyGraphics: flag, light: flag, columns: b.f64.otherAsNull },
@@ -109,18 +109,18 @@ export const ComponentOverrides = b.dictionary(
 const js = { capability: "js", throws: true } as const;
 
 export const markdown = b.namespace({
-  html: { args: { input, options: MarkdownOptions.default({}) }, returns: b.string.utf8, expected, ...js },
+  html: { args: { input, options: MarkdownOptions.otherAsNull }, returns: b.string.utf8, expected, ...js },
   ansi: { args: { input, theme: AnsiTheme.default({}) }, returns: b.string.utf8, expected, length: 2, ...js },
   /** The callbacks run while `input` is read. */
   render: {
-    args: { input: b.any, callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.default({}) },
+    args: { input: b.any, callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.otherAsNull },
     returns: b.string.utf8,
     length: 3,
     ...js,
   },
   /** As `render`. */
   react: {
-    args: { input: b.any, components: ComponentOverrides.otherAsNull, options: ReactOptions.default({}) },
+    args: { input: b.any, components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
     returns: b.any,
     length: 3,
     ...js,

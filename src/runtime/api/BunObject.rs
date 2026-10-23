@@ -360,7 +360,7 @@ fn apply_inspect_options(
 pub(crate) fn table<'a>(
     cx: &mut JsScope<'a>,
     tabular_data: Option<JsLocal<'a, JSObject>>,
-    options: Option<InspectOptions>,
+    options: Option<&InspectOptions>,
 ) -> JsResult<Vec<u8>> {
     print_table(cx, tabular_data, JSValue::UNDEFINED, options)
 }
@@ -370,7 +370,7 @@ pub(crate) fn table_with_properties<'a>(
     cx: &mut JsScope<'a>,
     tabular_data: Option<JsLocal<'a, JSObject>>,
     properties: JsLocal<'a, JSArray>,
-    options: Option<InspectOptions>,
+    options: Option<&InspectOptions>,
 ) -> JsResult<Vec<u8>> {
     print_table(cx, tabular_data, properties.to_js(), options)
 }
@@ -379,7 +379,7 @@ fn print_table(
     cx: &mut JsScope<'_>,
     tabular_data: Option<JsLocal<'_, JSObject>>,
     properties: JSValue,
-    options: Option<InspectOptions>,
+    options: Option<&InspectOptions>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
     let Some(value) = tabular_data else {
@@ -398,7 +398,7 @@ fn print_table(
         ..Default::default()
     };
     if let Some(options) = options {
-        apply_inspect_options(&mut format_options, global_this, &options)?;
+        apply_inspect_options(&mut format_options, global_this, options)?;
     }
 
     // very stable memory address

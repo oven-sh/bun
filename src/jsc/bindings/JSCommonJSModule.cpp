@@ -58,7 +58,7 @@
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/JSWeakMap.h>
-#include <JavaScriptCore/StrongInlines.h>
+#include <wtf/Box.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include <JavaScriptCore/JSWithScope.h>
 
@@ -1575,7 +1575,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(Zig::GlobalObject*, JSCommonJSModule*, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(JSCommonJSModule*, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1646,24 +1646,26 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(globalObject, moduleObject, sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(moduleObject, sourceOrigin, sourceURL, graph);
 }
 
 // The loader makes a record for the module when its fetch settles, and the module's body runs where the graph that
 // imports it evaluates that record, in import order. An ES module that runs first can require() the module (it runs
-// then, once) or delete or replace its require.cache entry, so the record holds on to the module it was made for.
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
+// then, once) or delete or replace its require.cache entry, so the record keeps the module it was made for alive
+// until then. (The provider only names it: a provider that rooted the module would keep its global object alive.)
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(JSCommonJSModule* moduleObject, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
+    auto module = WTF::Box<JSC::Weak<JSCommonJSModule>>::create(moduleObject);
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::createDeferred(
-            [graph = JSC::Weak<JSModuleGraph>(graph), module = JSC::Strong<JSCommonJSModule>(JSC::getVM(globalObject), moduleObject)](JSC::JSGlobalObject* lexicalGlobalObject,
+            [graph = JSC::Weak<JSModuleGraph>(graph), module](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                JSCommonJSModule* moduleObject = module.get();
+                JSCommonJSModule* moduleObject = module->get();
 
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
                 // (The graph's loader, which is evaluating this, keeps the graph alive.)
@@ -1673,7 +1675,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(Zig::GlobalObject* glob
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
 
-                if (moduleObject->failedToEvaluate || (!moduleObject->hasEvaluated && moduleObject->sourceCode.isNull())) [[unlikely]] {
+                if (!moduleObject || moduleObject->failedToEvaluate || (!moduleObject->hasEvaluated && moduleObject->sourceCode.isNull())) [[unlikely]] {
                     throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
                     return;
                 }
@@ -1683,7 +1685,10 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(Zig::GlobalObject* glob
                 RELEASE_AND_RETURN(scope, moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues));
             },
             sourceOrigin,
-            sourceURL));
+            sourceURL,
+            [module]() -> JSC::JSCell* {
+                return module->get();
+            }));
 }
 
 std::optional<JSC::SourceCode> createCommonJSModule(
@@ -1737,7 +1742,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(globalObject, moduleObject, sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(moduleObject, sourceOrigin, sourceURL, graph);
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)

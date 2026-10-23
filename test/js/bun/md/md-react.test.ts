@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import React from "react";
 import { renderToString } from "react-dom/server";
 
@@ -666,5 +667,123 @@ describe("Bun.markdown.react renderToString with component overrides", () => {
     }
     const html = reactRender("# Title\n\nParagraph\n", { h1: H1 });
     expect(html).toBe('<h1 class="big">Title</h1><p>Paragraph</p>');
+  });
+});
+
+// ============================================================================
+// Development-only element fields (React's dev renderers read them unguarded)
+// ============================================================================
+
+describe("Bun.markdown.react development fields", () => {
+  const script = `
+    const root = Bun.markdown.react("- a\\n- b\\n", undefined, { reactVersion: Number(process.env.MD_REACT_VERSION) });
+    const list = root.props.children[0];
+    const item = list.props.children[0];
+    const describeEl = el => ({
+      names: Object.getOwnPropertyNames(el),
+      keys: Object.keys(el),
+      owner: el._owner,
+      store: el._store && Object.getOwnPropertyDescriptor(el._store, "validated"),
+      debugInfo: el._debugInfo,
+      debugStack: el._debugStack,
+      debugTask: el._debugTask,
+    });
+    console.log(JSON.stringify({ root: describeEl(root), list: describeEl(list), item: describeEl(item) }));
+  `;
+
+  async function run(NODE_ENV: string | undefined, reactVersion = 19) {
+    const env = { ...bunEnv, MD_REACT_VERSION: String(reactVersion) };
+    if (NODE_ENV === undefined) delete env.NODE_ENV;
+    else env.NODE_ENV = NODE_ENV;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  const devShape = {
+    names: ["$$typeof", "type", "key", "ref", "props", "_owner", "_store", "_debugInfo", "_debugStack", "_debugTask"],
+    keys: ["$$typeof", "type", "key", "props", "_owner", "_store"],
+    owner: null,
+    store: { value: 1, writable: true, enumerable: false, configurable: false },
+    debugInfo: null,
+    debugStack: null,
+    debugTask: null,
+  };
+
+  test.each(["development", "test", undefined])(
+    "NODE_ENV=%s adds the fields React's dev build expects",
+    async nodeEnv => {
+      const { root, list, item } = await run(nodeEnv);
+      expect(root).toEqual(devShape);
+      expect(list).toEqual(devShape);
+      expect(item).toEqual(devShape);
+    },
+  );
+
+  test("reactVersion: 18 gets the same development fields", async () => {
+    const { root, list, item } = await run("development", 18);
+    expect(root).toEqual(devShape);
+    expect(list).toEqual(devShape);
+    expect(item).toEqual(devShape);
+  });
+
+  test("NODE_ENV=production keeps the production shape", async () => {
+    const { root, list, item } = await run("production");
+    const prodShape = {
+      names: ["$$typeof", "type", "key", "ref", "props"],
+      keys: ["$$typeof", "type", "key", "ref", "props"],
+      owner: undefined,
+      store: undefined,
+      debugInfo: undefined,
+      debugStack: undefined,
+      debugTask: undefined,
+    };
+    expect(root).toEqual(prodShape);
+    expect(list).toEqual(prodShape);
+    expect(item).toEqual(prodShape);
+  });
+
+  test("react-server-dom marks elements validated without throwing", async () => {
+    // react-server-dom-webpack's development build does `element._store.validated = 1`
+    // on every element it renders. It must not throw.
+    const visitScript = `
+      const root = Bun.markdown.react("# Title\\n\\n- a\\n- b\\n");
+      let visited = 0;
+      const visit = node => {
+        if (node === null || typeof node !== "object") return;
+        if (Array.isArray(node)) return node.forEach(visit);
+        if (node._owner !== null || node._debugStack !== null || node._debugTask !== null) {
+          throw new Error("missing development fields on " + String(node.type));
+        }
+        node._store.validated = 1;
+        visited++;
+        visit(node.props.children);
+      };
+      visit(root);
+      console.log(visited);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", visitScript],
+      env: { ...bunEnv, NODE_ENV: "development" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("5\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("list items do not trigger the missing key warning", () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: any[]) => errors.push(args.map(String).join(" "));
+    try {
+      expect(reactRender("- a\n- b\n- c\n")).toBe("<ul><li>a</li><li>b</li><li>c</li></ul>");
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toEqual([]);
   });
 });

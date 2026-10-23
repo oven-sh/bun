@@ -1657,8 +1657,10 @@ ${
       ...(throughCaller
         ? method.args.map(({ type }, i) =>
             type instanceof VariadicType
-              ? `all_arguments.get(${i}..).unwrap_or_default()`
-              : `all_arguments.get(${i}).copied().unwrap_or(bindgen::JsLocal::UNDEFINED)`,
+              ? i === 0
+                ? "all_arguments"
+                : `all_arguments.get(${i}..).unwrap_or_default()`
+              : `all_arguments.${i === 0 ? "first()" : `get(${i})`}.copied().unwrap_or(bindgen::JsLocal::UNDEFINED)`,
           )
         : rustArguments(method)),
     ].join(", ")})`;

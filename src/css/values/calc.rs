@@ -585,43 +585,47 @@ impl<V: CalcValue> Calc<V> {
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         let node = Self::parse_value(input, parse_ident)?;
+
+        // Only `*` or `/` continues a product. Most products end here, and no token is read.
         let start = input.state();
-        match input.next() {
-            Ok(css::Token::Delim(c)) if *c == b'*' as u32 || *c == b'/' as u32 => {
-                let operator = *c;
-                Self::parse_product_operators(node, operator, start.position, input, parse_ident)
-            }
-            _ => {
-                input.reset(&start);
-                Ok(node)
-            }
+        input.skip_whitespace();
+        if !matches!(input.next_byte(), Some(b'*' | b'/')) {
+            input.reset(&start);
+            return Ok(node);
         }
+        Self::parse_product_operators(node, start, input, parse_ident)
     }
 
-    /// The rest of a product, from the operand of its first `*` or `/`.
+    /// The operators of a product and their operands. `start` is the end of its first operand.
     #[inline(never)]
     fn parse_product_operators(
         mut node: Self,
-        mut operator: u32,
-        leading_end: usize,
+        mut start: css::ParserState,
         input: &mut css::Parser,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         // A leading number and one divisor of it, each with the end of its token. They stay
         // apart until they meet a math function: `6 / 7 * min(..)`.
         let mut leading_number = match node {
-            Calc::Number(number) => Some((number, leading_end)),
+            Calc::Number(number) => Some((number, start.position)),
             _ => None,
         };
         let mut leading_divisor = None;
         loop {
-            let rhs = Self::parse_value(input, parse_ident)?;
-            let rhs_end = input.position();
-            if operator == b'*' as u32 {
+            let tok = match input.next() {
+                Ok(vv) => vv,
+                Err(_) => {
+                    input.reset(&start);
+                    break;
+                }
+            };
+
+            if matches!(tok, css::Token::Delim(c) if *c == b'*' as u32) {
                 // At least one of the operands must be a number.
+                let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(n) = rhs {
                     leading_number = None;
-                    node = node.scale_by_token(Scale::Times(n), input.slice_to(rhs_end));
+                    node = node.scale_by_token(Scale::Times(n), input.slice_to(input.position()));
                 } else if let Calc::Number(val) = node {
                     let is_numeral =
                         |(_, end): (f32, usize)| ends_with_numeral(input.slice_to(end));
@@ -640,28 +644,23 @@ impl<V: CalcValue> Calc<V> {
                 } else {
                     return Err(input.new_unexpected_token_error(css::Token::Delim(b'*' as u32)));
                 }
-            } else {
-                match rhs {
-                    Calc::Number(val) if val != 0.0 => {
-                        if leading_divisor.is_some() {
-                            leading_number = None;
-                        }
-                        leading_divisor = Some((val, rhs_end));
-                        node = node.scale_by_token(Scale::Over(val), input.slice_to(rhs_end));
-                    }
+            } else if matches!(tok, css::Token::Delim(c) if *c == b'/' as u32) {
+                let divisor = match Self::parse_value(input, parse_ident)? {
+                    Calc::Number(val) if val != 0.0 => (val, input.position()),
                     _ => return Err(input.new_custom_error(css::ParserError::invalid_value)),
+                };
+                node = node.scale_by_token(Scale::Over(divisor.0), input.slice_to(divisor.1));
+                if leading_divisor.is_some() {
+                    leading_number = None;
                 }
+                leading_divisor = Some(divisor);
+            } else {
+                input.reset(&start);
+                break;
             }
-
-            let start = input.state();
-            operator = match input.next() {
-                Ok(css::Token::Delim(c)) if *c == b'*' as u32 || *c == b'/' as u32 => *c,
-                _ => {
-                    input.reset(&start);
-                    return Ok(node);
-                }
-            };
+            start = input.state();
         }
+        Ok(node)
     }
 
     /// Scales by the number that ends `input`. Only an expression that keeps a math function
@@ -1392,6 +1391,7 @@ impl Numeral {
     }
 
     /// `self * times / over`, when that is a numeral too.
+    #[inline(never)]
     fn scaled(self, times: Numeral, over: Numeral) -> Option<Numeral> {
         let divisor = over.digits;
         if divisor == 0 {
@@ -1420,6 +1420,7 @@ impl Numeral {
 
 /// Whether the printed digits of `number` are a numeral after `* times / over`. A value holds
 /// what is left of the rounding of its earlier products, and it prints without that.
+#[inline(never)]
 fn scales_to_numeral(number: f32, times: Numeral, over: Numeral) -> bool {
     Numeral::printed(number, false).is_some_and(|numeral| numeral.scaled(times, over).is_some())
 }

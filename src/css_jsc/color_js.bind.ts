@@ -59,10 +59,9 @@ export const ColorOutput = b.union({
 const formats = OutputColorFormat.spellings.flat().map(format => `'${format}'`);
 
 export const color = b.fn({
-  args: { input: ColorInput, format: OutputColorFormat.nullable.default("css") },
-  expected: { format: `format must be one of ${formats.slice(0, -1).join(", ")} or ${formats.at(-1)}` },
+  args: { input: ColorInput, outputFormat: OutputColorFormat.nullable.default("css") },
+  expected: { outputFormat: `outputFormat must be one of ${formats.slice(0, -1).join(", ")} or ${formats.at(-1)}` },
   returns: ColorOutput.nullable,
   capability: "js",
   throws: true,
-  length: 2,
 });

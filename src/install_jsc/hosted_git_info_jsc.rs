@@ -41,7 +41,7 @@ pub(crate) fn from_url<'a>(
     };
 
     Ok(Some(HostedGitInfo {
-        host_provider: BunString::static_(parsed.host_provider.type_str()),
+        r#type: BunString::static_(parsed.host_provider.type_str()),
         domain: BunString::clone_utf8(parsed.host_provider.domain()),
         project: BunString::clone_utf8(parsed.project()),
         user: parsed.user().map(BunString::clone_utf8),

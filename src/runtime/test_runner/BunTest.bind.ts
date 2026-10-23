@@ -16,7 +16,6 @@ const hook = (name: string) =>
       second: `${name}() expects a number or object as the second argument`,
       third: `${name}() expects a number or object as the third argument`,
     },
-    length: 1,
     ...js,
   });
 export const beforeAll = hook("beforeAll");

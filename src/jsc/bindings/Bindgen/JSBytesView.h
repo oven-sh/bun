@@ -12,8 +12,11 @@ std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue, bool& isShared);
 
 bool isSharedBuffer(JSC::JSValue);
 
+// Optional: ~MallocSpan calls free, of null too.
+using BytesCopy = std::optional<WTF::MallocSpan<uint8_t>>;
+
 // A copy of the bytes, which `copy` holds, or the bytes themselves if there are none. Allocating it can throw.
-std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, WTF::MallocSpan<uint8_t>& copy);
+std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, BytesCopy& copy);
 
 // Whether it holds a Blob: a Blob, or a `Bun.build()` output. Throws for one whose bytes are not in memory: a file.
 bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
@@ -41,7 +44,7 @@ public:
     }
 
     // The bytes of a shared buffer become those of `copy`. Whether it is one: copying can throw.
-    ALWAYS_INLINE bool copyIfShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy)
+    ALWAYS_INLINE bool copyIfShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
     {
         if (!m_isBlobOrBuffer || !isSharedBuffer(argument)) [[likely]]
             return false;
@@ -50,7 +53,7 @@ public:
     }
 
     // `read` and `copyIfShared` in one look at the buffer.
-    ALWAYS_INLINE bool readCopyingShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy)
+    ALWAYS_INLINE bool readCopyingShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
     {
         if (!m_isBlobOrBuffer)
             return false;
@@ -79,9 +82,9 @@ public:
     // Not `= default`: see JSStringUTF8View.
     JSBytesView() {}
 
-    void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+    bool initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
-        m_string.initialize(globalObject, string);
+        return m_string.initialize(globalObject, string);
     }
 
     std::span<const uint8_t> bytes() const LIFETIME_BOUND
@@ -98,10 +101,14 @@ class JSBlobOrStringOrBuffer {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    // Resolving a rope can throw.
-    void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+    // False if it threw, which resolving a rope can.
+    bool initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         m_string = string->value(&globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
     }
 
     void initializeAsBlobOrBuffer() {}

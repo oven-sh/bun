@@ -47,7 +47,7 @@ struct IDLOtherAsNull : WebCore::IDLNullable<IDL> {};
 
 // Treats the empty value, which stands for an argument the call does not have, as null.
 template<typename IDL>
-struct IDLNotPassedAsNull : WebCore::IDLNullable<IDL> {};
+struct IDLIfPassed : WebCore::IDLNullable<IDL> {};
 
 enum class AllowBigInt : bool {
     No,

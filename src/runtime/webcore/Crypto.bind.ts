@@ -37,7 +37,6 @@ export const randomUUIDv7 = b.fn({
   returns: EncodedUUID,
   capability: "heap",
   throws: true,
-  length: 2,
   rustPath: "crate::webcore::crypto::random_uuid_v7",
 });
 

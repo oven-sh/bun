@@ -89,13 +89,13 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
 
 pub(crate) fn do_connect<'a>(
     cx: &mut JsScope<'a>,
-    prev: SocketHandle<'a>,
-    opts: JsLocal<'a>,
+    socket: SocketHandle<'a>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
-    let (maybe_tcp, maybe_tls) = match prev {
+    let (maybe_tcp, maybe_tls) = match socket {
         SocketHandle::Tcp(socket) => (Some(socket.as_ctx_ptr()), None),
         SocketHandle::Tls(socket) => (None, Some(socket.as_ctx_ptr())),
         SocketHandle::Ignored(_) => (None, None),
     };
-    Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, opts.to_js())
+    Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options.to_js())
 }

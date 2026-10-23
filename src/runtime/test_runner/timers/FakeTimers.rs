@@ -341,7 +341,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
 pub(crate) fn use_fake_timers(
     cx: &mut JsScope<'_>,
     this_value: JsLocal<'_>,
-    options: Option<FakeTimersImplementationOrOptions<'_>>,
+    options: Option<FakeTimersImplementationOrOptions>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     // SAFETY: FFI call into C++ JSMock

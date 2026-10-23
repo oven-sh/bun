@@ -28,7 +28,6 @@ export const emitHandleIPCMessage = b.fn({
 export const send = b.fn({
   args: { message: b.any, handle: b.any, options: b.any, callback: b.any },
   returns: b.bool,
-  length: 1,
   capability: "js",
   throws: true,
 });

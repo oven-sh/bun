@@ -1866,7 +1866,7 @@ pub(crate) fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> 
 pub(crate) fn parse(
     cx: &mut JsScope<'_>,
     expression: &[u8],
-    from: Option<f64>,
+    relative_date: Option<f64>,
     options: Option<&CronOptions<'_>>,
 ) -> JsResult<Option<f64>> {
     let global = cx.global();
@@ -1881,9 +1881,9 @@ pub(crate) fn parse(
         }
     };
 
-    let from_ms = from.unwrap_or_else(|| bun_core::time::milli_timestamp() as f64);
+    let from_ms = relative_date.unwrap_or_else(|| bun_core::time::milli_timestamp() as f64);
 
-    // An out-of-range `from` is an invalid argument. next() would report it as "no match".
+    // An out-of-range `relative_date` is an invalid argument. next() would report it as "no match".
     if from_ms.is_nan() || from_ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME {
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }

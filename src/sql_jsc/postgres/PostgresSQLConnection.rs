@@ -845,7 +845,7 @@ impl PostgresSQLConnection {
 pub(crate) fn create_connection<'a>(
     cx: &mut JsScope<'a>,
     hostname: &[u8],
-    port: i32,
+    port: f64,
     username: &[u8],
     password: &[u8],
     database: &[u8],
@@ -868,6 +868,7 @@ pub(crate) fn create_connection<'a>(
 ) -> JsResult<JSValue> {
     let global_object = cx.global();
     let vm = global_object.bun_vm().as_mut();
+    let port = port as i32;
     // The connection is the calling script's.
     let context = global_object.bun_vm().context_of_caller_no_frame();
     let Some(args) = ConnectionCtorArgs::parse(

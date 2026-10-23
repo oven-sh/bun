@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::webcore::fetch" });
 
 const js = { capability: "js", throws: true } as const;
 /** An `input` that is neither a `Request` nor, after `ToString`, a URL is read as `init` is. */
-const request = { args: { input: b.any, init: b.any }, returns: b.any, ...js, rejects: true, length: 1 } as const;
+const request = { args: { input: b.any, init: b.any }, returns: b.any, ...js, rejects: true } as const;
 
 export const fetch = b.fn(request);
 /** What `session.fetch` of a `Bun.FetchSession` is bound from. */

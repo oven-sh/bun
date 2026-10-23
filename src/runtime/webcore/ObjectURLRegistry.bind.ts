@@ -11,7 +11,6 @@ export const revokeObjectURL = b.fn({
   expected: { url: "revokeObjectURL expects a string" },
   capability: "heap",
   throws: true,
-  length: 1,
 });
 
 /** `resolveObjectURL` of `node:buffer`. */

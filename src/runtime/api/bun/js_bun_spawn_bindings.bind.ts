@@ -8,7 +8,6 @@ const spawner = {
   returns: b.any,
   capability: "js",
   throws: true,
-  length: 1,
 } as const;
 export const spawn = b.fn(spawner);
 export const spawnSync = b.fn(spawner);

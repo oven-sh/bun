@@ -177,7 +177,7 @@ fn channel_list<'a, const N: usize>(
 pub(crate) fn color<'a>(
     cx: &mut JsScope<'a>,
     input: ColorInput<'a>,
-    format: OutputColorFormat,
+    output_format: OutputColorFormat,
 ) -> bindgen::Result<'a, Option<ColorOutput<'a>>> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_css as css;
@@ -257,7 +257,7 @@ pub(crate) fn color<'a>(
             return Err(heap.error(format_args!("color() failed to parse {}", kind_name)));
         }
         Ok(result) => {
-            let format: OutputColorFormat = if format == OutputColorFormat::Ansi {
+            let format: OutputColorFormat = if output_format == OutputColorFormat::Ansi {
                 match OutputSource::color_depth() {
                     // No color terminal, therefore return an empty string
                     ColorDepth::None => return Ok(Some(ColorOutput::Text(BunString::EMPTY))),
@@ -266,7 +266,7 @@ pub(crate) fn color<'a>(
                     ColorDepth::C256 => OutputColorFormat::Ansi256,
                 }
             } else {
-                format
+                output_format
             };
 
             'formatted: {

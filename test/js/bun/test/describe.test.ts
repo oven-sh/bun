@@ -237,6 +237,16 @@ describe("a proxy of a function is a callback", () => {
   test("each ran", () => {
     expect(ran).toEqual(["test", "beforeAll", "beforeEach", "test with a timeout", "afterEach"]);
   });
+  let error: Error | undefined;
+  try {
+    // @ts-expect-error
+    test("a proxy where the options go", proxy("options"), () => {});
+  } catch (thrown) {
+    error = thrown as Error;
+  }
+  test("and not options", () => {
+    expect(error?.message).toBe("test() expects options to be a number or object, not a function");
+  });
 });
 
 test("deeply nested describe() doesn't overflow the native stack", async () => {

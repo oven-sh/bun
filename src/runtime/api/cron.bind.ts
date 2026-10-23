@@ -27,7 +27,10 @@ const reaction = {
 export const onPromiseResolve = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseResolve" });
 export const onPromiseReject = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseReject" });
 
-export const CronOptions = b.dictionary({ tz: b.string.utf8.nullable }, { allowArray: true, reportedAs: "options" });
+export const CronOptions = b.dictionary(
+  { tz: b.string.utf8.nullable },
+  { allowArray: true, reportedAs: "Bun.cron: options" },
+);
 
 const signature = { export: "Bun__Cron__cron", capability: "js", throws: true } as const;
 
@@ -42,7 +45,6 @@ export const cron = b.overloads(
       title: "Bun.cron() expects a string title as the third argument",
     },
     returns: b.any,
-    length: 3,
     rustPath: "crate::api::cron::register_os_job",
   },
   /** An in-process job, whose `cron` is the `schedule` it was given. */
@@ -52,7 +54,6 @@ export const cron = b.overloads(
     expected: {
       schedule: "Bun.cron() expects a string cron expression",
       handler: "Bun.cron(schedule, handler) expects a function handler as the second argument",
-      options: "Bun.cron: options must be an object",
     },
     returns: CronJob,
     rustPath: "crate::api::cron::CronJob::register",
@@ -70,14 +71,12 @@ export const remove = b.fn({
 
 export const parse = b.fn({
   export: "Bun__Cron__parse",
-  args: { expression: b.string.utf8, from: b.f64.allowDate.nullable, options: CronOptions.nullable },
+  args: { expression: b.string.utf8, relativeDate: b.f64.allowDate.nullable, options: CronOptions.nullable },
   expected: {
     expression: "Bun.cron.parse() expects a string cron expression as the first argument",
-    from: "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)",
-    options: "Bun.cron: options must be an object",
+    relativeDate: "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)",
   },
   returns: b.f64.asDate.nullable,
   capability: "js",
   throws: true,
-  length: 1,
 });

@@ -8,6 +8,7 @@ describe("arguments are validated as in Node", () => {
   it("a proxy of a function is a callback", async () => {
     const called = (call: (callback: (err: Error | null) => void) => void) =>
       new Promise<void>((resolve, reject) => call(new Proxy(err => (err ? reject(err) : resolve()), {})));
+    await called(callback => randomBytes(4, callback));
     await called(callback => randomInt(5, callback));
     await called(callback => randomInt(1, 5, callback));
     await called(callback => randomFill(new Uint8Array(4), callback));

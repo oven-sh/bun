@@ -7,7 +7,6 @@ import {
   BufferSourceType,
   type BytesOptions,
   BytesType,
-  CallableType,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -53,7 +52,7 @@ export const string = new StringType();
 export const any = new AnyType();
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
-export const callable = new CallableType();
+export { callableType as callable } from "./bindgen-lib-internal.ts";
 
 /** An object, as a `JsLocal<'a, JSObject>`. */
 export { objectType as object } from "./bindgen-lib-internal.ts";

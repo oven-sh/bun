@@ -1,5 +1,4 @@
-//! What both the Postgres and MySQL `createQuery(query, values, pendingValue, bigint, simple)`
-//! refuse.
+//! The limits of a simple query, for `createQuery` of Postgres and MySQL.
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 

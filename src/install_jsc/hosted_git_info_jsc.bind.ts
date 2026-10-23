@@ -10,7 +10,7 @@ export const parseUrl = b.fn({
 });
 
 export const HostedGitInfo = b.dictionary({
-  type: { type: b.string, rustName: "host_provider" },
+  type: b.string,
   domain: b.string,
   project: b.string,
   user: b.string.nullable,

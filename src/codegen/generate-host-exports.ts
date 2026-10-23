@@ -24,7 +24,7 @@
 //   shape        impl signature                                          → thunk
 //   ──────────── ─────────────────────────────────────────────────────────────────
 //   lazy         (&JSGlobalObject) -> JsResult<JSValue>|JSValue
-//                  → host_fn::host_fn_lazy(g, path::name)
+//                  → host_fn::host_fn_result(g, || path::name(g))
 //   generic      (T0, T1, …) -> R   where Tn ∈ {&X, &mut X, *T, scalar}
 //                  → unsafe extern "C" fn(<ptr-ified Tn>) -> R { path::name(<deref>) }
 //
@@ -396,7 +396,7 @@ function emitThunk(e: Export): string {
       // ABI-identical to non-null `*const JSGlobalObject`; C++ never passes
       // null here.
       const body = retIsJsResult
-        ? `    host_fn::host_fn_lazy(g, ${impl})`
+        ? `    host_fn::host_fn_result(g, || ${impl}(g))`
         : `    host_fn::host_fn_lazy_passthrough(g, ${impl})`;
       return `
 // ${loc}

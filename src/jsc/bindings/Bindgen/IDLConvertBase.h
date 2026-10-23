@@ -52,6 +52,13 @@ private:
 
 }
 
+// Whether a conversion threw, from what it returned: false, null or empty. As WebCore's ConversionResult::hasException.
+ALWAYS_INLINE bool hasException(JSC::ThrowScope& scope, bool converted)
+{
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !converted);
+    return !converted;
+}
+
 // Conversion context where the name of the value being converted is specified as an
 // ASCIILiteral. Calls Bun::throwError.
 struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> {

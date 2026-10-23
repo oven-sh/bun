@@ -344,7 +344,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
         ],
       },
     }),
-  ).toThrow("x: its overloads have one privateSymbol");
+  ).toThrow("x: every overload gives privateSymbol the same value");
   expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
     "camelCase: rustName is written in snake_case",
   );
@@ -359,7 +359,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
         ],
       },
     }),
-  ).toThrow("x: its overloads have one invalidThis");
+  ).toThrow("x: every overload gives invalidThis the same value");
   expect(() => b.class({ rustPath: "T", proto: { "@@x": { getter: b.i32 } } })).toThrow(
     "@@x: only a function has an @@ key",
   );

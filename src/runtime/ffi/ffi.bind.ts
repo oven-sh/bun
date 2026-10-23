@@ -11,7 +11,7 @@ export const FFI = b.class({
   },
 });
 
-const method = { returns: b.any, length: 1, capability: "js", throws: true } as const;
+const method = { returns: b.any, capability: "js", throws: true } as const;
 
 // The functions of `Bun.FFI`. One that is given bad options returns the error.
 export const viewSource = b.fn({

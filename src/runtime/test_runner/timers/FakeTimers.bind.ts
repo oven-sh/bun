@@ -10,7 +10,10 @@ export const FakeTimersOptions = b.dictionary(
   { allowArray: true, reportedAs: "options" },
 );
 /** Jest 26 took `"modern"` or `"legacy"`. The string is ignored. */
-export const FakeTimersImplementationOrOptions = b.union({ implementation: b.string.utf8, options: FakeTimersOptions });
+export const FakeTimersImplementationOrOptions = b.union({
+  implementation: b.string.allowStringObject,
+  options: FakeTimersOptions,
+});
 
 export const useFakeTimers = b.fn({
   ...chainable,

@@ -105,16 +105,15 @@ export const InspectOptions = b.dictionary(
 export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, ignored: b.any });
 
 /**
- * `(value, options)` or `(value, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is
+ * `(arg, options)` or `(arg, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is
  * `"undefined"`.
  */
 export const inspect = b.fn({
   export: "Bun__BunObject__inspect",
-  args: { value: b.any.ifPassed, options: InspectOptionsOrDepth, colors: b.bool.loose.nullable },
+  args: { arg: b.any.ifPassed, options: InspectOptionsOrDepth, colors: b.bool.loose.nullable },
   returns: b.string.utf8,
   capability: "js",
   throws: true,
-  length: 2,
 });
 
 export const MMapOptions = b.dictionary(
@@ -153,18 +152,16 @@ export const openInEditor = b.fn({
   },
   capability: "heap",
   throws: true,
-  length: 1,
 });
 
-/** Without a `specifier` or a `from`, `resolveSync` throws and `resolve` rejects. */
-const resolver = {
-  args: { specifier: b.string.loose.nullable, from: b.string.loose.nullable, esm: b.bool.default(true) },
+/** Without a `moduleId` or a `parent`, `resolveSync` throws and `resolve` rejects. */
+const resolveSignature = {
+  args: { moduleId: b.string.loose.nullable, parent: b.string.loose.nullable, esm: b.bool.default(true) },
   capability: "js",
   throws: true,
-  length: 1,
 } as const;
-export const resolve = b.fn({ ...resolver, returns: b.any, rejects: true });
-export const resolveSync = b.fn({ ...resolver, returns: b.string });
+export const resolve = b.fn({ ...resolveSignature, returns: b.any, rejects: true });
+export const resolveSync = b.fn({ ...resolveSignature, returns: b.string });
 
 export const serve = b.fn({ args: { options: b.any }, returns: b.any, capability: "js", throws: true });
 
@@ -185,17 +182,21 @@ export const sleepSync = b.fn({
 
 /** The table of what is not an object is `""`. */
 const tabularData = b.object.otherAsNull;
-const printer = { export: "Bun__BunObject__table", returns: b.string.utf8, capability: "js", throws: true } as const;
+const tableSignature = {
+  export: "Bun__BunObject__table",
+  returns: b.string.utf8,
+  capability: "js",
+  throws: true,
+} as const;
 /** `Bun.inspect.table` */
 export const table = b.overloads(
   {
-    ...printer,
+    ...tableSignature,
     args: { tabularData, properties: b.jsArray, options: InspectOptions.otherAsNull },
-    length: 3,
     rustPath: "crate::api::bun_object::table_with_properties",
   },
   {
-    ...printer,
+    ...tableSignature,
     args: { tabularData, options: InspectOptions.otherAsNull },
     rustPath: "crate::api::bun_object::table",
   },
@@ -217,7 +218,6 @@ export const which = b.fn({
   returns: b.string.local.nullable,
   capability: "heap",
   throws: true,
-  length: 1,
 });
 
 export const ZstdCompressionOptions = b.dictionary({ level: b.f64.loose.allowBigInt.optional }, { allowArray: true });

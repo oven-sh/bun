@@ -129,56 +129,24 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 //
 // The thunks of `generate-host-exports.ts` and `generate-jssink.ts` call these.
 
-/// Normalize a host-fn body's return type to `JsResult<JSValue>`.
-pub trait IntoHostFnReturn {
-    fn into_host_fn_return(self) -> JsResult<JSValue>;
-}
-impl IntoHostFnReturn for JSValue {
-    #[inline]
-    fn into_host_fn_return(self) -> JsResult<JSValue> {
-        Ok(self)
-    }
-}
-impl IntoHostFnReturn for JsResult<JSValue> {
-    #[inline]
-    fn into_host_fn_return(self) -> JsResult<JSValue> {
-        self
-    }
-}
-
 /// Runs the body in an `ExceptionValidationScope`.
 #[track_caller]
 #[inline]
-pub fn host_fn_result<R: IntoHostFnReturn>(
-    global: &JSGlobalObject,
-    f: impl FnOnce() -> R,
-) -> JSValue {
-    to_js_host_call(global, || f().into_host_fn_return())
+pub fn host_fn_result(global: &JSGlobalObject, f: impl FnOnce() -> JsResult<JSValue>) -> JSValue {
+    to_js_host_call(global, f)
 }
 
 // ──────────────────────── safe codegen-thunk entry points ────────────────────────
 
-/// `fn(&JSGlobalObject, &CallFrame) -> R`.
+/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>`.
 #[track_caller]
 #[inline]
-pub fn host_fn_static<R: IntoHostFnReturn>(
+pub fn host_fn_static(
     global: &JSGlobalObject,
     callframe: &CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
+    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>,
 ) -> JSValue {
     host_fn_result(global, || f(global, callframe))
-}
-
-/// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by
-/// `generate-host-exports.ts` for the `BunObject__createX` / `Process__getX`
-/// shape (no `CallFrame`, no `this`).
-#[track_caller]
-#[inline]
-pub fn host_fn_lazy<R: IntoHostFnReturn>(
-    global: &JSGlobalObject,
-    f: impl FnOnce(&JSGlobalObject) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(global))
 }
 
 /// Lazy property creator, no exception scope (bare-`JSValue` impls).

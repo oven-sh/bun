@@ -431,12 +431,12 @@ fn print_table(
 
 pub(crate) fn inspect<'a>(
     cx: &mut JsScope<'a>,
-    value: Option<JsLocal<'a>>,
+    arg: Option<JsLocal<'a>>,
     options: InspectOptionsOrDepth<'a>,
     colors: Option<bool>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
-    let Some(value) = value else {
+    let Some(value) = arg else {
         return Ok(Vec::new());
     };
     let value = value.to_js();
@@ -872,32 +872,32 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
 
 pub(crate) fn resolve_sync(
     cx: &mut JsScope<'_>,
-    specifier: Option<BunString>,
-    from: Option<BunString>,
+    module_id: Option<BunString>,
+    parent: Option<BunString>,
     esm: bool,
 ) -> JsResult<BunString> {
     let global_this = cx.global();
-    let Some(specifier) = specifier else {
-        return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
+    let Some(module_id) = module_id else {
+        return Err(global_this.throw_invalid_arguments(format_args!("moduleId must be a string")));
     };
-    let Some(from) = from else {
-        return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
+    let Some(parent) = parent else {
+        return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
         ResolveMode::Esm
     } else {
         ResolveMode::Require
     };
-    do_resolve_with_args::<false>(global_this, &specifier, &from, mode)
+    do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
 }
 
 pub(crate) fn resolve(
     cx: &mut JsScope<'_>,
-    specifier: Option<BunString>,
-    from: Option<BunString>,
+    module_id: Option<BunString>,
+    parent: Option<BunString>,
     esm: bool,
 ) -> JsResult<JSValue> {
-    let resolved = resolve_sync(cx, specifier, from, esm)?;
+    let resolved = resolve_sync(cx, module_id, parent, esm)?;
     let global_object = cx.global();
     Ok(JSPromise::resolved_promise_value(
         global_object,

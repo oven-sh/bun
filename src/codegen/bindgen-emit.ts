@@ -8,6 +8,7 @@ import {
   type ClassMember,
   ClassType,
   cppEmplace,
+  cppReturnIfFailed,
   DefaultType,
   DictionaryType,
   EnumerationType,
@@ -218,12 +219,11 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
     .map(i => {
       const { name, type: alternative } = type.alternatives[i];
       const member = `result.${name}`;
-      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "");
-      if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn;`;
+      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "false");
+      if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn true;`;
       const take = `result.tag = ${i};
-scope.release();
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
-return;`;
+return true;`;
       // As the last, its own conversion reports what is not an object.
       if (refusesNonObjects(alternative))
         return i === candidates.at(-1) ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
@@ -231,9 +231,8 @@ return;`;
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
     ${member} = WTF::move(*converted);
     result.tag = ${i};
-    return;
-}
-RETURN_IF_EXCEPTION(scope, void());`;
+    return true;
+}${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
       return take;
     })
     .join("\n");
@@ -305,7 +304,7 @@ template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConve
 `
   }
     template<Bun::IDLConversionContext Ctx>
-    static void convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
+    static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
     {
         auto* globalObject = &lexicalGlobalObject;
         auto& vm = JSC::getVM(globalObject);
@@ -313,7 +312,8 @@ template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConve
 ${indent(code, 8)}
         switch (choice) {
 ${indent(cases.join("\n"), 8)}
-        }${outcomes.some(mayMatchNone) ? `\n        ctx.template throwNoMatchInUnion<${idlTypes}>(*globalObject, scope);` : ""}
+        }
+        ${outcomes.some(mayMatchNone) ? `ctx.template throwNoMatchInUnion<${idlTypes}>(*globalObject, scope);\n        return false;` : "RELEASE_ASSERT_NOT_REACHED();"}
     }
 };
 `;
@@ -363,7 +363,7 @@ ${type.members.map(member => `            .${member.fieldName} = ${toExtern(`val
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("${type.name}");
 };
-template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue, ${type.cpp}&);
+template<> bool Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue, ${type.cpp}&);
 ${
   type.needsLifetime
     ? `template<> struct WebCore::IDLDictionary<${type.cpp}> : Bun::Bindgen::IDLStackOnlyDictionary<${type.cpp}> {};`
@@ -443,17 +443,34 @@ extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${origin.stem}_${names
 `;
 }
 
+/** C++ that returns the variant `string` spells, of `candidates` of its length: the characters that tell them apart leave one to compare. */
+function cppMatchSpelling(candidates: readonly (readonly [spelling: string, variant: string])[]): string {
+  if (candidates.length === 1) {
+    const [[spelling, variant]] = candidates;
+    return `if (string == ${asciiLiteral(spelling)})\n    return ${variant};\nbreak;`;
+  }
+  const groupsAt = (at: number) => {
+    const groups = new Map<string, (typeof candidates)[number][]>();
+    for (const candidate of candidates)
+      groups.set(candidate[0][at], [...(groups.get(candidate[0][at]) ?? []), candidate]);
+    return groups;
+  };
+  const positions = Array.from(candidates[0][0], (character, at) => at);
+  const at = positions.reduce((best, at) => (groupsAt(at).size > groupsAt(best).size ? at : best));
+  return `switch (string[${at}]) {
+${[...groupsAt(at)].map(([character, group]) => `case '${character.replace(/['\\]/, "\\$&")}':\n${indent(cppMatchSpelling(group), 4)}`).join("\n")}
+}
+break;`;
+}
+
 function cppSourceForEnum(type: EnumerationType): string {
-  // The length rules out most spellings, so few are compared.
-  const byLength = new Map<number, string[]>();
+  const byLength = new Map<number, (readonly [string, string])[]>();
   type.spellings.forEach((spellings, index) => {
-    for (const spelling of spellings) {
-      const tests = byLength.get(spelling.length) ?? [];
-      byLength.set(spelling.length, tests);
-      tests.push(
-        `        if (string == ${asciiLiteral(spelling)})\n            return ${type.cpp}::${type.variants[index]};`,
-      );
-    }
+    for (const spelling of spellings)
+      byLength.set(spelling.length, [
+        ...(byLength.get(spelling.length) ?? []),
+        [spelling, `${type.cpp}::${type.variants[index]}`],
+      ]);
   });
   return `
 template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type.cpp}>(const WTF::String& string)
@@ -461,7 +478,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type
     switch (string.length()) {
 ${[...byLength]
   .sort(([a], [b]) => a - b)
-  .map(([length, tests]) => `    case ${length}:\n${tests.join("\n")}\n        break;`)
+  .map(([length, candidates]) => `    case ${length}:\n${indent(cppMatchSpelling(candidates), 8)}`)
   .join("\n")}
     }
     return std::nullopt;
@@ -508,7 +525,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
   let nameIndex = 0;
   const members = type.members.map((member, i) => {
     const [first, ...others] = member.names.map(
-      () => `members.get(${nameIndex++});\nRETURN_IF_EXCEPTION(scope, void());`,
+      () => `members.get(${nameIndex++});\n${cppReturnIfFailed(`!!value${i}`, "false")}`,
     );
     const qualified = type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
     const lines: string[] = [];
@@ -520,22 +537,14 @@ function cppSourceForDictionary(type: DictionaryType): string {
     if (!member.type.takesUndefined)
       lines.push(`if (value${i}.isUndefined()) [[unlikely]] {
     ${ctx}.throwRequired(*globalObject, scope);
-    return;
+    return false;
 }`);
-    lines.push(
-      member.type.cppConvertInto(
-        `result.${member.fieldName}`,
-        `value${i}`,
-        ctx,
-        qualified,
-        "RETURN_IF_EXCEPTION(scope, void());",
-      ),
-    );
+    lines.push(member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, ctx, qualified, "false"));
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
   });
   const count = type.names.length;
   return `
-template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ${type.cpp}& result)
+template<> bool Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ${type.cpp}& result)
 {
     auto* globalObject = &lexicalGlobalObject;
     auto& vm = JSC::getVM(globalObject);
@@ -546,25 +555,26 @@ ${
   type.nonObjectAsEmpty
     ? `    if (!object${type.nonObjectAsEmpty === "typeof" ? " || object->isCallable()" : ""}) {
 ${indent(type.cppAssign("result", {}), 8)}
-        return;
+        return true;
     }`
     : `    if (!object) [[unlikely]] {
         ctx.throwNotObject(*globalObject, scope);
-        return;
+        return false;
     }`
 }
 ${
   type.allowArray
     ? ""
     : `    bool isArray = JSC::isArray(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, false);
     if (isArray) [[unlikely]] {
         ctx.throwNotObject(*globalObject, scope);
-        return;
+        return false;
     }
 `
 }    Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, object, ${type.firstMemberNameIndex}, ${count});
 ${members.join("\n")}
+    return true;
 }
 ${
   type.needsLifetime || !type.convertedByValue
@@ -585,8 +595,7 @@ extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalOb
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ${type.cpp} converted;
-    Bun::Bindgen::convertDictionaryInto(*globalObject, JSC::JSValue::decode(value), converted);
-    RETURN_IF_EXCEPTION(scope, false);
+    ${cppReturnIfFailed("Bun::Bindgen::convertDictionaryInto(*globalObject, JSC::JSValue::decode(value), converted)", "false").replace("\n", "\n    ")}
     *result = ${toExtern("converted")};
     return true;
 }
@@ -601,20 +610,20 @@ const overloadSuffix = (fn: FunctionDefinition, signature: Signature) =>
 const thunkSymbol = (fn: FunctionDefinition, signature: Signature) =>
   `Bun__Bindgen__${fn.origin!.namespace}__${fn.name.replace(/^_+/, "")}${overloadSuffix(fn, signature)}`;
 
-/** Lines that declare `variable` as what `value` converts to. `check` is that of `cppConvertInto`. */
+/** Lines that declare `variable` as what `value` converts to, and return `failure` if converting throws. */
 function cppDeclareConverted(
   type: Type,
   variable: string,
   value: string,
   ctx: string,
   name: string,
-  check: string,
+  failure: string,
 ): string[] {
-  if (!type.convertsInPlace)
-    return [`auto ${variable} = ${type.cppConvert(value, ctx, name)};`, ...(type.conversionThrows ? [check] : [])];
+  if (!type.convertsInPlace && !type.conversionThrows)
+    return [`auto ${variable} = ${type.cppConvert(value, ctx, name)};`];
   return [
     `${implementationType(type)} ${variable};`,
-    ...type.cppConvertInto(variable, value, ctx, name, check).split("\n"),
+    ...type.cppConvertInto(variable, value, ctx, name, failure).split("\n"),
   ];
 }
 
@@ -650,7 +659,7 @@ function cppCallBody(
     );
     const ctx = cppContext(lines, i, name, expected, value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
-    lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, "RETURN_IF_EXCEPTION(scope, {});"));
+    lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, "{}"));
   });
   lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
@@ -949,7 +958,7 @@ ${
 }
     ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
-    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "RETURN_IF_EXCEPTION(scope, false);").join("\n    ")}
+    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "false").join("\n    ")}
     RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, ${getter.isStatic ? "" : "thisObject, "}${toExtern("value")}));
 }
 `;
@@ -980,7 +989,7 @@ ${
     if (JSC::JSValue cached = cachedValue.get())
         return JSC::JSValue::encode(cached);
     JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));
-    RETURN_IF_EXCEPTION(scope, {});
+    ${cppReturnIfFailed("!!result", "{}").replace("\n", "\n    ")}
     cachedValue.set(vm, thisObject, result);
     return JSC::JSValue::encode(result);`
 }
@@ -1055,7 +1064,7 @@ JSC_DEFINE_HOST_FUNCTION(construct${name}, (JSC::JSGlobalObject * globalObject, 
 {
 ${cppPrologue}
     JSC::Structure* structure = Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
-    RETURN_IF_EXCEPTION(scope, {});
+    ${cppReturnIfFailed("!!structure", "{}").replace("\n", "\n    ")}
 ${
   type.refCounted && !type.passStructure
     ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
@@ -1225,7 +1234,7 @@ ${takeThis}${cppCallBody(fn.signatures[0], symbol(fn.signatures[0]), leading)}
   // An overload reads `this` and the callee from the frame.
   const passed = takeThis ? leading : [];
   const overloads = fn.signatures.map(
-    signature => `static JSC::EncodedJSValue ${name}${overloadSuffix(fn, signature)}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...passed.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
+    signature => `static inline JSC::EncodedJSValue ${name}${overloadSuffix(fn, signature)}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...passed.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
 {
 ${cppPrologue}
 ${cppCallBody(signature, symbol(signature), leading)}

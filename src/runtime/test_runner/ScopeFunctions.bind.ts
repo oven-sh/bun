@@ -10,13 +10,13 @@ export const BunTestOptions = b.dictionary(
 
 /** A function here is the callback if none follows it, and else what the test is named after. */
 export const DescriptionOrCallback = b.union({
-  nothing: b.null,
+  none: b.null,
   function: b.callable,
   text: b.string.utf8.owned,
   number: b.f64,
 });
 export const CallbackOrOptions = b.union({
-  nothing: b.null,
+  none: b.null,
   callback: b.callable,
   timeout: b.f64,
   options: BunTestOptions,
@@ -35,7 +35,6 @@ export const callAsFunction = b.fn({
     second: "The second argument must be a function, number, or object",
     third: "The third argument must be a function, number, or object",
   },
-  length: 1,
   capability: "js",
   throws: true,
 });

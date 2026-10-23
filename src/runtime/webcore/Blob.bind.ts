@@ -50,7 +50,7 @@ export const BunFileOptions = b.dictionary(
   { allowArray: true, nonObjectAsEmpty: true, fromJS: true },
 );
 /** `options` is also what an S3 file takes. */
-export const file = b.fn({ ...js, args: { path: b.any, options: b.any }, returns: Blob, length: 1 });
+export const file = b.fn({ ...js, args: { path: b.any, options: b.any }, returns: Blob });
 
 /** What `Bun.write` itself reads of its options. */
 export const BunWriteOptions = b.dictionary(
@@ -58,4 +58,4 @@ export const BunWriteOptions = b.dictionary(
   { allowArray: true, fromJS: true, reportedAs: "options" },
 );
 /** `options` is also what a write to S3 takes. */
-export const write = b.fn({ ...method, args: { destination: b.any, data: b.any, options: b.any }, length: 1 });
+export const write = b.fn({ ...method, args: { destination: b.any, data: b.any, options: b.any } });

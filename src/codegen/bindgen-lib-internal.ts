@@ -173,7 +173,9 @@ export function indent(text: string, by: number): string {
     .join("\n");
 }
 
-const cppThenCheck = (statement: string, check: string) => (check ? `${statement}\n${check}` : statement);
+/** C++ that returns `failure` if `converted` is false, null or empty, which is how a conversion says that it threw. */
+export const cppReturnIfFailed = (converted: string, failure: string) =>
+  `if (Bun::Bindgen::hasException(scope, ${converted})) [[unlikely]]\n    return ${failure};`;
 
 /** C++ statements that engage `optional`, a `std::optional`, then fill what it holds: `fill` is given a name for that. */
 export function cppEmplace(optional: string, fill: (target: string) => string): string {
@@ -237,8 +239,8 @@ export abstract class Type {
   get refuses(): string | null {
     return null;
   }
-  /** What to write for `.otherAsNull`, if it throws for a value of a kind it takes, like `1.5` or an unknown string. */
-  get narrowsItsKinds(): string | null {
+  /** Set on a type that throws for some values of a kind it takes, like `1.5` or an unknown string: what to write for `.otherAsNull` instead. */
+  get otherAsNullRefusal(): string | null {
     return null;
   }
   /** A C++ condition that is true of the values `.otherAsNull` converts in place. */
@@ -252,7 +254,7 @@ export abstract class Type {
       .map(test => test.replace("cell", `${value}.asCell()`));
     return [...ofValue, ...(ofCell.length > 0 ? [`(${value}.isCell() && (${ofCell.join(" || ")}))`] : [])].join(" || ");
   }
-  /** Written `.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.otherAsNull`, `.ifPassed` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
+  /** Written `.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.otherAsNull`, `.ifPassed` or `.default()`. `length` leaves out a trailing run of these. */
   get isOptional(): boolean {
     return false;
   }
@@ -260,7 +262,7 @@ export abstract class Type {
   get passesValue(): boolean {
     return false;
   }
-  /** What a schema that makes it an element, a member, an alternative or a result is told, if it is only for an argument. */
+  /** The error for using it anywhere but as an argument, or null. */
   get refusalOutsideArgument(): string | null {
     return this.passesValue ? "b.bytes and .withValue are only for an argument" : null;
   }
@@ -276,9 +278,13 @@ export abstract class Type {
   get rustFromExternThrows(): boolean {
     return false;
   }
-  /** Converting can throw, so an exception check follows. */
+  /** Converting can throw. */
   get conversionThrows(): boolean {
     return true;
+  }
+  /** Its `tryConvert` can throw: it does more than test the value. */
+  get tryConvertThrows(): boolean {
+    return this.conversionThrows && !this.returnsValueUnchanged;
   }
   /** Holds a JS value: the Rust type is branded with the call. */
   get holdsJSValue(): boolean {
@@ -338,9 +344,13 @@ export abstract class Type {
   get convertsInPlace(): boolean {
     return false;
   }
-  /** C++ statements that convert `value` into `target`, just default-constructed. `check` returns if an exception is pending and follows what can throw; a caller that returns next passes "". */
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    return cppThenCheck(`${target} = ${this.cppConvert(value, ctx, name)};`, this.conversionThrows ? check : "");
+  /** C++ statements that convert `value` into `target`, just default-constructed, and return `failure` if that throws. */
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    if (!this.conversionThrows) return `${target} = ${this.cppConvert(value, ctx, name)};`;
+    return cppReturnIfFailed(
+      `Bun::convertIDLInto<${this.idlType}>(*globalObject, ${value}, ${ctx}, ${target})`,
+      failure,
+    );
   }
 
   abstract layout(): Layout;
@@ -427,6 +437,9 @@ export class BoolType extends PrimitiveType {
   get conversionThrows(): boolean {
     return this.valueKinds !== "any";
   }
+  get tryConvertThrows(): boolean {
+    return false;
+  }
 }
 
 interface IntegerInfo {
@@ -475,7 +488,7 @@ export class IntegerType extends PrimitiveType {
     assert(typeof value !== "number" || (value >= min && value <= max), `${value} is not in [${min}, ${max}]`);
     return super.toCpp(value);
   }
-  get narrowsItsKinds(): string {
+  get otherAsNullRefusal(): string {
     return "b.f64.otherAsNull takes every number";
   }
   /** Also a BigInt that is in range, for an argument whose type is `number | bigint`. */
@@ -570,9 +583,13 @@ export class RangeType extends IntegerType {
   getHeaders(out: Set<string>): void {
     out.add("Bindgen/IDLConvertIntegerRange.h");
   }
-  cppConvert(value: string, ctx: string, name: string): string {
+  /** Its converter takes the name, not a context. */
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
     const reported = this.modifier === "validateInteger" ? `, ${asciiLiteral(name)}` : "";
-    return `WebCore::Converter<${this.idlType}>::convert(*globalObject, ${value}${reported})`;
+    return cppReturnIfFailed(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}${reported}, ${target})`,
+      failure,
+    );
   }
 }
 
@@ -597,6 +614,9 @@ export class DoubleType extends PrimitiveType {
       8,
       valueKinds,
     );
+  }
+  get tryConvertThrows(): boolean {
+    return this.valueKinds === "any";
   }
   /** A `Date` too, as its time value, which is NaN for an invalid one. */
   get allowDate(): DoubleType {
@@ -851,10 +871,10 @@ export class Utf8Type extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    return cppThenCheck(
-      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`,
-      check,
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    return cppReturnIfFailed(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s)`,
+      failure,
     );
   }
   cppAssign(target: string, value: unknown): string {
@@ -971,7 +991,7 @@ export class BytesType extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
     const spelling = { string: ["a string"], buffer: ["ArrayBuffer", "ArrayBufferView"], blob: ["Blob"] };
     const expected = (["string", "buffer", "blob"] as const)
       .filter(kind => this.#options.from.includes(kind))
@@ -979,14 +999,16 @@ export class BytesType extends Type {
     if (!this.#options.from.includes("string")) expected[0] = `${/^A/.test(expected[0]) ? "an" : "a"} ${expected[0]}`;
     const last = expected.pop();
     const list = expected.length > 0 ? `${expected.join(", ")} or ${last}` : last!;
-    const convert = `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)})`;
-    return check ? `if (${convert})\n    ${check}` : `${convert};`;
+    return cppReturnIfFailed(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)})`,
+      failure,
+    );
   }
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
     if (this.#options.shared === "copied")
       return [
-        `WTF::MallocSpan<uint8_t> ${target}Copy;`,
+        `Bun::Bindgen::BytesCopy ${target}Copy;`,
         `if (${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy)) [[unlikely]]`,
         `    RETURN_IF_EXCEPTION(scope, {});`,
       ];
@@ -1087,36 +1109,6 @@ export class BufferSourceType extends Type {
   }
 }
 
-/** A function, or a proxy of one, for the body to call or to store. */
-export class CallableType extends Type {
-  readonly idlType = "Bun::Bindgen::IDLRawCallable";
-  readonly tsType = "((...args: any[]) => any)";
-  get valueKinds(): ValueKinds {
-    return ["callable"];
-  }
-  get holdsJSValue(): boolean {
-    return true;
-  }
-  get returnsValueUnchanged(): boolean {
-    return true;
-  }
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "JSValue";
-  }
-  rustType(): string {
-    return "bindgen::JsLocal<'a, bindgen::Callable>";
-  }
-  rustFromExtern(expr: string): string {
-    return `bindgen::JsLocal::from_extern(${expr}, heap)`;
-  }
-  rustToJS(value: string): string {
-    return `bindgen::to_js::any(heap, ${value})`;
-  }
-}
-
 /** A JS value of some kind, as itself. */
 export class LocalType extends Type {
   readonly idlType: string;
@@ -1137,9 +1129,6 @@ export class LocalType extends Type {
   }
   get refuses(): string | null {
     return this.#refuses;
-  }
-  get nullRepresentation() {
-    return "emptyValue" as const;
   }
   get holdsJSValue(): boolean {
     return true;
@@ -1165,6 +1154,14 @@ export class LocalType extends Type {
 }
 export const objectType = new LocalType("Bun::Bindgen::IDLRawObject", "object", "bun_jsc::JSObject", "any", nonObjects);
 export const jsArrayType = new LocalType("Bun::Bindgen::IDLRawArray", "any[]", "bun_jsc::JSArray", ["array"], null);
+/** A function, or a proxy of one, for the body to call or to store. */
+export const callableType = new LocalType(
+  "Bun::Bindgen::IDLRawCallable",
+  "((...args: any[]) => any)",
+  "bindgen::Callable",
+  ["callable"],
+  null,
+);
 
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
@@ -1359,8 +1356,8 @@ export class OptionalType extends Type {
         ".otherAsNull goes by the kind of a value, and this type does not: write it without .loose or nonObjectAsEmpty",
       );
       assert(
-        !inner.narrowsItsKinds,
-        `.otherAsNull goes by the kind of a value, and this type throws for a value of a kind it takes: ${inner.narrowsItsKinds}`,
+        !inner.otherAsNullRefusal,
+        `.otherAsNull goes by the kind of a value, and this type throws for a value of a kind it takes: ${inner.otherAsNullRefusal}`,
       );
     }
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
@@ -1383,7 +1380,7 @@ export class OptionalType extends Type {
       falsyAsNull: "Bun::Bindgen::IDLFalsyAsNull",
       emptyStringAsNull: "Bun::Bindgen::IDLEmptyStringAsNull",
       otherAsNull: "Bun::Bindgen::IDLOtherAsNull",
-      ifPassed: "Bun::Bindgen::IDLNotPassedAsNull",
+      ifPassed: "Bun::Bindgen::IDLIfPassed",
     }[this.modifier];
     return `${template}<${this.inner.idlType}>`;
   }
@@ -1402,7 +1399,7 @@ export class OptionalType extends Type {
     return this.modifier === "ifPassed" ? ".ifPassed is only for an argument" : super.refusalOutsideArgument;
   }
   get conversionThrows(): boolean {
-    return this.inner.conversionThrows;
+    return this.modifier === "otherAsNull" ? this.inner.tryConvertThrows : this.inner.conversionThrows;
   }
   get valueKinds(): ValueKinds {
     if (this.inner.valueKinds === "any" || !["optional", "nullable", "ifPassed"].includes(this.modifier)) return "any";
@@ -1433,18 +1430,16 @@ export class OptionalType extends Type {
       ifPassed: `!${value}.isEmpty()`,
     }[this.modifier];
   }
-  /** The converter of a range takes the name, which the converter of `idlType` does not have. */
-  cppConvert(value: string, ctx: string, name: string): string {
-    if (!(this.inner instanceof RangeType)) return super.cppConvert(value, ctx, name);
-    return `${this.#cppIsPresent(value)} ? std::optional { ${this.inner.cppConvert(value, ctx, name)} } : std::nullopt`;
-  }
-  /** What converts in place is null when default-constructed. A pointer to a class instance, which does not, is not. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
-    const present = this.#cppIsPresent(value);
-    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name, check);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    // One test of the value says both whether it is taken and what it converts to.
+    if (!this.conversionThrows || (this.modifier === "otherAsNull" && !this.convertsInPlace))
+      return super.cppConvertInto(target, value, ctx, name, failure);
+    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name, failure);
     const body = this.inner.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
-    return `if (${present}) {\n${indent(body, 4)}\n}`;
+    const converted = `if (${this.#cppIsPresent(value)}) {\n${indent(body, 4)}\n}`;
+    // What converts in place and a `std::optional` are null when default-constructed. A pointer to a class instance is not.
+    if (this.convertsInPlace || this.inner.nullRepresentation === "optional") return converted;
+    return `${converted} else {\n    ${target} = ${this.inner.idlType}::nullValue();\n}`;
   }
   toCpp(value: unknown): string {
     return value == null ? `${this.idlType}::nullValue()` : this.inner.toCpp(value);
@@ -1543,8 +1538,8 @@ export class WithValueType extends Type {
   cppConvert(value: string, ctx: string, name: string): string {
     return this.inner.cppConvert(value, ctx, name);
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    return this.inner.cppConvertInto(target, value, ctx, name, check);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    return this.inner.cppConvertInto(target, value, ctx, name, failure);
   }
   cppReadLast(target: string, value: string): string[] {
     return this.inner.cppReadLast(target, value);
@@ -1630,12 +1625,12 @@ export class DefaultType extends Type {
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    if (!this.conversionThrows) return super.cppConvertInto(target, value, ctx, name, failure);
     return `if (${this.cppIsAbsent(value)}) {
 ${indent(this.cppAssign(target, this.value), 4)}
 } else {
-${indent(this.inner.cppConvertInto(target, value, ctx, name, check), 4)}
+${indent(this.inner.cppConvertInto(target, value, ctx, name, failure), 4)}
 }`;
   }
   cppAssign(target: string, value: unknown): string {
@@ -1819,7 +1814,7 @@ export class EnumerationType extends NamedType {
   get valueKinds(): ValueKinds {
     return ["string"];
   }
-  get narrowsItsKinds(): string {
+  get otherAsNullRefusal(): string {
     return "b.string.allowStringObject.otherAsNull takes every string";
   }
   get idlType(): string {
@@ -1949,7 +1944,7 @@ export class DictionaryType extends NamedType {
   get fromJS(): boolean {
     return !!this.options.fromJS;
   }
-  get narrowsItsKinds(): string | null {
+  get otherAsNullRefusal(): string | null {
     return this.allowArray ? null : "give the dictionary allowArray";
   }
   get allowArray(): boolean {
@@ -1976,8 +1971,11 @@ export class DictionaryType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    return cppThenCheck(`Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx});`, check);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    return cppReturnIfFailed(
+      `Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx})`,
+      failure,
+    );
   }
   get reportedAs(): string {
     return this.options.reportedAs ?? this.name;
@@ -2093,10 +2091,10 @@ export class UnionType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
-    return cppThenCheck(
-      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`,
-      check,
+  cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
+    return cppReturnIfFailed(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target})`,
+      failure,
     );
   }
   get tsType(): string {
@@ -2307,7 +2305,7 @@ export class FunctionDefinition {
         signatures.every(
           signature => signature instanceof Signature || (signature as FunctionOptions)[key] === options[key],
         ),
-        `its overloads have one ${key}`,
+        `every overload gives ${key} the same value`,
       );
     }
     assert(
@@ -2318,7 +2316,7 @@ export class FunctionDefinition {
     assert(this.signatures.filter(signature => signature.length !== undefined).length <= 1, "length is given once");
     assert(
       this.signatures.every(signature => signature.rejects === this.signatures[0].rejects),
-      "its overloads have one rejects",
+      "every overload gives rejects the same value",
     );
     assert(
       this.signatures.length === 1 ||
@@ -2352,7 +2350,9 @@ export class FunctionDefinition {
           candidates.filter((signature, i) => (types[i] ? test(types[i]) : kind === "undefined"));
         const ofKind = keep(type => takes(type, kind));
         const takers = kind === "undefined" ? keep(type => type.takesUndefined) : ofKind;
-        const kept = [takers, ofKind, candidates].find(list => list.length > 0)!;
+        const kept = [takers, ofKind, candidates.filter((signature, i) => types[i]), candidates].find(
+          list => list.length > 0,
+        )!;
         return this.dispatchOn(kept, argument + 1, nodes);
       };
       const kinds = new Set(["undefined" as const, ...distinguishingKinds(types.filter(type => type !== undefined))]);
@@ -2713,7 +2713,7 @@ export class ClassType extends NamedType {
         for (const key of ["privateSymbol", "invalidThis", "name", "enumerable", "configurable"] as const)
           assert(
             overloads.every(overload => overload[key] === overloads[0]?.[key]),
-            `${name}: its overloads have one ${key}`,
+            `${name}: every overload gives ${key} the same value`,
           );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
@@ -2789,6 +2789,9 @@ export class ClassType extends NamedType {
   }
   get borrowsCell(): boolean {
     return true;
+  }
+  get tryConvertThrows(): boolean {
+    return false;
   }
   get nullRepresentation() {
     return "pointer" as const;

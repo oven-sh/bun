@@ -547,21 +547,21 @@ pub(crate) fn parse_arguments<'a>(
         // callback, options
         (
             DescriptionOrCallback::Function(callback),
-            options @ (CallbackOrOptions::Nothing | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
-            CallbackOrOptions::Nothing,
-        ) => (DescriptionOrCallback::Nothing, CallbackOrOptions::Callback(callback), options),
+            options @ (CallbackOrOptions::None | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
+            CallbackOrOptions::None,
+        ) => (DescriptionOrCallback::None, CallbackOrOptions::Callback(callback), options),
         // description
         // description, callback
         // description, callback, options
         (description, callback @ CallbackOrOptions::Callback(_), options)
-        | (description, callback, options @ CallbackOrOptions::Nothing) => (description, callback, options),
+        | (description, callback, options @ CallbackOrOptions::None) => (description, callback, options),
         // description, options, callback
         (description, options, callback) => (description, callback, options),
     };
 
     let result_callback: Option<JSValue> = match callback {
         CallbackOrOptions::Callback(callback) => Some(callback.to_js().with_async_context_if_needed(global)),
-        CallbackOrOptions::Nothing if cfg.callback != CallbackMode::Require => None,
+        CallbackOrOptions::None if cfg.callback != CallbackMode::Require => None,
         _ => {
             let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
             return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
@@ -577,7 +577,7 @@ pub(crate) fn parse_arguments<'a>(
     let mut timeout_option: Option<f64> = None;
 
     match options {
-        CallbackOrOptions::Nothing => {}
+        CallbackOrOptions::None => {}
         CallbackOrOptions::Timeout(timeout) => timeout_option = Some(timeout),
         CallbackOrOptions::Callback(_) => {
             return Err(global.throw(format_args!(
@@ -599,7 +599,7 @@ pub(crate) fn parse_arguments<'a>(
     }
 
     result.description = match description {
-        DescriptionOrCallback::Nothing => None,
+        DescriptionOrCallback::None => None,
         DescriptionOrCallback::Function(callable) => Some(name_of_callable(global, callable, signature)?),
         DescriptionOrCallback::Text(text) => Some(text.into_vec()),
         DescriptionOrCallback::Number(number) => Some(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec()),

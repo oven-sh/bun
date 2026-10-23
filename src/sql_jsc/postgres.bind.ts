@@ -31,7 +31,7 @@ export const binding = b.namespace({
     ...js,
     args: {
       hostname: text,
-      port: b.i32,
+      port: b.f64,
       username: text,
       password: text,
       database: text,

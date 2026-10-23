@@ -808,9 +808,9 @@ describe.concurrent("Readable.fromWeb over a native stream that a consumer alrea
     expect(out.equals(payload)).toBe(true);
   });
 
-  // Node holds the reader before it constructs the Readable. The native path claims the handle
-  // at the same point, so user code the constructor runs (a signal's getters) sees a locked stream.
-  it("the native handle is claimed before the Readable constructor runs user code", () => {
+  // Node holds the reader before it reads the signal. The native path has claimed the handle
+  // by then, so a getter of the signal sees a locked stream.
+  it("the native handle is claimed before fromWeb reads the signal", () => {
     using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
     const web = Bun.file(join(String(dir), "payload.bin")).stream();
     let lockedInGetter;
@@ -828,11 +828,22 @@ describe.concurrent("Readable.fromWeb over a native stream that a consumer alrea
     readable.destroy();
   });
 
-  // A throw from the Readable constructor comes after the claim, so the web stream stays
-  // locked, as in Node. Nothing else can release the handle then, so fromWeb cancels it:
-  // the pipe closes and the child's write fails. The child writes more than a pipe holds,
+  // A call that fails, or a signal that is already aborted, comes after the claim: the web
+  // stream stays locked, as in Node, so nothing else can release the handle. fromWeb cancels
+  // it: the pipe closes and the child's write fails. The child writes more than a pipe holds,
   // so the result does not depend on when the pipe closes.
-  it("a throw from the Readable constructor cancels the claimed handle", async () => {
+  const throwingSignal = () => ({
+    get aborted() {
+      throw new Error("boom");
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  });
+  it.each([
+    ["an invalid highWaterMark", () => ({ highWaterMark: -1 }), "ERR_INVALID_ARG_VALUE"],
+    ["a signal getter that throws", () => ({ signal: throwingSignal() }), "boom"],
+    ["a signal that is already aborted", () => ({ signal: AbortSignal.abort() }), "ABORT_ERR"],
+  ])("%s cancels the claimed handle", async (_, options, expected) => {
     const child = `
       const fs = require("fs");
       process.stdin.once("data", () => {
@@ -854,14 +865,15 @@ describe.concurrent("Readable.fromWeb over a native stream that a consumer alrea
       stderr: "pipe",
     });
     const web = proc.stdout;
-    const signal = {
-      get aborted() {
-        throw new Error("boom");
-      },
-      addEventListener() {},
-      removeEventListener() {},
-    };
-    expect(() => Readable.fromWeb(web, { signal })).toThrow("boom");
+    // The failure is thrown, or it is the 'error' event of the Readable that the aborted signal destroyed.
+    const { promise: failure, resolve } = Promise.withResolvers();
+    try {
+      Readable.fromWeb(web, options()).on("error", resolve);
+    } catch (error) {
+      resolve(error);
+    }
+    const error = await failure;
+    expect(error.code ?? error.message).toBe(expected);
     expect(web.locked).toBe(true);
     proc.stdin.write("go");
     await proc.stdin.end();
@@ -872,6 +884,36 @@ describe.concurrent("Readable.fromWeb over a native stream that a consumer alrea
       signalCode: null,
     });
   });
+
+  // fromWeb adds the signal after the Readable exists. Inside the constructor, an aborted signal
+  // destroyed the reader-based Readable before its fields existed, and it failed with a TypeError.
+  it.each([...Object.keys(sources), "new ReadableStream()"])(
+    "%s, started: a signal that is already aborted fails the Readable with an AbortError",
+    async name => {
+      using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+      const reasons = [];
+      const web = sources[name]
+        ? sources[name](join(String(dir), "payload.bin"))
+        : new ReadableStream({ pull: c => c.enqueue(payload), cancel: reason => void reasons.push(reason) });
+      web.getReader().releaseLock();
+      const controller = new AbortController();
+      controller.abort();
+      const readable = Readable.fromWeb(web, { signal: controller.signal });
+      expect(readable).toBeInstanceOf(ReadableFromWeb);
+      const { promise: closed, resolve } = Promise.withResolvers();
+      const events = [];
+      readable.on("data", chunk => events.push(["data", chunk.length]));
+      readable.on("end", () => events.push(["end"]));
+      readable.on("error", error =>
+        events.push(["error", error.name, error.code, error.cause === controller.signal.reason]),
+      );
+      readable.on("close", resolve);
+      await closed;
+      expect(events).toEqual([["error", "AbortError", "ABORT_ERR", true]]);
+      // The web stream's source is cancelled with the same error the Readable reports.
+      if (!sources[name]) expect(reasons.map(reason => reason?.code)).toEqual(["ABORT_ERR"]);
+    },
+  );
 
   it.each(Object.keys(sources))("%s after getReader() + releaseLock()", async name => {
     using dir = tempDir("fromweb-started-native", { "payload.bin": payload });

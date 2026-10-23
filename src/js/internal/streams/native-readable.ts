@@ -82,7 +82,6 @@ function tryConstructNativeReadable(readableStream: ReadableStream, options): Na
   return fromNativeHandle(bunNativePtr, options);
 }
 
-// Runs after the claim: `new Readable(options)` calls user getters that could otherwise start the stream first.
 function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeReadable {
   let stream: NativeReadable;
   try {
@@ -92,8 +91,6 @@ function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeR
     bunNativePtr?.cancel(error);
     throw error;
   }
-  // An aborted `signal` destroys the stream inside the constructor, where `_destroy` is not installed yet.
-  if (stream.destroyed) bunNativePtr?.cancel(stream.errored);
   stream._read = read;
   stream._destroy = destroy;
 

@@ -83,6 +83,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_REQUEST_TIMEOUT", Error],
   ["ERR_HTTP_TRAILER_INVALID", Error],
   ["ERR_HTTP_SOCKET_ASSIGNED", Error],
+  ["ERR_HTTP_SOCKET_ENCODING", Error],
   ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
   ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
   ["ERR_HTTP2_CONNECT_AUTHORITY", Error],

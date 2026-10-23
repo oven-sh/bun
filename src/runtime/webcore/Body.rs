@@ -1396,8 +1396,14 @@ impl Value {
             // Caller guarantees `self` is `Locked` at entry.
             unreachable!("tee() called on non-Locked Value");
         };
+        // The copy of a body that is being read is a used body. A locked stream that script made throws from its tee() below.
+        let unusable = |readable: &ReadableStream| {
+            readable.is_disturbed(cx.global())
+                || (!matches!(readable.ptr, webcore::readable_stream::Source::JavaScript)
+                    && readable.is_locked(cx.global()))
+        };
         if let Some(readable) = owned_readable {
-            if readable.is_disturbed(cx.global()) {
+            if unusable(readable) {
                 return Ok(Value::Used);
             }
 
@@ -1408,7 +1414,11 @@ impl Value {
                 return Ok(locked.tee_branch(rs1, cx.global()));
             }
         }
-        if locked.readable.is_disturbed(cx.global()) {
+        if locked
+            .readable
+            .get()
+            .is_some_and(|readable| unusable(&readable))
+        {
             return Ok(Value::Used);
         }
 

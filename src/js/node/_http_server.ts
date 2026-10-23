@@ -356,7 +356,7 @@ function onTLSClientError(this: Server, err, socket) {
   else if (err?.code === "ERR_TLS_HANDSHAKE_TIMEOUT") process.nextTick(destroyUnlessSecure, socket);
 }
 
-// Node keeps a socket that the 'clientError' listener didn't destroy, so a peer that never finishes its handshake holds it for good: the FIN of end() waits for the handshake too.
+// handshakeTimeout closes the socket whatever the 'clientError' listener did with it. Node leaves that to the listener.
 function destroyUnlessSecure(socket) {
   if (!socket._secureEstablished) socket.destroy();
 }
@@ -606,7 +606,7 @@ Server.prototype.closeAllConnections = function () {
   }
 };
 
-// net.Socket's _destroy() calls this after it took the socket off _connections. It has queued the socket's own 'close' by now, in an immediate or in a microtask that sets one, and the server's comes behind it.
+// net.Socket's _destroy() calls this after it queued the socket's own 'close', so the immediate set here runs behind that. The one that stop()'s promise sets can run ahead: an idle connection that its peer or closeIdleConnections() closes emits 'close' after the server, as in Node.
 Server.prototype._emitCloseIfDrained = function () {
   // This server has no 'close' listener on them, as in Node, so it forgets the closed ones now and then.
   const handedOff = this[kHandedOffSockets];
@@ -1562,15 +1562,18 @@ function detachFromHttp(socket, req) {
   // A 'close' listener of a WebSocket logs the peer's address, and net.Socket only keeps one that was read while the socket was open.
   socket._getpeername();
 }
-// Node keeps a socket with bytes that nobody reads for good, and server.close() waits for it: in the two-pipe proxy of its docs, unpipe() pauses the client's socket once the origin has closed.
+// A socket whose connection has closed closes too, also with bytes that nobody reads. Node keeps those for a reader.
 function destroyUnreadSocket(this: any) {
   if (this.readableLength > 0 && !this.readableFlowing) this.destroy();
 }
+// node:tls's own listener does nothing after the handshake, and pipe()'s would take it for one of the program's.
+function hasNoErrorListener(socket) {
+  for (const listener of socket.listeners("_tlsError")) socket.removeListener("error", listener);
+  return socket.listenerCount("error") === 0;
+}
 // Without an 'error' listener of the program's, a failed read or write ends the socket and closes it, as it always has here. Node emits 'error'.
 function handedOffSocketDestroy(this: any, err, callback) {
-  // node:tls keeps a listener of its own on a socket that a server accepted, and next to a listener node:net adds one for a failed read.
-  const notTheProgram = !this.encrypted ? 0 : err?.syscall === "read" ? 2 : 1;
-  if (err?.syscall !== undefined && this.listenerCount("error") === notTheProgram) {
+  if (err?.syscall !== undefined && hasNoErrorListener(this)) {
     err = null;
     this._readableState.errored = null;
     this.push(null);
@@ -1580,7 +1583,7 @@ function handedOffSocketDestroy(this: any, err, callback) {
 }
 // The same for a listener that passes the failure on when no other is left, as pipe()'s does.
 function handedOffSocketEmit(this: any, event, err) {
-  if (event !== "error" || err?.syscall === undefined || this.listenerCount("error") !== 0) {
+  if (event !== "error" || err?.syscall === undefined || !hasNoErrorListener(this)) {
     return NetSocket.prototype.emit.$apply(this, arguments);
   }
   const state = this._readableState;
@@ -1778,9 +1781,7 @@ function connectionListenerInternal(server, socket) {
 }
 
 function socketSetEncoding(): never {
-  const err = new Error("Changing the socket encoding is not allowed per RFC7230 Section 3.");
-  err.code = "ERR_HTTP_SOCKET_ENCODING";
-  throw err;
+  throw $ERR_HTTP_SOCKET_ENCODING();
 }
 
 function updateOutgoingData(socket, state, delta) {

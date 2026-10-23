@@ -2445,6 +2445,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "ServerResponse has an already assigned socket"_s));
+    case ErrorCode::ERR_HTTP_SOCKET_ENCODING:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ENCODING, "Changing the socket encoding is not allowed per RFC7230 Section 3."_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
     case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:

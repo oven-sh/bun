@@ -155,8 +155,14 @@ describe("fetch data urls", () => {
     }).toThrow("failed to fetch the data URL");
   });
   it("a media type with many parameters is serialized in linear time", async () => {
-    const parameters = Array.from({ length: 200_000 }, (_, i) => `;p${i}=1`).join("");
-    const res = await fetch(`data:text/plain${parameters};P7=2,x`);
+    // ";aaaa=1;aaab=1;aaac=1" and so on. A Buffer, because a debug build concatenates strings slowly.
+    const count = 100_000;
+    const bytes = Buffer.alloc(count * 7, ";aaaa=1");
+    for (let i = 0; i < count; i++) {
+      for (let digit = 4, rest = i; rest > 0; digit--, rest = Math.floor(rest / 26)) bytes[i * 7 + digit] += rest % 26;
+    }
+    const parameters = bytes.latin1Slice();
+    const res = await fetch(`data:text/plain${parameters};AAAB=2,x`);
     expect(res.headers.get("content-type") === "text/plain" + parameters).toBe(true);
   });
   it("emoji", async () => {

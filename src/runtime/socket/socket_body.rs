@@ -1653,6 +1653,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.mark_inactive();
             delivered?;
         }
+        if !SSL
+            && !global.has_exception()
+            && !this.socket.get().is_detached()
+            && this.buffered_data_for_node_net.get().len() > 0
+        {
+            // What the `open` handler queued is sent again at once.
+            return Self::on_writable(this, socket);
+        }
         Ok(())
     }
 

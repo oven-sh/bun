@@ -1494,8 +1494,8 @@ describe.concurrent("an https connection before its TLS handshake", () => {
     }
   });
 
-  // Node keeps this connection for as long as the peer likes: before the handshake, the FIN of end() has nothing to follow.
-  test("is closed after handshakeTimeout when the 'clientError' listener only calls end()", async () => {
+  // Node leaves the socket to the listener.
+  test("is closed after handshakeTimeout whatever the 'clientError' listener does", async () => {
     const events: string[] = [];
     const server = https.createServer({ ...validCert, handshakeTimeout: 1 });
     server.on("clientError", (err: NodeJS.ErrnoException, socket: Socket) => {

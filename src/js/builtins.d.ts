@@ -566,6 +566,7 @@ declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_TRAILER_INVALID(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
+declare function $ERR_HTTP_SOCKET_ENCODING(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
 declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;

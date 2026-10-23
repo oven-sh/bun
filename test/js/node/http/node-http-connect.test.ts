@@ -2374,8 +2374,8 @@ test("a tunnel write that waits for a drain settles its callbacks when the clien
   }
 });
 
-// Node.js keeps this socket for good, and close() never calls back: unpipe() paused it, so nobody reads what the client sent last.
-test("the two-pipe proxy of Node's docs keeps no tunnel whose client sends on after the origin has closed", async () => {
+// Node.js keeps the socket for a reader.
+test("a proxy made of two pipes closes the socket of a tunnel with its connection", async () => {
   const origin = net.createServer(socket => void socket.on("error", () => {}).end("bye"));
   const proxy = http.createServer();
   const { promise: tunnelClosed, resolve: onTunnelClosed } = Promise.withResolvers<void>();
@@ -2468,9 +2468,19 @@ describe.each(["http", "https"] as const)("%s: a socket handed to a listener, wh
 
   test.each(
     (["upgrade", "connect"] as const).flatMap(event =>
-      [false, true].map(both => [`'${event}', ${both ? "piped into and from" : "piped into"}`, event, both] as const),
+      [false, true].flatMap(both =>
+        [false, true].map(
+          writes =>
+            [
+              `'${event}', ${both ? "piped into and from" : "piped into"}, ${writes ? "writing" : "reading"}`,
+              event,
+              both,
+              writes,
+            ] as const,
+        ),
+      ),
     ),
-  )("%s, without an 'error' listener", async (_name, event, both) => {
+  )("%s, without an 'error' listener", async (_name, event, both, writes) => {
     const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
     await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
     server.on(event, (_req, socket) => {
@@ -2490,15 +2500,21 @@ describe.each(["http", "https"] as const)("%s: a socket handed to a listener, wh
       const sink = new PassThrough();
       source.pipe(socket);
       if (both) socket.pipe(sink).resume();
+      // Printed if the row fails: how the failure reached the socket differs by platform.
+      const seen: string[] = [];
+      const destroy = socket._destroy;
+      socket._destroy = function (err: any, callback) {
+        seen.push(`_destroy(${err?.code} ${err?.syscall})`);
+        destroy.call(this, err, callback);
+      };
+      socket.on("end", () => seen.push("end"));
       socket.on("close", () => onClosed());
       raw.resetAndDestroy();
-      source.write("a");
-      source.write("b");
+      if (writes) for (const chunk of ["a", "b"]) source.write(chunk);
       await closed;
-      expect({ destroyed: socket.destroyed, sinkEnded: sink.writableEnded }).toEqual({
+      expect({ destroyed: socket.destroyed, sinkEnded: sink.writableEnded }, seen.join(", ")).toEqual({
         destroyed: true,
-        // As in Node.js, a TLSSocket closes without 'end' here.
-        sinkEnded: both && proto === "http",
+        sinkEnded: both,
       });
     } finally {
       client.destroy();

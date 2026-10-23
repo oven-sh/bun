@@ -128,25 +128,25 @@ class BodyReadable extends ReadableFromWeb {
     this.#bodyUsed = true;
     if (this._readableState.closeEmitted) return null;
 
-    return await new Promise((resolve, reject) => {
-      if (Number(this.#response.headers.get("content-length")) > limit) this.destroy(new AbortError());
+    const { promise, resolve, reject } = Promise.withResolvers();
+    if (Number(this.#response.headers.get("content-length")) > limit) this.destroy(new AbortError());
 
-      const onAbort = () => this.destroy(signal.reason ?? new AbortError());
-      signal?.addEventListener("abort", onAbort);
+    const onAbort = () => this.destroy(signal.reason ?? new AbortError());
+    signal?.addEventListener("abort", onAbort);
 
-      let bytesRead = 0;
-      this.on("close", () => {
-        signal?.removeEventListener("abort", onAbort);
-        if (signal?.aborted) reject(signal.reason ?? new AbortError());
-        else resolve(null);
+    let bytesRead = 0;
+    this.on("close", () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) reject(signal.reason ?? new AbortError());
+      else resolve(null);
+    })
+      .on("error", noop)
+      .on("data", chunk => {
+        bytesRead += chunk.length;
+        if (bytesRead >= limit) this.destroy();
       })
-        .on("error", noop)
-        .on("data", chunk => {
-          bytesRead += chunk.length;
-          if (bytesRead >= limit) this.destroy();
-        })
-        .resume();
-    });
+      .resume();
+    return await promise;
   }
 }
 
@@ -553,7 +553,11 @@ async function dispatchWithFetch(send, handler, controller, signal) {
   paused = handler.onHeaders?.(response.status, rawHeaders, resume, response.statusText) === false;
 
   const whileNotPaused = async () => {
-    while (paused && !signal.aborted) await new Promise(resolve => (wake = resolve));
+    while (paused && !signal.aborted) {
+      const { promise, resolve } = Promise.withResolvers();
+      wake = resolve;
+      await promise;
+    }
     signal.throwIfAborted();
   };
   const { body } = response;
@@ -641,7 +645,9 @@ class DispatcherBase extends Dispatcher {
 
   close(callback) {
     if (callback === undefined) {
-      return new Promise((resolve, reject) => this.close((err, data) => (err ? reject(err) : resolve(data))));
+      const { promise, resolve, reject } = Promise.withResolvers();
+      this.close((err, data) => (err ? reject(err) : resolve(data)));
+      return promise;
     }
     if (!$isCallable(callback)) throw new InvalidArgumentError("invalid callback");
     if (this.#destroyed) {
@@ -662,7 +668,9 @@ class DispatcherBase extends Dispatcher {
       err = null;
     }
     if (callback === undefined) {
-      return new Promise((resolve, reject) => this.destroy(err, (err, data) => (err ? reject(err) : resolve(data))));
+      const { promise, resolve, reject } = Promise.withResolvers();
+      this.destroy(err, (err, data) => (err ? reject(err) : resolve(data)));
+      return promise;
     }
     if (!$isCallable(callback)) throw new InvalidArgumentError("invalid callback");
     this.#destroyed = true;
@@ -1066,14 +1074,15 @@ function hasOwnDispatch(dispatcher) {
 
 // Calls dispatcher.dispatch() and builds the Response from the handler callbacks.
 function sendWithDispatch(dispatcher, url, options, signal, redirect) {
-  return new Promise((resolve, reject) => {
-    signal.throwIfAborted();
-    const { method } = options;
-    let abort = noop;
-    let body;
-    const onAbort = () => abort(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) return Promise.$reject(signal.reason);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const { method } = options;
+  let abort = noop;
+  let body;
+  const onAbort = () => abort(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
 
+  try {
     dispatcher.dispatch(
       { ...options, origin: url.origin, path: url.pathname + url.search },
       {
@@ -1123,7 +1132,10 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
         },
       },
     );
-  });
+  } catch (err) {
+    reject(err);
+  }
+  return promise;
 }
 
 async function fetchWithDispatch(dispatcher, input, init) {

@@ -223,6 +223,8 @@ pub(crate) struct Connection {
     pub strict_field_whitespace: Cell<bool>,
     /// The SETTINGS_INITIAL_WINDOW_SIZE the peer has ACKed. Until it ACKs a smaller one it may go by this one (§6.5.3).
     acked_local_initial_window: Cell<u32>,
+    /// The SETTINGS_MAX_FRAME_SIZE the peer has ACKed. Until it ACKs a smaller one it may go by this one (§6.5.3).
+    acked_max_frame_size: Cell<u32>,
     /// The SETTINGS_MAX_HEADER_LIST_SIZE the peer has ACKed. Like nghttp2, a submitted value applies from its ACK on.
     pub enforced_max_header_list_size: Cell<u32>,
     /// The values of each SETTINGS frame the peer hasn't ACKed yet, in send order (§6.5.3).
@@ -284,6 +286,7 @@ impl Default for Connection {
             max_invalid_frames: Cell::new(1000),
             strict_field_whitespace: Cell::new(true),
             acked_local_initial_window: Cell::new(DEFAULT_WINDOW_SIZE),
+            acked_max_frame_size: Cell::new(Settings::default().max_frame_size),
             enforced_max_header_list_size: Cell::new(Settings::default().max_header_list_size),
             pending_local_settings_acks: JsCell::new(VecDeque::new()),
             invalid_frame_count: Cell::new(0),
@@ -500,40 +503,42 @@ impl Connection {
                     end: FeedEnd::Yielded,
                 };
             }
-            let (hdr, payload) =
-                match frame::next_frame(&bytes[offset..], self.local_settings.get().max_frame_size)
-                {
-                    Ok(NextFrame::Complete { header, payload }) => (header, payload),
-                    Ok(NextFrame::NeedHeader) => break,
-                    Ok(NextFrame::Partial { header, payload }) => {
-                        // A DATA frame is delivered as it arrives. A PADDED one waits for its Pad Length octet.
-                        if header.frame_type == FrameType::Data as u8
-                            && self.header_block.get().admits(&header)
-                            && header.stream_id != 0
-                            && (!header.has(flags::PADDED) || !payload.is_empty())
-                        {
-                            match self.begin_streamed_data(sink, &header, payload) {
-                                StreamedDataStart::Fatal => {
-                                    return Feed {
-                                        consumed: offset,
-                                        end: FeedEnd::Fatal,
-                                    };
-                                }
-                                StreamedDataStart::Consumed(n) => {
-                                    offset += n;
-                                }
+            let max_frame_size = self
+                .acked_max_frame_size
+                .get()
+                .max(self.local_settings.get().max_frame_size);
+            let (hdr, payload) = match frame::next_frame(&bytes[offset..], max_frame_size) {
+                Ok(NextFrame::Complete { header, payload }) => (header, payload),
+                Ok(NextFrame::NeedHeader) => break,
+                Ok(NextFrame::Partial { header, payload }) => {
+                    // A DATA frame is delivered as it arrives. A PADDED one waits for its Pad Length octet.
+                    if header.frame_type == FrameType::Data as u8
+                        && self.header_block.get().admits(&header)
+                        && header.stream_id != 0
+                        && (!header.has(flags::PADDED) || !payload.is_empty())
+                    {
+                        match self.begin_streamed_data(sink, &header, payload) {
+                            StreamedDataStart::Fatal => {
+                                return Feed {
+                                    consumed: offset,
+                                    end: FeedEnd::Fatal,
+                                };
+                            }
+                            StreamedDataStart::Consumed(n) => {
+                                offset += n;
                             }
                         }
-                        break;
                     }
-                    Err(e) => {
-                        self.send_go_away(sink, e.code, e.reason.as_bytes());
-                        return Feed {
-                            consumed: offset,
-                            end: FeedEnd::Fatal,
-                        };
-                    }
-                };
+                    break;
+                }
+                Err(e) => {
+                    self.send_go_away(sink, e.code, e.reason.as_bytes());
+                    return Feed {
+                        consumed: offset,
+                        end: FeedEnd::Fatal,
+                    };
+                }
+            };
             let total = FRAME_HEADER_SIZE + payload.len();
             if self.dispatch(sink, &hdr, payload) {
                 return Feed {
@@ -674,6 +679,7 @@ impl Connection {
         }
         self.acked_local_initial_window
             .set(acked.initial_window_size);
+        self.acked_max_frame_size.set(acked.max_frame_size);
         self.enforced_max_header_list_size
             .set(acked.max_header_list_size);
         self.hpack

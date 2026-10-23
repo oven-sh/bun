@@ -825,7 +825,7 @@ function onReadEnd(self, err?) {
     // Its TLS socket reports the error. The handle is gone, so this socket closes with nothing to report.
     if (self.emit(kReadError, err)) return void self.destroy();
     // The listener can be gone by the tick that emits 'error' (a request that finished as the reset arrived).
-    if (hasErrorListener) self.once("error", noop);
+    if (hasErrorListener && self[kHandleClosed] === undefined) self.once("error", noop);
     return void self.destroy(new ErrnoException(err.errno, err.syscall));
   }
   if (!self[kended]) {

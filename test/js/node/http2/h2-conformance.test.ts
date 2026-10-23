@@ -1973,6 +1973,43 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
     }
   });
 
+  test("a smaller maxFrameSize binds the peer's frames from its ACK on", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { settings: { maxFrameSize: 65536 } });
+    const sessionError = Promise.withResolvers<NodeJS.ErrnoException>();
+    client.on("error", sessionError.resolve);
+    try {
+      const isSettings = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0;
+      await raw.waitFor(isSettings);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK 65536
+      await once(client, "localSettings");
+
+      client.settings({ maxFrameSize: 16384 });
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      let received = 0;
+      req.on("data", (d: Buffer) => (received += d.length));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      expect(raw.frames.filter(isSettings).length).toBe(2);
+
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(32768, 0x61));
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) !== 0));
+      expect(raw.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK 16384
+      raw.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.alloc(16385, 0x61));
+      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY))).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      expect((await sessionError.promise).code).toBe("ERR_HTTP2_ERROR");
+      expect(received).toBe(32768);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
   // nghttp2 calls this "SETTINGS: unexpected ACK". Node reports ERR_HTTP2_ERROR "Protocol error".
   describe("a SETTINGS ACK with no SETTINGS outstanding", () => {
     const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;

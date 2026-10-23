@@ -826,6 +826,14 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
   });
 });
 
+test("new Request(request) has a used body while a reader holds the body of a request made from a string", async () => {
+  const source = new Request("http://example.com/", { method: "POST", body: "body" });
+  source.body!.getReader();
+  const copy = new Request(source);
+  expect(copy.bodyUsed).toBe(true);
+  expect(await copy.text().catch(error => error)).toBeInstanceOf(TypeError);
+});
+
 // https://fetch.spec.whatwg.org/#dom-request-clone (step 1)
 // https://fetch.spec.whatwg.org/#dom-response-clone (step 1)
 // clone() must throw a TypeError when "this is unusable": the body is non-null

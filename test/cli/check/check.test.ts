@@ -17323,6 +17323,64 @@ export {};
       expect(exitCode).toBe(1);
     });
 
+    test("the checks of an interface are those of its first clone if two re-exports clone the second one", async () => {
+      using dir = project({
+        "expect.ts": `export interface Base { a(): void }
+export interface X extends Base { own: 1 }
+`,
+        "chunk.ts": `export {};
+declare module "./expect" {
+  interface X { direct: 1 }
+}
+`,
+        "vitest.ts": `import "./chunk";
+export { X } from "./expect";
+`,
+        "browser.ts": `import "./vitest";
+interface M { a(): number }
+declare module "./vitest" {
+  interface X extends M {}
+}
+`,
+        "outer1.ts": `import "./browser";
+export { X } from "./vitest";
+`,
+        "outer2.ts": `import "./browser";
+export { X } from "./vitest";
+`,
+        "zaug1.ts": `import "./outer1";
+declare module "./outer1" {
+  interface X { o1: 1 }
+}
+`,
+        "zaug2.ts": `import "./outer2";
+declare module "./outer2" {
+  interface X { o2: 1 }
+}
+`,
+        "zuse.ts": `import "./zaug1";
+import "./zaug2";
+import { X as E } from "./expect";
+import { X as V } from "./vitest";
+import { X as O1 } from "./outer1";
+import { X as O2 } from "./outer2";
+declare const e: E, v: V, o1: O1, o2: O2;
+e.own; e.direct; e.o1;
+v.own; v.direct; v.o1; v.o2;
+o1.own; o1.direct; o1.o1; o1.o2;
+o2.own; o2.direct; o2.o1; o2.o2;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "zuse.ts(8,20): error TS2339: Property 'o1' does not exist on type 'X'.
+        zuse.ts(9,20): error TS2339: Property 'o1' does not exist on type 'X'.
+        zuse.ts(10,30): error TS2339: Property 'o2' does not exist on type 'X'.
+        zuse.ts(11,23): error TS2339: Property 'o1' does not exist on type 'X'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

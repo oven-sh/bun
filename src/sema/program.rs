@@ -7874,7 +7874,7 @@ impl<'s> Files<'s> {
         symbols.push(clone, arena);
         let parts = parts.unwrap_or_else(|| vec_from_iter_in([symbol], arena));
         if is_clone {
-            let earlier = self.declarations_of_first_clone.remove(&symbol);
+            let earlier = self.declarations_of_first_clone.get(&symbol).copied();
             let count = earlier
                 .unwrap_or_else(|| parts.iter().map(|&it| self.symbol(it).decls.len()).sum());
             self.declarations_of_first_clone.insert(result, count);

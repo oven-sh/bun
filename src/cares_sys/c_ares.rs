@@ -964,6 +964,12 @@ fn library_init() {
         if rc != ARES_SUCCESS {
             panic!("ares_library_init_mem failed: {}", rc);
         }
+        // A channel and its socket-state callback stay on one thread. c-ares
+        // with thread support applies `ares_reinit` on a thread of its own.
+        assert!(
+            ares_threadsafety() == 0,
+            "c-ares is built with CARES_THREADS (scripts/build/deps/cares.ts)"
+        );
     }}
 }
 
@@ -983,6 +989,8 @@ unsafe extern "C" {
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
+    /// `ares_bool_t`: nonzero when c-ares was built with `CARES_THREADS`.
+    safe fn ares_threadsafety() -> c_int;
     pub fn ares_init_options(
         channelptr: *mut *mut Channel,
         options: *mut Options,

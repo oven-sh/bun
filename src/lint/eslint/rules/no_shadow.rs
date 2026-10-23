@@ -243,16 +243,23 @@ fn unwrap_expression(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
+/// The function expression or the class that `variable` is the name of.
+fn owner_of_named_expression<'a>(variable: &Variable<'a>) -> Option<Node<'a>> {
+    match variable.definition {
+        Declaration::Fn(func) if func.kind() == FnKind::Expr => Some(func.owner()),
+        Declaration::Class(class) => Some(class.owner()),
+        _ => None,
+    }
+}
+
 /// ESLint's `isFunctionNameInitializerException`, typescript-eslint's `isOnInitializer`:
 /// `var a = function a() {}`, `var { A = foo || class A {} } = b`.
 fn is_function_name_initializer_exception<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
 ) -> bool {
-    let owner = match variable.definition {
-        Declaration::Fn(func) if func.kind() == FnKind::Expr => func.owner(),
-        Declaration::Class(class) => class.owner(),
-        _ => return false,
+    let Some(owner) = owner_of_named_expression(variable) else {
+        return false;
     };
     let (Declaration::Var(outer) | Declaration::Param(outer)) = shadowed.definition else {
         return false;
@@ -287,10 +294,8 @@ fn is_function_name_initializer_exception<'a>(
 /// `isOnInitializer`, which ESLint had before version 10: the name of a function or class expression anywhere in the
 /// declaration of the variable it shadows, with no other scope in between, as in `const A = wrap(function A() {})`.
 fn is_on_initializer<'a>(variable: &Variable<'a>, shadowed: &Variable<'a>) -> bool {
-    let owner = match variable.definition {
-        Declaration::Fn(func) if func.kind() == FnKind::Expr => func.owner(),
-        Declaration::Class(class) => class.owner(),
-        _ => return false,
+    let Some(owner) = owner_of_named_expression(variable) else {
+        return false;
     };
     let (Node::Expr(_), Declaration::Var(outer)) = (owner, shadowed.definition) else {
         return false;

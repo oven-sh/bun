@@ -224,8 +224,13 @@ export function nodeExe(): string | null {
 export function nodeExeAtLeast(version: string): string | null {
   const node = nodeExe();
   if (!node) return null;
-  const { exitCode, stdout } = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return exitCode === 0 && Bun.semver.satisfies(stdout.toString().trim(), `>=${version}`) ? node : null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;

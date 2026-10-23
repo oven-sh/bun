@@ -2414,6 +2414,8 @@ pub struct FileIn<S: Storage> {
     /// A module even without module syntax: by its extension, or because the options force every
     /// file to be a module. Such a file can still be a CommonJS module.
     pub is_forced_module: bool,
+    /// A script for its project that a build runs as a module: what `bun run` drops of it stays global. Set by the loader.
+    pub is_script_with_code: bool,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3079,6 +3081,7 @@ macro_rules! file_in_storage {
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
+            is_script_with_code: $this.is_script_with_code,
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,

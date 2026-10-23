@@ -8,13 +8,15 @@
 // Left out: a program of several files; one with a file beside it (it needs flags, or differs from plain Bun on purpose); and whatever cannot share a process with others
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { partInShare, slot, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
-const programsInGroup = 250;
+// Of which about 250 can be joined.
+const namesInGroup = 300;
+const groupsInShare = 3;
 const measure = ["--aot-heat=everything-is-hot"];
 
 const cannotBeJoined = new RegExp(
@@ -32,15 +34,16 @@ const cannotBeJoined = new RegExp(
 );
 const filesBeside = [".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"];
 
-function programsThatCanBeJoined(): string[] {
+/** By their names alone: what a program says is read only where its group is taken. */
+function programsOfOneFile(): string[] {
   const chosen: string[] = [];
-  for (const topic of readdirSync(root).sort()) {
-    if (!statSync(join(root, topic)).isDirectory()) continue;
-    for (const name of readdirSync(join(root, topic)).sort()) {
-      const [, stem, extension] = /^(.*)\.(ts|tsx|js)$/.exec(name) ?? [];
-      if (!extension || stem.endsWith(".d") || !statSync(join(root, topic, name)).isFile()) continue;
-      if (filesBeside.some(suffix => existsSync(join(root, topic, stem + suffix)))) continue;
-      if (!cannotBeJoined.test(readFileSync(join(root, topic, name), "utf8"))) chosen.push(`${topic}/${name}`);
+  for (const topic of readdirSync(root, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (!topic.isDirectory()) continue;
+    const entries = readdirSync(join(root, topic.name), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
+    const present = new Set(entries.map(entry => entry.name));
+    for (const entry of entries) {
+      const [, stem, extension] = /^(.*)\.(ts|tsx|js)$/.exec(entry.name) ?? [];
+      if (extension && entry.isFile() && !stem.endsWith(".d") && !filesBeside.some(suffix => present.has(stem + suffix))) chosen.push(`${topic.name}/${entry.name}`);
     }
   }
   return chosen;
@@ -102,6 +105,7 @@ async function run(executable: string, cwd: string): Promise<Ran> {
 
 async function compare(folder: string, carrier: string[], group: number, names: string[], flags: string[]) {
   const cwd = join(folder, String(group));
+  names = names.filter(name => !cannotBeJoined.test(readFileSync(join(root, name), "utf8")));
   for (const name of names) {
     const text = readFileSync(join(root, name), "utf8");
     mkdirSync(dirname(join(cwd, "programs", name)), { recursive: true });
@@ -142,9 +146,8 @@ async function compare(folder: string, carrier: string[], group: number, names: 
 }
 
 /**
- * Defines one test per group of 250 programs: built with `flags`, each program prints what it prints with every function through B3.
- * The groups are split into `parts`. A run that is told nothing takes ONE group of its part, which one follows from the revision as in `partInShare`: two builds of 250 programs
- * are what a file may cost in CI. AOT_SHARE=all takes all.
+ * Defines one test per group of about 250 programs: built with `flags`, each program prints what it prints with every function through B3.
+ * The groups are split into `parts`. A run that is told nothing takes three groups of its part, which ones follows from the revision as in `partInShare`. AOT_SHARE=all takes all.
  */
 export function joined(label: string, flags: string[], part = 1, parts = 1) {
   const folder = String(tempDir("aot-joined-programs", {}));
@@ -152,14 +155,14 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
   describe.concurrent(`compile/aot/joined/${label}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
     if (isWindows || isASAN) return void test.skip("no code is generated directly on Windows or by a Bun built with AddressSanitizer", () => {});
-    const all = programsThatCanBeJoined();
+    const all = programsOfOneFile();
     const carrier = withoutDebugInformation();
-    const groups = Math.ceil(all.length / programsInGroup);
-    const [first, step] = partInShare(part, parts, Math.ceil(groups / parts)).split("/").map(Number);
+    const groups = Math.ceil(all.length / namesInGroup);
+    const [first, step] = partInShare(part, parts, Math.ceil(groups / parts / groupsInShare)).split("/").map(Number);
     let taken = 0;
     for (let group = first - 1; group < groups; group += step) {
       taken++;
-      const names = all.slice(group * programsInGroup, (group + 1) * programsInGroup);
+      const names = all.slice(group * namesInGroup, (group + 1) * namesInGroup);
       test(`group ${group}: ${names[0]} to ${names.at(-1)}`, () => slot(() => compare(folder, carrier, group, names, flags)), 900_000);
     }
     if (!taken) test.skip("no group selected", () => {});

@@ -32,7 +32,7 @@ feature AotCompiler "the ahead-of-time compiler"
 
 feature Repl "bun repl"
   entered-from command-line
-  minimum 500000
+  minimum 80000
 
 feature Create "bun create and bun init"
   entered-from command-line

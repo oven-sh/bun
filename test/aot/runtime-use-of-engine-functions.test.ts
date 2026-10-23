@@ -46,10 +46,7 @@ describe.concurrent("the engine's own JavaScript reads its arrays by index", () 
       `const value: any = JSON.parse(process.argv[2]); value[Symbol.dispose]();`,
     ],
     ["at on a typed array", `console.log(new Uint8Array([1, 2, 3]).at(-1));`],
-    gap(notYet.everyBuiltin, [
-      "at on an unknown value",
-      `const value: any = JSON.parse(process.argv[2]); console.log(value.at(-1));`,
-    ]),
+    ["at on an unknown value", `const value: any = JSON.parse(process.argv[2]); console.log(value.at(-1));`],
   ])("%s uses no member of a built-in prototype that the program does not name", async (_, text) => {
     expect(
       await retained(text, [

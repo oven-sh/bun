@@ -58,6 +58,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         is_flow: _,
         check_directive,
         is_forced_module,
+        is_script_with_code: _,
         has_errors,
         ran_out_of_stack: _,
         decorators,

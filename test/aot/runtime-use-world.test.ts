@@ -321,7 +321,7 @@ describe.concurrent("an object of the program's own, read by a computed key", ()
     ["the result is called in place", `${table}console.log((table as any)[key]());`],
     ["the result is called in place with arguments", `${table}(table as any)[key](process.argv[3], () => 1);`],
     ["the result is called in place and awaited", `${table}console.log(await (table as any)[key]());\nexport {};`],
-    gap(notYet.everyBuiltin, ["the result is constructed in place", `${table}console.log(new (table as any)[key]());`]),
+    ["the result is constructed in place", `${table}console.log(new (table as any)[key]());`],
     [
       "a member says this, and the result is called in place",
       `const table = { home() { return this; } };\n(table as any)[key]();`,

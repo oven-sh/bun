@@ -868,11 +868,11 @@ group("members of built-in classes", () => {
     ["a key of a class of the program's own", `class Point { x = 1; y = 2; }\nfunction read(point: Point, key: keyof Point) { return point[key] === 1; }\nconsole.log(read(new Point(), "x"));`],
     ["a key in a function that nothing calls", `function never(key: string) { return input[key]; }\nconsole.log(1);`],
     ["the type of the functions that return descriptors", `console.log(typeof input.getOwnPropertyDescriptor, input.getOwnPropertyDescriptors === undefined);`],
-    gap(notYet.everyBuiltin, ["JSON.stringify without a second argument", `console.log(JSON.stringify(input));`]),
-    gap(notYet.everyBuiltin, ["JSON.stringify with null and an indentation", `console.log(JSON.stringify(input, null, 2), JSON.stringify(input, undefined, 2));`]),
-    gap(notYet.everyBuiltin, ["JSON.stringify with a function literal", `console.log(JSON.stringify(input, (key, value) => value), JSON.stringify(input, function (key, value) { return value; }));`]),
-    gap(notYet.everyBuiltin, ["JSON.stringify with the name of a function", `function keep(key: string, value: unknown) { return value; }\nconst all = (key: string, value: unknown) => value;\nconsole.log(JSON.stringify(input, keep), JSON.stringify(input, all));`]),
-    gap(notYet.everyBuiltin, ["JSON.parse", `console.log(JSON.parse(input.text), typeof JSON);`]),
+    ["JSON.stringify without a second argument", `console.log(JSON.stringify(input));`],
+    ["JSON.stringify with null and an indentation", `console.log(JSON.stringify(input, null, 2), JSON.stringify(input, undefined, 2));`],
+    ["JSON.stringify with a function literal", `console.log(JSON.stringify(input, (key, value) => value), JSON.stringify(input, function (key, value) { return value; }));`],
+    ["JSON.stringify with the name of a function", `function keep(key: string, value: unknown) { return value; }\nconst all = (key: string, value: unknown) => value;\nconsole.log(JSON.stringify(input, keep), JSON.stringify(input, all));`],
+    ["JSON.parse", `console.log(JSON.parse(input.text), typeof JSON);`],
   ])("no other member is used with %s", async (_, text) => {
     expect(await members(text)).toEqual({ first: closed.first, named: false, every: false });
   });

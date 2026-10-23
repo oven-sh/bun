@@ -304,6 +304,29 @@ impl<'s> std::ops::DerefMut for ModuleCell<'s> {
 /// never start. Everything else that runs on the pools finishes without waiting.
 static WAITS_ACROSS_POOLS: Guarded<()> = Guarded::new(());
 
+/// What the statements at the top level of a TypeScript file declare that `bun run` drops.
+fn find_erased_declarations(hir: &hir::File<'_>) -> FxHashSet<Decl> {
+    let (mut found, mut names) = (FxHashSet::default(), Vec::new());
+    for statement in hir.ids(hir.body).filter(|&it| hir.is_erased_statement(it)) {
+        match hir[statement].kind {
+            StmtKind::Interface(it) => drop(found.insert(Decl::Interface(it))),
+            StmtKind::TypeAlias(it) => drop(found.insert(Decl::Alias(it))),
+            StmtKind::Fn(it) => drop(found.insert(Decl::Fn(it))),
+            StmtKind::Class(it) => drop(found.insert(Decl::Class(it))),
+            StmtKind::Enum(it) => drop(found.insert(Decl::Enum(it))),
+            StmtKind::Module(it) => drop(found.insert(Decl::Module(it))),
+            StmtKind::Var(declarations) => {
+                for declaration in declarations.iter() {
+                    names_bound_by(hir, hir[declaration].pat, &mut names);
+                }
+                found.extend(names.drain(..).map(|(_, pattern)| Decl::Var(pattern)));
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 /// Returns the stub that replaces a file's HIR when it's freed. The text is retained for the report.
 fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
     hir::File {
@@ -6265,6 +6288,7 @@ impl<'s> Files<'s> {
                 may_be_unread,
                 is_unread_unless_reached: false,
                 declares_globals: !module.is_module()
+                    || hir.is_script_with_code
                     || !bound.global_augmentations.is_empty()
                     || !bound.umd_globals.is_empty()
                     || !bound.pattern_ambient_modules.is_empty()
@@ -6775,15 +6799,23 @@ impl<'s> Files<'s> {
                 true => options.written_module_detection,
                 false => options.module_detection,
             };
-            let is_decreed = match detection {
+            let is_decreed_by = |detection: ModuleDetection| match detection {
                 ModuleDetection::Force => true,
                 ModuleDetection::Legacy => false,
                 ModuleDetection::Auto => {
                     specifies_esm || format_by_extension(path) != ResolutionMode::None
                 }
             };
+            let is_decreed = is_decreed_by(detection);
             hir.has_module_syntax = is_indicated_by_syntax || is_decreed;
             hir.is_forced_module = !is_indicated_by_syntax && is_decreed;
+            let written = options.written_module_detection;
+            let imports_jsx_factory =
+                written == ModuleDetection::Auto && has_jsx && options.jsx_imports_its_factory;
+            hir.is_script_with_code = hir.is_forced_module
+                && !imports_jsx_factory
+                && !is_decreed_by(written)
+                && hir.declares_beside_code();
         }
         if bind_time == BindTime::WhenReached
             && let Some(specifiers) = bind::specifiers_of_closed_module(&hir)
@@ -7461,6 +7493,7 @@ impl<'s> Files<'s> {
         let identifiers = count_identifiers(hir);
         let is_closed = !is_lib
             && (hir.has_module_syntax || bound.commonjs_indicator.is_some())
+            && !hir.is_script_with_code
             && bound.global_augmentations.is_empty()
             && bound.ambient_modules.is_empty()
             && bound.pattern_ambient_modules.is_empty()
@@ -7695,6 +7728,23 @@ impl<'s> Files<'s> {
                             },
                         );
                     }
+                }
+            }
+        }
+        // In its own file such a name stays the file's own, so it adds to nothing that another file declares.
+        for &id in declaring.iter().filter(|id| self.modules[id.idx()].hir.is_script_with_code) {
+            let module = &self.modules[id.idx()];
+            let erased = find_erased_declarations(&module.hir);
+            let locals = module.bound.table(module.bound.scopes[0].locals).iter();
+            let is_erased = |symbol: SymbolId| {
+                module.bound.symbol(symbol).decls.iter().all(|it| erased.contains(it))
+            };
+            let found: Vec<(Atom, SymbolId)> =
+                locals.copied().filter(|&(_, symbol)| is_erased(symbol)).collect();
+            for (name, symbol) in found {
+                if !self.globals.contains_key(name) {
+                    let merged = self.get_merged_symbol(Sym { file: id, id: symbol });
+                    self.globals.insert(name, merged);
                 }
             }
         }

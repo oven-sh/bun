@@ -134,6 +134,12 @@ impl<S: Storage> FileIn<S> {
             && statements.all(|statement| self.is_erased_statement(statement))
     }
 
+    /// A TypeScript file of which `bun run` drops some statement at the top level.
+    pub fn declares_beside_code(&self) -> bool {
+        self.has_typescript_semantics()
+            && self.ids(self.body).any(|statement| self.is_erased_statement(statement))
+    }
+
     pub fn set_strict_by_syntax(&mut self) {
         self.is_strict = true;
         self.is_strict_by_syntax = true;

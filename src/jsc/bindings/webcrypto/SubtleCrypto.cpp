@@ -1970,6 +1970,25 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         return result.releaseReturnValue();
     };
 
+    // An export takes a key and no parameters, so only the name is read.
+    auto exportKeyIdentifier = [&](const AlgorithmIdentifier& identifier) -> std::optional<CryptoAlgorithmIdentifier> {
+        String name;
+        if (std::holds_alternative<String>(identifier))
+            name = std::get<String>(identifier);
+        else {
+            auto params = convertDictionary<CryptoAlgorithmParameters>(state, std::get<JSC::Strong<JSC::JSObject>>(identifier).get());
+            if (throwScope.exception()) [[unlikely]] {
+                (void)throwScope.tryClearException();
+                return std::nullopt;
+            }
+            name = WTF::move(params.name);
+        }
+        auto found = CryptoAlgorithmRegistry::singleton().identifier(name);
+        if (!found || !isSupportedExportKey(*found))
+            return std::nullopt;
+        return found;
+    };
+
     auto getKeyLengthFor = [&](const AlgorithmIdentifier& identifier) -> std::optional<std::optional<size_t>> {
         auto params = normalize(identifier, Operations::GetKeyLength);
         RETURN_IF_EXCEPTION(throwScope, std::nullopt);
@@ -2028,10 +2047,9 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             operationKind = Operations::Encapsulate;
         else if (op == "decapsulate"_s)
             operationKind = Operations::Decapsulate;
-        else if (op == "exportKey"_s) {
-            auto params = normalize(algorithm, Operations::ImportKey);
-            return params && isSupportedExportKey(params->identifier);
-        } else
+        else if (op == "exportKey"_s)
+            return exportKeyIdentifier(algorithm).has_value();
+        else
             return false;
 
         auto params = normalize(algorithm, operationKind);
@@ -2090,10 +2108,10 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             length = converted;
         }
     } else if (op == "getPublicKey"_s) {
-        auto params = normalize(algorithmIdentifier, Operations::ImportKey);
-        if (!params)
+        auto identifier = exportKeyIdentifier(algorithmIdentifier);
+        if (!identifier)
             return false;
-        switch (params->identifier) {
+        switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP:

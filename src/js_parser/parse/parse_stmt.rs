@@ -1845,6 +1845,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
+                    // Printed in a block with no scope, except as a label's body.
+                    if matches!(
+                        opts.lexical_decl,
+                        LexicalDecl::Forbid | LexicalDecl::AllowFnInsideIf
+                    ) {
+                        p.stop_tracking_scope_uses();
+                    }
                     return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));
                 }
                 if opts.ts_decorators.is_some() {

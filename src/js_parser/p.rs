@@ -2003,6 +2003,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_usage_impl(ref_, true);
     }
 
+    /// Whole file: without scope uses, no nested name takes a spelling that an outer scope holds.
+    #[cold]
+    pub(crate) fn stop_tracking_scope_uses(&mut self) {
+        // The dev server prints each file as a function of its own.
+        if !self.options.features.hot_module_reloading {
+            self.track_scope_uses = false;
+        }
+    }
+
     pub(crate) fn record_scope_use(&mut self, ref_: Ref) {
         if !self.track_scope_uses {
             return;

@@ -2278,9 +2278,9 @@ impl<'a> Transpiler<'a> {
         // `print_arena` is the same per-call arena that built `ast` (the one
         // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
         // runtime per-import path that aliases the per-VM `transpiler_arena`
-        // (`Arena::borrowing_default()` → `mi_heap_main()`, never freed), so the
+        // (freed with the VM of a Worker, and never for any other VM), so the
         // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
-        // would strand its bytes in `mi_heap_main` on every print.
+        // would strand its bytes there on every print.
         match format {
             js_printer::Format::Esm => self.print_esm_cold::<ENABLE_SOURCE_MAP>(
                 print_arena,

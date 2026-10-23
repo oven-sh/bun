@@ -268,7 +268,7 @@ pub struct VirtualMachine {
 
     pub source_mappings: SavedSourceMap,
 
-    // BACKREF — `&'a mut Arena` in spirit; caller-owned (web_worker) and
+    // BACKREF — `&'a mut Arena` in spirit; caller-owned and
     // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,

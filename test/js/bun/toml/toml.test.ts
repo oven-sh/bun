@@ -547,6 +547,232 @@ name = "banana"
   test("whole-document CRLF line endings", () => {
     expect(TOML.parse('a = 1\r\n[t]\r\nb = "x"\r\n')).toEqual({ a: 1, t: { b: "x" } });
   });
+
+  // A header defines only the table it names. The super-tables it creates on
+  // the way are not defined yet: a later header, or the dotted keys of one
+  // later block, can still define them (toml-lang/toml#771).
+  describe("a table that a deeper header created on the way", () => {
+    test("is defined by a dotted key under a later header", () => {
+      expect(TOML.parse('[tool.ruff.lint]\nselect = ["E"]\n\n[tool]\nruff.line-length = 100\n')).toEqual({
+        tool: { ruff: { lint: { select: ["E"] }, "line-length": 100 } },
+      });
+      // The pyproject.toml shape.
+      expect(
+        TOML.parse(`
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ruff]
+lint.select = ["E", "F"]
+`),
+      ).toEqual({
+        tool: { ruff: { lint: { "per-file-ignores": { "tests/*": ["S101"] }, select: ["E", "F"] } } },
+      });
+      // The document of toml-lang/toml#771.
+      expect(
+        TOML.parse(`
+[fruit.apple.texture]
+smooth = true
+
+[fruit]
+apple.color = "red"
+apple.taste.sweet = true
+`),
+      ).toEqual({ fruit: { apple: { texture: { smooth: true }, color: "red", taste: { sweet: true } } } });
+      // The bunfig.toml shape.
+      expect(
+        TOML.parse(`
+[install.scopes."@myorg"]
+url = "https://registry.myorg.com/"
+
+[install]
+scopes."@other" = "https://registry.other.com/"
+`),
+      ).toEqual({
+        install: {
+          scopes: { "@myorg": { url: "https://registry.myorg.com/" }, "@other": "https://registry.other.com/" },
+        },
+      });
+      // More than one level, and more than one dotted key of the same block.
+      expect(TOML.parse("[a.b.c.d]\nz = 9\n[a]\nb.c.x = 1\nb.y = 2\nb.c.w.v = 3\n")).toEqual({
+        a: { b: { c: { d: { z: 9 }, x: 1, w: { v: 3 } }, y: 2 } },
+      });
+      // An inline table value between two dotted keys of the same block.
+      expect(TOML.parse("[a.b.c]\n[a]\nb.x = { y = 1 }\nb.w = 2\n")).toEqual({
+        a: { b: { c: {}, x: { y: 1 }, w: 2 } },
+      });
+      // Two created tables, defined in the same block.
+      expect(TOML.parse("[a.b.c]\n[a.d.e]\n[a]\nb.x = 1\nd.y = 2\n")).toEqual({
+        a: { b: { c: {}, x: 1 }, d: { e: {}, y: 2 } },
+      });
+      // Each block defines the created table one level below its own header.
+      expect(TOML.parse("[a.b.c.d.e]\nz = 9\n[a.b.c]\nd.x = 1\n[a]\nb.y = 2\n")).toEqual({
+        a: { b: { c: { d: { e: { z: 9 }, x: 1 } }, y: 2 } },
+      });
+      // Quoted key segments name the same table.
+      expect(TOML.parse('["a".\'b\'.c]\nz = 9\n[a]\n"b".x = 1\n')).toEqual({ a: { b: { c: { z: 9 }, x: 1 } } });
+      // The deeper header can be an array of tables, and can continue after.
+      expect(TOML.parse("[[a.b.c]]\nz = 9\n[a]\nb.x = 1\n[[a.b.c]]\nz = 10\n")).toEqual({
+        a: { b: { c: [{ z: 9 }, { z: 10 }], x: 1 } },
+      });
+      // Each element of an array of tables has created tables of its own.
+      expect(TOML.parse("[[p]]\n[p.a.b.c]\nz = 1\n[p.a]\nb.x = 1\n[[p]]\n[p.a.b.c]\nz = 2\n[p.a]\nb.x = 2\n")).toEqual({
+        p: [{ a: { b: { c: { z: 1 }, x: 1 } } }, { a: { b: { c: { z: 2 }, x: 2 } } }],
+      });
+    });
+
+    test("then belongs to that block: sub-table headers are allowed, a header for it is not", () => {
+      expect(TOML.parse("[a.b.c]\nz = 9\n[a]\nb.x = 1\n[a.b.d]\ny = 2\n[[a.b.e]]\nw = 3\n")).toEqual({
+        a: { b: { c: { z: 9 }, x: 1, d: { y: 2 }, e: [{ w: 3 }] } },
+      });
+      // A sub-table header still works after an unrelated block.
+      expect(TOML.parse("[a.b.c]\nz = 9\n[a]\nb.x = 1\n[other]\nk = 1\n[a.b.e]\nw = 1\n")).toEqual({
+        a: { b: { c: { z: 9 }, x: 1, e: { w: 1 } } },
+        other: { k: 1 },
+      });
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb.x = 1\n[a.b]\ny = 2\n").message).toBe(
+        "TOML Parse error: Cannot redefine table 'b'",
+      );
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb.x = 1\n[[a.b]]\ny = 1\n").message).toBe(
+        "TOML Parse error: Cannot redefine table 'b' as an array of tables",
+      );
+      // `a.b.c` is still only created when the dotted key defines `a.b`, so
+      // `[a.b.c]` can define it. `[a.b]` cannot.
+      expect(TOML.parse("[a.b.c.d]\nz = 9\n[a]\nb.x = 1\n[a.b.c]\ny = 2\n")).toEqual({
+        a: { b: { c: { d: { z: 9 }, y: 2 }, x: 1 } },
+      });
+      expect(syntaxError("[a.b.c.d]\nz = 9\n[a]\nb.c.x = 1\n[a.b]\ny = 2\n").message).toBe(
+        "TOML Parse error: Cannot redefine table 'b'",
+      );
+      expect(syntaxError("[a.b.c.d]\nz = 9\n[a]\nb.c.x = 1\n[a.b.c]\ny = 2\n").message).toBe(
+        "TOML Parse error: Cannot redefine table 'c'",
+      );
+      expect(syntaxError("[a.b.c.d]\nz = 9\n[a.b]\nc.x = 1\n[a.b.c]\ny = 1\n").message).toBe(
+        "TOML Parse error: Cannot redefine table 'c'",
+      );
+      // A dotted key inside an inline table starts at a new table, so `a.b`
+      // stays only created and `[a.b]` can still define it.
+      expect(TOML.parse("[a.b.c]\nz = 9\n[a]\nq = { b.x = 1 }\n[a.b]\ny = 2\n")).toEqual({
+        a: { b: { c: { z: 9 }, y: 2 }, q: { b: { x: 1 } } },
+      });
+    });
+
+    test("does not let a dotted key reach a table that has a header of its own", () => {
+      // toml-lang/toml#846: the walk stops at the first table with a header.
+      expect(syntaxError('[tool.ruff.lint]\nselect = ["E"]\n\n[tool]\nruff.lint.ignore = ["F"]\n').message).toBe(
+        "TOML Parse error: Cannot extend table 'lint' with a dotted key",
+      );
+      expect(syntaxError("[tool.ruff]\nfix = true\n\n[tool]\nruff.line-length = 100\n").message).toBe(
+        "TOML Parse error: Cannot extend table 'ruff' with a dotted key",
+      );
+      expect(syntaxError("[a.b.c.d]\nz = 9\n[a.b]\nk = 1\n[a]\nb.c.x = 1\n").message).toBe(
+        "TOML Parse error: Cannot extend table 'b' with a dotted key",
+      );
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb.x = 1\nb.c.y = 2\n").message).toBe(
+        "TOML Parse error: Cannot extend table 'c' with a dotted key",
+      );
+      // A key of the created table cannot replace the table, a sub-table, or another key.
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb = 1\n").message).toBe("TOML Parse error: Cannot redefine key 'b'");
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb = {x = 1}\n").message).toBe(
+        "TOML Parse error: Cannot redefine key 'b'",
+      );
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb.c = 1\n").message).toBe("TOML Parse error: Cannot redefine key 'c'");
+      expect(syntaxError("[[a.b.c]]\nz = 9\n[a]\nb.c.x = 1\n").message).toBe(
+        "TOML Parse error: Cannot redefine key 'c'",
+      );
+      expect(syntaxError("[a.b.c]\nz = 9\n[a]\nb.x = 1\nb.x = 2\n").message).toBe(
+        "TOML Parse error: Cannot redefine key 'x'",
+      );
+    });
+
+    test.concurrent("parses the same way through a .toml import", async () => {
+      using dir = tempDir("toml-dotted-key-created-table", {
+        "pyproject.toml": '[tool.ruff.lint]\nselect = ["E"]\n\n[tool]\nruff.line-length = 100\n',
+        "index.ts": `import config from "./pyproject.toml"; console.log(JSON.stringify(config));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"tool":{"ruff":{"lint":{"select":["E"]},"line-length":100}}}\n');
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Replay a failure with BUN_TOML_FUZZ_SEED=<seed>. Soak with BUN_TOML_FUZZ_ITERS=<n>.
+  const fuzzSeed = Number(process.env.BUN_TOML_FUZZ_SEED ?? 0x746f6d6c) >>> 0;
+  const fuzzIters = Number(process.env.BUN_TOML_FUZZ_ITERS ?? 100);
+
+  // Only the root table and arrays of tables depend on their position. The
+  // same `[table]` blocks in any order parse to the same value, or every
+  // order is refused.
+  test(`the order of [table] blocks does not change the outcome (seed=${fuzzSeed}, iters=${fuzzIters})`, () => {
+    let state = fuzzSeed;
+    const next = () => {
+      state = (state + 0x6d2b79f5) | 0;
+      let t = Math.imul(state ^ (state >>> 15), 1 | state);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const int = (n: number) => Math.floor(next() * n);
+    // Two names, so a header is often a prefix of another and a dotted key often walks into one.
+    const name = () => (next() < 0.5 ? "a" : "b");
+    const path = (length: number) => Array.from({ length }, name);
+    const outcome = (text: string): unknown => {
+      try {
+        return TOML.parse(text);
+      } catch (e) {
+        if (!(e instanceof SyntaxError)) throw e;
+        return "refused";
+      }
+    };
+
+    let parsed = 0;
+    for (let i = 0; i < fuzzIters; i++) {
+      const blocks: string[] = [];
+      for (let n = 2 + int(3), fresh = 0; n > 0; n--) {
+        let block = `[${path(1 + int(4)).join(".")}]\n`;
+        for (let lines = int(3); lines > 0; lines--) {
+          const key = [...path(int(3)), next() < 0.8 ? `k${fresh++}` : name()].join(".");
+          const value = next() < 0.08 ? (next() < 0.5 ? `{ ${name()}.${name()} = 1 }` : "[1, { x = 2 }]") : 1 + int(9);
+          block += `${key} = ${value}\n`;
+        }
+        blocks.push(block);
+      }
+      const first = blocks.join("");
+      const expected = outcome(first);
+      if (expected !== "refused") parsed++;
+      // Heap's algorithm: every order of `blocks`.
+      const counters = blocks.map(() => 0);
+      for (let k = 1; k < blocks.length;) {
+        if (counters[k] < k) {
+          const swap = k % 2 === 0 ? 0 : counters[k];
+          [blocks[swap], blocks[k]] = [blocks[k], blocks[swap]];
+          const text = blocks.join("");
+          const got = outcome(text);
+          if (!Bun.deepEquals(got, expected)) {
+            throw new Error(
+              `the same blocks in another order have another outcome. seed=${fuzzSeed} iteration=${i}\n` +
+                `${JSON.stringify(first)} => ${JSON.stringify(expected)}\n${JSON.stringify(text)} => ${JSON.stringify(got)}`,
+            );
+          }
+          counters[k]++;
+          k = 1;
+        } else {
+          counters[k++] = 0;
+        }
+      }
+    }
+    // The generator must reach both outcomes, or the check says nothing. A short replay can miss one.
+    if (fuzzIters >= 100) {
+      expect(parsed).toBeGreaterThan(fuzzIters / 4);
+      expect(parsed).toBeLessThan(fuzzIters);
+    }
+  });
 });
 
 describe("robustness", () => {

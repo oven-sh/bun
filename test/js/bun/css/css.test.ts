@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -4978,7 +4979,7 @@ describe("css tests", () => {
     // A css-wide keyword (or the reserved `default`) on a longhand cannot be
     // folded into the `font` shorthand: the shorthand has no slot for it, and
     // `font: 12px inherit` is an invalid declaration that browsers drop whole.
-    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "default"]) {
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "revert-rule", "default"]) {
       minify_test(
         `.foo { font: italic .875rem/normal Arial, sans-serif; font-family: ${keyword} }`,
         `.foo{font:italic .875rem Arial,sans-serif;font-family:${keyword}}`,
@@ -6694,7 +6695,7 @@ describe("css tests", () => {
     minify_test(".foo { transition: opacity 1s; transition-property: all }", ".foo{transition:all 1s}");
     // `<single-transition-property>` is a <custom-ident>: a css-wide keyword or
     // `default` is not a property name and cannot move into the shorthand.
-    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "default"]) {
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "revert-rule", "default"]) {
       minify_test(
         `.foo { transition: opacity 1.5s, color 1s; transition-property: ${keyword} }`,
         `.foo{transition:opacity 1.5s,color 1s;transition-property:${keyword}}`,
@@ -7279,6 +7280,18 @@ describe("css tests", () => {
     minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
     minify_test(".foo { animation: unset }", ".foo{animation:unset}");
     minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
+
+    // A quoted name that spells a css-wide keyword keeps its quotes, and the
+    // keyword without quotes is not a <keyframes-name>.
+    for (const keyword of ["inherit", "revert-layer", "revert-rule"]) {
+      minify_test(`.foo { animation-name: "${keyword}" }`, `.foo{animation-name:"${keyword}"}`);
+      minify_test(`@keyframes "${keyword}" { from { color: red } }`, `@keyframes "${keyword}"{0%{color:red}}`);
+      test(`@keyframes ${keyword} is rejected`, () => {
+        expect(() => cssInternals.minifyTestWithOptions(`@keyframes ${keyword} { from { color: red } }`, "")).toThrow(
+          `Unexpected token: ${keyword}`,
+        );
+      });
+    }
   });
 
   describe("transform", () => {
@@ -7724,7 +7737,7 @@ describe("css tests", () => {
     minify_test(".foo { color-scheme: dark foo; }", ".foo{color-scheme:dark foo}");
     minify_test(".foo { color-scheme: normal dark; }", ".foo{color-scheme:normal dark}");
     minify_test(".foo { color-scheme: light only dark; }", ".foo{color-scheme:light only dark}");
-    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "default"]) {
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "revert-rule", "default"]) {
       minify_test(`.foo { color-scheme: ${keyword}; }`, `.foo{color-scheme:${keyword}}`);
     }
     prefix_test(
@@ -7857,6 +7870,7 @@ describe("css tests", () => {
       "light only dark",
       "only light only",
       "light inherit",
+      "light revert-rule",
       "light default",
       "light 5px",
       "light, dark",

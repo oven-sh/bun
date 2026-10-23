@@ -109,6 +109,17 @@ fn require_resolver<'s>(name: &[u8], config: Option<&'s Json>) -> Option<Lookup<
     }
 }
 
+/// True for a package's name with a `..` after it, like webpack's `raw-loader!../../../a/b.md`. `resolve` joins it to each
+/// `node_modules` with `path.join`, which takes out the `raw-loader!..`, then the `node_modules`, and so on. So what it
+/// looks for is a file outside, and from the right directory that's the file that was meant.
+fn leaves_node_modules(specifier: &[u8]) -> bool {
+    !specifier.starts_with(b".")
+        && !paths::is_absolute(specifier)
+        && strings::split(specifier, b"/")
+            .skip(1)
+            .any(|it| it == b"..")
+}
+
 impl<'s> Resolvers<'s> {
     /// `map.set(name, config)`
     fn set(&mut self, name: &'s [u8], config: Option<&'s Json>) -> Option<()> {
@@ -204,10 +215,17 @@ impl<'s> Resolvers<'s> {
         if is_posix && strings::contains_char(specifier, b'\\') {
             return Resolved::Nothing;
         }
-        let found = self
-            .map
-            .iter()
-            .find_map(|it| modules.resolve_file(&from, specifier, is_require, &it.1));
+        let found = (self.map.iter()).find_map(|(_, lookup)| match lookup {
+            Lookup::Node(_) if leaves_node_modules(specifier) => {
+                // `getPackageCandidates`
+                paths::ancestors(paths::dirname(&from)).find_map(|directory| {
+                    let packages = paths::join(directory, b"node_modules");
+                    let candidate = paths::join_normalized(&packages, specifier);
+                    modules.resolve_file(&from, &candidate, is_require, lookup)
+                })
+            }
+            lookup => modules.resolve_file(&from, specifier, is_require, lookup),
+        });
         found.map_or(Resolved::Nothing, Resolved::File)
     }
 

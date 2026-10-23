@@ -1031,6 +1031,37 @@ test.concurrent(
   },
 );
 
+// Recorded from eslint-plugin-import 2.32.0 with eslint-import-resolver-node 0.3.10 under ESLint 8.57.1.
+test("eslint-import-resolver-node finds the file behind webpack's loader syntax from three levels up", async () => {
+  const names = [
+    "../../../../other/Readme.md",
+    "../../../../other/code.js",
+    "../../../../other/missing.md",
+    "../../Readme.md",
+  ];
+  const { problems } = await lint(
+    {
+      "eslint.config.mjs": `export default [{
+        settings: { "import/resolver": { node: { extensions: [".js", ".json"] } } },
+        plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+        rules: { "import/extensions": ["error", "never"], "import/no-unresolved": "error" },
+      }];`,
+      "package.json": "{}",
+      "packages/other/Readme.md": "",
+      "packages/other/code.js": "",
+      "packages/demo/src/pages/docs/a.js": names.map(it => `import "!!raw-loader!${it}";\n`).join(""),
+    },
+    ["packages/demo"],
+  );
+  expect(problems).toEqual([
+    "packages/demo/src/pages/docs/a.js:2:8 import/extensions",
+    "packages/demo/src/pages/docs/a.js:3:8 import/extensions",
+    "packages/demo/src/pages/docs/a.js:3:8 import/no-unresolved",
+    "packages/demo/src/pages/docs/a.js:4:8 import/extensions",
+    "packages/demo/src/pages/docs/a.js:4:8 import/no-unresolved",
+  ]);
+});
+
 // Recorded from eslint-import-resolver-typescript 4.4.5 with eslint-plugin-import 2.32.0 under ESLint 10.12. Node.js
 // and TypeScript treat the `exports` target as the file itself.
 test.concurrent(
@@ -4575,6 +4606,8 @@ describe.concurrent("ESLint 8 config files", () => {
       "a.js": "debugger;\n",
     });
     expect(html.stderr).not.toContain("It seems that eslint is not loaded");
+    expect(html.problems).toEqual(["a.js:1:1 no-debugger"]);
+    expect(html.exitCode).toBe(1);
   });
 
   test("a package that isn't installed is never requested from a registry", async () => {

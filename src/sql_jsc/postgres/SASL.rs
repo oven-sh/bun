@@ -1,6 +1,5 @@
 use bun_base64;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_boringssl_sys::SSL;
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
 use bun_sql::postgres::protocol::authentication::SASLMechanisms;
@@ -23,16 +22,12 @@ pub(crate) enum ChannelBinding {
 }
 
 impl ChannelBinding {
-    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<ChannelBinding> {
-        match value.is_int32().then(|| value.as_int32()) {
-            Some(0) => Ok(ChannelBinding::Disable),
-            Some(1) => Ok(ChannelBinding::Prefer),
-            Some(2) => Ok(ChannelBinding::Require),
-            _ => Err(global.throw_invalid_arguments(format_args!(
-                "channelBinding must be 0 (disable), 1 (prefer) or 2 (require)"
-            ))),
-        }
-    }
+    /// In the order of the numbers `createConnection` takes.
+    pub(crate) const ALL: [ChannelBinding; 3] = [
+        ChannelBinding::Disable,
+        ChannelBinding::Prefer,
+        ChannelBinding::Require,
+    ];
 }
 
 /// The messages are libpq's.

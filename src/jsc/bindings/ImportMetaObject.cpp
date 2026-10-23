@@ -217,6 +217,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
         RETURN_IF_EXCEPTION(scope, {});
+        from = requirer->filenamePath(vm, from);
     }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {

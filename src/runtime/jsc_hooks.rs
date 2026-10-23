@@ -3996,6 +3996,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
             // outlives the synchronous transpile this borrow feeds into.
             virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
             loader = Some(Loader::Tsx);
+            // `<cwd>/[eval]` has no query: a `?` in it is part of the cwd.
+            path = Fs::Path::init(specifier);
         }
     }
 

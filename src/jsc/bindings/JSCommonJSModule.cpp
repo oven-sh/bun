@@ -42,6 +42,7 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/OptionsList.h>
 #include <JavaScriptCore/ParserError.h>
@@ -413,7 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     if (!boundModule) [[unlikely]] {
         RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
-    JSString* filename = dynamicDowncast<JSString>(boundModule->filename());
+    JSString* filename = dynamicDowncast<JSString>(boundModule->filenamePath(globalObject->vm()));
     if (!filename) [[unlikely]] {
         RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
@@ -562,7 +563,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JS
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(thisObject->m_filename.get());
+    return JSValue::encode(thisObject->filename());
 }
 JSC_DEFINE_CUSTOM_GETTER(getterId, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -641,19 +642,19 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         return JSValue::encode(jsUndefined());
     }
 
-    if (!thisObject->m_paths) {
-        JSValue filename = thisObject->filename();
+    if (!thisObject->paths()) {
+        JSValue filename = thisObject->filenamePath(globalObject->vm());
         ASSERT(filename);
         auto filenameWtfStr = filename.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         BunString filenameStr = Bun::toString(filenameWtfStr);
         JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filenameStr, globalObject, true));
         RETURN_IF_EXCEPTION(scope, {});
-        thisObject->m_paths.set(globalObject->vm(), thisObject, paths);
+        thisObject->setDerivedPaths(globalObject->vm(), paths);
         return JSValue::encode(paths);
     }
 
-    return JSValue::encode(thisObject->m_paths.get());
+    return JSValue::encode(thisObject->paths());
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterChildren,
@@ -740,7 +741,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
     if (!thisObject)
         return false;
 
-    thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    thisObject->setPaths(globalObject->vm(), JSValue::decode(value));
     return true;
 }
 
@@ -754,7 +755,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    thisObject->m_filename.set(globalObject->vm(), thisObject, string);
+    thisObject->setFilename(globalObject->vm(), string);
     return true;
 }
 
@@ -843,6 +844,9 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     JSValue filenameValue = callframe->argument(1);
     String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue pathValue = moduleObject->filenamePath(vm, filenameValue);
+    String pathString = pathValue == filenameValue ? filenameString : pathValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString;
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
@@ -857,13 +861,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     moduleObject->sourceCode = makeSource(
         WTF::move(wrappedString),
-        SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
+        SourceOrigin(URL::fileURLWithFileSystemPath(pathString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
+    EncodedJSValue encodedFilename = JSValue::encode(pathValue);
 #if OS(WINDOWS)
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
 #else
@@ -977,6 +981,52 @@ JSCommonJSModule* JSCommonJSModule::create(
     cell->finishCreation(vm, sourceCode);
     cell->setModuleGraph(vm, moduleGraph);
     return cell;
+}
+
+static_assert(OBJECT_OFFSETOF(JSCommonJSModule, sourceCode) - OBJECT_OFFSETOF(JSCommonJSModule, ignoreESModuleAnnotation) == sizeof(void*), "m_filenamePathLength must stay in the padding before sourceCode");
+
+void JSCommonJSModule::setLoadedPath(JSC::VM& vm, const WTF::String& path)
+{
+    auto* filename = dynamicDowncast<JSString>(m_filename.get());
+    unsigned pathLength = path.length();
+    if (!filename || !pathLength || filename->length() <= pathLength)
+        return;
+    auto key = filename->tryGetValue();
+    if (key->isNull() || key->codeUnitAt(pathLength) != '?' || !key->startsWith(path))
+        return;
+    // Without a separator in the query, the last separator of the key is the path's.
+    if (key->find([](char16_t character) { return character == '/' || character == '\\'; }, pathLength + 1) == WTF::notFound)
+        return;
+
+    // The loader can give a module its source again: what JS changed since the first time stays.
+    if (m_filenamePathLength == pathLength)
+        return;
+
+    m_filenamePathLength = pathLength;
+    size_t index = path.reverseFind(PLATFORM_SEP);
+    m_dirname.set(vm, this, index != WTF::notFound ? jsSubstringOfResolved(vm, filename, 0, index) : jsEmptyString(vm));
+    // A list that the getter derived before this is the whole key's.
+    if (m_pathsAreDerived) {
+        m_paths.clear();
+        m_pathsAreDerived = false;
+    }
+}
+
+JSValue JSCommonJSModule::loadedPath(JSC::VM& vm)
+{
+    return jsSubstringOfResolved(vm, asString(m_filename.get()), 0, m_filenamePathLength);
+}
+
+bool JSCommonJSModule::isFilename(JSValue value)
+{
+    JSValue filename = m_filename.get();
+    if (value == filename)
+        return true;
+    if (!value.isString() || asString(value)->length() != asString(filename)->length())
+        return false;
+    auto text = asString(value)->tryGetValue();
+    auto key = asString(filename)->tryGetValue();
+    return !text->isNull() && text.data == key.data;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -1518,6 +1568,7 @@ void JSCommonJSModule::evaluate(
         return;
 
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
+    setLoadedPath(vm, this->sourceCode.provider()->sourceURL());
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1532,6 +1583,7 @@ void JSCommonJSModule::evaluate(
     if (this->hasEvaluated)
         return;
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
+    setLoadedPath(vm, this->sourceCode.provider()->sourceURL());
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
@@ -1549,6 +1601,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             throwTypeError(globalObject, scope, "module._compile is not a function"_s);
             return;
         }
+        setLoadedPath(vm, source.source_url.toWTFString());
         WTF::String sourceString = source.source_code.transferToWTFString();
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
@@ -1631,6 +1684,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->setLoadedPath(vm, sourceURL);
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1681,7 +1735,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 globalObject,
                                 moduleObject,
                                 moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                                moduleObject->filename());
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return;
@@ -1748,6 +1802,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->setLoadedPath(vm, sourceURL);
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

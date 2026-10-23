@@ -499,13 +499,12 @@ pub fn get_loader_and_virtual_source<'a>(
         } else {
             b"/[stdin]"
         };
-        if strings::ends_with(specifier, EVAL_SUFFIX) {
+        if strings::ends_with(specifier, EVAL_SUFFIX) || strings::ends_with(specifier, STDIN_SUFFIX)
+        {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
-        }
-        if strings::ends_with(specifier, STDIN_SUFFIX) {
-            virtual_source = Some(eval_source);
-            loader = Some(Loader::Tsx);
+            // `<cwd>/[eval]` has no query: a `?` in it is part of the cwd.
+            path = Fs::Path::init(specifier);
         }
     }
 

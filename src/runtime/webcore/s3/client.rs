@@ -1377,6 +1377,7 @@ pub(crate) struct S3DownloadFeed {
 
 impl S3DownloadFeed {
     /// A chunk that is not the last one. `chunk` is borrowed for the duration of the call.
+    #[inline]
     pub(crate) fn deliver(&self, chunk: &[u8]) {
         let Some(bytes) = self.stream.bytes() else {
             return;

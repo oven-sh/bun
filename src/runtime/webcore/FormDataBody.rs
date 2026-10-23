@@ -18,6 +18,8 @@ use crate::webcore::streams::{SourceHandle, StreamError, StreamResult};
 use crate::webcore::{ByteStream, DrainResult, ReadableStream, readable_stream};
 
 /// What `Blob::from_dom_form_data` makes of a `FormData`.
+// Its two callers match it at once; boxing the `Blob` would add an allocation to every FormData body.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum FormDataBody {
     /// The whole body: every entry was in memory, or a file that was read.
     Bytes(Blob),

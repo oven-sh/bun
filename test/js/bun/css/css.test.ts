@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -187,6 +188,199 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // A <number> and a <percentage> cannot be added. The declaration is left as written.
+    minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
+    minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
+    minify_test(`a { color: rgb(calc(10 + 10%) 0 0) }`, `a{color:rgb(calc(10 + 10%)0 0)}`);
+    minify_test(`a { color: color(srgb calc(1 + 50%) 0 0) }`, `a{color:color(srgb calc(1 + 50%)0 0)}`);
+    minify_test(`a { color: rgb(from #336699 calc(10 + 10%) g b) }`, `a{color:rgb(from #369 calc(10 + 10%)g b)}`);
+    // max() of a number and a percentage is not reduced. The sum around it does not become a `none` channel.
+    minify_test(
+      `a { color: rgb(from #336699 r g calc(b + max(10, 20%))) }`,
+      `a{color:rgb(from #369 r g calc(b + max(10,20%)))}`,
+    );
+    // A channel that takes only a <percentage> reads its keyword of a relative color as one, so
+    // `calc(l + 20)` is such a sum too.
+    minify_test(`a { color: lab(from red calc(l + 20) a b) }`, `a{color:lab(from red calc(l + 20)a b)}`);
+    minify_test(`a { color: lch(from red calc(l + 20) c h) }`, `a{color:lch(from red calc(l + 20)c h)}`);
+    minify_test(`a { color: oklab(from red calc(l + .1) a b) }`, `a{color:oklab(from red calc(l + .1)a b)}`);
+    minify_test(`a { color: oklch(from #ff876a calc(l - .08) c h) }`, `a{color:oklch(from #ff876a calc(l - .08)c h)}`);
+    minify_test(`a { color: hsl(from blue h calc(s - 20) l) }`, `a{color:hsl(from blue h calc(s - 20)l)}`);
+    minify_test(`a { color: hsl(from blue h s calc(l + 20)) }`, `a{color:hsl(from blue h s calc(l + 20))}`);
+    minify_test(`a { color: hwb(from blue h calc(w + 20) b) }`, `a{color:hwb(from blue h calc(w + 20)b)}`);
+    minify_test(`a { color: hwb(from blue h w calc(b + 20)) }`, `a{color:hwb(from blue h w calc(b + 20))}`);
+    minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
+    // Every other reader of a <percentage> keeps the declaration as written too.
+    minify_test(`a { font-stretch: calc(50% + 1) }`, `a{font-stretch:calc(50% + 1)}`);
+    minify_test(`a { scale: 1 calc(50% + 1) }`, `a{scale:1 calc(50% + 1)}`);
+    minify_test(`a { transform: scale(calc(50% + 1)) }`, `a{transform:scale(calc(50% + 1))}`);
+    minify_test(`a { border-image-slice: calc(50% + 1) }`, `a{border-image-slice:calc(50% + 1)}`);
+    minify_test(`a { mask-border-slice: calc(50% + 1) }`, `a{mask-border-slice:calc(50% + 1)}`);
+    minify_test(
+      `@font-face { font-family: x; src: url(a.woff); font-stretch: calc(50% + 1); }`,
+      `@font-face{font-family:x;src:url(a.woff);font-stretch:calc(50% + 1)}`,
+    );
+    // A keyframe with such a selector is dropped. Chrome drops a keyframe whose selector is a math function.
+    minify_test(`@keyframes k { calc(50% + 1) { color: red } to { color: blue } }`, `@keyframes k{to{color:#00f}}`);
+    minify_test(`@keyframes k { calc(50% + 25%) { color: red } }`, `@keyframes k{75%{color:red}}`);
+    const property = (syntax: string, value: string) =>
+      cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
+    const rule = (syntax: string, value: string) =>
+      `@property --p{syntax:"${syntax}";inherits:false;initial-value:${value}}`;
+    test("@property with an initial-value that is a sum of percentages", () => {
+      expect(property("<percentage>", "calc(50% + 25%)")).toBe(rule("<percentage>", "75%"));
+      // The universal syntax has no type, so the value stays as written.
+      expect(property("*", "calc(50% + 1)")).toBe(rule("*", "calc(50% + 1)"));
+    });
+    // A typed `initial-value` has no unparsed form, so each of these is an `Unexpected token` error.
+    // https://github.com/oven-sh/bun/pull/45806 keeps a typed value that no component matches as written.
+    test.todo("@property with a typed initial-value that is not reduced", () => {
+      expect({
+        "<percentage>": property("<percentage>", "calc(50% + 1)"),
+        "<color>": property("<color>", "rgb(calc(10 + 10%) 0 0)"),
+        "<image>": property("<image>", "linear-gradient(rgb(calc(10 + 10%) 0 0), red)"),
+        "<transform-function>": property("<transform-function>", "scale(calc(50% + 1))"),
+        "<transform-list>": property("<transform-list>", "scale(calc(50% + 1))"),
+        // The next two values are valid.
+        "<color>, relative": property("<color>", "hsl(from blue h s calc(l + 20))"),
+        "<percentage>, abs()": property("<percentage>", "calc(50% + abs(-10%))"),
+      }).toEqual({
+        "<percentage>": rule("<percentage>", "calc(50% + 1)"),
+        "<color>": rule("<color>", "rgb(calc(10 + 10%)0 0)"),
+        "<image>": rule("<image>", "linear-gradient(rgb(calc(10 + 10%)0 0),red)"),
+        "<transform-function>": rule("<transform-function>", "scale(calc(50% + 1))"),
+        "<transform-list>": rule("<transform-list>", "scale(calc(50% + 1))"),
+        "<color>, relative": rule("<color>", "hsl(from blue h s calc(l + 20))"),
+        "<percentage>, abs()": rule("<percentage>", "calc(50% + abs(-10%))"),
+      });
+    });
+  });
+  describe("a calculation that is NaN in a color channel", () => {
+    // The same rule as above: the calculation is 0. It is not `none`. `none` is a missing
+    // component, and color-mix() takes a missing component from the other color.
+    // WPT css/css-color/parsing has `lab(calc(NaN) 0 0)` as `lab(0 0 0)` and `hsl(calc(0 / 0) 100% 50%)`
+    // as `rgb(255, 0, 0)`. Chrome 153 computes the same color for the source and for the expected
+    // text of each row.
+
+    // <number>, <percentage> and <angle> channels, and the alpha.
+    minify_test(`a { color: lab(50% calc(NaN) 0) }`, `a{color:lab(50% 0 0)}`);
+    minify_test(`a { color: lab(50% calc(sqrt(-1)) 0) }`, `a{color:lab(50% 0 0)}`);
+    minify_test(`a { color: lab(50% mod(1, 0) 0) }`, `a{color:lab(50% 0 0)}`);
+    minify_test(`a { color: lab(50% calc(1 + sqrt(-1)) 0) }`, `a{color:lab(50% 0 0)}`);
+    minify_test(`a { color: lab(calc(NaN * 1%) 10 0) }`, `a{color:lab(0% 10 0)}`);
+    minify_test(`a { color: lab(50% 10 0 / calc(NaN)) }`, `a{color:lab(50% 10 0/0)}`);
+    minify_test(`a { color: lab(50% 10 0 / calc(NaN * 1%)) }`, `a{color:lab(50% 10 0/0)}`);
+    minify_test(`a { color: lch(50% calc(NaN) 30) }`, `a{color:lch(50% 0 30)}`);
+    minify_test(`a { color: lch(50% 10 calc(NaN)) }`, `a{color:lch(50% 10 0)}`);
+    minify_test(`a { color: lch(50% 10 calc(NaN * 1deg)) }`, `a{color:lch(50% 10 0)}`);
+    minify_test(`a { color: lch(50% 10 asin(2)) }`, `a{color:lch(50% 10 0)}`);
+    minify_test(`a { color: oklab(50% calc(NaN) 0) }`, `a{color:oklab(50% 0 0)}`);
+    minify_test(`a { color: oklch(50% .1 calc(NaN)) }`, `a{color:oklch(50% .1 0)}`);
+    minify_test(`a { color: oklch(50% .1 calc(sqrt(-1) * 1rad)) }`, `a{color:oklch(50% .1 0)}`);
+    minify_test(`a { color: color(srgb calc(NaN) 0 0) }`, `a{color:color(srgb 0 0 0)}`);
+    minify_test(`a { color: color(display-p3 0 calc(NaN * 1%) 0) }`, `a{color:color(display-p3 0 0 0)}`);
+    minify_test(`a { color: color(xyz 0 0 0 / calc(NaN)) }`, `a{color:color(xyz 0 0 0/0)}`);
+
+    // rgb(), hsl() and hwb() in the space syntax.
+    minify_test(`a { color: rgb(calc(NaN) 0 0) }`, `a{color:#000}`);
+    minify_test(`a { color: hsl(calc(NaN) 50% 50%) }`, `a{color:#bf4040}`);
+    minify_test(`a { color: hwb(calc(NaN) 20% 20%) }`, `a{color:#c33}`);
+    minify_test(`a { color: hsl(120 50% 50% / calc(NaN)) }`, `a{color:#40bf4000}`);
+
+    // The comma syntax has no `none`, and a calculation that is NaN is not one.
+    minify_test(`a { color: rgb(calc(NaN), 0, 0) }`, `a{color:#000}`);
+    minify_test(`a { color: rgb(255, calc(NaN), 0) }`, `a{color:red}`);
+    minify_test(`a { color: rgb(calc(NaN * 1%), 0%, 100%) }`, `a{color:#00f}`);
+    minify_test(`a { color: rgba(12, 34, 56, calc(NaN)) }`, `a{color:#0c223800}`);
+    minify_test(`a { color: hsl(calc(NaN), 50%, 50%) }`, `a{color:#bf4040}`);
+    minify_test(`a { color: hsl(120, calc(NaN * 1%), 50%) }`, `a{color:gray}`);
+    minify_test(`a { color: hsla(120, 50%, 50%, calc(NaN)) }`, `a{color:#40bf4000}`);
+
+    // color-mix() mixes a 0. It takes a `none` from the other color.
+    minify_test(`a { color: color-mix(in lab, lab(50% calc(NaN) 0), lab(50% 40 0)) }`, `a{color:lab(50% 20 0)}`);
+    minify_test(`a { color: color-mix(in lab, lab(50% none 0), lab(50% 40 0)) }`, `a{color:lab(50% 40 0)}`);
+    minify_test(
+      `a { color: color-mix(in oklch, oklch(50% .1 calc(NaN)), oklch(50% .1 90)) }`,
+      `a{color:oklch(50% .1 45)}`,
+    );
+    minify_test(`a { color: color-mix(in oklch, oklch(50% .1 none), oklch(50% .1 90)) }`, `a{color:oklch(50% .1 90)}`);
+    minify_test(`a { color: color-mix(in hsl, hsl(calc(NaN) 50% 50%), hsl(90 50% 50%)) }`, `a{color:#bf9f40}`);
+    minify_test(
+      `a { color: color-mix(in lab, lab(50% 10 0 / calc(NaN)), lab(50% 10 0)) }`,
+      `a{color:lab(50% 10 0/.5)}`,
+    );
+
+    // Everything else that reads a color.
+    minify_test(`a { color: light-dark(lab(50% calc(NaN) 0), red) }`, `a{color:light-dark(lab(50% 0 0),red)}`);
+    minify_test(
+      `a { background: linear-gradient(lab(50% calc(NaN) 0), red) }`,
+      `a{background:linear-gradient(lab(50% 0 0),red)}`,
+    );
+    minify_test(`a { --c: lab(50% calc(NaN) 0) }`, `a{--c:lab(50% 0 0)}`);
+
+    // The keyword `none` does not change.
+    minify_test(`a { color: lab(50% none 0) }`, `a{color:lab(50% none 0)}`);
+    minify_test(`a { color: lab(none 10 0 / none) }`, `a{color:lab(none 10 0/none)}`);
+    minify_test(`a { color: lch(50% 10 none) }`, `a{color:lch(50% 10 none)}`);
+    minify_test(`a { color: color(srgb none 0 0) }`, `a{color:color(srgb none 0 0)}`);
+
+    // abs() of a percentage is not folded, so this sum is not a value. It is 60%, not NaN and not 0.
+    minify_test(`a { color: rgb(calc(50% + abs(-10%)), 0%, 0%) }`, `a{color:rgb(calc(50% + abs(-10%)),0%,0%)}`);
+    minify_test(`a { color: hsl(120, 50%, calc(50% + abs(-10%))) }`, `a{color:hsl(120,50%,calc(50% + abs(-10%)))}`);
+    minify_test(`a { color: lab(calc(50% + abs(-10%)) 10 0) }`, `a{color:lab(calc(50% + abs(-10%))10 0)}`);
+    minify_test(`a { opacity: calc(50% + abs(-10%)) }`, `a{opacity:calc(50% + abs(-10%))}`);
+
+    // lab() does not read a <number> lightness or a <percentage> a and b, so these stay as written.
+    // A reader for them must make the calculation 0, not `none`.
+    minify_test(`a { color: lab(calc(NaN) 10 0) }`, `a{color:lab(calc(NaN)10 0)}`);
+    minify_test(`a { color: lab(50% calc(NaN * 1%) 0) }`, `a{color:lab(50% calc(NaN*1%)0)}`);
+
+    // A relative color: the same calculation next to the keywords of the origin color.
+    minify_test(`a { color: lab(from lab(50% 10 20) l calc(NaN) b) }`, `a{color:lab(50% 0 20)}`);
+    minify_test(`a { color: lab(from lab(50% 10 20) l calc(a * NaN) b) }`, `a{color:lab(50% 0 20)}`);
+    minify_test(`a { color: lab(from lab(50% 10 20) calc(NaN * 1%) a b) }`, `a{color:lab(0% 10 20)}`);
+    minify_test(`a { color: lab(from lab(50% 10 20) l a b / calc(alpha * NaN)) }`, `a{color:lab(50% 10 20/0)}`);
+    minify_test(`a { color: lch(from lch(50% 10 20) l c calc(NaN * 1deg)) }`, `a{color:lch(50% 10 0)}`);
+    minify_test(`a { color: color(from color(srgb .5 .5 .5) srgb calc(r * NaN) g b) }`, `a{color:color(srgb 0 .5 .5)}`);
+    minify_test(`a { color: lab(from lab(50% 10 20) l none b) }`, `a{color:lab(50% none 20)}`);
+
+    // asin(), acos() and atan() are an <angle>, also when the result is NaN. A hue takes it.
+    // A <number> channel and the alpha do not, so the color stays as written: a browser rejects it.
+    minify_test(`a { color: hsl(asin(2), 50%, 50%) }`, `a{color:#bf4040}`);
+    minify_test(`a { color: lch(50% 10 calc(acos(2) + 1deg)) }`, `a{color:lch(50% 10 0)}`);
+    minify_test(`a { color: rgb(asin(2), 0, 0) }`, `a{color:rgb(asin(2),0,0)}`);
+    minify_test(`a { color: rgb(asin(2) 0 0) }`, `a{color:rgb(asin(2)0 0)}`);
+    minify_test(`a { color: lab(50% asin(2) 0) }`, `a{color:lab(50% asin(2)0)}`);
+    minify_test(`a { color: lab(50% 10 0 / acos(2)) }`, `a{color:lab(50% 10 0/acos(2))}`);
+
+    // `0e999` is 0. The tokenizer reads it as 0 * infinity.
+    minify_test(`a { color: lab(50% 0e999 0) }`, `a{color:lab(50% 0 0)}`);
+
+    // A typed @property reads the same color.
+    minify_test(
+      `@property --c { syntax: "<color>"; inherits: false; initial-value: rgb(calc(NaN), 0, 0) }`,
+      `@property --c{syntax:"<color>";inherits:false;initial-value:#000}`,
+    );
+  });
+  describe("asin(), acos() and atan() that are NaN", () => {
+    // The result is an <angle>, as it is for asin(.5). A <number> and a <length> do not take it.
+    minify_test(`a { opacity: asin(2) }`, `a{opacity:asin(2)}`);
+    minify_test(`a { line-height: acos(2) }`, `a{line-height:acos(2)}`);
+    minify_test(`a { width: calc(1px * asin(2)) }`, `a{width:calc(1px*asin(2))}`);
+    // An <angle> takes it. The NaN is 0, as for `calc(NaN * 1deg)`.
+    minify_test(`a { rotate: asin(2) }`, `a{rotate:0rad}`);
+    minify_test(`a { rotate: calc(acos(2) + 1deg) }`, `a{rotate:0deg}`);
+    minify_test(`a { transform: rotate(asin(2)) scale(2) }`, `a{transform:rotate(0rad)scale(2)}`);
+    minify_test(
+      `a { background: linear-gradient(asin(2), red, blue) }`,
+      `a{background:linear-gradient(0rad,red,#00f)}`,
+    );
+    // A result that is not NaN is an <angle> too. sin() of a NaN angle is a <number>.
+    minify_test(`a { rotate: asin(.5) }`, `a{rotate:30deg}`);
+    minify_test(`a { opacity: asin(.5) }`, `a{opacity:asin(.5)}`);
+    minify_test(`a { opacity: sin(asin(2)) }`, `a{opacity:0}`);
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.

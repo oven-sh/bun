@@ -710,7 +710,7 @@ impl<V: CalcValue> Calc<V> {
                 return Err(i.new_custom_error(css::ParserError::invalid_value));
             };
 
-            if to_angle && !rad.is_nan() {
+            if to_angle {
                 if let Some(val) = V::try_from_angle(Angle::Rad(rad)) {
                     return Ok(Calc::Value(Box::new(val)));
                 }
@@ -1609,10 +1609,10 @@ impl CalcValue for Percentage {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            _ => Ok(Percentage { v: f32::NAN }),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
 }

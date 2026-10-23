@@ -686,6 +686,56 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
+// A <number> cannot be added to a <percentage>, so this is not a color.
+test("a calculation that adds a number to a percentage is null", () => {
+  expect(color("rgb(calc(10 + 10%) 0 0)", "css")).toBeNull();
+});
+
+// These are null: the parser reads a channel keyword as a <percentage> where the channel takes
+// only one, and a <number> cannot be added to it. https://github.com/oven-sh/bun/pull/45362
+test.todo.each([
+  ["hsl(from blue h s calc(l + 20))", "#66f"],
+  ["lab(from lab(50% 10 20) calc(l + 20) a b)", "lab(70% 10 20)"],
+])("%s is %s", (input, expected) => {
+  expect(color(input, "css")).toBe(expected);
+});
+
+// CSS Values 4 "Infinities, NaN, and Signed Zero": a calculation that is NaN is 0.
+// Only the keyword `none` is a missing component.
+describe("a calculation that is NaN in a channel is 0", () => {
+  test.each([
+    ["lab(50% calc(NaN) 0)", "lab(50% 0 0)"],
+    ["lab(50% calc(sqrt(-1)) 0)", "lab(50% 0 0)"],
+    ["lab(calc(NaN * 1%) 10 0)", "lab(0% 10 0)"],
+    ["lab(50% 10 0 / calc(NaN))", "lab(50% 10 0 / 0)"],
+    ["lch(50% 10 calc(NaN * 1deg))", "lch(50% 10 0)"],
+    ["oklch(50% .1 asin(2))", "oklch(50% .1 0)"],
+    ["color(srgb calc(NaN) 0 0)", "color(srgb 0 0 0)"],
+    ["rgb(calc(NaN), 34, 56)", "#002238"],
+    ["rgba(12, 34, 56, calc(NaN))", "#0c223800"],
+    ["hsl(calc(NaN), 50%, 50%)", "#bf4040"],
+    ["lab(from lab(50% 10 20) l calc(a * NaN) b)", "lab(50% 0 20)"],
+    ["lab(50% 0e999 0)", "lab(50% 0 0)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // asin() is an <angle>, also when it is NaN. A <number> channel does not take it.
+  test.each(["rgb(asin(2), 0, 0)", "lab(50% asin(2) 0)", "lab(50% 10 0 / asin(2))"])("%s is null", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test("in the other output formats", () => {
+    expect(color("rgb(calc(NaN), 34, 56)", "{rgb}")).toEqual({ r: 0, g: 34, b: 56 });
+    expect(color("rgba(12, 34, 56, calc(NaN))", "{rgba}")).toEqual({ r: 12, g: 34, b: 56, a: 0 });
+    expect(color("hsl(calc(NaN), 50%, 50%)", "hex")).toBe("#bf4040");
+  });
+
+  test.each(["lab(50% none 0)", "lch(50% 10 none)", "color(srgb none 0 0)"])("%s keeps its none", input => {
+    expect(color(input, "css")).toBe(input);
+  });
+});
+
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing
   // in another channel's place shows up in the output. Mixing a color with

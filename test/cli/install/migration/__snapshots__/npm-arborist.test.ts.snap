@@ -293,7 +293,7 @@ bun install --frozen-lockfile exit code: 0
 
     "fs.realpath": ["fs.realpath@1.0.0", "", {}, "sha1-FQStJSMVjKpA20onh8sBQRmU6k8="],
 
-    "fsevents": ["fsevents@1.2.8", "", { "dependencies": { "nan": "^2.12.1", "node-pre-gyp": "^0.12.0" }, "os": "darwin" }, "sha512-tPvHgPGB7m40CZ68xqFGkKuzN+RnpGmSV+hgeKxhRpbxdqKXUFJGC3yonBOLzQBcJyGpdZFDfCsdOC2KFsXzeA=="],
+    "fsevents": ["fsevents@1.2.8", "", { "dependencies": { "nan": "^2.12.1", "node-pre-gyp": "^0.12.0" }, "os": "darwin", "hasInstallScript": true }, "sha512-tPvHgPGB7m40CZ68xqFGkKuzN+RnpGmSV+hgeKxhRpbxdqKXUFJGC3yonBOLzQBcJyGpdZFDfCsdOC2KFsXzeA=="],
 
     "function-loop": ["function-loop@1.0.2", "", {}, "sha512-Iw4MzMfS3udk/rqxTiDDCllhGwlOrsr50zViTOO/W6lS/9y6B1J0BD2VZzrnWUYBJsl3aeqjgR5v7bWWhZSYbA=="],
 
@@ -1381,7 +1381,7 @@ bun install --frozen-lockfile exit code: 0
 
     "convert-source-map": ["convert-source-map@1.7.0", "", { "dependencies": { "safe-buffer": "~5.1.1" } }, "sha512-4FJkXzKXEDB1snCFZlLP4gpC3JILicCpGbzG9f9G7tGqGCzETQ2hWPrcinA9oU4wtf2biUaEH5065UnMeR33oA=="],
 
-    "core-js": ["core-js@2.6.11", "", {}, "sha512-5wjnpaT/3dV+XB4borEsnAYQchn00XSgTAWKDkEqv+K8KevjbzmofK6hfJ9TZIlpj2N0xQpazy7PiRQiWHqzWg=="],
+    "core-js": ["core-js@2.6.11", "", { "hasInstallScript": true }, "sha512-5wjnpaT/3dV+XB4borEsnAYQchn00XSgTAWKDkEqv+K8KevjbzmofK6hfJ9TZIlpj2N0xQpazy7PiRQiWHqzWg=="],
 
     "core-util-is": ["core-util-is@1.0.2", "", {}, "sha1-tf1UIgqivFq1eqtxQMlAdUUDwac="],
 
@@ -1453,7 +1453,7 @@ bun install --frozen-lockfile exit code: 0
 
     "fs.realpath": ["fs.realpath@1.0.0", "", {}, "sha1-FQStJSMVjKpA20onh8sBQRmU6k8="],
 
-    "fsevents": ["fsevents@2.1.3", "", { "os": "darwin" }, "sha512-Auw9a4AxqWpa9GUfj370BMPzzyncfBABW8Mab7BGWBYDj4Isgq+cDKtx0i6u9jcX9pQDnswsaaOTgTmA5pEjuQ=="],
+    "fsevents": ["fsevents@2.1.3", "", { "os": "darwin", "hasInstallScript": true }, "sha512-Auw9a4AxqWpa9GUfj370BMPzzyncfBABW8Mab7BGWBYDj4Isgq+cDKtx0i6u9jcX9pQDnswsaaOTgTmA5pEjuQ=="],
 
     "function-loop": ["function-loop@1.0.2", "", {}, "sha512-Iw4MzMfS3udk/rqxTiDDCllhGwlOrsr50zViTOO/W6lS/9y6B1J0BD2VZzrnWUYBJsl3aeqjgR5v7bWWhZSYbA=="],
 
@@ -3072,7 +3072,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures dep-missing-resolved 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/tap/node_modules/completely-broken-witaf"
+"warn: skipping 1 unused package-lock.json entry: "node_modules/tap/node_modules/completely-broken-witaf"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3571,7 +3571,7 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--changed 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
-bun install --frozen-lockfile exit code: 1
+bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
@@ -3663,7 +3663,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--removed 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/semver"
+"warn: skipping 1 unused package-lock.json entry: "node_modules/semver"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -3763,7 +3763,7 @@ bun install --frozen-lockfile exit code: 1
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures external-link-dep 1`] = `
-"warn: skipped "app@file:./app" from package-lock.json: no entry for this dependency of "../cli-750"
+"warn: skipping "app@file:./app" from package-lock.json: no entry for this dependency of "../cli-750"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3795,9 +3795,9 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures external-link--root 1`] = `
-"warn: skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project
-warn: skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project
-warn: skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"
+"warn: skipping "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project
+warn: skipping "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project
+warn: skipping 3 unused package-lock.json entries: "../a", "../i", "../m"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3908,7 +3908,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures minimist-git-metadep 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/@isaacs/no-thing-here"
+"warn: skipping 1 unused package-lock.json entry: "node_modules/@isaacs/no-thing-here"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3934,7 +3934,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures old-package-lock 1`] = `
-"error: package-lock.json is lockfileVersion 1, which bun cannot migrate
+"error: cannot migrate package-lock.json: unsupported lockfileVersion 1
 note: npm install --package-lock-only --lockfile-version=3
 bun pm migrate exit code: 1"
 `;
@@ -4113,7 +4113,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures pnpm 1`] = `
-"warn: skipped 4 package-lock.json entries not depended on by any package: "node_modules/.pnpm/registry.npmjs.org/@scope/x/1.0.0", "node_modules/.pnpm/registry.npmjs.org/a/1.0.0", "node_modules/.pnpm/registry.npmjs.org/b/1.0.0", "node_modules/.pnpm/registry.npmjs.org/c/1.0.0"
+"warn: skipping 4 unused package-lock.json entries: "node_modules/.pnpm/registry.npmjs.org/@scope/x/1.0.0", "node_modules/.pnpm/registry.npmjs.org/a/1.0.0", "node_modules/.pnpm/registry.npmjs.org/b/1.0.0", "node_modules/.pnpm/registry.npmjs.org/c/1.0.0"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -4246,9 +4246,9 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "a": ["a@1.2.3", "http://localhost:1/a/-/a-1.2.3.tgz", {}, ""],
+    "a": ["a@1.2.3", "http://localhost:1/a/-/a-1.2.3.tgz", { "hasInstallScript": true }, ""],
 
-    "b": ["b@1.2.3", "http://localhost:1/b/-/b-1.2.3.tgz", {}, ""],
+    "b": ["b@1.2.3", "http://localhost:1/b/-/b-1.2.3.tgz", { "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4398,7 +4398,7 @@ bun install --frozen-lockfile exit code: 0
 
     "@isaacs/testing-rebuild-bundle-parent": ["@isaacs/testing-rebuild-bundle-parent@1.0.0", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-a": "" } }, "sha512-fa+mV2K+BDLzuxfI1LUWNmii92sylksrtaUITSO74ylcdWslvTFyr+REJfwdH5fDOxGqBH6kbVcDvWY8WqhgXg=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true, "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4421,7 +4421,7 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", {}, "sha512-Uk8u/2pQYJ2LRdm0bZB6k2MTxwtLJyZVfTHTFNR2pxirl9TPCLoRkGozbzwDV7n2V9pMwC26Oy230NoAml9tQg=="],
+    "@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", { "hasInstallScript": true }, "sha512-Uk8u/2pQYJ2LRdm0bZB6k2MTxwtLJyZVfTHTFNR2pxirl9TPCLoRkGozbzwDV7n2V9pMwC26Oy230NoAml9tQg=="],
   }
 }
 "
@@ -4448,7 +4448,7 @@ bun install --frozen-lockfile exit code: 0
 
     "@isaacs/testing-rebuild-bundle-parent": ["@isaacs/testing-rebuild-bundle-parent@1.0.1", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-a": "" } }, "sha512-PM20bXdRox3OOUEC7m0oYrpW3qZIYN+fh+/9TazZrWkfIggkHNnB91mROyPwlc/HvfPYoYHp1CMGPlgUSl3FDQ=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true, "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4473,7 +4473,7 @@ bun install --frozen-lockfile exit code: 0
   "packages": {
     "@isaacs/testing-rebuild-bundle-a": ["@isaacs/testing-rebuild-bundle-a@1.0.2", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-b": "" } }, "sha512-iMx/CGv5Z5dHRdeuYDoaCy0Nfgg0ih9G23C4bwoYPbkdXemc8ahbE9AFJ7jCP0u0hm5ZoZiP11FLN1i7ADhRbA=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true, "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4498,20 +4498,20 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "devdep": ["devdep@1.0.0", "http://localhost:1/devdep/-/devdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "optionalDependencies": { "opt-and-dev": "" } }, ""],
+    "devdep": ["devdep@1.0.0", "http://localhost:1/devdep/-/devdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "optionalDependencies": { "opt-and-dev": "" }, "hasInstallScript": true }, ""],
 
-    "devopt": ["devopt@1.0.0", "http://localhost:1/devopt/-/devopt-1.0.0.tgz", {}, ""],
+    "devopt": ["devopt@1.0.0", "http://localhost:1/devopt/-/devopt-1.0.0.tgz", { "hasInstallScript": true }, ""],
 
-    "opt-and-dev": ["opt-and-dev@1.0.0", "http://localhost:1/opt-and-dev/-/opt-and-dev-1.0.0.tgz", {}, ""],
+    "opt-and-dev": ["opt-and-dev@1.0.0", "http://localhost:1/opt-and-dev/-/opt-and-dev-1.0.0.tgz", { "hasInstallScript": true }, ""],
 
-    "optdep": ["optdep@1.0.0", "http://localhost:1/optdep/-/optdep-1.0.0.tgz", { "dependencies": { "devopt": "" } }, ""],
+    "optdep": ["optdep@1.0.0", "http://localhost:1/optdep/-/optdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "hasInstallScript": true }, ""],
   }
 }
 "
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures two-bundled-deps 1`] = `
-"warn: skipped 415 package-lock.json entries not depended on by any package: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
+"warn: skipping 415 unused package-lock.json entries: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -4661,7 +4661,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures workspaces-need-update 1`] = `
-"warn: skipped 4 package-lock.json entries not depended on by any package: "a", "b", "node_modules/once", "node_modules/wrappy"
+"warn: skipping 4 unused package-lock.json entries: "a", "b", "node_modules/once", "node_modules/wrappy"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0

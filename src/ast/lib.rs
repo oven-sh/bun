@@ -356,11 +356,6 @@ impl Ref {
         // User-bit lane is not part of identity — see type-level doc.
         self.as_u64() == other.as_u64()
     }
-    /// deprecated alias
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        self.is_empty()
-    }
     /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
     /// stored `Option<Ref>` and want option combinators on the sentinel form.
     #[inline]
@@ -714,7 +709,7 @@ impl Location {
             to,
             ENABLE_ANSI_COLORS,
             "<d>at <r><cyan>{}<r>",
-            bstr::BStr::new(&self.file)
+            bun_core::fmt::EscapeControlChars(bstr::BStr::new(&self.file))
         )?;
         if self.line > 0 && self.column > -1 {
             bun_core::write_pretty!(
@@ -1031,7 +1026,7 @@ impl Data {
                             to,
                             "{}",
                             bun_core::fmt::fmt_javascript(
-                                text,
+                                &printable(text),
                                 bun_core::fmt::HighlighterOptions {
                                     enable_colors: ENABLE_ANSI_COLORS,
                                     redact_sensitive_information,
@@ -1058,7 +1053,7 @@ impl Data {
                         to,
                         "{}",
                         bun_core::fmt::fmt_javascript(
-                            line_text,
+                            &printable(line_text),
                             bun_core::fmt::HighlighterOptions {
                                 enable_colors: ENABLE_ANSI_COLORS,
                                 redact_sensitive_information,
@@ -1106,17 +1101,34 @@ impl Data {
     }
 }
 
-/// Width in terminal columns of the first `units` UTF-16 code units of `line`. A tab counts as one column.
+/// Returns a source line as it is shown in a diagnostic: control characters other than tabs are
+/// written as escape sequences such as `\x1b`.
+fn printable(line: &[u8]) -> Vec<u8> {
+    let mut printed = Vec::with_capacity(line.len());
+    // NUL bytes are copied through unescaped because a terminal ignores them.
+    for (i, part) in bun_core::strings::split(line, b"\0").enumerate() {
+        if i > 0 {
+            printed.push(0);
+        }
+        let part = bun_core::fmt::escape_control_chars_multiline(part);
+        printed.extend_from_slice(part.to_string().as_bytes());
+    }
+    printed
+}
+
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`, as `printable`
+/// renders them. A tab counts as one column.
 fn width_before(line: &[u8], units: usize) -> usize {
     use bun_core::strings;
-    if strings::is_all_ascii(line) {
-        return units;
-    }
     let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
     let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
+    let before = printable(before);
+    if strings::is_all_ascii(line) {
+        return before.len() + past_the_end;
+    }
     // The width of a tab is 0 there.
-    let tabs = strings::count_char(before, b'\t');
-    strings::visible::width::exclude_ansi_colors::utf8(before) + tabs + past_the_end
+    let tabs = strings::count_char(&before, b'\t');
+    strings::visible::width::exclude_ansi_colors::utf8(&before) + tabs + past_the_end
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
@@ -1160,7 +1172,10 @@ impl BabyString {
         if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        // `container` is formatted lossily, so a `substring` with invalid UTF-8 may not be in it.
+        let Some(off) = bun_core::strings::index_of(container, substring) else {
+            return BabyString::new(0, 0);
+        };
         BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 

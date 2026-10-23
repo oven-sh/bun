@@ -22,6 +22,7 @@ import {
   lutimesSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -29,7 +30,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, join, resolve } from "path";
+import { delimiter, dirname, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -80,7 +81,9 @@ type FixturePackage = {
   version: string;
   bin?: Record<string, string>;
   dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
+  deprecated?: string;
   /** How long ago the version was published. Years, unless given. */
   daysOld?: number;
   /** Contents of the package besides its generated package.json. */
@@ -101,15 +104,18 @@ function fixturePackage(
   return { name, version, bin: { [binName]: "cli.js" }, files: { "cli.js": binScript } };
 }
 
-function fixtureServer(handler: (pathname: string) => Uint8Array<ArrayBuffer> | object | undefined) {
+type FixtureBody = Uint8Array<ArrayBuffer> | object | undefined;
+
+function fixtureServer(handler: (pathname: string) => FixtureBody | Promise<FixtureBody>) {
   const requests: string[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
-      const body = handler(pathname);
+      const body = await handler(pathname);
       if (body === undefined) return new Response(`no fixture for ${pathname}`, { status: 404 });
+      if (body instanceof Response) return body;
       return body instanceof Uint8Array ? new Response(body) : Response.json(body);
     },
   });
@@ -133,26 +139,43 @@ async function localRegistry(...packages: FixturePackage[]) {
     { name: string; versions: Record<string, object>; time: Record<string, string>; "dist-tags": { latest: string } }
   >();
   const tarballs = new Map<string, Uint8Array<ArrayBuffer>>();
-  const registry = fixtureServer(
-    pathname => tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))),
-  );
-  for (const { name, version, bin, dependencies, scripts, daysOld = 3650, files } of packages) {
+  const down = new Map<string, number>();
+  const held = new Map<string, () => Promise<void>>();
+  const registry = fixtureServer(async pathname => {
+    await held.get(pathname)?.();
+    return down.has(pathname)
+      ? new Response(null, { status: down.get(pathname) })
+      : (tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))));
+  });
+  for (const { deprecated, daysOld = 3650, files, ...packageJson } of packages) {
+    const { name, version } = packageJson;
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
-    const packageJson = { name, version, bin, dependencies, scripts };
     tarballs.set(
       tarballPath,
       await githubTarball("package", { "package.json": JSON.stringify(packageJson), ...files }),
     );
     const manifest = manifests.get(name) ?? { name, versions: {}, time: {}, "dist-tags": { latest: version } };
-    manifest.versions[version] = { ...packageJson, dist: { tarball: `${registry.url}${tarballPath}` } };
+    manifest.versions[version] = { ...packageJson, deprecated, dist: { tarball: `${registry.url}${tarballPath}` } };
     manifest.time[version] = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000).toISOString();
     manifest["dist-tags"].latest = version;
     manifests.set(name, manifest);
   }
   return Object.assign(registry, {
+    /** Request path -> the status it is answered with instead. */
+    down,
     /** Moves the `latest` tag of `name`. */
     tagLatest(name: string, version: string) {
       manifests.get(name)!["dist-tags"].latest = version;
+    },
+    /** Requests for `path` get no answer before `release()`. `arrived` settles with the first of them. */
+    hold(path: string) {
+      const arrived = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      held.set(path, () => {
+        arrived.resolve();
+        return released.promise;
+      });
+      return { arrived: arrived.promise, release: () => released.resolve() };
     },
   });
 }
@@ -178,6 +201,7 @@ function sandbox(registry?: { url: string; requests: string[] }, files: Director
     BUN_INSTALL_CACHE_DIR: undefined,
     BUN_INSTALL: undefined,
     XDG_CACHE_HOME: undefined,
+    XDG_CONFIG_HOME: undefined,
     BUN_OPTIONS: undefined,
     npm_config_registry: registry?.url,
   };
@@ -204,7 +228,13 @@ function sandbox(registry?: { url: string; requests: string[] }, files: Director
       {
         bunx = [bunExe(), "x"],
         ...options
-      }: { bunx?: string[]; env?: Record<string, string | undefined>; uid?: number; gid?: number } = {},
+      }: {
+        bunx?: string[];
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        uid?: number;
+        gid?: number;
+      } = {},
     ) {
       const first = registry?.requests.length ?? 0;
       await using proc = spawn({
@@ -252,6 +282,22 @@ function addLocalBin(dir: string, name: string, script: string) {
     writeFileSync(join(bin, name), `#!/usr/bin/env node\n${script}\n`);
     chmodSync(join(bin, name), 0o755);
   }
+}
+
+/** What an install leaves of `name` in `dir`/node_modules: its package.json and, in .bin, its `bin`, which says whose it is. */
+function addLocalPackage(dir: string, name: string, version: string, bin?: string) {
+  const packageDir = join(dir, "node_modules", name);
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name, version, bin: bin && { [bin]: "cli.js" } }));
+  if (!bin) return;
+  const script = `console.log(${JSON.stringify(`${bin} of ${name} ${version}`)});`;
+  if (isWindows) return addLocalBin(dir, bin, script);
+  writeFileSync(join(packageDir, "cli.js"), `#!/usr/bin/env node\n${script}\n`);
+  chmodSync(join(packageDir, "cli.js"), 0o755);
+  mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+  // If two packages have a bin with the same name, the first one keeps the entry.
+  const entry = join(dir, "node_modules", ".bin", bin);
+  if (!existsSync(entry)) symlinkSync(join(packageDir, "cli.js"), entry);
 }
 
 /** Makes everything below `dir`, and what it shares with the install cache through hard links, `hours` old. */
@@ -351,7 +397,7 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
       env: {
         ...env,
         npm_config_registry: registry.url,
-        PATH: `${decoyBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+        PATH: `${decoyBinDir}${delimiter}${env.PATH}`,
       },
     });
   });
@@ -638,7 +684,7 @@ it.concurrent("should pass --version to the package if specified", async () => {
       ...env,
       npm_config_registry: registry.url,
       // unversioned, so an esbuild already on PATH would be run instead of the fixture
-      PATH: pathWithout("esbuild", env.PATH ?? process.env.PATH),
+      PATH: pathWithout("esbuild", env.PATH),
     },
   });
 
@@ -728,8 +774,7 @@ describe("bunx --no-install", () => {
       // An unversioned `bunx <pkg>` runs a matching bin from PATH before it looks
       // at its cache, so a tsc/eslint/http-server installed on this machine
       // would satisfy both runs without the cache ever being consulted.
-      // (bunEnv spreads process.env, whose key is `Path` on Windows.)
-      ctx.env.PATH = pathWithout(bin, ctx.env.PATH ?? process.env.PATH);
+      ctx.env.PATH = pathWithout(bin, ctx.env.PATH);
 
       // not cached
       {
@@ -806,7 +851,7 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
     env: {
       ...env,
       npm_config_registry: registry.url,
-      PATH: `${x_dir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+      PATH: `${x_dir}${delimiter}${env.PATH}`,
     },
   });
 
@@ -1233,7 +1278,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
       env: {
         ...env,
         npm_config_registry: `http://localhost:${port}/`,
-        PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+        PATH: `${fakeBinDir}${delimiter}${env.PATH}`,
       },
     });
 
@@ -1297,7 +1342,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
       stderr: "pipe",
       env: {
         ...env,
-        PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+        PATH: `${fakeBinDir}${delimiter}${env.PATH}`,
       },
     });
 
@@ -1403,7 +1448,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
     const runEnv = {
       ...env,
       npm_config_registry: `http://localhost:${port}/`,
-      PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+      PATH: `${fakeBinDir}${delimiter}${env.PATH}`,
     };
 
     // First run: installs into the bunx cache (no local node_modules).
@@ -1598,7 +1643,7 @@ it.concurrent.skipIf(!isWindows)("completions: writes bunx.cmd (not bunx.exe) wh
     stdout: "pipe",
     stderr: "pipe",
   });
-  // stderr always says that PowerShell completions are not written yet.
+  // stderr always says that PowerShell completions aren't written yet.
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(await Bun.file(join(String(dir), `${bunxName}.cmd`)).text()).toBe("@%~dp0bun.exe x %*\n");
@@ -1630,13 +1675,51 @@ describe.skipIf(isWindows)("cache directory", () => {
     expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
   });
 
+  it.concurrent.skipIf(!isLinux)("works when the home directory's name isn't valid UTF-8", async () => {
+    // The bin is a shell script, because node can't load a file from a non-UTF-8 path.
+    using registry = await localRegistry(fixturePackage("tool", "1.0.0", "tool", "#!/bin/sh\necho tool ran\n"));
+    using box = sandbox(registry);
+    // A JavaScript string can't hold a lone 0xE9 byte, so HOME is set by a shell script written as raw bytes.
+    writeFileSync(
+      join(box.dir, "bunx.sh"),
+      Buffer.concat([
+        Buffer.from(`HOME='${box.dir}/jos`),
+        Buffer.from([0xe9]),
+        Buffer.from(`'; export HOME; mkdir -p "$HOME"; exec '${bunExe()}' x "$@"\n`),
+      ]),
+    );
+
+    expect(await box.run(["tool"], { bunx: ["sh", join(box.dir, "bunx.sh")] })).toMatchObject({
+      stdout: "tool ran\n",
+      exitCode: 0,
+    });
+  });
+
+  // The files of the user, which the install that bunx spawns reads too. Not those of the project.
+  it.concurrent.each([
+    [".bunfig.toml", (dir: string) => `[install.cache]\ndir = ${JSON.stringify(dir)}\n`],
+    [".bunfig.toml", (dir: string) => `[install]\ncache = ${JSON.stringify(dir)}\n`],
+    [".npmrc", (dir: string) => `cache=${dir}\n`],
+  ])("is in the install cache that ~/%s names", async (file, contents) => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry, { cwd: { "bunfig.toml": `[install.cache]\ndir = "of-the-project"\n` } });
+    const configured = join(box.dir, "configured");
+    writeFileSync(join(box.home, file), contents(configured));
+
+    expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+    expect(readdirSync(join(configured, `.bunx-${uid}`)).sort()).toEqual(["tool@latest", "tool@latest.lock"]);
+    expect([bunxEntries(box.home), bunxEntries(box.tmp), readdirSync(box.cwd)]).toEqual([[], [], ["bunfig.toml"]]);
+
+    expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
+  });
+
   it.concurrent("a module that another user puts in the temp directory is not loaded", async () => {
     using registry = await localRegistry(
       fixturePackage(
         "tool",
         "1.0.0",
         "tool",
-        // How a CLI probes for an optional dependency.
+        // This is how a CLI probes for an optional dependency.
         `#!/usr/bin/env node\nlet helper = "none";\ntry {\n  helper = require("zz-optional");\n} catch {}\nconsole.log("helper: " + helper);\n`,
       ),
     );
@@ -1672,7 +1755,7 @@ describe.skipIf(isWindows)("cache directory", () => {
 
   it.concurrent("a root that is not a private directory of this user is not used", async () => {
     using box = sandbox();
-    // What a finished install leaves.
+    // This is what a finished install leaves behind.
     const bin = join(box.tree("tool@latest"), "node_modules", ".bin", "tool");
     mkdirSync(join(bin, ".."), { recursive: true });
     writeFileSync(join(box.tree("tool@latest"), "package.json"), JSON.stringify({ dependencies: { tool: "^1.0.0" } }));
@@ -1717,11 +1800,11 @@ describe.skipIf(isWindows)("cache directory", () => {
     const root = join(box.tmp, `.bunx-${uid}`);
 
     const first = await box.run(["tool"], { env });
-    expect(first.stderr).toContain("warn: bunx is installing into the shared temp directory");
+    expect(first.stderr).toContain("warn: no usable private cache directory, installing into shared temp directory");
     expect(first).toMatchObject({ stdout: ran, exitCode: 0 });
     expect(statSync(root).mode & 0o777).toBe(0o700);
     expect(readdirSync(root).sort()).toEqual(["tool@latest", "tool@latest.lock"]);
-    // Not in `node_modules/.bun-cache` of the project, where `bun install` puts its cache then.
+    // It isn't in the project's `node_modules/.bun-cache`, which is where `bun install` puts its cache in that case.
     expect(readdirSync(box.cwd)).toEqual([]);
 
     expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
@@ -1733,18 +1816,18 @@ describe.skipIf(isWindows)("cache directory", () => {
     expect(readdirSync(box.root).sort()).toEqual(["tool@latest", "tool@latest.lock"]);
   });
 
-  it.concurrent("a home directory that cannot be written sends it to the temp directory", async () => {
+  it.concurrent("falls back to the temp directory when the home directory isn't writable", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     using unprivileged = unprivilegedSpawnOptions(box.dir);
     chmodSync(box.home, 0o555);
 
     const first = await box.run(["tool"], unprivileged);
-    expect(first.stderr).toContain("warn: bunx is installing into the shared temp directory");
+    expect(first.stderr).toContain("warn: no usable private cache directory, installing into shared temp directory");
     expect(first).toMatchObject({ stdout: ran, exitCode: 0 });
     expect(bunxEntries(box.tmp)).toContain(`.bunx-${unprivileged.uid ?? uid}`);
 
-    // What the first run installed is found again.
+    // The second run finds what the first run installed.
     expect(await box.run(["tool"], unprivileged)).toMatchObject({
       stdout: ran,
       stderr: "",
@@ -1753,21 +1836,42 @@ describe.skipIf(isWindows)("cache directory", () => {
     });
   });
 
+  // The install that bunx spawns runs in the tree, and is told which directory that is.
+  it.concurrent("a relative temp directory works like an absolute one", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    const tmp = "../tmp";
+    const env = {
+      ...box.env,
+      HOME: undefined,
+      USERPROFILE: undefined,
+      TMPDIR: tmp,
+      TMP: tmp,
+      TEMP: tmp,
+      BUN_TMPDIR: tmp,
+    };
+
+    expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, exitCode: 0 });
+    age(join(box.tmp, `.bunx-${uid}`, "tool@latest"));
+    registry.down.set("/tool", 503);
+    expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, exitCode: 0, requests: ["/tool"] });
+  });
+
   it.concurrent("refuses to install when no root can be made private", async () => {
     using registry = await localRegistry(...toolWithDep());
-    // What any user can put into a shared temp directory.
+    // Any user can put this into a shared temp directory.
     using box = sandbox(registry, { tmp: { [`.bunx-${uid}`]: {} } });
     chmodSync(join(box.tmp, `.bunx-${uid}`), 0o777);
 
     const result = await box.run(["tool"], { env: { ...box.env, HOME: undefined, USERPROFILE: undefined } });
     expect(result.stderr).toContain(
-      "error: bunx could not create a cache directory that only the current user can access. Set BUN_INSTALL_CACHE_DIR to a directory you own.",
+      "error: failed to create private cache directory. Set BUN_INSTALL_CACHE_DIR to a directory you own.",
     );
     expect(result).toMatchObject({ stdout: "", exitCode: 1, requests: [] });
     expect(readdirSync(join(box.tmp, `.bunx-${uid}`))).toEqual([]);
   });
 
-  it.concurrent("a version with .. in it does not lead out of the root", async () => {
+  it.concurrent("a version with .. in it can't escape the root", async () => {
     using registry = await localRegistry();
     using box = sandbox(registry);
 
@@ -1780,7 +1884,7 @@ describe.skipIf(isWindows)("cache directory", () => {
     ]);
   });
 
-  it.concurrent("bun pm cache rm clears and counts every layout", async () => {
+  it.concurrent("bun pm cache rm deletes and counts every layout", async () => {
     const tree = { node_modules: { ".bin": { tool: "" } } };
     using box = sandbox(undefined, {
       cwd: { "package.json": "{}" },
@@ -1796,7 +1900,7 @@ describe.skipIf(isWindows)("cache directory", () => {
       },
       tmp: {
         [`.bunx-${uid}`]: { "tool@latest+min-age=5": tree, "tool@latest+min-age=5.lock": "" },
-        // What older versions wrote.
+        // This is what older versions wrote.
         [`bunx-${uid}-tool@latest`]: tree,
         [`bunx-${uid + 1}-theirs@latest`]: tree,
       },
@@ -1845,9 +1949,145 @@ describe("a cached tree", () => {
     // an install does not renew their age.
     age(box.tree("tool@latest"));
 
-    expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0, requests: ["/tool"] });
+    expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0, requests: ["/tool", "/dep"] });
     expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0, requests: [] });
     expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0, requests: [] });
+  });
+
+  /** `version` of `dep` and of `tool`, whose bin needs any `dep` of the same major version. */
+  const release = (version: string): FixturePackage[] => [
+    { name: "dep", version, files: { "index.js": `module.exports = "dep ${version}";\n` } },
+    {
+      name: "tool",
+      version,
+      bin: { tool: "cli.js" },
+      dependencies: { dep: `^${parseInt(version)}` },
+      files: { "cli.js": `#!/usr/bin/env node\nconsole.log("tool ${version} with " + require("dep"));\n` },
+    },
+  ];
+
+  it.concurrent.each(["tool", "tool@latest", "tool@1", "tool@^1"])(
+    "refreshing a day-old tree of bunx %s picks up what was published since",
+    async spec => {
+      using before = await localRegistry(...release("1.0.0"));
+      using since = await localRegistry(...release("1.0.0"), ...release("1.0.1"));
+      using box = sandbox(before);
+      expect(await box.run([spec])).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+      age(box.tree(spec.includes("@") ? spec : "tool@latest"));
+
+      const env = { ...box.env, npm_config_registry: since.url };
+      expect(await box.run([spec], { env })).toMatchObject({ stdout: "tool 1.0.1 with dep 1.0.1\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent("a dist-tag run doesn't delay the refresh of the dependencies", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    expect(await box.run(["tool@latest"])).toMatchObject({ stdout: ran, exitCode: 0 });
+    age(box.tree("tool@latest"), 23);
+
+    expect(await box.run(["tool@latest"])).toMatchObject({ stdout: ran, exitCode: 0, requests: ["/tool"] });
+    const hoursOld = (Date.now() - statSync(join(box.tree("tool@latest"), "package.json")).mtimeMs) / (60 * 60 * 1000);
+    expect(hoursOld).toBeGreaterThan(22);
+  });
+
+  // The registry responded, so the run fails. It hasn't touched the tree that the other spelling runs.
+  it.concurrent.each([401, 403, 404])(
+    "a dist-tag run that gets a %d leaves the tree as good as it was",
+    async status => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+
+      registry.down.set("/tool", status);
+      expect(await box.run(["tool@latest"])).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
+    },
+  );
+
+  it.concurrent.each(["/tool/-/tool-2.0.0.tgz", "/dep/-/dep-2.0.0.tgz"])(
+    "a newer version that cannot be downloaded whole leaves the tree as good as it was: 404 for %s",
+    async path => {
+      using registry = await localRegistry(...release("1.0.0"), ...release("2.0.0"));
+      using box = sandbox(registry);
+      registry.tagLatest("tool", "1.0.0");
+      expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+      const markers = plantMarkers(box.tree("tool@latest"), "tool", "dep");
+
+      registry.tagLatest("tool", "2.0.0");
+      registry.down.set(path, 404);
+      expect(await box.run(["tool@latest"])).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(markers()).toEqual([true, true]);
+      expect(await box.run(["tool"])).toMatchObject({
+        stdout: "tool 1.0.0 with dep 1.0.0\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    },
+  );
+
+  it.concurrent("a run that needs nothing from the registry does not wait for one that asks it", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+
+    const manifest = registry.hold("/tool");
+    const asking = box.run(["tool@latest"]);
+    await manifest.arrived;
+    const running = box.run(["tool"]);
+    // Only so that a run that does wait fails the test instead of hanging it.
+    const deadline = Promise.withResolvers<string>();
+    const timer = setTimeout(deadline.resolve, 30_000, "waited for the other run");
+    const first = await Promise.race([running, deadline.promise]);
+    clearTimeout(timer);
+    manifest.release();
+
+    expect(first).toMatchObject({ stdout: ran, stderr: "", exitCode: 0 });
+    expect([await running, await asking]).toMatchObject([
+      { stdout: ran, exitCode: 0 },
+      { stdout: ran, exitCode: 0 },
+    ]);
+  });
+
+  it.concurrent("--no-install runs what a run with a dist-tag installed", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    expect(await box.run(["tool@latest"])).toMatchObject({ stdout: ran, exitCode: 0 });
+    expect(await box.run(["--no-install", "tool@latest"])).toMatchObject({
+      stdout: ran,
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  it.concurrent("the bins of the tree are not on the PATH of a bin of the project", async () => {
+    const callsHelper = (version: string) =>
+      `console.log("tool ${version} calls " + require("child_process").execSync("helper", { encoding: "utf8" }).trim());`;
+    using registry = await localRegistry(fixturePackage("helper", "1.0.0", "helper"), {
+      name: "tool",
+      version: "1.0.0",
+      bin: { tool: "cli.js" },
+      dependencies: { helper: "1.0.0" },
+      files: { "cli.js": `#!/usr/bin/env node\n${callsHelper("1.0.0")}\n` },
+    });
+    using box = sandbox(registry);
+    expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 calls helper 1.0.0\n", exitCode: 0 });
+
+    addLocalBin(box.cwd, "tool", callsHelper("2.0.0"));
+    addLocalBin(box.cwd, "helper", `console.log("helper 2.0.0");`);
+    expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 calls helper 2.0.0\n", exitCode: 0 });
+  });
+
+  it.concurrent("without a version, a deprecated latest is skipped, like in bun add", async () => {
+    using registry = await localRegistry(fixturePackage("tool", "2.0.0", "tool"), {
+      ...fixturePackage("tool", "2.1.0", "tool"),
+      deprecated: "use 2.0.0",
+    });
+    using box = sandbox(registry);
+    expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0\n", exitCode: 0 });
+    expect(await box.run(["tool@latest"])).toMatchObject({ stdout: "tool 2.1.0\n", exitCode: 0 });
   });
 
   // An install without --force keeps every package whose package.json has the right name and version.
@@ -1876,7 +2116,7 @@ describe("a cached tree", () => {
     });
 
     // On Windows the entry in .bin is a shim that exists on its own.
-    it.concurrent.skipIf(isWindows)("links a tree again that lost the file of its bin", async () => {
+    it.concurrent.skipIf(isWindows)("relinks a tree whose bin file is missing", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run([spec])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -1887,7 +2127,7 @@ describe("a cached tree", () => {
     });
   });
 
-  it.concurrent("--no-install uses a day-old tree, with a warning, and leaves it alone", async () => {
+  it.concurrent("--no-install uses a day-old tree, with a warning, and doesn't change it", async () => {
     // One bin is named after its package, the other is found through the installed package.json.
     using registry = await localRegistry(...toolWithDep(), ...uglifyJs());
     using box = sandbox(registry);
@@ -1903,26 +2143,80 @@ describe("a cached tree", () => {
       requests: [],
     });
     expect(await box.run(["--no-install", "uglify-js"])).toMatchObject({
-      stdout: "",
-      stderr: expect.stringContaining("Could not find an existing 'uglify-js' binary to run."),
-      exitCode: 1,
+      stdout: "uglifyjs 3.19.3\n",
+      stderr: expect.stringContaining("warn: Using a stale installation of uglify-js because --no-install was passed."),
+      exitCode: 0,
       requests: [],
     });
-    expect(existsSync(join(box.tree("uglify-js@latest"), "node_modules", "uglify-js", "cli.js"))).toBe(true);
   });
 
   // With it, a tool that runs `bunx add` gets `bun add`, and its own `bun install` finds no workspace root.
-  it.concurrent("the tool does not inherit the marker of the install bunx spawns", async () => {
+  it.concurrent("the tool does not inherit the markers of the install bunx spawns", async () => {
     using registry = await localRegistry(
       fixturePackage(
         "env-probe",
         "1.0.0",
         "env-probe",
-        `#!/usr/bin/env node\nconsole.log(String(process.env.BUN_INTERNAL_BUNX_INSTALL));\n`,
+        `#!/usr/bin/env node\nconsole.log(Object.keys(process.env).filter(key => key.startsWith("BUN_INTERNAL_BUNX_")));\n`,
       ),
     );
     using box = sandbox(registry);
-    expect(await box.run(["env-probe"])).toMatchObject({ stdout: "undefined\n", exitCode: 0 });
+    expect(await box.run(["env-probe"])).toMatchObject({ stdout: "[]\n", exitCode: 0 });
+  });
+
+  describe("the settings that bunx passes to the install it spawns only apply to that install", () => {
+    const files = {
+      "package.json": `{ "name": "root",   "workspaces": ["packages/*"] }`,
+      "packages/member/package.json": `{ "name": "member",   "dependencies": { "dep": "1.0.0" } }`,
+    };
+    /** After `bun install` in the member. */
+    const installedLikeAnyOther = async (project: string) => {
+      const found: Record<string, string | boolean> = {};
+      for (const file in files) found[file] = await Bun.file(join(project, file)).text();
+      for (const file of ["bun.lock", "packages/member/bun.lock"]) found[file] = existsSync(join(project, file));
+      expect(found).toEqual({ ...files, "bun.lock": true, "packages/member/bun.lock": false });
+    };
+
+    it.concurrent("a script of the package that runs bun install in a project", async () => {
+      using registry = await localRegistry(
+        { name: "dep", version: "1.0.0", files: { "index.js": "" } },
+        {
+          name: "tool",
+          version: "1.0.0",
+          bin: { tool: "cli.js" },
+          scripts: { postinstall: "node postinstall.js" },
+          files: {
+            "cli.js": `#!/usr/bin/env node\nconsole.log("the script saw", require("./saw.json"));\n`,
+            "postinstall.js": `
+const saw = Object.keys(process.env).filter(key => key.startsWith("BUN_INTERNAL_BUNX_"));
+require("fs").writeFileSync("saw.json", JSON.stringify(saw));
+require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: process.env.MEMBER, stdio: "inherit" });
+`,
+          },
+        },
+      );
+      using box = sandbox(registry, { project: files });
+      const project = join(box.dir, "project");
+
+      const env = { ...box.env, BUN_EXE: bunExe(), MEMBER: join(project, "packages", "member") };
+      expect(await box.run(["--trust", "tool"], { env })).toMatchObject({ stdout: "the script saw []\n", exitCode: 0 });
+      await installedLikeAnyOther(project);
+    });
+
+    it.concurrent("bun install in a project with the variable in the environment", async () => {
+      using registry = await localRegistry({ name: "dep", version: "1.0.0", files: { "index.js": "" } });
+      using box = sandbox(registry, { project: files });
+      const project = join(box.dir, "project");
+
+      const result = await box.run(["install"], {
+        bunx: [bunExe()],
+        cwd: join(project, "packages", "member"),
+        // The variable names the folder that `bunx` installs into, which is not this project.
+        env: { ...box.env, BUN_INTERNAL_BUNX_INSTALL: box.tmp, BUN_INTERNAL_BUNX_HAS_COPY: "true" },
+      });
+      expect(result.exitCode).toBe(0);
+      await installedLikeAnyOther(project);
+    });
   });
 
   const outcomes = (results: { stdout: string; exitCode: number }[]) =>
@@ -1939,7 +2233,7 @@ describe("a cached tree", () => {
     expect(markers()).toEqual([true, true]);
   });
 
-  it.concurrent("concurrent runs on a tree that just went stale refresh it once", async () => {
+  it.concurrent("concurrent runs on a tree that just became stale refresh it once", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -1948,7 +2242,7 @@ describe("a cached tree", () => {
     const before = registry.requests.length;
     const results = await Promise.all(Array.from({ length: 4 }, () => box.run(["tool"])));
     expect(outcomes(results)).toEqual(Array.from({ length: 4 }, () => ({ stdout: ran, exitCode: 0 })));
-    expect(registry.requests.slice(before)).toEqual(["/tool"]);
+    expect(registry.requests.slice(before)).toEqual(["/tool", "/dep"]);
   });
 
   // The lock is beside the tree, in a directory for the scope that the first run has to create.
@@ -1969,7 +2263,7 @@ describe("a cached tree", () => {
       return registry.url;
     }
 
-    it.concurrent("a day-old tree is used, with a warning, and left alone", async () => {
+    it.concurrent("a day-old tree is used, with a warning, and isn't changed", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -1979,9 +2273,7 @@ describe("a cached tree", () => {
       const env = { ...box.env, npm_config_registry: await unreachable() };
       expect(await box.run(["tool"], { env })).toMatchObject({
         stdout: ran,
-        stderr: expect.stringContaining(
-          "warn: Could not reach the registry. Using the installation of tool that bunx has.",
-        ),
+        stderr: expect.stringContaining("warn: registry unreachable, using cached tool"),
         exitCode: 0,
       });
       expect(markers()).toEqual([true, true]);
@@ -1989,7 +2281,7 @@ describe("a cached tree", () => {
       expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, stderr: "", exitCode: 0 });
     });
 
-    it.concurrent("an explicit dist-tag fails, and the tree stays as good as it was", async () => {
+    it.concurrent("an explicit dist-tag fails, and the tree is still usable", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -1999,7 +2291,7 @@ describe("a cached tree", () => {
       expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, stderr: "", exitCode: 0 });
     });
 
-    it.concurrent("nothing is used that was never installed to the end", async () => {
+    it.concurrent("a tree whose install never finished isn't used", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -2009,7 +2301,7 @@ describe("a cached tree", () => {
       expect(await box.run(["tool"], { env })).toMatchObject({ stdout: "", exitCode: 1 });
     });
 
-    // The registry answered: what it took down is not run again.
+    // The registry responded, so a version that it took down isn't run again.
     it.concurrent("a day-old tree is not used when the registry no longer has the package", async () => {
       using registry = await localRegistry(...toolWithDep());
       using without = await localRegistry();
@@ -2024,6 +2316,122 @@ describe("a cached tree", () => {
         exitCode: 1,
       });
     });
+
+    const usesItsTree = expect.stringContaining("warn: registry unreachable, using cached tool");
+
+    // These responses say nothing about the package. There's a tree to run, so bunx doesn't wait for a second attempt.
+    it.concurrent.each([500, 502, 503, 504, 429, 408])(
+      "a day-old tree is used when the registry answers %d, after one attempt",
+      async status => {
+        using registry = await localRegistry(...toolWithDep());
+        using box = sandbox(registry);
+        expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+        age(box.tree("tool@latest"));
+        const markers = plantMarkers(box.tree("tool@latest"), "tool", "dep");
+
+        registry.down.set("/tool", status);
+        expect(await box.run(["tool"])).toMatchObject({
+          stdout: ran,
+          stderr: usesItsTree,
+          exitCode: 0,
+          requests: ["/tool"],
+        });
+        expect(markers()).toEqual([true, true]);
+        expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
+      },
+    );
+
+    it.concurrent("without a tree to run, a 503 is retried", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      registry.down.set("/tool", 503);
+      expect(await box.run(["tool"])).toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("/tool - 503"),
+        exitCode: 1,
+        requests: Array(6).fill("/tool"),
+      });
+    });
+
+    it.concurrent("an explicit dist-tag fails on a 503, and the tree is still usable", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+
+      registry.down.set("/tool", 503);
+      expect(await box.run(["tool@latest"])).toMatchObject({
+        stdout: "",
+        exitCode: 1,
+        requests: Array(6).fill("/tool"),
+      });
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
+    });
+
+    it.concurrent.each(["/tool/-/tool-2.0.0.tgz", "/dep", "/dep/-/dep-2.0.0.tgz"])(
+      "a day-old tree is used when a newer version cannot be downloaded: 503 for %s",
+      async path => {
+        const pair = (version: string): FixturePackage[] => [
+          { name: "dep", version, files: { "index.js": `module.exports = "dep ${version}";\n` } },
+          {
+            name: "tool",
+            version,
+            bin: { tool: "cli.js" },
+            dependencies: { dep: version },
+            files: { "cli.js": `#!/usr/bin/env node\nconsole.log("tool ${version} with " + require("dep"));\n` },
+          },
+        ];
+        using registry = await localRegistry(...pair("1.0.0"), ...pair("2.0.0"));
+        using box = sandbox(registry);
+        registry.tagLatest("tool", "1.0.0");
+        expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+        age(box.tree("tool@latest"));
+        const markers = plantMarkers(box.tree("tool@latest"), "tool", "dep");
+
+        registry.tagLatest("tool", "2.0.0");
+        registry.down.set(path, 503);
+        expect(await box.run(["tool"])).toMatchObject({
+          stdout: "tool 1.0.0 with dep 1.0.0\n",
+          stderr: usesItsTree,
+          exitCode: 0,
+        });
+        expect(markers()).toEqual([true, true]);
+
+        registry.down.clear();
+        age(box.tree("tool@latest"));
+        expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 with dep 2.0.0\n", exitCode: 0 });
+      },
+    );
+
+    // Like a mirror that lists a version before it has the file. That says nothing about the version that bunx already
+    // has.
+    it.concurrent.each([404, 403, 401])(
+      "a day-old tree is used when the file of a newer version answers %d",
+      async status => {
+        using registry = await localRegistry(...release("1.0.0"), ...release("2.0.0"));
+        using box = sandbox(registry);
+        registry.tagLatest("tool", "1.0.0");
+        expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+        age(box.tree("tool@latest"));
+
+        registry.tagLatest("tool", "2.0.0");
+        registry.down.set("/tool/-/tool-2.0.0.tgz", status);
+        expect(await box.run(["tool"])).toMatchObject({
+          stdout: "tool 1.0.0 with dep 1.0.0\n",
+          stderr: usesItsTree,
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  it.concurrent("the bin of a package comes before one of a dependency that is named like the package", async () => {
+    using registry = await localRegistry(fixturePackage("lint", "1.0.0", "lint"), {
+      ...fixturePackage("@corp/lint", "1.0.0", "corp-lint"),
+      dependencies: { lint: "1.0.0" },
+    });
+    using box = sandbox(registry);
+    expect(await box.run(["@corp/lint"])).toMatchObject({ stdout: "corp-lint 1.0.0\n", exitCode: 0 });
+    expect(await box.run(["@corp/lint"])).toMatchObject({ stdout: "corp-lint 1.0.0\n", exitCode: 0, requests: [] });
   });
 
   // The linker skips an entry of `bin` whose value is not the path of a file in the package.
@@ -2039,7 +2447,7 @@ describe("a cached tree", () => {
     expect(await box.run(["many-bins"])).toMatchObject({ stdout: "real 1.0.0\n", exitCode: 0, requests: [] });
   });
 
-  // As on a file system without locks.
+  // Like on a file system without locks.
   it.concurrent.skipIf(isWindows)("runs without the lock when it cannot be taken", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
@@ -2051,13 +2459,644 @@ describe("a cached tree", () => {
   });
 });
 
+// `@scope/name` and `-p <package>` name a package, so bunx looks for the package. With a version it is not the project's.
+describe("a package in node_modules", () => {
+  it.concurrent("the bin of `@scope/name` is the one from that package", async () => {
+    using box = sandbox();
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+    addLocalPackage(box.cwd, "other", "1.0.0", "cli");
+
+    expect(await box.run(["--no-install", "@corp/cli"])).toMatchObject({
+      stdout: "corp of @corp/cli 1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("with several bins, runs the one named like the package", async () => {
+    using box = sandbox();
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "cli");
+    addLocalBin(box.cwd, "first", `console.log("first");`);
+    writeFileSync(
+      join(box.cwd, "node_modules", "@corp", "cli", "package.json"),
+      JSON.stringify({ name: "@corp/cli", version: "1.0.0", bin: { first: "first.js", cli: "cli.js" } }),
+    );
+
+    expect(await box.run(["--no-install", "@corp/cli"])).toMatchObject({
+      stdout: "cli of @corp/cli 1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)("a command in node_modules/.bin that cannot run is not downloaded", async () => {
+    using registry = await localRegistry(fixturePackage("gen", "1.0.0", "gen"));
+    using box = sandbox(registry);
+    addLocalBin(box.cwd, "gen", `console.log("mine");`);
+    chmodSync(join(box.cwd, "node_modules", ".bin", "gen"), 0o644);
+
+    expect(await box.run(["gen"])).toMatchObject({
+      stdout: "",
+      stderr: expect.stringMatching(/^error: .*\/node_modules\/\.bin\/gen is not executable\n$/),
+      exitCode: 126,
+    });
+    expect(registry.requests).toEqual([]);
+  });
+
+  // The project has the package, so bunx runs that copy or says why it cannot. It does not download another one.
+  describe.skipIf(isWindows)("a bin that cannot run", () => {
+    type Entry = "linked" | "removed" | "dangling" | "no .bin";
+    /** Takes the execute bit from the bin of `name`, and puts its entry in node_modules/.bin into the state `entry`. */
+    function takeExecuteBit(cwd: string, name: string, bin: string, entry: Entry) {
+      const bins = join(cwd, "node_modules", ".bin");
+      chmodSync(join(cwd, "node_modules", name, "cli.js"), 0o644);
+      if (entry === "no .bin") rmSync(bins, { recursive: true });
+      else if (entry !== "linked") rmSync(join(bins, bin));
+      if (entry === "dangling") symlinkSync("gone", join(bins, bin));
+    }
+    const notExecutable = (file: string) =>
+      expect.stringMatching(new RegExp(`^error: .*/${file} is not executable\n$`));
+    const notFound = (name: string, file: string, note: string) =>
+      expect.stringMatching(
+        new RegExp(
+          `^ENOENT: No such file or directory: could not find the bin of ${name}: ".*/${file}" \\(realpath\\)\nnote: ${note}\n$`,
+        ),
+      );
+    const reinstall = (name: string) =>
+      `run 'bun install --force', or 'bun pm trust ${name}' and 'bun install' if an install script writes the bin`;
+
+    // `named`: the file in the message. With an entry of the typed name in .bin, it is that entry.
+    it.concurrent.each<[string[], string, string, Entry, string]>([
+      [["mytool"], "mytool", "mytool", "removed", "node_modules/mytool/cli\\.js"],
+      [["mytool"], "mytool", "mytool", "dangling", "node_modules/mytool/cli\\.js"],
+      [["mytool"], "mytool", "mytool", "no .bin", "node_modules/mytool/cli\\.js"],
+      [["mytool"], "mytool", "mytool", "linked", "node_modules/\\.bin/mytool"],
+      [["compiler"], "compiler", "cc-tool", "linked", "node_modules/compiler/cli\\.js"],
+      [["compiler"], "compiler", "cc-tool", "removed", "node_modules/compiler/cli\\.js"],
+      [["cc-tool"], "compiler", "cc-tool", "linked", "node_modules/\\.bin/cc-tool"],
+      [["@corp/mytool"], "@corp/mytool", "mytool", "linked", "node_modules/@corp/mytool/cli\\.js"],
+      [["-p", "compiler", "cc-tool"], "compiler", "cc-tool", "linked", "node_modules/compiler/cli\\.js"],
+      [["--package=compiler", "cc-tool"], "compiler", "cc-tool", "linked", "node_modules/compiler/cli\\.js"],
+      [["--no-install", "@corp/mytool"], "@corp/mytool", "mytool", "linked", "node_modules/@corp/mytool/cli\\.js"],
+      [["tsc"], "typescript", "tsc", "removed", "node_modules/typescript/cli\\.js"],
+      [["tsc"], "typescript", "tsc", "linked", "node_modules/\\.bin/tsc"],
+    ])("bunx %j with %s in the project (bin %s, .bin entry %s)", async (args, name, bin, entry, named) => {
+      using registry = await localRegistry(fixturePackage(name, "9.9.9", bin), fixturePackage(bin, "9.9.9", bin));
+      using box = sandbox(registry);
+      addLocalPackage(box.cwd, name, "1.0.0", bin);
+      takeExecuteBit(box.cwd, name, bin, entry);
+
+      expect(await box.run(args, { env: { ...box.env, PATH: pathWithout(bin, box.env.PATH) } })).toEqual({
+        stdout: "",
+        stderr: notExecutable(named),
+        exitCode: 126,
+        requests: [],
+      });
+    });
+
+    it.concurrent("bun create <template> with create-<template> in the project", async () => {
+      using registry = await localRegistry(fixturePackage("create-thing", "9.9.9", "create-thing"));
+      using box = sandbox(registry);
+      addLocalPackage(box.cwd, "create-thing", "1.0.0", "create-thing");
+      takeExecuteBit(box.cwd, "create-thing", "create-thing", "removed");
+
+      expect(await box.run(["thing"], { bunx: [bunExe(), "create"] })).toEqual({
+        stdout: "",
+        stderr: notExecutable("node_modules/create-thing/cli\\.js"),
+        exitCode: 126,
+        requests: [],
+      });
+    });
+
+    // bun does not link the bins of a bundled dependency.
+    it.concurrent("the bin of a bundled dependency, from the package that bundles it", async () => {
+      using registry = await localRegistry(fixturePackage("inner", "9.9.9", "inner"));
+      using box = sandbox(registry);
+      const outer = join(box.cwd, "node_modules", "outer");
+      mkdirSync(outer, { recursive: true });
+      writeFileSync(join(outer, "package.json"), JSON.stringify({ name: "outer", version: "1.0.0" }));
+      addLocalPackage(outer, "inner", "1.0.0", "inner");
+      takeExecuteBit(outer, "inner", "inner", "no .bin");
+
+      expect(await box.run(["inner"], { cwd: outer })).toEqual({
+        stdout: "",
+        stderr: notExecutable("node_modules/outer/node_modules/inner/cli\\.js"),
+        exitCode: 126,
+        requests: [],
+      });
+    });
+
+    it.concurrent.each([[["mytool"]], [["--no-install", "mytool"]], [["-p", "mytool", "mytool"]]])(
+      "bunx %j when the file of the bin is missing",
+      async args => {
+        using registry = await localRegistry(fixturePackage("mytool", "9.9.9", "mytool"));
+        using box = sandbox(registry);
+        addLocalPackage(box.cwd, "mytool", "1.0.0", "mytool");
+        rmSync(join(box.cwd, "node_modules", "mytool", "cli.js"));
+
+        expect(await box.run(args)).toEqual({
+          stdout: "",
+          stderr: notFound("mytool", "node_modules/mytool/cli\\.js", reinstall("mytool")),
+          exitCode: 1,
+          requests: [],
+        });
+      },
+    );
+
+    // A file that leads out of its package is not taken for the bin of the package.
+    it.concurrent.each([
+      ["0644", 0o644],
+      ["0755", 0o755],
+    ])("a bin that links out of its package, mode %s", async (_, mode) => {
+      using box = sandbox(undefined, { elsewhere: { "cli.js": echoBin("elsewhere") } });
+      addLocalPackage(box.cwd, "@corp/mytool", "1.0.0", "mytool");
+      rmSync(join(box.cwd, "node_modules", ".bin", "mytool"));
+      const cli = join(box.cwd, "node_modules", "@corp", "mytool", "cli.js");
+      rmSync(cli);
+      chmodSync(join(box.dir, "elsewhere", "cli.js"), mode);
+      symlinkSync(join(box.dir, "elsewhere", "cli.js"), cli);
+
+      expect(await box.run(["--no-install", "@corp/mytool"])).toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("Could not find an existing 'mytool' binary to run."),
+        exitCode: 1,
+      });
+    });
+
+    it.concurrent("the bin of a workspace package, before and after the build that writes it", async () => {
+      using registry = await localRegistry(fixturePackage("mycli", "9.9.9", "mycli"));
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: ["packages/*"],
+            dependencies: { mycli: "workspace:*" },
+          }),
+          "packages/mycli/package.json": JSON.stringify({
+            name: "mycli",
+            version: "1.0.0",
+            bin: { mycli: "dist/cli.js" },
+          }),
+        },
+      });
+      const install = () => box.run([], { bunx: [bunExe(), "install"] });
+      expect(await install()).toMatchObject({ exitCode: 0 });
+
+      for (const args of [["mycli"], ["--no-install", "mycli"]]) {
+        expect(await box.run(args)).toEqual({
+          stdout: "",
+          stderr: notFound(
+            "mycli",
+            "node_modules/mycli/dist/cli\\.js",
+            "mycli is a package of this project, and its bin is not built",
+          ),
+          exitCode: 1,
+          requests: [],
+        });
+      }
+
+      const cli = join(box.cwd, "packages", "mycli", "dist", "cli.js");
+      mkdirSync(dirname(cli));
+      writeFileSync(cli, echoBin("mycli of the workspace"));
+      expect(await box.run(["mycli"])).toEqual({
+        stdout: "",
+        stderr: notExecutable("node_modules/mycli/dist/cli\\.js"),
+        exitCode: 126,
+        requests: [],
+      });
+
+      // The install links the bin that is there now.
+      expect(await install()).toMatchObject({ exitCode: 0 });
+      expect(await box.run(["mycli", "arg"])).toEqual({
+        stdout: "mycli of the workspace arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
+
+    // A node_modules folder above the project does not make a package of the project an installed one.
+    it.concurrent("the bin of a workspace package that is not built, in a project below a node_modules", async () => {
+      using box = sandbox(undefined, {
+        cwd: {
+          node_modules: {
+            parent: {
+              "package.json": JSON.stringify({ name: "parent", workspaces: ["packages/*"] }),
+              packages: {
+                mycli: {
+                  "package.json": JSON.stringify({ name: "mycli", version: "1.0.0", bin: { mycli: "dist/cli.js" } }),
+                },
+              },
+              node_modules: {},
+            },
+          },
+        },
+      });
+      const project = join(box.cwd, "node_modules", "parent");
+      symlinkSync(join("..", "packages", "mycli"), join(project, "node_modules", "mycli"));
+
+      expect(await box.run(["--no-install", "mycli"], { cwd: project })).toEqual({
+        stdout: "",
+        stderr: notFound(
+          "mycli",
+          "node_modules/mycli/dist/cli\\.js",
+          "mycli is a package of this project, and its bin is not built",
+        ),
+        exitCode: 1,
+        requests: [],
+      });
+    });
+
+    it.concurrent("a root postinstall that calls the bin of a workspace package before its build", async () => {
+      using registry = await localRegistry(fixturePackage("mycli", "9.9.9", "mycli"));
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: ["packages/*"],
+            dependencies: { mycli: "workspace:*" },
+            scripts: { postinstall: `"${bunExe()}" x mycli` },
+          }),
+          "packages/mycli/package.json": JSON.stringify({
+            name: "mycli",
+            version: "1.0.0",
+            bin: { mycli: "dist/cli.js" },
+          }),
+        },
+      });
+
+      expect(await box.run([], { bunx: [bunExe(), "install"] })).toMatchObject({
+        stderr: expect.stringContaining("could not find the bin of mycli"),
+        exitCode: 1,
+        requests: [],
+      });
+    });
+
+    // bun does not run the install script of a package that is not trusted.
+    it.concurrent("a bin that the install script of its package writes", async () => {
+      using registry = await localRegistry({
+        name: "gen",
+        version: "1.0.0",
+        bin: { gen: "cli.js" },
+        scripts: { postinstall: "node build.js" },
+        files: { "build.js": `require("fs").writeFileSync("cli.js", ${JSON.stringify(echoBin("gen built"))});\n` },
+      });
+      using box = sandbox(registry, {
+        cwd: { "package.json": JSON.stringify({ name: "app", dependencies: { gen: "1.0.0" } }) },
+      });
+      const bun = (...args: string[]) => box.run(args, { bunx: [bunExe()] });
+      expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+      expect(await box.run(["gen"])).toEqual({
+        stdout: "",
+        stderr: notFound("gen", "node_modules/gen/cli\\.js", reinstall("gen")),
+        exitCode: 1,
+        requests: [],
+      });
+
+      expect(await bun("pm", "trust", "gen")).toMatchObject({ exitCode: 0 });
+      expect(await bun("install")).toMatchObject({ exitCode: 0 });
+      expect(await box.run(["gen", "arg"])).toEqual({
+        stdout: "gen built arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
+  });
+
+  // Of two packages with one bin name, one gets the entry in .bin. The install makes the file of the other
+  // executable too. On Windows the entry is a shim that does not say whose it is, and bunx starts it.
+  it.concurrent.todoIf(isWindows)("after an install, the package that did not get the entry in .bin", async () => {
+    using registry = await localRegistry(
+      fixturePackage("aaa-first", "1.0.0", "tool"),
+      fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
+      fixturePackage("zzz-last", "2.0.0", "tool", echoBin("zzz-last 2.0.0")),
+    );
+    using box = sandbox(registry, {
+      cwd: {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" },
+          scripts: { postinstall: `"${bunExe()}" x zzz-last from postinstall > postinstall.txt` },
+        }),
+      },
+    });
+    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+    expect(await Bun.file(join(box.cwd, "postinstall.txt")).text()).toBe("zzz-last 1.0.0 from postinstall\n");
+
+    expect(await box.run(["zzz-last", "arg"])).toEqual({
+      stdout: "zzz-last 1.0.0 arg\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  // The install links the bin of a package with native builds into an optional dependency that has an `os` and a
+  // `cpu`. This one has neither, so the entry in .bin is its own bin.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package whose optional dependency got the entry in .bin",
+    async () => {
+      using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), {
+        ...fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
+        optionalDependencies: { "aaa-first": "1.0.0" },
+      });
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } }),
+        },
+      });
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "zzz-last 1.0.0 arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+
+      chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
+        exitCode: 126,
+        requests: [],
+      });
+    },
+  );
+
+  // The file is not there when the bins are linked. The install makes it executable after the script.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package without the entry in .bin whose install script writes the bin",
+    async () => {
+      const gen = (version: string): FixturePackage => ({
+        name: "zzz-gen",
+        version,
+        bin: { tool: "cli.js" },
+        scripts: { postinstall: "node build.js" },
+        files: {
+          "build.js": `require("fs").writeFileSync("cli.js", ${JSON.stringify(echoBin(`zzz-gen ${version}`))});\n`,
+        },
+      });
+      using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), gen("1.0.0"), gen("2.0.0"));
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { "aaa-first": "1.0.0", "zzz-gen": "1.0.0" },
+            trustedDependencies: ["zzz-gen"],
+          }),
+        },
+      });
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+      expect(await box.run(["zzz-gen", "arg"])).toEqual({
+        stdout: "zzz-gen 1.0.0 arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    },
+  );
+
+  it.concurrent.todoIf(isWindows)("after an install, a workspace package whose bin name a dependency has", async () => {
+    using registry = await localRegistry(
+      fixturePackage("aaa-first", "1.0.0", "tool"),
+      fixturePackage("mycli", "9.9.9", "tool"),
+    );
+    using box = sandbox(registry, {
+      cwd: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "aaa-first": "1.0.0", mycli: "workspace:*" },
+        }),
+        "packages/mycli/package.json": JSON.stringify({ name: "mycli", version: "1.0.0", bin: { tool: "cli.js" } }),
+        "packages/mycli/cli.js": echoBin("mycli of the workspace"),
+      },
+    });
+    expect(await box.run([], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+    expect(await box.run(["mycli", "arg"])).toEqual({
+      stdout: "mycli of the workspace arg\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  it.concurrent("is found from a directory below the project", async () => {
+    using box = sandbox(undefined, { cwd: { "package.json": JSON.stringify({ name: "app" }), src: { deep: {} } } });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "src", "deep") })).toMatchObject({
+      stdout: "corp of @corp/cli 1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.each(["node_modules/.bin", "$PATH"])(
+    "-p runs the bin of that package, whatever else of the name is in %s",
+    async where => {
+      using registry = await localRegistry(fixturePackage("mypkg", "1.0.0", "lint"));
+      using box = sandbox(registry, { elsewhere: {} });
+      const elsewhere = join(box.dir, "elsewhere");
+      addLocalPackage(where === "$PATH" ? elsewhere : box.cwd, "other", "1.0.0", "lint");
+      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH].join(delimiter);
+
+      expect(await box.run(["-p", "mypkg", "lint"], { env: { ...box.env, PATH } })).toMatchObject({
+        stdout: "lint 1.0.0\n",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Like npx: any command, which finds the bins of the package before node_modules/.bin and $PATH.
+  it.concurrent.each(["node_modules/.bin", "$PATH"])(
+    "-p installs the package for a command that is none of its bins, from %s",
+    async where => {
+      using registry = await localRegistry(fixturePackage("mypkg", "1.0.0", "lint"));
+      using box = sandbox(registry, { elsewhere: {} });
+      const elsewhere = join(box.dir, "elsewhere");
+      addLocalBin(
+        where === "$PATH" ? elsewhere : box.cwd,
+        "caller",
+        `console.log("caller got " + require("child_process").execSync("lint", { encoding: "utf8" }).trim());`,
+      );
+      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH].join(delimiter);
+      const env = { ...box.env, PATH };
+
+      const ran = { stdout: "caller got lint 1.0.0\n", exitCode: 0 };
+      expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject(ran);
+      expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject({ ...ran, stderr: "", requests: [] });
+      expect(await box.run(["-p", "mypkg", "nowhere"], { env })).toMatchObject({
+        stderr: expect.stringContaining("error: Package mypkg does not provide a binary named nowhere"),
+        exitCode: 1,
+      });
+    },
+  );
+
+  it.concurrent("-p uses the project's package", async () => {
+    using box = sandbox();
+    addLocalPackage(box.cwd, "mypkg", "1.0.0", "lint");
+    addLocalPackage(box.cwd, "other", "1.0.0", "format");
+
+    for (const [command, stdout] of [
+      ["lint", "lint of mypkg 1.0.0\n"],
+      // None of its bins.
+      ["format", "format of other 1.0.0\n"],
+    ]) {
+      expect(await box.run(["--no-install", "-p", "mypkg", command])).toMatchObject({
+        stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+    // Without the package no command is run.
+    expect(await box.run(["--no-install", "-p", "absent", "format"])).toMatchObject({ stdout: "", exitCode: 1 });
+  });
+
+  it.concurrent.each(["css@3.4.0", "css@3", "css@^3"])(
+    "another version than that of bunx %s is passed over",
+    async spec => {
+      using registry = await localRegistry(fixturePackage("css", "3.4.0", "css"), {
+        name: "css",
+        version: "4.0.0",
+        files: { "index.js": "" },
+      });
+      using box = sandbox(registry);
+      addLocalPackage(box.cwd, "css", "4.0.0");
+
+      expect(await box.run([spec])).toMatchObject({ stdout: "css 3.4.0\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent.each([[["css@3.4.0"]], [["css@3"]], [["css@^3"]], [["-p", "css@3.4.0", "css"]]])(
+    "bunx %j is not the copy in node_modules, whatever its version",
+    async args => {
+      using registry = await localRegistry(fixturePackage("css", "3.4.0", "css"));
+      using box = sandbox(registry, { cwd: { "package.json": JSON.stringify({ name: "app" }) } });
+      addLocalPackage(box.cwd, "css", "3.4.0", "css");
+
+      expect(await box.run(args)).toMatchObject({ stdout: "css 3.4.0\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent("is not looked for above the project", async () => {
+    using box = sandbox(undefined, { cwd: { project: { "package.json": JSON.stringify({ name: "project" }) } } });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "project") })).toMatchObject({
+      stdout: "",
+      stderr: expect.stringContaining("Could not find an existing 'cli' binary to run."),
+      exitCode: 1,
+    });
+  });
+
+  it.concurrent("is found in the workspace root from a member", async () => {
+    using box = sandbox(undefined, {
+      cwd: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/member/package.json": JSON.stringify({ name: "member" }),
+      },
+    });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", "member") })).toMatchObject({
+      stdout: "corp of @corp/cli 1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Reading an empty package.json ends the process.
+  it.concurrent("the other members of the workspace are not read", async () => {
+    using box = sandbox(undefined, {
+      cwd: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/member/package.json": JSON.stringify({ name: "member" }),
+        "packages/other/package.json": "",
+      },
+    });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", "member") })).toMatchObject({
+      stdout: "corp of @corp/cli 1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // On Windows the entry is no link, so it does not say whose it is.
+  it.concurrent.skipIf(isWindows).each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
+    "bunx %j runs the bin of that package where another one has the entry in .bin",
+    async args => {
+      using box = sandbox();
+      addLocalPackage(box.cwd, "another", "9.0.0", "tool");
+      addLocalPackage(box.cwd, "@corp/tool", "1.0.0", "tool");
+
+      expect(await box.run(["--no-install", ...args])).toMatchObject({
+        stdout: "tool of @corp/tool 1.0.0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.concurrent("without a bin and without a version asked for, it is an error", async () => {
+    using box = sandbox();
+    addLocalPackage(box.cwd, "css", "4.0.0");
+
+    expect(await box.run(["css"])).toMatchObject({
+      stdout: "",
+      stderr: expect.stringContaining("error: could not determine executable to run for package css"),
+      exitCode: 1,
+    });
+  });
+});
+
+it.concurrent("a package without a bin isn't installed again just to report that", async () => {
+  // No program in $PATH has this name.
+  const name = "bunx-fixture-without-bin";
+  using registry = await localRegistry({ name, version: "1.0.0", files: { "index.js": "" } });
+  using box = sandbox(registry);
+  const error = `error: could not determine executable to run for package ${name}\n`;
+
+  expect(await box.run([name])).toMatchObject({
+    stdout: "",
+    stderr: expect.stringContaining(error),
+    exitCode: 1,
+    requests: [`/${name}`, `/${name}/-/${name}-1.0.0.tgz`],
+  });
+  expect(await box.run([name])).toEqual({ stdout: "", stderr: error, exitCode: 1, requests: [] });
+  // The version that the tag points to by now may have one.
+  expect(await box.run([`${name}@latest`])).toMatchObject({
+    stdout: "",
+    stderr: expect.stringContaining(error),
+    exitCode: 1,
+    requests: [`/${name}`],
+  });
+});
+
 describe("flags", () => {
   // Skipping a flag made the value of `--flag value` the package that is downloaded and run.
   it.concurrent.each([
     [["--nope"]],
-    [["--registry", "hello"]],
+    [["--nope", "hello"]],
     [["--cwdx=sub"]],
-    [["-c", "hello"]],
+    [["-Z", "hello"]],
+    [["-w", "hello"]],
+    [["--userconfig", "hello"]],
+    [["--userconfig=.npmrc"]],
+    [["--npmrc-auth-file", "hello"]],
+    [["--config.@hello:registry=http://localhost:1"]],
+    [["--config.//localhost:1/:_authToken=hello"]],
     [["--trust=true"]],
     [["-"]],
   ])("a flag bunx does not have is an error: %j", async flags => {
@@ -2076,6 +3115,108 @@ describe("flags", () => {
     }
   });
 
+  // `bun run` runs `bun x` where a script says `npx`.
+  it.concurrent("the flags of npx and npm are skipped", async () => {
+    const flags =
+      "--no --quiet -q -n -c -dd --offline --prefer-offline --loglevel=error --registry=http://localhost:1 --yes=true --";
+    using box = sandbox(undefined, {
+      cwd: { "package.json": JSON.stringify({ scripts: { tool: `npx ${flags} local-tool ${flags}` } }) },
+    });
+    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+    const expected = { stdout: `local ${flags}\n`, stderr: "", exitCode: 0, requests: [] };
+
+    expect(await box.run([...flags.split(" "), "local-tool", ...flags.split(" ")])).toEqual(expected);
+    if (isWindows) return;
+    symlinkSync(bunExe(), join(box.dir, isDebug ? "bun-debug" : "bun"));
+    const env = { ...box.env, PATH: box.dir + delimiter + box.env.PATH };
+    expect(await box.run(["run", "--silent", "tool"], { env, bunx: [bunExe()] })).toEqual(expected);
+  });
+
+  it.concurrent.each([[["--loglevel", "hello"]], [["--force", "true"]], [["--node-arg", "--inspect"]], [["-w=hello"]]])(
+    "the value of npm's %j is not the package",
+    async flags => {
+      using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"), ...toolWithDep());
+      using box = sandbox(registry);
+
+      const { stdout, exitCode, requests } = await box.run([...flags, "tool"]);
+      expect(stdout).toBe("tool 1.1.0 with dep 1.0.0\n");
+      expect(requests).not.toContain("/hello");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent.each(["-n", "-c", "-q"])("%s doesn't take the name of the package for its value", async flag => {
+    using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"));
+    using box = sandbox(registry);
+    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+
+    expect(await box.run([flag, "local-tool", "hello"])).toEqual({
+      stdout: "local hello\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  it.concurrent.each([[["--registry"]], [["--registry="]], [["--reg="]], [["--config.registry="]]])(
+    "%j installs from that registry, into a tree of its own",
+    async ([flag]) => {
+      using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"));
+      using other = await localRegistry(fixturePackage("hello", "2.0.0", "hello"));
+      using box = sandbox(registry);
+      const flags = flag.endsWith("=") ? [flag + other.url] : [flag, other.url];
+
+      expect(await box.run(["hello"])).toMatchObject({ stdout: "hello 1.0.0\n", exitCode: 0 });
+      expect(await box.run([...flags, "hello"])).toMatchObject({ stdout: "hello 2.0.0\n", exitCode: 0, requests: [] });
+      expect(other.requests).toEqual(["/hello", "/hello/-/hello-2.0.0.tgz"]);
+    },
+  );
+
+  it.concurrent("--cafile and --ca are for the install", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+
+    expect(await box.run(["--cafile", "absent.pem", "tool"])).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(`could not find CA file: '${join(realpathSync(box.cwd), "absent.pem")}'`),
+      exitCode: 1,
+      requests: [],
+    });
+    expect(await box.run(["--ca=invalid", "tool"])).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("the CA is invalid"),
+      exitCode: 1,
+      requests: [],
+    });
+  });
+
+  it.concurrent("rejects two CA stores, also when there is nothing to install", async () => {
+    using box = sandbox();
+    addLocalBin(box.cwd, "local-tool", `console.log("local");`);
+
+    expect(await box.run(["--use-openssl-ca", "--use-bundled-ca", "local-tool"])).toEqual({
+      stdout: "",
+      stderr: "error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n",
+      exitCode: 1,
+      requests: [],
+    });
+  });
+
+  it.concurrent.each(["--no", "--no-yes", "--yes=false", "--yes false", "-n", "--offline"])(
+    "npm's %s means --no-install",
+    async flag => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+
+      expect(await box.run([...flag.split(" "), "--", "tool"])).toEqual({
+        stdout: "",
+        stderr: "error: Could not find an existing 'tool' binary to run. Stopping because --no-install was passed.\n",
+        exitCode: 1,
+        requests: [],
+      });
+    },
+  );
+
   it.concurrent("--yes, -y and -- are accepted", async () => {
     using box = sandbox();
     addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
@@ -2088,20 +3229,23 @@ describe("flags", () => {
   });
 
   // BUN_OPTIONS is for every command.
-  it.concurrent.skipIf(isWindows)("what bunx does not know in BUN_OPTIONS is skipped, value included", async () => {
-    using registry = await localRegistry();
-    using box = sandbox(registry);
-    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
-    symlinkSync(bunExe(), join(box.dir, "bunx"));
+  it.concurrent.skipIf(isWindows)(
+    "flags in BUN_OPTIONS that bunx doesn't know are skipped, including their values",
+    async () => {
+      using registry = await localRegistry();
+      using box = sandbox(registry);
+      addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+      symlinkSync(bunExe(), join(box.dir, "bunx"));
 
-    const env = { ...box.env, BUN_OPTIONS: "--smol --preload ./preloaded.ts" };
-    expect(await box.run(["local-tool", "--nope"], { env, bunx: [join(box.dir, "bunx")] })).toEqual({
-      stdout: "local --nope\n",
-      stderr: "",
-      exitCode: 0,
-      requests: [],
-    });
-  });
+      const env = { ...box.env, BUN_OPTIONS: "--smol --preload ./preloaded.ts" };
+      expect(await box.run(["local-tool", "--nope"], { env, bunx: [join(box.dir, "bunx")] })).toEqual({
+        stdout: "local --nope\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    },
+  );
 
   it.concurrent.each(["--help", "-h"])("%s prints the flags", async flag => {
     using box = sandbox();
@@ -2246,7 +3390,7 @@ describe("flags", () => {
       });
     });
 
-    it.concurrent("runs with and without it do not serve each other's tree", async () => {
+    it.concurrent("runs with and without it don't share a tree", async () => {
       using registry = await oldAndNew();
       using box = sandbox(registry);
       const gate = `--minimum-release-age=${tenDays}`;
@@ -2303,7 +3447,7 @@ console.log("scripts ran: tool " + ran(".") + ", dep " + ran("../dep"));
     });
 
     // `bun add --trust` trusts the dependency closure, not only the package that is named.
-    it.concurrent("runs the scripts of the package and of its dependencies, in a tree of its own", async () => {
+    it.concurrent("runs the scripts of the package and of its dependencies, in a separate tree", async () => {
       using registry = await withScripts();
       using box = sandbox(registry);
       expect(await box.run(["tool"])).toMatchObject({ stdout: "scripts ran: tool false, dep false\n", exitCode: 0 });
@@ -2320,6 +3464,19 @@ console.log("scripts ran: tool " + ran(".") + ", dep " + ran("../dep"));
         stdout: "scripts ran: tool true, dep true\n",
         exitCode: 0,
         requests: [],
+      });
+    });
+
+    it.concurrent.each(["--ignore-scripts", "--ignore-scripts=true"])("%s wins, in a separate tree", async flag => {
+      using registry = await withScripts();
+      using box = sandbox(registry);
+      expect(await box.run(["--trust", "tool"])).toMatchObject({
+        stdout: "scripts ran: tool true, dep true\n",
+        exitCode: 0,
+      });
+      expect(await box.run(["--trust", flag, "tool"])).toMatchObject({
+        stdout: "scripts ran: tool false, dep false\n",
+        exitCode: 0,
       });
     });
   });
@@ -2345,7 +3502,7 @@ console.log("scripts ran: tool " + ran(".") + ", dep " + ran("../dep"));
   });
 
   // The arguments of the install used to go into an array of eight.
-  it.concurrent("every flag that reaches the install at once", async () => {
+  it.concurrent("every flag that's passed on to the install, all at once", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     const flags = ["--verbose", "--silent", "--trust", "--minimum-release-age=0"];
@@ -2359,9 +3516,8 @@ console.log("scripts ran: tool " + ran(".") + ", dep " + ran("../dep"));
   });
 });
 
-// bunx formats the paths it probes into a path buffer (4096 bytes on Linux, 1024
-// on macOS). What goes into them is not bounded: the bin name comes out of a
-// package.json and the cache directory out of the environment.
+// bunx formats the paths that it probes into a path buffer (4096 bytes on Linux, 1024 on macOS). Their parts have no
+// length limit: the bin name comes from a package.json, and the cache directory comes from the environment.
 describe("paths that do not fit in the path buffer", () => {
   // Longer than the path buffer of every platform (~96 KiB on Windows).
   const longBinName = Buffer.alloc(100_000, "x").toString();
@@ -2371,7 +3527,12 @@ describe("paths that do not fit in the path buffer", () => {
     using box = sandbox(undefined, { cwd: { node_modules: { "long-bin": { "package.json": packageJson } } } });
     expect(await box.run(["--no-install", "long-bin"])).toMatchObject({
       stdout: "",
-      stderr: expect.stringMatching(/PathTooLong|Could not find an existing 'long-bin' binary to run\./),
+      // On Windows no bin runs without its shim, so the package counts as not in the project.
+      stderr: expect.stringMatching(
+        isWindows
+          ? /PathTooLong|Could not find an existing 'long-bin' binary to run\./
+          : /could not find the bin of long-bin/,
+      ),
       exitCode: 1,
     });
   });

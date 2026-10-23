@@ -1,4 +1,4 @@
-//! Markdown in the templates of JavaScript: Prettier's `language-js/embed/markdown.js`.
+//! Markdown in JavaScript templates: Prettier's `language-js/embed/markdown.js`.
 
 use crate::css::doc::{self, Alignment, Doc, Line};
 use crate::ir::element::{
@@ -6,7 +6,7 @@ use crate::ir::element::{
 };
 use crate::prelude::*;
 
-/// Prettier's `isEmbedMarkdown`, and what `embed` asks of every template. `e`: a template.
+/// Prettier's `isEmbedMarkdown`, plus the checks `embed` runs on every template. `e` is a template.
 fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
     matches!(
         f.options().embedded_language_formatting,
@@ -22,8 +22,8 @@ fn is_blank(template: Template<'_>) -> bool {
     bun_core::strings::trim_js_whitespace_start(template.raw(0)).is_empty()
 }
 
-/// Whether `e` is a template with the tag `md` or `markdown` that is more than ` `` `: for Prettier, its
-/// document has the label `embed`.
+/// True if `e` is a template with the tag `md` or `markdown` that's more than ` `` `. In Prettier its document then has
+/// the label `embed`.
 pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let ExprKind::TaggedTemplate(call) = e.kind() else {
         return false;
@@ -36,14 +36,14 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     is_candidate(quasi, template, f) && !is_blank(template)
 }
 
-/// A part of a document, in the order it is written.
+/// A part of a document, in print order.
 enum Op<'d> {
     Text(&'d [u8]),
     Line(Line),
     Element(FormatElement),
 }
 
-/// The parts of `doc`. Returns whether all of it can be written as a part of a document for JavaScript.
+/// Collects `doc`'s parts. Returns true if all of it can be written as part of a JavaScript document.
 fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::StackCheck) -> bool {
     if !stack_check.is_safe_to_recurse() {
         return false;
@@ -120,17 +120,18 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::S
             ops.push(Op::Element(FormatElement::ExpandParent));
             true
         }
-        // The lines of a block quote start with a text, which the other documents have no way to say.
+        // A block quote's lines start with a text, which the other document format can't express.
         Doc::Align(Alignment::Text(_) | Alignment::IfBreak { .. }, _)
         | Doc::Dedent(_)
         | Doc::DedentToRoot(_)
         | Doc::IfBreak { .. }
         | Doc::LineSuffix(_)
-        | Doc::LineSuffixBoundary => false,
+        | Doc::LineSuffixBoundary
+        | Doc::KeepTrailingWhitespace => false,
     }
 }
 
-/// Line breaks that are written as they are, with nothing taken away before them and nothing put behind them.
+/// Line breaks that are written as is, with nothing trimmed before them and nothing added after them.
 fn write_line_breaks(count: usize, f: &mut Formatter<'_>) {
     f.write_text(&vec![b'\n'; count], Some(TextWidth::multiline(0)));
 }
@@ -162,14 +163,11 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
             Op::Element(element) => f.write_element(*element),
             Op::Line(Line::Space) => f.write_element(FormatElement::Line(LineMode::SoftOrSpace)),
             Op::Line(Line::Soft) => f.write_element(FormatElement::Line(LineMode::Soft)),
-            // The line break is written as it is. The other only says how far the next line is indented.
-            Op::Line(Line::Literal) => {
-                write_line_breaks(1, f);
-                f.write_element(FormatElement::Line(LineMode::Hard));
-            }
-            Op::Line(Line::Hard) => {
-                // Several in a row, with nothing written between them, are empty lines. The last says how far the
-                // next line is indented.
+            Op::Line(first @ (Line::Literal | Line::Hard)) => {
+                // A literal line break is written as text so that the whitespace before it isn't trimmed.
+                let is_literal = *first == Line::Literal;
+                // Several in a row, with nothing written between them, are empty lines. The last one determines the
+                // next line's indentation.
                 let run = ops[index..]
                     .iter()
                     .take_while(|op| matches!(op, Op::Line(Line::Hard) | Op::Element(_)))
@@ -178,22 +176,27 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                     .iter()
                     .rposition(|op| matches!(op, Op::Line(Line::Hard)));
                 let Some(last) = last else {
+                    if is_literal {
+                        write_line_breaks(1, f);
+                    }
                     f.write_element(FormatElement::Line(LineMode::Hard));
                     continue;
                 };
                 let rest = &ops[index..index + last];
                 let count = 2 + rest.iter().filter(|op| matches!(op, Op::Line(_))).count();
-                // The printer writes no more than one empty line for line breaks.
-                match count {
-                    2 => f.write_element(FormatElement::Line(LineMode::Hard)),
-                    _ => write_line_breaks(count, f),
+                // The printer collapses consecutive line breaks into at most one empty line. After a line break written
+                // as text it doesn't even print that one, because the current line is empty.
+                let is_single_empty_line = count == 2 && !is_literal;
+                match is_single_empty_line {
+                    true => f.write_element(FormatElement::Line(LineMode::Hard)),
+                    false => write_line_breaks(count, f),
                 }
                 for op in rest {
                     if let Op::Element(element) = op {
                         f.write_element(*element);
                     }
                 }
-                f.write_element(FormatElement::Line(if count == 2 {
+                f.write_element(FormatElement::Line(if is_single_empty_line {
                     LineMode::Empty
                 } else {
                     LineMode::Hard
@@ -204,7 +207,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
     }
 }
 
-/// Writes the template `e` as Markdown, if that is what Prettier takes it for. Returns whether it has.
+/// Writes the template `e` as Markdown, if Prettier treats it as Markdown. Returns true if it did.
 pub(crate) fn write_template<'a>(
     e: Expr<'a>,
     template: Template<'a>,
@@ -236,11 +239,11 @@ pub(crate) fn write_template<'a>(
         text.push(byte);
     }
 
-    // The indentation of the first line that has something on it is taken away from all lines.
-    let is_blank_byte = |byte: &&u8| byte.is_ascii_whitespace() && **byte != b'\n';
+    // The indentation of the first non-blank line is stripped from all lines.
+    let is_space_but_not_line_break = |byte: &&u8| byte.is_ascii_whitespace() && **byte != b'\n';
     let indentation = bun_core::strings::split(&text, b"\n")
         .find(|line| !line.iter().all(u8::is_ascii_whitespace))
-        .map(|line| line[..line.iter().take_while(is_blank_byte).count()].to_vec())
+        .map(|line| line[..line.iter().take_while(is_space_but_not_line_break).count()].to_vec())
         .unwrap_or_default();
     if !indentation.is_empty() {
         let mut dedented = Vec::with_capacity(text.len());

@@ -23,20 +23,20 @@ const JSX_MAX_DEPTH: Message = Message::new(
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The depth of each element and fragment around what comes next, the innermost last.
+    /// The depth of each enclosing element and fragment, innermost last.
     depths: Vec<u32>,
-    /// `calculate_variable_jsx_depth`. 0 while it is being found out.
+    /// `calculate_variable_jsx_depth`. 0 while it's being computed.
     variables: IdMap<Symbol<'a>, u32>,
-    /// The identifiers in braces, each with the `getDepth` of the braces.
+    /// The identifiers in braces, each with the braces' `getDepth`.
     containers: Vec<(Expr<'a>, u32)>,
-    /// Whether an element with elements in it may be what a variable is given.
-    is_any_written: bool,
+    /// True if an element that contains elements may be assigned to a variable.
+    may_assign_nested_jsx: bool,
     found: Vec<Found>,
 }
 
-/// What is reported.
+/// A pending report.
 struct Found {
-    /// Where the node starts at which upstream finds it.
+    /// The start of the node where upstream's listener finds it.
     listener: u32,
     node: Span,
     depth: u32,
@@ -63,25 +63,25 @@ impl Rule for JsxMaxDepth {
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
         let parent = node.parent();
-        // `getDepth`. oxlint counts the elements around it, whatever is between.
+        // `getDepth`. oxlint counts the enclosing elements, whatever is in between.
         let is_child = matches!(parent, Node::Expr(parent) if parent.tag() == ExprTag::Jsx);
         let depth = match cx.state.depths.last() {
-            Some(&around) if is_oxlint || is_child => around + 1,
+            Some(&enclosing_depth) if is_oxlint || is_child => enclosing_depth + 1,
             _ => 0,
         };
         cx.state.depths.push(depth);
         let Some(ExprKind::Jsx(jsx)) = node.as_expr().map(Expr::kind) else {
             return;
         };
-        // `hasJSX`. oxlint passes over what is in braces.
+        // `hasJSX`. oxlint skips what's in braces.
         let has_jsx = |it: Expr<'a>| {
             it.tag() == ExprTag::Jsx && !(is_oxlint && it.jsx_container_span().is_some())
         };
-        // Only what has no element in it is looked at.
+        // Only elements without child elements are checked.
         if !jsx.children().iter().any(has_jsx) {
-            // oxlint adds what the variables in it have, where upstream looks into them.
+            // oxlint adds the depth of the variables inside it. Upstream looks into them separately.
             let inside = if is_oxlint {
-                Parts::of_element(jsx).depth(&mut cx.state.variables)
+                Parts::from_element(jsx).depth(&mut cx.state.variables)
             } else {
                 0
             };
@@ -94,8 +94,8 @@ impl Rule for JsxMaxDepth {
                 });
             }
         } else if !is_oxlint {
-            // What is certainly no `writeExpr` of a reference.
-            cx.state.is_any_written |= match parent {
+            // These parents are certainly not a reference's `writeExpr`.
+            cx.state.may_assign_nested_jsx |= match parent {
                 Node::Func(_) | Node::Prop(_) => false,
                 Node::Stmt(it) => !matches!(it.tag(), StmtTag::Return | StmtTag::Expr),
                 Node::Expr(it) => it.tag() == ExprTag::Assign,
@@ -126,26 +126,30 @@ impl Rule for JsxMaxDepth {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut found = std::mem::take(&mut cx.state.found);
         // upstream's `JSXExpressionContainer`
-        if cx.state.is_any_written {
-            let (mut known, mut fine) = (Known::default(), FxHashMap::<u32, u32>::default());
+        if cx.state.may_assign_nested_jsx {
+            let (mut known, mut passing_depths) =
+                (Known::default(), FxHashMap::<u32, u32>::default());
             for (expression, base_depth) in std::mem::take(&mut cx.state.containers) {
                 let Some(element) = find_jsx_element_or_fragment(expression, &mut known) else {
                     continue;
                 };
                 let (start, before) = (element.opening_span().start, found.len());
-                // Where nothing is found in an element, nothing is found with less around it.
-                if fine.get(&start).is_some_and(|it| base_depth <= *it) {
+                // If an element is fine at some depth, it's also fine at any lower depth.
+                if passing_depths
+                    .get(&start)
+                    .is_some_and(|it| base_depth <= *it)
+                {
                     continue;
                 }
                 self.check_descendant(expression.span().start, base_depth, element, &mut found);
                 if found.len() == before {
-                    fine.insert(start, base_depth);
+                    passing_depths.insert(start, base_depth);
                 }
             }
         }
-        // Several can be at one node.
+        // Several reports can be at the same node.
         utils::sort::sort_by_key(&mut found, |it| it.listener);
-        // oxlint has a text of its own.
+        // oxlint has its own message.
         let (message, depth, max) = match cx.language().is_oxlint {
             true => (JSX_MAX_DEPTH, "depth", "max"),
             false => (WRONG_DEPTH, "found", "needed"),
@@ -190,7 +194,7 @@ impl JsxMaxDepth {
     }
 }
 
-/// What `findJSXElementOrFragment` finds from a scope for a name. `None` also while it is being found out.
+/// Caches what `findJSXElementOrFragment` finds for a name from a scope. Also `None` while it's being computed.
 type Known<'a> = FxHashMap<(Scope<'a>, Name<'a>), Option<Jsx<'a>>>;
 
 /// upstream's `findJSXElementOrFragment`, for the identifier in the braces.
@@ -201,7 +205,7 @@ fn find_jsx_element_or_fragment<'a>(
     let (scope, mut name) = (Node::Expr(start_node).scope(), start_node.as_ident()?);
     let mut names: SmallVec<[Name<'a>; 4]> = SmallVec::new();
     let element = loop {
-        // A name that comes again in one search is a circle.
+        // A name that comes up again in the same search is a cycle.
         match known.entry((scope, name)) {
             Entry::Occupied(found) => break *found.get(),
             Entry::Vacant(entry) => entry.insert(None),
@@ -221,20 +225,20 @@ fn find_jsx_element_or_fragment<'a>(
     element
 }
 
-/// For oxlint: what the depth of an element, or of what a variable is initialized with, is made of.
+/// oxlint only: what determines the depth of an element, or of a variable's initializer.
 #[derive(Default)]
 struct Parts<'a> {
-    /// How deeply elements are nested in it.
+    /// How deeply elements are nested inside it.
     elements_depth: u32,
-    /// The variables `a` of the children `{a}` in it, with how many elements of it are around each. `None`: `const b =
-    /// a`.
+    /// The variables `a` of the `{a}` children inside it, each with the number of its elements around it. `None` for
+    /// `const b = a`.
     variables: SmallVec<[(Symbol<'a>, Option<u32>); 4]>,
-    /// How many of them are known.
+    /// How many of them have been resolved.
     known: usize,
 }
 
 impl<'a> Parts<'a> {
-    fn of_element(jsx: Jsx<'a>) -> Self {
+    fn from_element(jsx: Jsx<'a>) -> Self {
         let mut parts = Parts::default();
         let mut pending: SmallVec<[(Jsx<'a>, u32); 8]> = smallvec![(jsx, 0)];
         while let Some((jsx, level)) = pending.pop() {
@@ -258,14 +262,14 @@ impl<'a> Parts<'a> {
         parts
     }
 
-    /// `calculate_expression_jsx_depth` of what `variable` is declared with.
-    fn of_variable(variable: Symbol<'a>) -> Self {
+    /// `calculate_expression_jsx_depth` of `variable`'s initializer.
+    fn from_variable(variable: Symbol<'a>) -> Self {
         let init = match variable.declarations().next().and_then(Declaration::node) {
             Some(Node::VarDecl(declarator)) => declarator.init(),
             _ => None,
         };
         match init.map(|it| (it, it.kind())) {
-            Some((_, ExprKind::Jsx(jsx))) => Parts::of_element(jsx),
+            Some((_, ExprKind::Jsx(jsx))) => Parts::from_element(jsx),
             Some((ident, ExprKind::Ident(_))) => Parts {
                 variables: ident.symbol().map(|it| (it, None)).into_iter().collect(),
                 ..Parts::default()
@@ -274,10 +278,10 @@ impl<'a> Parts<'a> {
         }
     }
 
-    /// Each variable is looked at once in a file. oxlint looks at each once for every element that it starts from, so
-    /// that a variable which it gets to on two ways counts on the first only.
+    /// Visits each variable once per file. oxlint visits each one once per starting element, so a variable that it
+    /// reaches by two paths only counts on the first.
     fn depth(self, known: &mut IdMap<Symbol<'a>, u32>) -> u32 {
-        // With the variable that each but the first is of.
+        // Every entry except the first is paired with its variable.
         let mut stack: Vec<(Option<Symbol<'a>>, Parts<'a>)> = vec![(None, self)];
         let mut depth = 0;
         while let Some((_, parts)) = stack.last_mut() {
@@ -289,7 +293,7 @@ impl<'a> Parts<'a> {
                     0
                 });
                 if is_new {
-                    stack.push((Some(variable), Parts::of_variable(variable)));
+                    stack.push((Some(variable), Parts::from_variable(variable)));
                 }
                 continue;
             }
@@ -298,11 +302,11 @@ impl<'a> Parts<'a> {
                     .variables
                     .iter()
                     .fold(parts.elements_depth, |depth, (variable, level)| {
-                        let of_variable = known.get(*variable).copied().unwrap_or(0);
+                        let variable_depth = known.get(*variable).copied().unwrap_or(0);
                         depth.max(match level {
-                            Some(level) if of_variable > 0 => level + of_variable + 1,
+                            Some(level) if variable_depth > 0 => level + variable_depth + 1,
                             Some(_) => 0,
-                            None => of_variable,
+                            None => variable_depth,
                         })
                     });
             if let Some((Some(variable), _)) = stack.pop() {

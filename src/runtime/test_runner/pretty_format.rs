@@ -10,6 +10,10 @@ use bun_jsc::{
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
+use crate::generated_bindgen::expect::{
+    js_ExpectAny, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher, js_ExpectObjectContaining,
+    js_ExpectStringContaining, js_ExpectStringMatching,
+};
 use crate::webcore::BlobExt as _;
 
 /// `<tag>` colour templates used by the formatter, rewritten to ANSI (or
@@ -19,32 +23,6 @@ macro_rules! pretty_fmt_const {
     ($enabled:expr, $fmt:literal) => {
         if $enabled { ::bun_core::pretty_fmt!($fmt, true) } else { ::bun_core::pretty_fmt!($fmt, false) }
     };
-}
-
-/// `Expect*.js.*GetCached` accessors — generate-classes.ts emits these
-/// per-type for `cache: true` props (jest.classes.ts).
-/// Rust has no inherent associated modules, so each
-/// matcher gets a sibling `expect_js::*` module the same way `mod.rs` does for
-/// `Expect`.
-mod expect_js {
-    pub(super) mod any {
-        ::bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
-    }
-    pub(super) mod close_to {
-        ::bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
-    }
-    pub(super) mod object_containing {
-        ::bun_jsc::codegen_cached_accessors!("ExpectObjectContaining"; objectValue);
-    }
-    pub(super) mod string_containing {
-        ::bun_jsc::codegen_cached_accessors!("ExpectStringContaining"; stringValue);
-    }
-    pub(super) mod string_matching {
-        ::bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
-    }
-    pub(super) mod custom {
-        ::bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; capturedArgs, matcherFn);
-    }
 }
 
 #[repr(u8)]
@@ -423,7 +401,7 @@ impl Tag {
 
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
+        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX)
     }
 }
 
@@ -1121,8 +1099,13 @@ impl<'a> Formatter<'a> {
                         self.reset_line();
                         self.write_indent(writer.ctx).expect("unreachable");
                         let length = str.len;
-                        for (i, c) in str.slice().iter().enumerate() {
-                            writer.print(format_args!("\"{}\": \"{}\",\n", i, *c as char));
+                        for i in 0..length {
+                            let unit = [str.char_at(i)];
+                            writer.print(format_args!(
+                                "\"{}\": \"{}\",\n",
+                                i,
+                                bun_fmt::utf16(&unit)
+                            ));
                             if i != length - 1 {
                                 self.write_indent(writer.ctx).expect("unreachable");
                             }
@@ -1600,12 +1583,12 @@ impl<'a> Formatter<'a> {
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id.max(0)),
+                                + bun_fmt::digit_count(timer.internals.id),
                         );
                         if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(
                                 b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id.max(0)),
+                                    + bun_fmt::digit_count(timer.internals.id),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1638,7 +1621,7 @@ impl<'a> Formatter<'a> {
                     {
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
-                                + bun_fmt::digit_count(immediate.internals.id.max(0)),
+                                + bun_fmt::digit_count(immediate.internals.id),
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -2778,7 +2761,7 @@ impl JestPrettyFormat {
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
         if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAnything".len());
@@ -2788,12 +2771,12 @@ impl JestPrettyFormat {
                 writer.write_all(b"Anything");
             }
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
-            let Some(constructor_value) = expect_js::any::constructor_value_get_cached(value)
+            let Some(constructor_value) = js_ExpectAny::constructor_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAny<".len());
@@ -2814,11 +2797,11 @@ impl JestPrettyFormat {
             this.amf_add_for_new_line(1);
             writer.write_all(b">");
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            let Some(number_value) = expect_js::close_to::number_value_get_cached(value)
+            let Some(number_value) = js_ExpectCloseTo::number_value_get_cached(value)
             else {
                 return Ok(true);
             };
-            let Some(digits_value) = expect_js::close_to::digits_value_get_cached(value)
+            let Some(digits_value) = js_ExpectCloseTo::digits_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -2826,7 +2809,7 @@ impl JestPrettyFormat {
             let number = number_value.to_int32();
             let digits = digits_value.to_int32();
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NumberNotCloseTo".len());
@@ -2843,12 +2826,12 @@ impl JestPrettyFormat {
             ));
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
             let Some(object_value) =
-                expect_js::object_containing::object_value_get_cached(value)
+                js_ExpectObjectContaining::object_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"ObjectNotContaining ".len());
@@ -2862,12 +2845,12 @@ impl JestPrettyFormat {
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
-                expect_js::string_containing::string_value_get_cached(value)
+                js_ExpectStringContaining::string_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotContaining ".len());
@@ -2880,12 +2863,12 @@ impl JestPrettyFormat {
                 bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
+            let Some(test_value) = js_ExpectStringMatching::test_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotMatching ".len());
@@ -2912,12 +2895,12 @@ impl JestPrettyFormat {
                 // default print (non-overridden by user)
                 let flags = instance.flags;
                 let Some(args_value) =
-                    expect_js::custom::captured_args_get_cached(value)
+                    js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value)
                 else {
                     return Ok(true);
                 };
                 let Some(matcher_fn) =
-                    expect_js::custom::matcher_fn_get_cached(value)
+                    js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value)
                 else {
                     return Ok(true);
                 };

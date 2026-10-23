@@ -58,11 +58,11 @@ impl Rule for CatchOrReturn {
         let Some(e) = statement.as_expr() else {
             return;
         };
-        // What is in parentheses, and an optional chain, is not a call for oxlint.
+        // In oxlint's AST a parenthesized expression or an optional chain isn't a call.
         let Some(call_expr) = e.as_call().filter(|it| it.chain() == Chain::No && !e.is_parenthesized()) else {
             return;
         };
-        // A promise, or a method that is called at the end of one: `foo().catch().randomFunc()`
+        // A promise, or a method called at the end of one: `foo().catch().randomFunc()`
         let is_promise_call = |it: Call| is_promise(it).is_some();
         if (is_promise_call(call_expr) || object_call(call_expr).is_some_and(is_promise_call))
             && !self.is_allowed_promise_termination(call_expr)
@@ -74,7 +74,7 @@ impl Rule for CatchOrReturn {
     }
 }
 
-/// The `a()` of `a().b()`.
+/// Returns the `a()` in `a().b()`.
 fn object_call(call_expr: Call<'_>) -> Option<Call<'_>> {
     let object = get_member_expr(call_expr.callee())?.object()?;
     object.as_call().filter(|_| !object.is_parenthesized() && !object.is_chain_root())
@@ -83,7 +83,7 @@ fn object_call(call_expr: Call<'_>) -> Option<Call<'_>> {
 impl CatchOrReturn {
     fn is_allowed_promise_termination(&self, call_expr: Call) -> bool {
         let mut at = call_expr;
-        // `somePromise.catch().finally(fn).finally(fn) ..`: each is allowed if the one before it is.
+        // `somePromise.catch().finally(fn).finally(fn) ..`: each call is allowed if the one before it is.
         loop {
             let Some(prop_name) = get_member_expr(at.callee()).and_then(static_property_name) else {
                 break;
@@ -109,7 +109,8 @@ impl CatchOrReturn {
                 None => break,
             }
         }
-        // cy.get().then(a, b). What holds for an object further down the chain holds for the first.
+        // cy.get().then(a, b). `is_cypress_call` walks the whole chain, so starting at the outermost call covers the
+        // inner ones.
         let has_name = get_member_expr(call_expr.callee()).and_then(static_property_name).is_some();
         has_name && object_call(call_expr).is_some_and(is_cypress_call)
     }

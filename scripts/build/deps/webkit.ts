@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "930bcf4ea6d1e67dc8c866ff46f075fd9fff5a01";
+export const WEBKIT_VERSION = "5e3554face1338d738543540a82f23e3163045f5";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -12,7 +12,7 @@ export const WEBKIT_VERSION = "930bcf4ea6d1e67dc8c866ff46f075fd9fff5a01";
  *
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
  *   encodes {os, arch, musl, debug|lto, asan, assertions} — each is a separate
- *   ABI — and coverage.
+ *   ABI — and coverage and hardened.
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
  *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
  *
@@ -43,7 +43,7 @@ export const WEBKIT_VERSION = "930bcf4ea6d1e67dc8c866ff46f075fd9fff5a01";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
-import { computeCpuTargetFlags } from "../flags.ts";
+import { computeCpuTargetFlags, hardeningFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
 
@@ -70,6 +70,7 @@ function prebuiltSuffix(cfg: Config): string {
     if (cfg.assertions) s += "-assertions";
     if (cfg.fuzzilli) s += "-coverage";
   }
+  if (cfg.hardened) s += "-hardened";
   return s;
 }
 
@@ -259,6 +260,7 @@ export const webkit: Dependency = {
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.hardened) optFlags.push(...hardeningFlags);
     if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {

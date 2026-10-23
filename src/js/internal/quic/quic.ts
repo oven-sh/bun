@@ -2441,7 +2441,7 @@ class QuicStream {
    */
   get priority() {
     assertIsQuicStream(this);
-    if (this.destroyed || getQuicSessionState(this.#inner.session).headersSupported === 2) return null;
+    if (this.destroyed || !getQuicSessionState(this.#inner.session).isPrioritySupported) return null;
     const packed = this.#handle.getPriority();
     const urgency = packed >> 1;
     const incremental = !!(packed & 1);
@@ -3272,7 +3272,7 @@ class QuicSession {
       throw ERR_QUIC_OPEN_STREAM_FAILED();
     }
 
-    if (inner.state.headersSupported !== 2) {
+    if (inner.state.isPrioritySupported) {
       const urgency = priority === "high" ? 0 : priority === "low" ? 7 : 3;
       handle.setPriority((urgency << 1) | (incremental ? 1 : 0));
     }
@@ -3294,8 +3294,15 @@ class QuicSession {
     if (oninfo) stream.oninfo = oninfo;
     if (onwanttrailers) stream.onwanttrailers = onwanttrailers;
 
-    if (headers !== undefined) {
-      stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
+    if (
+      headers !== undefined &&
+      !stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody })
+    ) {
+      const error = ERR_QUIC_OPEN_STREAM_FAILED();
+      // The caller never gets the stream.
+      markPromiseAsHandled(stream.closed);
+      stream.destroy(error);
+      throw error;
     }
 
     if (deferredBody) {

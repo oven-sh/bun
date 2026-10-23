@@ -37,12 +37,12 @@ impl Rule for NoAmd {
             return;
         }
         if !cx.language().is_oxlint {
-            if Node::Expr(e).scope().kind() == ScopeKind::Module {
+            if Node::Expr(e).scope().is_top_level_of_module() {
                 cx.report(e, EXPECTED_IMPORTS).data("name", callee.text());
             }
             return;
         }
-        // oxlint takes parentheses for nodes, has one scope at the top of any file, and points at the callee.
+        // oxlint's AST keeps parentheses as nodes, every file has a single root scope, and it reports the callee.
         if !callee.is_parenthesized() && !modules.is_parenthesized() && is_in_root_scope(Node::Expr(e), &mut cx.state) {
             cx.report(callee, OXLINT).data("name", callee.text());
         }

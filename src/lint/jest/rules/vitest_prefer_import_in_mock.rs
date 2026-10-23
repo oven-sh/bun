@@ -18,7 +18,7 @@ impl Rule for PreferImportInMock {
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        // Options that are not valid are as none.
+        // Invalid options are treated as no options.
         let config = options.object(0);
         PreferImportInMock {
             fixable: config.entries().len() != 1 || config.bool_or("fixable", true),

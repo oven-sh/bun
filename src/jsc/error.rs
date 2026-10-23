@@ -2,10 +2,6 @@
 pub enum Error {
     #[error("ModuleNotFound")]
     ModuleNotFound,
-    #[error("InvalidDataURL")]
-    InvalidDataURL,
-    #[error("InvalidURL")]
-    InvalidURL,
     #[error("ParserError")]
     ParserError,
     #[error("StaleCache")]
@@ -38,8 +34,6 @@ pub enum Error {
     ParseError,
     #[error("JSError")]
     JSError,
-    #[error("TarballFailedToExtract")]
-    TarballFailedToExtract,
     #[error("ServerEntryPointGenerate")]
     ServerEntryPointGenerate,
     #[error("UnexpectedPendingResolution")]
@@ -48,10 +42,6 @@ pub enum Error {
     WorkerTerminated,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
-    #[error("MissingDebugInfo")]
-    MissingDebugInfo,
-    #[error("EndOfFile")]
-    EndOfFile,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
     #[error(transparent)]
@@ -91,8 +81,6 @@ impl Error {
     pub fn name(&self) -> &'static str {
         match self {
             Self::ModuleNotFound => "ModuleNotFound",
-            Self::InvalidDataURL => "InvalidDataURL",
-            Self::InvalidURL => "InvalidURL",
             Self::ParserError => "ParserError",
             Self::StaleCache => "StaleCache",
             Self::InvalidModuleType => "InvalidModuleType",
@@ -109,13 +97,10 @@ impl Error {
             Self::TranspilerJobGenerationMismatch => "TranspilerJobGenerationMismatch",
             Self::ParseError => "ParseError",
             Self::JSError => "JSError",
-            Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::WorkerTerminated => "WorkerTerminated",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
-            Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",

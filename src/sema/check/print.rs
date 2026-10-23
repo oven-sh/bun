@@ -1882,12 +1882,20 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getTypeAliasForTypeLiteral`
     fn type_alias_for_type_literal(&self, ty: TypeId) -> Option<Sym> {
-        let TypeData::Anon {
-            origin: Origin::TypeLiteral(file, node),
-            ..
-        } = *self.c.data(ty)
-        else {
-            return None;
+        // The binder gives a mapped type, a function type and a constructor type a `SymbolFlagsTypeLiteral` symbol too.
+        let (file, node) = match self.c.data(ty) {
+            &TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
+                ..
+            } => (file, node),
+            TypeData::Fns { decls, .. } => {
+                let &(file, func) = decls.first()?;
+                match self.c.bound(file).fns[func.idx()].owner {
+                    FnOwner::Type(node) => (file, node),
+                    _ => return None,
+                }
+            }
+            _ => return None,
         };
         let aliases = &self.c.hir(file).aliases;
         let index = aliases.iter().position(|alias| alias.ty == node)?;

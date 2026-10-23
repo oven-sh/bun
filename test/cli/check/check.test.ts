@@ -16740,6 +16740,57 @@ export const x = g<import("./w").W<{ p }>>();
       expect(exitCode).toBe(1);
     });
 
+    test("reports TS4023 for a cycle through a mapped type or a function type that's the body of a hidden type alias", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, declaration: true, outDir: "out" },
+        }),
+        "m.d.ts": `type Mapped<T> = { -readonly [K in keyof T]: Draft1<T[K]> };
+type Parenthesized<T> = ({ [K in keyof T]: Draft2<T[K]> });
+type Literal<T> = { value: T extends { sub: infer V } ? Draft3<V> : never };
+type Fn<T> = (value: T) => T extends { sub: infer V } ? Draft4<V> : never;
+type New<T> = new (value: T) => T extends { sub: infer V } ? Draft5<V> : never;
+type Union<T> = { [K in keyof T]: Draft6<T[K]> } | undefined;
+export type Draft1<T> = T extends object ? Mapped<T> : T;
+export type Draft2<T> = T extends object ? Parenthesized<T> : T;
+export type Draft3<T> = T extends object ? Literal<T> : T;
+export type Draft4<T> = T extends object ? Fn<T> : T;
+export type Draft5<T> = T extends object ? New<T> : T;
+export type Draft6<T> = T extends object ? Union<T> : T;
+export declare function d1<S>(s: S, r: (state: Draft1<S>) => void): typeof r;
+export declare function d2<S>(s: S, r: (state: Draft2<S>) => void): typeof r;
+export declare function d3<S>(s: S, r: (state: Draft3<S>) => void): typeof r;
+export declare function d4<S>(s: S, r: (state: Draft4<S>) => void): typeof r;
+export declare function d5<S>(s: S, r: (state: Draft5<S>) => void): typeof r;
+export declare function d6<S>(s: S, r: (state: Draft6<S>) => void): typeof r;
+export {};
+`,
+        "a.ts": `import { d1, d2, d3, d4, d5, d6 } from "./m";
+type Tree = { id: string; sub: Tree };
+declare const tree: Tree, flat: { id: string };
+export const a1 = d1(tree, state => {});
+export const a2 = d2(tree, state => {});
+export const a3 = d3(tree, state => {});
+export const a4 = d4(tree, state => {});
+export const a5 = d5(tree, state => {});
+export const a6 = d6(tree, state => {});
+export const b1 = d1(flat, state => {});
+export const { length } = d1(tree, state => {});
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS4023: Exported variable 'a1' has or is using name 'Mapped' from external module "<dir>/m" but cannot be named.
+        a.ts(5,14): error TS4023: Exported variable 'a2' has or is using name 'Parenthesized' from external module "<dir>/m" but cannot be named.
+        a.ts(6,14): error TS4023: Exported variable 'a3' has or is using name 'Literal' from external module "<dir>/m" but cannot be named.
+        a.ts(7,14): error TS4023: Exported variable 'a4' has or is using name 'Fn' from external module "<dir>/m" but cannot be named.
+        a.ts(8,14): error TS4023: Exported variable 'a5' has or is using name 'New' from external module "<dir>/m" but cannot be named.
+        a.ts(9,14): error TS5088: The inferred type of 'a6' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary.
+        a.ts(11,14): error TS4023: Exported variable '{ length }' has or is using name 'Mapped' from external module "<dir>/m" but cannot be named."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

@@ -12,15 +12,11 @@ namespace Bun {
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc);
 
-// Fills `record` from `frame`: its kind, code type, name, source URL and position. This is the one
-// place that derives them, so `error.stack`, the default `Error.prepareStackTrace`, a `CallSite` and
-// the error printer all describe a frame the same way. Safe on the collector thread: it allocates no
-// JS cell and runs no script. A position that the frame does not have stays invalid (-1).
+// The one derivation of a frame's kind, code type, name, source URL and position, for error.stack,
+// Error.prepareStackTrace, CallSite and the error printer. Safe on the collector thread.
 void populateStackFrame(JSC::VM&, const JSC::StackFrame&, ZigStackFrame& record);
 
-// Appends one line of `error.stack` after its "    at ": `name (location)`, or the location alone when
-// the frame has no name. The location is the source URL and position of a script frame, `native` and
-// the position of a builtin, `unknown` for a host function, `[wasm code]` for a WebAssembly function.
+// The one serializer of a frame: what follows "    at " on a line of error.stack.
 void appendStackFrame(WTF::StringBuilder&, const ZigStackFrame& record);
 
 } // namespace Bun

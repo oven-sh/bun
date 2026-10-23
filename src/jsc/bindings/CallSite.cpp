@@ -164,8 +164,7 @@ JSC::JSString* CallSite::fileName(JSC::VM& vm) const
         return jsNontrivialString(vm, "[native code]"_s);
     if (m_sourceID == JSC::noSourceID)
         return jsNontrivialString(vm, "[unknown]"_s);
-    // The 'bindings' package finds the calling module through Error.prepareStackTrace. A frame with
-    // no URL needs a name that tells it apart from the others.
+    // The 'bindings' package tells modules apart by getFileName(): a placeholder per source.
     return jsNontrivialString(vm, makeString("[source:"_s, m_sourceID, ']'));
 }
 

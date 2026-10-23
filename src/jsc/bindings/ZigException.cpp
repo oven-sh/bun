@@ -63,8 +63,7 @@ enum PopulateStackTraceFlags {
 
 #define SYNTAX_ERROR_CODE 4
 
-// The lines of source around the frame, for the preview under an uncaught error. `position` is the
-// frame's own (the record's, before any source map), so it locates the text of the file that ran.
+// The lines of source around the frame, for the preview of an uncaught error.
 static void populateStackFrameSourceLines(const JSC::StackFrame& stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     const ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider)

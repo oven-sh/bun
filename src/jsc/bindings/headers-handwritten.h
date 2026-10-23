@@ -214,8 +214,7 @@ inline constexpr ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeWasm = 5;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
-// What kind of code a frame runs. Decides how a stack line names its location: a script has a source
-// URL, a host function has none, a builtin has a position in the builtins' text but no URL.
+// What kind of code a frame runs: decides how a stack line names its location.
 typedef uint8_t ZigStackFrameKind;
 inline constexpr ZigStackFrameKind ZigStackFrameKindScript = 0;
 inline constexpr ZigStackFrameKind ZigStackFrameKindHost = 1;

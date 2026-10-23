@@ -20,8 +20,7 @@ impl ZigStackFrameCode {
     pub(crate) const CONSTRUCTOR: Self = Self(6);
 }
 
-/// What kind of code a frame runs. Same contract as [`ZigStackFrameCode`]: a
-/// transparent newtype, any `u8` is a valid bit pattern over FFI.
+/// What kind of code a frame runs. Same FFI contract as [`ZigStackFrameCode`].
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ZigStackFrameKind(pub u8);

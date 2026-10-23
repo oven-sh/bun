@@ -20,9 +20,8 @@ using namespace WebCore;
 
 namespace Zig {
 
-// A frame of a stack trace as Error.prepareStackTrace sees it: a view over the record that
-// Bun::populateStackFrame derives from the JSC::StackFrame, plus what only the frame has (the callee,
-// its strictness, the source ID).
+// A frame as Error.prepareStackTrace sees it: a view over the record Bun::populateStackFrame
+// derives, plus what only the JSC::StackFrame has (the callee, its strictness, the source ID).
 class CallSite final : public JSC::JSNonFinalObject {
 public:
     enum class Flags {
@@ -41,8 +40,7 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_thisValue;
     JSC::WriteBarrier<JSC::Unknown> m_function;
     JSC::WriteBarrier<JSC::Unknown> m_functionName;
-    // The record's source URL: empty for a host function, a builtin, a WebAssembly function and a
-    // script with no URL. fileName() stands in a placeholder for those.
+    // Empty for a frame with no source URL: fileName() stands in a placeholder for those.
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
     OrdinalNumber m_lineNumber;
     OrdinalNumber m_columnNumber;

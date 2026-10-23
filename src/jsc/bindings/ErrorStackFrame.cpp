@@ -31,8 +31,7 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         break;
     }
 
-    // Expression info has offsets only. The provider derives the line and the column from an offset,
-    // and does so on any thread: the collector formats the stack of an error it is about to lose.
+    // Safe on the collector thread, which formats the stack of an error it is about to lose.
     auto lineColumn = code->source().provider()->documentLineColumnForOffset(offset);
     return {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
@@ -99,8 +98,7 @@ void populateStackFrame(JSC::VM& vm, const JSC::StackFrame& frame, ZigStackFrame
         return;
     }
 
-    // A release build compiles the builtins without positions of their own, so JavaScriptCore places
-    // the frame where the builtin starts.
+    // A release build has no positions for the code of a builtin: JavaScriptCore places the frame where it starts.
     if (frame.hasLineAndColumnInfo()) {
         auto lineColumn = frame.computeLineAndColumn();
         record.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();

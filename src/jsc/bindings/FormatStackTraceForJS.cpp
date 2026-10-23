@@ -204,9 +204,8 @@ static JSC::JSGlobalObject* globalObjectForFrame(const JSC::StackFrame& frame, J
     return lexicalGlobalObject;
 }
 
-// With node:vm a frame can belong to another realm, whose source Bun did not transpile: it keeps its
-// position (https://github.com/oven-sh/bun/issues/17698). With no lexicalGlobalObject the collector is
-// formatting a stack it is about to lose, and every frame is Bun's.
+// A node:vm frame of another realm keeps its position (https://github.com/oven-sh/bun/issues/17698).
+// The collector formats with no lexicalGlobalObject, and every frame is Bun's.
 static bool isSourceMappable(const JSC::StackFrame& frame, const ZigStackFrame& record, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject)
 {
     if (!record.hasPosition() || record.source_url.isEmpty())
@@ -234,9 +233,8 @@ static void describeStackFrames(JSC::VM& vm, Zig::GlobalObject* globalObject, JS
         records.remap(clientData(vm)->bunVM);
 }
 
-// The error's own position is that of the first frame that has one: error.line, error.column and
-// error.sourceURL. When a source map moved it, error.originalLine and error.originalColumn keep the
-// position in the file that ran, which the error printer reads so as not to map the frame twice.
+// error.line, error.column and error.sourceURL are the first positioned frame's. error.originalLine
+// and error.originalColumn keep the position before the source map, so the error printer maps it once.
 static void noteFirstPosition(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<JSC::StackFrame>& stackTrace, OwnedZigStackFrames& records, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSC::JSObject* errorInstance)
 {
     size_t framesCount = stackTrace.size();
@@ -259,8 +257,7 @@ static void noteFirstPosition(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC:
     }
 }
 
-// A SyntaxError from the parser has no frame at the parse site, so a `<parse>` line stands in for one
-// and gives the error its line. Empty when the error does not need one.
+// A SyntaxError from the parser has no frame at the parse site: a `<parse>` line stands in for one.
 static WTF::String syntaxErrorParseFrame(JSC::VM& vm, Zig::GlobalObject* globalObject, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance, OrdinalNumber& line, bool& hasSetLine)
 {
     JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance);
@@ -762,8 +759,7 @@ void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObj
     size_t framesCount = stackTrace.size();
 
     for (size_t i = 0; i < framesCount; i++) {
-        // JSC keeps a frame of private implementation visibility out of the trace unless
-        // showPrivateScriptsInStackTraces is on (a debug build turns it on). V8 has no such frame.
+        // A debug build shows frames of private implementation visibility. V8 has no such frame.
         if (Zig::isImplementationVisibilityPrivate(stackTrace.at(i)))
             continue;
         CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), records[i], encounteredStrictFrame);

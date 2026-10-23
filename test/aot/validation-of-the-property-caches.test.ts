@@ -85,11 +85,14 @@ describe("validation of the property caches", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "true true true 24 18\n", exitCode: 0 });
   });
 
-  test.each(["1", "3", "7"])("a collection while a prototype object gets its members, at every %s. allocation off the fast path", async every => {
-    const env = { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: every };
-    const { stdout, stderr, exitCode } = await runProcess([join(String(dir), "members")], String(dir), env);
-    expect(stderr).not.toContain("AOT validation: ");
-    const looks = "function,function,function,g,,function";
-    expect({ stdout, exitCode }).toEqual({ stdout: `${looks} ${numberOfMethods + 2} ${looks}\n`, exitCode: 0 });
-  });
+  test.each(["1", "3", "7"])(
+    "a collection while a prototype object gets its members, at every %s. allocation off the fast path",
+    async every => {
+      const env = { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: every };
+      const { stdout, stderr, exitCode } = await runProcess([join(String(dir), "members")], String(dir), env);
+      expect(stderr).not.toContain("AOT validation: ");
+      const looks = "function,function,function,g,,function";
+      expect({ stdout, exitCode }).toEqual({ stdout: `${looks} ${numberOfMethods + 2} ${looks}\n`, exitCode: 0 });
+    },
+  );
 });

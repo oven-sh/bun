@@ -894,6 +894,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.state())
     }
 
+    /// Stores `seconds` as the response's idle budget and arms the timer. For request entries and `server.timeout()`. A body writer calls `reset_timeout()`. A no-op on HTTP/3, which has no per-response timer.
     pub fn timeout(self, seconds: u8) {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
@@ -1099,6 +1100,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.has_responded())
     }
 
+    /// Arms the idle timer with the stored budget. Stores nothing. A no-op on HTTP/3.
     pub fn reset_timeout(self) {
         any_dispatch!(self, |r| r.reset_timeout())
     }

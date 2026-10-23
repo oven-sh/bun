@@ -5,6 +5,7 @@ import tls from "node:tls";
 import {
   F,
   H2Result,
+  PREFACE,
   RawH2,
   T,
   baseHeaders,
@@ -255,6 +256,34 @@ describe("Bun.serve http2 lifecycle", () => {
     expect(Date.now() - t0).toBeLessThan(15000);
     const result = await pending;
     expect(result instanceof Error ? NaN : result.status).toBeNaN();
+  }, 30000);
+
+  test("server.timeout(req, 0) holds for a Bun.file body that stalls at a closed stream window", async () => {
+    // usockets ticks timeouts in 4 s steps, so this needs real seconds.
+    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
+    // One write: the request arrives with the preface, so no tick falls between them.
+    const open = async (path: string) => {
+      const raw = await RawH2.connect(fx.port, false, { sendPreface: false });
+      const headers = frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, hpackLiteral(baseHeaders(path)));
+      raw.write(Buffer.concat([PREFACE, frame(T.SETTINGS, 0, 0), headers]));
+      return raw;
+    };
+    // Neither client grows its window, so both bodies stall after the first 65,535 bytes.
+    const kept = await open("/file-t?s=0");
+    const control = await open("/file");
+    try {
+      // The tick that closes the control is the clock.
+      await control.waitForClose();
+      const size = 3 * 1024 * 1024 + 17;
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(size);
+      kept.write(frame(T.WINDOW_UPDATE, 0, 0, increment));
+      kept.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+      expect((await kept.body(1)).length).toBe(size);
+    } finally {
+      kept.close();
+      control.close();
+    }
   }, 30000);
 
   test("--max-http-header-size applies to h2 like HTTP/1.1", async () => {

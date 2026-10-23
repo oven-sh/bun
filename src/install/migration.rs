@@ -12,6 +12,7 @@ use crate::bin::Bin;
 use crate::dependency::{self, Behavior, Dependency};
 use crate::external_slice::ExternalSlice;
 use crate::install::{self as Install, PackageManager, Subcommand};
+use crate::integrity::Integrity;
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
     Migrated, Package,
@@ -617,6 +618,15 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
                 meta.libc = Npm::Libc::NONE;
             }
         }
+    }
+}
+
+/// npm and pnpm hash their own archive of a git package, never the bytes bun reads (npm/rfcs#525).
+pub(crate) fn foreign_integrity(tag: resolution::Tag, integrity: &[u8]) -> Integrity {
+    if tag.is_git() {
+        Integrity::default()
+    } else {
+        Integrity::parse(integrity)
     }
 }
 

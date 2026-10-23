@@ -70,4 +70,10 @@ Bun does not migrate an npm lockfile from npm 6 or older (`lockfileVersion` 1); 
 
 Bun preserves the original lockfile. You can remove it manually after verification.
 
+Bun keeps the integrity hashes that `package-lock.json` and `pnpm-lock.yaml` record for registry packages and tarball URLs. Tarball URLs include the archives that pnpm locks for GitLab and Bitbucket dependencies. For a git checkout, and for a GitHub dependency that is locked to a commit, those lockfiles hold the hash of an archive that Bun does not download. Bun keeps the commit and drops that hash.
+
+Bun records its own hash for a GitHub dependency when a command that saves `bun.lock` downloads the archive. `bun ci`, `bun install --frozen-lockfile` and `--no-save` save nothing, and an install that finds the package in `node_modules` or in the cache saves the entry without a hash. Until a hash is recorded, the commit alone pins the package.
+
+A lockfile that an earlier version of Bun migrated can still have the hash from npm or pnpm on a GitHub dependency. An install that has to download that dependency then fails with `Integrity check failed for tarball`. To repair a `bun.lock`, delete the `sha512-...` string at the end of that package's entry and run `bun install` again. For a `bun.lockb`, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only` first. In a `yarn.lock` that Bun wrote from such a lockfile, delete the `integrity` line of that entry.
+
 Bun writes the migrated `bun.lock` only when the command saves a lockfile. `bun install --frozen-lockfile` (and `bun ci`), `--dry-run`, `--no-save`, and read-only commands such as `bun outdated` use the migrated lockfile in memory and write nothing. Under `--frozen-lockfile`, Bun prints a `note:` asking you to run `bun install` and commit the result. To migrate without installing, run `bun pm migrate` or `bun install --lockfile-only`.

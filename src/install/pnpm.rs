@@ -9,12 +9,11 @@ use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
 use crate::dependency::{self, Behavior, Dependency, DependencyExt as _, VersionTag};
-use crate::integrity::Integrity;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile, join_top_level_dir};
 use crate::migration::{
-    as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
-    string_bytes, string_hash, take_appended_dependencies,
+    as_str, foreign_integrity, get_str, parse_manifest_bin, props, push_workspace_dependency,
+    record_workspace, sbuf, string_bytes, string_hash, take_appended_dependencies,
 };
 use crate::npm::{self};
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
@@ -1016,7 +1015,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
         if let Some(integrity_expr) = resolution_expr.as_ref().and_then(|r| r.get(b"integrity")) {
             let integrity_str = as_str(&integrity_expr).ok_or(InvalidPnpmLockfile)?;
-            pkg.meta.integrity = Integrity::parse(integrity_str);
+            pkg.meta.integrity = foreign_integrity(res.tag, integrity_str);
         }
 
         if let Some(os_expr) = package_obj.get(b"os") {

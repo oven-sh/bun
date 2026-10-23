@@ -161,6 +161,7 @@ impl<'a> Entry<'a> {
             .integrity
             .map_or_else(Integrity::default, Integrity::parse);
         // In a git entry, the `#` in `resolved` is followed by a commit, not by the tarball's sha1.
+        // yarn writes no `integrity` there. `bun install --yarn` copies it from the bun.lock row.
         if integrity.tag.is_supported() || self.commit.is_some() {
             return integrity;
         }

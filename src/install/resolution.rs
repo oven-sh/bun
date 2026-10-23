@@ -11,7 +11,7 @@ use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
 use crate::dependency::{self, TagExt as _};
-use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
+use crate::repository::{Repository, RepositoryExt as _};
 use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
@@ -255,29 +255,14 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         res_str: &[u8],
         string_buf: &mut StringBuf,
     ) -> Result<Resolution, FromPnpmLockfileError> {
-        if let Some(user_repo_tar_committish) =
+        if let Some(path) =
             strings::without_prefix_if_possible_comptime(res_str, b"https://codeload.github.com/")
         {
-            let Some(user_end) = strings::index_of_char_usize(user_repo_tar_committish, b'/')
-            else {
-                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
+            let Some((user, repo, committish)) = codeload_commit(path) else {
+                return Ok(Resolution::init(TaggedValue::RemoteTarball(
+                    string_buf.append(res_str)?,
+                )));
             };
-            let user = &user_repo_tar_committish[..user_end];
-            let repo_tar_committish = &user_repo_tar_committish[user_end + 1..];
-
-            let Some(repo_end) = strings::index_of_char_usize(repo_tar_committish, b'/') else {
-                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
-            };
-            let repo = &repo_tar_committish[..repo_end];
-            let tar_committish = &repo_tar_committish[repo_end + 1..];
-
-            let Some(tar_end) = strings::index_of_char_usize(tar_committish, b'/') else {
-                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
-            };
-            let committish = &tar_committish[tar_end + 1..];
-            if !is_safe_resolved_tag(committish) {
-                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
-            }
             let committish = string_buf.append(committish)?;
 
             return Ok(Resolution::init(TaggedValue::Github(Repository {
@@ -1118,3 +1103,12 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
+
+/// `<owner>/<repo>/tar.gz/<commit>` is how pnpm locks `github:owner/repo`. Any other path is a URL.
+fn codeload_commit(path: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
+    let (owner, rest) = strings::split_once_char(path, b'/')?;
+    let (repo, rest) = strings::split_once_char(rest, b'/')?;
+    let commit = rest.strip_prefix(b"tar.gz/")?;
+    let is_commit = commit.len() == 40 && commit.iter().all(u8::is_ascii_hexdigit);
+    (is_commit && !owner.is_empty() && !repo.is_empty()).then_some((owner, repo, commit))
+}

@@ -300,6 +300,7 @@ test("a truncation is a write event, and a change of metadata alone is not", asy
       .flatMap(line => Object.entries<{ events: string[]; changed?: string[] }>(JSON.parse(line).files))
       .filter(([path, file]) => path.endsWith("imported.js") || file.changed?.includes("imported.js"))
       .flatMap(([, file]) => file.events);
+  const exited = () => proc.exitCode !== null || proc.signalCode !== null;
   expect(await printed("run\ntail\nend\n")).toBe(true);
 
   // ReadDirectoryChangesW does not tell these from a write.
@@ -309,8 +310,7 @@ test("a truncation is a write event, and a change of metadata alone is not", asy
     // kqueue reports them. Once the trace has them, the truncation is a separate event. inotify is
     // not asked for them.
     if (isMacOS || isFreeBSD) {
-      const deadline = Date.now() + 3000;
-      while (!events().includes("metadata") && Date.now() < deadline) await Bun.sleep(1);
+      while (!events().includes("metadata") && !exited()) await Bun.sleep(1);
       expect(events()).toContain("metadata");
     }
   }

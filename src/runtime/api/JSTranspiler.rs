@@ -1238,6 +1238,7 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
+        log.level = self.config.get().log.level;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1532,6 +1533,7 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
+        log.level = self.config.get().log.level;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.

@@ -107,6 +107,10 @@ export const bunEnv: NodeJS.Dict<string> = {
   // `bun install` waits 250ms, 500ms, ... between the attempts of a failed request:
   // 7.75s for each request a test lets fail for good.
   BUN_CONFIG_HTTP_RETRY_BACKOFF: "1",
+  // A connection that goes silent is closed after 5 to 6 minutes by default, and only then does
+  // `bun install` send the request again on a new one. No test waits that long, and a registry
+  // that stops answering one connection usually answers the next.
+  BUN_CONFIG_HTTP_IDLE_TIMEOUT: "30",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",

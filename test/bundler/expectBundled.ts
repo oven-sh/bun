@@ -773,6 +773,9 @@ function expectBundled(
       const installProcess = Bun.spawn({
         cmd: [bunExe(), "install", ...install, "--linker=hoisted"],
         cwd: root,
+        // This install goes to the public registry, so it keeps the wait between retries that users get.
+        // `bunEnv` shortens that wait for the tests that let a request fail for good.
+        env: { ...bunEnv, BUN_CONFIG_HTTP_RETRY_BACKOFF: undefined },
         stdio: ["ignore", "inherit", "inherit"],
       });
       const installExitCode = await installProcess.exited;

@@ -395,24 +395,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if self.should_unwrap_common_js_to_esm() {
-                    if prev_require_to_convert_count < self.imports_to_convert_from_require.len() {
-                        if let BData::BIdentifier(id) = decl.binding.data {
-                            let ref_ = id.r#ref;
-                            if let Some(value) = decl.value {
-                                if let ExprData::ERequireString(req) = value.data {
-                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
-                                        let deferred = &mut self.imports_to_convert_from_require
-                                            [unwrapped_id.get_usize()];
-                                        deferred.namespace.ref_ = ref_;
-                                        self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::default());
-                                        continue 'outer;
-                                    }
-                                }
-                            }
-                        }
+                if self.should_unwrap_common_js_to_esm()
+                    && prev_require_to_convert_count < self.imports_to_convert_from_require.len()
+                    && let ExprData::ERequireString(req) = val.data
+                    && let Some(unwrapped_id) = req.unwrapped_id.get()
+                {
+                    let deferred =
+                        &mut self.imports_to_convert_from_require[unwrapped_id.get_usize()];
+                    // A pattern reads the namespace, `using` disposes its value, and a namespace export is an assignment.
+                    if let BData::BIdentifier(id) = decl.binding.data
+                        && !kind.is_using()
+                        && !(is_export && self.enclosing_namespace_arg_ref.is_some())
+                    {
+                        deferred.namespace.ref_ = id.r#ref;
+                        self.import_items_for_namespace
+                            .insert(id.r#ref, ImportItemForNamespaceMap::default());
+                        continue 'outer;
                     }
+                    let ref_ = deferred.namespace.ref_;
+                    val = self.new_expr(E::Identifier::init(ref_), val.loc);
+                    decl.value = Some(val);
+                    self.react_compiler_must_keep_body |= self.react_compiler_may_replace_body;
                 }
 
                 // `const|let|var <binding> = await import("str")` — record which
@@ -563,7 +566,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let local = id.r#ref;
                             if self.import_items_for_namespace.contains_key(&local)
                                 || !self.options.bundle
-                                || req.unwrapped_id.get().is_some()
                             {
                                 break 'split_require;
                             }
@@ -1802,6 +1804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
+            && !p.react_compiler_must_keep_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending

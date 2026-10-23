@@ -495,10 +495,14 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
 
   // `unshare` arguments that make its command PID 1 of a new pid namespace, or null where the host
   // allows no such namespace. --mount-proc, because LeakSanitizer lists the threads to scan from /proc.
+  // --kill-child, so that the command does not outlive an `unshare` that a timeout kills. BusyBox's
+  // `unshare` has no such option.
   const asPid1 = (() => {
-    for (const userNamespace of [[], ["--user", "--map-root-user"]]) {
-      const launcher = ["unshare", ...userNamespace, "--pid", "--fork", "--mount-proc"];
-      if (spawnSync(launcher[0], [...launcher.slice(1), "true"]).status === 0) return launcher;
+    for (const killChild of [["--kill-child"], []]) {
+      for (const userNamespace of [[], ["--user", "--map-root-user"]]) {
+        const launcher = ["unshare", ...userNamespace, "--pid", "--fork", ...killChild, "--mount-proc"];
+        if (spawnSync(launcher[0], [...launcher.slice(1), "true"]).status === 0) return launcher;
+      }
     }
     return null;
   })();

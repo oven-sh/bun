@@ -2380,12 +2380,19 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
+                                // ToString cannot throw for these.
+                                if !next_value.is_cell() || next_value.js_type().is_string() {
+                                    self.print_as::<ENABLE_ANSI_COLORS>(
+                                        Tag::String,
+                                        writer_,
+                                        next_value,
+                                        next_value.js_type(),
+                                    )?;
+                                } else {
+                                    self.print_string_substitution::<ENABLE_ANSI_COLORS>(
+                                        writer_, next_value,
+                                    )?;
+                                }
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -3164,6 +3171,8 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        /// Whether `String(object)` throws before it runs code of the object (`UtilInspect.cpp`).
+        safe fn Bun__hasNoStringConversion(object: JSValue, global: &JSGlobalObject) -> bool;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3501,6 +3510,44 @@ pub mod formatter {
             let slice = str.slice();
             self.add_for_new_line(slice.len());
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
+        }
+
+        /// `%s` of a Symbol or an object. An object that `String()` cannot convert is inspected.
+        #[cold]
+        #[inline(never)]
+        fn print_string_substitution<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            use jsc::JSType as T;
+            let global = self.global_this;
+            let js_type = value.js_type();
+            // The string printer converts with ToString, which throws for a Symbol.
+            if js_type == T::Symbol {
+                return self.print_as::<false>(Tag::Symbol, writer_, value, js_type);
+            }
+            let is_revoked_proxy = js_type == T::ProxyObject
+                && !value
+                    .get_proxy_internal_field(jsc::ProxyField::Handler)
+                    .is_cell();
+            if is_revoked_proxy {
+                return self.print_as::<false>(Tag::RevokedProxy, writer_, value, js_type);
+            }
+            // Other kinds (arguments, a Map) print through `length` or `size` of the object.
+            let is_inspected = matches!(js_type, T::FinalObject | T::ModuleNamespaceObject)
+                && Bun__hasNoStringConversion(value, global);
+            if !is_inspected {
+                return self.print_as::<C>(Tag::String, writer_, value, js_type);
+            }
+
+            let prev_single_line = self.single_line;
+            let prev_max_depth = self.max_depth;
+            let _restore_single_line = defer_restore!(self.single_line, prev_single_line);
+            let _restore_max_depth = defer_restore!(self.max_depth, prev_max_depth);
+            self.single_line = true;
+            self.max_depth = self.depth;
+            self.format::<false>(Tag::get(value, global)?, writer_, value, global)
         }
 
         #[inline(never)]
@@ -5380,9 +5427,7 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            if self.single_line {
-                let _ = writer_.write_all(b" ");
-            } else if self.always_newline_scope || self.good_time_for_a_new_line() {
+            if !self.single_line && (self.always_newline_scope || self.good_time_for_a_new_line()) {
                 let _ = writer_.write_all(b"\n");
                 let _ = self.write_indent(writer_);
                 self.reset_line();
@@ -5441,9 +5486,9 @@ pub mod formatter {
                 }
             } else {
                 self.depth -= 1;
+                self.indent = self.indent.saturating_sub(1);
 
                 if iter_always_newline {
-                    self.indent = self.indent.saturating_sub(1);
                     self.print_comma::<C>(writer_).expect("unreachable");
                     let _ = writer_.write_all(b"\n");
                     let _ = self.write_indent(writer_);

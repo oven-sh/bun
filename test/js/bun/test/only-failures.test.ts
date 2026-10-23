@@ -18,8 +18,7 @@ test.concurrent("only-failures flag should show only failures", async () => {
   }).toMatchInlineSnapshot(`
     {
       "exitCode": 1,
-      "stderr": 
-    "test/js/bun/test/only-failures.fixture.ts:
+      "stderr": "test/js/bun/test/only-failures.fixture.ts:
      7 | test("passing test 2", () => {
      8 |   expect(2 + 2).toBe(4);
      9 | });
@@ -49,8 +48,7 @@ test.concurrent("only-failures flag should show only failures", async () => {
      1 todo
      2 fail
      4 expect() calls
-    Ran 7 tests across 1 file."
-    ,
+    Ran 7 tests across 1 file.",
       "stdout": "bun test <version> (<revision>)",
     }
   `);

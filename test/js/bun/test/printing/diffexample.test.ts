@@ -63,12 +63,10 @@ test.concurrent("no color", async () => {
         "object1": "a",
     -   "object2": " b",
     +   "object2": "b",
-        "object3": 
-      "c
-    - d"
+        "object3": "c
+    - d",
     + d
-    + e"
-      ,
+    + e",
       }
 
     - Expected  - 2

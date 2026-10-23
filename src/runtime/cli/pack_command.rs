@@ -1,6 +1,7 @@
 use bun_collections::VecExt;
 use core::fmt;
 use std::io::Write as _;
+use std::rc::Rc;
 
 use crate::cli::Command;
 use crate::cli::publish_command as Publish;
@@ -334,16 +335,60 @@ impl PackQueue {
     }
 }
 
-/// (dir, dir_subpath, dir_depth)
-struct DirInfo(Dir, Box<[u8]>, usize);
+/// A directory of a walk. A borrowed one is a root that belongs to the caller and stays open.
+pub(crate) enum WalkedDir {
+    Borrowed(Fd),
+    Owned(Dir),
+}
 
-/// (dir, dir_depth). The root (depth 1) belongs to the caller and stays open. The walk closes the
-/// others.
-struct WalkedDir(Dir, usize);
-impl Drop for WalkedDir {
-    fn drop(&mut self) {
-        if self.1 == 1 {
-            self.0.fd = Fd::INVALID;
+impl WalkedDir {
+    pub(crate) fn dir(&self) -> &Dir {
+        match self {
+            WalkedDir::Borrowed(fd) => Dir::borrow(fd),
+            WalkedDir::Owned(dir) => dir,
+        }
+    }
+}
+
+/// Where `iterate_project_tree` starts: (dir, dir_subpath, dir_depth)
+struct DirInfo(WalkedDir, ZBox, usize);
+
+/// The directories that a walk listed and did not read yet. One that waits has no open handle.
+pub(crate) struct PendingDirs<T> {
+    /// (the directory that listed it, subpath, payload)
+    pending: Vec<(Rc<WalkedDir>, ZBox, T)>,
+    root: Option<(Rc<WalkedDir>, ZBox, T)>,
+}
+
+impl<T> PendingDirs<T> {
+    pub(crate) fn new(root: WalkedDir, subpath: ZBox, payload: T) -> Self {
+        Self {
+            pending: Vec::new(),
+            root: Some((Rc::new(root), subpath, payload)),
+        }
+    }
+
+    /// Adds a subdirectory of `parent`. `parent` closes when the last of them is open.
+    pub(crate) fn push(&mut self, parent: &Rc<WalkedDir>, subpath: ZBox, payload: T) {
+        self.pending.push((Rc::clone(parent), subpath, payload));
+    }
+
+    /// Returns the root, then opens the directory pushed last. If `failed` returns, that one is skipped.
+    pub(crate) fn next(
+        &mut self,
+        mut failed: impl FnMut(bun_sys::Error, &ZStr),
+    ) -> Option<(Rc<WalkedDir>, ZBox, T)> {
+        if let Some(root) = self.root.take() {
+            return Some(root);
+        }
+        loop {
+            let (parent, subpath, payload) = self.pending.pop()?;
+            let opened = open_listed_dir(parent.dir(), &subpath);
+            drop(parent);
+            match opened {
+                Ok(dir) => return Some((Rc::new(WalkedDir::Owned(dir)), subpath, payload)),
+                Err(err) => failed(err, &subpath),
+            }
         }
     }
 }
@@ -356,13 +401,20 @@ fn iterate_included_project_tree(
     root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
-    let mut dirs = vec![DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1)];
-    let mut included_dirs: Vec<DirInfo> = Vec::new();
+    // The payload is (dir_depth, whether "files" includes the directory).
+    let root = WalkedDir::Borrowed(root_dir.fd);
+    let mut dirs = PendingDirs::new(root, ZBox::default(), (1, false));
+    // The root stays open, so what it lists can wait. That only keeps the order of the `--verbose` lines.
+    let mut included_dirs: Vec<ZBox> = Vec::new();
 
     // first find included dirs and files
-    while let Some(DirInfo(dir, dir_subpath, dir_depth)) = dirs.pop() {
-        let dir = WalkedDir(dir, dir_depth);
-        let dir = &dir.0;
+    while let Some((handle, dir_subpath, (dir_depth, is_included))) = dirs.next(listed_dir_failed) {
+        let dir = handle.dir();
+        if is_included {
+            let included_dir = DirInfo(WalkedDir::Borrowed(dir.fd), dir_subpath, dir_depth);
+            iterate_project_tree(pack_queue, bins, Some(excludes), included_dir, log_level)?;
+            continue;
+        }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
         while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
@@ -438,25 +490,23 @@ fn iterate_included_project_tree(
                 continue;
             }
             // TODO: do not traverse directories whose files a pattern all excludes (`!test/**`)
-            let subdir = open_subdir(dir, entry_name, &entry_subpath);
-            let subdir = DirInfo(subdir, entry_subpath.as_bytes().into(), dir_depth + 1);
-            if included {
-                included_dirs.push(subdir);
+            if included && dir_depth == 1 {
+                included_dirs.push(entry_subpath);
             } else {
-                dirs.push(subdir);
+                dirs.push(&handle, entry_subpath, (dir_depth + 1, included));
             }
         }
     }
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
-    for included_dir_info in included_dirs {
-        iterate_project_tree(
-            pack_queue,
-            bins,
-            Some(excludes),
-            included_dir_info,
-            log_level,
-        )?;
+    for subpath in included_dirs {
+        match open_listed_dir(root_dir, &subpath) {
+            Ok(dir) => {
+                let included_dir = DirInfo(WalkedDir::Owned(dir), subpath, 2);
+                iterate_project_tree(pack_queue, bins, Some(excludes), included_dir, log_level)?;
+            }
+            Err(err) => listed_dir_failed(err, &subpath),
+        }
     }
 
     Ok(())
@@ -501,7 +551,7 @@ const ITERABLE: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
 };
 
 #[cold]
-fn fail_open_dir(err: crate::Error, subpath: &[u8]) -> ! {
+pub(crate) fn fail_open_dir(err: crate::Error, subpath: &[u8]) -> ! {
     Output::err(
         err,
         "failed to open directory \"{}\" for packing",
@@ -510,16 +560,27 @@ fn fail_open_dir(err: crate::Error, subpath: &[u8]) -> ! {
     Global::crash();
 }
 
-/// Opens a directory that the walk listed, so every failure is fatal. If it was replaced by a
-/// symlink in the meantime, the symlink isn't followed.
-fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
-    let opts = bun_sys::OpenDirOptions {
-        iterate: true,
-        // On Windows this would open the link itself instead of failing.
-        no_follow: cfg!(not(windows)),
+/// Opens a directory that `parent` listed. A symlink that replaced it since isn't followed.
+fn open_listed_dir(parent: &Dir, subpath: &ZStr) -> bun_sys::Maybe<Dir> {
+    let name_at = subpath.len() - path::basename_posix(subpath.as_bytes()).len();
+    let name = ZStr::from_slice_with_nul(&subpath.as_bytes_with_nul()[name_at..]);
+    // On Windows this would open the link itself instead of failing.
+    let no_follow = if cfg!(windows) {
+        0
+    } else {
+        bun_sys::O::NOFOLLOW
     };
-    dir.open_dir(entry_name, opts)
-        .unwrap_or_else(|err| fail_open_dir(err.into(), entry_subpath.as_bytes()))
+    let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | no_follow;
+    bun_sys::openat(parent.fd, name, flags, 0).map(Dir::from_fd)
+}
+
+/// For a listed directory that doesn't open: fatal, unless it was removed since the listing.
+pub(crate) fn listed_dir_failed(err: bun_sys::Error, subpath: &ZStr) {
+    // On Windows a listed name that can't be opened again is `ENOENT` too.
+    let removed = cfg!(not(windows)) && err.get_errno() == bun_sys::E::ENOENT;
+    if !removed {
+        fail_open_dir(err.into(), subpath);
+    }
 }
 
 /// Returns `None` if the directory doesn't exist. If it exists but can't be opened, that's fatal.
@@ -570,7 +631,7 @@ fn fail_read_dir(err: bun_sys::Error, dir_subpath: &[u8]) -> ! {
     Global::crash();
 }
 
-fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocError> {
+pub(crate) fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocError> {
     let sep: &[u8] = if dir_subpath.is_empty() { b"" } else { b"/" };
     Ok(ZBox::from_vec_with_nul(
         [dir_subpath, sep, entry_name, b"\0"].concat(),
@@ -838,10 +899,12 @@ fn add_bundled_dep(
 
     // `is_excluded` only treats depth 1, the project root, specially. Any other depth works.
     const PACKAGE_DEPTH: usize = 2;
-    let mut dirs = vec![DirInfo(dir, subpath.clone(), PACKAGE_DEPTH)];
+    // The payload is the depth.
+    let root = WalkedDir::Owned(dir);
+    let mut dirs = PendingDirs::new(root, ZBox::from_bytes(&subpath), PACKAGE_DEPTH);
 
-    while let Some(DirInfo(dir, dir_subpath, dir_depth)) = dirs.pop() {
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+    while let Some((handle, dir_subpath, dir_depth)) = dirs.next(listed_dir_failed) {
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(handle.dir()));
         while let Some(entry) = next_dir_entry(&mut iter, &dir_subpath) {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -869,12 +932,7 @@ fn add_bundled_dep(
                     edited: None,
                 });
             } else {
-                let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
-                dirs.push(DirInfo(
-                    subdir,
-                    entry_subpath_.as_bytes().into(),
-                    dir_depth + 1,
-                ));
+                dirs.push(&handle, entry_subpath_, dir_depth + 1);
             }
         }
     }
@@ -1038,7 +1096,7 @@ fn iterate_project_tree(
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
-    let root_depth = root_dir.2;
+    let DirInfo(root_dir, root_subpath, root_depth) = root_dir;
     let mut ignores: Vec<IgnorePatterns> = Vec::new();
 
     if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
@@ -1052,11 +1110,12 @@ fn iterate_project_tree(
     }
 
     // Depth-first, so that ignore patterns are pushed and popped instead of cloned.
-    let mut dirs: Vec<(DirInfo, InheritedIgnore)> = vec![(root_dir, None)];
+    // The payload is (dir_depth, inherited).
+    let no_inherited: InheritedIgnore = None;
+    let mut dirs = PendingDirs::new(root_dir, root_subpath, (root_depth, no_inherited));
 
-    while let Some((DirInfo(dir, dir_subpath, dir_depth), inherited)) = dirs.pop() {
-        let dir = WalkedDir(dir, dir_depth);
-        let dir = &dir.0;
+    while let Some((handle, dir_subpath, (dir_depth, inherited))) = dirs.next(listed_dir_failed) {
+        let dir = handle.dir();
 
         while ignores.last().is_some_and(|last| last.depth >= dir_depth) {
             ignores.pop();
@@ -1107,11 +1166,7 @@ fn iterate_project_tree(
                     })?;
                 }
             } else if !is_listed_bin(bins, BinType::Dir, &entry_subpath_) {
-                let subdir = open_subdir(dir, entry_name, &entry_subpath_);
-                dirs.push((
-                    DirInfo(subdir, entry_subpath_.as_bytes().into(), dir_depth + 1),
-                    entries_inherit,
-                ));
+                dirs.push(&handle, entry_subpath_, (dir_depth + 1, entries_inherit));
             }
         }
     }
@@ -1466,7 +1521,7 @@ pub(crate) fn published_files(
                         &mut pack_queue,
                         &[],
                         None,
-                        DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
+                        DirInfo(WalkedDir::Owned(bin_dir), bin.path.clone(), 2),
                         log_level,
                     )?;
                 }
@@ -1480,7 +1535,7 @@ pub(crate) fn published_files(
             &mut pack_queue,
             &bins,
             None,
-            DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
+            DirInfo(WalkedDir::Borrowed(root_dir.fd), ZBox::default(), 1),
             log_level,
         )?;
         return Ok((pack_queue, bins));

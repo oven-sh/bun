@@ -23,6 +23,7 @@ use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
+use crate::cli::pack_command::{PendingDirs, WalkedDir};
 use crate::cli::pm_diff_normalize as normalize;
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
@@ -677,23 +678,27 @@ fn read_dir_tree(
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
-    while let Some((dir, prefix)) = stack.pop() {
+    let root_dir = WalkedDir::Owned(bun_sys::Dir::from_fd(root_fd));
+    let mut stack = PendingDirs::new(root_dir, bun_core::ZBox::default(), ());
+    while let Some((handle, prefix, ())) = stack.next(|err, rel| fail(err, rel)) {
+        let dir = handle.dir().fd;
+        let prefix = prefix.as_bytes();
         let mut it = DirIterator::iterate(dir);
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
-                Err(err) => fail(err, &prefix),
+                Err(err) => fail(err, prefix),
             };
             let name = entry.name.slice_u8();
             if name == b"node_modules" || name == b".git" {
                 continue;
             }
-            let mut rel = prefix.clone();
-            if !rel.is_empty() {
-                rel.push(b'/');
-            }
+            let separator: &[u8] = if prefix.is_empty() { b"" } else { b"/" };
+            // With room for the NUL that the subpath of a pending directory ends with.
+            let mut rel = Vec::with_capacity(prefix.len() + separator.len() + name.len() + 1);
+            rel.extend_from_slice(prefix);
+            rel.extend_from_slice(separator);
             rel.extend_from_slice(name);
             // Some filesystems leave d_type blank: ask lstat what the entry itself is first.
             #[cfg(not(windows))]
@@ -720,10 +725,9 @@ fn read_dir_tree(
             let kind = own_kind;
             match kind {
                 bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
-                bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
-                    Ok(sub) => stack.push((sub, rel)),
-                    Err(err) => fail(err, &rel),
-                },
+                bun_sys::FileKind::Directory => {
+                    stack.push(&handle, bun_core::ZBox::from_vec(rel), ());
+                }
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
                     Ok(bytes) => {
                         #[cfg(not(windows))]
@@ -747,7 +751,6 @@ fn read_dir_tree(
                 _ => {}
             }
         }
-        dir.close();
     }
     Ok(tree)
 }

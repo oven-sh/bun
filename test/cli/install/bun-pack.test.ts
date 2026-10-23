@@ -30,6 +30,7 @@ import {
   substDrive,
   tempDir,
   unprivilegedSpawnOptions,
+  withOpenFileLimit,
   writeBinCommand,
 } from "harness";
 import { mkfifo } from "mkfifo";
@@ -3598,6 +3599,104 @@ describe.concurrent("bundledDependencies", () => {
   });
 });
 
+// A walk opened every directory when it listed it and kept it open until its turn. A directory with more
+// subdirectories than the process can have open files failed: `EMFILE: failed to open directory "d57" for packing`.
+describe.concurrent.skipIf(isWindows)("more directories than file descriptors", () => {
+  const names = Array.from({ length: 100 }, (_, i) => `d${i}`);
+
+  /** Runs `bun ...args` in `cwd` with a limit of 64 open file descriptors. */
+  async function runLimited(cwd: string, args: string[]) {
+    await using proc = spawn({
+      cmd: withOpenFileLimit(64, [bunExe(), ...args]),
+      cwd,
+      // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+      env: { ...bunEnv, NO_COLOR: "1", npm_config_registry: "http://user:password@127.0.0.1:1/" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  type Row = { walk: string; fields?: object; file: (name: string) => string; others?: Record<string, string> };
+  const rows: Row[] = [
+    { walk: "the package root", file: name => `${name}/index.js` },
+    { walk: "a directory below the root", file: name => `lib/${name}/index.js` },
+    // A directory stays open only while it has subdirectories left to walk.
+    { walk: "directories with one subdirectory each", file: name => `${name}/lib/index.js` },
+    { walk: '"files" includes each one', fields: { files: ["d*"] }, file: name => `${name}/index.js` },
+    {
+      walk: '"files" includes a file in each one',
+      fields: { files: ["**/index.js"] },
+      file: name => `${name}/index.js`,
+    },
+    {
+      walk: '"files" includes each one below "lib"',
+      fields: { files: ["lib/*"] },
+      file: name => `lib/${name}/index.js`,
+    },
+    {
+      walk: '"files" includes a directory in each one',
+      fields: { files: ["d*/lib"] },
+      file: name => `${name}/lib/index.js`,
+    },
+    {
+      walk: "directories.bin",
+      fields: { directories: { bin: "bin" } },
+      file: name => `bin/${name}/cli.js`,
+      // keeps the walk of the package out of the directory, so only the bin leads there
+      others: { ".npmignore": "bin\n" },
+    },
+    {
+      walk: "a bundled dependency",
+      fields: { bundledDependencies: ["dep"] },
+      file: name => `node_modules/dep/${name}/index.js`,
+      others: { "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+    },
+  ];
+
+  test.each(rows)("bun pm pack: $walk", async ({ fields, file, others = {} }) => {
+    const files = names.map(file);
+    using dir = tempDir("pack-emfile", {
+      "package.json": JSON.stringify({ name: "pack-emfile", version: "1.0.0", ...fields }),
+      ...Object.fromEntries(files.map(path => [path, indexJs])),
+      ...others,
+    });
+
+    const { err, exitCode } = await runLimited(String(dir), ["pm", "pack"]);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    const packed = [...files, ...Object.keys(others).filter(path => path !== ".npmignore")];
+    expect(tarballEntries(join(dir, "pack-emfile-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...packed.map(path => `package/${path}`).sort(),
+    ]);
+  });
+
+  // `bun publish` and `bun pm diff` of a folder with a package.json run the same walks.
+  test.each([
+    { command: "pm pack --dry-run", cwd: "b", expected: "Total files: 101" },
+    { command: "publish --dry-run", cwd: "b", expected: "Total files: 101" },
+    { command: "pm diff ./a ./b --name-only", cwd: "", expected: "M d7/index.js" },
+  ])("bun $command", async ({ command, cwd, expected }) => {
+    const folder = (changed: string) => ({
+      "package.json": JSON.stringify({ name: "pack-emfile", version: "1.0.0" }),
+      ...Object.fromEntries(names.map(name => [`${name}/index.js`, indexJs])),
+      "d7/index.js": changed,
+    });
+    using dir = tempDir("pack-emfile-commands", {
+      a: folder("module.exports = 1;\n"),
+      b: folder("module.exports = 2;\n"),
+    });
+
+    const { out, err, exitCode } = await runLimited(join(dir, cwd), command.split(" "));
+    expect(err).toBe("");
+    expect(out.split("\n")).toContain(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("files", () => {
   test("CHANGELOG is not included by default", async () => {
     using dir = tempDir("pack-files-changelog", {
@@ -4121,6 +4220,43 @@ describe.concurrent("files", () => {
       "package/src/index.js",
       "package/src/lib/b.js",
       "package/sub/build/out.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The search for what "files" includes walks such a directory when it gets to it.
+  test("included directories below the root keep their ignore files and the negated entries", async () => {
+    using dir = tempDir("pack-files-nested", {
+      "package.json": JSON.stringify({
+        name: "pack-files-nested",
+        version: "1.0.0",
+        files: ["packages/*/dist", "!**/*.map"],
+      }),
+      "dist/index.js": "x",
+      "packages/a/dist/index.js": "x",
+      "packages/a/dist/index.js.map": "x",
+      "packages/a/dist/.npmignore": "/private.js\n",
+      "packages/a/dist/private.js": "x",
+      "packages/a/dist/deep/er/index.js": "x",
+      "packages/a/dist/deep/er/private.js": "x",
+      "packages/a/dist/node_modules/dep/index.js": "x",
+      "packages/a/src/index.ts": "x",
+      "packages/b/dist/index.js": "x",
+      "packages/b/dist/deep/index.js.map": "x",
+      "packages/b/dist/deep/private.js": "x",
+      "packages/b/src/dist/index.js": "x",
+      "packages/c/src/index.ts": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-files-nested-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/packages/a/dist/deep/er/index.js",
+      "package/packages/a/dist/deep/er/private.js",
+      "package/packages/a/dist/index.js",
+      "package/packages/b/dist/deep/private.js",
+      "package/packages/b/dist/index.js",
     ]);
     expect(exitCode).toBe(0);
   });
@@ -5294,6 +5430,36 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
     expect(await tarballs(dir)).toEqual([]);
   });
 
+  // A walk opens a directory after the directories that its parent listed after it. The walk still stops there.
+  test.each([
+    { what: "a directory of the package", fields: {}, locked: "lib/locked" },
+    { what: 'a directory that "files" includes', fields: { files: ["locked"] }, locked: "locked" },
+    {
+      what: 'a directory below the root that "files" includes',
+      fields: { files: ["lib/locked"] },
+      locked: "lib/locked",
+    },
+    {
+      what: "a directory of a bundled dependency",
+      fields: { bundledDependencies: ["dep1"] },
+      locked: "node_modules/dep1/locked",
+    },
+  ])("$what", async ({ fields, locked }) => {
+    using dir = tempDir("pack-locked-dir", {
+      "package.json": manifest("pack-locked", fields),
+      "index.js": indexJs,
+      "node_modules/dep1/package.json": manifest("dep1"),
+      // The walk gets to the directories before and after the one that does not open.
+      ...Object.fromEntries(["a", "locked", "z"].map(name => [join(locked, "..", name, "index.js"), indexJs])),
+    });
+
+    const { out, err, exitCode } = await runWithout(dir, locked, ["pm", "pack"]);
+    expect(err).toBe(`EACCES: failed to open directory "${locked}" for packing`);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await tarballs(dir)).toEqual([]);
+  });
+
   // `bun publish` and `bun pm diff` run the same scan. The package is folder `b`, and `a` is a copy that opens.
   // A dry run opens no file, so it sees a directory that does not open and not a file that does not.
   const binDirectory = {
@@ -5601,6 +5767,12 @@ long syscall(long nr, ...) {
   long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
   int answered = errno;
   if (when && strcmp(when, "end") == 0 && rc == 0) return fail(injected);
+  // DIR_READ_FAULT_REMOVE_AT_END is an empty directory. The library removes it when the reader gets the end of the
+  // directory, which is after the reader listed it and before a walk that opens a directory at its turn opens it.
+  // DIR_READ_FAULT_LINK_AT_END is the target of a symlink that the library then makes in its place.
+  const char *listed = reader == env_int("DIR_READ_FAULT_READER", 1) ? getenv("DIR_READ_FAULT_REMOVE_AT_END") : NULL;
+  const char *target = getenv("DIR_READ_FAULT_LINK_AT_END");
+  if (listed && rc == 0 && rmdir(listed) == 0 && target && symlink(target, listed) < 0) {}
   note(rc < 0 ? "failed" : "ok", rc < 0 ? answered : rc);
   errno = answered;
   return rc;
@@ -5642,6 +5814,10 @@ long syscall(long nr, ...) {
     reader?: number;
     /** "removed": the directory, which is empty, is removed before the read and the kernel answers ENOENT. */
     errno?: "EIO" | "removed";
+    /** An empty directory in `dir`. It is removed when the reader gets the end of `dir`. */
+    removeAtEnd?: string;
+    /** The target of a symlink that then takes the place of `removeAtEnd`. */
+    linkAtEnd?: string;
   };
 
   /** The environment of a bun process in which the read fails, and the reads of the directory that the process made. */
@@ -5657,6 +5833,8 @@ long syscall(long nr, ...) {
         DIR_READ_FAULT_READ: fault.read === undefined ? undefined : String(fault.read),
         DIR_READ_FAULT_READER: String(fault.reader ?? 1),
         DIR_READ_FAULT_ERRNO: fault.errno === "removed" ? "removed" : String(constants.errno.EIO),
+        DIR_READ_FAULT_REMOVE_AT_END: fault.removeAtEnd,
+        DIR_READ_FAULT_LINK_AT_END: fault.linkAtEnd,
         DIR_READ_FAULT_LOG: log,
       },
       /** `ok`: the byte count of each read that the kernel answered (0 is the end). `failed`: the errno of each read that failed. */
@@ -5761,8 +5939,8 @@ long syscall(long nr, ...) {
     expect(exitCode).toBe(1);
   });
 
-  // pack opens a directory when its parent lists it and reads it later. A directory that is removed in between fails
-  // the read with ENOENT, which libc's readdir() and so npm report as the end of the directory.
+  // A directory that is removed after pack opened it fails the read with ENOENT, which libc's readdir() and so npm
+  // report as the end of the directory.
   test.concurrent("bun pm pack: a directory that is removed after pack opened it has no entries", async () => {
     using dir = tempDir("pack-read-removed", {
       "package.json": JSON.stringify({ name: "pack-read-removed", version: "1.0.0" }),
@@ -5782,6 +5960,111 @@ long syscall(long nr, ...) {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // One row for each walk. `gone` is an empty directory that `listedBy` lists.
+  const listedDirectories = [
+    { walk: "the default walk", packageJson: {}, listedBy: "lib", gone: "lib/gone" },
+    // The resolver reads the package root before pack does: pack is the second reader.
+    {
+      walk: '"files" with a directory',
+      packageJson: { files: ["gone", "lib"] },
+      listedBy: "",
+      gone: "gone",
+      reader: 2,
+    },
+    {
+      walk: '"files" with a directory that a directory below the root lists',
+      packageJson: { files: ["lib/*"] },
+      listedBy: "lib",
+      gone: "lib/gone",
+    },
+    {
+      walk: "bundledDependencies",
+      packageJson: { bundledDependencies: ["dep"] },
+      listedBy: "node_modules/dep",
+      gone: "node_modules/dep/gone",
+    },
+  ];
+  const listedDirectoriesPackage = (packageJson: object, gone: string) => ({
+    "package.json": JSON.stringify({ name: "pack-listed-dir", version: "1.0.0", ...packageJson }),
+    "lib/index.js": index,
+    "node_modules/dep/package.json": "{}",
+    [gone]: {},
+  });
+
+  // pack opens a directory at its turn, which is after its parent listed it. One that is removed in between has no
+  // entries, like one that is removed after pack opened it.
+  test.concurrent.each(listedDirectories)(
+    "bun pm pack: a directory that is removed before pack opens it has no entries, $walk",
+    async ({ packageJson, listedBy, gone, reader }) => {
+      using dir = tempDir("pack-open-removed", listedDirectoriesPackage(packageJson, gone));
+      const fault = failDirRead({ dir: join(dir, listedBy), reader, removeAtEnd: join(dir, gone) });
+
+      const { err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+      // If the library did not interpose, the directory is still there.
+      expect(existsSync(join(dir, gone))).toBe(false);
+      expect(err).toBe("");
+      expect(tarballEntries(join(dir, "pack-listed-dir-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/lib/index.js",
+        ...("bundledDependencies" in packageJson ? ["package/node_modules/dep/package.json"] : []),
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The walk goes on with the directories that are left. In the first three rows the directory that is gone is one of
+  // three siblings, so it is the first, the second or the last one that the walk opens. In the last two it is the only
+  // subdirectory of one of two directories, and the walk opens the other one after it in one of them.
+  test.concurrent.each([
+    { gone: "lib/a", listedBy: "lib" },
+    { gone: "lib/b", listedBy: "lib" },
+    { gone: "lib/c", listedBy: "lib" },
+    { gone: "x/only", listedBy: "x" },
+    { gone: "y/only", listedBy: "y" },
+  ])("bun pm pack: the walk goes on after $gone is removed before pack opens it", async ({ gone, listedBy }) => {
+    const kept = ["lib/a", "lib/b", "lib/c", "x/only", "y/only"].filter(path => path !== gone);
+    const files = ["lib", "x", "y", ...kept].map(path => `${path}/index.js`);
+    using dir = tempDir("pack-open-removed-siblings", {
+      "package.json": JSON.stringify({ name: "pack-listed-dir", version: "1.0.0" }),
+      ...Object.fromEntries(files.map(path => [path, index])),
+      [gone]: {},
+    });
+    const fault = failDirRead({ dir: join(dir, listedBy), removeAtEnd: join(dir, gone) });
+
+    const { err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    expect(existsSync(join(dir, gone))).toBe(false);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-listed-dir-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...files.sort().map(path => `package/${path}`),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A symlink that takes the place of a directory after its parent listed it is not followed. The walk stops there.
+  test.concurrent.each(listedDirectories)(
+    "bun pm pack: a symlink that replaces a directory before pack opens it is not followed, $walk",
+    async ({ packageJson, listedBy, gone, reader }) => {
+      using dir = tempDir("pack-open-replaced", {
+        pkg: listedDirectoriesPackage(packageJson, gone),
+        "outside/secret.js": index,
+      });
+      const pkg = join(dir, "pkg");
+      const fault = failDirRead({
+        dir: join(pkg, listedBy),
+        reader,
+        removeAtEnd: join(pkg, gone),
+        linkAtEnd: join(dir, "outside"),
+      });
+
+      const { err, exitCode } = await bun(["pm", "pack"], pkg, fault.env);
+      expect((await lstat(join(pkg, gone))).isSymbolicLink()).toBe(true);
+      expect(err).toBe(`ENOTDIR: failed to open directory "${gone}" for packing`);
+      expect(existsSync(join(pkg, "pack-listed-dir-1.0.0.tgz"))).toBe(false);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test.concurrent("bun pm pack: postpack does not run", async () => {
     using dir = tempDir("pack-read-fails-scripts", {
@@ -5842,17 +6125,19 @@ long syscall(long nr, ...) {
     ]);
   });
 
-  // A registry that counts the requests it receives.
+  // A registry that counts the requests it receives and keeps the manifest of the last publish.
   function countingRegistry() {
     const registry = {
       requests: 0,
+      manifest: undefined as any,
       bunfig: "",
       [Symbol.dispose]: () => void server.stop(true),
     };
     const server = Bun.serve({
       port: 0,
-      fetch() {
+      async fetch(req) {
         registry.requests++;
+        if (req.method === "PUT") registry.manifest = await req.json();
         return new Response("OK", { status: 200 });
       },
     });
@@ -5893,6 +6178,82 @@ long syscall(long nr, ...) {
     expect(await sortedNames(dir)).toEqual(before);
     expect(exitCode).toBe(1);
   });
+
+  // The listing for the manifest is the second reader of `lib`: pack reads it first. It leaves out a directory that
+  // does not open, and it does not follow a symlink that took the place of one.
+  test.concurrent("bun publish: a symlink that replaces a directory of directories.bin is not followed", async () => {
+    using registry = countingRegistry();
+    using dir = tempDir("publish-bin-replaced", {
+      pkg: {
+        "package.json": JSON.stringify({ name: "publish-bin-replaced", version: "1.0.0", directories: { bin: "lib" } }),
+        "bunfig.toml": registry.bunfig,
+        "lib/index.js": index,
+        "lib/gone": {},
+      },
+      "outside/secret.js": index,
+    });
+    const pkg = join(dir, "pkg");
+    const fault = failDirRead({
+      dir: join(pkg, "lib"),
+      reader: 2,
+      removeAtEnd: join(pkg, "lib", "gone"),
+      linkAtEnd: join(dir, "outside"),
+    });
+
+    const { err, exitCode } = await bun(["publish"], pkg, fault.env);
+    expect((await lstat(join(pkg, "lib", "gone"))).isSymbolicLink()).toBe(true);
+    expect(err).toBe("");
+    expect(registry.manifest.versions["1.0.0"].bin).toEqual({ "index.js": "lib/index.js", gone: "lib/gone" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A folder with a package.json is read as `bun pm pack` would publish it, so a directory that is removed before its
+  // turn has no entries. A folder without one is read whole, and everything that cannot be read stops the diff.
+  test.concurrent.each([
+    { folder: "a package", packageJson: true, link: false, lines: ["D lib/gone/x.js"], err: "", exitCode: 0 },
+    {
+      folder: "a folder without a package.json",
+      packageJson: false,
+      link: false,
+      lines: [],
+      err: "ENOENT: No such file or directory: failed to read <dir>/b/lib/gone (open)",
+      exitCode: 1,
+    },
+    {
+      folder: "a folder without a package.json, and a symlink takes its place",
+      packageJson: false,
+      link: true,
+      lines: [],
+      err: "ENOTDIR: Not a directory: failed to read <dir>/b/lib/gone (open)",
+      exitCode: 1,
+    },
+  ])(
+    "bun pm diff: a directory that is removed before its turn, $folder",
+    async ({ packageJson, link, lines, err: expected, exitCode: expectedExitCode }) => {
+      const manifest = packageJson ? { "package.json": JSON.stringify({ name: "p", version: "1.0.0" }) } : {};
+      using dir = tempDir("pm-diff-open-removed", {
+        a: { ...manifest, "lib/gone/x.js": "module.exports = 1;\n" },
+        b: { ...manifest, "lib/gone": {} },
+        "outside/secret.js": index,
+      });
+      const gone = join(dir, "b", "lib", "gone");
+      const fault = failDirRead({
+        dir: join(dir, "b", "lib"),
+        removeAtEnd: gone,
+        linkAtEnd: link ? join(dir, "outside") : undefined,
+      });
+
+      const { out, err, exitCode } = await bun(["pm", "diff", "./a", "./b", "--name-only"], dir, {
+        ...fault.env,
+        NO_COLOR: "1",
+      });
+      // If the library did not interpose, the directory is still there.
+      expect(link ? (await lstat(gone)).isSymbolicLink() : !existsSync(gone)).toBe(true);
+      expect(err).toBe(expected);
+      expect(out.split("\n").filter(line => /^[AMD] /.test(line))).toEqual(lines);
+      expect(exitCode).toBe(expectedExitCode);
+    },
+  );
 
   // A folder with a package.json is read as `bun pm pack` would publish it. The diff listed the files it did not
   // read as added or removed and exited 0.

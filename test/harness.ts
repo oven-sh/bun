@@ -747,6 +747,21 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
   return options;
 }
 
+/**
+ * The command line that runs `cmd` with at most `limit` open file descriptors.
+ *
+ * It lowers the hard limit as well. bun raises its soft limit to the hard limit when it
+ * starts, so a soft limit alone limits nothing and such a test passes for no reason. POSIX only.
+ *
+ * @example
+ * ```ts
+ * await using proc = Bun.spawn({ cmd: withOpenFileLimit(64, [bunExe(), "pm", "pack"]), cwd: String(dir), env: bunEnv });
+ * ```
+ */
+export function withOpenFileLimit(limit: number, cmd: string[]): string[] {
+  return ["sh", "-c", `ulimit -n ${limit} && exec "$0" "$@"`, ...cmd];
+}
+
 export interface BunRunResult {
   stdout: string;
   stderr: string;

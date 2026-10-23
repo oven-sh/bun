@@ -281,22 +281,41 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       await checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
     it("exists when bun test --isolate calls a function that an earlier file created", async () => {
-      // The addon is loaded once per process, so its reference keeps the function of the first file for the second one.
-      const testFile = `
-        import { expect, test } from "bun:test";
-        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
-        test("keeps strings alive", () => {
-          let first;
-          try {
-            first = addon.get_object_from_ref();
-          } catch {
+      // The addon is loaded once per process. When the first file's global is swapped out, the
+      // addon's references into it are released, so the second file reads the static ref as
+      // undefined and cannot ref it back. A threadsafe function the first file created still
+      // calls the first file's function from the second file, under the second file's handle scope.
+      const addonPath = JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"));
+      using dir = tempDir("napi-isolate", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          const addon = require(${addonPath});
+          test("creates a ref and a threadsafe function", () => {
             addon.create_wrap({ keepsStringsAlive: addon.test_napi_handle_scope_string }, true, true);
-            return;
-          }
-          expect(first.keepsStringsAlive(() => Bun.gc(true))).toBeUndefined();
-        });
-      `;
-      using dir = tempDir("napi-isolate", { "a.test.ts": testFile, "b.test.ts": testFile });
+            addon.queue_threadsafe_function_items(
+              () => addon.test_napi_handle_scope_string(() => Bun.gc(true)),
+              0,
+              false,
+            );
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          const addon = require(${addonPath});
+          test("reads the released ref and calls the first file's function", async () => {
+            expect(addon.get_object_from_ref()).toBeUndefined();
+            expect(addon.ref_wrapped_value()).toBe(0);
+            expect(addon.get_object_from_ref()).toBeUndefined();
+
+            addon.queue_more_threadsafe_function_items(1);
+            const deadline = Date.now() + 10_000;
+            while (addon.threadsafe_function_with_queued_items_calls_into_js() < 1) {
+              if (Date.now() > deadline) throw new Error("the threadsafe function never called into JS");
+              await Bun.sleep(1);
+            }
+          });
+        `,
+      });
       await using proc = spawn({
         cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
         env: bunEnv,
@@ -304,8 +323,44 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(" 2 pass");
+      expect(stdout).toContain("call_js: item 1, call_function 0");
+      expect(exitCode).toBe(0);
+    });
+    it("does not keep a finished file's global alive through the addon's references under bun test --isolate", async () => {
+      // A reference with a count above zero is a VM-level root. Once its file's global is
+      // swapped out it must not hold that global (and the file's module graph) for the rest
+      // of the run.
+      const fileCount = 8;
+      const testFile = `
+        import { test } from "bun:test";
+        import { heapStats } from "bun:jsc";
+        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+        addon.create_wrap({}, true, true);
+        test("counts live globals", () => {
+          Bun.gc(true);
+          console.log("live GlobalObjects:", heapStats().objectTypeCounts.GlobalObject);
+        });
+      `;
+      const files: Record<string, string> = {};
+      for (let i = 0; i < fileCount; i++) {
+        files[`t${i}.test.ts`] = testFile;
+      }
+      using dir = tempDir("napi-isolate-globals", files);
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", ...Object.keys(files).map(f => `./${f}`)],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const counts = [...stdout.matchAll(/live GlobalObjects: (\d+)/g)].map(m => Number(m[1]));
+      expect(counts).toHaveLength(fileCount);
+      // The current file's global and at most the one before it, which may not be swept yet.
+      expect(Math.max(...counts)).toBeLessThanOrEqual(3);
+      expect(stderr).toContain(` ${fileCount} pass`);
       expect(exitCode).toBe(0);
     });
   });

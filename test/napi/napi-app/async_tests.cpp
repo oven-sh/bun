@@ -833,6 +833,7 @@ async_work_with_external_buffer(const Napi::CallbackInfo &info) {
 static napi_threadsafe_function queued_items_tsfn = nullptr;
 static bool queued_items_tsfn_print_finalize = false;
 static bool queued_items_tsfn_finalized = false;
+static int queued_items_tsfn_calls_into_js = 0;
 
 static void queued_items_call_js(napi_env env, napi_value js_callback,
                                  void *context, void *data) {
@@ -862,6 +863,9 @@ static void queued_items_call_js(napi_env env, napi_value js_callback,
   // and this does not return.
   napi_status status =
       napi_call_function(env, undefined, js_callback, 0, nullptr, nullptr);
+  if (status == napi_ok) {
+    queued_items_tsfn_calls_into_js++;
+  }
   printf("call_js: item %d, call_function %d\n", item,
          static_cast<int>(status));
   fflush(stdout);
@@ -903,6 +907,27 @@ napi_value queue_threadsafe_function_items(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
+// queue_more_threadsafe_function_items(count): queues `count` more items on
+// the function queue_threadsafe_function_items created, from this thread.
+napi_value
+queue_more_threadsafe_function_items(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  int count = info[0].As<Napi::Number>().Int32Value();
+  for (intptr_t item = 1; item <= count; item++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           queued_items_tsfn, reinterpret_cast<void *>(item),
+                           napi_tsfn_nonblocking));
+  }
+  return info.Env().Undefined();
+}
+
+// threadsafe_function_with_queued_items_calls_into_js(): how many queued
+// items called their JS function and got napi_ok back.
+napi_value threadsafe_function_with_queued_items_calls_into_js(
+    const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), queued_items_tsfn_calls_into_js);
+}
+
 napi_value
 abort_threadsafe_function_with_queued_items(const Napi::CallbackInfo &info) {
   napi_status status =
@@ -919,6 +944,9 @@ napi_value threadsafe_function_with_queued_items_finalized(
 void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, async_work_with_external_buffer);
   REGISTER_FUNCTION(env, exports, queue_threadsafe_function_items);
+  REGISTER_FUNCTION(env, exports, queue_more_threadsafe_function_items);
+  REGISTER_FUNCTION(env, exports,
+                    threadsafe_function_with_queued_items_calls_into_js);
   REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);
   REGISTER_FUNCTION(env, exports,
                     threadsafe_function_with_queued_items_finalized);

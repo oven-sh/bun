@@ -367,6 +367,22 @@ public:
         m_pendingRefFinalizers.remove(ref);
     }
 
+    // Node's env->reflist: every live NapiRef of this env, so the env can drop
+    // their roots when its realm ends (RefTracker::FinalizeAll). Index-based so
+    // link and unlink are O(1) without a hash; the NapiRef keeps its slot.
+    uint32_t linkRef(Zig::NapiRef* ref)
+    {
+        m_refs.append(ref);
+        return m_refs.size() - 1;
+    }
+    void unlinkRef(uint32_t slot);
+
+    // `bun test --isolate` swapped this env's realm out: release every root the
+    // env still holds into it, the way Node resets each Reference's persistent
+    // handle in napi_env__::DeleteMe. Runs no addon code: finalizers still run
+    // from GC through the retargeted env.
+    void releaseRealmRoots();
+
     /// Will abort the process if a duplicate entry would be added.
     /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
@@ -655,6 +671,7 @@ private:
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     static void drainOneRefFinalizer(napi_env, void*, void*);
     WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
+    WTF::Vector<Zig::NapiRef*> m_refs;
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
@@ -842,20 +859,24 @@ class NapiRef {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
-    void ref();
+    // Returns the count to report to the addon.
+    uint32_t ref();
     void unref();
-    void clear();
 
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
-        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
         , finalizer(WTF::move(finalizer))
         , refCount(count)
+        , m_envSlot(this->env->linkRef(this))
     {
     }
 
+    // Empty once the env released this ref's realm (Node: an empty persistent handle).
     JSC::JSValue value() const
     {
+        if (m_released) {
+            return JSC::JSValue();
+        }
         if (refCount == 0 && !m_isEternal) {
             return weakValueRef.get();
         }
@@ -866,7 +887,7 @@ public:
     void setValueInitial(JSC::JSValue value, bool can_be_weak)
     {
         if (refCount > 0) {
-            strongRef.set(globalObject->vm(), value);
+            strongRef.set(env->vm(), value);
         }
 
         // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
@@ -882,10 +903,22 @@ public:
                 // even if garbage collection happens while the ref count is 0.
                 m_isEternal = true;
                 if (refCount == 0) {
-                    strongRef.set(globalObject->vm(), symbol);
+                    strongRef.set(env->vm(), symbol);
                 }
             }
         }
+    }
+
+    // Node's Reference::Finalize from FinalizeAll: drop the root, keep the count. A registered
+    // symbol belongs to the VM's symbol registry, not to the realm, and stays. The weak handle
+    // stays so the finalizer (or the self-delete of a wrap ref) still runs when GC collects the value.
+    void releaseRealm()
+    {
+        if (m_released || m_isEternal) {
+            return;
+        }
+        m_released = true;
+        strongRef.clear();
     }
 
     // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
@@ -904,6 +937,7 @@ public:
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
+        env->unlinkRef(m_envSlot);
         env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
@@ -920,7 +954,6 @@ public:
     }
 
     WTF::Ref<NapiEnv> env;
-    JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     Bun::NapiFinalizer finalizer;
@@ -930,7 +963,11 @@ public:
     bool releaseOnWeaken = false;
 
 private:
+    friend struct ::NapiEnv;
     bool m_isEternal = false;
+    bool m_released = false;
+    // Index in env->m_refs; moved by NapiEnv::unlinkRef when another ref leaves.
+    uint32_t m_envSlot;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

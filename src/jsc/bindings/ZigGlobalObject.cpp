@@ -4648,12 +4648,20 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 // take ownership of the refs so ~GlobalObject on the old one doesn't drop
 // them — the envs stay valid for late finalizers and for the process-exit
 // cleanup hooks in rare_data.cleanup_hooks (which hold raw NapiEnv* in .ctx).
+//
+// The envs' napi_refs are VM-level Strongs into the old realm. Like the plugin
+// and registry Strongs released below, they would keep the old global alive
+// for the rest of the run, so each env drops them here (Node drops them when
+// the env's context ends). An env adopted by an earlier swap releases only
+// what it rooted since.
 void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 {
     if (oldGlobal->m_napiEnvs.isEmpty())
         return;
-    for (auto& env : oldGlobal->m_napiEnvs)
+    for (auto& env : oldGlobal->m_napiEnvs) {
         env->retargetGlobalObject(this);
+        env->releaseRealmRoots();
+    }
     // Ref<NapiEnv> is move-only; the rvalue appendVector overload moves each
     // element out, and we make the source explicitly empty afterwards so
     // ~GlobalObject on the old cell is a no-op here.

@@ -6,23 +6,23 @@ namespace Zig {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 
-void NapiRef::ref()
+uint32_t NapiRef::ref()
 {
-    // Node's Reference::Ref(): once the value is gone, the count stays at 0.
-    if (refCount == 0 && !weakValueRef.get()) {
+    // Node's Reference::Ref(): once the value is gone, the count stays where it is and 0 is reported.
+    if (m_released || (refCount == 0 && !weakValueRef.get())) {
         NAPI_LOG("ref %p (value released)", this);
-        return;
+        return 0;
     }
     NAPI_LOG("ref %p %u -> %u", this, refCount, refCount + 1);
     ++refCount;
     if (refCount == 1 && !weakValueRef.isClear()) {
-        auto& vm = globalObject.get()->vm();
-        strongRef.set(vm, weakValueRef.get());
+        strongRef.set(env->vm(), weakValueRef.get());
 
         // .setString/.setObject/.setPrimitive will assert fail if called more than once (even after clear())
         // We should not clear the weakValueRef here because we need to keep it if we call NapiRef::unref()
         // so we can call the finalizer
     }
+    return refCount;
 }
 
 void NapiRef::unref()
@@ -35,15 +35,6 @@ void NapiRef::unref()
         // and use it to call the finalizer when GC'd
         strongRef.clear();
     }
-}
-
-void NapiRef::clear()
-{
-    NAPI_LOG("ref clear %p", this);
-    finalizer.call(env.ptr(), nativeObject);
-    globalObject.clear();
-    weakValueRef.clear();
-    strongRef.clear();
 }
 
 void NapiRef::callFinalizerFromGC()
@@ -59,6 +50,24 @@ void NapiRef::callFinalizerFromGC()
     env->enqueueRefFinalizer(this);
 }
 
+}
+
+void NapiEnv::unlinkRef(uint32_t slot)
+{
+    ASSERT(slot < m_refs.size());
+    Zig::NapiRef* last = m_refs.takeLast();
+    if (slot < m_refs.size()) {
+        m_refs[slot] = last;
+        last->m_envSlot = slot;
+    }
+}
+
+void NapiEnv::releaseRealmRoots()
+{
+    for (Zig::NapiRef* ref : m_refs) {
+        ref->releaseRealm();
+    }
+    m_pendingException.clear();
 }
 
 void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)

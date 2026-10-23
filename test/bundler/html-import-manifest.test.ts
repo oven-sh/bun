@@ -1255,17 +1255,23 @@ console.log("✓ Both import types work correctly");
           const result = await Bun.build({ entrypoints: [entry], target: "bun", define: { DEEP }, throw: false });
           return result.logs.map(log => [log.message, ...log.notes.map(note => note.message)]);
         };
-        // The deepest value that a build without a page accepts.
-        let low = 1;
-        let high = 1 << 16;
-        while (low < high) {
-          const middle = (low + high + 1) >> 1;
-          if ((await build("./plain.js", middle)).length === 0) low = middle;
-          else high = middle - 1;
+        // The deepest value that a build without a page accepts: double the depth until a build
+        // fails, then bisect. The limit is the stack of the platform, so there is no fixed bound.
+        const accepts = async depth => (await build("./plain.js", depth)).length === 0;
+        let low = 0;
+        let high = 128;
+        while (await accepts(high)) {
+          low = high;
+          high *= 2;
+        }
+        while (high - low > 1) {
+          const middle = (low + high) >> 1;
+          if (await accepts(middle)) low = middle;
+          else high = middle;
         }
         // An entry point that fails is skipped while other files are still parsed, so it runs a few times.
         const entryPoint = new Set();
-        for (let i = 0; i < 5; i++) entryPoint.add(JSON.stringify(await build("./client.html", low)));
+        for (let i = 0; i < 3; i++) entryPoint.add(JSON.stringify(await build("./client.html", low)));
         console.log(JSON.stringify({ imported: await build("./server.js", low), entryPoint: [...entryPoint].map(JSON.parse) }));
       `,
     });

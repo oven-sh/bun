@@ -5,7 +5,9 @@
 //! immutable from then on. Positions are byte offsets into the source.
 
 use crate::atom::Atom;
-pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
+pub use crate::node::{
+    ImportTypeArguments, Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode,
+};
 use crate::session::{Arena, ArenaBox, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
@@ -584,6 +586,8 @@ pub struct LazyCells {
     pub(crate) type_query_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
     /// `File::is_in_class_extends`
     pub(crate) class_extends_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
+    /// `File::type_arguments_of_import_types`
+    pub(crate) import_type_arguments: OnceLock<ImportTypeArguments>,
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: OnceLock<Box<[Node]>>,
 }
@@ -596,6 +600,7 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     ambient_or_type_ranges: OnceLock::new(),
     type_query_ranges: OnceLock::new(),
     class_extends_ranges: OnceLock::new(),
+    import_type_arguments: OnceLock::new(),
     keyword_identifiers: OnceLock::new(),
 };
 

@@ -7221,6 +7221,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None
                 };
                 self.circular_constraint_origins.push((ty, current));
+                self.report_circular_constraint_on_request(ty);
             }
             // Another frame of `ty` can be in progress below a `resolution_start` barrier. Its
             // first read was a miss, so it learns of the cycle at its own `leave`. The mark stays

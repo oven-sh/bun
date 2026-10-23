@@ -1885,6 +1885,44 @@ differential("matches tsc on lib interfaces that extend a type built from their 
   expect(await casesThatDiffer({}, declarations, cases, 1, files)).toEqual([]);
 });
 
+// `checkImportType` checks the argument of an import type and none of its type arguments. `getTypeFromImportTypeNode`
+// resolves each type argument. What is below one, such as the type of a member of a type literal, is resolved when
+// something reads it. Only then is an error in it reported, and a name in it used.
+for (const noUnused of [false, true]) {
+  const title = `matches tsc below the type arguments of an import type, for every shape, error and read, noUnusedLocals: ${noUnused}`;
+  differential(title, async () => {
+    // X: what is wrong.
+    const shapes = [
+      ...["X", "X[]", "[X]", "X | string", "Array<X>", "(X)", "{ a: X }", "{ m(x: X): void }", "{ m(): X }"],
+      ...["{ (x: X): void }", "{ new (x: X): object }", "{ [k: string]: X }", "{ get a(): X }", "{ set a(v: X) }"],
+      ...["(x: X) => void", "() => X", "(...x: X[]) => void", "<U extends X>() => void", "<U = X>() => void"],
+      ...["(x: unknown) => x is X", "new (x: X) => object", "{ [K in X]: string }", `{ [K in "a"]: X }`],
+      ...[`{ [K in "a" as X]: string }`, "{ a: X }[]", "[{ a: X }]", "Array<{ a: X }>", "{ a: X } | string"],
+      ...["{ a: X } & { b: string }", "X extends string ? 1 : 2", "string extends X ? 1 : 2"],
+      ...["string extends string ? X : 2", "string extends number ? 1 : X", `{ a: X }["a"]`, "keyof { a: X }"],
+      ...[`import("./box").Box<X>`, `import("./box").Box<{ a: X }>`, "`a${X}`", "readonly { a: X }[]"],
+      ...["[a?: { a: X }]", "{ a: { b: X } }", "() => () => X"],
+    ];
+    const wrongs = [
+      ...["Missing", "NotG<string>", `import("./box").NotGeneric<string>`, "One<string, number>", "Limited<number>"],
+      ...["NS.Nope", "someValue", "typeof missingValue", "typeof someValue.nope", "this", `import("./nope").T`],
+      ...[`import("./box").Nope`, "Used"],
+    ];
+    const declarations = [
+      "type NotG = string; interface One<T> { v: T } type Limited<T extends string> = T;",
+      "declare namespace NS { type Yes = 1 } declare const someValue: number;",
+    ];
+    // With the assignment, the relation reads the members.
+    const cases = [...product(shapes, wrongs, ["", " v = w;"])].map(([shape, wrong, read]) => {
+      const argument = `import("./box").Box<${shape.replace(/\bX\b/g, () => wrong)}>`;
+      return `{ type Used = string; type A = ${argument}; type B = ${argument}; let v!: A, w!: B; void v, w;${read} }`;
+    });
+    const files = { "box.ts": "export interface Box<T> { value: T }\nexport type NotGeneric = string;\n" };
+    const options = { noUnusedLocals: noUnused, noUnusedParameters: noUnused };
+    expect(await casesThatDiffer(options, declarations, cases, every, files)).toEqual([]);
+  });
+}
+
 // typescript-go records the specifier of `import()` and `require()` once for each `import` and `require` in the call's
 // text, and prints why a file is in the program if there's more than one reason.
 differential("lists the same reasons as tsc for why a dynamically imported file is in the program", async () => {

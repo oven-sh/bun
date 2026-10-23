@@ -627,12 +627,30 @@ impl Checker<'_, '_> {
             }
             return self.discarded.insert(diagnostic);
         }
-        if self.is_reported_too_late(None, diagnostic.file) {
+        if !self.stack.is_empty() && self.leaves_own_late_request(diagnostic.file, diagnostic.start)
+            || self.is_reported_too_late(None, diagnostic.file)
+        {
             self.mark_tainted_from(0);
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
+    }
+
+    /// True if the check of the task's file `file` is over and a query reports at `pos` there, which that check left
+    /// to a request (`is_left_to_a_request`): the declaration phase or a lint rule is the first to ask. tsc emits
+    /// after the last check, so the check of an earlier file that asks for the same reports the error. Here the
+    /// emit follows the file's own check and that earlier file's task can come later. It must not hit anything this
+    /// task stores on the way, so the task is discarded unless every earlier file is final. The caller stores nothing
+    /// for the queries in progress.
+    pub(super) fn leaves_own_late_request(&self, file: FileId, pos: u32) -> bool {
+        let is_late = self.is_type_checked
+            && self.task.file == Some(file)
+            && self.is_left_to_a_request(file, pos);
+        if is_late {
+            self.task.leave_to_an_earlier_request();
+        }
+        is_late
     }
 
     /// `checkExpression` doesn't store its result, so running it again recreates a discarded
@@ -881,6 +899,9 @@ impl Checker<'_, '_> {
         // already been collected. A baseline writer can still be the first to evaluate another file's entry, and then
         // this task owns what that evaluation reports.
         if self.is_type_checked && self.task.file == Some(diagnostic.file) {
+            if self.leaves_own_late_request(diagnostic.file, diagnostic.start) {
+                self.mark_tainted_from(0);
+            }
             return;
         }
         // `GetGlobalDiagnostics` runs after the last `checkSourceFile` and before `Emit` or a baseline writer. Whatever
@@ -892,6 +913,9 @@ impl Checker<'_, '_> {
             return self.mark_tainted_from(0);
         }
         if diagnostic.file != NOWHERE.0 && self.defers_to_earlier_file(owner, diagnostic.file) {
+            if self.is_left_to_a_request(diagnostic.file, diagnostic.start) {
+                self.task.leave_to_an_earlier_request();
+            }
             // Not every error goes through `add_diagnostic`.
             return self.note_error_in(diagnostic.file);
         }
@@ -964,8 +988,44 @@ impl Checker<'_, '_> {
             }
             _ => true,
         };
-        (owner.iter().chain(in_progress))
-            .any(|&q| is_requested_by_check(q) && q.syntax().is_none_or(is_in_time))
+        (owner.iter().chain(in_progress)).any(|&q| {
+            is_requested_by_check(q)
+                && q.syntax().is_none_or(is_in_time)
+                && !self.is_in_unchecked_type_arguments(q)
+        })
+    }
+
+    /// True if the check of `file` reports errors and never gets to what is at `pos` by itself: `pos` is below the type
+    /// arguments of an import type, and that import type isn't being resolved. `checkImportType` checks nothing below
+    /// the type arguments, and `getTypeFromImportTypeNode` resolves what the type arguments themselves need. So an error
+    /// there is reported only if something else requests it.
+    pub(super) fn is_left_to_a_request(&self, file: FileId, pos: u32) -> bool {
+        let around = (self.hir(file).type_arguments_of_import_types()).import_type_at(pos);
+        around.is_some_and(|node| !self.stack.contains(&Query::TypeNode(file, node)))
+            && self.reports_semantic_errors(file)
+    }
+
+    /// True if `q` is about syntax below the type arguments of an import type. `checkImportType` checks nothing there,
+    /// so no check requests `q`.
+    fn is_in_unchecked_type_arguments(&self, q: Query) -> bool {
+        let (file, pos) = match q {
+            Query::TypeNode(file, node) => (file, self.hir(file)[node].pos),
+            Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                (file, self.hir(file)[pat].pos)
+            }
+            Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                (file, self.hir(file)[func].start)
+            }
+            Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) | Query::Call(file, e) => {
+                (file, self.hir(file)[e].pos)
+            }
+            Query::Symbol(symbol) => match self.span_of_symbol(symbol) {
+                Some((file, start, _)) => (file, start),
+                None => return false,
+            },
+            _ => return false,
+        };
+        (self.hir(file).type_arguments_of_import_types()).contain(pos)
     }
 
     /// True if `checkVariableLikeDeclaration` `returns_before_type_of_symbol` for every name

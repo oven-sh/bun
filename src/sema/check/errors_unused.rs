@@ -5,6 +5,7 @@
 //! the identifiers, and a loop at the end of the file marks their symbols.
 
 use super::errors_enums_names::Location;
+use super::explain::NO_LENGTH;
 use super::jsdoc::closing_bracket_after;
 use super::*;
 use crate::bind::{
@@ -108,7 +109,13 @@ struct Use {
 impl Checker<'_, '_> {
     /// The end of `Resolve` with `isUse`: it has found `found` for the name at `pos` of `file`, looked up with
     /// `meaning`. Only the file's own declarations are marked, because no other file reports them.
-    pub(super) fn symbol_referenced(&self, file: FileId, pos: u32, found: Sym, meaning: SymFlags) {
+    pub(super) fn symbol_referenced(
+        &mut self,
+        file: FileId,
+        pos: u32,
+        found: Sym,
+        meaning: SymFlags,
+    ) {
         let kinds = reference_kinds(meaning);
         let parts = self.files().parts(found);
         let Some(&part) = parts.iter().find(|part| part.file == file) else {
@@ -117,9 +124,47 @@ impl Checker<'_, '_> {
         if self.p.reference_kinds.flags(part) & kinds == kinds {
             return;
         }
-        if !is_inside_declaration_of(self.hir(file), self.bound(file), pos, part.id) {
+        if !is_inside_declaration_of(self.hir(file), self.bound(file), pos, part.id)
+            && !self.leaves_reference_to_an_earlier_request(file, pos)
+        {
             self.p.reference_kinds.add(part, kinds);
         }
+    }
+
+    /// True if the name at `pos` of `file` references nothing, because `checkUnusedIdentifiers` has run for `file` by
+    /// the time tsc resolves it. The check of `file` never resolves the name itself (`is_left_to_a_request`), and this
+    /// task gets to it after the end of that check:
+    /// - It has checked `file` that far itself.
+    /// - It emits another file. tsc does that after the last check, and the check of `file` can come later here. So
+    ///   nothing in progress is stored, as for an error there (`is_reported_too_late`).
+    /// - It checks a later file. What resolves the name before then must not hit anything this task stores on the way,
+    ///   as for an error there.
+    fn leaves_reference_to_an_earlier_request(&mut self, file: FileId, pos: u32) -> bool {
+        let Some(visited) = self.task.file else {
+            return false;
+        };
+        if visited == file && !self.has_checked_unused_identifiers {
+            return false;
+        }
+        let options = &self.p.files.options;
+        if !(options.no_unused_locals || options.no_unused_parameters)
+            || self.hir(file).kind == FileKind::Declaration
+            || !self.is_left_to_a_request(file, pos)
+        {
+            return false;
+        }
+        if visited == file {
+            return true;
+        }
+        if self.is_type_checked {
+            self.mark_tainted_from(0);
+            return true;
+        }
+        if self.is_checked_no_later_than(visited, file) {
+            return false;
+        }
+        self.task.leave_to_an_earlier_request();
+        true
     }
 
     pub(super) fn check_unused(&mut self, file: FileId) {
@@ -130,6 +175,7 @@ impl Checker<'_, '_> {
         if !(locals || parameters || !renamed.is_empty()) || hir.kind == FileKind::Declaration {
             return;
         }
+        self.has_checked_unused_identifiers = true;
         let parse_errors = hir
             .diagnostics
             .iter()
@@ -160,6 +206,55 @@ impl Checker<'_, '_> {
         self.unused_private_members.clear();
         self.note_rare_references(file, &mut u);
         self.report_unused_declarations(&u, &renamed);
+        if self.reports_name_below_import_type_arguments(&u, reported) {
+            self.task.leave_to_an_earlier_request();
+        }
+    }
+
+    /// True if one of the declarations reported from `self.reported[from]` on is named by a type reference below the
+    /// type arguments of an import type. The check of the file resolves no name there: see
+    /// `File::type_arguments_of_import_types`. tsc counts the reference if the check of an earlier file resolves the
+    /// name, and a task that checks a later file leaves it to that one (`leaves_reference_to_an_earlier_request`). So
+    /// the report is final only once every earlier file is.
+    fn reports_name_below_import_type_arguments(&self, u: &Unused, from: usize) -> bool {
+        let (hir, bound) = (u.hir, u.bound);
+        let below = hir.type_arguments_of_import_types();
+        if below.is_empty() {
+            return false;
+        }
+        let reported = &self.reported[from..];
+        let is_reported = |symbol: SymbolId| {
+            bound.symbol(symbol).decls.iter().any(|&declaration| {
+                let node = hir.node(declaration);
+                let (start, end) = (hir.start(node), self.end_of_node(u.file, node));
+                reported.iter().any(|d| {
+                    let end_of_report = if d.end == NO_LENGTH { 0 } else { d.end };
+                    d.file == u.file
+                        && ((start..end).contains(&d.start)
+                            || (d.start..end_of_report).contains(&start))
+                })
+            })
+        };
+        hir.types.iter().enumerate().any(|(i, node)| {
+            let TypeNodeKind::Ref { name, .. } = node.kind else {
+                return false;
+            };
+            if !below.contain(node.pos) || bound.is_unchecked_type(i) {
+                return false;
+            }
+            // `resolveEntityName`: the first name of `a.b` is a namespace.
+            let meaning = match name.len() {
+                1 => SymFlags::TYPE,
+                _ => SymFlags::NAMESPACE,
+            };
+            let first = hir.texts(name).next();
+            let found = first.and_then(|first| u.resolve_use(bound.type_scope[i], first, meaning));
+            found.is_some_and(|found| {
+                !found.is_self_reference
+                    && u.referenced[found.symbol.idx()] & REFERENCED == 0
+                    && is_reported(found.symbol)
+            })
+        })
     }
 
     fn report_unused_declarations(&mut self, u: &Unused, renamed: &[PatPropId]) {
@@ -1467,6 +1562,12 @@ impl Unused<'_, '_> {
         never_checked.any(|&(from, to)| (from..to).contains(&pos))
     }
 
+    /// True if no `registerForUnusedIdentifiersCheck` gets to the declaration at `pos`, because `checkSourceFile`
+    /// never visits it.
+    fn is_declaration_never_checked(&self, pos: u32) -> bool {
+        self.is_never_checked(pos) || self.hir.type_arguments_of_import_types().contain(pos)
+    }
+
     /// The negation of `is_never_checked` for the node of `scope`, a `ScopeKind::Block`. The scope doesn't store the
     /// node. It's `GetEnclosingBlockScopeContainer` of every declaration among its locals
     /// (`bindBlockScopedDeclaration`).
@@ -1777,7 +1878,7 @@ impl Checker<'_, '_> {
                 if let TypeNodeKind::Infer(param) = t.kind
                     && hir[param].name != known::empty
                     && !unchecked.contain(t.pos)
-                    && !u.is_never_checked(t.pos)
+                    && !u.is_declaration_never_checked(t.pos)
                     && u.is_unreferenced_type_parameter(param)
                 {
                     let at = self.span_of_token(u.file, hir[param].pos);
@@ -2008,7 +2109,7 @@ impl Checker<'_, '_> {
             return;
         }
         let node = hir.node(declaration);
-        if u.is_never_checked(hir.start(node)) {
+        if u.is_declaration_never_checked(hir.start(node)) {
             return;
         }
         if params.len() > 1 && params.iter().all(|p| u.is_unreferenced_type_parameter(p)) {

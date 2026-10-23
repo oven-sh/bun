@@ -297,6 +297,15 @@ impl<'s> Task<'s> {
         }
     }
 
+    /// The task has left an error to an earlier file whose own check doesn't request what reported it. tsc reports it
+    /// only if a file before the task's file requests that, and whichever does must not hit anything this task has
+    /// stored on the way there. That holds if every earlier file is final. Any other task is discarded.
+    pub(super) fn leave_to_an_earlier_request(&self) {
+        if !self.is_first_in_order.get() {
+            self.discard();
+        }
+    }
+
     /// Returns the `members` of the cycles this task has resolved since its last commit, sorted. For a task that was
     /// discarded because of a cycle, that cycle is included.
     pub(super) fn take_cycle_members(&self) -> Vec<u64> {

@@ -1,5 +1,5 @@
-//! A file's diagnostics. The resolver answers queries and never reports. This pass visits every node of the file once,
-//! queries the resolver, and reports the inconsistencies.
+//! A file's diagnostics. `check_source_file` and the queries it makes report where TypeScript reports. The passes
+//! that follow visit every node of a kind once, query the resolver, and report the inconsistencies.
 //!
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
 //! reported. A false negative is better than a false positive.
@@ -274,6 +274,8 @@ impl Checker<'_, '_> {
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
+        self.has_checked_unused_identifiers = false;
+        self.holds_back_commits = false;
         let hir = self.hir(file);
         if hir.ran_out_of_stack {
             self.ran_out_of_stack.set(true);
@@ -528,21 +530,11 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The callers of `resolveExternalModule` other than import and export declarations. Also reports 2322 and 2880 for
-    /// the options of `import()`.
+    /// The callers of `resolveExternalModule` other than import and export declarations and `getTypeFromImportTypeNode`.
+    /// Also reports 2322 and 2880 for the options of `import()`.
     fn check_modules(&mut self, file: FileId) {
         let hir = self.hir(file);
         let is_ambient = hir.kind == FileKind::Declaration;
-        // `getTypeFromImportTypeNode`
-        for &specifier_use in &hir.specifier_uses {
-            if specifier_use.kind == SpecifierKind::ImportType {
-                let site = SpecifierSite {
-                    is_ambient,
-                    ..Default::default()
-                };
-                self.resolve_external_module(file, specifier_use, site);
-            }
-        }
         let index = self.exprs_by_kind(file);
         // `checkImportCallExpression`
         for &e in index.of(ExprTag::ImportCall) {
@@ -1332,13 +1324,25 @@ impl Checker<'_, '_> {
     /// call, so that call's state determines whether `addDiagnostic` discards it. For an identifier in another file
     /// that would depend on the file order, so that file's `check_file` decides.
     pub(super) fn note_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
+        let pos = self.hir(file)[e].pos;
+        // Only the query that evaluates `e` there notes it. If the task is discarded, the check that replaces it has to
+        // evaluate that query again, so nothing the query stored under a record may have been published by then.
+        self.holds_back_commits |= self.is_resolved_on_request_at(file, pos);
         if self.task.file == Some(file) {
+            if self.leaves_own_late_request(file, pos) {
+                return self.mark_tainted_from(0);
+            }
             let is_discarded = self.serialization_level >= MAX_SERIALIZATION_LEVEL;
             if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
                 return;
             }
         } else {
             self.note_error_in(file);
+            // As in `log_diagnostic`: only `check_file` of `file` reports it, and no check visits `e` there.
+            let is_late = |visited: FileId| !self.is_checked_no_later_than(visited, file);
+            if self.task.file.is_some_and(is_late) && self.is_left_to_a_request(file, pos) {
+                self.task.leave_to_an_earlier_request();
+            }
         }
         self.unresolved_identifiers.push((file, e, name));
     }
@@ -1349,10 +1353,18 @@ impl Checker<'_, '_> {
     /// Only for the file being checked. No other task stores an unresolved identifier's entry
     /// (`has_side_effect_for_check_file`), so another file's `check_file` evaluates its own identifiers itself, before
     /// its last call of this function.
+    /// Not below the type arguments of an import type, which no check visits: whoever evaluates one there reports, unless
+    /// tsc collects the errors of that file before.
     pub(super) fn report_unresolved_identifiers(&mut self) {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
-            unresolved.retain(|u| Some(u.0) == self.task.file);
+            unresolved.retain(|&(file, e, _)| {
+                Some(file) == self.task.file || {
+                    let hir = self.hir(file);
+                    (self.task.file).is_some_and(|it| self.is_checked_no_later_than(it, file))
+                        && hir.type_arguments_of_import_types().contain(hir[e].pos)
+                }
+            });
             unresolved.shared_sort_unstable_by_key(|u| (u.0, u.1));
             unresolved.dedup_by_key(|u| (u.0, u.1));
             for (file, e, name) in unresolved {

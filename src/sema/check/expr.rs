@@ -1926,7 +1926,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.precheck_type_nodes(file, type_args);
                 let ty = self.type_of_expr(file, expr);
                 let args = self.types_from_nodes(file, type_args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::Expr(file, e))
+                self.with_type_arguments(ty, Some(args), InstantiationExpression::Expr(file, e))
             }
             ExprKind::Jsx(j) => {
                 let is_fragment = hir[j].tag.is_none();
@@ -4529,22 +4529,35 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let hir = self.hir(file);
-        let mut pending: SmallVec<[Node; 8]> = SmallVec::from_slice(&[hir.node(node)]);
-        while let Some(at) = pending.pop() {
-            if let NodeData::Type(inner) = hir.data(at)
-                && matches!(hir[inner].kind, TypeNodeKind::Typeof { .. })
-            {
-                if inner != node {
-                    // `c.currentNode`, which is where a limit error is reported.
-                    let outer = self.looked_at_type_node.replace((file, inner));
-                    self.type_from_node(file, inner);
-                    self.looked_at_type_node = outer;
+        // With each node, whether it's in the type arguments of an import type.
+        let mut pending: SmallVec<[(Node, bool); 8]> =
+            SmallVec::from_slice(&[(hir.node(node), false)]);
+        while let Some((at, mut is_type_argument)) = pending.pop() {
+            if let NodeData::Type(inner) = hir.data(at) {
+                match hir[inner].kind {
+                    TypeNodeKind::Typeof { .. } => {
+                        if inner != node {
+                            // `c.currentNode`, which is where a limit error is reported.
+                            let outer = self.looked_at_type_node.replace((file, inner));
+                            self.type_from_node(file, inner);
+                            self.looked_at_type_node = outer;
+                        }
+                        continue;
+                    }
+                    TypeNodeKind::Import { spec, .. } if spec.is_some() => is_type_argument = true,
+                    // `checkImportType` visits no type argument. `getTypeFromImportTypeNode` resolves each one, and
+                    // with it no member of a type literal, no signature and no mapped type.
+                    TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_)
+                        if is_type_argument =>
+                    {
+                        continue;
+                    }
+                    _ => {}
                 }
-                continue;
             }
             let from = pending.len();
             hir.for_each_child(at, &mut |child| {
-                pending.push(child);
+                pending.push((child, is_type_argument));
                 false
             });
             pending[from..].reverse();

@@ -13,7 +13,7 @@ use super::errors_statements::is_with_statement;
 use super::shape::ThisAssignmentDeclaration;
 use super::sink::MAX_SERIALIZATION_LEVEL;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -454,6 +454,7 @@ impl<'s> Checker<'_, 's> {
         self.check_type_node(file, decl.default);
         let ty = self.type_param(file, tp);
         self.base_constraint(ty);
+        self.check_circular_constraint(file, tp);
         self.check_type_parameter_default(file, tp, ty);
         self.check_type_name_is_reserved(file, tp, decl.name, 2368);
     }
@@ -633,10 +634,17 @@ impl<'s> Checker<'_, 's> {
         if func.is_none() {
             return;
         }
-        let hir = self.hir(file);
         self.check_signature_declaration(file, func);
         self.check_function_or_constructor_symbols_of(file, Decl::Fn(func));
         self.check_function_body(file, func);
+        self.check_end_of_function_or_method_declaration(file, func);
+    }
+
+    /// `checkFunctionOrMethodDeclaration`, after `checkSourceElement(body)`.
+    fn check_end_of_function_or_method_declaration(&mut self, file: FileId, func: FnId) {
+        let hir = self.hir(file);
+        // `getReturnTypeFromAnnotation`: `checkSourceElement` has not asked for the type of every kind of node.
+        self.type_from_node(file, hir[func].ret);
         self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
         if hir[func].ret.is_none()
             && hir[func].flags.contains(Flags::GENERATOR)
@@ -684,18 +692,24 @@ impl<'s> Checker<'_, 's> {
             && hir.is_in_ambient_or_type_node(hir.node(name))
     }
 
-    /// True if what the walk records for the end of `checkSourceFile` is about the file being checked. A query runs
-    /// parts of the walk for another file, or for this one after its check, and those record nothing, as in
-    /// `check_node_deferred`.
-    fn records_for_end_of_check(&self, file: FileId) -> bool {
-        self.task.file == Some(file) && !self.is_type_checked && !self.is_checking_in_flow_loop
+    /// True if what the walk records at `pos` for the end of `checkSourceFile` is about the file being checked. A
+    /// query runs parts of the walk for another file, or for this one after its check, and those record nothing, as in
+    /// `check_node_deferred`. Nor does the part that only a request runs (`is_resolved_on_request_at`): which task
+    /// makes that request first depends on the schedule.
+    fn records_for_end_of_check(&self, file: FileId, pos: u32) -> bool {
+        self.task.file == Some(file)
+            && !self.is_type_checked
+            && !self.is_checking_in_flow_loop
+            && !self.is_resolved_on_request_at(file, pos)
     }
 
     /// Records that the check of `e`'s parent returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() && self.records_for_end_of_check(file) {
+        if e.is_some() {
             let start = self.start_of(file, e);
-            self.unvisited_exprs.push((start, e));
+            if self.records_for_end_of_check(file, start) {
+                self.unvisited_exprs.push((start, e));
+            }
         }
     }
 
@@ -736,7 +750,7 @@ impl<'s> Checker<'_, 's> {
                         self.grammar_error_at((file, prop.key_pos, end), 18064, &[]);
                     }
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        if self.records_for_end_of_check(file) {
+                        if self.records_for_end_of_check(file, prop.key_pos) {
                             self.renamed_binding_elements_in_types.push(p);
                             if let PropKey::Computed(key) = prop.key {
                                 self.unvisited_exprs.push((prop.key_pos, key));
@@ -925,6 +939,7 @@ impl<'s> Checker<'_, 's> {
         self.leave_heritage_expressions_unvisited(file, decl.other_implements);
         if symbol.is_some() {
             self.check_class_heritage(file, class);
+            self.check_type_for_duplicate_index_signatures(file, decl.members);
             self.check_property_initialization(file, class);
         }
     }
@@ -950,6 +965,7 @@ impl<'s> Checker<'_, 's> {
         self.leave_heritage_expressions_unvisited(file, decl.extends);
         self.leave_heritage_expressions_unvisited(file, decl.other_heritage);
         self.check_members(file, decl.members);
+        self.check_type_for_duplicate_index_signatures(file, decl.members);
     }
 
     /// `checkTypeAliasDeclaration`
@@ -1048,7 +1064,14 @@ impl<'s> Checker<'_, 's> {
             }
             if member.func.is_some() {
                 self.check_function_body(file, member.func);
-                self.check_all_code_paths_in_non_void_function_return_or_throw(file, member.func);
+                if member.kind == MemberKind::Method {
+                    self.check_end_of_function_or_method_declaration(file, member.func);
+                } else {
+                    self.check_all_code_paths_in_non_void_function_return_or_throw(
+                        file,
+                        member.func,
+                    );
+                }
             }
             if member.kind == MemberKind::Constructor {
                 self.check_function_or_constructor_symbols_of(file, Decl::Member(m));
@@ -1065,6 +1088,17 @@ impl<'s> Checker<'_, 's> {
                 self.type_of_symbol(symbol);
             }
             self.check_expression(file, member.init);
+            // `checkVariableLikeDeclaration` checks a computed name and the initializer first.
+            if member.kind == MemberKind::Property
+                && !matches!(self.bound(file).member_owner[m.idx()], MemberOwner::None)
+            {
+                if self.bound(file).member_symbol[m.idx()].is_none() {
+                    self.type_of_member_declaration(file, m);
+                } else if matches!(member.key, PropKey::Computed(_)) {
+                    let symbol = self.symbol_of_member(file, m);
+                    self.type_of_symbol(symbol);
+                }
+            }
             self.check_property_initializer(file, m);
             if member.kind == MemberKind::Property {
                 self.check_variable_like_declaration(file, Decl::Member(m));
@@ -1192,7 +1226,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkSourceElements` for type nodes.
-    fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
+    pub(super) fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
         for node in self.hir(file).ids(nodes) {
             self.check_type_node(file, node);
         }
@@ -1248,7 +1282,9 @@ impl<'s> Checker<'_, 's> {
                 if spec.is_none() {
                     self.check_type_nodes(file, args);
                 }
-                self.check_type_reference_or_import(file, node)
+                self.check_attributes_of_import_type(file, node);
+                self.check_type_reference_or_import(file, node);
+                self.check_import_attributes_of_import_type(file, node);
             }
             // `checkThisType`
             TypeNodeKind::Keyword(Keyword::This) => {
@@ -1266,6 +1302,7 @@ impl<'s> Checker<'_, 's> {
                 let ty = self.type_from_node(file, node);
                 if (members.iter()).any(|m| hir[m].kind == MemberKind::IndexSignature) {
                     self.check_index_constraints(file, ty, &[(file, members)], false, None);
+                    self.check_type_for_duplicate_index_signatures(file, members);
                 }
                 // Another task may have stored `ty`.
                 self.get_members_of_type_literal(file, members);

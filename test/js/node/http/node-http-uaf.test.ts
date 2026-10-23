@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
@@ -53,7 +53,7 @@ test.concurrent(
           responded: expect.any(Number),
           aborted: expect.any(Number),
           // Errors other than AbortError, counted by name.
-          failed: {},
+          failed: isWindows ? expect.any(Object) : {},
         },
       },
       stderr: "",
@@ -61,10 +61,13 @@ test.concurrent(
     });
     // `handled` isn't asserted: on a slow machine every abort can land before
     // the server accepts the connection.
-    const { tally } = result as { tally: { responded: number; aborted: number } };
-    expect({ settled: tally.responded + tally.aborted, aborted: tally.aborted > 0 }).toEqual({
+    // Windows refuses a connection while the accept backlog is full, which a loaded machine reaches.
+    const { tally } = result as { tally: { responded: number; aborted: number; failed: Record<string, number> } };
+    const { ECONNREFUSED: refused = 0, ...failed } = tally.failed;
+    expect({ settled: tally.responded + tally.aborted + refused, aborted: tally.aborted > 0, failed }).toEqual({
       settled: requests,
       aborted: true,
+      failed: {},
     });
   },
   fixtureTimeout,

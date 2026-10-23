@@ -3662,7 +3662,8 @@ describe("writes under cork()", () => {
       });
     }
 
-    it("with part of it still to send", async () => {
+    // Windows takes a send whole, whatever the size of the send buffer, so nothing is left to send there.
+    it.skipIf(isWindows)("with part of it still to send", async () => {
       using pair = await connectedPair("tcp");
       require("bun:internal-for-testing").setSocketOptions(pair.writer, 1, 4096);
       await writeThenReuse(pair.writer, pair.peer);

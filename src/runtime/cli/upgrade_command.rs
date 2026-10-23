@@ -200,6 +200,7 @@ impl UpgradeCommand {
         // Incase they're using a GitHub proxy in e.g. China
         let mut github_api_domain: &[u8] = b"api.github.com";
         if let Some(api_domain) = env_loader.map.get(b"GITHUB_API_DOMAIN") {
+            let api_domain = strings::trim_right(api_domain, b"/");
             if !api_domain.is_empty() {
                 github_api_domain = api_domain;
             }

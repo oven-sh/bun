@@ -21,7 +21,7 @@ test("18547", async () => {
     },
   });
 
-  const response = await fetch(`${serve.url}/foo`);
+  const response = await fetch(new URL("/foo", serve.url));
   // Or the context of the original request
   expect(response.headers.get("set-cookie")).toEqual("sessionToken=123456; Path=/; SameSite=Lax");
 });

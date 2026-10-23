@@ -242,6 +242,30 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("the :path keeps the leading slashes of the pathname", async () => {
+    await withH2Server(
+      (req, res) => {
+        res.setHeader("x-seen-path", req.url);
+        res.end("ok");
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          const seen = [];
+          for (const tail of ["//a//b?x=1", "///", "//?q=1"]) {
+            const res = await fetch(${JSON.stringify(url)} + tail, { tls: { rejectUnauthorized: false } });
+            await res.text();
+            seen.push(res.headers.get("x-seen-path"));
+          }
+          console.log(JSON.stringify(seen));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(["//a//b?x=1", "///", "//?q=1"]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("POST: request body is delivered as DATA frames", async () => {
     await withH2Server(
       (req, res) => {

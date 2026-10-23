@@ -291,6 +291,23 @@ it("should support Request", async () => {
   }
 });
 
+it("match(url) keeps the leading slashes of the pathname, as new URL() reads them", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const pick = (url: string) => {
+    const match = router.match(url)!;
+    return { name: match.name, pathname: match.pathname, params: match.params };
+  };
+  expect(pick("http://example.com//posts/hello-world")).toEqual({
+    name: "/posts/[id]",
+    pathname: "//posts/hello-world",
+    params: { id: "hello-world" },
+  });
+  expect(pick("http://example.com//posts")).toEqual({ name: "/posts", pathname: "//posts", params: {} });
+  expect(pick("http://example.com//")).toEqual({ name: "/", pathname: "//", params: {} });
+});
+
 it("assetPrefix, src, and origin", async () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);

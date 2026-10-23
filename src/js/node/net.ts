@@ -3928,6 +3928,19 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     } else if (typeof hostname === "string" && typeof onListen === "number") {
       backlog = onListen;
       onListen = argsLength > 3 ? arguments[3] : undefined;
+    } else if (argsLength > 3 && typeof arguments[3] === "function") {
+      // listen(port, host, backlog, callback) with an `undefined`/`null`
+      // backlog: skip it and take the callback from the last argument,
+      // matching Node. e.g. listen(port, host, undefined, cb) and
+      // listen(port, undefined, undefined, cb).
+      if (typeof onListen === "number") {
+        backlog = onListen;
+      }
+      onListen = arguments[3];
+    } else if ((hostname === undefined || hostname === null) && typeof onListen === "number") {
+      // listen(port, undefined, backlog): numeric backlog with no host.
+      backlog = onListen;
+      onListen = undefined;
     }
 
     if (typeof port === "function") {

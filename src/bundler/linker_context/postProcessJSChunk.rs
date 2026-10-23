@@ -474,14 +474,10 @@ pub(crate) fn post_process_js_chunk(
 
     // Add the top-level directive if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
-    if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
-
-        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-            j.push_static(b"\"use strict\";\n");
-            line_offset.advance(b"\"use strict\";\n");
-            newline_before_comment = true;
-        }
+    if chunk.starts_with_use_strict(c) {
+        j.push_static(b"\"use strict\";\n");
+        line_offset.advance(b"\"use strict\";\n");
+        newline_before_comment = true;
     }
 
     let mut preload_registration = module_preload_registration(c, chunk, chunk_index, &ctx.chunks)?;

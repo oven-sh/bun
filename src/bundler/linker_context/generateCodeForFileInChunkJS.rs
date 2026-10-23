@@ -257,21 +257,20 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point of this
     // chunk). An ES module without a wrapper symbol prints no closure to hold it.
-    if flags.wrap != WrapKind::None
+    let has_own_use_strict = flags.wrap != WrapKind::None
         && ast
             .flags
             .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
         && !chunk.is_entry_point_file(source_index as u32)
-        && !ast.wrapper_ref.is_empty()
-        && !output_format.is_always_strict_mode()
-    {
-        stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(
-            S::Directive {
-                value: bun_ast::StoreStr::new(b"use strict"),
-            },
-            bun_ast::Loc::EMPTY,
-        ));
+        && !output_format.is_always_strict_mode();
+    if has_own_use_strict && !ast.wrapper_ref.is_empty() {
+        stmts
+            .inside_wrapper_prefix
+            .append_directive(use_strict_directive());
     }
+
+    // The directive in the wrapper does not cover a function that prints above it. The directive at the top of the chunk does.
+    let hoisted_functions_need_use_strict = has_own_use_strict && !chunk.starts_with_use_strict(c);
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
     // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
@@ -736,6 +735,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
+                let mut strict_scope = StrictScope::default();
+                if hoisted_functions_need_use_strict {
+                    strict_scope.find_names(stmts.all_stmts.as_slice(), hoist.symbols.get());
+                }
+
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
@@ -761,13 +765,29 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     if let Some(initializer) = decl.value {
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
                                         if initializer.can_be_moved()
-                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                            && let B::B::BIdentifier(id) = decl.binding.data
                                         {
-                                            // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
-                                            hoist.decls.push(G::Decl {
-                                                binding: decl.binding,
-                                                value: decl.value,
-                                            });
+                                            if strict_scope.stores(hoist.symbols.get(), id.r#ref) {
+                                                // ie `const f = (a = 1) => {}` => `var f; (() => { "use strict"; f = (a = 1) => {}; })()`
+                                                let name = hoist
+                                                    .wrap_identifier(decl.binding.loc, id.r#ref);
+                                                strict_scope.values.push(Stmt::allocate_expr(
+                                                    temp_arena,
+                                                    Expr::assign(name, initializer),
+                                                ));
+                                            } else {
+                                                // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
+                                                hoist.decls.push(G::Decl {
+                                                    binding: decl.binding,
+                                                    value: Some(
+                                                        if hoisted_functions_need_use_strict {
+                                                            with_use_strict(temp_arena, initializer)
+                                                        } else {
+                                                            initializer
+                                                        },
+                                                    ),
+                                                });
+                                            }
                                         } else {
                                             // A pattern runs getters or the iterator, so it stays inside the wrapper
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
@@ -796,8 +816,38 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                                 break 'stmt Stmt::allocate_expr(temp_arena, value);
                             }
-                            StmtData::SFunction(_) => {
-                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                            StmtData::SFunction(function) => {
+                                let func = &function.func;
+                                if let Some(name) = func.name
+                                    && strict_scope.stores(hoist.symbols.get(), name.ref_)
+                                {
+                                    // ie `function f(a = 1) {}` => `var f; (() => { "use strict"; f = function(a = 1) {}; })()`
+                                    let lhs = hoist.wrap_identifier(name.loc, name.ref_);
+                                    // Not `function f`: that name is a second binding, and strict code cannot assign to it.
+                                    let mut func = func.with_body_stmts(func.body.stmts);
+                                    func.name = None;
+                                    strict_scope.declarations.push(Stmt::allocate_expr(
+                                        temp_arena,
+                                        Expr::assign(
+                                            lhs,
+                                            Expr::init(E::Function { func }, stmt.loc),
+                                        ),
+                                    ));
+                                } else if hoisted_functions_need_use_strict {
+                                    // ie `function f() {}` => `function f() { "use strict"; }`
+                                    let body = strict_body(temp_arena, func.body.stmts.slice());
+                                    stmts.append(
+                                        StmtListWhich::OutsideWrapperPrefix,
+                                        Stmt::alloc(
+                                            S::Function {
+                                                func: func.with_body_stmts(body),
+                                            },
+                                            stmt.loc,
+                                        ),
+                                    );
+                                } else {
+                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                                }
                                 continue 'hoist;
                             }
                             StmtData::SClass(mut class) => 'stmt: {
@@ -851,6 +901,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     );
                     hoist.decls.clear();
                 }
+
+                if let Some(scope) = strict_scope.into_stmt(temp_arena) {
+                    stmts.append(StmtListWhich::OutsideWrapperPrefix, scope);
+                }
+                debug_assert!(
+                    !hoisted_functions_need_use_strict
+                        || stmts
+                            .outside_wrapper_prefix
+                            .iter()
+                            .all(has_no_function_without_use_strict)
+                );
 
                 let inner_len = inner_stmts.len();
                 if inner_len > 0 {
@@ -1045,6 +1106,190 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
         end += 1;
     }
     stmts.truncate(end);
+}
+
+fn use_strict_directive() -> Stmt {
+    Stmt::alloc(
+        S::Directive {
+            value: bun_ast::StoreStr::new(b"use strict"),
+        },
+        bun_ast::Loc::EMPTY,
+    )
+}
+
+fn directive_of(stmt: &Stmt) -> Option<&[u8]> {
+    match &stmt.data {
+        StmtData::SDirective(directive) => Some(directive.value.slice()),
+        _ => None,
+    }
+}
+
+fn has_use_strict(body: &[Stmt]) -> bool {
+    body.iter()
+        .map_while(directive_of)
+        .any(|directive| directive == b"use strict")
+}
+
+/// A copy of a function body with "use strict". The other chunks that print the file share the original.
+fn strict_body(bump: &Bump, body: &[Stmt]) -> bun_ast::StoreSlice<Stmt> {
+    // A directive of the function itself ("use server") stays its first statement.
+    let at = body.iter().map_while(directive_of).count();
+    bun_ast::StoreSlice::new_mut(
+        bump.alloc_slice_fill_with(body.len() + 1, |i| match i.cmp(&at) {
+            core::cmp::Ordering::Less => body[i],
+            core::cmp::Ordering::Equal => use_strict_directive(),
+            core::cmp::Ordering::Greater => body[i - 1],
+        }),
+    )
+}
+
+/// Whether `value` is a function that cannot have a "use strict" directive in its body.
+fn is_function_with_non_simple_parameter_list(value: Expr) -> bool {
+    match value.data {
+        ExprData::EFunction(function) => !function.func.has_simple_parameter_list(),
+        ExprData::EArrow(arrow) => {
+            !G::Arg::is_simple_parameter_list(arrow.args.slice(), arrow.has_rest_arg)
+        }
+        _ => false,
+    }
+}
+
+/// `value` with "use strict" first in its body, if it is a function. `StrictScope` takes the functions that cannot have it.
+fn with_use_strict(bump: &Bump, value: Expr) -> Expr {
+    debug_assert!(!is_function_with_non_simple_parameter_list(value));
+    match value.data {
+        ExprData::EFunction(function) => {
+            let func = &function.func;
+            let body = strict_body(bump, func.body.stmts.slice());
+            Expr::init(
+                E::Function {
+                    func: func.with_body_stmts(body),
+                },
+                value.loc,
+            )
+        }
+        ExprData::EArrow(arrow) => Expr::init(
+            E::Arrow {
+                args: arrow.args,
+                body: G::FnBody {
+                    loc: arrow.body.loc,
+                    stmts: strict_body(bump, arrow.body.stmts.slice()),
+                },
+                is_async: arrow.is_async,
+                has_rest_arg: arrow.has_rest_arg,
+                // `() => value` has no place for a directive: `() => { "use strict"; return value; }`
+                prefer_expr: false,
+                has_react_hooks_suppression: arrow.has_react_hooks_suppression,
+            },
+            value.loc,
+        ),
+        _ => value,
+    }
+}
+
+/// Whether each function that `stmt` creates outside of the wrapper is strict by itself.
+fn has_no_function_without_use_strict(stmt: &Stmt) -> bool {
+    match stmt.data {
+        StmtData::SFunction(function) => has_use_strict(function.func.body.stmts.slice()),
+        StmtData::SLocal(local) => {
+            local
+                .decls
+                .slice()
+                .iter()
+                .all(|decl| match decl.value.map(|value| value.data) {
+                    Some(ExprData::EFunction(function)) => {
+                        has_use_strict(function.func.body.stmts.slice())
+                    }
+                    Some(ExprData::EArrow(arrow)) => has_use_strict(arrow.body.stmts.slice()),
+                    _ => true,
+                })
+        }
+        _ => true,
+    }
+}
+
+/// `(() => { "use strict"; ... })()` above an `__esm` wrapper. It creates the functions that cannot have the directive in their own body.
+#[derive(Default)]
+struct StrictScope {
+    /// The names that get such a function, sorted. Each other hoisted store to one of them joins the scope, so the last store stays the last.
+    names: Vec<(u32, u32)>,
+    /// `name = function() {}` for function declarations. JavaScript creates them first.
+    declarations: Vec<Stmt>,
+    /// `name = value` for initializers, in source order.
+    values: Vec<Stmt>,
+}
+
+impl StrictScope {
+    fn name(symbols: &bun_ast::symbol::Map, ref_: Ref) -> (u32, u32) {
+        let ref_ = symbols.follow(ref_);
+        (ref_.source_index(), ref_.inner_index())
+    }
+
+    /// `stmts` are the statements of a wrapped ES module before the hoist.
+    fn find_names(&mut self, stmts: &[Stmt], symbols: &bun_ast::symbol::Map) {
+        for stmt in stmts {
+            match stmt.data {
+                StmtData::SFunction(function) => {
+                    if let Some(name) = function.func.name
+                        && !function.func.has_simple_parameter_list()
+                    {
+                        self.names.push(Self::name(symbols, name.ref_));
+                    }
+                }
+                StmtData::SLocal(local) if !local.kind.is_using() => {
+                    for decl in local.decls.slice() {
+                        if let B::B::BIdentifier(id) = decl.binding.data
+                            && decl
+                                .value
+                                .is_some_and(is_function_with_non_simple_parameter_list)
+                        {
+                            self.names.push(Self::name(symbols, id.r#ref));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.names.sort_unstable();
+    }
+
+    fn stores(&self, symbols: &bun_ast::symbol::Map, ref_: Ref) -> bool {
+        !self.names.is_empty() && self.names.binary_search(&Self::name(symbols, ref_)).is_ok()
+    }
+
+    fn into_stmt(self, bump: &Bump) -> Option<Stmt> {
+        let (declarations, values) = (self.declarations, self.values);
+        if declarations.is_empty() && values.is_empty() {
+            return None;
+        }
+        let body = bump.alloc_slice_fill_with(1 + declarations.len() + values.len(), |i| {
+            match i.checked_sub(1) {
+                None => use_strict_directive(),
+                Some(i) if i < declarations.len() => declarations[i],
+                Some(i) => values[i - declarations.len()],
+            }
+        });
+        let scope = Expr::init(
+            E::Arrow {
+                body: G::FnBody {
+                    stmts: bun_ast::StoreSlice::new_mut(body),
+                    loc: bun_ast::Loc::EMPTY,
+                },
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        Some(Stmt::allocate_expr(
+            bump,
+            Expr::init(
+                E::Call {
+                    target: scope,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ),
+        ))
+    }
 }
 
 // Type aliases / re-imports for readability of match arms.

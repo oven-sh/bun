@@ -206,6 +206,26 @@ describe("bundler", () => {
     },
     run: { stdout: "true false" },
   });
+  // The linker prints these functions above the __esm wrapper of strict.mjs, outside of the
+  // directive in that wrapper. Each has the directive in its own body or in a strict scope.
+  itBundled("compile/BytecodeKeepsUseStrictOfHoistedFunctions", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        const strict = require("./strict.mjs");
+        const call = f => f();
+        console.log(call(strict.declaration), call(strict.declarationWithDefault), strict.arrow());
+      `,
+      "/strict.mjs": /* js */ `
+        "use strict";
+        export function declaration() { return this === undefined; }
+        export function declarationWithDefault(a = 1) { return this === undefined; }
+        export const arrow = () => (function () { return this === undefined; })();
+      `,
+    },
+    run: { stdout: "true true true" },
+  });
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.

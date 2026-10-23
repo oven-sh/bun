@@ -6042,18 +6042,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         _value
     }
 
-    pub(crate) fn is_simple_parameter_list(args: &[G::Arg], has_rest_arg: bool) -> bool {
-        if has_rest_arg {
-            return false;
-        }
-        for arg in args {
-            if !matches!(arg.binding.data, js_ast::b::B::BIdentifier(_)) || arg.default.is_some() {
-                return false;
-            }
-        }
-        true
-    }
-
     // This one is never called in places that haven't already checked if DCE is enabled.
     pub(crate) fn class_can_be_removed_if_unused(&mut self, class: &G::Class) -> bool {
         if let Some(extends) = &class.extends {

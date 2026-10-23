@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
@@ -760,25 +760,28 @@ describe("bundler", () => {
 
   // Every statement of this ES module is hoisted out of the __esm closure, so the
   // parser made no wrapper symbol for it. No closure is printed for the directive.
+  // The hoisted function has the directive in its own body.
   itBundled("cjs/UseStrictEsmFileWithoutWrapperSymbol", {
     files: {
       "/entry.cjs": /* js */ `
         const lib = require("./lib.mjs");
-        console.log(lib.one());
+        const one = lib.one;
+        console.log(one());
       `,
       "/lib.mjs": /* js */ `
         "use strict";
-        export function one() { return 1; }
+        export function one() { return this === undefined; }
       `,
     },
     target: "node",
     format: "cjs",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      expect(code).not.toContain("use strict");
+      expect(code).toMatch(/function one\(\) \{\s*"use strict";/);
+      expect(code.split('"use strict"')).toHaveLength(2);
       expect(code).not.toContain("__esm(");
     },
-    run: { runtime: "node", stdout: "1" },
+    run: { runtime: "node", stdout: "true" },
   });
 
   // The import statement gives this ES module a wrapper symbol, and each of its
@@ -859,8 +862,8 @@ describe("bundler", () => {
   });
 
   // The mode of each kind of file that starts with "use strict", in one bundle.
-  // The entry point, a file with no wrapper, and a function that is hoisted out
-  // of an __esm closure run in the mode of the chunk, as in esbuild.
+  // The entry point and a file with no wrapper run in the mode of the chunk, as in
+  // esbuild. A function that is hoisted out of an __esm closure is strict, as in node.
   const strictEsm = `"use strict";\nexport const top = ${isStrict};\nexport function fn() { return this === undefined; }`;
   const modeTableFiles = {
     "/entry.mjs": /* js */ `
@@ -903,7 +906,7 @@ describe("bundler", () => {
     "import script: sloppy",
     "require cjs: strict",
     "require esm: strict",
-    "require esm, function: sloppy",
+    "require esm, function: strict",
     "require script: strict",
   ].join("\n");
   for (const format of ["cjs", "iife"] as const) {
@@ -914,6 +917,471 @@ describe("bundler", () => {
       run: { runtime: "node", stdout: modeTable },
     });
   }
+
+  // ============================================================================
+  // The linker prints the functions of a wrapped ES module above its __esm closure,
+  // outside of the "use strict" that the closure holds for the file. Each such
+  // function has the directive in its own body. A function with a non-simple
+  // parameter list cannot have one (a SyntaxError), so a strict scope above the
+  // wrapper creates it.
+  // ============================================================================
+
+  const hoistedFunctionFiles = {
+    "/entry.mjs": /* js */ `
+      const strict = require("./strict.mjs");
+      const defaultDeclaration = require("./default-declaration.mjs");
+      const defaultExpression = require("./default-expression.mjs");
+      const noWrapper = require("./no-wrapper.mjs");
+      require("./script.js");
+      const call = f => f();
+      import("./imported.mjs").then(async imported => {
+        const rows = {
+          "body": strict.body,
+          "function declaration": call(strict.declaration),
+          "function declaration, default parameter": call(strict.declarationWithDefault),
+          "async function declaration": await call(strict.asyncDeclaration),
+          "generator declaration": call(strict.generatorDeclaration).next().value,
+          "function expression": call(strict.expression),
+          "function expression, rest parameter": call(strict.expressionWithRest),
+          "arrow": strict.arrow(),
+          "arrow, expression body": strict.arrowWithExpressionBody(),
+          "arrow, destructured parameter": strict.arrowWithPattern(),
+          "static import from a wrapped file": strict.fromDependency(),
+          "export default function": call(defaultDeclaration.default),
+          "export default function expression": call(defaultExpression.default),
+          "no wrapper symbol, function declaration": call(noWrapper.declaration),
+          "no wrapper symbol, function expression": call(noWrapper.expression),
+          "script, function declaration": globalThis.scriptDeclaration,
+          "script, function expression": globalThis.scriptExpression,
+          "import(), function declaration": call(imported.declaration),
+        };
+        for (const row in rows) console.log(row + ": " + (rows[row] ? "strict" : "sloppy"));
+      });
+    `,
+    "/strict.mjs": /* js */ `
+      "use strict";
+      import { fromDependency } from "./dependency.mjs";
+      export { fromDependency };
+      export const body = ${isStrict};
+      export function declaration() { return this === undefined; }
+      export function declarationWithDefault(a = 1) { return this === undefined; }
+      export async function asyncDeclaration() { return this === undefined; }
+      export function* generatorDeclaration() { yield this === undefined; }
+      export const expression = function () { return this === undefined; };
+      export const expressionWithRest = function (...rest) { return this === undefined; };
+      export const arrow = () => { return ${isStrict}; };
+      export const arrowWithExpressionBody = () => ${isStrict};
+      export const arrowWithPattern = ({ a } = {}) => ${isStrict};
+    `,
+    "/dependency.mjs": `"use strict";\nexport const fromDependency = () => ${isStrict};`,
+    "/default-declaration.mjs": `"use strict";\nexport default function () { return this === undefined; }`,
+    "/default-expression.mjs": `"use strict";\nexport default (function named() { return this === undefined; });`,
+    "/no-wrapper.mjs": /* js */ `
+      "use strict";
+      export function declaration() { return this === undefined; }
+      export const expression = function () { return this === undefined; };
+    `,
+    "/script.js": /* js */ `
+      "use strict";
+      function declaration() { return this === undefined; }
+      var expression = function () { return this === undefined; };
+      globalThis.scriptDeclaration = declaration();
+      globalThis.scriptExpression = expression();
+    `,
+    "/imported.mjs": `"use strict";\nexport function declaration() { return this === undefined; }`,
+  };
+  const hoistedFunctionTable = [
+    "body",
+    "function declaration",
+    "function declaration, default parameter",
+    "async function declaration",
+    "generator declaration",
+    "function expression",
+    "function expression, rest parameter",
+    "arrow",
+    "arrow, expression body",
+    "arrow, destructured parameter",
+    "static import from a wrapped file",
+    "export default function",
+    "export default function expression",
+    "no wrapper symbol, function declaration",
+    "no wrapper symbol, function expression",
+    "script, function declaration",
+    "script, function expression",
+    "import(), function declaration",
+  ]
+    .map(row => row + ": strict")
+    .join("\n");
+
+  // node runs the node-target bundles. bun runs the other two as printed (`// @bun`).
+  const hoistedFunctionOutputs: Record<string, Partial<BundlerTestInput> & { target: "node" | "bun" }> = {
+    format_cjs: { target: "node", format: "cjs" },
+    format_iife: { target: "node", format: "iife" },
+    minify: { target: "node", format: "cjs", minifyWhitespace: true, minifySyntax: true, minifyIdentifiers: true },
+    target_bun: { target: "bun", format: "cjs", outdir: "/out", outputPaths: ["/out/entry.js"] },
+    target_bun_bytecode: {
+      target: "bun",
+      format: "cjs",
+      bytecode: true,
+      outdir: "/out",
+      outputPaths: ["/out/entry.js"],
+    },
+  };
+  for (const [name, options] of Object.entries(hoistedFunctionOutputs)) {
+    itBundled(`cjs/UseStrictHoistedFunctions_${name}`, {
+      files: hoistedFunctionFiles,
+      ...options,
+      run: { runtime: options.target, stdout: hoistedFunctionTable },
+    });
+  }
+
+  // The printed shape. A function that can have the directive stays where it was.
+  itBundled("cjs/UseStrictHoistedFunctionsOutput", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.mjs");
+        console.log(Object.keys(lib).join());
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        export function declaration(a) { return a; }
+        export function declarationWithDefault(a = 1) { return a; }
+        export const expression = function (a) { return a; };
+        export const arrow = a => a;
+        export const arrowWithRest = (...a) => a;
+        export async function withOwnDirective() { "use server"; }
+        export const number = 1;
+        export class Class {}
+        export const inWrapper = [declaration];
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      const lib = code.slice(code.indexOf("function declaration"), code.indexOf("// entry.cjs"));
+      expect(lib).toMatchInlineSnapshot(`
+        "function declaration(a) {
+          "use strict";
+          return a;
+        }
+        async function withOwnDirective() {
+          "use server";
+          "use strict";
+        }
+
+        class Class {
+        }
+        var declarationWithDefault, expression = function(a) {
+          "use strict";
+          return a;
+        }, arrow = (a) => {
+          "use strict";
+          return a;
+        }, arrowWithRest, number = 1, inWrapper;
+        (() => {
+          "use strict";
+          declarationWithDefault = function(a = 1) {
+            return a;
+          };
+          arrowWithRest = (...a) => a;
+        })();
+        var init_lib = __esm(() => {
+          "use strict";
+          inWrapper = [declaration];
+        });
+
+        "
+      `);
+    },
+    run: {
+      runtime: "node",
+      stdout:
+        "Class,arrow,arrowWithRest,declaration,declarationWithDefault,expression,inWrapper,number,withOwnDirective",
+    },
+  });
+
+  // The strict scope runs where the file prints, and a function declaration is no longer
+  // created before every other statement. Each other store to the same name moves into
+  // the scope, so the last store stays the last. node prints the same line for the source.
+  itBundled("cjs/UseStrictHoistedFunctionsKeepStoreOrder", {
+    files: {
+      "/entry.cjs": /* js */ `
+        require("./script.js");
+      `,
+      "/script.js": /* js */ `
+        "use strict";
+        function declarationThenNumber(a = 1) {}
+        var declarationThenNumber = 1;
+        var expressionThenNumber = function (a = 1) {};
+        var expressionThenNumber = 2;
+        var numberThenExpression = 3;
+        var numberThenExpression = function (a = 1) { return this === undefined; };
+        function declarationThenExpression(a = 1) { return "declaration"; }
+        var declarationThenExpression = function () { return this === undefined; };
+        var expressionThenExpression = function () { return "first"; };
+        var expressionThenExpression = function (a = 1) { return this === undefined; };
+        var numberThenDeclaration = 4;
+        function numberThenDeclaration(a = 1) {}
+        function twice(a = 1) { return "first"; }
+        var twice;
+        function twice(b = 2) { return "last"; }
+        function assignedInBody(a = 1) { return typeof assignedInBody; }
+        var saved = assignedInBody;
+        function recursive(n = 3) { return n ? n * recursive(n - 1) : 1; }
+        console.log([
+          typeof declarationThenNumber,
+          typeof expressionThenNumber,
+          typeof numberThenDeclaration,
+          twice(),
+          numberThenExpression(),
+          declarationThenExpression(),
+          expressionThenExpression(),
+          saved(),
+          recursive(),
+          assignedInBody.name,
+          assignedInBody.length,
+          numberThenExpression.name,
+        ].join());
+        assignedInBody = 4;
+        console.log(saved());
+      `,
+    },
+    backend: "cli",
+    target: "node",
+    format: "cjs",
+    run: {
+      runtime: "node",
+      stdout: "number,number,number,last,true,true,true,function,6,assignedInBody,0,numberThenExpression\nnumber",
+    },
+  });
+
+  // b.mjs calls the functions of a.mjs before the body of a.mjs runs.
+  itBundled("cjs/UseStrictHoistedFunctionsInImportCycle", {
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(require("./a.mjs").fromB);
+      `,
+      "/a.mjs": /* js */ `
+        "use strict";
+        import { callA } from "./b.mjs";
+        export function declaration() { return this === undefined; }
+        export function declarationWithDefault(a = 1) { return this === undefined; }
+        export const fromB = callA();
+      `,
+      "/b.mjs": /* js */ `
+        import { declaration, declarationWithDefault } from "./a.mjs";
+        const call = f => f();
+        const early = [call(declaration), call(declarationWithDefault)];
+        export function callA() { return early.join(); }
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "true,true" },
+  });
+
+  // A hoisted function reads and writes the variables of its module, which the linker
+  // declares above the wrapper too.
+  itBundled("cjs/UseStrictHoistedFunctionsStoreModuleVariables", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.mjs");
+        lib.add(2);
+        console.log(lib.add(3), lib.count);
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        export var count = 0;
+        let total = [0][0];
+        for (var last = 0; last < 0; last++) {}
+        export function add(n) { count++; total += n; last = n; return count + ":" + total + ":" + last; }
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "2:5:3 2" },
+  });
+
+  // The parser leaves the \`var\` of a body with no braces inside the wrapper (#45705), so
+  // the hoisted function has no binding to store to. node prints 5.
+  itBundled("cjs/UseStrictHoistedFunctionsStoreVarOfBracelessBody", {
+    todo: true,
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(require("./lib.mjs").set(5));
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        if (Date.now() > 0) var counter = 1;
+        export function set(v) { counter = v; return counter; }
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "5" },
+  });
+
+  // A call through the namespace compiles to a direct call, which has no receiver.
+  // In strict code \`this\` is then undefined, and no longer the global object.
+  itBundled("cjs/UseStrictHoistedFunctionsCalledThroughNamespace", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.mjs");
+        console.log(lib.receiver());
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        export function receiver() { return this === undefined ? "undefined" : this === globalThis ? "globalThis" : "namespace"; }
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "undefined" },
+  });
+
+  // unwrapped.mjs has no wrapper, so it runs when the chunk loads. The chunk prints the
+  // wrapped lib.mjs above it, so the strict scope of lib.mjs ran before.
+  itBundled("cjs/UseStrictHoistedFunctionsCalledAtChunkLoad", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { early } from "./unwrapped.mjs";
+        console.log(early, Object.keys(require("./lib.mjs")).join());
+      `,
+      "/unwrapped.mjs": /* js */ `
+        import { declarationWithDefault, expressionWithRest } from "./lib.mjs";
+        const call = f => f();
+        export const early = [call(declarationWithDefault), call(expressionWithRest)].join();
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        export function declarationWithDefault(a = 1) { return this === undefined; }
+        export const expressionWithRest = function (...rest) { return this === undefined; };
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "true,true declarationWithDefault,expressionWithRest" },
+  });
+
+  // The static import binds through the `export *` of a file with no side effects, and
+  // nothing calls init_lib() before the entry point runs. The functions of lib.mjs are
+  // created when the chunk loads, as they were before.
+  itBundled("cjs/UseStrictHoistedFunctionsReadBeforeInit", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { expression, declarationWithDefault } from "./pkg/barrel.mjs";
+        const call = f => f();
+        console.log(call(expression), call(declarationWithDefault));
+        import("./pkg/lib.mjs");
+      `,
+      "/pkg/package.json": `{ "name": "pkg", "sideEffects": false, "type": "module" }`,
+      "/pkg/barrel.mjs": `export * from "./lib.mjs";`,
+      "/pkg/lib.mjs": /* js */ `
+        "use strict";
+        export const expression = function () { return this === undefined; };
+        export function declarationWithDefault(a = 1) { return this === undefined; }
+        export const inWrapper = [expression];
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var init_lib = __esm(");
+    },
+    run: { runtime: "node", stdout: "true true" },
+  });
+
+  // The directive at the top of this chunk covers every file in it, so the hoisted
+  // functions get none.
+  itBundled("cjs/UseStrictHoistedFunctionsInStrictChunk", {
+    files: {
+      "/entry.cjs": /* js */ `
+        "use strict";
+        const lib = require("./lib.mjs");
+        const call = f => f();
+        console.log(call(lib.declaration), call(lib.declarationWithDefault), lib.top);
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        export function declaration() { return this === undefined; }
+        export function declarationWithDefault(a = 1) { return this === undefined; }
+        export const top = ${isStrict};
+      `,
+    },
+    banner: "/* license */",
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toStartWith('/* license */\n"use strict";\n');
+      expect(code).toMatch(/function declaration\(\) \{\s*return/);
+      expect(code).toMatch(/function declarationWithDefault\(a = 1\) \{\s*return/);
+      expect(code.split('"use strict"')).toHaveLength(3);
+    },
+    run: { runtime: "node", stdout: "true true true" },
+  });
+
+  // lib.mjs is an entry point too. In its own chunk the directive at the top covers it.
+  itBundled("cjs/UseStrictHoistedFunctionsOfEntryPointRequiredByOtherEntryPoint", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.mjs");
+        const call = f => f();
+        console.log(call(lib.declaration), call(lib.expressionWithDefault));
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        export function declaration() { return this === undefined; }
+        export const expressionWithDefault = function (a = 1) { return this === undefined; };
+      `,
+    },
+    entryPoints: ["/entry.cjs", "/lib.mjs"],
+    outdir: "/out",
+    outputPaths: ["/out/entry.js", "/out/lib.js"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).toMatch(/function declaration\(\) \{\s*"use strict";/);
+      expect(entry).toMatch(/\(\(\) => \{\s*"use strict";\s*expressionWithDefault = function\(a = 1\) \{/);
+      const lib = api.readFile("/out/lib.js");
+      expect(lib).toStartWith('"use strict";\n');
+      expect(lib.split('"use strict"')).toHaveLength(2);
+    },
+    run: { file: "/out/entry.js", runtime: "node", stdout: "true true" },
+  });
+
+  // ESM output is strict everywhere, and a file with no directive has none to keep.
+  itBundled("cjs/UseStrictHoistedFunctions_format_esm", {
+    files: hoistedFunctionFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("use strict");
+    },
+    run: { stdout: hoistedFunctionTable },
+  });
+  itBundled("cjs/HoistedFunctionsOfFileWithoutDirective", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.mjs");
+        const call = f => f();
+        console.log(call(lib.declaration), call(lib.expressionWithDefault));
+      `,
+      "/lib.mjs": /* js */ `
+        export function declaration() { return this === undefined; }
+        export const expressionWithDefault = function (a = 1) { return this === undefined; };
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("use strict");
+    },
+    run: { runtime: "node", stdout: "false false" },
+  });
 
   // Test 28: export * from an external package whose module.exports is null.
   // CJS output emits __reExport(exports, require("ext"), module.exports) with

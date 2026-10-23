@@ -341,6 +341,30 @@ impl Fn {
             return_ts_metadata: self.return_ts_metadata.clone(),
         })
     }
+
+    /// A copy of this function with another body. The copy shares its arguments with `self`.
+    pub fn with_body_stmts(&self, stmts: StmtNodeList) -> Fn {
+        Fn {
+            name: self.name,
+            open_parens_loc: self.open_parens_loc,
+            args: self.args,
+            body: FnBody {
+                loc: self.body.loc,
+                stmts,
+            },
+            arguments_ref: self.arguments_ref,
+            flags: self.flags,
+            return_ts_metadata: self.return_ts_metadata.clone(),
+        }
+    }
+
+    #[inline]
+    pub fn has_simple_parameter_list(&self) -> bool {
+        Arg::is_simple_parameter_list(
+            self.args.slice(),
+            self.flags.contains(flags::Function::HasRestArg),
+        )
+    }
 }
 
 pub struct Arg {
@@ -367,6 +391,22 @@ impl Default for Arg {
 }
 
 impl Arg {
+    /// ECMA-262 IsSimpleParameterList. Only such a function can have "use strict" in its body.
+    #[inline]
+    pub fn is_simple_parameter_list(args: &[Arg], has_rest_arg: bool) -> bool {
+        if has_rest_arg {
+            return false;
+        }
+        for arg in args {
+            if !matches!(arg.binding.data, crate::binding::Data::BIdentifier(_))
+                || arg.default.is_some()
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,

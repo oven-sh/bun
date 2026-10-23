@@ -196,10 +196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_strict_mode()
             && func.arguments_ref.is_valid()
             && self.symbols[func.arguments_ref.inner_index() as usize].use_count_estimate > 0
-            && Self::is_simple_parameter_list(
-                func.args.slice(),
-                func.flags.contains(flags::Function::HasRestArg),
-            )
+            && func.has_simple_parameter_list()
         {
             for arg in func.args.slice() {
                 if let BData::BIdentifier(id) = arg.binding.data {
@@ -220,7 +217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
-        let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
+        let has_simple_args = G::Arg::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
         let mut duplicate_args_check: Option<
             bun_collections::pool::PoolGuard<'static, StringVoidMap>,

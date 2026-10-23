@@ -22,7 +22,6 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
-#[cfg(debug_assertions)]
 use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
@@ -277,6 +276,14 @@ impl Chunk {
     #[inline]
     pub(crate) fn is_entry_point_file(&self, source_index: u32) -> bool {
         self.entry_point.is_entry_point() && self.entry_point.source_index() == source_index
+    }
+
+    /// Whether this chunk starts with the "use strict" of its entry point, which covers every file in it.
+    pub(crate) fn starts_with_use_strict(&self, c: &LinkerContext<'_>) -> bool {
+        self.is_entry_point()
+            && !c.options.output_format.is_always_strict_mode()
+            && c.graph.ast.items_flags()[self.entry_point.source_index() as usize]
+                .contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
     }
 
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.

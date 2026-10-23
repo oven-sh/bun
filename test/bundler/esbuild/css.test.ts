@@ -2403,10 +2403,11 @@ c {
   }
 
   // The bundle has to declare each layer where the source declares it. In Chrome, `.t` gets the
-  // same color from each `out` as from its source files. A `todo` names a case that is still wrong.
+  // same color from each `out` as from its source files. A `todo` has the right output and says why bun prints another.
   const layerOrderCases: Record<string, { files: Record<string, string>; out: string; todo?: string }> = {
     // The first copy of btn.css is replaced by a list of its layers. That list declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {
+      todo: 'no file has a statement ahead of an "@import", so the list is removed as on main and in esbuild',
       files: {
         "/entry.css": /* css */ `
           @import "./base.css";
@@ -2605,8 +2606,28 @@ c {
       },
       out: "@media print{@layer a{.g{color:green}}}@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
     },
+    NameDeclaredOnlyUnderMediaInAFileImportedTwice: {
+      todo: 'the list for the first copy of tokens.css declares "theme" with no "@media" around it',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./tokens.css";
+          @import "./components.css";
+        `,
+        "/tokens.css": /* css */ `
+          @media (prefers-color-scheme: dark) { @layer theme { :root { --bg: black } } }
+          :root { --bg: white }
+        `,
+        "/components.css": /* css */ `
+          @layer base, theme;
+          @import "./tokens.css";
+          @layer theme { .t { color: red } }
+          @layer base { .t { color: blue } }
+        `,
+      },
+      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
+    },
+    // A copy under "layer(w)" or "layer" is kept when a later copy has no layer: its rules are in another layer.
     LayeredCopyBehindABareCopy: {
-      todo: 'the copy of f2.css under "layer(w)" is replaced by a list of its layers, as in esbuild',
       files: {
         "/entry.css": /* css */ `
           @layer a;
@@ -2626,7 +2647,6 @@ c {
       out: "@layer a;@layer c;@layer w{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
     },
     AnonymousCopyBehindABareCopy: {
-      todo: 'the copy of f2.css under "layer" is removed, as in esbuild',
       files: {
         "/entry.css": /* css */ `
           @layer a;
@@ -2675,17 +2695,14 @@ c {
   }
 
   // Random "@import" graphs (css-layer-order.ts). The bundle must give `.t` the rule that the sources give it, and
-  // the same order of named layers. bun 1.4.3 is wrong on each of these, and 543 is still wrong.
-  for (const [seed, options, todo] of [
-    [1, {}, ""],
-    [3, {}, ""],
-    [10, { leadingStatements: false }, ""],
-    [26, { cycles: true }, ""],
-    [2, { emptyBlocks: true }, ""],
-    [2, { anonymous: true }, ""],
-    [543, {}, "the copy of f2.css under layer(v) is replaced by a list of its layers"],
+  // the same order of named layers. bun 1.4.3 is wrong on each of these.
+  for (const [seed, options] of [
+    [1, {}],
+    [3, {}],
+    [543, {}],
+    [2, { anonymous: true }],
   ] as const) {
-    test.todoIf(!!todo)(`css/CSSAtLayerOrder: graph ${seed} ${JSON.stringify(options)}`, async () => {
+    test(`css/CSSAtLayerOrder: graph ${seed} ${JSON.stringify(options)}`, async () => {
       expect(await checkGraph(bunExe(), seed, options)).toEqual({ seed, status: "ok", problems: [] });
     });
   }

@@ -60,12 +60,13 @@ pub(crate) use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_
 
 mod css {
     pub(crate) use bun_css_jsc::css_internals::{
-        _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,
-        prefix_test, prefix_test_with_options, test_with_options,
+        _test, attr_test, canonical_test, minify_error_test_with_options, minify_test,
+        minify_test_with_options, prefix_test, prefix_test_with_options, test_with_options,
     };
 }
 pub(crate) use css::_test as css_jsc_css_internals__test;
 pub(crate) use css::attr_test as css_jsc_css_internals_attr_test;
+pub(crate) use css::canonical_test as css_jsc_css_internals_canonical_test;
 pub(crate) use css::minify_error_test_with_options as css_jsc_css_internals_minify_error_test_with_options;
 pub(crate) use css::minify_test as css_jsc_css_internals_minify_test;
 pub(crate) use css::minify_test_with_options as css_jsc_css_internals_minify_test_with_options;

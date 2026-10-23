@@ -926,6 +926,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
             alloc,
             &bun_css::PrinterOptions {
                 minify: false,
+                canonical_token_lists: true,
                 ..bun_css::PrinterOptions::default()
             },
             Some(bun_css::ImportInfo::init_outside_of_bundler(

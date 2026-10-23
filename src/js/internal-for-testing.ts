@@ -151,6 +151,7 @@ export const cssInternals = {
   minifyTest: $newRustFunction("css_internals.rs", "minifyTest", 3),
   prefixTest: $newRustFunction("css_internals.rs", "prefixTest", 3),
   _test: $newRustFunction("css_internals.rs", "_test", 3),
+  canonicalTest: $newRustFunction("css_internals.rs", "canonicalTest", 3),
   attrTest: $newRustFunction("css_internals.rs", "attrTest", 3),
 };
 

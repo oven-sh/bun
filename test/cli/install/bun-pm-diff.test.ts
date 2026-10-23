@@ -829,11 +829,17 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
       "b/index.js": `"use strict"\n\nmodule.exports = function add(a, b) {\n\treturn a + b\n}\n`,
       "a/style.css": `.a{color:red;margin:0 auto}`,
       "b/style.css": `.a {\n  color: red;\n  margin: 0 auto;\n}\n`,
+      // Values that the CSS parser keeps as tokens, as a minifier prints them and as `bun fmt` prints them, with
+      // one value wrapped and commented by hand. The blank next to a comma and next to `*` and `/` in calc(),
+      // the amount of whitespace, and a comment are formatting.
+      "a/tokens.css": `.a{--shadow:0 0 1px red,0 0 2px blue;font-family:var(--f),sans-serif;color:rgba(1,2,3,var(--o));width:calc(var(--a)*2/3);height:calc(var(--h,10px*2));margin:var(--x) auto}@apply a b;`,
+      "b/tokens.css": `.a {\n  --shadow: 0 0 1px red, /* second layer */\n    0 0 2px blue;\n  font-family: var(--f), sans-serif;\n  color: rgba(1, 2, 3, var(--o));\n  width: calc(var(--a) * 2 / 3);\n  height: calc(var(--h, 10px * 2));\n  margin: var(--x)  auto /* centered */;\n}\n@apply a  b;\n`,
     });
     expect(text).toMatch(/\nindex\.js ─+ formatting only\n/);
     expect(text).toMatch(/\npackage\.json ─+ formatting only\n/);
     expect(text).toMatch(/\nstyle\.css ─+ formatting only\n/);
-    expect(text).toContain("3 formatting only");
+    expect(text).toMatch(/\ntokens\.css ─+ formatting only\n/);
+    expect(text).toContain("4 formatting only");
     expect(changedLines(text)).toEqual([]);
     expect(exitCode).toBe(0);
   });
@@ -2163,6 +2169,9 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       "b/s.css": ".a { color: blue }\n.b { margin: 0 }\n",
       "a/bad.css": ".a{color:red}\n",
       "b/bad.css": ".a{color:red\n.b{{{\n",
+      // A blank that is not next to a comma can be a descendant combinator, so one that goes or comes is a change.
+      "a/sel.css": ".a{--sel:.x .y;--w:var(--m)var(--n)}\n",
+      "b/sel.css": ".a{--sel:.x.y;--w:var(--m) var(--n)}\n",
       "a/d.json": '{"a":1,"b":[1,2]}\n',
       "b/d.json": '{\n  "a": 2,\n  "b": [1, 2]\n}\n',
       "a/bad.json": '{"a":1}\n',
@@ -2173,6 +2182,11 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(text).toContain("│-   color: red;");
     expect(text).toContain("│+   color: #00f;");
     expect(text).not.toContain("margin");
+    expect(text).toMatch(/\nsel\.css ─+ normalized \+2 -2\n/);
+    expect(text).toContain("│-   --sel: .x .y;");
+    expect(text).toContain("│+   --sel: .x.y;");
+    expect(text).toContain("│-   --w: var(--m)var(--n);");
+    expect(text).toContain("│+   --w: var(--m) var(--n);");
     expect(text).toMatch(/\nd\.json ─+ normalized \+1 -1\n/);
     expect(text).toContain('│+   "a": 2,');
     expect(text).not.toMatch(/│[-+].*"b"/);

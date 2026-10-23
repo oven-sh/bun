@@ -13,6 +13,8 @@ pub(crate) enum TestKind {
     Normal,
     Minify,
     Prefix,
+    /// The print that `bun pm diff` compares: no minify pass, canonical token lists.
+    Canonical,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -56,6 +58,10 @@ pub fn prefix_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     testing_impl(global, frame, TestKind::Normal, TestCategory::Normal)
+}
+
+pub fn canonical_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    testing_impl(global, frame, TestKind::Canonical, TestCategory::Normal)
 }
 
 /// Shared arg-validation for the test-only CSS internals: pulls the next arg,
@@ -168,13 +174,16 @@ fn testing_impl(
     ) {
         Ok(ret) => {
             let (mut stylesheet, extra) = ret;
-            let mut minify_options = MinifyOptions::default();
-            minify_options.targets.browsers = browsers;
-            match stylesheet.minify(alloc, &minify_options, &extra) {
-                Ok(_) => {}
-                Err(err) => {
-                    return Err(global
-                        .throw_value(global.create_error_instance(format_args!("{}", err.kind))));
+            if test_kind != TestKind::Canonical {
+                let mut minify_options = MinifyOptions::default();
+                minify_options.targets.browsers = browsers;
+                match stylesheet.minify(alloc, &minify_options, &extra) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(global.throw_value(
+                            global.create_error_instance(format_args!("{}", err.kind)),
+                        ));
+                    }
                 }
             }
 
@@ -183,11 +192,8 @@ fn testing_impl(
             let result = match stylesheet.to_css(
                 alloc,
                 &PrinterOptions {
-                    minify: match test_kind {
-                        TestKind::Minify => true,
-                        TestKind::Normal => false,
-                        TestKind::Prefix => false,
-                    },
+                    minify: test_kind == TestKind::Minify,
+                    canonical_token_lists: test_kind == TestKind::Canonical,
                     targets: Targets {
                         browsers,
                         ..Default::default()

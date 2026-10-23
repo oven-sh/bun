@@ -3,11 +3,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
+  Browsers,
+  canonical_test,
   cssTest,
   cssTestTodo,
+  exact_test,
   indoc,
   minify_error_test_with_options,
   minify_test,
@@ -98,21 +101,32 @@ describe("css tests", () => {
        }`,
     );
 
-    // Adjacent `/` and `*` delim tokens must not be printed as `/*` or `*/`
-    // when minifying, which would open/close a comment and swallow the rest of
-    // the stylesheet.
-    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x/ *y}.k{color:red}");
-    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x* /y}.k{color:red}");
-    minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
-    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
-    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
-    minify_test(":root { --a: x / *= y }", ":root{--a:x/ *= y}");
-    // A lone `/` or `*` delim must still minify without extra whitespace.
-    minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
-    minify_test(":root { --a: x * y }", ":root{--a:x*y}");
-    minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
-    // Non-minified output is unchanged.
-    cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+    // A `/` printed directly before a `*` opens a comment that swallows the
+    // rest of the stylesheet. The author's blanks between the two stay, as one
+    // space each, so the minifier never prints them side by side.
+    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x / * y}.k{color:red}");
+    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x * / y}.k{color:red}");
+    minify_test(":root { --a: x / * / * y }", ":root{--a:x / * / * y}");
+    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a / * b}");
+    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x / * y)}");
+    minify_test(":root { --a: x / *= y }", ":root{--a:x / *= y}");
+    // When only comments keep the `/` and the `*` apart, one empty comment
+    // takes their place.
+    minify_test(":root { --a: x //**/* y }\n.k { color: red }", ":root{--a:x //**/* y}.k{color:red}");
+    minify_test(":root { --a: x //* c *//* d */* y }\n.k { color: red }", ":root{--a:x //**/* y}.k{color:red}");
+    minify_test(".a:foo(a//**/*b) { color: red }\n.k { color: blue }", ".a:foo(a//**/*b){color:red}.k{color:#00f}");
+    // The `/` before an alpha that is only known at runtime comes from the
+    // printer, not from the author's tokens.
+    minify_test(":root { --a: rgb(1 2 3 / *x) }\n.k { color: red }", ":root{--a:rgb(1 2 3/ *x)}.k{color:red}");
+    minify_test(":root { --a: hsl(1 2% 3% / *= x) }\n.k { color: red }", ":root{--a:hsl(1 2% 3%/ *= x)}.k{color:red}");
+    minify_test(":root { --a: rgb(1 2 3 //* c */*x) }\n.k { color: red }", ":root{--a:rgb(1 2 3/ *x)}.k{color:red}");
+    // A `/` or a `*` keeps the blanks it was written with and gets no other.
+    minify_test(":root { --a: 16 / 9 }", ":root{--a:16 / 9}");
+    minify_test(":root { --a: 16/9 }", ":root{--a:16/9}");
+    minify_test(":root { --a: x * y }", ":root{--a:x * y}");
+    minify_test(":root { --a: x*y }", ":root{--a:x*y}");
+    minify_test(":root { --a: x / / y }", ":root{--a:x / / y}");
+    exact_test(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
 
     // Leading/trailing whitespace around a custom-property value is dropped.
     minify_test(":root{--a: x}", ":root{--a:x}");
@@ -131,7 +145,397 @@ describe("css tests", () => {
     // and printed back from them, in order; the legacy comma form is not a color
     // here and is left as written.
     minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
-    minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
+    minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12, 34, 56, var(--alpha))}");
+
+    // A token list is a value whose grammar is unknown: a custom property, an
+    // unknown or unparsed declaration, an unknown at-rule, the arguments of an
+    // unknown function or pseudo-class. A blank there can be a descendant
+    // combinator (`--sel: .a .b`) or a separator that another tool reads
+    // (`@apply a b`). So each blank comes out where the author wrote it and
+    // nowhere else: as written by default, as one space when minified.
+    describe("whitespace and comments in token lists", () => {
+      // Each output is also printed again, in the mode that made it: it must come back as it is.
+      function token_list_test(source: string, normal: string, minified: string) {
+        exact_test(source, normal);
+        minify_test(source, minified);
+        if (normal !== source) exact_test(normal, normal);
+        if (minified !== source) minify_test(minified, minified);
+      }
+
+      // [declaration, default output, minified output]
+      const declarations: [string, string, string][] = [
+        // Next to a delimiter.
+        ["--sel: .a .b", "--sel: .a .b", "--sel:.a .b"],
+        ["--sel: .a.b", "--sel: .a.b", "--sel:.a.b"],
+        ["--sel: .dark *", "--sel: .dark *", "--sel:.dark *"],
+        ["--sel: > a ~ b", "--sel: > a ~ b", "--sel:> a ~ b"],
+        ["--sel: a>b", "--sel: a>b", "--sel:a>b"],
+        ["--q: width >= 600px", "--q: width >= 600px", "--q:width >= 600px"],
+        ["--x: a+b", "--x: a+b", "--x:a+b"],
+        ["--x: a + b", "--x: a + b", "--x:a + b"],
+        ["--x: 1/2", "--x: 1/2", "--x:1/2"],
+        ["--x: a , b", "--x: a , b", "--x:a , b"],
+        ["--x: a,b", "--x: a,b", "--x:a,b"],
+        ["--x: a:b c : d", "--x: a:b c : d", "--x:a:b c : d"],
+        // After a closing bracket, a function, var() and env().
+        ["--x: (a) (b) [c] d", "--x: (a) (b) [c] d", "--x:(a) (b) [c] d"],
+        ["--x: (a)(b)[c]d", "--x: (a)(b)[c]d", "--x:(a)(b)[c]d"],
+        ["--x: {a: b; c: d} e", "--x: {a: b; c: d} e", "--x:{a: b; c: d} e"],
+        ["--x: f(a) g(b)", "--x: f(a) g(b)", "--x:f(a) g(b)"],
+        ["--x: f(a)g(b)", "--x: f(a)g(b)", "--x:f(a)g(b)"],
+        ["--x: var(--a) var(--b)", "--x: var(--a) var(--b)", "--x:var(--a) var(--b)"],
+        ["--x: var(--a)var(--b)", "--x: var(--a)var(--b)", "--x:var(--a)var(--b)"],
+        // In an unknown property and in a known property that holds var().
+        ["unknown-prop: .a .b", "unknown-prop: .a .b", "unknown-prop:.a .b"],
+        ["margin: var(--a) auto", "margin: var(--a) auto", "margin:var(--a) auto"],
+        ["width: calc(var(--a) + 2px)", "width: calc(var(--a) + 2px)", "width:calc(var(--a) + 2px)"],
+        ["width: calc(var(--a)*2)", "width: calc(var(--a)*2)", "width:calc(var(--a)*2)"],
+        ["grid-area: var(--a) / var(--b)", "grid-area: var(--a) / var(--b)", "grid-area:var(--a) / var(--b)"],
+        ["font: var(--a)/1.5 x", "font: var(--a)/1.5 x", "font:var(--a)/1.5 x"],
+        // Syntax that a browser drops when a blank is added to it.
+        [
+          "width: attr(data-w type(<length>), 100px)",
+          "width: attr(data-w type(<length>), 100px)",
+          "width:attr(data-w type(<length>), 100px)",
+        ],
+        [
+          "--x: attr(data-count type(<number>+))",
+          "--x: attr(data-count type(<number>+))",
+          "--x:attr(data-count type(<number>+))",
+        ],
+        [
+          "color: if(media(width >= 600px): red; else: blue)",
+          "color: if(media(width >= 600px): red; else: blue)",
+          "color:if(media(width >= 600px): red; else: blue)",
+        ],
+        // The blank after the comma of a fallback is the printer's. The rest
+        // of the fallback is the author's.
+        ["--x: var(--a, 1px) x", "--x: var(--a, 1px) x", "--x:var(--a,1px) x"],
+        ["--x: var(--a,1px)", "--x: var(--a, 1px)", "--x:var(--a,1px)"],
+        ["--x: var(--a,)", "--x: var(--a, )", "--x:var(--a,)"],
+        ["--x: var(--a, )", "--x: var(--a, )", "--x:var(--a, )"],
+        [
+          "padding: env(safe-area-inset-top, 1px) 2px",
+          "padding: env(safe-area-inset-top, 1px) 2px",
+          "padding:env(safe-area-inset-top,1px) 2px",
+        ],
+        // The edges of the arguments of a function are trimmed. An argument
+        // list that is only whitespace is kept.
+        ["--x: f( a , b )", "--x: f(a , b)", "--x:f(a , b)"],
+        ["--x: f( )", "--x: f( )", "--x:f( )"],
+        ["--x: light-dark( , x)", "--x: light-dark( , x)", "--x:light-dark( ,x)"],
+        // A run of whitespace is as written by default and one space when minified.
+        ["--x: a    b", "--x: a    b", "--x:a b"],
+        ["--x: a\n    b", "--x: a\n    b", "--x:a b"],
+        ["--x: a\tb", "--x: a\tb", "--x:a b"],
+        ["--x: f(a,\n        b)", "--x: f(a,\n        b)", "--x:f(a, b)"],
+        // A line break prints as `\n`, whatever the line endings of the source are.
+        ["--x: a\r\n    b", "--x: a\n    b", "--x:a b"],
+        ["--x: a\rb\fc", "--x: a\nb\nc", "--x:a b c"],
+        ["--x: a/* c\r\nd */b", "--x: a/* c\nd */b", "--x:a/**/b"],
+        // A comment is as written by default. Minified, it goes when a blank
+        // is next to it, and leaves `/**/` when it alone keeps two tokens apart.
+        ["--x: a/* c */b", "--x: a/* c */b", "--x:a/**/b"],
+        ["--x: b /* c */ d", "--x: b /* c */ d", "--x:b d"],
+        ["--x: b /* c *//* d */ e", "--x: b /* c *//* d */ e", "--x:b e"],
+        ["--x: 1 +/**/2", "--x: 1 +/**/2", "--x:1 +/**/2"],
+        // Minified, the whitespace and the comments at each end of a list go.
+        ["--x: f(/* c */a)", "--x: f(/* c */a)", "--x:f(a)"],
+        ["--x: f( /* c */ a )", "--x: f(/* c */ a)", "--x:f(a)"],
+        ["--x: a /* c */", "--x: a /* c */", "--x:a"],
+        ["--x: a/* c */", "--x: a/* c */", "--x:a"],
+        ["--x: /* c */b", "--x: /* c */b", "--x:b"],
+        ["--x: /* c */ a", "--x: /* c */ a", "--x:a"],
+        ["margin: var(--a) /* c */", "margin: var(--a) /* c */", "margin:var(--a)"],
+        // Minified, a value of only whitespace and comments is one blank. With
+        // no blank it is an empty value, which older browsers reject.
+        ["--x: /* off */", "--x: /* off */", "--x: "],
+        ["--x:/* off */", "--x: /* off */", "--x: "],
+        ["margin: var(--m, /* none */)", "margin: var(--m, /* none */)", "margin:var(--m, )"],
+        [
+          "--tw-ring-inset: var(--tw-empty,/*!*/ /*!*/)",
+          "--tw-ring-inset: var(--tw-empty, /*!*/ /*!*/)",
+          "--tw-ring-inset:var(--tw-empty, )",
+        ],
+        ["--x: f(/**/)", "--x: f(/**/)", "--x:f( )"],
+        // A number keeps the sign it was written with. Without it the number
+        // joins the token before it.
+        ["--x: 1+2", "--x: 1+2", "--x:1+2"],
+        ["--x: 1-0", "--x: 1-0", "--x:1-0"],
+        ["--x: a+1", "--x: a+1", "--x:a+1"],
+        ["--nth: 2n+1", "--nth: 2n+1", "--nth:2n+1"],
+        ["--x: 1px+2px", "--x: 1px+2px", "--x:1px+2px"],
+        ["--x: calc(100%+2rem)", "--x: calc(100%+2rem)", "--x:calc(100%+2rem)"],
+        ["--x: +1px -1px +.5 -.5", "--x: +1px -1px +.5 -.5", "--x:+1px -1px +.5 -.5"],
+        ["width: calc(1px+2px)", "width: calc(1px+2px)", "width:calc(1px+2px)"],
+        // `\` is a token only before a newline, so a newline follows it in the
+        // output too. Before `)` or `;` it is an escape.
+        ["--x: f(a\\\n)", "--x: f(a\\\n)", "--x:f(a\\\n)"],
+        ["--x: a\\\n", "--x: a\\\n", "--x:a\\\n"],
+        ["--x: a\\\n  b", "--x: a\\\n  b", "--x:a\\\nb"],
+      ];
+      for (const [declaration, normal, minified] of declarations) {
+        token_list_test(`.c { ${declaration}; }`, `.c {\n  ${normal};\n}\n`, `.c{${minified}}`);
+      }
+
+      // [stylesheet, default output, minified output]
+      const sheets: [string, string, string][] = [
+        // The prelude and the block of an unknown at-rule.
+        [
+          "@custom-variant dark (&:is(.dark *));",
+          "@custom-variant dark (&:is(.dark *));\n",
+          "@custom-variant dark (&:is(.dark *));",
+        ],
+        ["@apply outline-ring/50;", "@apply outline-ring/50;\n", "@apply outline-ring/50;"],
+        [
+          "@apply text-[#fff] bg-[#000] font-sans;",
+          "@apply text-[#fff] bg-[#000] font-sans;\n",
+          "@apply text-[#fff] bg-[#000] font-sans;",
+        ],
+        ["@apply a /* c */ ;", "@apply a /* c */;\n", "@apply a;"],
+        ["@foo (a:b) and (c: d);", "@foo (a:b) and (c: d);\n", "@foo (a:b) and (c: d);"],
+        ["@foo a . b { c .d>e }", "@foo a . b {\n  c .d>e\n}\n", "@foo a . b{c .d>e}"],
+        [
+          "@function --f(--x <length>+) returns <length> { result: var(--x); }",
+          "@function --f(--x <length>+) returns <length> {\n  result: var(--x);\n}\n",
+          "@function --f(--x <length>+) returns <length>{result: var(--x);}",
+        ],
+        // The arguments of an unknown functional pseudo-class and pseudo-element.
+        [".c:foo(a .b > c) { color: red }", ".c:foo(a .b > c) {\n  color: red;\n}\n", ".c:foo(a .b > c){color:red}"],
+        [".c:foo( a  .b >c ) { color: red }", ".c:foo( a  .b >c ) {\n  color: red;\n}\n", ".c:foo(a .b >c){color:red}"],
+        [".c:foo(a/* c */b) { color: red }", ".c:foo(a/* c */b) {\n  color: red;\n}\n", ".c:foo(a/**/b){color:red}"],
+        [
+          ".c::foo(a /* c */ .b) { color: red }",
+          ".c::foo(a /* c */ .b) {\n  color: red;\n}\n",
+          ".c::foo(a .b){color:red}",
+        ],
+        // The other places that hold a token list.
+        [
+          `@property --x { syntax: "*"; inherits: false; initial-value: .a .b; }`,
+          `@property --x {\n  syntax: "*";\n  inherits: false;\n  initial-value: .a .b;\n}\n`,
+          `@property --x{syntax:"*";inherits:false;initial-value:.a .b}`,
+        ],
+        [
+          "@container style(--sel: .a .b) { .c { color: red } }",
+          "@container style(--sel: .a .b) {\n  .c {\n    color: red;\n  }\n}\n",
+          "@container style(--sel:.a .b){.c{color:red}}",
+        ],
+        [
+          "@font-face { font-family: x; unknown-desc: .a .b; }",
+          "@font-face {\n  font-family: x;\n  unknown-desc: .a .b;\n}\n",
+          "@font-face{font-family:x;unknown-desc:.a .b}",
+        ],
+        // Two values that differ only by a blank are two values. The rules do not merge.
+        [
+          ".c { --sel: .a .b } .d { --sel: .a.b }",
+          ".c {\n  --sel: .a .b;\n}\n\n.d {\n  --sel: .a.b;\n}\n",
+          ".c{--sel:.a .b}.d{--sel:.a.b}",
+        ],
+        // Two values that differ only in the amount of whitespace are one value. The rules
+        // merge, and the merged rule keeps the whitespace of the first.
+        [".c { --x: a  b } .d { --x: a b }", ".c, .d {\n  --x: a  b;\n}\n", ".c,.d{--x:a b}"],
+        [
+          ".c { margin: var(--m)\n    auto } .d { margin: var(--m) auto }",
+          ".c, .d {\n  margin: var(--m)\n    auto;\n}\n",
+          ".c,.d{margin:var(--m) auto}",
+        ],
+        // The same holds for the arguments of an unknown pseudo-class: a later rule with the
+        // same selector replaces the earlier one.
+        [
+          ".c:foo(a  b) { color: red } .k { color: green } .c:foo(a b) { color: blue }",
+          ".k {\n  color: green;\n}\n\n.c:foo(a b) {\n  color: #00f;\n}\n",
+          ".k{color:green}.c:foo(a b){color:#00f}",
+        ],
+        // The lines of a value are the author's. A value that runs over more
+        // than one line keeps the indentation of its source, not of the output.
+        [
+          "div {\n  color: blue;\n\n          --button:focus {\n            color: red;\n          }\n}",
+          "div {\n  color: #00f;\n  --button: focus {\n            color: red;\n          };\n}\n",
+          "div{color:#00f;--button:focus { color: red; }}",
+        ],
+        [
+          "@foo test {\n      div {\n        color: red;\n      }\n    }",
+          "@foo test {\n  div {\n        color: red;\n      }\n}\n",
+          "@foo test{div { color: red; }}",
+        ],
+        ["\t.c {\n\t\t--x: a\n\t\t\tb;\n\t}", ".c {\n  --x: a\n\t\t\tb;\n}\n", ".c{--x:a b}"],
+        ["    .c {\n        --x: a\n            b;\n    }", ".c {\n  --x: a\n            b;\n}\n", ".c{--x:a b}"],
+      ];
+      for (const [sheet, normal, minified] of sheets) {
+        token_list_test(sheet, normal, minified);
+      }
+
+      // The expectations that lightningcss changed with this behavior
+      // (32f1f52f "Do not remove whitespace in token lists", and aa2ed1e3).
+      minify_test(
+        ".foo { width: calc(100% - 2 (2 * var(--card-margin))); }",
+        ".foo{width:calc(100% - 2 (2 * var(--card-margin)))}",
+      );
+      exact_test(
+        ".test {\n  width: calc(var(--test) + 2px);\n  width: calc(var(--test) - 2px);\n}\n",
+        ".test {\n  width: calc(var(--test) + 2px);\n  width: calc(var(--test) - 2px);\n}\n",
+      );
+      minify_test(
+        '@font-face {src: url("foo.ttf") tech(palettes  color-colrv0  variations) format(opentype);}',
+        "@font-face{src:url(foo.ttf) tech(palettes color-colrv0 variations) format(opentype)}",
+      );
+      minify_test('@font-face {src: local("") url("test.woff");}', '@font-face{src:local("") url(test.woff)}');
+      minify_test(
+        "@font-palette-values --Cooler { font-family: Handover Sans; base-palette: 3; override-colors: 1 rgb(43, 12, 9), 3 var(--highlight); }",
+        "@font-palette-values --Cooler{font-family:Handover Sans;base-palette:3;override-colors:1 #2b0c09, 3 var(--highlight)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, currentColor, blue); }",
+        ".foo{color:color-mix(in srgb, currentColor, blue)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, blue, accentcolor); }",
+        ".foo{color:color-mix(in srgb, blue, accentcolor)}",
+      );
+      minify_test(
+        ".foo { transition: var(--foo, 20px),\nvar(--bar, 40px); }",
+        ".foo{transition:var(--foo,20px), var(--bar,40px)}",
+      );
+      minify_test(".foo { background: var(--color) var(--image); }", ".foo{background:var(--color) var(--image)}");
+      minify_test(
+        ".foo { height: calc(var(--spectrum-global-dimension-size-300) / 2); }",
+        ".foo{height:calc(var(--spectrum-global-dimension-size-300) / 2)}",
+      );
+      minify_test(
+        ".foo { color: var(--color, rgb(var(--red), var(--green), 0)); }",
+        ".foo{color:var(--color,rgb(var(--red), var(--green), 0))}",
+      );
+      minify_test(
+        ".foo { background-color: attr(data-color type(<color>)); }",
+        ".foo{background-color:attr(data-color type(<color>))}",
+      );
+      exact_test(
+        ".foo { background-color: attr(data-color type(<color>)); }",
+        ".foo {\n  background-color: attr(data-color type(<color>));\n}\n",
+      );
+      exact_test(".foo { transform: var(--bar, ) }", ".foo {\n  transform: var(--bar, );\n}\n");
+      exact_test(".foo { transform: env(--bar, ) }", ".foo {\n  transform: env(--bar, );\n}\n");
+
+      // The space toggle that lowers light-dark() is a value of one blank.
+      exact_test(
+        ".foo { color-scheme: light; }",
+        ".foo {\n  --buncss-light: initial;\n  --buncss-dark: ;\n  color-scheme: light;\n}\n",
+        { chrome: 90 << 16 },
+      );
+      minify_test(".foo { color-scheme: light; }", ".foo{--buncss-light:initial;--buncss-dark: ;color-scheme:light}", {
+        chrome: 90 << 16,
+      });
+
+      // A list that the printer copies or rewrites for a target keeps its
+      // tokens in each copy: a run of blanks, a comment that is the only
+      // separator, a value on two lines.
+      // [stylesheet, targets, default output, minified output]
+      const lowered: [string, Browsers, string, string][] = [
+        // light-dark() as a pair of var().
+        [
+          ".c { color: light-dark(var(--a)  var(--b), var(--c)/**/var(--d)); }",
+          { chrome: 90 << 16 },
+          ".c {\n  color: var(--buncss-light, var(--a)  var(--b)) var(--buncss-dark, var(--c)/**/var(--d));\n}\n",
+          ".c{color:var(--buncss-light,var(--a) var(--b))var(--buncss-dark,var(--c)/**/var(--d))}",
+        ],
+        [
+          ".c { --x: light-dark(var(--a)\n    var(--b), var(--c)); }",
+          { chrome: 90 << 16 },
+          ".c {\n  --x: var(--buncss-light, var(--a)\n    var(--b)) var(--buncss-dark, var(--c));\n}\n",
+          ".c{--x:var(--buncss-light,var(--a) var(--b))var(--buncss-dark,var(--c))}",
+        ],
+        // rgb() and hsl() with an alpha that is only known at runtime, in the comma form.
+        [
+          ".c { --x: rgb(1 2 3 / var(--a)  var(--b)); --y: hsl(10 20% 30% / var(--a)/**/var(--b)); --z: rgb(1 2 3 / var(--a)\n    var(--b)); }",
+          { chrome: 60 << 16 },
+          ".c {\n  --x: rgba(1, 2, 3, var(--a)  var(--b));\n  --y: hsla(10, 20%, 30%, var(--a)/**/var(--b));\n  --z: rgba(1, 2, 3, var(--a)\n    var(--b));\n}\n",
+          ".c{--x:rgba(1,2,3,var(--a) var(--b));--y:hsla(10,20%,30%,var(--a)/**/var(--b));--z:rgba(1,2,3,var(--a) var(--b))}",
+        ],
+        // The copies for a color that the targets do not all support.
+        [
+          ".c { background: var(--a)  lab(40% 56.6 39)/**/var(--b); }",
+          { chrome: 90 << 16 },
+          ".c {\n  background: var(--a)  #b32323/**/var(--b);\n}\n\n@supports (color: lab(0% 0 0)) {\n  .c {\n    background: var(--a)  lab(40% 56.6 39)/**/var(--b);\n  }\n}\n",
+          ".c{background:var(--a) #b32323/**/var(--b)}@supports (color:lab(0% 0 0)){.c{background:var(--a) lab(40% 56.6 39)/**/var(--b)}}",
+        ],
+        [
+          ".c { background: var(--a)\n    lab(40% 56.6 39); }",
+          { chrome: 87 << 16, firefox: 78 << 16, safari: 14 << 16, edge: 88 << 16 },
+          ".c {\n  background: var(--a)\n    #b32323;\n}\n\n@supports (color: color(display-p3 0 0 0)) {\n  .c {\n    background: var(--a)\n    color(display-p3 .643308 .192455 .167712);\n  }\n}\n\n@supports (color: lab(0% 0 0)) {\n  .c {\n    background: var(--a)\n    lab(40% 56.6 39);\n  }\n}\n",
+          ".c{background:var(--a) #b32323}@supports (color:color(display-p3 0 0 0)){.c{background:var(--a) color(display-p3 .643308 .192455 .167712)}}@supports (color:lab(0% 0 0)){.c{background:var(--a) lab(40% 56.6 39)}}",
+        ],
+        // The copies for vendor prefixes.
+        [
+          ".c { transform: var(--a)/**/var(--b)  var(--c); }",
+          { firefox: 6 << 16, safari: 6 << 16 },
+          ".c {\n  -webkit-transform: var(--a)/**/var(--b)  var(--c);\n  -moz-transform: var(--a)/**/var(--b)  var(--c);\n  transform: var(--a)/**/var(--b)  var(--c);\n}\n",
+          ".c{-webkit-transform:var(--a)/**/var(--b) var(--c);-moz-transform:var(--a)/**/var(--b) var(--c);transform:var(--a)/**/var(--b) var(--c)}",
+        ],
+        [
+          ".c { transform: var(--a)\n    var(--b); }",
+          { firefox: 6 << 16, safari: 6 << 16 },
+          ".c {\n  -webkit-transform: var(--a)\n    var(--b);\n  -moz-transform: var(--a)\n    var(--b);\n  transform: var(--a)\n    var(--b);\n}\n",
+          ".c{-webkit-transform:var(--a) var(--b);-moz-transform:var(--a) var(--b);transform:var(--a) var(--b)}",
+        ],
+      ];
+      for (const [sheet, browsers, normal, minified] of lowered) {
+        exact_test(sheet, normal, browsers);
+        minify_test(sheet, minified, browsers);
+      }
+
+      // `bun pm diff` compares a print that is not minified and that has one
+      // form for what no grammar reads in a token list: the amount of
+      // whitespace, comments, and the blank next to a comma or next to `*` and
+      // `/` in a math function. A blank anywhere else is kept: two values that
+      // differ by it are two values.
+      // [stylesheet, the print that is compared]
+      const canonical: [string, string][] = [
+        [".c { --x: a\n    b   c; }", ".c {\n  --x: a b c;\n}\n"],
+        [".c { margin: var(--a)  auto; }", ".c {\n  margin: var(--a) auto;\n}\n"],
+        [".c { --x: a/* c */b; }", ".c {\n  --x: a/**/b;\n}\n"],
+        [".c { --x: /* c */ a /* d */; }", ".c {\n  --x: a;\n}\n"],
+        [".c { --x: ; }", ".c {\n  --x: ;\n}\n"],
+        [".c { --x:; }", ".c {\n  --x: ;\n}\n"],
+        [".c { --x: /* c */; }", ".c {\n  --x: ;\n}\n"],
+        [".c { --x: var(--a, ); }", ".c {\n  --x: var(--a, );\n}\n"],
+        [".c { --x: var(--a,); }", ".c {\n  --x: var(--a, );\n}\n"],
+        [".c { --x: f( ); }", ".c {\n  --x: f();\n}\n"],
+        [".c { --x: f(); }", ".c {\n  --x: f();\n}\n"],
+        [".c { --f:Inter,system-ui , sans-serif; }", ".c {\n  --f: Inter, system-ui, sans-serif;\n}\n"],
+        [".c { --f: Inter, system-ui, sans-serif; }", ".c {\n  --f: Inter, system-ui, sans-serif;\n}\n"],
+        [".c { --t: rgba(1,2,3,var(--o)); }", ".c {\n  --t: rgba(1, 2, 3, var(--o));\n}\n"],
+        [".c { --x: f(a,); }", ".c {\n  --x: f(a,);\n}\n"],
+        [".c { --c: calc(var(--w)*2/3); }", ".c {\n  --c: calc(var(--w) * 2 / 3);\n}\n"],
+        [".c { --c: calc( var(--w) * 2 / 3 ); }", ".c {\n  --c: calc(var(--w) * 2 / 3);\n}\n"],
+        [".c { --c: min(1px*2,3px/4); }", ".c {\n  --c: min(1px * 2, 3px / 4);\n}\n"],
+        // A fallback in a math function is a part of its arguments.
+        [".c { --c: calc(var(--w,10px*2)); }", ".c {\n  --c: calc(var(--w, 10px * 2));\n}\n"],
+        [
+          ".c { --c: calc(1px + var(--w, var(--v,10px/2))); }",
+          ".c {\n  --c: calc(1px + var(--w, var(--v, 10px / 2)));\n}\n",
+        ],
+        [
+          ".c { --c: max(env(safe-area-inset-top,1px*2),3px); }",
+          ".c {\n  --c: max(env(safe-area-inset-top, 1px * 2), 3px);\n}\n",
+        ],
+        // Not in a math function, or behind a function with a grammar that is not known: kept.
+        [".c { --c: var(--w, 10px*2); }", ".c {\n  --c: var(--w, 10px*2);\n}\n"],
+        [".c { --c: calc(foo(var(--w, a*b))); }", ".c {\n  --c: calc(foo(var(--w, a*b)));\n}\n"],
+        [".c { --r: 16/9; }", ".c {\n  --r: 16/9;\n}\n"],
+        [".c { --r: 16 / 9; }", ".c {\n  --r: 16 / 9;\n}\n"],
+        [".c { --sel: .a .b; }", ".c {\n  --sel: .a .b;\n}\n"],
+        [".c { --sel: .a.b; }", ".c {\n  --sel: .a.b;\n}\n"],
+        [".c { --x: rgb(1 2 3 / *x); }", ".c {\n  --x: rgb(1 2 3 / *x);\n}\n"],
+        [".c { --x: a\\\n  b; }", ".c {\n  --x: a\\\nb;\n}\n"],
+        [".c:foo( a  b ) { color: red }", ".c:foo(a b) {\n  color: red;\n}\n"],
+        [".c:foo(a,b) { color: red }", ".c:foo(a, b) {\n  color: red;\n}\n"],
+        ["@apply a  b , c;", "@apply a b, c;\n"],
+      ];
+      for (const [sheet, print] of canonical) {
+        canonical_test(sheet, print);
+        if (print !== sheet) canonical_test(print, print);
+      }
+    });
   });
 
   describe("pseudo-class edge case", () => {
@@ -8345,5 +8749,70 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent("bun build gives back the text of a custom property and of an unknown at-rule", () => {
+    const sheet = [
+      ".c { --sel: .a .b; --all: .dark *; }",
+      "@custom-variant dark (&:is(.dark *));",
+      "@apply outline-ring/50;",
+      "@apply text-[#fff] bg-[#000] font-sans;",
+      // A value on two lines, in a nested rule of a source that indents by four.
+      ".a {",
+      "    .b {",
+      "        --m: 1px",
+      "            2px;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const expected = {
+      normal: [
+        ".c {",
+        "  --sel: .a .b;",
+        "  --all: .dark *;",
+        "}",
+        "",
+        "@custom-variant dark (&:is(.dark *));",
+        "",
+        "@apply outline-ring/50;",
+        "",
+        "@apply text-[#fff] bg-[#000] font-sans;",
+        "",
+        ".a .b {",
+        "  --m: 1px",
+        "            2px;",
+        "}",
+        "",
+      ].join("\n"),
+      minified:
+        ".c{--sel:.a .b;--all:.dark *}@custom-variant dark (&:is(.dark *));@apply outline-ring/50;@apply text-[#fff] bg-[#000] font-sans;.a .b{--m:1px 2px}\n",
+    };
+    // The default output starts with a `/* path */` line that names the source file.
+    const withoutSourceLine = (css: string) => css.replace(/^\/\*.*\*\/\n/, "");
+
+    for (const minify of [false, true]) {
+      test(`bun build${minify ? " --minify" : ""}`, async () => {
+        using dir = tempDir("css-token-list-cli", { "sheet.css": sheet });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./sheet.css", "--outdir", "out", ...(minify ? ["--minify"] : [])],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(withoutSourceLine(await Bun.file(join(String(dir), "out", "sheet.css")).text())).toBe(
+          minify ? expected.minified : expected.normal,
+        );
+        expect(exitCode).toBe(0);
+      });
+
+      test(`Bun.build${minify ? " with minify" : ""}`, async () => {
+        using dir = tempDir("css-token-list-api", { "sheet.css": sheet });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "sheet.css")], minify });
+        expect(withoutSourceLine(await result.outputs[0].text())).toBe(minify ? expected.minified : expected.normal);
+      });
+    }
   });
 });

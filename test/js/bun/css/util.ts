@@ -5,6 +5,7 @@ const {
   minifyTestWithOptions,
   testWithOptions,
   _test,
+  canonicalTest,
   prefixTestWithOptions,
   prefixTest,
   minifyTest,
@@ -47,9 +48,10 @@ export function minify_error_test_with_options(source: string, expectedError: st
   });
 }
 
-export function minify_test(source: string, expected: string) {
+export function minify_test(source: string, expected: string, browsers?: Browsers) {
   test(source, () => {
-    expect(minifyTestWithOptions(source, expected)).toEqual(expected);
+    const output = browsers ? minifyTest(source, expected, browsers) : minifyTestWithOptions(source, expected);
+    expect(output).toEqual(expected);
   });
 }
 
@@ -75,6 +77,20 @@ export function cssTest(source: string, expected: string, browsers?: Browsers, s
 export function cssTestTodo(source: string, expected: string, browsers?: Browsers) {
   test.todo(source, () => {
     expect(_test(source, expected, browsers)).toEqualIgnoringWhitespace(expected);
+  });
+}
+
+/** Like `cssTest`, but compares byte for byte. `cssTest` ignores all whitespace, so it cannot see a lost or added blank. */
+export function exact_test(source: string, expected: string, browsers?: Browsers) {
+  test(source, () => {
+    expect(_test(source, expected, browsers)).toBe(expected);
+  });
+}
+
+/** The print that `bun pm diff` compares: not minified, each token list in its one canonical form. */
+export function canonical_test(source: string, expected: string) {
+  test(source, () => {
+    expect(canonicalTest(source, expected)).toBe(expected);
   });
 }
 

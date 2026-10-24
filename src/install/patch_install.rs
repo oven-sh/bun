@@ -649,7 +649,11 @@ impl PatchTask {
                 log.add_error_fmt(
                     None,
                     Loc::EMPTY,
-                    format_args!("failed to read patch file: {}", e),
+                    format_args!(
+                        "failed to stat patch file: {} ({})",
+                        e,
+                        BStr::new(absolute_patchfile_path.as_bytes())
+                    ),
                 );
                 return None;
             }

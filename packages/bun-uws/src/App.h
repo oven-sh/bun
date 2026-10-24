@@ -253,6 +253,9 @@ public:
 
     /* Closes all sockets including listen sockets. `thread_ends`: see us_socket_group_close_all_ex. */
     TemplatedApp &&close(int thread_ends) {
+        /* A close handler can tick the loop (waitForPromise). That tick must not free the sockets closed here, which the walks below still read. */
+        us_loop_t *loop = httpContext->getSocketGroup()->loop;
+        loop->data.tick_depth++;
         if constexpr (SSL) {
             /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
             std::vector<us_socket_t *> sockets;
@@ -285,6 +288,7 @@ public:
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
             h2->closeAll(thread_ends);
         }
+        loop->data.tick_depth--;
 
         return std::move(*this);
     }

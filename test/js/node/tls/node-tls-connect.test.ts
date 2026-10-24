@@ -4759,6 +4759,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     { server: "https.createServer()", call: "end(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...threadEnds },
     { server: "Bun.serve()", call: "Response(data)", ...threadEnds },
+    { server: "Bun.serve() WebSocket", call: "send(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...timedOut },
@@ -4838,6 +4839,20 @@ describe("a TLS connection with queued data gets no close_notify", () => {
                 // The response is written once this returns.
                 if (${JSON.stringify(call)} === "Response(data)") setImmediate(leave);
                 return new ${call};
+              },
+            }),
+          "Bun.serve() WebSocket": () =>
+            Bun.serve({
+              ...at,
+              fetch: (request, server) => void server.upgrade(request),
+              websocket: {
+                backpressureLimit: 2 * data.length,
+                message() {},
+                open(socket) {
+                  socket.${call};
+                  // The message is written once this returns.
+                  setImmediate(leave);
+                },
               },
             }),
         };
@@ -4942,7 +4957,9 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     await step("the handshake", once(client, "secureConnect"));
     const server = await upstream.promise;
     server.pause();
-    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    const upgrade =
+      "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n";
+    client.write(`GET / HTTP/1.1\r\nHost: localhost\r\n${kind.endsWith("WebSocket") ? upgrade : ""}\r\n`);
     await step("the server to queue the data", said.queued.promise);
     server.resume();
     // 1 MB, or all that the kernel holds where that is less: nothing more comes while the server's thread stands still.

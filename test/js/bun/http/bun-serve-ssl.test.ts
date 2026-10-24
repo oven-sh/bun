@@ -811,3 +811,69 @@ describe("tls.minVersion and tls.maxVersion take node:tls's version names", () =
     );
   });
 });
+
+// In a child, under `bun test`: expect().resolves is what runs the event loop from inside a handler.
+test("stop(true) survives a handler that closes other connections and runs the event loop", async () => {
+  using dir = tempDir("serve-stop-nested-tick", {
+    "stop.test.js": /* js */ `
+      import { expect, test } from "bun:test";
+      import tls from "node:tls";
+      const { key, cert } = JSON.parse(process.env.TEST_TLS);
+
+      test("stop(true)", async () => {
+        const count = 6;
+        const controllers = [];
+        const stopped = Promise.withResolvers();
+        let ranLoop = false;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert },
+          idleTimeout: 0,
+          fetch(request) {
+            request.signal.addEventListener("abort", () => {
+              if (ranLoop) return;
+              ranLoop = true;
+              // "Connection: close": the end of a response closes its connection, once the peer has answered.
+              for (const controller of controllers) controller.end();
+              expect(new Promise(resolve => setTimeout(resolve, 400, 1))).resolves.toBe(1);
+            });
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  controllers.push(controller);
+                  controller.write("unfinished");
+                  await controller.flush();
+                  await new Promise(() => {});
+                },
+              }),
+            );
+          },
+        });
+        let answered = 0;
+        for (let i = 0; i < count; i++) {
+          const client = tls.connect({ port: server.port, host: "127.0.0.1", ca: cert, servername: "localhost" });
+          client.on("error", () => {});
+          client.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
+          client.once("data", () => {
+            // From a timer, so that no tick of the socket loop is on the stack.
+            if (++answered === count) setTimeout(() => stopped.resolve(server.stop(true)), 1);
+          });
+        }
+        await stopped.promise;
+        expect(ranLoop).toBe(true);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "stop.test.js"],
+    env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert }) },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

@@ -1162,6 +1162,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
+            if p.options.repl_mode {
+                let class_name = data.class.class_name.expect("infallible: name checked");
+                p.repl_report_class_declaration(stmts, lowered, class_name, stmt.loc);
+            }
         } else {
             let ref_ = data
                 .class

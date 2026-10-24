@@ -345,10 +345,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
-            // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
-            // it off in Bun while upstream stabilises it.
-            // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
-            JSC::Options::useWasmMemory64() = false;
             // Node.js defaults Error.stackTraceLimit to 10.
             JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
 #if OS(WINDOWS)

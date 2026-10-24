@@ -1,8 +1,8 @@
-//! The symbol at every name of a file: the content TypeScript's test harness writes into `.symbols`
-//! baselines (`typeWriterWalker.getSymbols`, `GetSymbolAtLocation`, `SymbolToStringEx`).
+//! Prints the symbol at every name in a file. This is what TypeScript's test harness writes into
+//! `.symbols` baselines (`typeWriterWalker.getSymbols`, `GetSymbolAtLocation`, `SymbolToStringEx`).
 //!
-//! The declarations of a [`Prop`] are those the binder and `lateBindMember` have merged with the
-//! first one.
+//! A [`Prop`]'s declarations are the first one plus those the binder and `lateBindMember` merged
+//! with it.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_declaration_emit::{EndOfChain, Meaning};
@@ -79,7 +79,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         if hir.is_in_with(start) || hir.is_in_jsdoc(start) {
             return;
         }
-        // The file scope substitutes for a scope the binder did not record.
+        // Fall back to the file scope if the binder didn't record a scope.
         let scope = if scope.is_some() { scope } else { ScopeId(0) };
         let (name, declarations) = match found {
             Found::Symbol(symbol) => self.describe_symbol(*symbol, scope),
@@ -119,9 +119,9 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                         true,
                         Enclosing::at_scope(self.file, scope),
                     );
-                // `hasNonGlobalAugmentationExternalModuleSymbol`: a JSON file is not an external
-                // module, so it is printed. It has an `export =`, which is what an import of it
-                // resolves to, so no alias refers to the file.
+                // `hasNonGlobalAugmentationExternalModuleSymbol`: a JSON file isn't an external
+                // module, so it's printed. An import of it resolves to its `export =`, so no alias
+                // refers to the file.
                 let is_json = self.c.hir(module.file).kind == FileKind::Json;
                 if is_json {
                     chain = vec![*module];
@@ -279,8 +279,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         }
     }
 
-    /// `symbol.Parent` of a property. The symbol of a type literal or an object literal is never
-    /// printed.
+    /// `symbol.Parent` of a property. A type literal's or an object literal's symbol is never printed.
     fn parent_of_property(&mut self, prop: &Prop) -> Option<PropertyParent> {
         let (file, member) = match &prop.source {
             PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol)? {
@@ -288,8 +287,8 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 // `bindExpandoPropertyAssignment`
                 (file, Decl::Expando(first)) => {
                     let (bound, files) = (self.c.bound(file), self.c.files());
-                    let parent = bound.symbols[bound.expr_symbol[first.idx()].idx()].parent;
-                    let owner = &bound.symbols[parent.idx()];
+                    let parent = bound.symbol(bound.symbol_of_expr(first)).parent;
+                    let owner = bound.symbol(parent);
                     return match (owner.name, owner.decls[0]) {
                         (known::anonymous_function, Decl::Fn(function)) => {
                             let FnOwner::Expr(e) = bound.fns[function.idx()].owner else {
@@ -334,7 +333,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
     /// `declaration.Pos()`
     fn pos_of_declaration(&self, file: FileId, declaration: Declaration) -> u32 {
         let hir = self.c.hir(file);
-        // The start of the first token, and the flags of the declaration.
+        // The first token's start and the declaration's flags.
         let (start, flags) = match declaration {
             Declaration::Bound(decl) => match self.c.files().loc_of_declaration(file, decl) {
                 Some(loc) => return loc.pos,
@@ -356,8 +355,8 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 (this.pos, this.flags)
             }
         };
-        // The end of the previous token. `finishReparsedNode`: a node synthesized from a JSDoc tag
-        // has the position of the tag, and the scanner of JSDoc comments has no trivia.
+        // `Pos()` is the end of the previous token. `finishReparsedNode`: a node synthesized from a
+        // JSDoc tag has the tag's position, and the JSDoc comment scanner has no trivia.
         if flags.contains(Flags::REPARSED) {
             start
         } else {
@@ -410,11 +409,11 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         at: ScopeId,
     ) -> (String, Vec<(FileId, Declaration)>) {
         match &prop.source {
-            // A member is handled as a property: `describe_symbol` cannot reach it.
+            // A member is handled as a property because `describe_symbol` can't reach it.
             PropSource::Symbol(symbol) if !self.c.is_member_symbol(*symbol) => {
                 return self.describe_symbol(*symbol, at);
             }
-            // The name, the parent and the declarations of the symbol it is a copy of.
+            // A copy has the name, parent and declarations of the symbol it was copied from.
             PropSource::Copy(_, of, true) if of.len() == 1 => {
                 return self.describe_property(&of[0], at);
             }
@@ -445,7 +444,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         {
             return (self.symbol_chain_to_string(false, &[alias]), declarations);
         }
-        // `getNameOfSymbolAsWritten`: the source text of the name in the first declaration.
+        // `getNameOfSymbolAsWritten`: the name's source text in the first declaration.
         let source = match declarations.first() {
             Some(&(
                 file,
@@ -463,7 +462,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             source,
             ..prop.clone_in(self.c.arena)
         }));
-        // `lookupSymbolChainWorker`: `class C<T> { T: number }` is one symbol, and a type parameter is not qualified.
+        // `lookupSymbolChainWorker`: `class C<T> { T: number }` is one symbol, and a type parameter isn't qualified.
         let is_type_parameter = |declaration: &(FileId, Declaration)| {
             matches!(declaration.1, Declaration::Bound(Decl::TypeParam(_)))
         };
@@ -474,7 +473,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         (self.qualified_by_parent(parent, name, at), declarations)
     }
 
-    /// `createUnionOrIntersectionProperty`: all the declarations, and the parent of the value declaration if there is only one.
+    /// `createUnionOrIntersectionProperty`: all the declarations, and the value declaration's parent if there's only one.
     fn describe_properties(
         &mut self,
         props: &[&Prop],
@@ -506,8 +505,8 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         (self.qualified_by_parent(parent, name, at), declarations)
     }
 
-    /// `getSymbolChain` for a symbol that is in no symbol table: the chain of its parent, followed
-    /// by `name`.
+    /// `getSymbolChain` for a symbol that isn't in any symbol table: its parent's chain followed by
+    /// `name`.
     fn qualified_by_parent(
         &mut self,
         parent: Option<PropertyParent>,
@@ -553,8 +552,8 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         text
     }
 
-    /// `getNameOfSymbolAsWritten`, and the specifier `createExpressionFromSymbolChain` prints for
-    /// an external module. `is_initial`: `FlagsInInitialEntityName`.
+    /// `getNameOfSymbolAsWritten`, or the specifier `createExpressionFromSymbolChain` prints for an
+    /// external module. `is_initial` is `FlagsInInitialEntityName`.
     fn get_name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> String {
         let is_default_export = self.c.files().symbol(symbol).name == known::default;
         // `isDefaultBindingContext`, at file granularity.
@@ -583,8 +582,8 @@ fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
     text.push_str(&crate::messages::text(&access));
 }
 
-/// The number of UTF-16 code units of the character whose UTF-8 encoding contains `byte`, counted
-/// at its first byte.
+/// Returns the number of UTF-16 code units in the character whose UTF-8 encoding contains `byte`.
+/// The whole count is attributed to the first byte, so continuation bytes return 0.
 fn utf16_length(byte: u8) -> usize {
     match byte {
         0x80..=0xBF => 0,
@@ -596,8 +595,8 @@ fn utf16_length(byte: u8) -> usize {
 impl<'p, 's> Checker<'p, 's> {
     /// `lookupSymbolChain` as `symbolToExpression` calls it for `symbolToStringEx(symbol, enclosingDeclaration, SymbolFlagsNone,
     /// ..)`, without `yieldModuleSymbol`. Returns whether the chain starts with `globalThis`, and the rest of the chain.
-    /// `is_parent`: `symbol` is the parent of a symbol that is in no symbol table, so `endOfChain` is false and the meaning is
-    /// `SymbolFlagsNamespace`; the chain is then empty if `symbol` has no printable name.
+    /// `is_parent` means `symbol` is the parent of a symbol that isn't in any symbol table, so `endOfChain` is false and the
+    /// meaning is `SymbolFlagsNamespace`. The chain is then empty if `symbol` has no printable name.
     pub(super) fn lookup_symbol_chain_for_symbol_to_string(
         &mut self,
         symbol: Sym,

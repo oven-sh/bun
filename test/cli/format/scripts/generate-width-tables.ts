@@ -2,6 +2,8 @@
 //
 //   cd <a directory with emoji-regex, get-east-asian-width and narrow-emojis installed, in the versions of Prettier's package.json>
 //   bun <this file> > src/format/ir/width_tables.rs
+//
+// `OXFMT_ZERO_WIDTH` at the end of that file isn't generated. It was measured with oxfmt, so copy it over by hand.
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
@@ -33,7 +35,7 @@ const matchesWhole = (regex: RegExp, text: string) => {
 const tables: [string, string, [number, number][]][] = [
   ["WIDE", "East Asian Width is `W` or `F`.", ranges(c => isFullwidth(c) || isWide(c))],
   ["EMOJI", "`emoji-regex` matches the character by itself.", ranges(c => matchesWhole(emojiRegex(), String.fromCodePoint(c)))],
-  ["NARROW_EMOJI", "An emoji that takes one column by itself.", ranges(c => isNarrowEmojiCharacter(String.fromCodePoint(c)))],
+  ["NARROW_EMOJI", "An emoji that's one column wide by itself.", ranges(c => isNarrowEmojiCharacter(String.fromCodePoint(c)))],
   [
     "EMOJI_MODIFIER_BASE",
     "`emoji-regex` matches the character with a skin tone after it as one emoji.",

@@ -608,10 +608,11 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// the index — keeping its SwissTable grow path off the subsequent
     /// `push_entry` loop. No-op when the index hasn't materialised yet (it will
     /// be built at the right size by [`rebuild_index`] when the map first
-    /// crosses [`INDEX_THRESHOLD`], since that reads `self.keys.capacity()`).
+    /// crosses [`INDEX_THRESHOLD`], since that reads `self.hashes.capacity()`).
+    /// Not `self.keys.capacity()`, which is `usize::MAX` for a zero-sized `K`.
     #[inline]
     fn reserve_index_to_capacity(&mut self) {
-        let cap = self.keys.capacity();
+        let cap = self.hashes.capacity();
         if let Some(index) = self.index.as_deref_mut() {
             index_reserve(index, &self.hashes, cap);
         }
@@ -800,7 +801,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     fn rebuild_index(&mut self) {
         self.index = Some(rebuild_index_from_hashes(
             &self.hashes,
-            self.keys.capacity(),
+            self.hashes.capacity(),
         ));
     }
 

@@ -16,7 +16,7 @@ const VARIABLE_SUGGEST: Message = Message::new(
     "You should use `as const` instead of type annotation.",
 );
 
-/// oxlint compares the values of strings and of numbers, and knows no other literals.
+/// oxlint compares string and number values, and doesn't handle any other literals.
 fn oxlint_is_same_literal<'a>(value: Expr<'a>, ty: TypeNode<'a>) -> bool {
     match (value.kind(), ty.kind()) {
         (ExprKind::String(value), TypeKind::StringLit(ty_value)) => value == ty_value && !ty.text().starts_with(b"`"),
@@ -25,7 +25,7 @@ fn oxlint_is_same_literal<'a>(value: Expr<'a>, ty: TypeNode<'a>) -> bool {
     }
 }
 
-/// Whether `value` is a literal and `ty` is the type of that literal, written the same way.
+/// True if `value` is a literal and `ty` is that literal's type, written the same way.
 fn is_same_literal<'a>(value: Expr<'a>, ty: TypeNode<'a>) -> bool {
     if value.file().language().is_oxlint {
         return oxlint_is_same_literal(value, ty);
@@ -51,7 +51,7 @@ fn check_annotation<'a>(value: impl FnOnce() -> Option<Expr<'a>>, ty: Option<Typ
                 fixer.insert_after(value, " as const"),
             ]
         };
-        // What typescript-eslint suggests is a fix in oxlint.
+        // typescript-eslint's suggestion is a fix in oxlint.
         match cx.language().is_oxlint {
             true => cx.report(ty, VARIABLE_CONST_ASSERTION).fix(fix),
             false => cx.report(ty, VARIABLE_CONST_ASSERTION).suggest(VARIABLE_SUGGEST, fix),
@@ -74,7 +74,7 @@ impl Rule for PreferAsConst {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::As { expr, ty } = e.kind()
             && is_same_literal(expr, ty)
-            // oxlint does not look at `<"a">"a"`.
+            // oxlint ignores `<"a">"a"`.
             && !(cx.language().is_oxlint && e.is_angle_bracket_assertion())
         {
             cx.report(ty, PREFER_CONST_ASSERTION).fix(|fixer| fixer.replace(ty, "const"));

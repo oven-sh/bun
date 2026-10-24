@@ -16,7 +16,7 @@ fn is_apply_signature(first: Expr, second: Expr) -> bool {
         && !second.is_parenthesized()
 }
 
-/// The `a` of `a.name`.
+/// The `a` in `a.name`.
 fn object_of_member<'a>(e: Expr<'a>, name: &str) -> Option<Expr<'a>> {
     as_member_expression(e).filter(|it| static_property_name(*it).is_some_and(|it| it.is(name)))?.object()
 }
@@ -65,7 +65,7 @@ impl Rule for PreferReflectApply {
         let (Some(first), Some(second)) = (args.first(), args.get(1)) else {
             return;
         };
-        // The function, what is `this` in it, its arguments.
+        // The function, its `this` value and its arguments.
         let (function, this_argument, arguments) = match args.get(2) {
             None => match object_of_member(callee, "apply") {
                 Some(function) if !is_literal_or_array_or_object(function) => (function, first, second),

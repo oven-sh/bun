@@ -1,6 +1,7 @@
 #pragma once
 #include "Bindgen/IDLTypes.h"
 #include "BunIDLConvertBase.h"
+#include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSBigIntInlines.h>
 #include <JavaScriptCore/MathCommon.h>
 #include <limits>
@@ -35,10 +36,10 @@ std::optional<T> tryBigIntToInt(JSC::JSValue value)
 }
 }
 
-template<std::integral T>
+template<std::integral T, Bun::Bindgen::AllowBigInt allowBigInt>
     requires(sizeof(T) <= sizeof(uint64_t))
-struct WebCore::Converter<Bun::Bindgen::IDLStrictInteger<T>>
-    : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictInteger<T>> {
+struct WebCore::Converter<Bun::Bindgen::IDLStrictInteger<T, allowBigInt>>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictInteger<T, allowBigInt>> {
 
     static constexpr bool conversionHasSideEffects = false;
 
@@ -80,18 +81,20 @@ private:
             return {};
         }
 
-        using Largest = std::conditional_t<std::signed_integral<T>, int64_t, uint64_t>;
-        if (value.isBigInt()) {
-            if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<T>(value))
-                return *result;
-            if constexpr (maxInt < std::numeric_limits<Largest>::max()) {
-                if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<Largest>(value)) {
-                    ctx.throwIntegerOutOfRange(globalObject, scope, *result, minInt, maxInt);
-                    return {};
+        if constexpr (allowBigInt == Bun::Bindgen::AllowBigInt::Yes) {
+            using Largest = std::conditional_t<std::signed_integral<T>, int64_t, uint64_t>;
+            if (value.isBigInt()) {
+                if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<T>(value))
+                    return *result;
+                if constexpr (maxInt < std::numeric_limits<Largest>::max()) {
+                    if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<Largest>(value)) {
+                        ctx.throwIntegerOutOfRange(globalObject, scope, *result, minInt, maxInt);
+                        return {};
+                    }
                 }
+                ctx.throwBigIntOutOfRange(globalObject, scope, minInt, maxInt);
+                return {};
             }
-            ctx.throwBigIntOutOfRange(globalObject, scope, minInt, maxInt);
-            return {};
         }
 
         if (!value.isNumber())
@@ -140,19 +143,60 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictDouble> : Bun::DefaultTryConver
     }
 };
 
-template<std::integral T>
-struct WebCore::Converter<Bun::Bindgen::IDLLooseInteger<T>>
-    : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseInteger<T>> {
+template<>
+struct WebCore::Converter<Bun::Bindgen::IDLStrictDoubleOrDate> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictDoubleOrDate> {
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<double> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (value.isNumber())
+            return value.asNumber();
+        if (auto* date = dynamicDowncast<JSC::DateInstance>(value))
+            return date->internalNumber();
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a number or Date"_s);
+    }
+};
+
+template<>
+struct WebCore::Converter<Bun::Bindgen::IDLLooseDoubleOrBigInt>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseDoubleOrBigInt> {
+
+    template<Bun::IDLConversionContext Ctx>
+    static double convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto numeric = value.toNumeric(&globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (numeric.isBigInt())
+            numeric = JSC::JSBigInt::toNumber(numeric);
+        return numeric.asNumber();
+    }
+};
+
+template<std::integral T, Bun::Bindgen::AllowBigInt allowBigInt>
+struct WebCore::Converter<Bun::Bindgen::IDLLooseInteger<T, allowBigInt>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseInteger<T, allowBigInt>> {
 
     template<Bun::IDLConversionContext Ctx>
     static T convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto numeric = value.toNumeric(&globalObject);
+        JSC::JSValue numeric;
+        if constexpr (allowBigInt == Bun::Bindgen::AllowBigInt::Yes)
+            numeric = value.toNumeric(&globalObject);
+        else
+            numeric = JSC::jsNumber(value.toNumber(&globalObject));
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(
-            scope,
-            Bun::convertIDL<Bun::Bindgen::IDLStrictInteger<T>>(globalObject, numeric, ctx));
+        using Strict = Bun::Bindgen::IDLStrictInteger<T, allowBigInt>;
+        RELEASE_AND_RETURN(scope, Bun::convertIDL<Strict>(globalObject, numeric, ctx));
     }
 };

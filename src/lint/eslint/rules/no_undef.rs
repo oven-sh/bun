@@ -20,7 +20,7 @@ fn has_typeof_operator(reference: Reference) -> bool {
 }
 
 /// Globals that `bun test` defines in test files.
-const OF_BUN_TEST: [&str; 12] = [
+const BUN_TEST_GLOBALS: [&str; 12] = [
     "afterAll",
     "afterEach",
     "beforeAll",
@@ -37,7 +37,7 @@ const OF_BUN_TEST: [&str; 12] = [
 
 fn hint(reference: Reference) -> String {
     let (name, language) = (reference.name(), reference.node().file().language());
-    if name.is_any(&OF_BUN_TEST) {
+    if name.is_any(&BUN_TEST_GLOBALS) {
         return "With bun test, import it from \"bun:test\".".to_owned();
     }
     let globals = config_globals_in_order(language);
@@ -73,10 +73,11 @@ impl Rule for NoUndef {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // oxlint says nothing about a name that can be that of a type. And for oxc only an expression and the `a` of
-        // `export { a }` refer to a variable: not the `a` of `import b = a.c`, of `export as namespace a`, of `a is T`, of `<a:b />`.
+        // oxlint doesn't report a name that may refer to a type. And in oxc, only an expression and the `a` of
+        // `export { a }` reference a variable, not the `a` of `import b = a.c`, `export as namespace a`, `a is T` or
+        // `<a:b />`.
         let is_oxlint = cx.language().is_oxlint;
-        let is_none_for_oxc = |it: Reference| match it.expr() {
+        let is_not_a_reference_in_oxc = |it: Reference| match it.expr() {
             None => !matches!(it.node(), Node::ExportSpec(_)),
             // The `a` of `export default a` can be a type, in JavaScript too.
             Some(e) => {
@@ -85,12 +86,12 @@ impl Rule for NoUndef {
             }
         };
         let file = cx.file();
-        // Whether a global variable of a name is one for a value, and for a type.
+        // Bit flags: a name's global variable can be used as a value, and as a type.
         let (for_value, for_type) = (1, 2);
         let mut globals: ByName<u8> = ByName::default();
-        // With no config file, a name that the file tests with `typeof` isn't reported anywhere in it. The author knows that it may
-        // be missing: `if (typeof define === "function" && define.amd) define(factory);`
-        let trusts_typeof = cx.language().stands_alone && !self.considers_typeof;
+        // With no config file, a name that the file tests with `typeof` isn't reported anywhere in it. The author knows
+        // it may be missing: `if (typeof define === "function" && define.amd) define(factory);`
+        let trusts_typeof = cx.language().has_no_foreign_config && !self.considers_typeof;
         let tested: OnceCell<Vec<Name>> = OnceCell::new();
         let names_with_typeof = || {
             file.unresolved_references()
@@ -102,7 +103,8 @@ impl Rule for NoUndef {
         for reference in file.unresolved_references() {
             let is_in_parentheses = || reference.expr().is_some_and(Expr::is_parenthesized);
             if is_oxlint
-                && (reference.is_type() && !is_in_parentheses() || is_none_for_oxc(reference))
+                && (reference.is_type() && !is_in_parentheses()
+                    || is_not_a_reference_in_oxc(reference))
                 || !self.considers_typeof && has_typeof_operator(reference)
             {
                 continue;
@@ -128,10 +130,10 @@ impl Rule for NoUndef {
             }
             found.push(reference);
         }
-        // oxlint's rule goes through oxc's table of the names that resolve to nothing, name by name.
+        // oxlint's rule iterates over oxc's table of unresolved references, name by name.
         if is_oxlint && found.len() > 1 {
             let order = UnresolvedOrder::new(file);
-            // Those of one name stay in the order of the text.
+            // The sort is stable, so references to the same name stay in source order.
             utils::sort::sort_by_cached_key(&mut found, |it| order.rank(it.name()));
         }
         for reference in found {

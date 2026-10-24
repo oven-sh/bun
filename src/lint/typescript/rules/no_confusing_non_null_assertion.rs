@@ -34,7 +34,7 @@ const WRAP_UP_LEFT: Message = Message::new(
 
 /// `e`: `left operator ..`
 fn check<'a>(e: Expr<'a>, left: Expr<'a>, operator: &'static str, cx: &Cx<'a, NoConfusingNonNullAssertion>) {
-    // Nothing but the operator ends with a `!`. This also finds the one in `1 + two! === 3`.
+    // Only a non-null assertion ends with a `!`. This also finds the one in `1 + two! === 3`.
     let end = left.span().end;
     if cx.text().get(end.wrapping_sub(1) as usize) != Some(&b'!') || left.is_parenthesized() {
         return;

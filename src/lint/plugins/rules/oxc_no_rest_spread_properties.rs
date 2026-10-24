@@ -22,7 +22,7 @@ impl Rule for NoRestSpreadProperties {
         }
     }
 
-    // Objects are far fewer than properties.
+    // Listens for objects instead of properties, because there are far fewer.
     fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(properties) = object.as_object() else {
             return;

@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::collections::VecDeque;
-use std::io::Write as _;
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -24,7 +23,7 @@ use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
-use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_paths::{DELIMITER, PathBuffer, SEP};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -337,7 +336,7 @@ pub(crate) struct ManifestFailure {
     pub(crate) msgs: Vec<bun_ast::Msg>,
     /// The registry answered 404, so it has no package of this name.
     pub(crate) is_missing: bool,
-    /// No attempt got an answer about the package, as `fail_update_requests` wants to know.
+    /// True if no attempt got a response about the package. `fail_update_requests` reads this.
     pub(crate) is_unanswered: bool,
     /// An optional dependency that needs the manifest only logs a warning.
     pub(crate) spares_optional: bool,
@@ -345,8 +344,8 @@ pub(crate) struct ManifestFailure {
 }
 
 impl ManifestFailure {
-    /// For a failure that somebody else has reported. A dependency that needs the manifest then
-    /// gives up without a message of its own.
+    /// Use this for a failure that was already reported elsewhere. A dependency that needs the
+    /// manifest then fails without logging anything.
     pub(crate) fn already_reported() -> Self {
         ManifestFailure {
             reported: FailureReport::Errored,
@@ -367,7 +366,7 @@ impl Default for ManifestFailure {
     }
 }
 
-/// How far the messages of a `ManifestFailure` have gotten.
+/// How far along the messages of a `ManifestFailure` are in being reported.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FailureReport {
     NotYet,
@@ -386,7 +385,7 @@ pub(crate) struct Wanted {
     pub(crate) range_len: usize,
     /// The hash of the name in the registry.
     pub(crate) name_hash: PackageNameHash,
-    /// It was found in the peer pass, where a peer that nothing provides gets installed.
+    /// True if it was found during the peer pass, which installs the peers that nothing provides.
     pub(crate) follows_peers: bool,
 }
 
@@ -434,9 +433,10 @@ pub(crate) struct RemotePackages {
 /// Which package `append_next_remote_package` may add.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteTurn {
-    /// Only the one that the lowest waiting dependency asks for.
+    /// Only the package that the lowest waiting dependency needs.
     InOrder,
-    /// No task is running, so a package that has not arrived never will. The lowest one that has.
+    /// No task is running, so a package that hasn't arrived never will. Add the lowest one that has
+    /// arrived.
     NothingElseArrives,
 }
 
@@ -497,7 +497,8 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
-    /// Of the `name` in the root package.json, which `workspace_paths` (the members) does not hold.
+    /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
+    /// not the root.
     pub(crate) workspace_root_name_hash: PackageNameHash,
     /// The `version` in the root package.json, as written. The lockfile records none for the root.
     pub(crate) workspace_root_version: Box<[u8]>,
@@ -560,9 +561,10 @@ pub struct PackageManager {
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
-    // Every required peer dependency as (name hash, dependency, the package that declares it),
-    // sorted by name. `enqueue::index_peer_askers` fills this and the next two fields.
-    pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID)>>,
+    // The required peer dependencies that have to agree on a version, as (name hash, dependency,
+    // the package that declares it, true if no package provides it anywhere), sorted by name.
+    // `enqueue::index_peer_askers` fills this and the next two fields.
+    pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID, bool)>>,
     // The names that the root package resolves to a folder, a tarball or a git repository.
     pub(crate) local_in_root: Vec<PackageNameHash>,
     // Every `npm:` alias as (name hash, the package that declares it, the package it resolved to).
@@ -747,30 +749,6 @@ impl Subcommand {
             Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit
         ) || (matches!(self, Self::Install | Self::Link) && has_package_args)
     }
-
-    /// Whether the command installs or removes packages, which includes editing package.json and
-    /// bun.lock to match.
-    pub(crate) fn installs(self, positionals: &[&[u8]]) -> bool {
-        match self {
-            Self::Install
-            | Self::Update
-            | Self::Add
-            | Self::Remove
-            | Self::Link
-            | Self::Patch
-            | Self::PatchCommit
-            | Self::Dedupe
-            | Self::Prune => true,
-            Self::Audit => positionals.get(1).is_some_and(|arg| *arg == b"fix"),
-            Self::Pm
-            | Self::Unlink
-            | Self::Outdated
-            | Self::Pack
-            | Self::Publish
-            | Self::Info
-            | Self::Why => false,
-        }
-    }
 }
 
 /// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.
@@ -821,12 +799,14 @@ pub struct PackageUpdateInfo {
 }
 
 impl PackageUpdateInfo {
-    /// One name can sit in several catalogs, each with its version. No name contains `@catalog:`.
+    /// A name can be in several catalogs, with a different version in each. No package name
+    /// contains `@catalog:`, so the key is unambiguous.
     pub(crate) fn catalog_row_key(name: &[u8], catalog_name: &[u8]) -> Vec<u8> {
         [name, b"@catalog:".as_slice(), catalog_name].concat()
     }
 
-    /// `version`'s tag strings live in `buf`, which cleaning rebuilds: the original keeps a copy.
+    /// `version`'s tag strings point into `buf`, which is rebuilt when the lockfile is cleaned, so
+    /// this keeps its own copy of them.
     pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
         let mut tag_buf =
             vec![0u8; version.tag.pre.len() + version.tag.build.len()].into_boxed_slice();
@@ -917,26 +897,6 @@ impl PackageManager {
         // outlives every `'a` a caller can name. Exclusive access is upheld by
         // single-threaded use; see doc comment.
         unsafe { &mut *p }
-    }
-
-    /// Exits with an error if a bunfig.toml or .npmrc exists but cannot be read. These files say
-    /// where packages come from, where they are installed and what checks them, so the command does
-    /// not guess. `verb` is what the command does to packages, for the message.
-    pub fn refuse_unreadable_config(&self, ctx: &Command::ContextData, verb: &str) {
-        let Some(path) = ctx.unreadable_config.as_deref() else {
-            return;
-        };
-        let log = self.log_mut();
-        log.add_error_fmt(
-            Some(&bun_ast::Source::init_path_string(path, b"")),
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "cannot read {}, refusing to {verb} packages",
-                bstr::BStr::new(bun_paths::basename(path)),
-            ),
-        );
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-        Global::crash();
     }
 
     /// Reborrow the active progress download node (`self.progress.root`-rooted).
@@ -1101,7 +1061,7 @@ impl PackageManager {
         }
     }
 
-    /// `nothing`: what a missing lockfile leaves undone, e.g. "nothing to update".
+    /// `nothing` is the end of the error message for a missing lockfile, e.g. "nothing to update".
     pub fn load_lockfile_from_cwd_or_exit(&mut self, nothing: &str) {
         let silent = self.options.log_level == package_manager_options::LogLevel::Silent;
         match self.load_lockfile_from_cwd::<true>() {
@@ -1424,7 +1384,7 @@ fn configure_env_for_scripts_run(
 
 static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
 
-/// Scripts find the shim through PATH until the process ends.
+/// Kept until the process exits, because scripts find the shim through PATH.
 static NODE_GYP_TEMPDIR: std::sync::OnceLock<(Fd, Box<[u8]>)> = std::sync::OnceLock::new();
 
 extern "C" fn remove_node_gyp_tempdir() {
@@ -1529,41 +1489,29 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Global::crash();
     }
 
+    // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
+    let parts: [&[u8]; 3] = [
+        strings::without_trailing_slash(tempdir.name),
+        &[SEP],
+        &manager.node_gyp_tempdir_name,
+    ];
+    let node_gyp_abs_dir = parts.concat();
+
     // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
-    let mut path_var: Vec<u8> = Vec::with_capacity(
-        existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
-    );
+    let mut path_var: Vec<u8> =
+        Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
     path_var.extend_from_slice(existing_path);
     if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
         path_var.push(DELIMITER);
     }
-    path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
-    path_var.push(SEP);
-    path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
+    path_var.extend_from_slice(&node_gyp_abs_dir);
     manager.env_mut().map.put(b"PATH", &path_var)?;
 
-    let path_buf_len = path_buf.len();
-    let mut cursor = &mut path_buf[..];
-    write!(
-        cursor,
-        "{}{}{}{}{}",
-        bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
-        SEP_STR,
-        bstr::BStr::new(strings::without_trailing_slash(
-            &manager.node_gyp_tempdir_name
-        )),
-        SEP_STR,
-        FILE_NAME
-    )?;
-    let written = path_buf_len - cursor.len();
-    let npm_config_node_gyp = &path_buf[..written];
-
-    let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
     manager
         .env_mut()
         .map
-        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
+        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", &node_gyp_abs_dir)?;
 
     Ok(())
 }
@@ -1795,7 +1743,7 @@ fn allocate_package_manager(
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
-    // Not before this line: it reads `thread_pool`.
+    // This has to come after `thread_pool` is initialized, because the callback reads it.
     bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
     p
 }
@@ -1947,17 +1895,14 @@ fn push_package_json(path: &mut Vec<u8>) {
     path.extend_from_slice(b"package.json\0");
 }
 
-/// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
-/// If a file exists but cannot be read, its path is stored in `unreadable`, unless that is already
-/// set. A later file in `project_npmrcs` overrides an earlier one, and all of them override the
-/// user's own .npmrc.
+/// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`. A later file in `project_npmrcs`
+/// overrides an earlier one, and all of them override the user's own .npmrc.
 fn load_npmrc_files<'a>(
     bunfig: &Api::BunInstall,
     env: &dot_env::Loader,
     start_dir: &[u8],
     project_npmrcs: &mut dyn Iterator<Item = &'a ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
-    unreadable: &mut Option<Box<[u8]>>,
 ) -> Api::BunInstall {
     let mut buf = bun_paths::path_buffer_pool::get();
     let parts = [b"./.npmrc" as &[u8]];
@@ -1991,13 +1936,11 @@ fn load_npmrc_files<'a>(
         paths.push(path);
     }
     let mut install = Api::BunInstall::default();
-    if let Some(path) = ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths) {
-        unreadable.get_or_insert_with(|| path.as_bytes().into());
-    }
+    ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths);
     install
 }
 
-/// Whether npm's `ignore-scripts` is set in the environment. It can only turn scripts off.
+/// Returns true if npm's `ignore-scripts` is set in the environment. It can only turn scripts off.
 fn env_ignores_scripts(env: &dot_env::Loader) -> bool {
     [
         b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
@@ -2008,8 +1951,8 @@ fn env_ignores_scripts(env: &dot_env::Loader) -> bool {
     .any(|value| !value.is_empty() && ini::npm_config_bool(value))
 }
 
-/// Whether the configuration makes `bun install` in `cwd`, the working directory, skip lifecycle
-/// scripts even without `--ignore-scripts`. This is for `bun create`, which has no
+/// Returns true if the configuration makes `bun install` in `cwd`, the working directory, skip
+/// lifecycle scripts even without `--ignore-scripts`. This is for `bun create`, which has no
 /// `PackageManager`. It resets the AST store.
 pub fn config_ignores_scripts(
     ctx: Command::Context,
@@ -2036,13 +1979,12 @@ pub fn config_ignores_scripts(
         cwd,
         &mut core::iter::once(bun_core::zstr!(".npmrc")),
         ini::NpmrcDiagnostics::Discard,
-        &mut None,
     );
     Ok(npmrc.ignore_scripts.unwrap_or(false))
 }
 
-/// The cache directory set in the user's own `.bunfig.toml`, or else in their `.npmrc`. Those are
-/// the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
+/// Returns the cache directory set in the user's own `.bunfig.toml`, or else in their `.npmrc`.
+/// Those are the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
 /// `PackageManager`.
 pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
     let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
@@ -2053,22 +1995,16 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
     }
     initialize_store();
     let diagnostics = ini::NpmrcDiagnostics::Discard;
-    load_npmrc_files(
-        &bunfig,
-        env,
-        cwd,
-        &mut core::iter::empty(),
-        diagnostics,
-        &mut None,
-    )
-    .cache_directory
+    load_npmrc_files(&bunfig, env, cwd, &mut core::iter::empty(), diagnostics).cache_directory
 }
 
-/// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
+/// The upward directory walk that [`init`] does: first to the nearest `package.json`, then on to
+/// the workspace root.
 struct PackageJsonWalk<'a> {
     cwd: &'a [u8],
     next_dir: Option<&'a [u8]>,
-    /// `<dir>/package.json` of `next`'s last directory. The cwd alone can fill a path buffer.
+    /// `<dir>/package.json` for the directory that `next` returned last. It's a `Vec` because the
+    /// cwd alone can fill a path buffer.
     path: Vec<u8>,
 }
 
@@ -2081,7 +2017,7 @@ impl<'a> PackageJsonWalk<'a> {
         }
     }
 
-    /// The next directory and what opening its `package.json` returned.
+    /// Returns the next directory and the result of opening its `package.json`.
     fn next(&mut self, flags: i32) -> Option<(&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
         loop {
             let dir = self.next_dir?;
@@ -2313,36 +2249,8 @@ fn find_workspace_root_above<'a>(
     Ok(None)
 }
 
-/// Nothing is written to a workspace whose folder is outside the project (see
-/// `Lockfile::is_member_outside`). So a command that installs exits here, before it changes
-/// anything, if it was started in such a workspace. `top_level_dir` must already be the project's.
-fn exit_if_started_in_member_outside(
-    members: &Package::WorkspaceMap::WorkspaceMap,
-    name_hash: PackageNameHash,
-) {
-    let Some((path, entry)) = (members.keys().iter().zip(members.values().iter()))
-        .find(|(_, entry)| Semver::string::Builder::string_hash(&entry.name) == name_hash)
-    else {
-        return;
-    };
-    let mut linked = crate::lockfile_real::LinkedMembers::default();
-    linked.see(path, entry.is_behind_link);
-    let Some(real_path) = linked.outside_and_started_in(path) else {
-        return;
-    };
-    let real_path = bun_core::fmt::escape_control_chars(real_path);
-    Output::err_generic(
-        "workspace \"{}\" links to \"{}\" outside the project, no changes made",
-        (bun_core::fmt::escape_control_chars(path), &real_path),
-    );
-    bun_core::note!(
-        "run the command in \"{}\" to use that folder as its own project",
-        real_path
-    );
-    Global::crash();
-}
-
-/// Sticky and group- or world-writable, like `/tmp`: any local user can put a `package.json` there.
+/// Returns true if `dir` is sticky and group- or world-writable, like `/tmp`. Any local user can
+/// create a `package.json` there.
 #[cfg(unix)]
 fn is_shared_directory(dir: &[u8]) -> bool {
     use bun_sys::S;
@@ -2470,7 +2378,8 @@ pub fn init(
     // `holder::RAW_PTR`) instead of `Box::leak`.
     let env: &mut dot_env::Loader = unsafe {
         let mut loader_ptr = holder::ENV_LOADER.load();
-        // A second `init()` has another cwd: it keeps what the first read from `--env-file` paths.
+        // A second `init()` runs with a different cwd, so it keeps what the first one read from the
+        // `--env-file` paths.
         if loader_ptr.is_null() {
             loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
             holder::ENV_LOADER.store(loader_ptr);
@@ -2478,7 +2387,7 @@ pub fn init(
         &mut *loader_ptr
     };
     if !cli.env_files.is_empty() {
-        // Before the cwd they are relative to changes.
+        // Load these before the cwd changes, because their paths are relative to it.
         env.load_process()?;
         env.load(
             &dot_env::DirEntryKeys(Vec::new()),
@@ -2592,7 +2501,8 @@ pub fn init(
             } else {
                 bun_sys::O::RDONLY
             }) {
-                // `-g` names its project, the global directory. What is above it is another one's.
+                // With `-g`, the project is the global directory. A package.json above it belongs
+                // to some other project.
                 if cli.global {
                     walk.next_dir = None;
                 }
@@ -2634,7 +2544,8 @@ pub fn init(
                 && (subcommand == Subcommand::Add
                     || (subcommand == Subcommand::Install && cli.positionals.len() > 1))
             {
-                // The package.json that `bun add <package>` would create here stays in memory.
+                // The package.json that `bun add <package>` would create here is only kept in
+                // memory.
                 workspace_package_json_cache.insert_unwritten(
                     &mut bun_ast::Log::init(),
                     original_package_json_path.as_bytes(),
@@ -2680,7 +2591,8 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root(cli.positionals.len() > 1) {
-            // Above `bunx`'s tree are the user's cache and home: no workspace of it.
+            // The directories above `bunx`'s tree are the user's cache and home, so it isn't a
+            // workspace of anything there.
             let is_bunx_install = run_tasks::is_bunx_tree(child_cwd);
             if !created_package_json
                 && !no_project
@@ -2700,9 +2612,6 @@ pub fn init(
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                if subcommand.installs(cli.positionals) {
-                    exit_if_started_in_member_outside(&workspace_names, name_hash);
-                }
                 let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
                 // The root was found above the path as the user typed it. The root reads the
@@ -2740,7 +2649,8 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // From `top_level_dir`, not the fd's realpath: relative paths never cross drives.
+        // Build it from `top_level_dir`, not from the fd's real path, so that relative paths never
+        // cross drives.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
         let tld_no_slash = strings::without_trailing_slash(tld);
         let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
@@ -2749,7 +2659,8 @@ pub fn init(
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
-    // From here on package.json is read (and, by the commands that do, written) by path.
+    // From here on, package.json is read by path, and written by path by the commands that write
+    // it.
     let _ = root_package_json_file.close();
 
     // Returns the resolver's BSSMap-owned
@@ -2812,7 +2723,6 @@ pub fn init(
             )
             .into_iter(),
             ini::NpmrcDiagnostics::Print,
-            &mut ctx.unreadable_config,
         );
 
         overlay_bunfig_install(&mut install, bunfig_install);
@@ -3181,8 +3091,8 @@ fn init_with_runtime_once(
             Err(path) => unreadable = Some(path),
         }
     }
-    // This also finds a scanner in a folder between the two. `bun install` would not read that
-    // file, but when in doubt the scanner counts.
+    // This also finds a scanner in a folder between the two. `bun install` wouldn't read that file,
+    // but when in doubt, the scanner counts.
     let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner only sees what `bun install` is about to install, so auto-install is refused.
     if [
@@ -3221,10 +3131,9 @@ fn init_with_runtime_once(
         start_dir,
         &mut npmrcs.iter().map(|path| &**path),
         ini::NpmrcDiagnostics::Discard,
-        &mut unreadable,
     );
-    // The unreadable file may say where packages come from or what checks them, so nothing is
-    // installed without it.
+    // The file may say where packages come from or what checks them, so nothing is installed
+    // without it.
     if let Some(path) = unreadable {
         log.add_warning_fmt(
             None,

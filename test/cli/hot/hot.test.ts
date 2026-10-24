@@ -1119,6 +1119,36 @@ it.each(["--hot", "--watch"])("%s loads a file again after the truncation that e
   expect(await stdout("two\nend\n")).toBe(true);
 });
 
+// A save that empties a file is a truncation to 0, and nothing is written after it.
+it.each(["--hot", "--watch"])("%s loads a file again after a save that empties it", async flag => {
+  using dir = tempDir("hot-save-empties-file", {
+    "main.js": `import "./imported.js";\nconsole.log("end");\n`,
+    "imported.js": `console.log("one");`,
+  });
+  const imported = join(String(dir), "imported.js");
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("one\nend\n")).toBe(true);
+
+  // A second `end` directly after the first: that run loaded the empty file.
+  truncateSync(imported, 0);
+  expect(await stdout("one\nend\nend\n")).toBe(true);
+
+  writeFileSync(imported, `console.log("two");`);
+  expect(await stdout("two\nend\n")).toBe(true);
+
+  // `open(O_TRUNC)`, and no `write()` after it.
+  writeFileSync(imported, "");
+  expect(await stdout("two\nend\nend\n")).toBe(true);
+});
+
 // The Windows watcher never reads the cached listing.
 it.skipIf(isWindows)("survives a directory event for a folder whose cached listing failed to read", async () => {
   using dir = tempDir("hot-dir-read-error", {

@@ -599,6 +599,27 @@ devTest("hmr rebuilds a file that is truncated", {
     await c.expectMessage("kept");
   },
 });
+devTest("hmr rebuilds a file that is emptied", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./dep";
+      console.log("index");
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `console.log("dep");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep", "index");
+
+    // `Bun.write` of an empty text is a truncation to 0, and nothing is written.
+    await dev.write("dep.ts", ``);
+    await c.expectMessage("index");
+  },
+});
 devTest("hmr does not rebuild a file for a change of its metadata", {
   // ReadDirectoryChangesW does not tell `utimes` from a write.
   skip: ["win32"],

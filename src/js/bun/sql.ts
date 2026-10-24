@@ -308,8 +308,8 @@ function dispatchEnd(this: Scope, commit: boolean, query: Query, handle: QueryHa
   }
 }
 
-function send(scope: Scope, text: string, handler: QueryHandler): Query {
-  return new Query(text, [], scope.flags | SQLQueryFlags.unsafe | SQLQueryFlags.internal, handler, scope.pool);
+function send(scope: Scope, text: string, handler: QueryHandler, flags = SQLQueryFlags.none): Query {
+  return new Query(text, [], scope.flags | SQLQueryFlags.unsafe | SQLQueryFlags.internal | flags, handler, scope.pool);
 }
 
 function shut(scope: Scope) {
@@ -556,8 +556,8 @@ async function run(scope: Scope, callback: TransactionCallback) {
   // SAVEPOINT is a statement of the scope that savepoint() was called on: it goes through that scope's gate.
   const started =
     scope.kind === Kind.savepoint
-      ? send(parent!, scope.statements!.BEGIN, parent!.handler)
-      : send(scope, scope.statements!.BEGIN, dispatchOwn.bind(scope));
+      ? send(parent!, scope.statements!.BEGIN, parent!.handler, SQLQueryFlags.transactionStart)
+      : send(scope, scope.statements!.BEGIN, dispatchOwn.bind(scope), SQLQueryFlags.transactionStart);
   // Queued now: what the callback sends follows it on the connection.
   started.execute();
   started.$then(undefined, refuseStart.bind(scope));

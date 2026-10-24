@@ -1771,14 +1771,20 @@ impl PostgresSQLConnection {
             .any(|request| !request.flags.get().internal)
     }
 
-    /// They were handed over for a transaction or savepoint that never began.
-    fn reject_unwritten_behind_refused_internal(&self, error: JSValue) {
+    /// They were handed over for a transaction or savepoint that never began: the ones that are
+    /// not written yet, up to the next statement that a scope sends itself.
+    fn reject_unwritten_behind_refused_start(&self, error: JSValue) {
         let unwritten: Vec<RefPtr<PostgresSQLQuery>> = {
             let requests = self.requests.get();
             let written = requests
                 .len()
                 .saturating_sub(self.pending_requests.get() as usize);
-            requests.iter().skip(written).cloned().collect()
+            requests
+                .iter()
+                .skip(written)
+                .take_while(|request| !request.flags.get().internal)
+                .cloned()
+                .collect()
         };
         for request in unwritten {
             self.reject_unwritten(&request, error);
@@ -2152,11 +2158,11 @@ impl PostgresSQLConnection {
                         self.count(&request, RequestCounter::None);
                         let request = request.ref_guard();
                         self.discard_request(&request);
-                        let refused_internal = request.flags.get().internal;
-                        let error = request.kept_error();
+                        let refused_start = request.flags.get().transaction_start;
+                        let error = request.kept_error().filter(|error| error.is_error());
                         request.end_rejected(self.global());
-                        if refused_internal && let Some(error) = error {
-                            self.reject_unwritten_behind_refused_internal(error);
+                        if refused_start && let Some(error) = error {
+                            self.reject_unwritten_behind_refused_start(error);
                         }
                     } else if request.status.get() == QueryStatus::PartialResponse {
                         self.count(&request, RequestCounter::None);

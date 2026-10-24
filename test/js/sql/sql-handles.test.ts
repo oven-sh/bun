@@ -1373,25 +1373,55 @@ describe.each(adapters)("$adapter", entry => {
       expect(log()).toEqual(sentBehindStart("SELECT 'T1'"));
     }));
 
-  // A query that is not prepared on the connection yet waits for the answer to BEGIN. PostgreSQL only: MySQL
-  // prepares it in the same write as START TRANSACTION.
-  test.skipIf(runsBehindStart)("a statement that waited for the answer to BEGIN is refused with it", () =>
+  // A query that waits for the answer to BEGIN: one that is not prepared on the connection yet on PostgreSQL, one
+  // behind a text query of several statements on MySQL.
+  const waiting = runsBehindStart
+    ? { ahead: ["SELECT 'T0';"], make: (tx: any) => [tx.unsafe("SELECT 'T0';"), tx.unsafe("SELECT 'T1'")] }
+    : { ahead: [], make: (tx: any) => [tx.unsafe("SELECT $1", ["T1"])] };
+
+  test("a statement that waited for the answer to BEGIN is refused with it", () =>
     scenario(async ({ sql, log, refuse }) => {
       refuse(BEGIN);
       let statement!: Promise<any>;
       const transaction = await errorOf(
         sql.begin(async tx => {
-          statement = errorOf(tx.unsafe("SELECT $1", ["T1"]));
-          await statement;
+          const made = waiting.make(tx);
+          for (const query of made) query.execute();
+          statement = errorOf(made.at(-1));
+          await Promise.allSettled(made);
         }),
       );
       expect([(await statement).message, transaction.message]).toEqual([
         expect.stringContaining(`refused: ${BEGIN}`),
         expect.stringContaining(`refused: ${BEGIN}`),
       ]);
-      expect(log()).toEqual([BEGIN]);
-    }),
-  );
+      expect(log()).toEqual([BEGIN, ...waiting.ahead]);
+    }));
+
+  test("a refused SAVEPOINT refuses what waited for it, and the transaction still ends", () =>
+    scenario(async ({ sql, log, refuse }) => {
+      refuse("SAVEPOINT s0");
+      let savepoint!: Promise<any>;
+      let statement!: Promise<any>;
+      const transaction = await outcome(
+        sql.begin(tx => {
+          savepoint = errorOf(
+            tx.savepoint(sp => {
+              const made = waiting.make(sp);
+              for (const query of made) query.execute();
+              statement = errorOf(made.at(-1));
+              return made;
+            }),
+          );
+        }),
+      );
+      expect([transaction, (await savepoint).message, (await statement).message]).toEqual([
+        "resolved",
+        expect.stringContaining("refused: SAVEPOINT s0"),
+        expect.stringContaining("refused: SAVEPOINT s0"),
+      ]);
+      expect(log()).toEqual([BEGIN, "SAVEPOINT s0", ...waiting.ahead, "COMMIT"]);
+    }));
 
   // The statement follows START TRANSACTION in one write and is still running when the refusal is read.
   test.skipIf(!runsBehindStart)("close({ timeout }) after BEGIN was refused lets begin() settle", () =>

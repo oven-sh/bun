@@ -67,6 +67,8 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// BEGIN, COMMIT, SAVEPOINT: the unnamed statement, pipelined, never lost (26000).
     pub(crate) internal: bool,
+    /// BEGIN or SAVEPOINT: what is not written yet when the server refuses it is refused too.
+    pub(crate) transaction_start: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
     /// Its values are what `write_bind` sends. See `PostgresRequest::stage_parameters`.
@@ -120,6 +122,7 @@ impl Default for Flags {
             bigint: false,
             simple: false,
             internal: false,
+            transaction_start: false,
             describe_first: false,
             staged: false,
             discard_response: false,
@@ -385,6 +388,7 @@ impl PostgresSQLQuery {
         bigint: bool,
         simple: bool,
         internal: bool,
+        transaction_start: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
@@ -403,6 +407,7 @@ impl PostgresSQLQuery {
                 bigint,
                 simple,
                 internal,
+                transaction_start,
                 ..Default::default()
             });
         }

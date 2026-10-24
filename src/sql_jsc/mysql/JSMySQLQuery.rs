@@ -60,6 +60,7 @@ impl JSMySQLQuery {
         bigint: bool,
         simple: bool,
         internal: bool,
+        transaction_start: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
@@ -71,7 +72,13 @@ impl JSMySQLQuery {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
+            query: JsCell::new(MySQLQuery::init(
+                query,
+                bigint,
+                simple,
+                internal,
+                transaction_start,
+            )),
             undescribed: JsCell::new(Undescribed::default()),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
@@ -369,6 +376,14 @@ impl JSMySQLQuery {
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
         self.query.get().is_simple()
+    }
+    #[inline]
+    pub(crate) fn is_internal(&self) -> bool {
+        self.query.get().is_internal()
+    }
+    #[inline]
+    pub(crate) fn is_transaction_start(&self) -> bool {
+        self.query.get().is_transaction_start()
     }
     #[inline]
     pub(crate) fn is_bigint_supported(&self) -> bool {

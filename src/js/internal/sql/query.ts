@@ -347,6 +347,8 @@ enum SQLQueryFlags {
   /// the handler gets no handle: it finds the text (sql.file()) and calls setText()
   deferredText = 1 << 6,
   copy = 1 << 9,
+  /// BEGIN or SAVEPOINT: what is handed over behind it is refused with it when the server refuses it
+  transactionStart = 1 << 10,
 }
 /// Bits 7 and 8 of the flags: the SQLQueryResultMode asked for before the handle exists.
 const resultModeShift = 7;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, nodeExeAtLeast, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
@@ -199,10 +199,7 @@ describe("child.stdin", () => {
       "destroy() in 'prefinish'": "prefinish, finish, close, child alive",
     };
     // Before v24 node passes no error to a canceled write. On Windows a pipe takes the first write whole.
-    const node = isPosix ? nodeExe() : null;
-    const nodeMajor = node
-      ? Number(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node.split('.')[0]"], env: bunEnv }).stdout)
-      : 0;
+    const node = isPosix ? nodeExeAtLeast("24.0.0") : null;
 
     // A few cases per process: a debug build needs about half a second for each.
     const titles = Object.keys(sameAsNode);
@@ -210,7 +207,7 @@ describe("child.stdin", () => {
 
     describe.each([
       ["bun", bunExe()],
-      ["node", nodeMajor >= 24 ? node : null],
+      ["node", node],
     ])("the events are node's (%s)", (runtime, exe) => {
       it.skipIf(!exe).each([0, 1, 2])("part %d", async part => {
         const cases = parts[part];

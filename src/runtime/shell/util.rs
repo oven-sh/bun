@@ -10,15 +10,9 @@ pub(crate) enum OutKind {
 // `bun_spawn` *crate* re-exports under the same name.
 pub(crate) use crate::api::bun_spawn::stdio::Stdio;
 
-/// A `< ${response}` redirect takes the whole body when the command starts.
-/// For a stream, a used or a failed body, `use_as_any_blob()` and `use_()`
-/// hand back an empty `Blob`, and an S3-backed `Blob` has no bytes to read:
-/// the command reads zero bytes and exits 0, or never sees the end of its
-/// stdin. Throws for such a body and leaves it unread.
-///
-/// A file-backed `Blob` passes: a spawned command gets its path or its fd. A
-/// builtin reads zero bytes from it (`Builtin::read_stdin_no_io`), as it does
-/// for `< ${Bun.file(fd)}`.
+/// Throws for a `Response` body that has no bytes for a `<` redirect to take:
+/// a stream, a used or failed body (`use_as_any_blob()` and `use_()` return an
+/// empty `Blob` for those), or an S3-backed `Blob`. Leaves the body unread.
 pub(crate) fn throw_if_body_unavailable(
     global: &crate::jsc::JSGlobalObject,
     body: &mut crate::webcore::body::Value,
@@ -26,8 +20,6 @@ pub(crate) fn throw_if_body_unavailable(
     use crate::jsc::ErrorCode;
     use crate::webcore::body::Value;
 
-    // An unread native stream (`blob.stream()`) goes back to its `Blob`. For a
-    // string body the call would scan the string for non-ASCII bytes again.
     if matches!(body, Value::Locked(_)) {
         body.to_blob_if_possible();
     }

@@ -879,10 +879,9 @@ it.skipIf(isWindows)(
     // After creating `node_modules/.bin/<name>`, the installer chmods the bin
     // target to make it executable. If the bin target inside the package is
     // itself a symlink (git/file/workspace dependencies can ship one — the npm
-    // tarball extractor never materializes one), a chmod that follows it
-    // changes the mode of whatever file it points at, including files outside
-    // node_modules. The file behind a symlinked bin target only gets the mode
-    // when it is inside the package.
+    // tarball extractor never materializes one), chmod follows it and changes
+    // the mode of whatever file it points at, including files outside
+    // node_modules. The chmod must be skipped when the bin target is a symlink.
     using dir = tempDir("bin-target-symlink-test", {
       // Pin the hoisted linker so the bin link lands at node_modules/.bin and
       // the chmod runs against the package's own bin target.
@@ -918,8 +917,7 @@ it.skipIf(isWindows)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The file the symlink points at keeps its original permissions; the
-    // installer must not chmod through a symlinked bin target that leaves the
-    // package.
+    // installer must not chmod through a symlinked bin target.
     expect((await stat(victimPath)).mode & 0o777).toBe(0o600);
 
     // The bin link itself is still created.
@@ -935,57 +933,6 @@ it.skipIf(isWindows)(
   },
   60000,
 );
-
-it.skipIf(isWindows)("makes a file reached through a symlinked bin target inside the package executable", async () => {
-  // The symlink stays inside the package, so the file it points at is the
-  // package's own, and it gets the executable bit like a regular bin target.
-  using dir = tempDir("bin-target-symlink-inside-test", {
-    "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "bin-target-symlink-inside-app",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-    }),
-    "packages/dep/package.json": JSON.stringify({
-      name: "dep-with-inside-symlinked-bin",
-      version: "1.0.0",
-      bin: { "dep-with-inside-symlinked-bin": "./bin/cli.js" },
-    }),
-    "packages/dep/lib/cli.js": "#!/bin/sh\necho hello\n",
-  });
-  const installDir = String(dir);
-
-  const realBin = join(installDir, "packages", "dep", "lib", "cli.js");
-  await chmod(realBin, 0o644);
-  await mkdir(join(installDir, "packages", "dep", "bin"));
-  await symlink(join("..", "lib", "cli.js"), join(installDir, "packages", "dep", "bin", "cli.js"));
-
-  await using proc = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: installDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) {
-    console.error("Install failed with exit code:", exitCode);
-    console.error("stdout:", stdout);
-    console.error("stderr:", stderr);
-  }
-  expect(exitCode).toBe(0);
-
-  expect((await stat(realBin)).mode & 0o111).not.toBe(0);
-  await using bin = spawn({
-    cmd: [join(installDir, "node_modules", ".bin", "dep-with-inside-symlinked-bin")],
-    cwd: installDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(await bin.stdout.text()).toBe("hello\n");
-  expect(await bin.exited).toBe(0);
-});
 
 it.skipIf(isWindows)(
   "does not change permissions of a directory reached through a symlinked bin target with a trailing slash",

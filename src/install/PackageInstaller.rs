@@ -880,6 +880,7 @@ impl<'a> PackageInstaller<'a> {
                         pkg_metas,
                         pkg_names,
                         self.resolutions.slice(),
+                        tree_id,
                         target_package_id,
                         link_rel_buf,
                     )
@@ -1374,6 +1375,7 @@ impl<'a> PackageInstaller<'a> {
         metas: &[Package::Meta],
         pkg_names: &[String],
         resolutions: &[Resolution],
+        tree_id: lockfile::tree::Id,
         package_id: PackageID,
         buf: &'b mut [u8],
     ) -> Option<&'b [u8]> {
@@ -1389,9 +1391,9 @@ impl<'a> PackageInstaller<'a> {
                 if symlink_backend =>
             {
                 let pkg_name = pkg_names[package_id as usize];
-                let cache_dir = package_manager::get_cache_directory(manager);
-                let mut cache_path = bun_paths::path_buffer_pool::get();
-                let cache_path = bun_sys::get_fd_path(cache_dir, &mut cache_path).ok()?;
+                // Opens the cache directory, which sets its path.
+                let _ = package_manager::get_cache_directory(manager);
+                let cache_path = manager.cache_directory_path.as_bytes();
                 let entry = Self::cache_entry_name(
                     manager,
                     string_buf,
@@ -1410,8 +1412,14 @@ impl<'a> PackageInstaller<'a> {
             }
             resolution::Tag::Folder => {
                 let folder = resolution.folder().slice(string_buf);
-                // `get_install_method` symlinks a package from its own folder.
-                if !symlink_backend && !matches!(folder, b"" | b".") {
+                // `install_package` symlinks a package from its own folder, see
+                // `get_install_method`.
+                let own_folder = if lockfile.is_workspace_tree_id(tree_id) {
+                    matches!(folder, b"" | b".")
+                } else {
+                    folder == b"."
+                };
+                if !symlink_backend && !own_folder {
                     return None;
                 }
                 join_abs_string_buf_z_checked::<platform::Auto>(

@@ -36,9 +36,19 @@ function readBinTarget(binDir: string, name: string) {
   return realpathSync(join(binDir, name));
 }
 
+// The hoisted linker also runs with the symlink backend, where the bins in node_modules are
+// links into the cache and the cache files have to get the executable bit.
+const hoistedBackends = isWindows ? [null] : [null, "symlink"];
+const linkersAndBackends = [
+  ...hoistedBackends.map(backend => ["hoisted", backend] as const),
+  ["isolated", null] as const,
+];
+const withBackend = (backend: string | null) => `${backend ? ` and --backend ${backend}` : ""}`;
+
 describe.concurrent("native binlink optimization", () => {
-  for (const linker of ["hoisted", "isolated"]) {
-    test(`uses platform-specific bin instead of main package bin with linker ${linker}`, async () => {
+  for (const [linker, backend] of linkersAndBackends) {
+    const installArgs = backend ? [`--backend=${backend}`] : [];
+    test(`uses platform-specific bin instead of main package bin with linker ${linker}${withBackend(backend)}`, async () => {
       let env = { ...bunEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
@@ -75,7 +85,7 @@ describe.concurrent("native binlink optimization", () => {
 
       async function runInstall() {
         const proc = spawn({
-          cmd: [bunExe(), "install"],
+          cmd: [bunExe(), "install", ...installArgs],
           cwd: packageDir,
           stdout: "inherit",
           stdin: "ignore",
@@ -100,7 +110,12 @@ describe.concurrent("native binlink optimization", () => {
       }
 
       await runInstall();
-      expect(readBinTarget(binDir, "test-binlink-cmd")).toContain(join("test-native-binlink-target", "bin", "main.js"));
+      // With the symlink backend the file behind the link is the platform package's cache entry.
+      expect(readBinTarget(binDir, "test-binlink-cmd")).toContain(
+        backend === "symlink"
+          ? join(packageDir, ".bun-cache", "test-native-binlink-target@")
+          : join("test-native-binlink-target", "bin", "main.js"),
+      );
       await expectPlatformBin();
 
       // Now delete the node_modules folder, keep the bun.lock, re-install
@@ -205,7 +220,7 @@ describe.concurrent("native binlink optimization", () => {
     // fall back to linking the original package's bin. Previously the `seen` map
     // was poisoned by the failed redirect attempt, so the retry silently no-op'd
     // and `.bin/<cmd>` was never created (broke `bunx @anthropic-ai/claude-code`).
-    test(`falls back to main package bin when platform dep has no matching bin file with linker ${linker}`, async () => {
+    test(`falls back to main package bin when platform dep has no matching bin file with linker ${linker}${withBackend(backend)}`, async () => {
       let env = { ...bunEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
@@ -236,7 +251,7 @@ describe.concurrent("native binlink optimization", () => {
       );
 
       const installProc = spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", ...installArgs],
         cwd: packageDir,
         stdout: "pipe",
         stdin: "ignore",
@@ -253,7 +268,11 @@ describe.concurrent("native binlink optimization", () => {
 
       const binDir = join(packageDir, "node_modules", ".bin");
       const binPath = binEntry(binDir, "fallback-cmd");
-      expect(readBinTarget(binDir, "fallback-cmd")).toContain(join("test-native-binlink-fallback", "cli.js"));
+      expect(readBinTarget(binDir, "fallback-cmd")).toContain(
+        backend === "symlink"
+          ? join(packageDir, ".bun-cache", "test-native-binlink-fallback@")
+          : join("test-native-binlink-fallback", "cli.js"),
+      );
 
       const binProc = spawn({
         cmd: [binPath],
@@ -270,7 +289,7 @@ describe.concurrent("native binlink optimization", () => {
       // Re-install with node_modules removed (lockfile-only path)
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       const installProc2 = spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", ...installArgs],
         cwd: packageDir,
         stdout: "inherit",
         stdin: "ignore",

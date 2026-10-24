@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmod, lstat, readlink, stat } from "node:fs/promises";
+import { chmod, lstat, readFile, readlink, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { TestRegistry } from "registry";
 
 // `bun install --backend symlink` fills `node_modules/<pkg>` with symlinks into the cache. The bin
 // linker does not set the mode through a link, so the file in the cache has to get the executable
@@ -9,9 +10,13 @@ import { join } from "node:path";
 
 const BIN = "#!/bin/sh\necho hello\n";
 
-async function install(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
+
+async function run(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--linker=hoisted", ...args],
+    cmd: [bunExe(), ...args],
     cwd,
     env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, "cache"), ...env },
     stdout: "pipe",
@@ -20,6 +25,10 @@ async function install(cwd: string, args: string[], env: Record<string, string |
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
   return stdout;
+}
+
+function install(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
+  return run(cwd, ["install", "--linker=hoisted", ...args], env);
 }
 
 async function runBin(cwd: string, name: string) {
@@ -106,4 +115,88 @@ test.concurrent.skipIf(isWindows)("--backend symlink makes the bin file of a fil
   expect((await lstat(join(cwd, "node_modules", "pkg", "bin", "cli.js"))).isSymbolicLink()).toBe(true);
   expect(await isExecutable(join(cwd, "pkg", "bin", "cli.js"))).toBe(true);
   await runBin(cwd, "pkg");
+});
+
+test.concurrent.skipIf(isWindows)(
+  "--backend symlink normalizes a CRLF shebang in the cache and keeps the link",
+  async () => {
+    using dir = tempDir("bin-symlink-backend-crlf", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:./pkg-1.0.0.tgz" } }),
+    });
+    const cwd = String(dir);
+    await Bun.Archive.write(
+      join(cwd, "pkg-1.0.0.tgz"),
+      {
+        "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", bin: { pkg: "bin/cli.js" } }),
+        "package/bin/cli.js": "#!/bin/sh\r\necho hello\n",
+      },
+      { compress: "gzip" },
+    );
+    await install(cwd, ["--backend=symlink"]);
+
+    const binTarget = join(cwd, "node_modules", "pkg", "bin", "cli.js");
+    expect((await lstat(binTarget)).isSymbolicLink()).toBe(true);
+    const cacheFile = await readlink(binTarget);
+    expect(await readFile(cacheFile, "utf8")).toBe(BIN);
+    expect(await isExecutable(cacheFile)).toBe(true);
+    await runBin(cwd, "pkg");
+  },
+);
+
+/** A project that depends on registry packages, with the install cache inside it. */
+async function projectWithRegistry(name: string, dependencies: Record<string, string>) {
+  const dir = tempDir(name, { "package.json": JSON.stringify({ name: "app", dependencies }) });
+  await registry.writeBunfig(String(dir), { linker: "hoisted" });
+  return dir;
+}
+
+test.concurrent.skipIf(isWindows)(
+  "--backend symlink makes the files of a directories.bin entry executable",
+  async () => {
+    using dir = await projectWithRegistry("bin-symlink-backend-dir", { "dep-with-directory-bins": "1.0.0" });
+    const cwd = String(dir);
+    await install(cwd, ["--backend=symlink"]);
+
+    for (const name of ["directory-bin-1", "directory-bin-2"]) {
+      const binTarget = join(cwd, "node_modules", "dep-with-directory-bins", "bins", name);
+      expect((await lstat(binTarget)).isSymbolicLink()).toBe(true);
+      const cacheFile = await readlink(binTarget);
+      expect(cacheFile.startsWith(join(cwd, "cache"))).toBe(true);
+      expect(await isExecutable(cacheFile)).toBe(true);
+    }
+  },
+);
+
+test.concurrent.skipIf(isWindows)("--backend symlink makes the bin of a scoped package executable", async () => {
+  using dir = await projectWithRegistry("bin-symlink-backend-scoped", { "@scoped/has-bin-entry": "1.0.0" });
+  const cwd = String(dir);
+  await install(cwd, ["--backend=symlink"]);
+
+  // The package ships its bin as 0755. The second install has to set the mode again.
+  const cacheFile = await readlink(join(cwd, "node_modules", "@scoped", "has-bin-entry", "bin.js"));
+  expect(cacheFile.startsWith(join(cwd, "cache", "@scoped"))).toBe(true);
+  await chmod(cacheFile, 0o644);
+  await install(cwd, ["--backend=symlink"]);
+  expect(await isExecutable(cacheFile)).toBe(true);
+});
+
+test.concurrent.skipIf(isWindows)("--backend symlink makes the bin of a patched package executable", async () => {
+  using dir = await projectWithRegistry("bin-symlink-backend-patched", { "dep-with-file-bin": "1.0.0" });
+  const cwd = String(dir);
+  await install(cwd, []);
+  await run(cwd, ["patch", "dep-with-file-bin"]);
+  const patchedBin = join(cwd, "node_modules", "dep-with-file-bin", "file-bin");
+  await writeFile(patchedBin, BIN);
+  await chmod(patchedBin, 0o644);
+  await run(cwd, ["patch", "--commit", "node_modules/dep-with-file-bin"]);
+
+  await install(cwd, ["--backend=symlink", "--force"]);
+  const binTarget = join(cwd, "node_modules", "dep-with-file-bin", "file-bin");
+  expect((await lstat(binTarget)).isSymbolicLink()).toBe(true);
+  const cacheFile = await readlink(binTarget);
+  expect(cacheFile).toMatch(/@@@1_patch_hash=/);
+  await chmod(cacheFile, 0o644);
+  await install(cwd, ["--backend=symlink"]);
+  expect(await isExecutable(cacheFile)).toBe(true);
+  await runBin(cwd, "dep-with-file-bin");
 });

@@ -7,7 +7,7 @@ use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{AbsPath, Platform, SEP};
+use bun_paths::{Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -524,7 +524,7 @@ pub fn do_patch_commit(
     let old_folder =
         resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
-    make_bins_executable(&manager.lockfile, &pkg, cache_dir, &cache_dir_subpath);
+    make_bins_executable(&manager.lockfile, &pkg, &cache_path, &cache_dir_subpath);
 
     let Some(patchfile_contents) = diff_against_cache(manager, &old_folder, &new_folder) else {
         Global::crash();
@@ -1015,7 +1015,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     make_bins_executable(
         &manager.lockfile,
         &pkg,
-        cache_result.cache_dir,
+        &cache_path,
         cache_result.cache_dir_subpath.as_bytes(),
     );
 
@@ -1138,18 +1138,20 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
 fn make_bins_executable(
     lockfile: &Lockfile,
     pkg: &Package,
-    cache_dir: Fd,
+    cache_path: &[u8],
     cache_dir_subpath: &[u8],
 ) {
-    let Ok(mut cache_entry) = <AbsPath>::init_fd_path(cache_dir) else {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Some(cache_entry) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+        cache_path,
+        &mut buf[..],
+        &[cache_dir_subpath],
+    ) else {
         return;
     };
-    if cache_entry.append_join(cache_dir_subpath).is_err() {
-        return;
-    }
     bin::make_bins_executable(
         pkg.bin,
-        cache_entry.slice(),
+        cache_entry.as_bytes(),
         None,
         lockfile.buffers.string_bytes.as_slice(),
         lockfile.buffers.extern_strings.as_slice(),

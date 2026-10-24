@@ -150,14 +150,12 @@ describe("property matchers leave the received value as it was", () => {
     "a matcher on the received side": () => [{ a: any(Number), b: 1 }, { a: 5 }],
   };
 
-  for (const [name, make] of Object.entries(cases)) {
-    test(name, () => {
-      const [received, matchers] = make();
-      const before = ownState(received, matchers);
-      expect(received).toMatchSnapshot(matchers);
-      expect(ownState(received, matchers)).toBe(before);
-    });
-  }
+  test.each(Object.entries(cases))("%s", (_, make) => {
+    const [received, matchers] = make();
+    const before = ownState(received, matchers);
+    expect(received).toMatchSnapshot(matchers);
+    expect(ownState(received, matchers)).toBe(before);
+  });
 
   test("inline snapshots", () => {
     const received = { id: 42, name: "abc" };

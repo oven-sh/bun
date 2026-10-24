@@ -3315,8 +3315,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
         format(ctx, matched);
 
     {
-        // A termination (a `node:vm` timeout, `worker.terminate()`) cannot be cleared, and one can be
-        // requested between two puts. This takes it off the VM and throws it again at the end of the block.
+        // A termination cannot be cleared, and after a `node:vm` timeout the caller goes on. This holds it until the end of the block.
         DeferTermination deferTermination(scope.vm());
         // `undo` calls into JSC, which returns early while an exception is pending.
         JSC::Exception* exception = scope.exception();

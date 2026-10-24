@@ -2,6 +2,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync, rmSync } from "node:fs";
+import { release } from "node:os";
 import { join } from "node:path";
 import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
@@ -22,20 +23,27 @@ self.onmessage = event => postMessage(twice(event.data));
 `,
 };
 
+const build = async (folder: string, env: Record<string, string> = {}) =>
+  built(
+    await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "beside.ts", "--outfile", "app"], folder, {
+      ...bunEnv,
+      ...env,
+    }),
+  );
+
+// Linux since 6.7.
+const [major, minor] = release().split(".").map(Number);
+const kernelForbidsNewExecutableMemory = isLinux && (major > 6 || (major === 6 && minor >= 7));
+
 describe("compile/aot/every-image-of-an-executable-has-its-map", () => {
   test(
-    "the build's map and perf's map",
+    "the build's map",
     () =>
       slot(async () => {
         using dir = tempDir("aot-every-image-has-its-map", files);
         const folder = String(dir);
         const map = join(folder, "code.map");
-        built(
-          await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "beside.ts", "--outfile", "app"], folder, {
-            ...bunEnv,
-            BUN_JSC_aotMapFilePath: map,
-          }),
-        );
+        await build(folder, { BUN_JSC_aotMapFilePath: map });
         const functionsOf = (path: string) =>
           readFileSync(path, "utf8")
             .split("\n")
@@ -46,8 +54,18 @@ describe("compile/aot/every-image-of-an-executable-has-its-map", () => {
         expect(maps.filter(functions => functions.includes("twice beside.ts")).length).toBeGreaterThan(0);
         expect(maps.filter(functions => functions.some(name => name.endsWith(" main.ts"))).length).toBeGreaterThan(0);
         expect(maps[0]).not.toEqual(maps[1]);
+      }),
+    240_000,
+  );
 
-        if (!isLinux) return;
+  // TODO: not yet where the kernel forbids new executable memory.
+  (isLinux ? test.todoIf(kernelForbidsNewExecutableMemory) : test.skip)(
+    "perf's map",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-every-image-has-its-perf-map", files);
+        const folder = String(dir);
+        await build(folder);
         const run = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_useAOTPerfMap: "1" });
         const [pid, answer] = run.stdout.trim().split(" ");
         expect({ answer, exitCode: run.exitCode, stderr: run.stderr }).toEqual({

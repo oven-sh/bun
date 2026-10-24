@@ -932,9 +932,7 @@ impl Drop for ReadableSinkController {
         unsafe {
             match sink {
                 AnyControlledSink::FileSink(sink) => controller_finalize(sink),
-                AnyControlledSink::RewriterPipe(sink) => {
-                    removable_body!(HtmlRewriter, Abort, { controller_finalize(sink) })
-                }
+                AnyControlledSink::RewriterPipe(sink) => controller_finalize(sink),
                 AnyControlledSink::HTTPResponseSink(sink) => {
                     removable_body!(Serve, Abort, { controller_finalize(sink) })
                 }

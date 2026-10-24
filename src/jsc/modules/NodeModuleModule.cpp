@@ -20,8 +20,10 @@
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
+#include "BunProcess.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 #include "VectorSizeLimit.h"
 #include "BunString.h"
 
@@ -801,6 +803,24 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     return prototype;
 }
 
+// Node: `main = process.argv[1]`, then `path.resolve(main)` throws for a non-string.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L140
+static NEVER_INLINE String runMainNameSlowCase(JSGlobalObject* globalObject, JSValue main)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (main.isUndefined()) {
+        // A property get, so that a redefined `process.argv` is read like Node reads it.
+        JSValue argv = defaultGlobalObject(globalObject)->processObject()->get(globalObject, Identifier::fromString(vm, "argv"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        main = argv.get(globalObject, 1u);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    Bun::V::validateString(scope, globalObject, main, "paths[0]"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, main.toWTFString(globalObject));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -811,7 +831,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto name = callFrame->argument(0).toWTFString(globalObject);
+    JSValue main = callFrame->argument(0);
+    auto name = main.isString() ? main.toWTFString(globalObject) : runMainNameSlowCase(globalObject, main);
     RETURN_IF_EXCEPTION(scope, {});
 
     // JSC::loadAndEvaluateModule() takes a key.

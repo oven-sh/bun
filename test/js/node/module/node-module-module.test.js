@@ -1,7 +1,7 @@
 import "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -462,15 +462,56 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs")).toBe("fs");
   });
 
-  test("Module.runMain propagates an error from stringifying its argument", () => {
-    const boom = new Error("boom");
-    expect(() =>
-      Module.runMain({
-        toString() {
+  // Node: `path.resolve(main)` checks the type and never converts the argument.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L35
+  describe("Module.runMain with an argument that is not a string", () => {
+    function thrownBy(value) {
+      try {
+        Module.runMain(value);
+      } catch (error) {
+        return error;
+      }
+    }
+
+    test.each([
+      ["null", null, "null"],
+      ["a number", 42, "type number (42)"],
+      ["a boolean", true, "type boolean (true)"],
+      ["a bigint", 10n, "type bigint (10n)"],
+      ["a symbol", Symbol("s"), "type symbol (Symbol(s))"],
+      ["a String object", new String("./missing.js"), "an instance of String"],
+      ["a URL", new URL("file:///missing.js"), "an instance of URL"],
+      ["a Buffer", Buffer.from("./missing.js"), "an instance of Buffer"],
+      ["an array", ["./missing.js"], "an instance of Array"],
+    ])("throws ERR_INVALID_ARG_TYPE for %s", (_, value, received) => {
+      const error = thrownBy(value);
+      expect(error).toBeInstanceOf(TypeError);
+      expect({ code: error.code, message: error.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "paths[0]" argument must be of type string. Received ${received}`,
+      });
+    });
+
+    test("does not call toString", () => {
+      const toString = mock(() => "./missing.js");
+      const error = thrownBy({ toString });
+      expect(error).toBeInstanceOf(TypeError);
+      expect({ code: error.code, message: error.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "paths[0]" argument must be of type string. Received an instance of Object`,
+      });
+      expect(toString).not.toHaveBeenCalled();
+    });
+
+    test("propagates what the argument throws while the message names its type", () => {
+      const boom = new RangeError("boom");
+      const argument = {
+        get constructor() {
           throw boom;
         },
-      }),
-    ).toThrow(boom);
+      };
+      expect(thrownBy(argument)).toBe(boom);
+    });
   });
 
   test("module.filename/id/path setters propagate a failed string conversion", () => {
@@ -1422,6 +1463,227 @@ console.log("survived", require("./late.js"));`,
       expect(await run(`${handlers} require("module").runMain = ${value};`, true)).toEqual(expected);
     });
   });
+
+  // Node: `function executeUserEntryPoint(main = process.argv[1])`.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L140
+  describe.concurrent("Module.runMain with no argument", () => {
+    const files = {
+      // A build that resolves the name "undefined" runs this package.
+      "node_modules/undefined/package.json": `{ "name": "undefined", "main": "index.js" }`,
+      "node_modules/undefined/index.js": `console.log("node_modules/undefined ran");`,
+      "target.cjs": `console.log("target.cjs ran");`,
+      "target.mjs": `console.log("target.mjs ran");`,
+    };
+    async function spawn(cmd, cwd) {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    async function run(args, extra = {}) {
+      using dir = tempDir("run-main-default", { ...files, ...extra });
+      return await spawn([bunExe(), "--no-install", ...args], String(dir));
+    }
+    const call = `require("node:module").runMain();`;
+    const caught = `
+      try {
+        ${call}
+        console.log("no error");
+      } catch (error) {
+        console.log(error.constructor.name, error.code, error.message);
+      }
+    `;
+    const invalid = received =>
+      `TypeError ERR_INVALID_ARG_TYPE The "paths[0]" argument must be of type string. Received ${received}\n`;
+
+    // https://github.com/oven-sh/bun/issues/31773
+    test.each([
+      ["an ES module", "entry.mjs", `import { runMain } from "node:module";`],
+      ["a CommonJS module", "entry.cjs", `const { runMain } = require("node:module");`],
+    ])("called by the entry point, %s, does not run it again", async (_, entry, load) => {
+      const source = `
+        ${load}
+        runMain();
+        runMain(undefined);
+        setImmediate(() => {
+          runMain();
+          console.log("later");
+        });
+        console.log("ran");
+      `;
+      expect(await run([entry], { [entry]: source })).toEqual({ stdout: "ran\nlater\n", stderr: "", exitCode: 0 });
+    });
+
+    test("runs Node's fixture es-modules/runmain.mjs", async () => {
+      const fixture = path.join(import.meta.dir, "..", "test", "fixtures", "es-modules", "runmain.mjs");
+      expect(await run([fixture])).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    const target = `require("node:path").resolve(process.argv[2])`;
+    test.each([
+      ["index 1 is assigned", `process.argv[1] = ${target};`],
+      ["the wrapper is spliced out", `process.argv.splice(1, 1);`],
+      ["process.argv is assigned an array", `process.argv = [process.argv[0], ${target}];`],
+      ["process.argv is assigned an array-like object", `process.argv = { 1: ${target} };`],
+      [
+        "process.argv is redefined with a getter",
+        `const argv = [process.argv[0], ${target}];\nObject.defineProperty(process, "argv", { get: () => argv });`,
+      ],
+      [
+        "index 1 is redefined with a getter",
+        `const main = ${target};\nObject.defineProperty(process.argv, 1, { get: () => main });`,
+      ],
+    ])("runs the process.argv[1] of the time of the call: %s", async (_, setup) => {
+      expect(await run(["wrapper.cjs", "./target.cjs"], { "wrapper.cjs": `${setup}\n${call}` })).toEqual({
+        stdout: "target.cjs ran\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("called by an ES module, runs the ES module that process.argv[1] names", async () => {
+      const wrapper = `
+        import { runMain } from "node:module";
+        import { resolve } from "node:path";
+        process.argv[1] = resolve(process.argv[2]);
+        runMain();
+      `;
+      expect(await run(["wrapper.mjs", "./target.mjs"], { "wrapper.mjs": wrapper })).toEqual({
+        stdout: "target.mjs ran\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("does not read a process global that the program replaced", async () => {
+      const wrapper = `globalThis.process = { argv: [process.argv[0], ${target}] };\n${call}`;
+      expect(await run(["wrapper.cjs", "./target.cjs"], { "wrapper.cjs": wrapper })).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("throws when there is no script", async () => {
+      expect(await run(["-e", caught])).toEqual({ stdout: invalid("undefined"), stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      [
+        "index 1 is an object with toString",
+        `process.argv[1] = { toString: () => "./target.cjs" };`,
+        invalid("an instance of Object"),
+      ],
+      [
+        "index 1 is a getter that throws",
+        `Object.defineProperty(process.argv, 1, { get() { throw new RangeError("from index 1"); } });`,
+        "RangeError undefined from index 1\n",
+      ],
+      [
+        "process.argv is a getter that throws",
+        `Object.defineProperty(process, "argv", { get() { throw new RangeError("from process.argv"); } });`,
+        "RangeError undefined from process.argv\n",
+      ],
+    ])("throws when %s", async (_, setup, stdout) => {
+      expect(await run(["entry.cjs"], { "entry.cjs": `${setup}\n${caught}` })).toEqual({
+        stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("throws a TypeError without a code when process.argv is null", async () => {
+      const entry = `
+        process.argv = null;
+        try {
+          ${call}
+          console.log("no error");
+        } catch (error) {
+          console.log(error.constructor.name, error.code);
+        }
+      `;
+      expect(await run(["entry.cjs"], { "entry.cjs": entry })).toEqual({
+        stdout: "TypeError undefined\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    const mains = {
+      "main.cjs": `console.log("main ran", require.main === module);`,
+      "main.mjs": `console.log("main ran", import.meta.main);`,
+    };
+    test.each([
+      ["once", "main.cjs", `() => original()`],
+      ["once", "main.mjs", `() => original()`],
+      ["twice", "main.cjs", `() => {\n  original();\n  original();\n}`],
+      ["after an await", "main.mjs", `async () => {\n  await null;\n  original();\n}`],
+    ])("called %s by a preload's replacement, runs %s as the main module", async (_, main, replacement) => {
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Module.runMain = ${replacement};
+      `;
+      expect(await run(["--require", "./preload.cjs", main], { ...mains, "preload.cjs": preload })).toEqual({
+        stdout: "main ran true\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("called by a preload, runs the entry point once", async () => {
+      expect(await run(["--require", "./preload.cjs", "main.cjs"], { ...mains, "preload.cjs": call })).toEqual({
+        stdout: "main ran true\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    const workerEntry = `${call}\nconsole.log("ran");`;
+    test.each([
+      ["a file", `import.meta.dir + "/entry.cjs"`],
+      ["a blob", `URL.createObjectURL(new Blob([${JSON.stringify(workerEntry)}], { type: "application/javascript" }))`],
+    ])("called by the entry point of a Worker that is %s, does not run it again", async (_, url) => {
+      const main = `new Worker(${url}).addEventListener("error", event => console.log(event.message));`;
+      expect(await run(["main.mjs"], { "main.mjs": main, "entry.cjs": workerEntry })).toEqual({
+        stdout: "ran\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("called by a Worker preload's replacement, runs the entry point of the Worker", async () => {
+      const main = `
+        const worker = new Worker(import.meta.dir + "/main.cjs", { preload: [import.meta.dir + "/preload.cjs"] });
+        worker.addEventListener("error", event => console.log(event.message));
+      `;
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Module.runMain = () => original();
+      `;
+      expect(await run(["worker.mjs"], { ...mains, "worker.mjs": main, "preload.cjs": preload })).toEqual({
+        stdout: "main ran true\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // `--compile` copies the whole binary. A debug or ASAN binary takes longer than the default timeout.
+    test.skipIf(isDebug || isASAN)(
+      "called by the entry point of a compiled executable, does not run it again",
+      async () => {
+        using dir = tempDir("run-main-compiled", { "entry.cjs": `${call}\nconsole.log("ran");` });
+        const exe = path.join(String(dir), isWindows ? "app.exe" : "app");
+        expect(await spawn([bunExe(), "build", "--compile", "./entry.cjs", "--outfile", exe], String(dir))).toEqual({
+          stdout: expect.any(String),
+          stderr: expect.any(String),
+          exitCode: 0,
+        });
+        expect(await spawn([exe], String(dir))).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+      },
+    );
+  });
+
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

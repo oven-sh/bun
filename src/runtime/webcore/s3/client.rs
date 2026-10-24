@@ -31,6 +31,7 @@ pub(crate) use error_jsc::throw_sign_error;
 
 pub(crate) use bun_s3_signing::credentials::S3Credentials;
 pub(crate) use bun_s3_signing::credentials::S3CredentialsWithOptions;
+pub(crate) use bun_s3_signing::credentials::{PutHeaders, PutHeadersOwned};
 use bun_s3_signing::credentials::encode_uri_component;
 
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
@@ -76,7 +77,7 @@ pub(crate) fn stat(
             path,
             method: bun_http::Method::HEAD,
             body: b"",
-            request_payer,
+            headers: PutHeaders::request_payer_only(request_payer),
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
@@ -99,7 +100,7 @@ pub(crate) fn download(
             path,
             method: bun_http::Method::GET,
             body: b"",
-            request_payer,
+            headers: PutHeaders::request_payer_only(request_payer),
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -143,7 +144,7 @@ pub(crate) fn download_slice(
             method: bun_http::Method::GET,
             body: b"",
             range: range.map(Vec::into_boxed_slice),
-            request_payer,
+            headers: PutHeaders::request_payer_only(request_payer),
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -166,7 +167,7 @@ pub(crate) fn delete(
             path,
             method: bun_http::Method::DELETE,
             body: b"",
-            request_payer,
+            headers: PutHeaders::request_payer_only(request_payer),
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
@@ -259,14 +260,7 @@ pub(crate) fn list_objects(
             path: b"",
             method: bun_http::Method::GET,
             search_params: Some(search_params.slice()),
-            content_hash: None,
-            content_md5: None,
-            content_disposition: None,
-            content_type: None,
-            content_encoding: None,
-            acl: None,
-            storage_class: None,
-            request_payer: false,
+            ..Default::default()
         },
         None,
     ) {
@@ -380,12 +374,7 @@ pub(crate) fn upload(
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     content: &[u8],
-    content_type: Option<&[u8]>,
-    content_disposition: Option<&[u8]>,
-    content_encoding: Option<&[u8]>,
-    acl: Option<ACL>,
-    storage_class: Option<StorageClass>,
-    request_payer: bool,
+    headers: PutHeaders<'_>,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -396,12 +385,7 @@ pub(crate) fn upload(
             path,
             method: bun_http::Method::PUT,
             body: content,
-            content_type,
-            content_disposition,
-            content_encoding,
-            acl,
-            storage_class,
-            request_payer,
+            headers,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
@@ -417,11 +401,7 @@ pub(crate) fn writable_stream(
     path: &[u8],
     cx: &bun_jsc::JsThread<'_>,
     options: MultiPartUploadOptions,
-    content_type: Option<&[u8]>,
-    content_disposition: Option<&[u8]>,
-    content_encoding: Option<&[u8]>,
-    storage_class: Option<StorageClass>,
-    request_payer: bool,
+    headers: PutHeaders<'_>,
 ) -> JsResult<JSValue> {
     // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
@@ -505,9 +485,7 @@ pub(crate) fn writable_stream(
         ref_count: Cell::new(2), // +1 for the stream
         ended: Cell::new(false),
         options: Cell::new(options),
-        acl: None,
-        storage_class,
-        request_payer,
+        headers: PutHeadersOwned::new(headers),
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
@@ -521,9 +499,6 @@ pub(crate) fn writable_stream(
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
         proxy: None,
-        content_type: content_type.map(Box::<[u8]>::from),
-        content_disposition: content_disposition.map(Box::<[u8]>::from),
-        content_encoding: content_encoding.map(Box::<[u8]>::from),
         upload_id: JsCell::new(Box::default()),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
@@ -778,13 +753,8 @@ pub(crate) fn upload_stream(
     readable_stream: ReadableStream,
     cx: &bun_jsc::JsThread<'_>,
     options: MultiPartUploadOptions,
-    acl: Option<ACL>,
-    storage_class: Option<StorageClass>,
-    content_type: Option<&[u8]>,
-    content_disposition: Option<&[u8]>,
-    content_encoding: Option<&[u8]>,
+    headers: PutHeaders<'_>,
     proxy: Option<&[u8]>,
-    request_payer: bool,
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
@@ -891,9 +861,7 @@ pub(crate) fn upload_stream(
         ref_count: Cell::new(2), // +1 for the stream ctx (only deinit after task and context ended)
         ended: Cell::new(false),
         options: Cell::new(options),
-        acl,
-        storage_class,
-        request_payer,
+        headers: PutHeadersOwned::new(headers),
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
@@ -906,9 +874,6 @@ pub(crate) fn upload_stream(
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
         proxy: proxy.map(Box::<[u8]>::from),
-        content_type: content_type.map(Box::<[u8]>::from),
-        content_disposition: content_disposition.map(Box::<[u8]>::from),
-        content_encoding: content_encoding.map(Box::<[u8]>::from),
         upload_id: JsCell::new(Box::default()),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
@@ -1134,15 +1099,8 @@ fn download_stream(
         &bun_s3_signing::SignOptions {
             path,
             method: bun_http::Method::GET,
-            request_payer,
-            content_hash: None,
-            content_md5: None,
-            search_params: None,
-            content_disposition: None,
-            content_type: None,
-            content_encoding: None,
-            acl: None,
-            storage_class: None,
+            headers: PutHeaders::request_payer_only(request_payer),
+            ..Default::default()
         },
         None,
     ) {

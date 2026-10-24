@@ -841,6 +841,8 @@ pub mod store {
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
         pub request_payer: bool,
+        /// The `x-amz-tagging` value of a write, encoded as `k=v&k2=v2`.
+        pub tagging: Option<Box<[u8]>>,
     }
 
     impl S3 {
@@ -887,6 +889,23 @@ pub mod store {
                 acl: None,
                 storage_class: None,
                 request_payer: false,
+                tagging: None,
+            }
+        }
+
+        /// The headers of a write to this store. `content_type` is the blob's.
+        pub fn put_headers<'a>(
+            &'a self,
+            content_type: Option<&'a [u8]>,
+        ) -> bun_s3_signing::PutHeaders<'a> {
+            bun_s3_signing::PutHeaders {
+                content_type,
+                content_disposition: None,
+                content_encoding: None,
+                acl: self.acl,
+                storage_class: self.storage_class,
+                request_payer: self.request_payer,
+                tagging: self.tagging.as_deref(),
             }
         }
     }

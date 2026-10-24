@@ -260,11 +260,14 @@ impl S3Ext for S3 {
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
             self.get_credentials(),
-            self.options,
+            crate::webcore::s3::credentials_jsc::S3Defaults {
+                options: self.options,
+                acl: self.acl,
+                storage_class: self.storage_class,
+                request_payer: self.request_payer,
+                tagging: self.tagging.as_deref(),
+            },
             options,
-            self.acl,
-            self.storage_class,
-            self.request_payer,
             global_object,
         )
     }

@@ -1332,15 +1332,8 @@ impl BlobExt for Blob {
                 readable_stream,
                 cx,
                 aws_options.options,
-                aws_options.acl,
-                aws_options.storage_class,
-                self.content_type_or_mime_type(),
-                // SAFETY: option-wrapped raw `*const [u8]` borrowed back; the
-                // backing storage is owned by `aws_options` which outlives this call.
-                aws_options.content_disposition.as_deref(),
-                aws_options.content_encoding.as_deref(),
+                aws_options.put_headers(self.content_type_or_mime_type()),
                 None,
-                aws_options.request_payer,
                 None,
                 core::ptr::null_mut(),
             );
@@ -1522,31 +1515,6 @@ impl BlobExt for Blob {
                     set_content_type_from_js(global_this, self, content_type)?;
                 }
 
-                let content_disposition_str: Option<Utf8Bytes> =
-                    match options.get_truthy(global_this, "contentDisposition")? {
-                        Some(v) if !v.is_string() => {
-                            return Err(global_this.throw_invalid_argument_type(
-                                "write",
-                                "options.contentDisposition",
-                                "string",
-                            ));
-                        }
-                        Some(v) => Some(v.to_utf8(global_this)?),
-                        None => None,
-                    };
-                let content_encoding_str: Option<Utf8Bytes> =
-                    match options.get_truthy(global_this, "contentEncoding")? {
-                        Some(v) if !v.is_string() => {
-                            return Err(global_this.throw_invalid_argument_type(
-                                "write",
-                                "options.contentEncoding",
-                                "string",
-                            ));
-                        }
-                        Some(v) => Some(v.to_utf8(global_this)?),
-                        None => None,
-                    };
-
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
@@ -1557,11 +1525,7 @@ impl BlobExt for Blob {
                     path,
                     &cx,
                     credentials_with_options.options,
-                    self.content_type_or_mime_type(),
-                    content_disposition_str.as_ref().map(|s| s.slice()),
-                    content_encoding_str.as_ref().map(|s| s.slice()),
-                    credentials_with_options.storage_class,
-                    credentials_with_options.request_payer,
+                    credentials_with_options.put_headers(self.content_type_or_mime_type()),
                 );
             }
 
@@ -1569,12 +1533,8 @@ impl BlobExt for Blob {
                 s3.get_credentials().clone(),
                 path,
                 &cx,
-                Default::default(),
-                self.content_type_or_mime_type(),
-                None,
-                None,
-                None,
-                s3.request_payer,
+                s3.options,
+                s3.put_headers(self.content_type_or_mime_type()),
             );
         }
 
@@ -4233,12 +4193,7 @@ fn write_file_with_empty_source_to_destination(
                 cx.context(),
                 s3.path(),
                 b"",
-                destination_blob.content_type_or_mime_type(),
-                aws_options.content_disposition.as_deref(),
-                aws_options.content_encoding.as_deref(),
-                aws_options.acl,
-                aws_options.storage_class,
-                aws_options.request_payer,
+                aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
@@ -4430,13 +4385,8 @@ pub(crate) fn write_file_with_source_destination(
                             stream,
                             cx,
                             aws_options.options,
-                            aws_options.acl,
-                            aws_options.storage_class,
-                            destination_blob.content_type_or_mime_type(),
-                            aws_options.content_disposition.as_deref(),
-                            aws_options.content_encoding.as_deref(),
+                            aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                             None,
-                            aws_options.request_payer,
                             None,
                             core::ptr::null_mut(),
                         );
@@ -4492,12 +4442,7 @@ pub(crate) fn write_file_with_source_destination(
                         cx.context(),
                         s3.path(),
                         bytes.slice(),
-                        destination_blob.content_type_or_mime_type(),
-                        aws_options.content_disposition.as_deref(),
-                        aws_options.content_encoding.as_deref(),
-                        aws_options.acl,
-                        aws_options.storage_class,
-                        aws_options.request_payer,
+                        aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
@@ -4529,13 +4474,8 @@ pub(crate) fn write_file_with_source_destination(
                         stream,
                         cx,
                         s3.options,
-                        aws_options.acl,
-                        aws_options.storage_class,
-                        destination_blob.content_type_or_mime_type(),
-                        aws_options.content_disposition.as_deref(),
-                        aws_options.content_encoding.as_deref(),
+                        aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                         None,
-                        aws_options.request_payer,
                         None,
                         core::ptr::null_mut(),
                     );
@@ -4812,13 +4752,8 @@ pub(crate) fn write_file_internal(
                                 readable,
                                 cx,
                                 aws_options.options,
-                                aws_options.acl,
-                                aws_options.storage_class,
-                                destination_blob.content_type_or_mime_type(),
-                                aws_options.content_disposition.as_deref(),
-                                aws_options.content_encoding.as_deref(),
+                                aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                                 None,
-                                aws_options.request_payer,
                                 None,
                                 core::ptr::null_mut(),
                             )?));

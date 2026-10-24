@@ -153,6 +153,30 @@ await writer.end();
 await Bun.write(s3file, "Hello World!");
 ```
 
+#### Object tags
+
+To tag an object when you create it, pass the `tagging` option. Bun sends the tags as the `x-amz-tagging` header of the `PutObject` request, or of the `CreateMultipartUpload` request for a multipart upload. A bucket lifecycle rule can select objects by tag, so an app can tag a staged upload and let the bucket expire it.
+
+```ts s3.ts icon="/icons/typescript.svg"
+// As a record. Bun URL-encodes it as "state=staged&owner=app".
+await s3file.write(data, {
+  tagging: { state: "staged", owner: "app" },
+});
+
+// As the encoded string that S3 expects.
+await s3file.write(data, {
+  tagging: "state=staged&owner=app",
+});
+
+// Tags work with the writer too.
+const writer = s3file.writer({ tagging: { state: "staged" } });
+writer.write(data);
+await writer.end();
+
+// A client default tags every object the client writes.
+const client = new Bun.S3Client({ tagging: { owner: "app" } });
+```
+
 ### Working with large files (streams)
 
 Bun automatically handles multipart uploads for large files and supports streaming. The same API that works for local files also works for S3 files.
@@ -236,6 +260,25 @@ You can pass any of the following ACLs:
 | `"bucket-owner-read"`         | The object is readable by the bucket owner.                         |
 | `"bucket-owner-full-control"` | The object is readable and writable by the bucket owner.            |
 | `"log-delivery-write"`        | The object is writable by AWS services used for log delivery.       |
+
+### Setting object tags
+
+To tag the object that a presigned `PUT` URL creates, pass the `tagging` option. S3 reads tags only from the `x-amz-tagging` header, so Bun signs that header. The client that uploads with the URL must send the same header value, which Bun encodes as `key=value&key2=value2`.
+
+```ts s3.ts icon="/icons/typescript.svg"
+const url = s3file.presign({
+  method: "PUT",
+  tagging: { state: "staged" },
+});
+
+await fetch(url, {
+  method: "PUT",
+  headers: { "x-amz-tagging": "state=staged" },
+  body: data,
+});
+```
+
+A presigned `GET`, `HEAD` or `DELETE` URL ignores the option.
 
 ### Expiring URLs
 

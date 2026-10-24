@@ -29,3 +29,14 @@ doFileOps(
     type: "application/octet-stream",
   }),
 );
+
+async function doTagging(file: Bun.S3File) {
+  await file.write("data", { tagging: { state: "staged" } });
+  await file.write("data", { tagging: "state=staged" });
+  file.writer({ tagging: { state: "staged" } });
+  console.log(file.presign({ method: "PUT", tagging: { state: "staged" } }));
+  // @ts-expect-error a tag value is a string
+  await file.write("data", { tagging: { count: 1 } });
+}
+
+doTagging(new Bun.S3Client({ tagging: { owner: "app" } }).file("tagged.bin"));

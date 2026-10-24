@@ -2315,4 +2315,122 @@ c {
       "/across-files-url.css",
     ],
   });
+  // A media or container condition that is `<general-enclosed>` (Media
+  // Queries 4, section 3), such as the IE 9 and 10 hack `(min-width:0\\0)`.
+  // A browser reads it without an error and the rule applies nowhere.
+  const generalEnclosed = {
+    "/entry.css": /* css */ `
+      @import "./ie.css" screen and (min-width:0\\0);
+      @media screen and (min-width:0\\0) { .media { color: red } }
+      @container scroll-state(stuck: top) { .container { color: red } }
+    `,
+    "/ie.css": /* css */ `.ie { color: red }`,
+  };
+  itBundled("css/GeneralEnclosedCondition", {
+    files: generalEnclosed,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* ie.css */
+        @media screen and (min-width:0\\0) {
+          .ie {
+            color: red;
+          }
+        }
+
+        /* entry.css */
+        @media screen and (min-width:0\\0) {
+          .media {
+            color: red;
+          }
+        }
+
+        @container scroll-state(stuck: top) {
+          .container {
+            color: red;
+          }
+        }
+      `);
+    },
+  });
+  itBundled("css/GeneralEnclosedConditionMinified", {
+    files: generalEnclosed,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(
+          "@media screen and (min-width:0\\0){.ie{color:red}}" +
+            "@media screen and (min-width:0\\0){.media{color:red}}" +
+            "@container scroll-state(stuck: top){.container{color:red}}\n",
+        );
+    },
+  });
+  // An `@import` that stays a statement keeps the condition as written.
+  // `(layer(x))` keeps its parentheses: without them it would name a layer.
+  itBundled("css/GeneralEnclosedConditionOnExternalImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "https://example.com/a.css" (min-width:0\\0);
+        @import "https://example.com/b.css" (layer(x));
+        .entry { color: red }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        @import "https://example.com/a.css" (min-width:0\\0);
+        @import "https://example.com/b.css" (layer(x));
+
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  // The text of a kept condition is not an import.
+  itBundled("css/GeneralEnclosedConditionURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @media (foo: url("./missing.png")) { .media { color: red } }
+        @container (style(--bg: url(./missing.png)) junk) { .container { color: red } }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        @media (foo: url("./missing.png")) {
+          .media {
+            color: red;
+          }
+        }
+
+        @container (style(--bg: url(./missing.png)) junk) {
+          .container {
+            color: red;
+          }
+        }
+      `);
+    },
+  });
+  // A condition that is not closed, or holds an error token, is an error.
+  itBundled("css/InvalidConditionIsStillAnError", {
+    files: {
+      "/unclosed-condition.css": `@media (min-width:0\\0 { .a { color: red } }`,
+      "/dangling-and.css": `@media (min-width:0\\0) and { .a { color: red } }`,
+      "/error-token.css": `@media (a ] b) { .a { color: red } }`,
+      "/after-condition.css": `@media (min-width:0\\0) foo { .a { color: red } }`,
+    },
+    entryPoints: ["/unclosed-condition.css", "/dangling-and.css", "/error-token.css", "/after-condition.css"],
+    outdir: "/out",
+    bundleErrors: {
+      "/unclosed-condition.css": ["Invalid media query"],
+      "/dangling-and.css": ["Invalid media query"],
+      "/error-token.css": ["Unexpected token: ]"],
+      "/after-condition.css": ["Unexpected token: foo"],
+    },
+  });
 });

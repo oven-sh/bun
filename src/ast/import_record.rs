@@ -23,8 +23,7 @@ pub struct ImportRecord {
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
-    /// Used for metafile generation, and to find the imports of one specifier for
-    /// `import.meta.hot.accept`.
+    /// Used for metafile generation and to match the specifier of `import.meta.hot.accept`.
     // TODO: lifetime — likely a borrow into parser-owned source text; using
     // &'static [u8] as a placeholder.
     pub original_path: &'static [u8],

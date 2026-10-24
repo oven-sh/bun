@@ -6685,9 +6685,7 @@ pub mod bv2_impl {
                 }
 
                 // For non-dev-server builds, barrel-deferred records need their
-                // source_index cleared so they don't get linked. The dev server
-                // keeps the index that patch_import_record_source_indices gives a
-                // deferred record whose specifier is the path of a CSS module.
+                // source_index cleared so they don't get linked.
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_UNUSED)

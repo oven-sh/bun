@@ -205,12 +205,7 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // Dev server: a re-export is deferred only while no other statement of this
-    // file loads its path. A hot update that starts to use another name of a
-    // loaded module then finds it bound, and a barrel that defers nothing here
-    // is not registered to be parsed and sent again in each build.
-    // `un_defer_same_path` keeps the names bound for a request that arrives
-    // after the barrel is parsed.
+    // Dev server: defer a re-export only while no other statement of this file loads its path.
     if dev_handle.is_some() {
         // Collect paths of needed records.
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
@@ -332,9 +327,7 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) 
     true
 }
 
-/// Dev server: `record_idx` just went live. The other deferred re-exports of its path
-/// go live with it, see `apply_barrel_optimization`. `went_live` gets every record that
-/// is live because of this request, in ascending order.
+/// Dev server: the other deferred re-exports of `record_idx`'s path go live too, in index order.
 fn un_defer_same_path(
     import_records: &mut import_record::List,
     record_idx: u32,
@@ -911,8 +904,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         };
 
-        let record_idx = resolution.import_record_index;
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
+        let record_idx = resolution.import_record_index;
         same_path.clear();
         // The records that this request takes from deferred to live.
         let went_live: &[u32] = if !un_defer_record(barrel_ir, record_idx as usize) {
@@ -934,15 +927,11 @@ pub(crate) fn schedule_barrel_deferred_imports(
             Some(p) => p.slice(),
             None => alias,
         };
-        let barrel_ir = &this.graph.ast.items_import_records()[barrel_idx as usize];
-        let live_target = |idx: u32| {
-            barrel_ir
-                .as_slice()
-                .get(idx as usize)
-                .map(|rec| rec.source_index)
-                .filter(|si| si.is_valid())
-        };
-        if let Some(rec_si) = live_target(record_idx) {
+        let rec_si = this.graph.ast.items_import_records()[barrel_idx as usize]
+            .as_slice()
+            .get(resolution.import_record_index as usize)
+            .map(|rec| rec.source_index);
+        if let Some(rec_si) = rec_si.filter(|si| si.is_valid()) {
             // When the barrel re-exports a namespace import (`import * as X; export { X }`),
             // propagate as a star import so the target barrel loads all exports.
             queue.push(BarrelWorkItem {
@@ -950,37 +939,40 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 alias: propagate_alias,
                 is_star: resolution.alias_is_star,
             });
-        }
 
-        // A record just went from deferred to live. Propagate every
-        // alias this barrel imports through it, exactly as Phase 1
-        // seeding does for a record that is live when the barrel finishes
-        // parsing. Propagating only the alias that triggered the un-defer
-        // makes a downstream barrel's deferral set (and with it the
-        // symbol binding the linker produces) depend on parse completion
-        // order (#40657).
-        for &live_idx in went_live {
-            let Some(rec_si) = live_target(live_idx) else {
-                continue;
-            };
-            let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
-            for ni in named_imports.values() {
-                if ni.import_record_index != live_idx {
+            // The record just went from deferred to live. Propagate every
+            // other alias this barrel imports through it, exactly as Phase 1
+            // seeding does for a record that is live when the barrel finishes
+            // parsing. Propagating only the alias that triggered the un-defer
+            // makes a downstream barrel's deferral set (and with it the
+            // symbol binding the linker produces) depend on parse completion
+            // order (#40657).
+            for &live_idx in went_live {
+                let rec_si = this.graph.ast.items_import_records()[barrel_idx as usize].as_slice()
+                    [live_idx as usize]
+                    .source_index;
+                if !rec_si.is_valid() {
                     continue;
                 }
-                if ni.alias_is_star {
-                    queue.push(BarrelWorkItem {
-                        barrel_source_index: rec_si.get(),
-                        alias: b"",
-                        is_star: true,
-                    });
-                } else if let Some(alias_ptr) = ni.alias {
-                    // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
-                    queue.push(BarrelWorkItem {
-                        barrel_source_index: rec_si.get(),
-                        alias: alias_ptr.slice(),
-                        is_star: false,
-                    });
+                let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
+                for ni in named_imports.values() {
+                    if ni.import_record_index != live_idx {
+                        continue;
+                    }
+                    if ni.alias_is_star {
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: rec_si.get(),
+                            alias: b"",
+                            is_star: true,
+                        });
+                    } else if let Some(alias_ptr) = ni.alias {
+                        // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: rec_si.get(),
+                            alias: alias_ptr.slice(),
+                            is_star: false,
+                        });
+                    }
                 }
             }
         }

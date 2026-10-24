@@ -345,8 +345,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    /// The import statement that a re-export reads its names from. Each statement
-    /// keeps its own import record: barrel optimization defers by record.
+    /// The import statement that a re-export reads its names from, with its own import record.
     fn push_import(
         &mut self,
         import_record_index: u32,

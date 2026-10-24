@@ -106,8 +106,7 @@ export class HMRModule {
    *  should throw the same error */
   failure: unknown = null;
   /** Two purposes:
-   * 1. HMRModule[] - List of parsed imports, one for each import statement. The
-   *    position of an HMRModule is the position of its updater function
+   * 1. HMRModule[] - List of parsed imports, one per statement, indexed like the updater functions
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
    * Unused for CJS
    */

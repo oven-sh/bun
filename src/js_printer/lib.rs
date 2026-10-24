@@ -3439,8 +3439,7 @@ pub(crate) mod __gated_printer {
                             self.options.module_type == bundle_opts::Format::InternalBakeDev
                         );
                         let mut record = self.import_record(*index as usize);
-                        // The parser picked the first import of the specifier. If that one
-                        // was dropped or deferred, the first live import of it has the module.
+                        // A dropped or deferred import has no module: take the first live one.
                         if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                             let specifier = record.path.text;
                             if let Some(live) = self.import_records.iter().find(|other| {

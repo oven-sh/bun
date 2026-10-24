@@ -470,6 +470,18 @@ Headers {
 `);
 });
 
+test("an event that contains itself", () => {
+  const data: any = {};
+  const event = new MessageEvent("message", { data });
+  data.event = event;
+  expect(event).toMatchInlineSnapshot(`MessageEvent {
+  type: "message",
+  data: {
+    "event": [Circular],
+  }, 
+}`);
+});
+
 test("a Map key that throws while it is printed", () => {
   const key = new Proxy({ a: 1n }, {});
   expect(() => expect(new Map([[key, {}]])).toEqual(1)).toThrow("JSON.stringify cannot serialize BigInt");
@@ -506,7 +518,13 @@ test("asymmetric matchers", () => {
 });
 
 test("long arrays are not truncated", () => {
-  expect(() => expect(new Array(150).fill(7)).toEqual([])).toThrow(/(\n\+   7,){150}\n\+ \]/);
+  let message = "";
+  try {
+    expect(new Array(150).fill(7)).toEqual([]);
+  } catch (e: any) {
+    message = Bun.stripANSI(e.message);
+  }
+  expect(message).toMatch(/(\n\+   7,){150}\n\+ \]/);
 });
 
 test("indentation stops at 32 levels", () => {

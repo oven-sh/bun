@@ -4737,18 +4737,25 @@ pub mod formatter {
                     .get(self.global_this, "toJSON")?
                     .filter(|f| f.is_callable())
                 {
-                    let prev_quote_keys = self.quote_keys;
-                    self.quote_keys = true;
-                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
+                    let result = to_json_function.call(self.global_this, value, &[])?;
+                    if result.is_object() {
+                        let prev_quote_keys = self.quote_keys;
+                        self.quote_keys = true;
+                        let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
-                    if self.pretty_format {
-                        self.add_for_new_line("FormData (entries) ".len());
-                        let _ = writer_.write_all(
-                            pfmt!("<r><blue>FormData<r> <d>(entries)<r> ", C).as_bytes(),
+                        if self.pretty_format {
+                            self.add_for_new_line("FormData (entries) ".len());
+                            let _ = writer_.write_all(
+                                pfmt!("<r><blue>FormData<r> <d>(entries)<r> ", C).as_bytes(),
+                            );
+                        }
+                        return self.print_as::<C>(
+                            Tag::Object,
+                            writer_,
+                            result,
+                            jsc::JSType::Object,
                         );
                     }
-                    let result = to_json_function.call(self.global_this, value, &[])?;
-                    return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
             } else if js_type != jsc::JSType::DOMWrapper {
                 if value.is_callable() {

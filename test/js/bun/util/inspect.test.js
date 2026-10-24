@@ -288,7 +288,7 @@ it("BigIntArray", () => {
 });
 
 // Runs in a subprocess because this used to panic.
-it("TypedArray over memory that is not aligned for its elements", async () => {
+it.concurrent("TypedArray over memory that is not aligned for its elements", async () => {
   const script = `
     const { ptr, toArrayBuffer } = require("bun:ffi");
     const view = new DataView(new ArrayBuffer(24));

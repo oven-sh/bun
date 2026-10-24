@@ -48,6 +48,8 @@ TZ=America/New_York bun test
 
 Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.
 
+The timeout is wall-clock time from the moment the test starts. Synchronous code is not interrupted: a test that blocks the thread past its timeout, for example with a busy loop or `Bun.sleepSync()`, runs to the end and is then reported as timed out.
+
 ### Global Timeout
 
 Change the timeout globally with the `--timeout` flag:

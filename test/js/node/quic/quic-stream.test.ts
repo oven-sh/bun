@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -298,6 +299,386 @@ describe("HTTP/3 header encoding", () => {
     });
     expect(await answered.promise).toBe("200");
     client.close();
+  });
+});
+
+// The native stream delivers a received header block only while its
+// `wantsHeaders` flag is set, and asks for trailers only while `wantsTrailers`
+// is. Every callback and property that needs one of the two has to set it.
+describe("HTTP/3 header and trailers interest", () => {
+  const encoder = new TextEncoder();
+  const bytes = () => encoder.encode("body");
+  const OK = { ":status": "200" };
+  const TRAILERS = { "x-checksum": "abc123" };
+  const tls = { sni: { "*": { keys: [key], certs: [cert] } }, transportParams: { maxIdleTimeout: 2 } };
+  const request = (path: string) => ({
+    ":method": "GET",
+    ":path": path,
+    ":scheme": "https",
+    ":authority": "localhost",
+  });
+  const serve = async (serverSession: any) => {
+    serverSession.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+    };
+    await serverSession.closed.catch(() => {});
+  };
+  const connectTo = async (server: QuicEndpoint): Promise<any> => {
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 2 },
+    } as SessionOptions);
+    await client.opened;
+    return client;
+  };
+  // A stream that never ends fails here, when the idle timeout closes its session.
+  async function bodyOf(stream: any) {
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+    await stream.closed;
+    return body;
+  }
+  // One response, as a client with both callbacks sees it.
+  async function response(client: any, path: string): Promise<{ body?: string; trailers?: object; error?: string }> {
+    let trailers: object | undefined;
+    const stream = await client.createBidirectionalStream({
+      headers: request(path),
+      onheaders() {},
+      ontrailers: (block: object) => void (trailers = { ...block }),
+    });
+    stream.closed.catch(() => {});
+    try {
+      const body = await bodyOf(stream);
+      return { body, trailers };
+    } catch (error: any) {
+      return { error: error?.code ?? String(error) };
+    }
+  }
+
+  test("a client gets trailers and interim responses without onheaders", async () => {
+    await using server = await listen(serve, {
+      ...tls,
+      onheaders(this: any) {
+        this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
+        this.sendHeaders(OK);
+        this.writer.writeSync(bytes());
+        this.writer.endSync();
+      },
+      onwanttrailers(this: any) {
+        this.sendTrailers(TRAILERS);
+      },
+    });
+    const client = await connectTo(server);
+
+    // The header blocks that reach JS for each client stream, by diagnostics channel.
+    const published = new Map<unknown, string[]>();
+    const unsubscribers = ["info", "headers", "trailers"].map(name => {
+      const onMessage = (message: any) => void published.get(message.stream)?.push(name);
+      subscribe(`quic.stream.${name}`, onMessage);
+      return () => unsubscribe(`quic.stream.${name}`, onMessage);
+    });
+
+    type Seen = { onheaders: number; info?: string; trailers?: object; status?: string };
+    const callbacks = (seen: Seen) => ({
+      onheaders: () => void seen.onheaders++,
+      oninfo: (block: Record<string, string>) => void (seen.info = block[":status"]),
+      ontrailers(this: any, block: object) {
+        seen.trailers = { ...block };
+        // A closed stream no longer has its headers, so they are read here.
+        seen.status = this.headers?.[":status"];
+      },
+    });
+    async function exchange(register: (seen: Seen) => { options?: object; afterCreate?: (stream: any) => void }) {
+      const seen: Seen = { onheaders: 0 };
+      const { options, afterCreate } = register(seen);
+      const stream = await client.createBidirectionalStream({ headers: request("/"), ...options });
+      published.set(stream, []);
+      afterCreate?.(stream);
+      const body = await bodyOf(stream);
+      return { ...seen, body, published: published.get(stream) };
+    }
+
+    try {
+      const results = {
+        "ontrailers option": await exchange(seen => ({ options: { ontrailers: callbacks(seen).ontrailers } })),
+        "ontrailers setter": await exchange(seen => ({
+          afterCreate: stream => void (stream.ontrailers = callbacks(seen).ontrailers),
+        })),
+        "oninfo option": await exchange(seen => ({ options: { oninfo: callbacks(seen).oninfo } })),
+        "oninfo setter": await exchange(seen => ({
+          afterCreate: stream => void (stream.oninfo = callbacks(seen).oninfo),
+        })),
+        "onheaders cleared": await exchange(seen => ({
+          options: callbacks(seen),
+          afterCreate: stream => void (stream.onheaders = undefined),
+        })),
+        "no callback": await exchange(() => ({})),
+      };
+      const everyBlock = ["info", "headers", "trailers"];
+      expect(results).toEqual({
+        "ontrailers option": { onheaders: 0, trailers: TRAILERS, status: "200", body: "body", published: everyBlock },
+        "ontrailers setter": { onheaders: 0, trailers: TRAILERS, status: "200", body: "body", published: everyBlock },
+        "oninfo option": { onheaders: 0, info: "103", body: "body", published: everyBlock },
+        "oninfo setter": { onheaders: 0, info: "103", body: "body", published: everyBlock },
+        "onheaders cleared": {
+          onheaders: 0,
+          info: "103",
+          trailers: TRAILERS,
+          status: "200",
+          body: "body",
+          published: everyBlock,
+        },
+        "no callback": { onheaders: 0, body: "body", published: [] },
+      });
+    } finally {
+      for (const off of unsubscribers) off();
+      client.close();
+    }
+  });
+
+  test("a server gets request trailers without onheaders", async () => {
+    const results: Record<string, unknown> = {};
+    for (const how of ["listen() option", "setter in onstream"]) {
+      let trailers: object | undefined;
+      const ontrailers = (block: object) => void (trailers = { ...block });
+      const atClose = Promise.withResolvers<unknown>();
+      await using server = await listen(
+        async serverSession => {
+          serverSession.onstream = (stream: any) => {
+            if (how === "setter in onstream") stream.ontrailers = ontrailers;
+            stream.sendHeaders(OK, { terminal: true });
+            stream.closed.then(() => atClose.resolve(trailers), atClose.reject);
+          };
+          await serverSession.closed.catch(() => {});
+        },
+        how === "listen() option" ? { ...tls, ontrailers } : tls,
+      );
+      const client = await connectTo(server);
+      const stream = await client.createBidirectionalStream();
+      stream.sendHeaders(request("/"));
+      stream.sendTrailers(TRAILERS);
+      await bodyOf(stream);
+      results[how] = await atClose.promise;
+      client.close();
+    }
+    expect(results).toEqual({ "listen() option": TRAILERS, "setter in onstream": TRAILERS });
+  });
+
+  test("a response asks for trailers whichever way its body is given", async () => {
+    const bodies: Record<string, (stream: any) => void> = {
+      "writer": stream => {
+        stream.sendHeaders(OK);
+        stream.writer.writeSync(bytes());
+        stream.writer.endSync();
+      },
+      "setBody(view)": stream => {
+        stream.sendHeaders(OK);
+        stream.setBody(bytes());
+      },
+      "setBody(string)": stream => {
+        stream.sendHeaders(OK);
+        stream.setBody("body");
+      },
+      "setBody(iterable)": stream => {
+        stream.sendHeaders(OK);
+        stream.setBody([bytes()]);
+      },
+      // setOutbound() refuses a stream that has sent its headers.
+      "setOutbound(view)": stream => {
+        stream.setOutbound(bytes());
+        stream.sendHeaders(OK);
+      },
+    };
+    const providers: Record<string, (stream: any) => void> = {
+      "nothing": () => {},
+      "onwanttrailers": stream => {
+        stream.onwanttrailers = () => stream.sendTrailers(TRAILERS);
+      },
+      "pendingTrailers": stream => {
+        stream.pendingTrailers = TRAILERS;
+      },
+    };
+    await using server = await listen(serve, {
+      ...tls,
+      onheaders(this: any, headers: Record<string, any>) {
+        const [, body, provider] = headers[":path"].split("/");
+        Object.values(providers)[+provider](this);
+        Object.values(bodies)[+body](this);
+      },
+    });
+    const client = await connectTo(server);
+
+    const results: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [b, body] of Object.keys(bodies).entries()) {
+      for (const [p, provider] of Object.keys(providers).entries()) {
+        results[`${body} with ${provider}`] = await response(client, `/${b}/${p}`);
+        expected[`${body} with ${provider}`] = {
+          body: "body",
+          trailers: provider === "nothing" ? undefined : TRAILERS,
+        };
+      }
+    }
+    client.close();
+    expect(results).toEqual(expected);
+  });
+
+  test("the choice between a FIN and trailers is made once the body has been sent", async () => {
+    const end = (stream: any) => {
+      stream.writer.writeSync(bytes());
+      stream.writer.endSync();
+    };
+    const scripts: Record<string, (stream: any) => void> = {
+      "pendingTrailers set after endSync()": stream => {
+        end(stream);
+        stream.pendingTrailers = TRAILERS;
+      },
+      "onwanttrailers set after setBody()": stream => {
+        stream.setBody(bytes());
+        stream.onwanttrailers = () => stream.sendTrailers(TRAILERS);
+      },
+      "onwanttrailers cleared after endSync()": stream => {
+        stream.onwanttrailers = () => stream.sendTrailers(TRAILERS);
+        end(stream);
+        stream.onwanttrailers = undefined;
+      },
+      "pendingTrailers cleared before endSync()": stream => {
+        stream.pendingTrailers = TRAILERS;
+        stream.pendingTrailers = undefined;
+        end(stream);
+      },
+      "pendingTrailers cleared after endSync()": stream => {
+        stream.pendingTrailers = TRAILERS;
+        end(stream);
+        stream.pendingTrailers = undefined;
+      },
+      "pendingTrailers and onwanttrailers": stream => {
+        stream.onwanttrailers = () => stream.sendTrailers({ "x-from": "onwanttrailers" });
+        stream.pendingTrailers = TRAILERS;
+        end(stream);
+      },
+    };
+    await using server = await listen(serve, {
+      ...tls,
+      onheaders(this: any, headers: Record<string, any>) {
+        const [, script, when] = headers[":path"].split("/");
+        this.sendHeaders(OK);
+        const run = () => Object.values(scripts)[+script](this);
+        // From a callback the body is flushed when the callback returns. From
+        // here endSync() flushes it, so the request for trailers is already
+        // queued when the script withdraws its interest.
+        if (when === "later") setImmediate(run);
+        else run();
+      },
+    });
+    const client = await connectTo(server);
+
+    const results: Record<string, unknown> = {};
+    for (const [index, name] of Object.keys(scripts).entries()) {
+      results[name] = await response(client, `/${index}/now`);
+    }
+    const cleared = Object.keys(scripts).indexOf("onwanttrailers cleared after endSync()");
+    results["onwanttrailers cleared after endSync(), outside a callback"] = await response(client, `/${cleared}/later`);
+    client.close();
+    expect(results).toEqual({
+      "pendingTrailers set after endSync()": { body: "body", trailers: TRAILERS },
+      "onwanttrailers set after setBody()": { body: "body", trailers: TRAILERS },
+      "onwanttrailers cleared after endSync()": { body: "body" },
+      "pendingTrailers cleared before endSync()": { body: "body" },
+      "pendingTrailers cleared after endSync()": { body: "body" },
+      "pendingTrailers and onwanttrailers": { body: "body", trailers: TRAILERS },
+      "onwanttrailers cleared after endSync(), outside a callback": { body: "body" },
+    });
+  });
+
+  test("a request whose body is given at creation asks for trailers", async () => {
+    let trailers: object | undefined;
+    const atClose = Promise.withResolvers<unknown>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.then(() => atClose.resolve(trailers), atClose.reject);
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        ...tls,
+        onheaders(this: any) {
+          this.sendHeaders(OK, { terminal: true });
+        },
+        ontrailers: (block: object) => void (trailers = { ...block }),
+      },
+    );
+    const client = await connectTo(server);
+    const stream = await client.createBidirectionalStream({
+      headers: { ...request("/"), ":method": "POST" },
+      body: bytes(),
+      onwanttrailers(this: any) {
+        this.sendTrailers(TRAILERS);
+      },
+    });
+    await bodyOf(stream);
+    client.close();
+    expect(await atClose.promise).toEqual(TRAILERS);
+  });
+
+  // A unidirectional stream has no header blocks, so a request could not be answered.
+  test("a unidirectional stream is never asked for trailers", async () => {
+    await using server = await listen(serve, {
+      ...tls,
+      transportParams: { maxIdleTimeout: 2, initialMaxStreamsUni: 16 },
+    });
+    const client = await connectTo(server);
+    const results: Record<string, unknown> = {};
+    for (const provider of ["onwanttrailers", "pendingTrailers"]) {
+      let asked = 0;
+      const stream = await client.createUnidirectionalStream();
+      if (provider === "onwanttrailers") stream.onwanttrailers = () => void asked++;
+      else stream.pendingTrailers = TRAILERS;
+      stream.writer.writeSync(bytes());
+      stream.writer.endSync();
+      const closed = await stream.closed.then(
+        () => "resolved",
+        (error: any) => `rejected: ${error.code}`,
+      );
+      results[provider] = { closed, asked };
+    }
+    client.close();
+    expect(results).toEqual({
+      onwanttrailers: { closed: "resolved", asked: 0 },
+      pendingTrailers: { closed: "resolved", asked: 0 },
+    });
+  });
+
+  test("pendingTrailers that can't be sent reject closed without onwanttrailers", async () => {
+    const closed = Promise.withResolvers<unknown>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.then(() => closed.resolve("resolved"), closed.resolve);
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        ...tls,
+        onheaders(this: any) {
+          this.sendHeaders(OK);
+          this.pendingTrailers = { connection: "close" };
+          this.writer.writeSync(bytes());
+          this.writer.endSync();
+        },
+      },
+    );
+    const client = await connectTo(server);
+    const seen = await response(client, "/");
+    client.close();
+    expect({ seen, closed: await closed.promise }).toEqual({
+      seen: { body: "body" },
+      closed: expect.objectContaining({ code: "ERR_HTTP2_INVALID_CONNECTION_HEADERS" }),
+    });
   });
 });
 

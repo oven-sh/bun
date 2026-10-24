@@ -89,7 +89,10 @@ pub(super) struct Key(pub(super) u64);
 pub(super) enum PendingEnd {
     #[default]
     None,
+    /// The body has ended. `drain_outbound` sends the FIN, or asks JS for
+    /// trailers, once the queue is empty.
     Fin,
+    /// JS was asked for trailers. They carry the FIN.
     Trailers,
 }
 
@@ -98,6 +101,15 @@ pub(super) struct Outbound {
     pub data: VecDeque<u8>,
     pub end: PendingEnd,
     pub started: bool,
+}
+
+impl Outbound {
+    pub(super) fn end_body(&mut self) {
+        self.started = true;
+        if self.end == PendingEnd::None {
+            self.end = PendingEnd::Fin;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -491,6 +503,24 @@ impl QuicStream {
     pub(super) fn wants_headers(&self) -> bool {
         self.with_state(|s| s.wants_headers != 0)
     }
+    pub(super) fn wants_trailers(&self) -> bool {
+        self.with_state(|s| s.wants_trailers != 0)
+    }
+    /// True at most once per stream. A unidirectional stream has no header blocks.
+    fn take_trailers_request(&self) -> bool {
+        self.stream_id() & STREAM_ID_UNI_BIT == 0
+            && self.wants_trailers()
+            && !self.trailers_requested.replace(true)
+    }
+    /// The trailers request found no taker: the body ends with a FIN.
+    pub(super) fn end_without_trailers(&self) {
+        self.outbound.with_mut(|o| {
+            if o.end == PendingEnd::Trailers {
+                o.end = PendingEnd::Fin;
+            }
+        });
+        self.kick_write();
+    }
     pub(super) fn wants_reset(&self) -> bool {
         self.with_state(|s| s.wants_reset != 0)
     }
@@ -510,7 +540,8 @@ impl QuicStream {
         }
     }
 
-    fn drain_outbound(&self) {
+    /// `may_ask_for_trailers: false` ends the body with a FIN whatever JS registered.
+    fn drain_outbound(&self, may_ask_for_trailers: bool) {
         let Some(s) = self.ls() else { return };
         loop {
             let (slice, contig): (Vec<u8>, usize) = {
@@ -543,17 +574,18 @@ impl QuicStream {
             (out.data.is_empty(), out.end)
         };
         if empty {
-            if end == PendingEnd::Fin {
+            if end == PendingEnd::Fin && may_ask_for_trailers && self.take_trailers_request() {
+                self.outbound.with_mut(|o| o.end = PendingEnd::Trailers);
+                if let Some(session) = self.session_ref() {
+                    session.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
+                }
+            } else if end == PendingEnd::Fin {
                 s.shutdown(1);
                 self.wrote_to_lsquic.set(true);
                 self.outbound.with_mut(|o| o.end = PendingEnd::None);
                 self.with_state(|s| s.fin_sent = 1);
                 if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
                     s.shutdown(0);
-                }
-            } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
-                if let Some(session) = self.session_ref() {
-                    session.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
                 }
             }
             s.want_write(false);
@@ -722,9 +754,8 @@ impl QuicStream {
             )));
         };
         self.outbound.with_mut(|o| {
-            o.started = true;
             o.data.extend(bytes.iter().copied());
-            o.end = PendingEnd::Fin;
+            o.end_body();
         });
         self.with_state(|s| s.has_outbound = 1);
         self.kick_write();
@@ -778,15 +809,7 @@ impl QuicStream {
         if self.destroyed.get() {
             return;
         }
-        let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
-        self.outbound.with_mut(|o| {
-            o.started = true;
-            o.end = if wants_trailers {
-                PendingEnd::Trailers
-            } else {
-                PendingEnd::Fin
-            };
-        });
+        self.outbound.with_mut(|o| o.end_body());
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
         }
@@ -823,7 +846,8 @@ impl QuicStream {
                                 o.end = PendingEnd::None;
                             }
                         });
-                        self.drain_outbound();
+                        // The JS stream is closing: nothing can answer a trailers request.
+                        self.drain_outbound(false);
                         if self.outbound.get().data.is_empty() {
                             s.close();
                         } else {
@@ -1184,7 +1208,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
 
 lsquic_callback! {
     pub(super) fn on_stream_write(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
-        qs.drain_outbound();
+        qs.drain_outbound(true);
     }
 
     pub(super) fn on_stream_close(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {

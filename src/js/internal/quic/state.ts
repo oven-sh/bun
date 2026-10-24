@@ -590,6 +590,9 @@ class QuicStreamState {
   #offset = 0;
   /** @type {bigint|undefined} */
   #id = undefined;
+  // The last values `setHeadersInterest` stored. The buffer starts zeroed and nothing else writes these bytes.
+  #wantsHeaders = false;
+  #wantsTrailers = false;
 
   /**
    * @param {symbol} privateSymbol
@@ -693,13 +696,6 @@ class QuicStreamState {
   }
 
   /** @type {boolean} */
-  set wantsHeaders(val) {
-    const handle = this.#handle;
-    if (handle === undefined) return;
-    DataViewPrototypeSetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_HEADERS, val ? 1 : 0);
-  }
-
-  /** @type {boolean} */
   get wantsReset() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
@@ -720,11 +716,21 @@ class QuicStreamState {
     return DataViewPrototypeGetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_TRAILERS) !== 0;
   }
 
-  /** @type {boolean} */
-  set wantsTrailers(val) {
+  /**
+   * @param {boolean} wantsHeaders Deliver received header blocks of every kind.
+   * @param {boolean} wantsTrailers Ask for trailers when the body has been sent.
+   */
+  setHeadersInterest(wantsHeaders, wantsTrailers) {
     const handle = this.#handle;
     if (handle === undefined) return;
-    DataViewPrototypeSetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_TRAILERS, val ? 1 : 0);
+    if (wantsHeaders !== this.#wantsHeaders) {
+      this.#wantsHeaders = wantsHeaders;
+      DataViewPrototypeSetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_HEADERS, wantsHeaders ? 1 : 0);
+    }
+    if (wantsTrailers !== this.#wantsTrailers) {
+      this.#wantsTrailers = wantsTrailers;
+      DataViewPrototypeSetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_TRAILERS, wantsTrailers ? 1 : 0);
+    }
   }
 
   /** @type {boolean} */

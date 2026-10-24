@@ -1309,6 +1309,19 @@ function parseHeaderPairs(pairs) {
 }
 
 /**
+ * Tells the native stream which header events have a taker. One flag gates
+ * every received block (initial, hints, trailing), so any of the three
+ * callbacks turns it on.
+ * Node v26.10.0: https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L1314-L1323
+ */
+function updateHeaderInterest(inner: QuicStreamInner) {
+  inner.state.setHeadersInterest(
+    inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined,
+    inner.onwanttrailers !== undefined || inner.pendingTrailers !== undefined,
+  );
+}
+
+/**
  * Applies session and stream callbacks from an options object to a session.
  * @param {QuicSession} session
  * @param {object} cbs
@@ -1866,13 +1879,12 @@ class QuicStream {
     const inner = this.#inner;
     if (fn === undefined) {
       inner.onheaders = undefined;
-      inner.state.wantsHeaders = false;
     } else {
       validateFunction(fn, "onheaders");
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
-      inner.state.wantsHeaders = true;
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1891,6 +1903,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1909,6 +1922,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1922,13 +1936,12 @@ class QuicStream {
     const inner = this.#inner;
     if (fn === undefined) {
       inner.onwanttrailers = undefined;
-      inner.state.wantsTrailers = false;
     } else {
       validateFunction(fn, "onwanttrailers");
       assertHeadersSupported(inner.session);
       inner.onwanttrailers = FunctionPrototypeBind(fn, this);
-      inner.state.wantsTrailers = true;
     }
+    updateHeaderInterest(inner);
   }
 
   /**
@@ -1957,10 +1970,11 @@ class QuicStream {
     assertHeadersSupported(inner.session);
     if (headers === undefined) {
       inner.pendingTrailers = undefined;
-      return;
+    } else {
+      validateObject(headers, "headers");
+      inner.pendingTrailers = headers;
     }
-    validateObject(headers, "headers");
-    inner.pendingTrailers = headers;
+    updateHeaderInterest(inner);
   }
 
   /**
@@ -2561,7 +2575,6 @@ class QuicStream {
 
     switch (kindName) {
       case "initial":
-        assert(inner.onheaders, "Unexpected stream headers event");
         inner.headers ??= block;
         if (onStreamHeadersChannel.hasSubscribers) {
           onStreamHeadersChannel.publish({
@@ -2571,7 +2584,10 @@ class QuicStream {
             headers: block,
           });
         }
-        safeCallbackInvoke(inner.onheaders, this, block);
+        {
+          const { onheaders } = inner;
+          if (onheaders) safeCallbackInvoke(onheaders, this, block);
+        }
         break;
       case "trailing":
         if (onStreamTrailersChannel.hasSubscribers) {
@@ -2609,8 +2625,20 @@ class QuicStream {
     const inner = this.#inner;
 
     if (inner.pendingTrailers) {
-      this.sendTrailers(inner.pendingTrailers);
+      // Node v26.10.0: https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L2794-L2807
+      let sent;
+      try {
+        sent = this.sendTrailers(inner.pendingTrailers);
+      } catch (error) {
+        this.destroy(error);
+        return;
+      }
+      if (!sent) {
+        this.destroy(ERR_QUIC_STREAM_ABORTED("Failed to submit trailing headers"));
+        return;
+      }
       inner.pendingTrailers = undefined;
+      updateHeaderInterest(inner);
     } else {
       const { onwanttrailers } = inner;
       if (typeof onwanttrailers === "function") safeCallbackInvoke(onwanttrailers, this);

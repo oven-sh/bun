@@ -1169,6 +1169,11 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(stream) else {
                     return Ok(());
                 };
+                // JS can withdraw its interest between the drain and this dispatch.
+                if !stream.wants_trailers() {
+                    stream.end_without_trailers();
+                    return Ok(());
+                }
                 let handle = stream.handle();
                 if let Some(cb) = callbacks::get(global, "onStreamTrailers") {
                     let vm = global.bun_vm().as_mut();
@@ -2083,9 +2088,8 @@ impl QuicSession {
             // SAFETY: `qs` was just created.
             unsafe {
                 (*qs).outbound.with_mut(|o| {
-                    o.started = true;
                     o.data.extend(buf.byte_slice().iter().copied());
-                    o.end = super::stream::PendingEnd::Fin;
+                    o.end_body();
                 });
                 // As attach_source/init_streaming_source/send_headers do: this
                 // is what makes a later setOutbound() throw instead of

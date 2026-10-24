@@ -3761,7 +3761,12 @@ impl<'a> LinkerContext<'a> {
         }
         let other_kind = exports_kind[other_id as usize];
         // Is this a CommonJS file?
-        if other_kind == ExportsKind::Cjs {
+        // A named import of a CommonJS file without exports is matched below, and finds none.
+        if other_kind == ExportsKind::Cjs
+            && (alias_is_star
+                || !flags.contains(AstFlags::COMMONJS_WITHOUT_EXPORTS)
+                || alias.is_some_and(|a| a.slice() == b"default"))
+        {
             return ImportTrackerIterator {
                 value: ImportTracker {
                     source_index: crate::Index::init(other_source_index),

@@ -305,26 +305,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
-                        // Importing using ES6 syntax from a file without any ES6 syntax
-                        // causes that module to be considered CommonJS-style, even if it
-                        // doesn't have any CommonJS exports.
-                        //
-                        // That means the ES6 imports will become undefined instead of
-                        // causing errors. This is for compatibility with older CommonJS-
-                        // style bundlers.
-                        //
-                        // We emit a warning in this case but try to avoid turning the module
-                        // into a CommonJS module if possible. This is possible with named
-                        // imports (the module stays an ECMAScript module but the imports are
-                        // rewritten with undefined) but is not possible with star or default
-                        // imports:
-                        //
-                        //   import * as ns from './empty-file'
-                        //   import defVal from './empty-file'
-                        //   console.log(ns, defVal)
-                        //
-                        // In that case the module *is* considered a CommonJS module because
-                        // the namespace object must be created.
+                        // A star or default import of a file of undecided kind needs its `module.exports`.
                         if (record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
@@ -334,9 +315,21 @@ pub(crate) fn scan_imports_and_exports(
                             && !other_flags.contains(AstFlags::HAS_LAZY_EXPORT)
                             && !other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && col_ref!(exports_kind)[other_file] == ExportsKind::None
+                            // Nothing calls the wrapper of an iife entry point (#37843) or an HTML script (#42026).
+                            && !(output_format == Format::Iife
+                                && col_ref!(entry_point_kinds)[other_file].is_entry_point())
+                            && !is_html_script(
+                                other_file,
+                                &reachable,
+                                col_ref!(loaders),
+                                col_ref!(import_records_list),
+                            )
                         {
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            make_commonjs(
+                                &mut col!(exports_kind)[other_file],
+                                &mut col!(flags)[other_file].wrap,
+                                &mut col!(ast_flags_list)[other_file],
+                            );
                         }
 
                         // A default import of a lifted CommonJS module binds to its
@@ -366,8 +359,11 @@ pub(crate) fn scan_imports_and_exports(
                                 col!(flags)[other_file].wrap = WrapKind::Esm;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                                col!(flags)[other_file].wrap = WrapKind::Cjs;
-                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                                make_commonjs(
+                                    &mut col!(exports_kind)[other_file],
+                                    &mut col!(flags)[other_file].wrap,
+                                    &mut col!(ast_flags_list)[other_file],
+                                );
                             }
                         }
                     }
@@ -379,8 +375,11 @@ pub(crate) fn scan_imports_and_exports(
                                 col!(flags)[other_file].wrap = WrapKind::Esm;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                                col!(flags)[other_file].wrap = WrapKind::Cjs;
-                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                                make_commonjs(
+                                    &mut col!(exports_kind)[other_file],
+                                    &mut col!(flags)[other_file].wrap,
+                                    &mut col!(ast_flags_list)[other_file],
+                                );
                             }
                         } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && this.is_external_dynamic_import(record, id as u32)
@@ -516,6 +515,9 @@ pub(crate) fn scan_imports_and_exports(
                 // "ExportsKind" field has its final value and will not be changed.
                 if col_ref!(ast_flags_list)[id].contains(AstFlags::HAS_LAZY_EXPORT) {
                     this.generate_code_for_lazy_export(id as u32)?;
+                } else if col_ref!(exports_kind)[id] == ExportsKind::None {
+                    // No importer needed this undecided file to be CommonJS in step 1.
+                    col!(exports_kind)[id] = ExportsKind::Esm;
                 }
 
                 // Propagate exports for export star statements
@@ -632,6 +634,23 @@ pub(crate) fn scan_imports_and_exports(
                         source_index_.get(),
                         SymbolKind::Other,
                         b"value",
+                    );
+                }
+
+                // The parser makes no wrapper symbol for an undecided file whose statements all hoist.
+                if flag.wrap == WrapKind::Cjs && col_ref!(wrapper_refs)[source_index].is_empty() {
+                    use core::fmt::Write as _;
+                    let arena = this.graph.bump;
+                    let mut name = bun_alloc::ArenaString::new_in(arena.get());
+                    let _ = write!(
+                        &mut name,
+                        "require_{}",
+                        col_ref!(input_files)[source_index].fmt_identifier()
+                    );
+                    col!(wrapper_refs)[source_index] = this.graph.generate_new_symbol(
+                        source_index_.get(),
+                        SymbolKind::Other,
+                        name.into_bump_str().as_bytes(),
                     );
                 }
 
@@ -1443,6 +1462,33 @@ pub(crate) fn scan_imports_and_exports(
 #[inline]
 fn should_call_runtime_require(format: options::Format) -> bool {
     format != Format::Cjs
+}
+
+/// Makes a file CommonJS for an importer that needs its `module.exports`.
+fn make_commonjs(kind: &mut ExportsKind, wrap: &mut WrapKind, ast_flags: &mut AstFlags) {
+    // An undecided file that is not a lazy export has no module syntax.
+    if *kind == ExportsKind::None && !ast_flags.contains(AstFlags::HAS_LAZY_EXPORT) {
+        ast_flags.insert(AstFlags::COMMONJS_WITHOUT_EXPORTS);
+    }
+    *kind = ExportsKind::Cjs;
+    *wrap = WrapKind::Cjs;
+}
+
+/// Is `file` a `<script src>` of an HTML file in the graph?
+fn is_html_script(
+    file: usize,
+    reachable: &[Index],
+    loaders: &[Loader],
+    import_records: &[ImportRecordList<'_>],
+) -> bool {
+    reachable.iter().any(|html| {
+        let html = html.get() as usize;
+        loaders[html] == Loader::Html
+            && import_records[html]
+                .as_slice()
+                .iter()
+                .any(|record| record.source_index.get() as usize == file)
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

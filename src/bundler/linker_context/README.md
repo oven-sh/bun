@@ -97,28 +97,37 @@ _What happens_:
 
 _Key decision logic_:
 
-```javascript
-// Import star or default import from a module with no ES6 exports
-// forces that module to be treated as CommonJS
-import * as ns from "./empty-file"; // Forces './empty-file' to be CJS
-import defaultValue from "./empty-file"; // Forces './empty-file' to be CJS
+The parser decides the kind of most files. It leaves two kinds of file undecided (`ExportsKind::None`): a lazy-export file (JSON, text, an empty file), and a file that starts with `"use strict"` and has no module syntax. This step decides for the second kind from how the file is imported.
 
-// Regular named imports don't force CommonJS treatment
-import { namedExport } from "./empty-file"; // './empty-file' stays ES6 compatible
+```javascript
+// script.js starts with "use strict" and has no import, export, require, module or exports.
+
+// A star or default import needs a namespace object, so script.js becomes CommonJS
+import * as ns from "./script.js";
+import defaultValue from "./script.js";
+
+// require() makes script.js CommonJS too, and so does import() when code splitting is disabled
+require("./script.js");
+
+// A side-effect import or a named import does not. Step 3 then makes script.js an ES module
+import "./script.js";
+import { namedExport } from "./script.js"; // a build error in both kinds: script.js has no exports
 ```
 
 _Critical edge cases handled_:
 
-- `require()` calls always force the target module to be CommonJS
+- `require()` of a file that the parser classified as an ES module keeps it an ES module, wrapped in `__esm`
 - Dynamic imports (`import()`) behave like `require()` when code splitting is disabled
 - Modules with `force_cjs_to_esm` flag get special ESM wrapper treatment
 - Entry points get different wrapper treatment based on output format
+- A star or default import does not make an iife entry point or an HTML file's `<script src>` CommonJS, because nothing calls the wrapper of those files. For those two files a default import stays a build error, and a star import has no `default`
 
 _Example transformation_:
 
 ```javascript
-// Input: module-a.js (has no exports)
-// No code, just an empty file
+// Input: module-a.js
+"use strict";
+globalThis.loaded = true;
 
 // Input: module-b.js
 import * as a from "./module-a.js";
@@ -183,6 +192,7 @@ _What happens_:
 - Handles export star conflicts when multiple modules export the same name
 - Ignores export stars from CommonJS modules (since their exports aren't statically analyzable)
 - Generates code for expression-style loaders (JSON, CSS modules, etc.)
+- Makes a file an ES module when the parser left its kind undecided and step 1 did not make it CommonJS
 
 _Export star resolution algorithm_:
 

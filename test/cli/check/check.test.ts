@@ -17230,6 +17230,102 @@ export class C {
       expect(exitCode).toBe(1);
     });
 
+    // `parseSeeTag`: a name, with or without braces, is parsed as the name of a link. The expected output is tsc's.
+    test("reports the syntax errors in the name after `@see` in a JavaScript file", async () => {
+      using dir = project({
+        "a.js": `/** @see {Map<string, number>} */
+export const typeArguments = 1;
+/** @see Foo. */
+export const sentence = 1;
+/**
+ * @see Foo.
+ * More text.
+ */
+export const nextLine = 1;
+/** @see {Foo bar} */
+export const twoWords = 1;
+/** @see {Foo.bar()} */
+export const call = 1;
+/** @see {https://example.com} */
+export const addressInBraces = 1;
+/** @see {Foo[]} */
+export const array = 1;
+/** @see {import("x").Y} */
+export const importType = 1;
+/** @see Foo#class */
+export const reservedWord = 1;
+/** @see {#x */
+export const privateName = 1;
+/** @see Foo.bar() */
+export const afterTheName = 1;
+/** @see {Foo#bar} text */
+export const member = 1;
+/** @see https://example.com */
+export const address = 1;
+/** @see {@link Foo} */
+export const link = 1;
+/** @see [text](https://example.com) */
+export const markdown = 1;
+/** @see {1Foo} */
+export const number = 1;
+/** @see class */
+export const keyword = 1;
+`,
+        "b.ts": `/** @see {Map<string, number>} */
+export const typeArguments = 1;
+/** @see Foo. */
+export const sentence = 1;
+/**
+ * @see Foo.
+ * More text.
+ */
+export const nextLine = 1;
+/** @see {Foo bar} */
+export const twoWords = 1;
+/** @see {Foo.bar()} */
+export const call = 1;
+/** @see {https://example.com} */
+export const addressInBraces = 1;
+/** @see {Foo[]} */
+export const array = 1;
+/** @see {import("x").Y} */
+export const importType = 1;
+/** @see Foo#class */
+export const reservedWord = 1;
+/** @see {#x */
+export const privateName = 1;
+/** @see Foo.bar() */
+export const afterTheName = 1;
+/** @see {Foo#bar} text */
+export const member = 1;
+/** @see https://example.com */
+export const address = 1;
+/** @see {@link Foo} */
+export const link = 1;
+/** @see [text](https://example.com) */
+export const markdown = 1;
+/** @see {1Foo} */
+export const number = 1;
+/** @see class */
+export const keyword = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--allowJs", "--checkJs"]);
+      expect(stdout.split("\n")).toEqual([
+        `a.js(1,14): error TS1005: '}' expected.`,
+        `a.js(3,14): error TS1003: Identifier expected.`,
+        `a.js(7,2): error TS1003: Identifier expected.`,
+        `a.js(10,15): error TS1005: '}' expected.`,
+        `a.js(12,18): error TS1005: '}' expected.`,
+        `a.js(14,16): error TS1005: '}' expected.`,
+        `a.js(16,14): error TS1005: '}' expected.`,
+        `a.js(18,17): error TS1005: '}' expected.`,
+        `a.js(20,14): error TS1359: Identifier expected. 'class' is a reserved word that cannot be used here.`,
+        `a.js(22,14): error TS1005: '}' expected.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

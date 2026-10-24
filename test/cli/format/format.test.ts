@@ -6927,6 +6927,30 @@ type V = { m<T extends string>(x: T): T, n<T: string>(x: T): T };
     },
   );
 
+  test("Flow: with --arrow-parens=avoid, the function type of an indexer keeps its parentheses", async () => {
+    const code = `// @flow
+type A = {|
+  [name: string]: (B) => { [string]: mixed },
+  [string]: (B) => C,
+  a: B => C,
+  [[slot]]: B => C,
+  +b: B => C,
+  m(): B => C,
+|};
+declare class D {
+  [k: string]: (B) => C;
+  static [k: string]: (B) => C;
+  a: B => C;
+}
+interface I {
+  [k: string]: (B) => C;
+}
+`;
+    const result = await format({ "a.js": code }, ["--arrow-parens=avoid", "--check", "a.js"]);
+    expect(result.stderr).not.toContain("a.js");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("Flow: a type guard as the return type of an arrow function gets no parentheses", async () => {
     // Prettier 3.9.9 prints `(x: mixed): (x is { a: () => void }) => true`, which its `flow` parser can't parse.
     const code = `// @flow

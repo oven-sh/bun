@@ -395,35 +395,30 @@ pub(crate) fn use_fake_timers(
     // SAFETY: `timer::All` is per-thread, and `activate` doesn't re-enter it.
     unsafe { (*timer_all()).fake_timers.activate(js_now, global)? };
 
-    // Mark the fake timer function installed by `activate()`. If this runs
-    // user code and throws, roll back the activation and release its timers.
+    // Mark the installed fake function, rather than the real setTimeout that
+    // activate() just replaced. If defining the marker fails, roll back the
+    // activation so useFakeTimers() cannot leave the clock partially enabled.
     if let Err(error) = set_fake_timer_marker(global, true) {
         let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
         cleared.release(global.bun_vm_ptr());
         return Err(error);
     }
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value.to_js()))
 }
 
 pub(crate) fn use_real_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
+    // Remove the marker from the fake function before restoring the real one.
+    let marker_result = set_fake_timer_marker(global, false);
     // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
     let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
     cleared.release(global.bun_vm_ptr());
 
-    // Remove the marker before restoring the real timer. Still complete the
-    // teardown if accessing the property throws, then return that error.
-    let marker_result = set_fake_timer_marker(global, false);
+    // Complete teardown even if removing the marker ran a throwing accessor.
     marker_result?;
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value.to_js()))
 }
 
 pub(crate) fn advance_timers_to_next_timer(

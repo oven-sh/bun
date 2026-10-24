@@ -42,6 +42,22 @@ test("fake timers", async () => {
   expect(order.takeOrderMessages()).toEqual([]); // it was created as a fake timer, so it should not have triggered
 });
 
+test("fake timer marker belongs to the installed setTimeout", () => {
+  const originalSetTimeout = globalThis.setTimeout;
+
+  vi.useFakeTimers();
+  const fakeSetTimeout = globalThis.setTimeout;
+  try {
+    expect(fakeSetTimeout).not.toBe(originalSetTimeout);
+    expect(Object.hasOwnProperty.call(fakeSetTimeout, "clock")).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+
+  expect(globalThis.setTimeout).toBe(originalSetTimeout);
+  expect(Object.hasOwnProperty.call(originalSetTimeout, "clock")).toBe(false);
+});
+
 test("setTimeout captured before fake timers remains a real timer", () => {
   const capturedSetTimeout = globalThis.setTimeout.bind(globalThis);
   const capturedSetInterval = globalThis.setInterval.bind(globalThis);

@@ -1266,42 +1266,8 @@ impl ErrorDisplayLevel {
 }
 
 impl FormatOptions {
-    pub fn from_js(&mut self, global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<()> {
-        let arg1 = arguments[0];
-
-        if arg1.is_object() {
-            if let Some(opt) = arg1.get_truthy(global_this, "depth")? {
-                self.set_depth(global_this, opt)?;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "colors")? {
-                self.enable_colors = opt;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "sorted")? {
-                self.ordered_properties = opt;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "compact")? {
-                self.single_line = opt;
-            }
-        } else {
-            // formatOptions.show_hidden = arg1.toBoolean();
-            if !arguments.is_empty() {
-                self.set_depth(global_this, arg1)?;
-                if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-                    self.enable_colors = arguments[1].to_boolean();
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`; non-numbers are
-    /// ignored. Decided on the number's value, so an integer JSC boxed as a double (a
-    /// `Float64Array` element, `-0`) is accepted like its int32 twin.
-    fn set_depth(&mut self, global_this: &JSGlobalObject, depth: JSValue) -> JsResult<()> {
-        if !depth.is_number() {
-            return Ok(());
-        }
-        let depth = depth.as_number();
+    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`.
+    pub fn set_depth(&mut self, global_this: &JSGlobalObject, depth: f64) -> JsResult<()> {
         if depth.is_infinite() {
             self.max_depth = u16::MAX;
         } else if depth.trunc() != depth {
@@ -5911,8 +5877,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 ///
 /// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
 /// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim — same pattern as `export_callbacks!` in
-/// `runtime/api/BunObject.rs`.
+/// export symbol is passed verbatim.
 macro_rules! console_noop_hooks {
     (str: $($name:ident),+ $(,)?) => {$(
         #[unsafe(no_mangle)]

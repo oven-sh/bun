@@ -1727,6 +1727,7 @@ impl<'s> Checker<'_, 's> {
             return;
         }
         let hir = self.hir(file);
+        self.reached_by_walk = (file, e);
         let ty = self.type_of_expr(file, e);
         if ty == TypeId::ERROR {
             cold_path();

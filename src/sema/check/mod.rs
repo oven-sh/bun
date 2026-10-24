@@ -1055,6 +1055,7 @@ impl<'s> Program<'s> {
             expression_without_query: None,
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
+            reached_by_walk: (FileId(u32::MAX), ExprId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
@@ -2061,6 +2062,9 @@ pub struct Checker<'p, 's> {
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
+    /// The expression that `check_expression` reached last. It has checked whatever encloses the expression, so
+    /// there's nothing to prepare for a query about it.
+    reached_by_walk: (FileId, ExprId),
     /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
     /// The stack pointer when the checker was created, and how far below that it may go.

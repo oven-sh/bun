@@ -2892,6 +2892,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .ssl_config
                 .as_ref()
                 .and_then(|config| config.protos_bytes())
+                .filter(|protocols| !protocols.is_empty())
                 && !bun_opaque::opaque_deref_mut(app).set_alpn_protocols(protocols)
             {
                 let _ = global.throw(format_args!("Failed to configure TLS ALPN protocols"));

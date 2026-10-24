@@ -2470,8 +2470,16 @@ if (isLinux) {
       // #29963: the writable PT_LOAD must have been grown to cover .bun,
       // rather than a new late PT_LOAD being appended.
       expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments; the fix must not add a 4th.
-      expect(loadCount).toBe(3);
+      // The writer grows a PT_LOAD and never adds one: the compiled binary has
+      // as many as the bun it was copied from (which has one of its own for
+      // `.bun`, after `.bss` — see src/linker-bun-section.lds).
+      const source = new DataView(await Bun.file(bunExe()).slice(0, 64 * 1024).arrayBuffer());
+      const sourcePhoff = Number(source.getBigUint64(32, true));
+      let sourceLoadCount = 0;
+      for (let i = 0; i < source.getUint16(56, true); i++) {
+        if (source.getUint32(sourcePhoff + i * source.getUint16(54, true), true) === PT_LOAD) sourceLoadCount++;
+      }
+      expect(loadCount).toBe(sourceLoadCount);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode

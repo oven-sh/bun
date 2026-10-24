@@ -91,6 +91,41 @@ test.skipIf(!(isLinux || isFreeBSD))(
   180_000,
 );
 
+// src/linker-bun-section.lds puts `.bun` after `.bss` in a PT_LOAD of its own,
+// so the payload the writer appends there leaves `.bss` a NOBITS tail
+// (p_filesz < p_memsz). Appending inside the segment that holds `.bss` stored
+// the runtime's zero-initialized statics (~1.8 MB on x64) in every compiled
+// executable.
+test.skipIf(!(isLinux || isFreeBSD))("compiled executable does not store the runtime's .bss", async () => {
+  using dir = tempDir("elf-segment-bss", {
+    "index.ts": `console.log("bss");`,
+  });
+  const cwd = String(dir);
+  const out = join(cwd, "app");
+
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", join(cwd, "index.ts"), "--outfile", out],
+    env: bunEnv,
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).not.toContain("error:");
+  expect(buildExit).toBe(0);
+
+  const writableWithBss = readElf64ProgramHeaders(out).filter(
+    ph => ph.type === 1 /* PT_LOAD */ && ph.flags & 2 /* PF_W */ && ph.filesz < ph.memsz,
+  );
+  expect(writableWithBss.length).toBe(1);
+
+  await using run = Bun.spawn({ cmd: [out], env: bunEnv, cwd, stderr: "pipe", stdout: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("bss\n");
+  expect(exitCode).toBe(0);
+});
+
 // `bun build --compile` injects into a copy of an executable: bun itself, or
 // the one `--compile-executable-path` names. That executable can be a compiled
 // one: `BUN_BE_BUN=1 ./app build --compile`, or `Bun.build({ compile })`
@@ -107,31 +142,45 @@ describe("compiling into a compiled executable", () => {
   const built = { stdout: expect.any(String), stderr: expect.not.stringContaining("error"), exitCode: 0 };
 
   // The ELF writer is the same on every host. Like the PE and Mach-O writers,
-  // it is tested on a template small enough to build by hand: an R E segment,
-  // an RW segment with `.data`, `.bun` (BUN_COMPILED, 0) and `.bss`, then
-  // `.shstrtab` and the section headers. The result cannot run.
-  // `bunLast` puts `.bun` where a payload would be: on a page of its own that
-  // ends the image, with no `.bss` behind it.
-  function minimalElf64Template(machine: number, page: number, bunLast = false): Buffer {
+  // it is tested on templates small enough to build by hand. None can run.
+  // - "linked": bun linked without `src/linker-bun-section.lds` (bun up to
+  //   1.4.x): an R E segment, an RW segment with `.data`, `.bun`
+  //   (BUN_COMPILED, 0) and `.bss`, then `.shstrtab` and the section headers.
+  // - "bunSegment": bun as that script links it: `.bun` after `.bss`, in an
+  //   RW segment of its own on the next page.
+  // - "bunLast": `.bun` where a payload would be: on a page of its own that
+  //   ends the image, with no `.bss` behind it.
+  type Layout = "linked" | "bunSegment" | "bunLast";
+  function minimalElf64Template(machine: number, page: number, layout: Layout = "linked"): Buffer {
     const base = 0x200000;
     const names = Buffer.from("\0.data\0.bun\0.bss\0.shstrtab\0", "latin1");
     const nameAt = (name: string) => names.indexOf(`\0${name}\0`, 0, "latin1") + 1;
-    const rw = bunLast
-      ? { offset: page, vaddr: base + 2 * page, filesz: 2 * page, memsz: 2 * page }
-      : { offset: page, vaddr: base + 2 * page, filesz: page, memsz: 3 * page - 0x234 };
-    const bun = bunLast ? page : 0x100;
-    const bss = bunLast ? { at: 0x100, size: 0 } : { at: page, size: rw.memsz - page };
-    const shstrtab = rw.offset + rw.filesz;
+    const rw =
+      layout === "bunLast"
+        ? { offset: page, vaddr: base + 2 * page, filesz: 2 * page, memsz: 2 * page }
+        : { offset: page, vaddr: base + 2 * page, filesz: page, memsz: 3 * page - 0x234 };
+    const bss = layout === "bunLast" ? { at: 0x100, size: 0 } : { at: page, size: rw.memsz - page };
+    const bun =
+      layout === "bunSegment"
+        ? { offset: rw.offset + rw.filesz, vaddr: base + 5 * page }
+        : {
+            offset: rw.offset + (layout === "bunLast" ? page : 0x100),
+            vaddr: rw.vaddr + (layout === "bunLast" ? page : 0x100),
+          };
+    const shstrtab = layout === "bunSegment" ? bun.offset + 8 : rw.offset + rw.filesz;
     const e_shoff = shstrtab + 64;
     const [PROGBITS, STRTAB, NOBITS, WA] = [1, 3, 8, 3];
     const segments = [
       { flags: 5 /* R E */, offset: 0, vaddr: base, filesz: page, memsz: page },
       { flags: 6 /* RW */, ...rw },
+      ...(layout === "bunSegment"
+        ? [{ flags: 6 /* RW */, offset: bun.offset, vaddr: bun.vaddr, filesz: 8, memsz: 8 }]
+        : []),
     ];
     const sections = [
       { name: 0, type: 0, flags: 0, addr: 0, offset: 0, size: 0 },
       { name: nameAt(".data"), type: PROGBITS, flags: WA, addr: rw.vaddr, offset: rw.offset, size: 0x100 },
-      { name: nameAt(".bun"), type: PROGBITS, flags: WA, addr: rw.vaddr + bun, offset: rw.offset + bun, size: 8 },
+      { name: nameAt(".bun"), type: PROGBITS, flags: WA, addr: bun.vaddr, offset: bun.offset, size: 8 },
       { name: nameAt(".bss"), type: NOBITS, flags: WA, addr: rw.vaddr + bss.at, offset: shstrtab, size: bss.size },
       { name: nameAt(".shstrtab"), type: STRTAB, flags: 0, addr: 0, offset: shstrtab, size: names.length },
     ];
@@ -199,39 +248,41 @@ describe("compiling into a compiled executable", () => {
       return spawn([bunExe(), "build", "--compile", ...target, entry, "--outfile", outfile], cwd);
     };
 
-    test.concurrent("the new payload takes the place of the old one", async () => {
-      // More than a page apart, so each payload takes a different number of
-      // pages than the one it replaces and everything behind it moves.
-      using dir = tempDir("elf-compile-into-compiled", {
-        "large.js": `console.log("${Buffer.alloc(3 * page, "x").toString()}");`,
-        "small.js": `console.log("small");`,
-        "larger.js": `console.log("${Buffer.alloc(6 * page, "y").toString()}");`,
-      });
-      const cwd = String(dir);
-      writeFileSync(join(cwd, "template"), minimalElf64Template(machine, page));
+    test.concurrent.each<Layout>(["linked", "bunSegment"])(
+      "the new payload takes the place of the old one (%s)",
+      async layout => {
+        // Pages apart in size, so everything behind each payload moves.
+        using dir = tempDir("elf-compile-into-compiled", {
+          "large.js": `console.log("${Buffer.alloc(3 * page, "x").toString()}");`,
+          "small.js": `console.log("small");`,
+          "larger.js": `console.log("${Buffer.alloc(6 * page, "y").toString()}");`,
+        });
+        const cwd = String(dir);
+        writeFileSync(join(cwd, "template"), minimalElf64Template(machine, page, layout));
 
-      expect(await compileInto(cwd, "template", "large.js", "large")).toEqual(built);
-      expect(await compileInto(cwd, "large", "small.js", "small")).toEqual(built);
-      expect(await compileInto(cwd, "small", "larger.js", "larger")).toEqual(built);
-      expect(await compileInto(cwd, "template", "small.js", "direct/small")).toEqual(built);
-      expect(await compileInto(cwd, "template", "larger.js", "direct/larger")).toEqual(built);
-      const read = (name: string) => readFileSync(join(cwd, name));
-      const [large, small, larger] = [read("large"), read("small"), read("larger")];
+        expect(await compileInto(cwd, "template", "large.js", "large")).toEqual(built);
+        expect(await compileInto(cwd, "large", "small.js", "small")).toEqual(built);
+        expect(await compileInto(cwd, "small", "larger.js", "larger")).toEqual(built);
+        expect(await compileInto(cwd, "template", "small.js", "direct/small")).toEqual(built);
+        expect(await compileInto(cwd, "template", "larger.js", "direct/larger")).toEqual(built);
+        const read = (name: string) => readFileSync(join(cwd, name));
+        const [large, small, larger] = [read("large"), read("small"), read("larger")];
 
-      // The bytes of a compile into the template: nothing of the payload before
-      // is left, and the payload is where BUN_COMPILED already points.
-      expect(small.equals(read("direct/small"))).toBe(true);
-      expect(larger.equals(read("direct/larger"))).toBe(true);
-      const payloadAddress = (elf: Buffer) => elf.readBigUInt64LE(fieldsOf(elf).bun.addr);
-      expect([payloadAddress(small), payloadAddress(larger)]).toEqual(Array(2).fill(payloadAddress(large)));
-      expect(small.length).toBeLessThan(large.length);
-      expect(larger.length).toBeGreaterThan(large.length);
-    });
+        // The bytes of a compile into the template: nothing of the payload before
+        // is left, and the payload is where BUN_COMPILED already points.
+        expect(small.equals(read("direct/small"))).toBe(true);
+        expect(larger.equals(read("direct/larger"))).toBe(true);
+        const payloadAddress = (elf: Buffer) => elf.readBigUInt64LE(fieldsOf(elf).bun.addr);
+        expect([payloadAddress(small), payloadAddress(larger)]).toEqual(Array(2).fill(payloadAddress(large)));
+        expect(small.length).toBeLessThan(large.length);
+        expect(larger.length).toBeGreaterThan(large.length);
+      },
+    );
 
     test.concurrent("a `.bun` that holds 0 is BUN_COMPILED, wherever it is", async () => {
       using dir = tempDir("elf-compile-bun-last", { "app.js": `console.log("app");` });
       const cwd = String(dir);
-      const template = minimalElf64Template(machine, page, true);
+      const template = minimalElf64Template(machine, page, "bunLast");
       writeFileSync(join(cwd, "template"), template);
       expect(await compileInto(cwd, "template", "app.js", "app")).toEqual(built);
 
@@ -244,6 +295,38 @@ describe("compiling into a compiled executable", () => {
       expect(app.readBigUInt64LE(Number(app.readBigUInt64LE(payload.offset)))).toBe(
         app.readBigUInt64LE(payload.size) - 8n,
       );
+    });
+
+    test.concurrent("a `.bun` with a segment of its own takes the payload without storing `.bss`", async () => {
+      using dir = tempDir("elf-compile-bun-segment", { "app.js": `console.log("app");` });
+      const cwd = String(dir);
+      writeFileSync(join(cwd, "template"), minimalElf64Template(machine, page, "bunSegment"));
+      expect(await compileInto(cwd, "template", "app.js", "app")).toEqual(built);
+
+      const [, templateRw, templateBun] = readElf64ProgramHeaders(join(cwd, "template"));
+      const [, rw, bun] = readElf64ProgramHeaders(join(cwd, "app"));
+      const app = readFileSync(join(cwd, "app"));
+      const payload = fieldsOf(app).bun;
+      const payloadAddress = app.readBigUInt64LE(payload.addr);
+      const payloadEnd = payloadAddress + app.readBigUInt64LE(payload.size);
+      const afterBunCompiled = (templateBun.vaddr + 8n + 127n) & ~127n;
+
+      expect({
+        // The segment with `.bss` is untouched: `.bss` stays out of the file.
+        rw,
+        // The payload starts at the first 128-byte boundary after BUN_COMPILED, which points at it.
+        payloadAddress,
+        bunCompiled: app.readBigUInt64LE(Number(templateBun.offset)),
+        // The `.bun` segment grows to end with the payload.
+        bun: { offset: bun.offset, vaddr: bun.vaddr, fileBacked: bun.filesz === bun.memsz },
+        padding: bun.vaddr + bun.memsz - payloadEnd < 8n,
+      }).toEqual({
+        rw: templateRw,
+        payloadAddress: afterBunCompiled,
+        bunCompiled: afterBunCompiled,
+        bun: { offset: templateBun.offset, vaddr: templateBun.vaddr, fileBacked: true },
+        padding: true,
+      });
     });
 
     let compiled: Promise<Buffer> | undefined;
@@ -261,15 +344,13 @@ describe("compiling into a compiled executable", () => {
     test.concurrent.each<[string, (f: Fields) => void]>([
       ["a section longer than its payload", f => f.add(f.bun.size, 1)],
       [
-        "a payload that does not start a page",
+        "a payload that is not 128-byte aligned",
         f => {
-          // 8 bytes further on: still [length][bytes], still the end of its segment.
+          // Starting 8 bytes further on: still [length][bytes], still ending its segment.
           f.add(f.bun.addr, 8);
           f.add(f.bun.offset, 8);
           f.add(f.bun.size, -8);
           f.set(Number(f.get(f.bun.offset)), f.get(f.bun.size) - 8n);
-          f.add(f.rw.filesz, 8);
-          f.add(f.rw.memsz, 8);
         },
       ],
       // What the writer made of a compiled executable before it looked: a

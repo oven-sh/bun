@@ -206,6 +206,11 @@ impl ElfFile {
     /// WSL1 while preserving the mmap-at-execve contract (no file I/O at
     /// startup, works with execute-only permissions).
     ///
+    /// The linker puts `.bun` after `.bss` in a `PT_LOAD` of its own
+    /// (`src/linker-bun-section.lds`), so growing that segment stores none of
+    /// the runtime's `.bss`. A template linked without it (an older bun) still
+    /// works: its writable segment grows across `.bss`, which is then stored.
+    ///
     /// We always append rather than writing in-place because `.bun` is in the
     /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
     /// `.got.plt` come after it, and expanding in-place would invalidate their
@@ -220,7 +225,6 @@ impl ElfFile {
 
         let header_size: u64 = size_of::<u64>() as u64;
         let new_content_size: u64 = header_size + payload.len() as u64;
-        let aligned_new_size = align_up(new_content_size, page_size);
 
         // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
         // not "first writable": patchelf'd templates have an extra writable
@@ -256,15 +260,14 @@ impl ElfFile {
             return Err(ElfError::NoWritableLoadSegment);
         };
 
-        // Place the new data at a page-aligned virtual address past every
-        // existing mapping. page_size is ≥ 128 so this also guarantees the
-        // 128-byte alignment that JSC's bytecode cache requires — see
-        // `target_mod = 120` in StandaloneModuleGraph.rs, which assumes the
-        // payload starts on a 128-byte boundary so bytecode at payload-offset
-        // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
-        // accounted for. A non-page-aligned `new_vaddr` (e.g. one inheriting
-        // `rw_phdr.p_vaddr`'s residue mod 128) would SIGSEGV in JSC bytecode
-        // deserialization on aarch64.
+        // Place the new data at the first PAYLOAD_ALIGN boundary past every
+        // existing mapping: the 128-byte alignment JSC's bytecode cache
+        // requires — see `target_mod = 120` in StandaloneModuleGraph.rs, which
+        // assumes the payload starts on a 128-byte boundary so bytecode at
+        // payload-offset 120 lands 128-aligned once the 8-byte `[u64 size]`
+        // header is accounted for. A `new_vaddr` that isn't 128-aligned (e.g.
+        // one inheriting `rw_phdr.p_vaddr`'s residue) would SIGSEGV in JSC
+        // bytecode deserialization on aarch64.
         //
         // `new_file_offset` follows the segment's existing (vaddr - offset)
         // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
@@ -275,7 +278,7 @@ impl ElfFile {
         let new_vaddr = if replaces_payload {
             bun_section_vaddr
         } else {
-            align_up(max_vaddr_end, page_size)
+            align_up(max_vaddr_end, PAYLOAD_ALIGN)
         };
 
         // Sanity: `max_vaddr_end` already reflects the RW segment's full
@@ -292,13 +295,15 @@ impl ElfFile {
         //
         //   [0, old_rw_file_end)                      original content, unchanged
         //                                             (RW segment's file-backed bytes)
-        //   [old_rw_file_end, new_file_offset)        zero fill
+        //   [old_rw_file_end, new_file_offset)        zero fill: <128 bytes after
+        //                                             BUN_COMPILED, or `.bss` in a template
+        //                                             linked without the `.bun` script
         //                                             (becomes file-backed inside the
         //                                              extended RW PT_LOAD; must read as
         //                                              zero to keep BSS semantics)
-        //   [new_file_offset, +aligned_new_size)      [u64 LE size][payload][zero pad]
+        //   [new_file_offset, move_dst_start)         [u64 LE size][payload][<8 zero bytes]
         //                                             (new .bun contents — vaddr = new_vaddr)
-        //   [payload_end, +moved_tail_size)           relocated non-ALLOC sections + old
+        //   [move_dst_start, +moved_tail_size)        relocated non-ALLOC sections + old
         //                                             section header table
         //
         // Anything past `old_rw_file_end` in the input — non-ALLOC sections
@@ -317,7 +322,13 @@ impl ElfFile {
         let move_src_start: u64 = old_rw_file_end;
         let move_src_end: u64 = old_file_size;
         let moved_tail_size: u64 = move_src_end - move_src_start;
-        let move_dst_start: u64 = new_file_offset + aligned_new_size;
+        // The tail keeps its offset mod TAIL_ALIGN, so the sections in it stay
+        // aligned. The padding is inside the segment: a later call replacing
+        // this payload then moves only the tail itself, and lands it where a
+        // compile straight into the template would.
+        let payload_end = new_file_offset + new_content_size;
+        let move_dst_start: u64 =
+            payload_end + (move_src_start.wrapping_sub(payload_end) & (TAIL_ALIGN - 1));
         let move_dst_end: u64 = move_dst_start + moved_tail_size;
 
         let total_new_size: u64 = move_dst_end;
@@ -362,7 +373,6 @@ impl ElfFile {
             .copy_from_slice(payload);
 
         // Zero the padding between payload end and the relocated tail
-        let payload_end = new_file_offset + new_content_size;
         if move_dst_start > payload_end {
             self.data[usize::try_from(payload_end).expect("int cast")
                 ..usize::try_from(move_dst_start).expect("int cast")]
@@ -429,7 +439,7 @@ impl ElfFile {
         // PT_GNU_STACK is deliberately left alone; repurposing it into a
         // separate late PT_LOAD is what breaks WSL1 (#29963).
         {
-            let new_segment_size = offset_in_segment + aligned_new_size;
+            let new_segment_size = offset_in_segment + (move_dst_start - new_file_offset);
             let extended = Elf64_Phdr {
                 p_type: rw_phdr.p_type,
                 p_flags: rw_phdr.p_flags,
@@ -481,28 +491,39 @@ impl ElfFile {
             .max()
             .unwrap_or(0);
         let rw_vaddr_end = rw_phdr.p_vaddr.checked_add(rw_phdr.p_memsz);
-        let payload_vaddr_end = bun_section
+        let payload_vaddr_end = bun_section.vaddr.checked_add(bun_section.size);
+        // Up to 1.4.x the segment ended at the page boundary after the payload.
+        let page_padded_vaddr_end = bun_section
             .size
             .checked_next_multiple_of(page_size)
             .and_then(|aligned_size| bun_section.vaddr.checked_add(aligned_size));
 
         let is_length_then_bytes =
             bun_section.size.checked_sub(size_of::<u64>() as u64) == Some(first_word);
-        let starts_a_page = bun_section.vaddr.is_multiple_of(page_size);
+        let is_aligned = bun_section.vaddr.is_multiple_of(PAYLOAD_ALIGN);
         // 1.3.14 to 1.4.x left a second payload behind the one BUN_COMPILED points at: a page or more later.
+        // When `.bun` has a segment of its own, only BUN_COMPILED (no section once a payload is written)
+        // precedes the payload in it.
         let follows_linked_sections = bun_section
             .vaddr
-            .checked_sub(linked_end)
+            .checked_sub(linked_end.max(rw_phdr.p_vaddr))
             .is_some_and(|gap| gap < page_size);
         let offset_matches_segment = bun_section.vaddr.checked_sub(rw_phdr.p_vaddr)
             == bun_section.file_offset.checked_sub(rw_phdr.p_offset);
         let is_file_backed = rw_phdr.p_filesz == rw_phdr.p_memsz;
         // Nothing is mapped past the payload, so a longer one runs into no other mapping.
         let segment_is_highest = rw_vaddr_end == Some(max_vaddr_end);
-        let ends_segment = payload_vaddr_end == rw_vaddr_end;
+        let ends_segment = match (rw_vaddr_end, payload_vaddr_end) {
+            (Some(end), Some(payload_end)) => {
+                end.checked_sub(payload_end)
+                    .is_some_and(|pad| pad < TAIL_ALIGN)
+                    || Some(end) == page_padded_vaddr_end
+            }
+            _ => false,
+        };
 
         if is_length_then_bytes
-            && starts_a_page
+            && is_aligned
             && follows_linked_sections
             && offset_matches_segment
             && is_file_backed
@@ -751,6 +772,10 @@ const ELFDATA2LSB: u8 = 1;
 
 use bun_sys::elf::{PT_INTERP, PT_LOAD};
 const PF_W: u32 = 2;
+/// Payload start alignment: JSC reads cached bytecode in place, 128-byte aligned.
+const PAYLOAD_ALIGN: u64 = 128;
+/// Alignment the relocated tail keeps: the section header table's (`Elf64_Shdr` is 8-byte aligned).
+const TAIL_ALIGN: u64 = 8;
 const SHT_NOBITS: u32 = 8;
 const SHF_ALLOC: u64 = 0x2;
 const SHF_TLS: u64 = 0x400;

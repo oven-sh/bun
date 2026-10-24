@@ -23,6 +23,18 @@ compile_error!("Unsupported platform");
 
 bun_core::define_scoped_log!(log, watcher, visible);
 
+/// Temporary: counts for the measurements of this branch. To be removed before the branch is ready.
+pub(crate) mod diag {
+    use core::sync::atomic::{AtomicBool, AtomicU32};
+
+    pub(crate) static KEVENT: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static FSTAT: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static LOCK: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static HOLD: AtomicU32 = AtomicU32::new(0);
+    /// `BUN_WATCHER_TRACE` ends with `.base`: `report_truncations` uses the rule of the base branch.
+    pub(crate) static BASE_RULE: AtomicBool = AtomicBool::new(false);
+}
+
 // ─── constants ────────────────────────────────────────────────────────────
 
 pub const MAX_COUNT: usize = 128;
@@ -227,6 +239,7 @@ impl Watcher {
     /// open-coding the lock/trace/callback sequence.
     pub(crate) fn dispatch_file_updates(&mut self, event_count: usize, changed_count: usize) {
         let _guard = self.mutex.lock_guard();
+        diag::LOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         if !self.running.load() {
             return;
         }
@@ -263,6 +276,13 @@ impl Watcher {
             };
             let sizes = self.watchlist.items_mut::<"size", u64>();
             if sizes[index] == size {
+                continue;
+            }
+            if diag::BASE_RULE.load(core::sync::atomic::Ordering::Relaxed) {
+                sizes[index] = size;
+                if size != 0 {
+                    event.op |= Op::WRITE;
+                }
                 continue;
             }
             // A save that empties the file, or the `open(O_TRUNC)` of a save in place before its `write()`.
@@ -1043,6 +1063,7 @@ impl Watcher {
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 fn file_size(fd: Fd) -> Option<u64> {
+    diag::FSTAT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     sys::fstat(fd).ok().map(|stat| stat.st_size as u64)
 }
 

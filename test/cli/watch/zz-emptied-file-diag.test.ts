@@ -2,7 +2,7 @@
 // is ready.
 import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMacOS, isWindows, nodeExe, tempDir } from "harness";
+import { isMacOS, isWindows, nodeExe } from "harness";
 import {
   chmodSync,
   close,
@@ -11,150 +11,89 @@ import {
   open,
   openSync,
   promises,
-  readFileSync,
   truncateSync,
   utimesSync,
   write,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { release } from "node:os";
 import { join } from "node:path";
+import {
+  bucket,
+  count,
+  type Hot,
+  loadLine,
+  type Mode,
+  modes,
+  otherLine,
+  otherText,
+  platform,
+  print,
+  settle,
+  tally,
+  text,
+  withHot,
+} from "./zz-emptied-file-diag-harness";
 
-const print = isMacOS || !!process.env.WATCHER_DIAG_PRINT;
-const report: Record<string, unknown> = { platform: `${process.platform} ${process.arch} ${release()}` };
+const report: Record<string, unknown> = { platform };
 
-const padding = 64;
-/** The text of the import: `marker` is 6 digits, and the length is always the same. */
-const text = (marker: number) =>
-  `console.log("load v=${String(marker).padStart(6, "0")}");//` + Buffer.alloc(padding, "p").toString();
-
-type Record_ = { timestamp: number; events: string[] };
-type Hot = {
-  cwd: string;
-  dep: string;
-  /** The `load` and `end` lines so far. */
-  lines: () => string[];
-  stderr: () => string;
-  /** The records of the trace that name the import. */
-  trace: () => Record_[];
-  /** Resolves to true when a `load` line has this marker. False after `ms`. */
-  loaded: (marker: number, ms?: number) => Promise<boolean>;
-  /** Resolves to the time of the line that made `done` true. Undefined after `ms`. */
-  until: (done: (lines: string[]) => boolean, ms: number) => Promise<number | undefined>;
-};
-
-async function withHot<T>(body: (hot: Hot) => Promise<T>) {
-  using dir = tempDir("emptied-diag-hot", {
-    "app/main.js": `import "./dep.js";\nimport "./other.js";\nconsole.log("end");\n`,
-    "app/dep.js": text(0),
-    "app/other.js": otherText(0),
-    "source.txt": "",
-  });
-  const cwd = join(String(dir), "app");
-  const dep = join(cwd, "dep.js");
-  const traceFile = join(String(dir), "trace.log");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
-    env: { ...bunEnv, BUN_WATCHER_TRACE: traceFile },
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-  let stdout = "";
-  let stderr = "";
-  let at = performance.now();
-  let changed = Promise.withResolvers<void>();
-  (async () => {
-    for await (const chunk of proc.stdout) {
-      stdout += Buffer.from(chunk).toString();
-      at = performance.now();
-      changed.resolve();
-      changed = Promise.withResolvers<void>();
-    }
-  })();
-  (async () => {
-    for await (const chunk of proc.stderr) stderr += Buffer.from(chunk).toString();
-  })();
-  const lines = () => stdout.split("\n").slice(0, -1);
-  const until = async (done: (lines: string[]) => boolean, ms: number) => {
-    const deadline = Bun.sleep(ms).then(() => "late" as const);
-    while (!done(lines())) {
-      if ((await Promise.race([changed.promise, deadline])) === "late") return undefined;
-    }
-    return at;
+type Save = (hot: Hot, marker: number) => void | Promise<unknown>;
+/** Another program saves the file. One process for each save. The text comes after `cmd`. */
+const program =
+  (...cmd: string[]): Save =>
+  (hot, marker) => {
+    const { exitCode, stderr } = Bun.spawnSync({ cmd: [...cmd, text(marker)], cwd: hot.cwd, stderr: "pipe" });
+    if (exitCode !== 0) throw new Error(`${cmd[0]} failed: ${stderr}`);
   };
-  const loaded = async (marker: number, ms = 20_000) => {
-    const wanted = loadLine(marker);
-    return (await until(lines => lines.includes(wanted), ms)) !== undefined;
-  };
-  const trace = () => {
-    let file = "";
-    try {
-      file = readFileSync(traceFile, "utf8");
-    } catch {}
-    const records: Record_[] = [];
-    for (const line of file.split("\n")) {
-      if (!line.trim()) continue;
-      let record: { timestamp: number; files: Record<string, { events: string[] }> };
-      try {
-        record = JSON.parse(line);
-      } catch {
-        // The last line, while the watcher writes it.
-        continue;
+const node = nodeExe();
+const python = Bun.which("python3");
+
+/** Saves `saves` times and counts the loads and the trace records of each save. */
+async function measure(mode: Mode, saves: number, save: Save) {
+  return await withHot(
+    async hot => {
+      await settle();
+      const recordsBefore = hot.trace().length;
+      const errorsBefore = hot.stderr().split("error:").length;
+      const records: Record<string, number> = {};
+      const gaps: Record<string, number> = {};
+      let done = 0;
+      for (let i = 1; i <= saves; i++) {
+        const from = hot.trace().length;
+        await save(hot, i);
+        if (!(await hot.loaded(i))) break;
+        // The run that loaded the marker has ended.
+        await hot.until(lines => lines.lastIndexOf("end") > lines.lastIndexOf(loadLine(i)), 20_000);
+        done++;
+        const mine = hot.trace().slice(from);
+        tally(records, `${mine.length}: ${mine.map(record => record.events.join("+")).join(", ")}`);
+        const written = mine.findLastIndex(record => record.events.includes("write"));
+        if (written > 0) tally(gaps, bucket(mine[written].timestamp - mine[0].timestamp));
       }
-      for (const [path, entry] of Object.entries(record.files)) {
-        if (path.endsWith("dep.js")) records.push({ timestamp: record.timestamp, events: entry.events });
-      }
-    }
-    return records;
-  };
-  if (!(await loaded(0))) throw new Error(`no first load:\n${stdout}\n${stderr}`);
-  return await body({ cwd, dep, lines, stderr: () => stderr, trace, loaded, until });
+      await settle();
+      // Without the first load.
+      const loads = count(hot.lines(), "load ") - 1;
+      const ends = count(hot.lines(), "end") - 1;
+      const errors = hot.stderr().split("error:").length - errorsBefore;
+      return {
+        saves: `${done} of ${saves} loaded`,
+        loads,
+        "runs where the import printed nothing": ends - loads,
+        errors,
+        "trace records for one save": records,
+        "trace records in all": hot.trace().length - recordsBefore,
+        "time from the first record to the last record with a write": gaps,
+      };
+    },
+    { mode },
+  );
 }
 
-const loadLine = (marker: number) => "load v=" + String(marker).padStart(6, "0");
-const otherLine = (marker: number) => "other v=" + String(marker).padStart(6, "0");
-function otherText(marker: number) {
-  return `console.log("${otherLine(marker)}");`;
-}
-const count = (lines: string[], start: string) => lines.filter(line => line.startsWith(start)).length;
-/** Long enough for a reload that was started to print. This file measures. It does not assert on time. */
-const settle = () => Bun.sleep(isDebug ? 2000 : 500);
-
-const bucket = (ms: number) =>
-  ms < 1
-    ? "under 1 ms"
-    : ms < 2
-      ? "1 ms"
-      : ms < 5
-        ? "2 to 4 ms"
-        : ms < 10
-          ? "5 to 9 ms"
-          : ms < 20
-            ? "10 to 19 ms"
-            : ms < 50
-              ? "20 to 49 ms"
-              : ms < 100
-                ? "50 to 99 ms"
-                : "100 ms or more";
-
-const tally = (into: Record<string, number>, key: string) => void (into[key] = (into[key] ?? 0) + 1);
-
-// A save in place: the file is truncated to 0, and then it is written. How far apart does the
-// watcher see the two, and how many loads does one save start?
+// A save in place: the file is truncated to 0, and then it is written. How many loads does one save
+// start, and does a load read the empty file?
 (isWindows ? test.skip : test)(
   "a save in place, for each style",
   async () => {
-    type Save = (hot: Hot, marker: number) => void | Promise<unknown>;
-    /** Another program saves the file. One process for each save. */
-    const program =
-      (...cmd: string[]): Save =>
-      (hot, marker) => {
-        const { exitCode, stderr } = Bun.spawnSync({ cmd: [...cmd, text(marker)], cwd: hot.cwd, stderr: "pipe" });
-        if (exitCode !== 0) throw new Error(`${cmd[0]} failed: ${stderr}`);
-      };
     const styles: Record<string, [saves: number, save: Save]> = {
       "openSync(w), writeSync": [
         60,
@@ -215,7 +154,6 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
         },
       ],
     };
-    const node = nodeExe();
     if (node) {
       styles["node: fs.writeFileSync"] = [
         30,
@@ -234,7 +172,6 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
         program(node, "-e", `require("fs").createWriteStream("dep.js").end(process.argv[1])`),
       ];
     }
-    const python = Bun.which("python3");
     if (python) {
       styles["python3: open(w), write"] = [
         30,
@@ -244,44 +181,47 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
     report["programs"] = { node, python };
     const result: Record<string, unknown> = {};
     for (const [style, [saves, save]] of Object.entries(styles)) {
-      result[style] = await withHot(async hot => {
-        await settle();
-        const recordsBefore = hot.trace().length;
-        const errorsBefore = hot.stderr().split("error:").length;
-        const records: Record<string, number> = {};
-        const gaps: Record<string, number> = {};
-        let done = 0;
-        for (let i = 1; i <= saves; i++) {
-          const from = hot.trace().length;
-          await save(hot, i);
-          if (!(await hot.loaded(i))) break;
-          // The run that loaded the marker has ended.
-          await hot.until(lines => lines.lastIndexOf("end") > lines.lastIndexOf(loadLine(i)), 20_000);
-          done++;
-          const mine = hot.trace().slice(from);
-          tally(records, `${mine.length}: ${mine.map(record => record.events.join("+")).join(", ")}`);
-          const written = mine.findIndex(record => record.events.includes("write"));
-          if (written > 0) tally(gaps, bucket(mine[written].timestamp - mine[0].timestamp));
-        }
-        await settle();
-        // Without the first load.
-        const loads = count(hot.lines(), "load ") - 1;
-        const ends = count(hot.lines(), "end") - 1;
-        const errors = hot.stderr().split("error:").length - errorsBefore;
-        return {
-          saves: `${done} of ${saves} loaded`,
-          loads,
-          "runs where the import printed nothing": ends - loads,
-          errors,
-          "trace records for one save": records,
-          "trace records in all": hot.trace().length - recordsBefore,
-          "time from the first record to the record with the write": gaps,
-        };
-      });
+      result[style] = await measure("change", saves, save);
       // Kept when a later style stops the file.
       console.error("DIAG", style, JSON.stringify(result[style]));
     }
     report["a save in place"] = result;
+  },
+  600_000,
+);
+
+// The shell truncates the file, and then it starts an interpreter that writes the file. The write
+// comes later than the wait of the watcher. With the rule of the base branch the trace has a record
+// for the truncation and a record for the write: the time between them is the time that the saver
+// takes.
+(isWindows ? test.skip : test)(
+  "a redirect from an interpreter",
+  async () => {
+    const interpreters: Record<string, [exe: string, script: string] | undefined> = {
+      "sh: node -e > file": node ? [node, `"$1" -e 'process.stdout.write(process.argv[1])' "$0" > dep.js`] : undefined,
+      "sh: python3 -c > file": python
+        ? [python, `"$1" -c 'import sys; sys.stdout.write(sys.argv[1])' "$0" > dep.js`]
+        : undefined,
+    };
+    const result: Record<string, unknown> = {};
+    for (const [style, entry] of Object.entries(interpreters)) {
+      if (!entry) continue;
+      const [exe, script] = entry;
+      // sh gets the text as $0 and the interpreter as $1.
+      const save: Save = (hot, marker) => {
+        const { exitCode, stderr } = Bun.spawnSync({
+          cmd: ["/bin/sh", "-c", script, text(marker), exe],
+          cwd: hot.cwd,
+          stderr: "pipe",
+        });
+        if (exitCode !== 0) throw new Error(`${style} failed: ${stderr}`);
+      };
+      for (const mode of modes) {
+        result[`${style}, ${mode}`] = await measure(mode, 40, save);
+        console.error("DIAG", style, mode, JSON.stringify(result[`${style}, ${mode}`]));
+      }
+    }
+    report["a redirect from an interpreter"] = result;
   },
   600_000,
 );
@@ -292,6 +232,7 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
   async () => {
     const styles: Record<string, (hot: Hot) => void | Promise<unknown>> = {
       "truncateSync(file, 0)": hot => truncateSync(hot.dep, 0),
+      "closeSync(openSync(file, 'w'))": hot => closeSync(openSync(hot.dep, "w")),
       "writeFileSync(file, '')": hot => writeFileSync(hot.dep, ""),
       "Bun.write(file, '')": hot => Bun.write(hot.dep, ""),
       "sh: : > file": hot => {
@@ -345,7 +286,7 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
   600_000,
 );
 
-// A change of the metadata of a file that is empty starts nothing.
+// A change of the metadata of a file that is empty starts nothing, and the watcher does not wait.
 (isWindows ? test.skip : test)(
   "metadata of an empty file",
   async () => {
@@ -355,15 +296,18 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
       await settle();
       const ends = count(hot.lines(), "end");
       const from = hot.trace().length;
+      const counters = hot.counters();
       chmodSync(hot.dep, 0o600);
       utimesSync(hot.dep, new Date(2020, 0, 1), new Date(2020, 0, 1));
       await settle();
       const runs = count(hot.lines(), "end") - ends;
+      const holds = hot.counters().hold - counters.hold;
       const start = performance.now();
       writeFileSync(hot.dep, text(1));
       const loaded = await hot.loaded(1);
       return {
         runs,
+        holds,
         "trace records": hot
           .trace()
           .slice(from)
@@ -381,30 +325,36 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
 (isWindows ? test.skip : test)(
   "a save of another file right after a save that empties a file",
   async () => {
-    report["ms from a save of another file to its load"] = await withHot(async hot => {
-      await settle();
-      const other = join(hot.cwd, "other.js");
-      const alone: number[] = [];
-      const afterEmptied: number[] = [];
-      let marker = 0;
-      const save = async (into: number[], before?: () => void) => {
-        const wanted = otherLine(++marker);
-        const start = performance.now();
-        before?.();
-        writeFileSync(other, otherText(marker));
-        const seen = await hot.until(lines => lines.includes(wanted), 5000);
-        into.push(seen === undefined ? -1 : Math.round((seen - start) * 10) / 10);
-        await settle();
-      };
-      for (let i = 1; i <= 5; i++) {
-        await save(alone);
-        await save(afterEmptied, () => truncateSync(hot.dep, 0));
-        writeFileSync(hot.dep, text(i));
-        if (!(await hot.loaded(i))) return { alone, afterEmptied, stopped: `no load of dep.js at ${i}` };
-        await settle();
-      }
-      return { alone, "right after a save that empties a file": afterEmptied };
-    });
+    const result: Record<string, unknown> = {};
+    for (const mode of modes) {
+      result[mode] = await withHot(
+        async hot => {
+          await settle();
+          const alone: number[] = [];
+          const afterEmptied: number[] = [];
+          let marker = 0;
+          const save = async (into: number[], before?: () => void) => {
+            const wanted = otherLine(++marker);
+            const start = performance.now();
+            before?.();
+            writeFileSync(hot.other, otherText(marker));
+            const seen = await hot.until(lines => lines.includes(wanted), 5000);
+            into.push(seen === undefined ? -1 : Math.round((seen - start) * 10) / 10);
+            await settle();
+          };
+          for (let i = 1; i <= 5; i++) {
+            await save(alone);
+            await save(afterEmptied, () => truncateSync(hot.dep, 0));
+            writeFileSync(hot.dep, text(i));
+            if (!(await hot.loaded(i))) return { alone, afterEmptied, stopped: `no load of dep.js at ${i}` };
+            await settle();
+          }
+          return { alone, "right after a save that empties a file": afterEmptied };
+        },
+        { mode },
+      );
+    }
+    report["ms from a save of another file to its load"] = result;
   },
   120_000,
 );

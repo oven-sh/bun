@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { afterAll, expect } from "bun:test";
 import { tempDir } from "harness";
-import { existsSync, readFileSync, renameSync, unlinkSync, watch, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
@@ -66,30 +66,15 @@ for (const atomicWatchFile of [false, true]) {
         }
         let blockedRequest: Promise<string> | undefined;
         async function waitForControl(condition: () => boolean) {
-          const ready = Promise.withResolvers<void>();
-          const check = () => {
-            try {
-              if (condition()) {
-                ready.resolve();
-              }
-            } catch (error) {
-              ready.reject(error);
+          const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+          while (!condition()) {
+            if (dev.devProcess.exitCode !== null) {
+              throw new Error("Dev server exited while awaiting watcher event");
             }
-          };
-          const observer = watch(pendingBatchControls, check);
-          observer.on("error", ready.reject);
-          const timeout = setTimeout(
-            () => ready.reject(new Error("Watcher control event deadline exceeded")),
-            2000 * WAIT_MULTIPLIER,
-          );
-          dev.devProcess.exited.then(() => ready.reject(new Error("Dev server exited while awaiting watcher event")));
-          blockedRequest?.catch(ready.reject);
-          try {
-            check();
-            await ready.promise;
-          } finally {
-            observer.close();
-            clearTimeout(timeout);
+            if (Date.now() >= deadline) {
+              throw new Error("Watcher control event deadline exceeded");
+            }
+            await new Promise(setImmediate);
           }
         }
         function waitForWrite(filename: string, offset = 0) {
@@ -113,6 +98,8 @@ for (const atomicWatchFile of [false, true]) {
         await dev.fetch("/").expect.toBe("A0|B0|C0");
         try {
           blockedRequest = dev.fetch("/?block=1").text();
+          // The finally block awaits request failures after releasing the server.
+          void blockedRequest.catch(() => {});
           await waitForControl(() => existsSync(trace + ".blocked"));
           for (const name of ["a", "b", "c"]) {
             const filename = dev.join(name === "b" && atomicWatchFile ? "b.txt" : name + ".ts");

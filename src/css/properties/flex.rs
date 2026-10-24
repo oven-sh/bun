@@ -490,6 +490,20 @@ impl FlexLinePack {
 
 pub(crate) type BoxOrdinalGroup = CSSInteger;
 
+/// Whether what the handler holds is the fallback for `later`: a target lacks the basis `later`,
+/// and every target supports the basis in `held`. A held basis that a target lacks is no
+/// fallback, and `flush` would fold it with grow and shrink into a `flex` that the target drops.
+fn is_fallback(
+    held: &Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    later: &LengthPercentageOrAuto,
+    context: &css::PropertyHandlerContext,
+) -> bool {
+    !context.targets.supports(later)
+        && held
+            .as_ref()
+            .is_none_or(|held| context.targets.supports(&held.0))
+}
+
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 #[derive(Default)]
 pub struct FlexHandler {
@@ -608,15 +622,30 @@ impl FlexHandler {
                 if context.targets.browsers.is_some() {
                     self.preferred_size = None;
                 }
+                if self.basis.is_some() && is_fallback(&self.basis, &val.0, context) {
+                    self.flush(dest, context);
+                }
                 property_helper!(basis, &val.0, &val.1);
             }
-            Property::FlexPreferredSize(val) => property_helper!(preferred_size, &val.0, &val.1),
+            Property::FlexPreferredSize(val) => {
+                if self.preferred_size.is_some()
+                    && is_fallback(&self.preferred_size, &val.0, context)
+                {
+                    self.flush(dest, context);
+                }
+                property_helper!(preferred_size, &val.0, &val.1);
+            }
             Property::Flex(val) => {
                 if context.targets.browsers.is_some() {
                     self.box_flex = None;
                     self.flex_positive = None;
                     self.flex_negative = None;
                     self.preferred_size = None;
+                }
+                if (self.grow.is_some() || self.shrink.is_some() || self.basis.is_some())
+                    && is_fallback(&self.basis, &val.0.basis, context)
+                {
+                    self.flush(dest, context);
                 }
                 maybe_flush!(grow, &val.0.grow, &val.1);
                 maybe_flush!(shrink, &val.0.shrink, &val.1);

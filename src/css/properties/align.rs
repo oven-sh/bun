@@ -596,7 +596,7 @@ impl LegacyJustify {
 
 /// A [gap](https://www.w3.org/TR/css-align-3/#column-row-gap) value, as used in the
 /// `column-gap` and `row-gap` properties.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss, css::generics::IsCompatible)]
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
@@ -1282,14 +1282,25 @@ impl AlignHandler {
                 self.justify_items = Some(val.justify.clone());
             }
             Property::RowGap(val) => {
+                if self.row_gap.is_some() && self.holds_gap_fallback(&[val], context) {
+                    self.flush(dest, context);
+                }
                 self.row_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::ColumnGap(val) => {
+                if self.column_gap.is_some() && self.holds_gap_fallback(&[val], context) {
+                    self.flush(dest, context);
+                }
                 self.column_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::Gap(val) => {
+                if (self.row_gap.is_some() || self.column_gap.is_some())
+                    && self.holds_gap_fallback(&[&val.row, &val.column], context)
+                {
+                    self.flush(dest, context);
+                }
                 self.row_gap = Some(val.row.clone());
                 self.column_gap = Some(val.column.clone());
                 self.has_any = true;
@@ -1309,6 +1320,19 @@ impl AlignHandler {
         }
 
         true
+    }
+
+    /// Whether the held gaps are the fallback for `later`: a target lacks a gap of `later`, and
+    /// every target supports the held ones. A held gap that a target lacks is no fallback, and
+    /// `flush` would fold it with the other gap into a declaration that the target drops.
+    fn holds_gap_fallback(
+        &self,
+        later: &[&GapValue],
+        context: &PropertyHandlerContext<'_>,
+    ) -> bool {
+        !later.iter().all(|gap| context.targets.supports(*gap))
+            && context.targets.supports(&self.row_gap)
+            && context.targets.supports(&self.column_gap)
     }
 
     pub(crate) fn finalize(

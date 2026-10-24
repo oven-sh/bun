@@ -1566,14 +1566,14 @@ where
                 "Cannot set a TLS context on a non-TLS server",
             )));
         }
-        let Some(config) = SSLConfig::from_js(global.bun_vm_ref(), global, options)? else {
+        let Some(config) = SSLConfig::from_js(global.bun_vm_ref(), global, options, true)? else {
             return Err(global
                 .throw_invalid_arguments(format_args!("setSecureContext requires TLS options",)));
         };
         let additional_ca_config = if additional_ca.is_empty_or_undefined_or_null() {
             None
         } else {
-            SSLConfig::from_js(global.bun_vm_ref(), global, additional_ca)?
+            SSLConfig::from_js(global.bun_vm_ref(), global, additional_ca, true)?
         };
         let native_options = config.as_usockets();
         let additional_ca_options = additional_ca_config

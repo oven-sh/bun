@@ -770,6 +770,12 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+export const BunString_crossThreadCopyBytes: (value: string, unrelatedExternal?: boolean) => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_crossThreadCopyBytes",
+  2,
+);
+
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_threadIsolatedCopyRefCountDelta",

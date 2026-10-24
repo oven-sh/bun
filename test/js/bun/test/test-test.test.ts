@@ -555,7 +555,7 @@ it("test timeouts when expected", () => {
 });
 
 describe("a test that completes after its timeout has passed is reported as timed out", () => {
-  // Each body blocks synchronously for longer than its timeout, so the timeout timer cannot fire until the
+  // Each late body blocks synchronously for longer than its timeout, so the timeout timer cannot fire until the
   // callback has already completed, and the verdict has to come from the completion itself.
   async function runFixture(name: string, code: string) {
     using dir = tempDir("late-timeout-" + name, {
@@ -569,12 +569,17 @@ describe("a test that completes after its timeout has passed is reported as time
       stderr: "pipe",
       env: bunEnv,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode };
+    const [stdout, raw, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Without the source excerpt and the stack that bun prints with an error.
+    const stderr = raw
+      .split("\n")
+      .filter(line => !/^\s*\d+ \| |^\s+\^$|^\s+at /.test(line))
+      .join("\n");
+    return { raw, result: { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode } };
   }
 
   test.concurrent("sequential test, Bun.sleepSync after an await", async () => {
-    const result = await runFixture(
+    const { result } = await runFixture(
       "sequential",
       /*js*/ `
         import { test } from "bun:test";
@@ -582,6 +587,10 @@ describe("a test that completes after its timeout has passed is reported as time
           await Bun.sleep(1);
           Bun.sleepSync(300);
         }, 100);
+        test("has no timeout", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(300);
+        }, 0);
         test("next test still runs", async () => {
           await Bun.sleep(1);
         });
@@ -594,11 +603,12 @@ describe("a test that completes after its timeout has passed is reported as time
       "blocks.test.js:
       (fail) sleeps synchronously after an await
         ^ this test timed out after 100ms.
+      (pass) has no timeout
       (pass) next test still runs
 
-       1 pass
+       2 pass
        1 fail
-      Ran 2 tests across 1 file."
+      Ran 3 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }
@@ -606,7 +616,7 @@ describe("a test that completes after its timeout has passed is reported as time
   });
 
   test.concurrent("concurrent test with a sibling still pending, busy loop after an await", async () => {
-    const result = await runFixture(
+    const { result } = await runFixture(
       "concurrent-busy-loop",
       /*js*/ `
         import { test } from "bun:test";
@@ -642,7 +652,7 @@ describe("a test that completes after its timeout has passed is reported as time
     // With a sibling running, spawnSync's wait loop cannot tell whose child it is waiting on and uses
     // the sibling's later deadline, so this test's own deadline is only checked once the callback
     // completes.
-    const result = await runFixture(
+    const { result } = await runFixture(
       "concurrent-spawnSync",
       /*js*/ `
         import { test } from "bun:test";
@@ -673,9 +683,44 @@ describe("a test that completes after its timeout has passed is reported as time
     `);
   });
 
+  test.concurrent("a concurrent test that waits while a sibling blocks past its timeout", async () => {
+    // The timeout is wall clock from the test's own start, so the sibling's block counts against it.
+    const { result } = await runFixture(
+      "concurrent-waiting-sibling",
+      /*js*/ `
+        import { test } from "bun:test";
+        test.concurrent("blocks the thread", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(300);
+        }, 100);
+        test.concurrent("waits on a timer meanwhile", async () => {
+          await Bun.sleep(20);
+        }, 100);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) blocks the thread
+        ^ this test timed out after 100ms.
+      (fail) waits on a timer meanwhile
+        ^ this test timed out after 100ms.
+
+       0 pass
+       2 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
   test.concurrent("done() called after the timeout has passed", async () => {
-    // done() was called, so the hint about a missing done() call does not apply to either test.
-    const result = await runFixture(
+    // done() was called, so the hint about a missing done() call does not apply. An error passed
+    // to done() stays the reason of the failure.
+    const { result } = await runFixture(
       "done-callback",
       /*js*/ `
         import { test } from "bun:test";
@@ -689,6 +734,12 @@ describe("a test that completes after its timeout has passed is reported as time
           Bun.sleepSync(300);
           done();
         }, 100);
+        test("done(err) from a timer callback", done => {
+          setTimeout(() => {
+            Bun.sleepSync(300);
+            done(new Error("passed to done"));
+          }, 1);
+        }, 100);
       `,
     );
     expect(result).toMatchInlineSnapshot(`
@@ -700,10 +751,12 @@ describe("a test that completes after its timeout has passed is reported as time
         ^ this test timed out after 100ms.
       (fail) done() synchronously
         ^ this test timed out after 100ms.
+      error: passed to done
+      (fail) done(err) from a timer callback
 
        0 pass
-       2 fail
-      Ran 2 tests across 1 file."
+       3 fail
+      Ran 3 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }
@@ -713,8 +766,8 @@ describe("a test that completes after its timeout has passed is reported as time
   test.concurrent("a test that finished in time is not blamed for a sibling blocking afterwards", async () => {
     // The first test's completion is queued as soon as it returns, but the runner only processes the queue
     // once the sibling, resumed by the microtask the first test queues on its way out, has finished
-    // blocking. The verdict has to be based on when the completion arrived, not on when it was processed.
-    const result = await runFixture(
+    // blocking. The verdict and the printed time have to come from when the completion arrived.
+    const { raw, result } = await runFixture(
       "sibling-blocks-after-completion",
       /*js*/ `
         import { test } from "bun:test";
@@ -744,31 +797,50 @@ describe("a test that completes after its timeout has passed is reported as time
         "stdout": "bun test <version> (<revision>)",
       }
     `);
+    const printed = raw.match(/^\(pass\) finishes within its timeout \[([\d.]+)ms\]$/m);
+    expect(Number(printed?.[1])).toBeLessThan(1500);
   });
 
   test.concurrent("a hook that completes after its timeout", async () => {
-    // The body of the first test must not run: its beforeEach failed.
-    const result = await runFixture(
+    // The bodies below a failed beforeAll or beforeEach must not run.
+    const { result } = await runFixture(
       "hooks",
       /*js*/ `
-        import { afterEach, beforeEach, describe, test } from "bun:test";
-        describe("beforeEach returns a promise", () => {
-          beforeEach(async () => {
-            await Bun.sleep(1);
-            Bun.sleepSync(300);
-          }, 100);
-          test("body is skipped", () => {
-            console.log("body ran");
-          });
+        import { afterAll, afterEach, beforeAll, beforeEach, describe, onTestFinished, test } from "bun:test";
+        const late = async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(300);
+        };
+        describe("beforeAll", () => {
+          beforeAll(late, 100);
+          test("body is skipped", () => console.log("beforeAll: body ran"));
         });
-        describe("afterEach takes done", () => {
+        describe("beforeEach", () => {
+          beforeEach(late, 100);
+          test("body is skipped", () => console.log("beforeEach: body ran"));
+        });
+        describe("afterEach", () => {
+          afterEach(late, 100);
+          test("body runs", () => console.log("afterEach: body ran"));
+        });
+        describe("afterEach that takes done", () => {
           afterEach(done => {
             setTimeout(() => {
               Bun.sleepSync(300);
               done();
             }, 1);
           }, 100);
-          test("body runs", () => {});
+          test("body runs", () => console.log("afterEach with done: body ran"));
+        });
+        describe("afterAll", () => {
+          afterAll(late, 100);
+          test("body runs", () => console.log("afterAll: body ran"));
+        });
+        describe("onTestFinished", () => {
+          test("body runs", () => {
+            onTestFinished(late, 100);
+            console.log("onTestFinished: body ran");
+          });
         });
       `,
     );
@@ -777,30 +849,70 @@ describe("a test that completes after its timeout has passed is reported as time
         "exitCode": 1,
         "stderr": 
       "blocks.test.js:
-      (fail) beforeEach returns a promise > body is skipped
+      (fail) beforeAll > (unnamed)
         ^ a beforeEach/afterEach hook timed out for this test.
-      (fail) afterEach takes done > body runs
+      (fail) beforeEach > body is skipped
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) afterEach > body runs
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) afterEach that takes done > body runs
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (pass) afterAll > body runs
+      (fail) afterAll > (unnamed)
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) onTestFinished > body runs
         ^ a beforeEach/afterEach hook timed out for this test.
 
-       0 pass
-       2 fail
-      Ran 2 tests across 1 file."
+       1 pass
+       6 fail
+      Ran 7 tests across 1 file."
       ,
-        "stdout": "bun test <version> (<revision>)",
+        "stdout": 
+      "bun test <version> (<revision>)
+      afterEach: body ran
+      afterEach with done: body ran
+      afterAll: body ran
+      onTestFinished: body ran"
+      ,
       }
     `);
   });
 
-  test.concurrent("test.failing that throws after its timeout", async () => {
-    // As when the callback returns synchronously: the timeout wins over the expected failure.
-    const result = await runFixture(
-      "failing",
+  test.concurrent("a late completion that already has a verdict keeps it", async () => {
+    // Only the first test changes: its late first attempt counts as a failed attempt. The others already
+    // failed or already met their expected failure when their completion arrived, and that stands.
+    const { result } = await runFixture(
+      "verdict-already-set",
       /*js*/ `
         import { test } from "bun:test";
-        test.failing("throws after its timeout has passed", async () => {
+        let attempts = 0;
+        test("is retried after a late first attempt", async () => {
+          await Bun.sleep(1);
+          if (++attempts === 1) Bun.sleepSync(700);
+        }, { retry: 1, timeout: 500 });
+        test("rejects after its timeout", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(300);
+          throw new Error("own error");
+        }, 100);
+        test("rejects in time, then done() arrives after the timeout", async done => {
+          await Bun.sleep(1);
+          Promise.resolve().then(() => {}).then(() => {}).then(() => {
+            Bun.sleepSync(300);
+            done();
+          });
+          throw new Error("rejected in time");
+        }, 100);
+        test.failing("test.failing rejects after its timeout", async () => {
           await Bun.sleep(1);
           Bun.sleepSync(300);
           throw new Error("the expected failure");
+        }, 100);
+        test.failing("test.failing throws from a timer after its timeout", done => {
+          setTimeout(() => {
+            Bun.sleepSync(300);
+            throw new Error("the expected failure");
+          }, 1);
         }, 100);
       `,
     );
@@ -809,12 +921,17 @@ describe("a test that completes after its timeout has passed is reported as time
         "exitCode": 1,
         "stderr": 
       "blocks.test.js:
-      (fail) throws after its timeout has passed
-        ^ this test timed out after 100ms.
+      (pass) is retried after a late first attempt (attempt 2)
+      error: own error
+      (fail) rejects after its timeout
+      error: rejected in time
+      (fail) rejects in time, then done() arrives after the timeout
+      (pass) test.failing rejects after its timeout
+      (pass) test.failing throws from a timer after its timeout
 
-       0 pass
-       1 fail
-      Ran 1 test across 1 file."
+       3 pass
+       2 fail
+      Ran 5 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }

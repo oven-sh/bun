@@ -314,18 +314,25 @@ describe("WINDOW_UPDATE (checklist §6)", () => {
       await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0, 20_000);
       c.sendSettingsAck();
       c.send(Buffer.concat([1, 3].map(id => encodeFrame(FrameType.HEADERS, 0x4, id, requestHeaderBlock("POST")))));
-      // Nothing reads stream 1, so its buffer fills, which pauses it. Two steps, to stay within the connection's window.
-      const step = Buffer.concat(
-        Array.from({ length: 6 }, () => encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(10_000))),
-      );
-      c.send(step);
-      await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0, 20_000);
-      c.send(Buffer.concat([step, encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+      // What is left of the connection's window. How the server's reads split the frames decides when it gives credit back.
+      let sent = 0;
+      const credit = () =>
+        c.frames
+          .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+          .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 65_535 - sent);
+      const sendData = async (id: number, size: number) => {
+        await c.waitFor(() => credit() >= size, 20_000);
+        sent += size;
+        c.send(encodeFrame(FrameType.DATA, 0, id, Buffer.alloc(size)));
+      };
+      // Nothing reads stream 1, so its buffer fills, which pauses it.
+      for (let i = 0; i < 12; i++) await sendData(1, 10_000);
+      c.send(encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)));
       await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0, 20_000);
       const updates = () => c.frames.filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
       expect(updates()).toEqual([]);
       // Its listener empties the buffer of stream 1. That calls _read(), which reopens the window, inside the read that delivers this frame.
-      c.send(encodeFrame(FrameType.DATA, 0, 3, Buffer.alloc(5)));
+      await sendData(3, 5);
       await c.waitFor(() => updates().length > 0, 20_000);
       expect(updates().map(f => f.payload.readUInt32BE(0))).toEqual([120_000]);
     } finally {

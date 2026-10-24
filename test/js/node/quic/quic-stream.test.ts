@@ -1329,7 +1329,11 @@ describe("stream flow control", () => {
     });
   });
 
-  test("trailers wait for the stream's flow-control credit", async () => {
+  describe.concurrent("trailers that wait for the stream's flow-control credit", () => {
+    const bodySize = 5000;
+    // One connection per window, from too small for the response's body to large enough for some of its trailers.
+    const windows = Array.from({ length: 12 }, (_, i) => bodySize + 6 + i);
+
     async function* lines(stream: ReadableStream<Uint8Array>) {
       const decoder = new TextDecoder();
       let text = "";
@@ -1347,28 +1351,47 @@ describe("stream flow control", () => {
         stdout: "pipe",
         stderr: "inherit",
       });
-    const bodySize = 5000;
-    // One connection per window, from too small for the response's body to large enough for some of its trailers.
-    const windows = Array.from({ length: 12 }, (_, i) => bodySize + 6 + i);
 
-    await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"), bodySize);
-    const serverLines = lines(server.stdout);
-    await using client = spawn("client", (await serverLines.next()).value!, ...windows);
-    const clientLines = lines(client.stdout);
-    const ranInto: (string | void)[] = [];
-    const rows: { error?: string }[] = [];
-    // The client stops at the first error.
-    while (rows.length < windows.length && !rows.at(-1)?.error) {
+    // The client prints one row per window and stops at its first error.
+    async function expectEveryRow(action: "finish" | "stop" | "reset", expected: object) {
+      await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"), bodySize);
+      const serverLines = lines(server.stdout);
+      await using client = spawn("client", action, (await serverLines.next()).value!, ...windows);
       // The client returns no credit until the server has either run out of it or sent its trailers.
-      ranInto.push((await serverLines.next()).value);
-      client.stdin.write("x");
-      client.stdin.flush();
-      rows.push(JSON.parse((await clientLines.next()).value!));
+      const ranInto: string[] = [];
+      const relayed = (async () => {
+        for await (const line of serverLines) {
+          ranInto.push(line);
+          client.stdin.write("x");
+          client.stdin.flush();
+        }
+        client.stdin.end();
+      })();
+      const rows: object[] = [];
+      for await (const line of lines(client.stdout)) rows.push(JSON.parse(line));
+      server.kill();
+      await relayed;
+      expect(rows).toEqual(windows.map(() => expected));
+      // The windows have to include the one that the body uses up exactly, and the two after it.
+      expect(ranInto.indexOf("trailers")).toBeWithin(1, windows.length - 2);
     }
-    expect(rows).toEqual(windows.map(() => ({ bytes: bodySize, trailers: "abc123", again: "204" })));
-    // The windows have to include the one that the body uses up exactly, and the two after it.
-    expect(ranInto.indexOf("trailers")).toBeWithin(1, windows.length - 2);
-  }, 30_000);
+
+    test("are sent when the credit arrives", async () => {
+      await expectEveryRow("finish", { bytes: bodySize, trailers: "abc123", again: "204" });
+    }, 30_000);
+
+    // The request is still open, so only the server's close ends the connection before it idles out.
+    test.each([
+      ["the peer's STOP_SENDING", "stop"],
+      ["resetStream()", "reset"],
+    ] as const)(
+      "don't delay session.close() after %s",
+      async (_, action) => {
+        await expectEveryRow(action, { closed: "QUIC application error 5" });
+      },
+      60_000,
+    );
+  });
 });
 
 describe("a client's limit for the streams its server opens", () => {

@@ -1,4 +1,4 @@
-// The server and the client of "trailers wait for the stream's flow-control credit". They're two processes
+// The server and the client of "trailers that wait for the stream's flow-control credit". They're two processes
 // so that the client can block its thread, which stops it from returning credit while the server writes.
 import { createPrivateKey } from "node:crypto";
 import { readFileSync, readSync, writeSync } from "node:fs";
@@ -21,63 +21,88 @@ if (process.argv[2] === "server") {
       async onheaders(this: any, headers: Record<string, string>) {
         if (headers[":path"] === "/again") return void this.sendHeaders({ ":status": "204" }, { terminal: true });
         this.sendHeaders({ ":status": "200" });
-        // The client ends its request right before it blocks.
-        for await (const _ of this);
+        const close = () => void this.session.close({ code: 5n, type: "application" });
         // Tells the test what the response ran into first, once the packets written so far have been sent.
         let report: typeof print | undefined = print;
         const reportOnce = (line: string) => void setImmediate(() => void (report?.(line), (report = undefined)));
-        this.onblocked = () => reportOnce("blocked");
-        this.onwanttrailers = () => {
-          this.sendTrailers({ "x-checksum": "abc123" });
-          reportOnce("trailers");
+        let respond: (() => void) | undefined = () => {
+          respond = undefined;
+          this.onblocked = () => reportOnce("blocked");
+          this.onstopsending = close;
+          this.onwanttrailers = () => {
+            this.sendTrailers({ "x-checksum": "abc123" });
+            if (headers[":path"] === "/reset") {
+              this.resetStream(7n);
+              close();
+            }
+            reportOnce("trailers");
+          };
+          this.writer.writeSync(new Uint8Array(Number(bodySize)));
+          this.writer.endSync();
         };
-        this.writer.writeSync(new Uint8Array(Number(bodySize)));
-        this.writer.endSync();
+        // The client writes to its request, or ends it, right before it blocks.
+        try {
+          for await (const _ of this) respond?.();
+        } catch {}
+        respond?.();
       },
     },
   );
   print(String(endpoint.address!.port));
 } else {
-  const [port, ...windows] = process.argv.slice(3).map(Number);
-  const get = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
-  for (const initialMaxStreamDataBidiLocal of windows) {
-    const row: { bytes: number; trailers?: string; again?: string; error?: string } = { bytes: 0 };
+  const [action, port, ...windows] = process.argv.slice(3);
+  const request = { ":method": "POST", ":path": "/" + action, ":scheme": "https", ":authority": "localhost" };
+  for (const window of windows) {
+    const row: { bytes?: number; trailers?: string; again?: string; closed?: string; error?: string } = {};
     // Transport parameters belong to the endpoint, so each window needs its own.
     const endpoint = new QuicEndpoint();
-    const session = await connect({ address: "127.0.0.1", port } as any, {
-      endpoint,
-      servername: "localhost",
-      verifyPeer: "manual",
-      transportParams: { ...transportParams, initialMaxStreamDataBidiLocal },
-      onerror() {},
-    } as SessionOptions);
-    session.closed.catch(() => {});
     try {
+      const session = await connect({ address: "127.0.0.1", port: Number(port) } as any, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { ...transportParams, initialMaxStreamDataBidiLocal: Number(window) },
+        onerror() {},
+      } as SessionOptions);
+      const closed = session.closed.then(
+        () => Promise.reject("the connection idled out"),
+        error => String(error.message),
+      );
+      closed.catch(() => {});
       await session.opened;
       const gotHeaders = Promise.withResolvers<void>();
+      closed.then(gotHeaders.reject, gotHeaders.reject);
       const stream: any = await session.createBidirectionalStream({
         onheaders: gotHeaders.resolve,
         ontrailers: (trailers: Record<string, string>) => void (row.trailers = trailers["x-checksum"]),
       } as any);
-      stream.sendHeaders({ ...get, ":method": "POST" });
+      stream.sendHeaders(request);
       await gotHeaders.promise;
-      // Outside of a callback, the end of the request is sent before endSync() returns.
+      // Outside of a callback, a write or the end of the request is sent before the call returns.
       await new Promise(resolve => setImmediate(resolve));
-      stream.writer.endSync();
+      if (action === "finish") stream.writer.endSync();
+      else stream.writer.writeSync(new Uint8Array(1));
       // Nothing that arrives is read until the test writes a byte.
-      readSync(0, new Uint8Array(1));
-      for await (const batch of stream) for (const chunk of batch) row.bytes += chunk.byteLength;
-      await stream.closed;
-      const again: any = await session.createBidirectionalStream({
-        headers: { ...get, ":path": "/again" },
-        onheaders: (headers: Record<string, string>) => void (row.again = headers[":status"]),
-      } as any);
-      await again.closed;
+      if (readSync(0, new Uint8Array(1)) === 0) throw new Error("the server exited");
+      if (action === "finish") {
+        row.bytes = 0;
+        for await (const batch of stream) for (const chunk of batch) row.bytes += chunk.byteLength;
+        await stream.closed;
+        const again: any = await session.createBidirectionalStream({
+          headers: { ...request, ":method": "GET", ":path": "/again" },
+          onheaders: (headers: Record<string, string>) => void (row.again = headers[":status"]),
+        } as any);
+        await again.closed;
+        session.close();
+      } else {
+        stream.closed.catch(() => {});
+        if (action === "stop") stream.stopSending(9n);
+        row.closed = await closed;
+      }
     } catch (error: any) {
       row.error = String(error?.code ?? error);
     }
     print(JSON.stringify(row));
-    session.close();
     endpoint.close();
     if (row.error) break;
   }

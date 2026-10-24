@@ -364,7 +364,6 @@ impl QuicStream {
             } else {
                 // sendHeaders() returned true when it queued this block, so `closed` reports the failure.
                 self.fail_message(s);
-                self.pending_headers.with_mut(Vec::clear);
             }
         }
         want_write
@@ -538,10 +537,7 @@ impl QuicStream {
     /// early-data phase.
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
-        self.outbound.with_mut(|o| {
-            o.free();
-            o.end = PendingEnd::None;
-        });
+        self.discard_outbound();
         self.with_state(|st| st.write_ended = 1);
         if let Some(s) = self.ls() {
             // Node destroys it silently.
@@ -559,10 +555,7 @@ impl QuicStream {
                 s.reset_code = code;
             }
         });
-        self.outbound.with_mut(|o| {
-            o.free();
-            o.end = PendingEnd::None;
-        });
+        self.discard_outbound();
         // lsquic already queued its RESET_STREAM. Ending our write side lets the stream finish once that's acknowledged.
         if let Some(s) = self.ls() {
             if self.with_state(|st| st.read_ended != 0) {
@@ -641,16 +634,25 @@ impl QuicStream {
         }
     }
 
+    /// Drops everything that's still waiting to be sent. Every path that ends the write side calls this.
+    fn discard_outbound(&self) {
+        self.outbound.with_mut(|o| {
+            o.free();
+            o.end = PendingEnd::None;
+        });
+        // As in Node, a stream that isn't open yet still sends its queued header blocks when it opens.
+        if !self.is_pending() {
+            self.pending_headers.set(Vec::new());
+        }
+    }
+
     /// Resets an HTTP/3 stream whose message can't be sent.
     fn fail_message(&self, s: lsquic::Stream) {
         s.reset(H3_INTERNAL_ERROR);
         s.stop_sending(H3_INTERNAL_ERROR);
         self.mark_reset(H3_INTERNAL_ERROR);
         self.with_state(|st| st.write_ended = 1);
-        self.outbound.with_mut(|o| {
-            o.free();
-            o.end = PendingEnd::None;
-        });
+        self.discard_outbound();
     }
 
     fn drain_outbound(&self) {
@@ -659,9 +661,6 @@ impl QuicStream {
             // Neither a body nor a FIN can follow a header block that lsquic refused.
             self.fail_message(s);
             return;
-        }
-        if self.with_state(|st| st.write_ended != 0) {
-            self.pending_headers.with_mut(Vec::clear);
         }
         self.send_pending_headers(s);
         if !self.pending_headers.get().is_empty() {
@@ -723,10 +722,7 @@ impl QuicStream {
     fn send_fin(&self, s: lsquic::Stream) {
         s.shutdown(1);
         self.wrote_to_lsquic.set(true);
-        self.outbound.with_mut(|o| {
-            o.free();
-            o.end = PendingEnd::None;
-        });
+        self.discard_outbound();
         self.with_state(|s| s.fin_sent = 1);
         if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
             s.shutdown(0);
@@ -1047,10 +1043,7 @@ impl QuicStream {
             s.reset = 1;
             s.reset_code = code;
         });
-        self.outbound.with_mut(|o| {
-            o.free();
-            o.end = PendingEnd::None;
-        });
+        self.discard_outbound();
         if let Some(s) = self.ls() {
             s.reset(code);
         }
@@ -1108,10 +1101,7 @@ impl QuicStream {
                 s.reset = 1;
                 s.reset_code = code;
             });
-            self.outbound.with_mut(|o| {
-                o.free();
-                o.end = PendingEnd::None;
-            });
+            self.discard_outbound();
         }
         if let Some(s) = self.ls() {
             if self.wrote_to_lsquic.get() {
@@ -1178,16 +1168,21 @@ impl QuicStream {
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         // Node sends no HEADERS frame for hints or trailers without fields, and an ls-qpack peer closes the connection on one.
         let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
-        let ready = self.ls().filter(|&s| {
+        let open = self.ls();
+        let ready = open.filter(|&s| {
             self.pending_headers.get().is_empty() && !self.must_wait_for_credit(s, frameless)
         });
         let Some(s) = ready else {
+            // Nothing would send or drop a block that's queued after the write side ended.
+            if open.is_some() && self.with_state(|s| s.write_ended != 0) {
+                return Ok(JSValue::js_boolean(false));
+            }
             self.pending_headers
                 .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
             self.with_state(|s| s.has_outbound = 1);
-            if let Some(s) = self.ls() {
+            if open.is_some() {
                 self.note_write_blocked();
-                s.want_write(true);
+                self.kick_write();
             }
             return Ok(JSValue::js_boolean(true));
         };

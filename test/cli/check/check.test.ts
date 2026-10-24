@@ -24977,7 +24977,7 @@ describe.concurrent("--check", () => {
       Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "typescript-go", "bundle.zst"))),
     );
     const entries: [path: string, start: number, length: number][] = [];
-    for (let at = 0; at < bundle.length; ) {
+    for (let at = 0; at < bundle.length;) {
       const end = bundle.indexOf(10, at);
       const [, path, length] = /^=== (.*) (\d+)$/.exec(bundle.toString("latin1", at, end))!;
       entries.push([path, end + 1, +length]);

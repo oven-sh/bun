@@ -139,6 +139,45 @@ describe.skipIf(isWindows)("a unix socket peer that closes before the connecting
     return { peer, events, received: Buffer.concat(chunks) };
   }
 
+  async function bunTlsConnect(answer: Uint8Array, transport: "unix" | "tcp") {
+    const { unix, port } = await peer(answer, transport);
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const connecting = Bun.connect({
+      ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port }),
+      tls: true,
+      socket: {
+        open() {
+          events.push("open");
+        },
+        handshake(_socket, success, error) {
+          events.push(`handshake ${success} ${(error as NodeJS.ErrnoException | null)?.code}`);
+        },
+        data() {
+          events.push("data");
+        },
+        end() {
+          events.push("end");
+        },
+        close() {
+          events.push("close");
+          closed.resolve();
+        },
+        connectError(_socket, error) {
+          events.push(`connectError ${(error as NodeJS.ErrnoException).code}`);
+          closed.resolve();
+        },
+      },
+    });
+    const done = blockUntilPeerIsDone();
+    const connect = await connecting.then(
+      () => "fulfilled",
+      () => "rejected",
+    );
+    await closed.promise;
+    return { peer: done, connect, events };
+  }
+
   // The peer's one write has to fit in the socket buffer, because the client does not read yet.
   // The default buffer of a unix socket is 8 KiB on macOS, so the large answer is for Linux only.
   for (const bytes of [0, 5, isLinux ? 126892 : 4096]) {
@@ -165,6 +204,24 @@ describe.skipIf(isWindows)("a unix socket peer that closes before the connecting
         received: bytes,
       });
       expect(received.equals(answer)).toBe(true);
+    });
+  }
+
+  // A TLS client opens in the same way. Its handshake then fails, because the answer is not TLS,
+  // or because the stream ends first.
+  for (const [bytes, code] of [
+    [0, "ECONNRESET"],
+    [5, "EPROTO"],
+  ] as const) {
+    it(`Bun.connect with tls fails in the handshake, as over TCP, on an answer of ${bytes} bytes`, async () => {
+      const answer = Buffer.alloc(bytes, "x");
+      const overTcp = await bunTlsConnect(answer, "tcp");
+      expect(overTcp).toEqual({
+        peer: "done",
+        connect: "fulfilled",
+        events: ["open", `handshake false ${code}`, "close"],
+      });
+      expect(await bunTlsConnect(answer, "unix")).toEqual(overTcp);
     });
   }
 

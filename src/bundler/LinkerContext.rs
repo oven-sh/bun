@@ -5215,16 +5215,16 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
+    /// A directive stays ahead of the dependency calls inserted at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
+        self.stmts.push(stmt);
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
-    }
-
-    /// A directive stays ahead of the `init_*()` calls that `append_sync_dependency` inserts.
-    pub(crate) fn append_directive(&mut self, directive: Stmt) {
-        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
-        self.stmts.push(directive);
-        self.sync_dependencies_end += 1;
     }
 
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {

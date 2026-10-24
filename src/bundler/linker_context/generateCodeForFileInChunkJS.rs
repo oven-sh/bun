@@ -259,9 +259,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let output_format = c.options.output_format;
 
-    // The prologue of a wrapped file comes first in its wrapper. `post_process_js_chunk` prints
-    // the prologue of the chunk's entry point. A file whose statements all move out of the
-    // wrapper has no wrapper symbol (`needs_wrapper_ref` in the parser), so it gets no body.
+    // The top-level directives must come first (the non-wrapped case is handled
+    // by the chunk generation code, although only for the entry point of this
+    // chunk). An ES module without a wrapper symbol prints no closure to hold them.
     if flags.wrap != WrapKind::None
         && !chunk.is_entry_point_file(source_index as u32)
         && !ast.wrapper_ref.is_empty()
@@ -283,7 +283,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
         bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
 
-    // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)

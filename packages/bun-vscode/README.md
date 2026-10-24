@@ -26,6 +26,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 - Debugger support
 - Run scripts from package.json
 - Visual lockfile viewer for old binary lockfiles (`bun.lockb`)
+- Formatter and linter powered by `bun fmt` (via `bun fmt --lsp`)
 
 ## Bun test runner integration
 
@@ -44,6 +45,31 @@ When running programs with Bun from a Visual Studio Code terminal, Bun will conn
 </div>
 
 Errors are cleared whenever you start typing, or whenever the extension detects that Bun just started running (or reloading) a new program.
+
+## Formatter and linter
+
+The extension can format your code and apply lint fixes using Bun's built-in language server. When you open a supported file (JavaScript, TypeScript, JSON, CSS, HTML, Markdown, YAML, and more) in a workspace folder that contains a `bunfig.toml`, `bun.lock`, or `bun.lockb`, the extension lazily starts `bun fmt --no-script --lsp` and connects to it over stdio. Nothing is started until such a file is opened.
+
+Once the server is running, VS Code's own formatting and code action settings work through it:
+
+```jsonc
+{
+  // Format files with `bun fmt` on save.
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "oven.bun-vscode",
+
+  // Apply lint fixes on save.
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+  },
+}
+```
+
+You can also run "Format Document" or "Format Selection" from the command palette.
+
+This feature requires Bun 1.4.4 or later. If the `bun` executable on your `PATH` (or the one set in `bun.runtime`) is older or cannot be started, the language server is skipped and a message is written to the "Bun" output channel. The server is started again after `bun.runtime` changes.
+
+To turn the formatter and linter off, set `bun.lsp.enable` to `false` in your settings.
 
 ## Configuration
 
@@ -129,5 +155,8 @@ You can use the following configurations to customize the behavior of the Bun ex
 
   // The custom script to call for testing instead of `bun test`
   "bun.test.customScript": "bun test",
+
+  // If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.
+  "bun.lsp.enable": true,
 }
 ```

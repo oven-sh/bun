@@ -47,9 +47,10 @@ export function minify_error_test_with_options(source: string, expectedError: st
   });
 }
 
-export function minify_test(source: string, expected: string) {
+export function minify_test(source: string, expected: string, targets?: Browsers) {
   test(source, () => {
-    expect(minifyTestWithOptions(source, expected)).toEqual(expected);
+    const output = targets ? minifyTest(source, expected, targets) : minifyTestWithOptions(source, expected);
+    expect(output).toEqual(expected);
   });
 }
 

@@ -492,6 +492,197 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
     true
 }
 
+/// Whether `:is(selectors)` matches the same elements with the same specificity as the selector list.
+pub(crate) fn can_wrap_in_is(selectors: &[parser::Selector]) -> bool {
+    let Some(first) = selectors.first() else {
+        return true;
+    };
+    // `:is()` cannot hold a pseudo-element, and it takes the specificity of its most specific argument.
+    selectors.iter().all(|selector| {
+        !selector.has_pseudo_element() && selector.specificity() == first.specificity()
+    }) && components_allow_is(selectors)
+}
+
+/// What the specificity and flags stored at parse time do not say about a component inside `:is()`.
+enum InsideIs {
+    /// It matches inside `:is()`, and the stored specificity counts it as it prints.
+    Allowed,
+    /// Its weight is not known at parse time, so every selector of the list must have the same one.
+    IfShared,
+    /// It does not match, weigh or print inside `:is()` as it does outside.
+    Never,
+}
+
+fn inside_is(component: &Component) -> InsideIs {
+    match component {
+        Component::NonTsPseudoClass(pseudo_class) => match pseudo_class {
+            // WebKit never matches `:visited` inside `:is()`, and there `:link` matches visited links too.
+            PseudoClass::Visited | PseudoClass::Link => InsideIs::Never,
+
+            // A vendor prefix pass prints the `:is()` around them as `:-webkit-any()` or `:-moz-any()`.
+            PseudoClass::Fullscreen(_)
+            | PseudoClass::AnyLink(_)
+            | PseudoClass::ReadOnly(_)
+            | PseudoClass::ReadWrite(_)
+            | PseudoClass::PlaceholderShown(_)
+            | PseudoClass::Autofill(_) => InsideIs::Never,
+
+            // CSS modules `:local()` and `:global()` print as their argument, which can end in a pseudo-element.
+            PseudoClass::Local { .. } | PseudoClass::Global { .. } => InsideIs::Never,
+
+            // An unknown function weighs what its argument means.
+            PseudoClass::CustomFunction { .. } => InsideIs::IfShared,
+
+            PseudoClass::Lang { .. }
+            | PseudoClass::Dir { .. }
+            | PseudoClass::Hover
+            | PseudoClass::Active
+            | PseudoClass::Focus
+            | PseudoClass::FocusVisible
+            | PseudoClass::FocusWithin
+            | PseudoClass::Current
+            | PseudoClass::Past
+            | PseudoClass::Future
+            | PseudoClass::Playing
+            | PseudoClass::Paused
+            | PseudoClass::Seeking
+            | PseudoClass::Buffering
+            | PseudoClass::Stalled
+            | PseudoClass::Muted
+            | PseudoClass::VolumeLocked
+            | PseudoClass::Open
+            | PseudoClass::Closed
+            | PseudoClass::Modal
+            | PseudoClass::PictureInPicture
+            | PseudoClass::PopoverOpen
+            | PseudoClass::Defined
+            | PseudoClass::LocalLink
+            | PseudoClass::Target
+            | PseudoClass::TargetWithin
+            | PseudoClass::Enabled
+            | PseudoClass::Disabled
+            | PseudoClass::Default
+            | PseudoClass::Checked
+            | PseudoClass::Indeterminate
+            | PseudoClass::Blank
+            | PseudoClass::Valid
+            | PseudoClass::Invalid
+            | PseudoClass::InRange
+            | PseudoClass::OutOfRange
+            | PseudoClass::Required
+            | PseudoClass::Optional
+            | PseudoClass::UserValid
+            | PseudoClass::UserInvalid
+            | PseudoClass::WebkitScrollbar(_)
+            | PseudoClass::Custom { .. } => InsideIs::Allowed,
+        },
+
+        // `&` weighs the selector list of the parent rule.
+        Component::Nesting => InsideIs::IfShared,
+
+        // A hand-written `:-webkit-any()` prints as `:is()` here, and browsers do not weigh the two alike.
+        Component::Any { .. }
+        | Component::Slotted(_)
+        | Component::Part(_)
+        | Component::PseudoElement(_) => InsideIs::Never,
+
+        // Under a default `@namespace`, the `:is()` itself matches only elements of that namespace.
+        Component::Namespace { .. }
+        | Component::ExplicitAnyNamespace
+        | Component::ExplicitNoNamespace => InsideIs::Never,
+
+        Component::Negation(selectors) | Component::Is(selectors) | Component::Has(selectors) => {
+            arguments_inside_is(selectors)
+        }
+        Component::NthOf(nth) => arguments_inside_is(&nth.selectors),
+        Component::Host(Some(selector)) => arguments_inside_is(core::slice::from_ref(selector)),
+
+        // `:where()` weighs nothing, whatever its arguments are.
+        Component::Where(_)
+        | Component::Host(None)
+        | Component::Combinator(_)
+        | Component::DefaultNamespace(_)
+        | Component::ExplicitUniversalType
+        | Component::LocalName(_)
+        | Component::Id(_)
+        | Component::Class(_)
+        | Component::AttributeInNoNamespaceExists { .. }
+        | Component::AttributeInNoNamespace { .. }
+        | Component::AttributeOther(_)
+        | Component::Root
+        | Component::Empty
+        | Component::Scope
+        | Component::Nth(_) => InsideIs::Allowed,
+    }
+}
+
+// The most specific argument is not known if one of them has a component of unknown weight.
+fn arguments_inside_is(selectors: &[parser::Selector]) -> InsideIs {
+    let mut verdict = InsideIs::Allowed;
+    for component in selectors
+        .iter()
+        .flat_map(|selector| selector.components.iter())
+    {
+        match inside_is(component) {
+            InsideIs::Allowed => {}
+            InsideIs::IfShared => verdict = InsideIs::IfShared,
+            InsideIs::Never => return InsideIs::Never,
+        }
+    }
+    verdict
+}
+
+// Chrome 124 and Firefox 128 do not match a shadow host that is the subject of one of several `:is()` arguments.
+fn subject_is_shadow_host(selector: &parser::Selector) -> bool {
+    selector
+        .components
+        .iter()
+        .take_while(|component| !component.is_combinator())
+        .any(|component| match component {
+            Component::Host(_) => true,
+            Component::NonTsPseudoClass(PseudoClass::CustomFunction { name, .. }) => {
+                bun_core::strings::eql_case_insensitive_ascii_check_length(name, b"host-context")
+            }
+            _ => false,
+        })
+}
+
+/// Whether no selector has a `Never` component and all of them have the same `IfShared` components.
+#[cold]
+#[inline(never)]
+fn components_allow_is(selectors: &[parser::Selector]) -> bool {
+    fn next<'a>(
+        components: &mut core::slice::Iter<'a, Component>,
+    ) -> Option<(&'a Component, InsideIs)> {
+        components
+            .map(|component| (component, inside_is(component)))
+            .find(|(_, verdict)| !matches!(verdict, InsideIs::Allowed))
+    }
+
+    fn alike(a: &parser::Selector, b: &parser::Selector) -> bool {
+        let (mut a, mut b) = (a.components.iter(), b.components.iter());
+        loop {
+            match (next(&mut a), next(&mut b)) {
+                (None, None) => return true,
+                (Some((x, InsideIs::IfShared)), Some((y, InsideIs::IfShared))) if x.eql(y) => {}
+                _ => return false,
+            }
+        }
+    }
+
+    // Each selector is compared with the one before it, and the first with the last.
+    let Some(mut previous) = selectors.last() else {
+        return true;
+    };
+    for selector in selectors {
+        if subject_is_shadow_host(selector) || !alike(previous, selector) {
+            return false;
+        }
+        previous = selector;
+    }
+    true
+}
+
 /// Determines whether a selector list contains only unused selectors.
 /// A selector is considered unused if it contains a class or id component that exists in the set of unused symbols.
 pub(crate) fn is_unused(

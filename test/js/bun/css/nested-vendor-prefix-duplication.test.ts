@@ -160,9 +160,16 @@ test("the fuzzer reproduction shape errors instead of amplifying", () => {
 });
 
 test("nesting-capable targets also bound the mixed vendor-prefix expansion", () => {
-  // Modern targets preserve nesting (no de-nesting), so the same per-prefix
-  // re-serialization of the body applies and must be bounded too.
-  expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+  // Modern targets preserve nesting (no de-nesting). With browser targets, a
+  // selector with a prefixed pseudo-class never shares an `:is()` with another
+  // selector, so each level splits the list into one rule per selector, each
+  // with a copy of the nested rules. The selector-expansion limit bounds that.
+  expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(
+    "Nested CSS rules expand to more than",
+  );
+  expect(minifyTest(nestedMixedPrefix(1), "", { chrome: 130 << 16 })).toBe(
+    ".a:placeholder-shown .x{color:red}.b:-webkit-autofill .y{color:red}",
+  );
 });
 
 test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {

@@ -575,7 +575,11 @@ impl<R> CssRuleList<R> {
                     CssRule::Scope(scpe) => {
                         // See `Container` above: recurse so nested style rules
                         // count against the selector-expansion cap.
-                        scpe.rules.minify(context, parent_is_unused)?;
+                        let was_in_scope_rule =
+                            core::mem::replace(&mut context.in_scope_rule, true);
+                        let result = scpe.rules.minify(context, parent_is_unused);
+                        context.in_scope_rule = was_in_scope_rule;
+                        result?;
                     }
                     CssRule::Nesting(nst) => {
                         // See `Container` above. `@nest` wraps a single style
@@ -592,7 +596,11 @@ impl<R> CssRuleList<R> {
                         // untouched preserves them verbatim, matching the
                         // pre-port behavior.
                         nst.style.charge_selector_expansion(context)?;
-                        nst.style.minify_nested_rules(context, parent_is_unused)?;
+                        let lowering = nst
+                            .style
+                            .selector_list_lowering(context.targets, context.in_scope_rule);
+                        nst.style
+                            .minify_nested_rules(context, parent_is_unused, lowering)?;
                     }
                     CssRule::StartingStyle(rl) => {
                         // See `Container` above: recurse so nested style rules
@@ -654,36 +662,33 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
     use css::selector::{self, Component, Selector, SelectorList};
+    use style::SelectorListLowering;
     let CssRule::Style(sty) = rule else {
         unreachable!()
     };
 
-    if parent_is_unused || sty.minify(context, parent_is_unused)? {
+    if parent_is_unused {
         return Ok(());
     }
 
     // If some of the selectors in this rule are not compatible with the targets,
     // we need to either wrap in :is() or split them into multiple rules.
-    let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
-        && context.targets.should_compile_selectors()
-        && !sty.is_compatible(context.targets)
-    {
-        // The :is() selector accepts a forgiving selector list, so use that if possible.
-        // Note that :is() does not allow pseudo elements, so we need to check for that.
-        // In addition, :is() takes the highest specificity of its arguments, so if the selectors
-        // have different weights, we need to split them into separate rules as well.
-        if context
-            .targets
-            .is_compatible(css::compat::Feature::IsSelector)
-            && !sty.selectors.any_has_pseudo_element()
-            && sty.selectors.specifities_all_equal()
-        {
+    let lowering = sty.selector_list_lowering(context.targets, context.in_scope_rule);
+    if sty.minify(context, parent_is_unused, lowering)? {
+        return Ok(());
+    }
+
+    let mut incompatible: SmallList<Selector, 1> = match lowering {
+        SelectorListLowering::AsWritten => SmallList::default(),
+        SelectorListLowering::WrapInIs => {
+            debug_assert!(selector::can_wrap_in_is(sty.selectors.v.slice()));
             let component = Component::Is(core::mem::take(&mut sty.selectors.v).to_owned_slice());
             let mut list = SmallList::<Selector, 1>::default();
             list.append(Selector::from_component(component));
             sty.selectors = SelectorList { v: list };
             SmallList::default()
-        } else {
+        }
+        SelectorListLowering::Partition => {
             // Otherwise, partition the selectors and keep the compatible ones in this rule.
             // We will generate additional rules for incompatible selectors later.
             let mut incompatible = SmallList::<Selector, 1>::default();
@@ -700,8 +705,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             }
             incompatible
         }
-    } else {
-        SmallList::default()
     };
 
     sty.update_prefix(context);
@@ -1254,4 +1257,6 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
+    /// Whether the rules being minified are inside an `@scope` rule.
+    pub(crate) in_scope_rule: bool,
 }

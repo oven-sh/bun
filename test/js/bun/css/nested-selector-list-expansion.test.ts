@@ -115,6 +115,14 @@ test("collapsed :is() lists still hit the limit when nesting has to be compiled 
   expect(() => minifyTest(src, "", { chrome: 100 << 16 })).toThrow(LIMIT_ERROR);
 });
 
+test("incompatible selector lists that cannot collapse into :is() hit the limit when nesting is preserved", () => {
+  // `:is()` cannot hold `::part()`, so each list is split into one rule per
+  // selector, each with a clone of every nested rule. The limit has to count
+  // that split even though nesting stays native.
+  const src = nestedRules("x::part(a):user-valid, y z:user-valid", 17);
+  expect(() => minifyTest(src, "", MODERN_TARGETS)).toThrow(LIMIT_ERROR);
+});
+
 test("bun build reports an error instead of exploding on deeply nested multi-selector css", async () => {
   using dir = tempDir("css-nested-selector-expansion", {
     "input.css": nestedRules("co :is(.bar), .bar :is(.baz)", 17),

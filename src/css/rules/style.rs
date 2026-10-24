@@ -31,6 +31,17 @@ impl<R> StyleRule<R> {
     }
 }
 
+/// How a selector list is printed for targets that may not parse all of its selectors.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectorListLowering {
+    /// The targets can parse every selector, so the list stays as written.
+    AsWritten,
+    /// The list becomes the single selector `:is(list)`, which ignores what a browser cannot parse.
+    WrapInIs,
+    /// Each selector that the targets cannot parse moves to its own copy of the rule.
+    Partition,
+}
+
 // ─── behavior bodies ──────────────────────────────────────────────────────
 impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
@@ -67,6 +78,34 @@ impl<R> StyleRule<R> {
 
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
+    }
+
+    /// `minify_style_arm` acts on this verdict, and `minify_nested_rules` budgets for the same one.
+    pub(crate) fn selector_list_lowering(
+        &self,
+        targets: &css::targets::Targets,
+        in_scope_rule: bool,
+    ) -> SelectorListLowering {
+        let selectors = self.selectors.v.slice();
+        if selectors.len() <= 1
+            || !targets.should_compile_selectors()
+            || selector::is_compatible(selectors, targets)
+        {
+            return SelectorListLowering::AsWritten;
+        }
+        // In `@scope`, each selector of a list is relative to the scoping root. An `:is()` argument is not.
+        if in_scope_rule || !targets.is_compatible(css::Feature::IsSelector) {
+            return SelectorListLowering::Partition;
+        }
+        // A selector that every target can parse stays outside `:is()`.
+        let all_need_lowering = selectors
+            .iter()
+            .all(|one| !selector::is_compatible(core::slice::from_ref(one), targets));
+        if all_need_lowering && selector::can_wrap_in_is(selectors) {
+            SelectorListLowering::WrapInIs
+        } else {
+            SelectorListLowering::Partition
+        }
     }
 }
 
@@ -314,6 +353,7 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+        lowering: SelectorListLowering,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -368,7 +408,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            self.minify_nested_rules(context, unused)?;
+            self.minify_nested_rules(context, unused, lowering)?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
@@ -413,6 +453,7 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+        lowering: SelectorListLowering,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -423,7 +464,7 @@ impl<R> StyleRule<R> {
         // rule's selectors for compatibility), each of this rule's selectors
         // multiplies the expansion of every nested rule.
         //
-        // Mirrors the selector-compatibility branch in `minify_style_arm`
+        // `lowering` is the verdict that `minify_style_arm` acts on
         // (rules/mod.rs): an incompatible selector list is either collapsed
         // into a single `:is()` selector (nothing cloned) or partitioned
         // into one cloned rule per selector (fan-out = selector count).
@@ -432,14 +473,9 @@ impl<R> StyleRule<R> {
         // nesting is compiled away the printed output still fans out per
         // selector, which is why the nesting branch bumps unconditionally.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        let selectors_incompatible = self.selectors.v.len() > 1
-            && context.targets.should_compile_selectors()
-            && !self.is_compatible(context.targets);
-        let splits_selectors = selectors_incompatible
-            && !(context.targets.is_compatible(css::Feature::IsSelector)
-                && !self.selectors.any_has_pseudo_element()
-                && self.selectors.specifities_all_equal());
-        if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
+        if context.targets.should_compile_same(css::Feature::Nesting)
+            || lowering == SelectorListLowering::Partition
+        {
             context.selector_expansion_multiplier = context
                 .selector_expansion_multiplier
                 .saturating_mul(self.selectors.v.len().max(1));

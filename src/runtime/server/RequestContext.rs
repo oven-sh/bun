@@ -186,6 +186,11 @@ pub(crate) struct RequestContext<
     /// Used in errors
     pub(crate) pathname: JsCell<bun_core::String>,
 
+    /// The error an `error()` promise that is still pending was called for, and its status: what is
+    /// rendered if the promise settles to something that is not a sendable Response.
+    pub(crate) error_promise_original: JsCell<bun_jsc::strong::Optional>,
+    pub(crate) error_promise_status: Cell<u16>,
+
     /// Used either for temporary blob data or fallback
     /// When the response body is a temporary value
     pub(crate) response_buf_owned: JsCell<Vec<u8>>,
@@ -798,6 +803,24 @@ where
         self.render_missing();
     }
 
+    /// A pending `error()` promise settled to `value`, which is not a Response: the request is
+    /// answered with the error `error()` was called for, as when the promise was already settled
+    /// (not with the "Expected a Response object" message and the welcome page or 204).
+    /// Returns whether it was one.
+    fn finish_pending_error_promise(&self, value: JSValue) -> bool {
+        let _ = value;
+        if !self.flags.is_error_promise_pending() {
+            return false;
+        }
+        self.flags.set_is_error_promise_pending(false);
+        let original = self.error_promise_original.with_mut(|o| o.swap());
+        if original.is_empty() {
+            return false;
+        }
+        self.finish_running_error_handler(original, self.error_promise_status.get());
+        true
+    }
+
     fn handle_resolve(&self, global_this: &JSGlobalObject, value: JSValue) {
         if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
             Self::discard_response_body(global_this, value);
@@ -805,11 +828,17 @@ where
         }
 
         if value.is_empty_or_undefined_or_null() || !value.is_cell() {
+            if self.finish_pending_error_promise(value) {
+                return;
+            }
             self.render_missing_invalid_response(value);
             return;
         }
 
         let Some(response) = as_response(value) else {
+            if self.finish_pending_error_promise(value) {
+                return;
+            }
             self.render_missing_invalid_response(value);
             return;
         };
@@ -1503,6 +1532,8 @@ where
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
                 pathname: JsCell::new(BunString::EMPTY),
+                error_promise_original: JsCell::new(bun_jsc::strong::Optional::empty()),
+                error_promise_status: Cell::new(500),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
@@ -1697,6 +1728,7 @@ where
             .with_mut(|s| s.deinit());
 
         self.pathname.set(BunString::EMPTY);
+        self.error_promise_original.set(bun_jsc::strong::Optional::empty());
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
@@ -3712,6 +3744,9 @@ where
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
+                ctx.error_promise_original
+                    .set(bun_jsc::strong::Optional::create(value, server.global_this()));
+                ctx.error_promise_status.set(status);
                 let cell = ctx.create_promise_cell(server.global_this());
                 promise_js.then_with_value(
                     server.global_this(),

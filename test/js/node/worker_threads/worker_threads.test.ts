@@ -994,6 +994,31 @@ describe("environmentData", () => {
   });
 });
 
+test("inherited bunfig preloads keep their startup directory after chdir", async () => {
+  using dir = tempDir("worker-bunfig-preload-cwd", {
+    "bunfig.toml": 'preload = ["./preload.js"]',
+    "preload.js": 'globalThis.preloadMarker = "loaded";',
+    "other/.keep": "",
+    "worker.js": 'require("node:worker_threads").parentPort.postMessage(globalThis.preloadMarker);',
+    "main.js": `
+      const { Worker } = require("node:worker_threads");
+      const path = require("node:path");
+      const workerPath = path.resolve("worker.js");
+      process.chdir("other");
+      new Worker(workerPath).on("message", value => console.log(value));
+    `,
+  });
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "loaded\n", stderr: "", exitCode: 0 });
+});
+
 describe("error event", () => {
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });

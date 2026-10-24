@@ -2510,10 +2510,11 @@ export interface CalledFromRustField {
 
 /** A C++ class of cells and the header that declares it. */
 export class CellClass {
-  constructor(
-    readonly cpp: string,
-    readonly header: string,
-  ) {
+  readonly cpp: string;
+  readonly header: string;
+  constructor(cpp: string, header: string) {
+    this.cpp = cpp;
+    this.header = header;
     assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `${cpp} is not a C++ class with its namespace`);
   }
 }

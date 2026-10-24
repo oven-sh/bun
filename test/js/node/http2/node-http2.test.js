@@ -4106,7 +4106,7 @@ it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred b
 });
 
 describe.concurrent(
-  "http2 DATA payload survives its ArrayBuffer being detached/resized by transport JS mid-send",
+  "http2 DATA payload survives its ArrayBuffer being detached/resized by JS that runs mid-send",
   () => {
     // When the transport under an Http2Session is user JS (a createConnection Duplex, or a
     // TLSSocket upgraded from a JS Duplex), that JS runs synchronously while the native side is
@@ -4366,6 +4366,60 @@ describe.concurrent(
         expect(result).toEqual({ native: true, firedDuringWrite: true, foreign: 0 });
       },
     );
+
+    // No transport JS at all: the parser writes to a native TCP socket. A frame holds one write
+    // callback, so a write that tops up a queued frame concludes the callback the frame had, and
+    // that callback is the JS. node:http2 keeps one write in flight per stream, so this drives
+    // the native parser itself. Oracle: the DATA bytes the peer receives.
+    it("an earlier write's callback concluded by a multi-frame write, native writer", async () => {
+      const result = await run(/* js */ `
+      const session = http2.connect("http://localhost:1", { createConnection: () => wireDuplex() });
+      session.on("error", die("session error"));
+      const H2FrameParser = session[Symbol.for("::bunhttp2native::")].constructor;
+      const fail = { error: (_, e) => die("socket error")(e), close: () => die("socket")("closed early") };
+      const results = {};
+      for (const mode of ["transfer", "resize0", "overwrite", "write"]) {
+        const wire = wireDuplex();
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...fail, data(_, chunk) { wire.write(chunk); } } });
+        const socket = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { ...fail, data() {} } });
+        // A client parser queues its DATA until the socket is attached again below.
+        const parser = new H2FrameParser({ context: {}, handlers: { write() { return true; } }, native: socket });
+        const id = parser.getNextStream();
+        parser.request(id, {}, { ":method": "POST", ":path": "/", ":scheme": "http", ":authority": "localhost" }, {});
+        const holder = { src: payload(40000, mode === "resize0") };
+        const expected = Buffer.concat([Buffer.from(holder.src), Buffer.from(mode === "write" ? "tail" : "")]);
+        const calls = [];
+        parser.writeStream(id, "", undefined, false, () => {
+          calls.push("empty");
+          if (mode === "overwrite") holder.src.fill(0x5a);
+          else if (mode === "write") parser.writeStream(id, "tail", undefined, false, () => calls.push("tail"));
+          else yank(holder, mode);
+        });
+        parser.writeStream(id, holder.src, undefined, false, () => calls.push("payload"));
+        calls.push("payload queued");
+        // An empty frame concludes the callback of the frame it lands on too, from either entry point.
+        parser.writeStream(id, "", undefined, false, () => calls.push("empty again"));
+        calls.push("empty queued");
+        parser.noTrailers(id);
+        calls.push("end queued");
+        parser.setNativeSocket(socket);
+        await wire.dataSeen(expected.length);
+        results[mode] = { calls, foreign: foreign(wire.data(), expected) };
+      }
+      console.log(JSON.stringify(results));
+      process.exit(0);
+    `);
+      const calls = ["empty", "payload queued", "payload", "empty queued", "empty again", "end queued"];
+      expect(result).toEqual({
+        transfer: { calls, foreign: 0 },
+        resize0: { calls, foreign: 0 },
+        overwrite: { calls, foreign: 0 },
+        write: {
+          calls: ["empty", "payload", "payload queued", "tail", "empty queued", "empty again", "end queued"],
+          foreign: 0,
+        },
+      });
+    });
 
     // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
     // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.

@@ -2827,8 +2827,7 @@ impl Display for SizeBinFormatter {
         let log2 = (usize::BITS - 1 - value.leading_zeros()) as usize;
         let mut magnitude = log2 / 10;
         let mut scaled = value as f64 / 1024f64.powi(magnitude as i32);
-        // Just below a power of 1024, two decimals round up to `1024.00`.
-        // Step up to the next unit so it reads `1.00MiB`, not `1024.00KiB`.
+        // `{:.2}` would print `1024.00KiB` here; use the next unit.
         if scaled >= 1023.995 && magnitude < MAGS_IEC.len() {
             magnitude += 1;
             scaled = value as f64 / 1024f64.powi(magnitude as i32);

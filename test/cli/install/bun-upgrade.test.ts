@@ -534,6 +534,8 @@ it.concurrent("verifies the downloaded release archive against the digest report
 describe.skipIf(isWindows).concurrent("download progress", () => {
   const pacedZip = { count: 8, bytes: 64 * 1024, intervalMs: 100 };
 
+  // Returns the frames of the "Downloading" node. Other nodes ("Fetching
+  // version tags") can print a raw counter when the version fetch is slow.
   const runUpgrade = async (server: ReleaseServer) => {
     using stagingRoot = tempDir("bun-upgrade-progress", {});
 
@@ -547,7 +549,11 @@ describe.skipIf(isWindows).concurrent("download progress", () => {
     });
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+    expectTargetsRelease(stderr, "9.9.9");
+    // The zero-filled archive is downloaded in full and then fails to unpack.
+    expect(stderr).toEndWith(unpackFailure);
+    expect(exitCode).toBe(1);
+    return stderr.split(/\r?\n/).filter(line => line.includes("Downloading "));
   };
 
   it("prints the received and total bytes in IEC units", async () => {
@@ -555,22 +561,20 @@ describe.skipIf(isWindows).concurrent("download progress", () => {
     // next unit (`1.00MiB`, not `1024.00KiB`). The first frame prints before
     // any byte arrives, later frames carry a KiB count.
     using server = startReleaseServer({ tagName: "bun-v9.9.9", assetSize: 1048575, zipStream: pacedZip });
-    const { stderr, exitCode } = await runUpgrade(server);
+    const frames = await runUpgrade(server);
 
-    expect(stderr).toMatch(/\[0B\/1\.00MiB\] /);
-    expect(stderr).toMatch(/\[\d+\.\d\dKiB\/1\.00MiB\] /);
-    expect(stderr).not.toContain("/1048575]");
-    // The bogus archive must not be installed; the upgrade fails cleanly.
-    expect(exitCode).toBe(1);
+    expect(frames).toContainEqual(expect.stringMatching(/\[0B\/1\.00MiB\] /));
+    expect(frames).toContainEqual(expect.stringMatching(/\[\d+\.\d\dKiB\/1\.00MiB\] /));
+    expect(frames).toEqual(frames.map(() => expect.stringMatching(/\[(\d+B|\d+\.\d\d[KM]iB)\/1\.00MiB\] /)));
   });
 
   it("prints the received bytes in IEC units when the total is unknown", async () => {
     // No asset size: the progress line has no total, as on the canary channel.
+    // The first frame is `Downloading... ` because nothing has arrived yet.
     using server = startReleaseServer({ tagName: "bun-v9.9.9", zipStream: pacedZip });
-    const { stderr, exitCode } = await runUpgrade(server);
+    const frames = await runUpgrade(server);
 
-    expect(stderr).toMatch(/\[\d+\.\d\dKiB\] /);
-    expect(stderr).not.toMatch(/\[\d+\] /);
-    expect(exitCode).toBe(1);
+    expect(frames).toContainEqual(expect.stringMatching(/\[\d+\.\d\dKiB\] /));
+    expect(frames).toEqual(frames.map(() => expect.stringMatching(/\.\.\. |\[\d+\.\d\d[KM]iB\] /)));
   });
 });

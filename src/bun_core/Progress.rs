@@ -569,8 +569,7 @@ impl Progress {
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
-                            // A byte count is a quantity, not a 1-based
-                            // index, so it is not offset like the others.
+                            // A byte count is a quantity, not a 1-based index.
                             Unit::Bytes => self.buf_write(
                                 &mut end,
                                 format_args!(

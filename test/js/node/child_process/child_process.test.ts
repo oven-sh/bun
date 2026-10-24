@@ -29,6 +29,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import { Readable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -1799,4 +1800,29 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // several seconds, and the fixtures give up on their markers after 15 s so
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
+});
+
+it("an already-open child stdin does not emit open or ready", async () => {
+  const child = spawn(bunExe(), ["-e", 'process.stdin.resume(); process.stdin.on("end", () => console.log("done"));'], {
+    env: bunEnv,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  try {
+    const events: string[] = [];
+    child.stdin!.on("open", () => events.push("open"));
+    child.stdin!.on("ready", () => events.push("ready"));
+    const closed = once(child, "close");
+    const stdout = new Response(Readable.toWeb(child.stdout!) as ReadableStream).text();
+    const stderr = new Response(Readable.toWeb(child.stderr!) as ReadableStream).text();
+    child.stdin!.end("input");
+    const [out, err, code] = await Promise.all([stdout, stderr, closed]);
+    expect({ stdout: out, stderr: err, events, code }).toEqual({
+      stdout: "done\n",
+      stderr: "",
+      events: [],
+      code: [0, null],
+    });
+  } finally {
+    child.kill();
+  }
 });

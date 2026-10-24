@@ -1513,6 +1513,10 @@ struct Analyzer<'a> {
 }
 
 impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
+    // `find_react_component_export` reads the resolved exports of the entry point.
+    const READS: bun_bundler::bundle_v2::DependenciesScannerReads =
+        bun_bundler::bundle_v2::DependenciesScannerReads::LinkedExports;
+
     fn on_analyze(
         &mut self,
         result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,

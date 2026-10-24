@@ -7012,6 +7012,12 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     ["a.ts", "type T<in out A, const B_ = 1> = A;"],
     ["a.ts", "interface I<const A> {}"],
     ["a.ts", "function f<in A>() {}"],
+    ["a.ts", "({ a? });"],
+    ["a.ts", "({ a?: 1 });"],
+    ["a.ts", "({ a! });"],
+    ["a.ts", "({ a!: 1 });"],
+    ["a.ts", "({ a?() {} });"],
+    ["a.ts", "({ a? } = b);"],
   ])("with an .oxfmtrc.json, code that OXC's parser rejects is a syntax error: %s: %j", async (name, code) => {
     const files = { [name]: code + "\n" };
     const result = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [name], { reads: [name] });

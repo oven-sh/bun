@@ -2644,6 +2644,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if kind == PropKind::Init
             && matches!(self.token(), T::Question | T::Exclamation)
             && !self.is_ecmascript
+            && !self.is_typescript_for_oxc
         {
             postfix_token = self.pos();
             self.next();

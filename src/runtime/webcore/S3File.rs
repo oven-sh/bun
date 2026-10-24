@@ -3,6 +3,7 @@ use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::credentials_jsc::S3Defaults;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
@@ -184,18 +185,12 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     path: PathLike<'static>,
     options: Option<JSValue>,
     default_credentials: &s3::S3Credentials,
-    default_options: s3::MultiPartUploadOptions,
-    default_acl: Option<s3::ACL>,
-    default_storage_class: Option<s3::StorageClass>,
-    default_request_payer: bool,
+    defaults: &S3Defaults<'_>,
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
-        default_options,
+        defaults,
         options,
-        default_acl,
-        default_storage_class,
-        default_request_payer,
         global,
     )?;
 
@@ -205,7 +200,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
-    finish_s3_blob(global, store, &aws_options, options)
+    finish_s3_blob(global, store, &mut aws_options, options)
 }
 
 pub(crate) fn construct_s3_file_with_s3_credentials(
@@ -216,16 +211,13 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         existing_credentials,
-        Default::default(),
+        &S3Defaults::default(),
         options,
-        None,
-        None,
-        false,
         global,
     )?;
     let credentials = std::mem::take(&mut aws_options.credentials);
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
-    finish_s3_blob(global, store, &aws_options, options)
+    finish_s3_blob(global, store, &mut aws_options, options)
 }
 
 /// Shared constructor epilogue: copies the parsed per-request settings onto
@@ -234,7 +226,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 fn finish_s3_blob(
     global: &JSGlobalObject,
     store: RefPtr<Store>,
-    aws_options: &s3::S3CredentialsWithOptions,
+    aws_options: &mut s3::S3CredentialsWithOptions,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
     let s3 = Store::data_mut(&store).as_s3_mut();
@@ -242,6 +234,7 @@ fn finish_s3_blob(
     s3.acl = aws_options.acl;
     s3.storage_class = aws_options.storage_class;
     s3.request_payer = aws_options.request_payer;
+    s3.tagging = aws_options.tagging.take();
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
@@ -494,7 +487,16 @@ pub(crate) fn get_presign_url_from(
                 expires = expires_ as usize;
             }
         }
-        credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
+        // A tagging default would oblige whoever uses the URL to send the header.
+        credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
+            s3.get_credentials(),
+            &S3Defaults {
+                tagging: None,
+                ..s3.defaults()
+            },
+            Some(options),
+            global,
+        )?;
     }
     let path = s3.path();
 
@@ -502,15 +504,8 @@ pub(crate) fn get_presign_url_from(
         &bun_s3_signing::SignOptions {
             path,
             method,
-            acl: credentials_with_options.acl,
-            storage_class: credentials_with_options.storage_class,
-            request_payer: credentials_with_options.request_payer,
-            content_disposition: credentials_with_options.content_disposition.as_deref(),
-            content_type: credentials_with_options.content_type.as_deref(),
-            content_hash: None,
-            content_md5: None,
-            search_params: None,
-            content_encoding: None,
+            headers: credentials_with_options.put_headers(None),
+            ..Default::default()
         },
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {

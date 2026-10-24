@@ -12,10 +12,8 @@ use bun_http::{
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
-use bun_s3_signing::acl::ACL;
-use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
+use bun_s3_signing::credentials::{PutHeaders, S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
-use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
 
@@ -523,9 +521,8 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub path: &'a [u8],
     pub method: Method,
     pub(crate) search_params: Option<&'a [u8]>,
-    pub(crate) content_type: Option<&'a [u8]>,
-    pub(crate) content_disposition: Option<&'a [u8]>,
-    pub(crate) content_encoding: Option<&'a [u8]>,
+    /// The object headers. A read or delete sets `request_payer` only.
+    pub(crate) headers: PutHeaders<'a>,
 
     // http request options
     pub(crate) body: &'a [u8],
@@ -533,9 +530,6 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) proxy_url: Option<&'a [u8]>,
     /// Owned; ownership transfers to the spawned task (or is dropped on sign error).
     pub(crate) range: Option<Box<[u8]>>,
-    pub(crate) acl: Option<ACL>,
-    pub(crate) storage_class: Option<StorageClass>,
-    pub(crate) request_payer: bool,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -544,15 +538,10 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             path: b"",
             method: Method::GET,
             search_params: None,
-            content_type: None,
-            content_disposition: None,
-            content_encoding: None,
+            headers: PutHeaders::default(),
             body: b"",
             proxy_url: None,
             range: None,
-            acl: None,
-            storage_class: None,
-            request_payer: false,
         }
     }
 }
@@ -610,14 +599,9 @@ pub(crate) fn execute_simple_s3_request(
             path: options.path,
             method: options.method,
             search_params: options.search_params,
-            content_disposition: options.content_disposition,
-            content_encoding: options.content_encoding,
-            acl: options.acl,
-            storage_class: options.storage_class,
-            request_payer: options.request_payer,
+            headers: options.headers,
             content_hash: None,
             content_md5: None,
-            content_type: None,
         },
         None,
     ) {
@@ -642,7 +626,7 @@ pub(crate) fn execute_simple_s3_request(
                 result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
             break 'brk Headers::from_pico_http_headers(_headers);
         } else {
-            if let Some(content_type) = options.content_type {
+            if let Some(content_type) = options.headers.content_type {
                 if !content_type.is_empty() {
                     let _headers = result.mix_with_header(
                         &mut header_buffer,

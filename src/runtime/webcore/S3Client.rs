@@ -6,6 +6,7 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
+use crate::webcore::s3::credentials_jsc::S3Defaults;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
@@ -42,11 +43,8 @@ pub(crate) trait S3CredentialsExt {
         // (e.g. `&RefPtr<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
-        default_options: MultiPartUploadOptions,
+        defaults: &S3Defaults<'_>,
         options: Option<JSValue>,
-        default_acl: Option<ACL>,
-        default_storage_class: Option<StorageClass>,
-        default_request_payer: bool,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions>;
 }
@@ -62,21 +60,12 @@ impl S3CredentialsExt for S3Credentials {
     #[inline]
     fn get_credentials_with_options(
         this: &S3Credentials,
-        default_options: MultiPartUploadOptions,
+        defaults: &S3Defaults<'_>,
         options: Option<JSValue>,
-        default_acl: Option<ACL>,
-        default_storage_class: Option<StorageClass>,
-        default_request_payer: bool,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
         crate::webcore::s3::credentials_jsc::get_credentials_with_options(
-            this,
-            default_options,
-            options,
-            default_acl,
-            default_storage_class,
-            default_request_payer,
-            global,
+            this, defaults, options, global,
         )
     }
 }
@@ -263,9 +252,32 @@ pub(crate) struct S3Client {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
+    pub(crate) tagging: Option<Box<[u8]>>,
 }
 
 impl S3Client {
+    pub(crate) fn from_options(aws_options: bun_s3_signing::S3CredentialsWithOptions) -> Self {
+        S3Client {
+            credentials: aws_options.credentials.dupe(),
+            options: aws_options.options,
+            acl: aws_options.acl,
+            storage_class: aws_options.storage_class,
+            request_payer: aws_options.request_payer,
+            tagging: aws_options.tagging,
+        }
+    }
+
+    /// The per-client settings that a per-call options object overrides.
+    fn defaults(&self) -> S3Defaults<'_> {
+        S3Defaults {
+            options: self.options,
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+            tagging: self.tagging.as_deref(),
+        }
+    }
+
     pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
         let global = cx.global();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -281,20 +293,11 @@ impl S3Client {
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
-            MultiPartUploadOptions::default(),
+            &S3Defaults::default(),
             Some(options.to_js()),
-            None,
-            None,
-            false,
             global,
         )?;
-        Ok(S3Client {
-            credentials: aws_options.credentials.dupe(),
-            options: aws_options.options,
-            acl: aws_options.acl,
-            storage_class: aws_options.storage_class,
-            request_payer: aws_options.request_payer,
-        })
+        Ok(S3Client::from_options(aws_options))
     }
 
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
@@ -354,10 +357,7 @@ impl S3Client {
             path,
             options,
             &self.credentials,
-            self.options,
-            self.acl,
-            self.storage_class,
-            self.request_payer,
+            &self.defaults(),
         )
     }
 
@@ -542,10 +542,11 @@ impl S3Client {
             PathLike::default(),
             options,
             &self.credentials,
-            self.options,
-            None,
-            None,
-            self.request_payer,
+            &S3Defaults {
+                options: self.options,
+                request_payer: self.request_payer,
+                ..Default::default()
+            },
         )?;
 
         let store = blob.store.get().as_ref().unwrap().clone();

@@ -405,6 +405,47 @@ declare module "bun" {
     requestPayer?: boolean;
 
     /**
+     * The tags of the object, sent as the `x-amz-tagging` header when the
+     * object is created (`PutObject`, or `CreateMultipartUpload` for a
+     * multipart upload). Pass a record, which Bun URL-encodes as
+     * `key=value&key2=value2`, or that string already encoded.
+     *
+     * A client or file default applies to every write. Pass `{}` or `""` to
+     * write without tags.
+     *
+     * A presigned `PUT` URL signs the header when the `presign()` call passes
+     * `tagging`. A client or file default does not apply to a presigned URL.
+     * The client that uploads with the URL must send the same `x-amz-tagging`
+     * header value. A presigned `GET`, `HEAD` or `DELETE` URL ignores the
+     * option.
+     *
+     * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-tagging.html
+     *
+     * @example
+     * ```ts
+     * // Tag a staged upload so a lifecycle rule can expire it
+     * await s3.write("uploads/draft.json", data, {
+     *   tagging: { state: "staged" },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Presigned PUT with a signed tagging header
+     * const url = s3.presign("uploads/draft.json", {
+     *   method: "PUT",
+     *   tagging: { state: "staged" },
+     * });
+     * await fetch(url, {
+     *   method: "PUT",
+     *   headers: { "x-amz-tagging": "state=staged" },
+     *   body: data,
+     * });
+     * ```
+     */
+    tagging?: Record<string, string> | string | undefined;
+
+    /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. Use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;

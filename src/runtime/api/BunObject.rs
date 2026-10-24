@@ -1391,11 +1391,8 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
-        Default::default(),
+        &Default::default(),
         None,
-        None,
-        None,
-        false,
         global_this,
     ) {
         Ok(v) => v,
@@ -1403,13 +1400,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         // Invalid S3 options in the environment throw from the `Bun.s3` getter.
         Err(err) => return Err(err),
     };
-    let client = S3Client {
-        credentials: aws_options.credentials.dupe(),
-        options: aws_options.options,
-        acl: aws_options.acl,
-        storage_class: aws_options.storage_class,
-        request_payer: aws_options.request_payer,
-    };
+    let client = S3Client::from_options(aws_options);
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
     rare.s3_default_client = StrongOptional::create(js_client, global_this);

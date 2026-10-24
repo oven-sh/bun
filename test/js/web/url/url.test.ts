@@ -620,6 +620,11 @@ describe("object URL prefix check", () => {
     expect(resolveObjectURL(real)).toBeUndefined();
   });
 
+  it("createObjectURL without an argument reports its type, as in Node", () => {
+    // @ts-expect-error
+    expect(() => URL.createObjectURL()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
   // `is_string()` admits `StringObject`, so `to_bun_string` can hit a user
   // `toString` that throws; that must surface as a catchable JS exception.
   test("revokeObjectURL propagates a throwing toString on a String object", async () => {

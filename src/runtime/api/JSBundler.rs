@@ -16,7 +16,7 @@ use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -1477,18 +1477,18 @@ pub(crate) mod js_bundler {
         pub(crate) keep_names: bool,
     }
 
-    fn build(
-        global_this: &JSGlobalObject,
-        context: jsc::ContextId,
-        arguments: &[JSValue],
-    ) -> JsResult<JSValue> {
-        if arguments.is_empty() || !arguments[0].is_object() {
+    /// `Bun.build(config)`
+    pub(crate) fn build(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let config = config.to_js();
+        if !config.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected a config object to be passed to Bun.build"
             )));
         }
 
         let vm = global_this.bun_vm();
+        let context = vm.context_of_caller_no_frame().id();
 
         // Detect and prevent calling Bun.build from within a macro during bundling.
         // This would cause a deadlock because:
@@ -1505,7 +1505,7 @@ pub(crate) mod js_bundler {
         }
 
         let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
+        let config = Config::from_js(global_this, config, &mut plugins)?;
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
@@ -1521,19 +1521,6 @@ pub(crate) mod js_bundler {
         let promise = completion.promise.value();
         completion.schedule();
         Ok(promise)
-    }
-
-    /// `Bun.build(config)`
-    #[bun_jsc::host_fn]
-    pub(crate) fn build_fn(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        build(
-            global_this,
-            global_this.bun_vm().context_of_caller(callframe).id(),
-            callframe.arguments(),
-        )
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -2035,15 +2022,9 @@ pub(crate) mod js_bundler {
 pub(crate) use js_bundler as JSBundler;
 
 /// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
-#[bun_jsc::host_fn]
-pub(crate) fn js_worker_live_count(
-    _global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn worker_live_count() -> usize {
     use core::sync::atomic::Ordering;
-    Ok(JSValue::js_number(
-        bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst) as f64,
-    ))
+    bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst)
 }
 
 pub(crate) use js_bundler::BunPluginTarget;

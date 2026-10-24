@@ -877,6 +877,46 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
     },
   });
 }
+// A module is a file and a loader, so a "use client" file under a second loader is a second
+// client component: it has its own client reference and its own entry in the manifest.
+for (const { name, serverComponents } of [
+  { name: "one server graph", serverComponents: oneServerGraph },
+  { name: "a separate SSR graph", serverComponents: separateSSRGraph },
+]) {
+  devTest(`a "use client" module under a second loader is a second client component, with ${name}`, {
+    framework: { ...minimalFramework, serverComponents },
+    files: {
+      "Button.ts": `
+        "use client";
+        export function Button() {}
+      `,
+      "tsx.ts": `
+        import { Button } from "./Button.ts" with { type: "tsx" };
+        export { Button as TsxButton };
+      `,
+      "routes/index.ts": `
+        import { Button } from "../Button.ts";
+        import { TsxButton } from "../tsx.ts";
+        export default function (req, meta) {
+          return Response.json([Button.file, TsxButton.file]);
+        }
+      `,
+      "routes/manifest.ts": `
+        import { serverManifest } from "bun:bake/server";
+        export default function (req, meta) {
+          return Response.json(Object.keys(serverManifest).sort());
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(["Button.ts", "Button.ts with { type: 'tsx' }"]);
+      expect(await dev.fetch("/manifest").json()).toEqual([
+        "Button.ts with { type: 'tsx' }#Button",
+        "Button.ts#Button",
+      ]);
+    },
+  });
+}
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,
   files: {
@@ -1025,6 +1065,167 @@ devTest("importing html file with text loader (#18154)", {
   async test(dev) {
     await using c = await dev.client("/", {});
     await c.expectMessage("<div>hello world</div>");
+  },
+});
+// A file is one module for each loader it is imported with: "d.json" and
+// `"d.json" with { type: "text" }` are two modules.
+devTest("a json file that a second module imports as text", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["a.ts", "b.ts"] }),
+    "d.json": `{"version":1}`,
+    "a.ts": `
+      import data from "./d.json";
+      console.log("a: " + typeof data + " " + data.version);
+    `,
+    "b.ts": `
+      import text from "./d.json" with { type: "text" };
+      console.log("b: " + typeof text + " " + text);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a: object 1", `b: string {"version":1}`);
+
+    await c.expectReload(async () => {
+      await dev.write("d.json", `{"version":2}`);
+    });
+    await c.expectMessage("a: object 2", `b: string {"version":2}`);
+  },
+});
+for (const first of ["module", "text"]) {
+  devTest(`a module that a second module imports as text, with the ${first} import bundled first`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: [`${first}.ts`] }),
+      "m.ts": `export const m = 1;`,
+      // The first importer imports the second one, so the bundler sees its import of "m.ts" first.
+      "module.ts": `
+        import { m } from "./m.ts";
+        ${first === "module" ? `import "./text.ts";` : ""}
+        console.log("module: " + m);
+      `,
+      "text.ts": `
+        import text from "./m.ts" with { type: "text" };
+        ${first === "text" ? `import "./module.ts";` : ""}
+        console.log("text: " + text);
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessageInAnyOrder("module: 1", "text: export const m = 1;");
+    },
+  });
+}
+// https://github.com/oven-sh/bun/issues/23299
+devTest("a TypeScript file that is imported as text stays text when it is saved", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <script src="frontend.ts"></script>
+        </head>
+        <body></body>
+      </html>
+    `,
+    "asset.ts": `console.error("Unreachable!");`,
+    "frontend.ts": `
+      //@ts-ignore
+      import code from "./asset.ts" with { type: "text" };
+
+      console.log(code);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(`console.error("Unreachable!");`);
+
+    // The client exits when the page calls console.error, so this fails if the code of "asset.ts" runs.
+    await c.expectReload(async () => {
+      await dev.write("asset.ts", `console.error("Still unreachable!");`);
+    });
+    await c.expectMessage(`console.error("Still unreachable!");`);
+  },
+});
+// The dev server bundles the importers of a deleted file again, each with the loader it was imported with.
+devTest("a module under a second loader keeps that loader when a file it imports is deleted", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "app.ts": `
+      import { value } from "./typed.js" with { type: "ts" };
+      console.log(value);
+    `,
+    // TypeScript in a .js file: only the loader of the import parses it.
+    "typed.js": `
+      import { leaf } from "./leaf";
+      export const value: string = "typed " + leaf;
+    `,
+    "leaf.tsx": `export const leaf = "tsx";`,
+    "leaf.ts": `export const leaf = "ts";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("typed tsx");
+
+    // "./leaf" resolves to "leaf.ts" now.
+    await c.expectReload(async () => {
+      await dev.delete("leaf.tsx");
+    });
+    await c.expectMessage("typed ts");
+  },
+});
+devTest("a dynamic import of a file with another type than its static import", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "d.json": `{"version":1}`,
+    "app.ts": `
+      import data from "./d.json";
+      const { default: text } = await import("./d.json", { with: { type: "text" } });
+      console.log(typeof data + " " + data.version + ", " + typeof text + " " + text);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(`object 1, string {"version":1}`);
+  },
+});
+devTest("a node polyfill that a second script imports as text", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["a.ts", "b.ts"] }),
+    "a.ts": `
+      import { Buffer } from "buffer";
+      console.log("a: " + typeof Buffer);
+    `,
+    "b.ts": `
+      import text from "buffer" with { type: "text" };
+      console.log("b: " + typeof text);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a: function", "b: string");
+  },
+});
+devTest("a route imports a json file that a second server module imports as text", {
+  framework: minimalFramework,
+  files: {
+    "d.json": `{"version":1}`,
+    "text.ts": `
+      import text from "./d.json" with { type: "text" };
+      export { text };
+    `,
+    "routes/index.ts": `
+      import data from "../d.json";
+      import { text } from "../text.ts";
+      export default function (req, meta) {
+        return Response.json({ data, text });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ data: { version: 1 }, text: `{"version":1}` });
   },
 });
 devTest("importing bun on the client", {

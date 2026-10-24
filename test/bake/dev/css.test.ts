@@ -810,6 +810,170 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+// When an onResolve plugin declines an import, the bundler resolves it and the import
+// record keeps the specifier as its path. The dev server must not take that for the file's path.
+devTest("editing a stylesheet whose @import an onResolve plugin declined", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /child\\.css$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `
+      @import "./child.css";
+      .main { color: red; }
+    `,
+    "child.css": `
+      .child { color: blue; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".child").color.expect.toBe("#00f");
+    await dev.write(
+      "child.css",
+      `
+        .child { color: green; }
+      `,
+    );
+    await c.style(".child").color.expect.toBe("green");
+  },
+});
+// A file is one module for each loader it is used with: the stylesheet "x.css" and
+// `"x.css" with { type: "text" }` are two modules. A script that reads an import
+// logs the error if the read throws.
+devTest("a stylesheet that a script imports as text", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["x.css"], scripts: ["app.ts"] }),
+    "x.css": `.box { color: red; }`,
+    "app.ts": `
+      import text from "./x.css" with { type: "text" };
+      const load = 1;
+      let value;
+      try {
+        value = text;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log("load " + load + ": " + value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("load 1: .box { color: red; }");
+    await c.style(".box").color.expect.toBe("red");
+
+    // Only the importer is bundled again. It finds the text module in the dev server's cache.
+    await c.expectReload(async () => {
+      await dev.patch("app.ts", { find: "load = 1", replace: "load = 2" });
+    });
+    await c.expectMessage("load 2: .box { color: red; }");
+    await c.style(".box").color.expect.toBe("red");
+
+    // Both modules of the file are bundled again.
+    await c.expectReload(async () => {
+      await dev.write("x.css", `.box { color: blue; }`);
+    });
+    await c.expectMessage("load 2: .box { color: blue; }");
+    await c.style(".box").color.expect.toBe("#00f");
+
+    await using c2 = await dev.client("/");
+    await c2.expectMessage("load 2: .box { color: blue; }");
+    await c2.style(".box").color.expect.toBe("#00f");
+  },
+});
+devTest("a file that is imported as text becomes a stylesheet when a module imports it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "x.css": `.box { color: red; }`,
+    "other.ts": `export const other = "no stylesheet";`,
+    "app.ts": `
+      import text from "./x.css" with { type: "text" };
+      import { other } from "./other.ts";
+      let value;
+      try {
+        value = text;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(other + ": " + value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("no stylesheet: .box { color: red; }");
+    await c.style(".box").notFound();
+
+    await c.expectReload(async () => {
+      await dev.write("other.ts", `import "./x.css";\nexport const other = "stylesheet";`);
+    });
+    await c.expectMessage("stylesheet: .box { color: red; }");
+    await c.style(".box").color.expect.toBe("red");
+
+    await c.expectReload(async () => {
+      await dev.write("other.ts", `export const other = "no stylesheet again";`);
+    });
+    await c.expectMessage("no stylesheet again: .box { color: red; }");
+    await c.style(".box").notFound();
+  },
+});
+devTest("a stylesheet that a script imports as a file", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["x.css"], scripts: ["app.ts"] }),
+    "x.css": `.box { color: red; }`,
+    "app.ts": `
+      import url from "./x.css" with { type: "file" };
+      let value;
+      try {
+        value = typeof url + " " + url;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const message = await c.getStringMessage();
+    expect(message).toMatch(/^string \/_bun\/asset\/[0-9a-f]{16}\.css$/);
+    // The url serves the file as it is on disk. The page's stylesheet is the bundled css.
+    expect(await dev.fetch(message.slice("string ".length)).text()).toBe(".box { color: red; }");
+    await c.style(".box").color.expect.toBe("red");
+  },
+});
+devTest("one script imports a stylesheet and another script imports it as text", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["a.ts", "b.ts"] }),
+    "x.css": `.box { color: red; }`,
+    "a.ts": `
+      import "./x.css";
+      console.log("a");
+    `,
+    "b.ts": `
+      import text from "./x.css" with { type: "text" };
+      let value;
+      try {
+        value = text;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log("b: " + value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a", "b: .box { color: red; }");
+    await c.style(".box").color.expect.toBe("red");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

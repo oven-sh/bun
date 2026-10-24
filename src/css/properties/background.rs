@@ -6,6 +6,7 @@ use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
 use crate::generics::{CssEql, DeepClone};
+use crate::properties::custom::UnparsedProperty;
 use crate::properties::{Property, PropertyId};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
@@ -579,52 +580,174 @@ impl BackgroundProperty {
     }
 }
 
+/// The background longhands that a run of declarations sets.
 #[derive(Default)]
-pub struct BackgroundHandler {
-    pub(crate) color: Option<CssColor>,
-    pub(crate) images: Option<SmallList<Image, 1>>,
-    pub(crate) has_prefix: bool,
-    pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
-    pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
-    pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
-    pub(crate) sizes: Option<SmallList<BackgroundSize, 1>>,
-    pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
-    pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
-    pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
-    // `'bump` through BackgroundHandler would avoid the heap alloc.
-    pub(crate) decls: Vec<Property>,
-    pub(crate) flushed_properties: BackgroundProperty,
-    pub(crate) has_any: bool,
+struct BackgroundState {
+    color: Option<CssColor>,
+    images: Option<SmallList<Image, 1>>,
+    x_positions: Option<SmallList<HorizontalPosition, 1>>,
+    y_positions: Option<SmallList<VerticalPosition, 1>>,
+    repeats: Option<SmallList<BackgroundRepeat, 1>>,
+    sizes: Option<SmallList<BackgroundSize, 1>>,
+    attachments: Option<SmallList<BackgroundAttachment, 1>>,
+    origins: Option<SmallList<BackgroundOrigin, 1>>,
+    clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
 }
 
-// Struct fields cannot be indexed by string at runtime; the `flushHelper` /
+impl BackgroundState {
+    fn is_empty(&self) -> bool {
+        self.images.is_none() && self.sets_nothing_else()
+    }
+
+    fn is_image_only(&self) -> bool {
+        self.images.is_some() && self.sets_nothing_else()
+    }
+
+    fn sets_nothing_else(&self) -> bool {
+        self.color.is_none()
+            && self.x_positions.is_none()
+            && self.y_positions.is_none()
+            && self.repeats.is_none()
+            && self.sizes.is_none()
+            && self.attachments.is_none()
+            && self.origins.is_none()
+            && self.clips.is_none()
+    }
+
+    /// `background` does not reset a prefixed `background-clip`.
+    fn sets_prefixed_clip(&self) -> bool {
+        matches!(&self.clips, Some((_, prefix)) if *prefix != VendorPrefix::NONE)
+    }
+
+    /// A clip under another prefix with another value has to stay a declaration of its own.
+    fn clips_conflict(&self, later: &BackgroundState) -> bool {
+        matches!(
+            (&self.clips, &later.clips),
+            (Some((clips, prefix)), Some((later_clips, later_prefix)))
+                if prefix != later_prefix && !SmallList::eql(later_clips, clips)
+        )
+    }
+
+    /// Applies the longhands that `later` sets on top of this state.
+    fn apply(&mut self, later: BackgroundState) {
+        macro_rules! apply {
+            ($($field:ident),*) => {$(
+                if later.$field.is_some() {
+                    self.$field = later.$field;
+                }
+            )*};
+        }
+        apply!(
+            color,
+            images,
+            x_positions,
+            y_positions,
+            repeats,
+            sizes,
+            attachments,
+            origins
+        );
+        if let Some((later_clips, later_prefix)) = later.clips {
+            match &mut self.clips {
+                Some((clips, prefix)) => {
+                    if !SmallList::eql(&later_clips, clips) {
+                        *clips = later_clips;
+                    }
+                    prefix.insert(later_prefix);
+                }
+                None => self.clips = Some((later_clips, later_prefix)),
+            }
+        }
+    }
+}
+
+/// Which targets read the images of the open state.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Reach {
+    /// Every target. Also the answer for a state that sets no image.
+    #[default]
+    Every,
+    /// Unprefixed images that the targets were not asked about yet.
+    Unasked,
+    /// Not every target.
+    Partial,
+}
+
+enum Pending {
+    /// A closed state. When `resumable`, a later image that every target reads
+    /// folds it back into the open state. Otherwise it stays as written.
+    State {
+        state: Box<BackgroundState>,
+        resumable: bool,
+    },
+    Unparsed(UnparsedProperty),
+}
+
+impl Pending {
+    /// A declaration that a later image overrides when every target reads that image.
+    fn sets_only_an_image(&self) -> bool {
+        match self {
+            Pending::State { state, resumable } => !resumable && state.is_image_only(),
+            Pending::Unparsed(unparsed) => {
+                matches!(unparsed.property_id, PropertyId::BackgroundImage)
+            }
+        }
+    }
+
+    fn is_resumable(&self) -> bool {
+        matches!(
+            self,
+            Pending::State {
+                resumable: true,
+                ..
+            }
+        )
+    }
+
+    fn sets_prefixed_clip(&self) -> bool {
+        match self {
+            Pending::State { state, .. } => state.sets_prefixed_clip(),
+            Pending::Unparsed(unparsed) => matches!(
+                unparsed.property_id,
+                PropertyId::BackgroundClip(prefix) if prefix != VendorPrefix::NONE
+            ),
+        }
+    }
+}
+
+/// Folds the background declarations of a block.
+///
+/// A value that not every target reads never replaces an earlier declaration.
+/// The earlier declarations wait in `pending`, in source order, until the block
+/// ends or a later value that every target reads overrides them. lightningcss
+/// keeps one buffered state instead, and loses the earlier declaration.
+#[derive(Default)]
+pub struct BackgroundHandler {
+    /// The declarations that still fold into one another.
+    open: BackgroundState,
+    /// Earlier declarations that a target may still need.
+    pending: Vec<Pending>,
+    /// One past the index of the first resumable state in `pending`, or 0.
+    first_resumable: u32,
+    flushed_properties: BackgroundProperty,
+    reach: Reach,
+    has_any: bool,
+}
+
+// Struct fields cannot be indexed by string at runtime; the
 // `initSmallListHelper` / `push` helpers are expanded into small per-field
 // macros below. A derive macro could replace them.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
         let length = $length;
-        if let Some(list) = &mut $this.$field {
+        if let Some(list) = &mut $this.open.$field {
             list.clear_retaining_capacity();
             list.ensure_total_capacity(length);
             list
         } else {
-            $this.$field = Some(SmallList::init_capacity(length));
-            $this.$field.as_mut().unwrap()
-        }
-    }};
-}
-
-macro_rules! flush_helper {
-    ($this:expr, $field:ident, $val:expr, $dest:expr, $context:expr) => {{
-        if let Some(existing) = &$this.$field {
-            if !crate::generic::eql(existing, $val)
-                && $context.targets.browsers.is_some()
-                && !crate::generic::is_compatible($val, &$context.targets.browsers.unwrap())
-            {
-                $this.flush($dest, $context);
-            }
+            $this.open.$field = Some(SmallList::init_capacity(length));
+            $this.open.$field.as_mut().unwrap()
         }
     }};
 }
@@ -634,6 +757,25 @@ macro_rules! push_property {
         $dest.push(Property::$variant($val));
         $this.flushed_properties.insert($bg_prop);
     }};
+}
+
+/// Whether every target reads the lowest colour fallback that `flush` writes in front of `images`.
+fn color_fallback_reaches_every_target(
+    images: &SmallList<Image, 1>,
+    arena: &Bump,
+    targets: &css::targets::Targets,
+    browsers: &css::targets::Browsers,
+) -> bool {
+    let mut kinds = ColorFallbackKind::empty();
+    for image in images.slice() {
+        kinds.insert(image.get_necessary_fallbacks(targets));
+    }
+    let lowest = kinds.lowest();
+    !lowest.is_empty()
+        && images
+            .slice()
+            .iter()
+            .all(|image| image.get_fallback(arena, lowest).is_compatible(browsers))
 }
 
 impl BackgroundHandler {
@@ -646,14 +788,20 @@ impl BackgroundHandler {
         let arena = dest.bump();
         match property {
             Property::BackgroundColor(val) => {
-                flush_helper!(self, color, val, dest, context);
-                self.color = Some(val.deep_clone(arena));
+                let is_fallback = self.open_color_is_fallback_of(val, context);
+                let partial = self.open_is_partial(arena, context);
+                if partial || !self.pending.is_empty() {
+                    if partial || is_fallback {
+                        self.close(false);
+                    }
+                } else if is_fallback {
+                    self.flush(dest, context);
+                }
+                self.open.color = Some(val.deep_clone(arena));
             }
-            Property::BackgroundImage(val) => {
-                self.background_helper(val, property, dest, context);
-                self.images = Some(val.deep_clone(arena));
-            }
+            Property::BackgroundImage(val) => self.image_longhand(val, dest, context),
             Property::BackgroundPosition(val) => {
+                self.close_partial(arena, context);
                 let len = val.len();
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
@@ -669,132 +817,64 @@ impl BackgroundHandler {
                 }
             }
             Property::BackgroundPositionX(val) => {
-                // Drop replaces deinit; just overwrite.
-                self.x_positions = Some(val.deep_clone(arena));
+                self.close_partial(arena, context);
+                self.open.x_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundPositionY(val) => {
-                self.y_positions = Some(val.deep_clone(arena));
+                self.close_partial(arena, context);
+                self.open.y_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundRepeat(val) => {
-                self.repeats = Some(val.deep_clone(arena));
+                self.close_partial(arena, context);
+                self.open.repeats = Some(val.deep_clone(arena));
             }
             Property::BackgroundSize(val) => {
-                self.sizes = Some(val.deep_clone(arena));
+                self.close_partial(arena, context);
+                self.open.sizes = Some(val.deep_clone(arena));
             }
             Property::BackgroundAttachment(val) => {
-                self.attachments = Some(val.deep_clone(arena));
+                self.close_partial(arena, context);
+                self.open.attachments = Some(val.deep_clone(arena));
             }
             Property::BackgroundOrigin(val) => {
-                self.origins = Some(val.deep_clone(arena));
+                self.close_partial(arena, context);
+                self.open.origins = Some(val.deep_clone(arena));
             }
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
-                // Compute the predicate first, then dispatch (avoids holding
-                // &mut self.clips across self.flush()).
-                let needs_flush = if let Some((clips, vp)) = &self.clips {
-                    vendor_prefix != *vp && !SmallList::eql(val, clips)
-                } else {
-                    false
-                };
-                if needs_flush {
-                    // `flush()` takes ownership of `self.clips` via `take()` and
-                    // frees it, so any borrow into `self.clips` would be stale
-                    // once `flush()` returns. Do not touch it.
+                let conflicts = matches!(
+                    &self.open.clips,
+                    Some((clips, vp)) if vendor_prefix != *vp && !SmallList::eql(val, clips)
+                );
+                if conflicts {
                     self.flush(dest, context);
-                    let arena = dest.bump();
-                    self.clips = Some((val.deep_clone(arena), vendor_prefix));
-                } else if let Some((clips, vp)) = &mut self.clips {
+                } else {
+                    self.close_partial(arena, context);
+                }
+                if let Some((clips, vp)) = &mut self.open.clips {
                     if !SmallList::eql(val, clips) {
                         *clips = val.deep_clone(arena);
                     }
                     vp.insert(vendor_prefix);
                 } else {
-                    self.clips = Some((val.deep_clone(arena), vendor_prefix));
+                    self.open.clips = Some((val.deep_clone(arena), vendor_prefix));
                 }
             }
-            Property::Background(val) => {
-                let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
-                for b in val.slice() {
-                    images.append_assume_capacity(b.image.deep_clone(arena));
-                }
-                self.background_helper(&images, property, dest, context);
-                let arena = dest.bump();
-                let color = val.last().unwrap().color.deep_clone(arena);
-                flush_helper!(self, color, &color, dest, context);
-                let arena = dest.bump();
-                let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
-                for b in val.slice() {
-                    clips.append_assume_capacity(b.clip);
-                }
-                let mut clips_vp = VendorPrefix::NONE;
-                // Drop the `self.clips` borrow before calling flush().
-                let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
-                    clips_vp != *existing_vp && !SmallList::eql(&clips, existing_clips)
-                } else {
-                    false
-                };
-                if needs_flush {
-                    self.flush(dest, context);
-                } else if let Some((_, existing_vp)) = &self.clips {
-                    clips_vp.insert(*existing_vp);
-                }
-
-                self.color = Some(color);
-                self.images = Some(images);
-                let len = val.len();
-                {
-                    let x_positions = init_small_list_helper!(self, x_positions, len);
-                    for b in val.slice() {
-                        x_positions.append_assume_capacity(b.position.x.clone());
-                    }
-                }
-                {
-                    let y_positions = init_small_list_helper!(self, y_positions, len);
-                    for b in val.slice() {
-                        y_positions.append_assume_capacity(b.position.y.clone());
-                    }
-                }
-                {
-                    let repeats = init_small_list_helper!(self, repeats, len);
-                    for b in val.slice() {
-                        repeats.append_assume_capacity(b.repeat);
-                    }
-                }
-                {
-                    let sizes = init_small_list_helper!(self, sizes, len);
-                    for b in val.slice() {
-                        sizes.append_assume_capacity(b.size.deep_clone(arena));
-                    }
-                }
-                {
-                    let attachments = init_small_list_helper!(self, attachments, len);
-                    for b in val.slice() {
-                        attachments.append_assume_capacity(b.attachment);
-                    }
-                }
-                {
-                    let origins = init_small_list_helper!(self, origins, len);
-                    for b in val.slice() {
-                        origins.append_assume_capacity(b.origin);
-                    }
-                }
-
-                self.clips = Some((clips, clips_vp));
-            }
+            Property::Background(val) => self.shorthand(val, dest, context),
             Property::Unparsed(val) => {
-                if is_background_property(val.property_id) {
-                    self.flush(dest, context);
-                    let arena = dest.bump();
-                    let mut unparsed = val.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut unparsed);
-                    if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
-                        self.flushed_properties.insert(prop);
-                    }
-
-                    dest.push(Property::Unparsed(unparsed));
-                } else {
+                if !is_background_property(val.property_id) {
                     return false;
+                }
+                let partial = self.open_is_partial(arena, context);
+                if partial || !self.pending.is_empty() {
+                    // Written with the held declarations, so that a later
+                    // `background` which every target reads overrides them all.
+                    self.close(!partial);
+                    self.pending.push(Pending::Unparsed(val.deep_clone(arena)));
+                } else {
+                    self.flush(dest, context);
+                    self.write_unparsed(val.deep_clone(arena), dest, context);
                 }
             }
             _ => return false,
@@ -804,45 +884,436 @@ impl BackgroundHandler {
         true
     }
 
-    fn background_helper(
+    fn image_longhand(
         &mut self,
         val: &SmallList<Image, 1>,
-        property: &Property,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        flush_helper!(self, images, val, dest, context);
+        let arena = dest.bump();
+        let prefixed = val.any(|image: &Image| image.contains_vendor_prefix());
+        if !prefixed && matches!(&self.open.images, Some(open) if crate::generic::eql(open, val)) {
+            return;
+        }
+        if self.holds_nothing() {
+            self.open.images = Some(val.deep_clone(arena));
+            self.reach = Self::reach_of_first(prefixed, context);
+            return;
+        }
 
-        // Store prefixed properties. Clear if we hit an unprefixed property and we have
-        // targets. In this case, the necessary prefixes will be generated.
-        self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
-        if self.has_prefix {
-            let arena = dest.bump();
-            self.decls.push(property.deep_clone(arena));
-        } else if context.targets.browsers.is_some() {
-            self.decls.clear();
+        let partial = self.open_is_partial(arena, context);
+        let held = partial || !self.pending.is_empty();
+        let every_target_reads = !prefixed
+            && match context.targets.browsers {
+                None => true,
+                Some(browsers) => {
+                    crate::generic::is_compatible(val, &browsers)
+                        || (!held
+                            && self.open.images.is_none()
+                            && self.flushed_properties.is_empty()
+                            && color_fallback_reaches_every_target(
+                                val,
+                                arena,
+                                &context.targets,
+                                &browsers,
+                            ))
+                }
+            };
+
+        if !every_target_reads {
+            if !held && !prefixed && self.open.images.is_some() {
+                // The image before it is its manual fallback.
+                self.flush(dest, context);
+            } else {
+                self.close(!partial);
+            }
+            self.open.images = Some(val.deep_clone(arena));
+            self.reach = Reach::Partial;
+            return;
+        }
+
+        if partial {
+            if self.open.is_image_only() && context.targets.browsers.is_some() {
+                self.open.images = None;
+            } else {
+                // No fold into a declaration that a target ignores. Without
+                // targets a prefixed image stays as written.
+                self.close(false);
+            }
+        }
+        if self.open.images.is_none() {
+            self.resume(context.targets.browsers.is_some());
+        }
+        self.open.images = Some(val.deep_clone(arena));
+        self.reach = Reach::Every;
+    }
+
+    fn shorthand(
+        &mut self,
+        val: &SmallList<Background, 1>,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let arena = dest.bump();
+        let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
+        for b in val.slice() {
+            images.append_assume_capacity(b.image.deep_clone(arena));
+        }
+        let color = val.last().unwrap().color.deep_clone(arena);
+        let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
+        for b in val.slice() {
+            clips.append_assume_capacity(b.clip);
+        }
+        let mut clips_vp = VendorPrefix::NONE;
+
+        let prefixed = images.any(|image: &Image| image.contains_vendor_prefix());
+        let conflicts = matches!(
+            &self.open.clips,
+            Some((open_clips, open_vp)) if clips_vp != *open_vp && !SmallList::eql(&clips, open_clips)
+        );
+        if conflicts {
+            self.flush(dest, context);
+        }
+        let reach = if self.holds_nothing() {
+            Self::reach_of_first(prefixed, context)
+        } else {
+            self.before_shorthand(&images, &color, prefixed, dest, context)
+        };
+        if let Some((_, open_vp)) = &self.open.clips {
+            clips_vp.insert(*open_vp);
+        }
+
+        self.open.color = Some(color);
+        self.open.images = Some(images);
+        self.reach = reach;
+        let len = val.len();
+        {
+            let x_positions = init_small_list_helper!(self, x_positions, len);
+            for b in val.slice() {
+                x_positions.append_assume_capacity(b.position.x.clone());
+            }
+        }
+        {
+            let y_positions = init_small_list_helper!(self, y_positions, len);
+            for b in val.slice() {
+                y_positions.append_assume_capacity(b.position.y.clone());
+            }
+        }
+        {
+            let repeats = init_small_list_helper!(self, repeats, len);
+            for b in val.slice() {
+                repeats.append_assume_capacity(b.repeat);
+            }
+        }
+        {
+            let sizes = init_small_list_helper!(self, sizes, len);
+            for b in val.slice() {
+                sizes.append_assume_capacity(b.size.deep_clone(arena));
+            }
+        }
+        {
+            let attachments = init_small_list_helper!(self, attachments, len);
+            for b in val.slice() {
+                attachments.append_assume_capacity(b.attachment);
+            }
+        }
+        {
+            let origins = init_small_list_helper!(self, origins, len);
+            for b in val.slice() {
+                origins.append_assume_capacity(b.origin);
+            }
+        }
+        self.open.clips = Some((clips, clips_vp));
+    }
+
+    /// Closes, writes or drops the declarations in front of a `background`
+    /// shorthand. Returns which targets read the images of the shorthand.
+    fn before_shorthand(
+        &mut self,
+        images: &SmallList<Image, 1>,
+        color: &CssColor,
+        prefixed: bool,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) -> Reach {
+        let arena = dest.bump();
+        let partial = self.open_is_partial(arena, context);
+        let held = partial || !self.pending.is_empty();
+        let is_fallback = self.open_color_is_fallback_of(color, context);
+        let same_images = !prefixed
+            && matches!(&self.open.images, Some(open) if crate::generic::eql(open, images));
+
+        // `reach_behind`: the answer when an earlier declaration stays in
+        // front of the shorthand, which stops its colour fallbacks.
+        let (every_target_reads, reach_behind) = if prefixed {
+            (false, Reach::Partial)
+        } else if same_images {
+            (
+                !partial,
+                if partial {
+                    Reach::Partial
+                } else {
+                    Reach::Unasked
+                },
+            )
+        } else {
+            match context.targets.browsers {
+                None => (true, Reach::Every),
+                Some(browsers) if crate::generic::is_compatible(images, &browsers) => {
+                    (true, Reach::Every)
+                }
+                Some(browsers) => {
+                    let with_fallbacks = self.open.images.is_none()
+                        && self.flushed_properties.is_empty()
+                        && color_fallback_reaches_every_target(
+                            images,
+                            arena,
+                            &context.targets,
+                            &browsers,
+                        );
+                    (with_fallbacks, Reach::Partial)
+                }
+            }
+        };
+
+        if !every_target_reads {
+            if same_images {
+                if is_fallback {
+                    self.close(false);
+                }
+            } else if !held && ((!prefixed && self.open.images.is_some()) || is_fallback) {
+                // The image or the colour before it is its manual fallback.
+                self.flush(dest, context);
+            } else {
+                self.close(!partial && !is_fallback);
+            }
+            return Reach::Partial;
+        }
+
+        if is_fallback {
+            if held {
+                self.close(false);
+            } else {
+                self.flush(dest, context);
+            }
+            return reach_behind;
+        }
+        if !self.supersede(context) {
+            self.flush(dest, context);
+            return reach_behind;
+        }
+        if same_images {
+            self.reach
+        } else {
+            Reach::Every
         }
     }
 
+    fn reach_of_first(prefixed: bool, context: &PropertyHandlerContext) -> Reach {
+        if prefixed {
+            Reach::Partial
+        } else if context.targets.browsers.is_none() {
+            Reach::Every
+        } else {
+            Reach::Unasked
+        }
+    }
+
+    fn holds_nothing(&self) -> bool {
+        !self.has_any || (self.pending.is_empty() && self.open.is_empty())
+    }
+
+    /// Whether the colour of the open state is the manual fallback of `val`,
+    /// a later colour that a target lacks.
+    fn open_color_is_fallback_of(&self, val: &CssColor, context: &PropertyHandlerContext) -> bool {
+        matches!(
+            (&self.open.color, context.targets.browsers),
+            (Some(open), Some(browsers))
+                if !crate::generic::eql(open, val) && !crate::generic::is_compatible(val, &browsers)
+        )
+    }
+
+    /// Asks the targets about the images of the open state, once. `flush`
+    /// writes the colour fallbacks of a first image, so every target reads it
+    /// when every target reads the lowest one.
+    fn open_is_partial(&mut self, arena: &Bump, context: &PropertyHandlerContext) -> bool {
+        if self.reach == Reach::Unasked {
+            self.reach = match (&self.open.images, context.targets.browsers) {
+                (Some(images), Some(browsers))
+                    if !crate::generic::is_compatible(images, &browsers)
+                        && !(self.pending.is_empty()
+                            && self.flushed_properties.is_empty()
+                            && color_fallback_reaches_every_target(
+                                images,
+                                arena,
+                                &context.targets,
+                                &browsers,
+                            )) =>
+                {
+                    Reach::Partial
+                }
+                _ => Reach::Every,
+            };
+        }
+        self.reach == Reach::Partial
+    }
+
+    /// A state that a target cannot read takes in no later longhand.
+    fn close_partial(&mut self, arena: &Bump, context: &PropertyHandlerContext) {
+        if self.open_is_partial(arena, context) {
+            self.close(false);
+        }
+    }
+
+    /// Moves the open state to the end of `pending`.
+    fn close(&mut self, resumable: bool) {
+        self.reach = Reach::Every;
+        if self.open.is_empty() {
+            return;
+        }
+        let state = Box::new(core::mem::take(&mut self.open));
+        self.pending.push(Pending::State { state, resumable });
+        if resumable && self.first_resumable == 0 {
+            self.first_resumable = self.pending.len() as u32;
+        }
+    }
+
+    /// A `background` that every target reads overrides the declarations in
+    /// front of it. Without targets, only the resumable states: the prefixed
+    /// and the unparsed declarations stay as written. Returns false when a
+    /// declaration to drop sets a prefixed `background-clip`.
+    fn supersede(&mut self, context: &PropertyHandlerContext) -> bool {
+        if context.targets.browsers.is_some() {
+            if self.pending.iter().any(Pending::sets_prefixed_clip) {
+                return false;
+            }
+            self.pending.clear();
+            self.first_resumable = 0;
+            return true;
+        }
+
+        let start = match self.first_resumable {
+            0 => self.pending.len(),
+            first => first as usize - 1,
+        };
+        if self.pending[start..]
+            .iter()
+            .any(|entry| entry.is_resumable() && entry.sets_prefixed_clip())
+        {
+            return false;
+        }
+        if self.reach == Reach::Partial {
+            self.close(false);
+        }
+        let mut kept = start;
+        for i in start..self.pending.len() {
+            if !self.pending[i].is_resumable() {
+                self.pending.swap(kept, i);
+                kept += 1;
+            }
+        }
+        self.pending.truncate(kept);
+        self.first_resumable = 0;
+        true
+    }
+
+    /// An image that every target reads overrides the image-only declarations
+    /// in front of it. The resumable states below them fold back into the open
+    /// state, down to the first one that sets an image.
+    fn resume(&mut self, has_targets: bool) {
+        // Without targets the overridden declarations stay as written.
+        let mut overridden = Vec::new();
+        while let Some(entry) = self.pending.pop() {
+            match entry {
+                Pending::State {
+                    mut state,
+                    resumable: true,
+                } if !state.clips_conflict(&self.open) => {
+                    if self.first_resumable as usize > self.pending.len() {
+                        self.first_resumable = 0;
+                    }
+                    state.apply(core::mem::take(&mut self.open));
+                    self.open = *state;
+                    if self.open.images.is_some() {
+                        break;
+                    }
+                }
+                entry if entry.sets_only_an_image() => {
+                    if !has_targets {
+                        overridden.push(entry);
+                    }
+                }
+                entry => {
+                    self.pending.push(entry);
+                    break;
+                }
+            }
+        }
+        self.pending.extend(overridden.into_iter().rev());
+    }
+
+    fn write_unparsed(
+        &mut self,
+        mut unparsed: UnparsedProperty,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        context.add_unparsed_fallbacks(dest.bump(), &mut unparsed);
+        if let Some(prop) = BackgroundProperty::try_from_property_id(unparsed.property_id) {
+            self.flushed_properties.insert(prop);
+        }
+        dest.push(Property::Unparsed(unparsed));
+    }
+
+    /// Writes the held declarations and the open state.
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }
         self.has_any = false;
+
+        // A resumable state without an image is not the manual fallback of
+        // the shorthand after it, which still gets its generated fallbacks.
+        let mut shorthand_fallbacks = self.flushed_properties.is_empty();
+        let mut pending = core::mem::take(&mut self.pending);
+        for entry in pending.drain(..) {
+            match entry {
+                Pending::State { state, resumable } => {
+                    let is_manual_fallback = !resumable || state.images.is_some();
+                    self.write_state(*state, shorthand_fallbacks, dest, context);
+                    shorthand_fallbacks &= !is_manual_fallback;
+                }
+                Pending::Unparsed(unparsed) => {
+                    self.write_unparsed(unparsed, dest, context);
+                    shorthand_fallbacks = false;
+                }
+            }
+        }
+        self.pending = pending;
+        self.first_resumable = 0;
+        self.reach = Reach::Every;
+        let open = core::mem::take(&mut self.open);
+        self.write_state(open, shorthand_fallbacks, dest, context);
+    }
+
+    fn write_state(
+        &mut self,
+        state: BackgroundState,
+        shorthand_fallbacks: bool,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         let arena = dest.bump();
 
-        let mut maybe_color: Option<CssColor> = self.color.take();
-        let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();
-        let mut maybe_x_positions: Option<SmallList<HorizontalPosition, 1>> =
-            self.x_positions.take();
-        let mut maybe_y_positions: Option<SmallList<VerticalPosition, 1>> = self.y_positions.take();
-        let mut maybe_repeats: Option<SmallList<BackgroundRepeat, 1>> = self.repeats.take();
-        let mut maybe_sizes: Option<SmallList<BackgroundSize, 1>> = self.sizes.take();
-        let mut maybe_attachments: Option<SmallList<BackgroundAttachment, 1>> =
-            self.attachments.take();
-        let mut maybe_origins: Option<SmallList<BackgroundOrigin, 1>> = self.origins.take();
-        let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> =
-            self.clips.take();
+        let mut maybe_color: Option<CssColor> = state.color;
+        let mut maybe_images: Option<SmallList<Image, 1>> = state.images;
+        let mut maybe_x_positions: Option<SmallList<HorizontalPosition, 1>> = state.x_positions;
+        let mut maybe_y_positions: Option<SmallList<VerticalPosition, 1>> = state.y_positions;
+        let mut maybe_repeats: Option<SmallList<BackgroundRepeat, 1>> = state.repeats;
+        let mut maybe_sizes: Option<SmallList<BackgroundSize, 1>> = state.sizes;
+        let mut maybe_attachments: Option<SmallList<BackgroundAttachment, 1>> = state.attachments;
+        let mut maybe_origins: Option<SmallList<BackgroundOrigin, 1>> = state.origins;
+        let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> = state.clips;
 
         if let (
             Some(color),
@@ -923,7 +1394,7 @@ impl BackgroundHandler {
                 // originals Drop normally; no explicit clear needed.
                 // PERF: profile the clones if hot.
 
-                if self.flushed_properties.is_empty() {
+                if shorthand_fallbacks {
                     let mut fallbacks =
                         crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
                     // Pop in reverse then re-reverse via a temp Vec to
@@ -958,8 +1429,6 @@ impl BackgroundHandler {
                     dest.push(clip);
                     self.flushed_properties.insert(BackgroundProperty::CLIP);
                 }
-
-                self.reset();
                 return;
             }
         }
@@ -1114,21 +1583,6 @@ impl BackgroundHandler {
             )));
             self.flushed_properties.insert(BackgroundProperty::CLIP);
         }
-
-        self.reset();
-    }
-
-    fn reset(&mut self) {
-        // Drop on assignment frees each field's old value.
-        self.color = None;
-        self.images = None;
-        self.x_positions = None;
-        self.y_positions = None;
-        self.repeats = None;
-        self.sizes = None;
-        self.attachments = None;
-        self.origins = None;
-        self.clips = None;
     }
 
     pub(crate) fn finalize(
@@ -1136,20 +1590,6 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // If the last declaration is prefixed, pop the last value
-        // so it isn't duplicated when we flush.
-        if self.has_prefix {
-            let _ = self.decls.pop();
-            // Drop handles deinit.
-        }
-
-        let arena = dest.bump();
-        for decl in self.decls.drain(..) {
-            // `Property` is not `Clone` here, so move out via drain.
-            let _ = arena;
-            dest.push(decl);
-        }
-
         self.flush(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
     }

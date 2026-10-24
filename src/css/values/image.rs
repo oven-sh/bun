@@ -85,6 +85,20 @@ impl Image {
         !prefix.is_empty() && prefix != VendorPrefix::NONE
     }
 
+    /// Whether the image, or an image in its `image-set()` options, has a vendor prefix.
+    pub(crate) fn contains_vendor_prefix(&self) -> bool {
+        match self {
+            Image::ImageSet(set) => {
+                self.has_vendor_prefix()
+                    || set
+                        .options
+                        .iter()
+                        .any(|option| option.image.contains_vendor_prefix())
+            }
+            _ => self.has_vendor_prefix(),
+        }
+    }
+
     /// Returns the vendor prefix used in the image value.
     pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
         match self {

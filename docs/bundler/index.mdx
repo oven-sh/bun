@@ -263,7 +263,7 @@ When every entrypoint is spelled like a key of `files`, Bun uses the current wor
 
 #### Override files on disk
 
-In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged. A relative path for a file on disk replaces the contents of that file only. Bun still resolves the file on disk, so its `tsconfig.json` and `package.json` apply. The key must be the real path of the file: a path through a symlinked directory has no effect.
+In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged. A relative path for a file on disk replaces the contents of that file only. Bun still resolves the file on disk, so its `tsconfig.json` and `package.json` apply. For this, write the real path of the file, with the same letter case. A key for a symlink, for a path through a symlinked directory, or for a directory is a file in memory at that path.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 // Assume ./src/config.ts exists on disk with development settings

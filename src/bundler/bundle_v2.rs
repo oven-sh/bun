@@ -931,26 +931,22 @@ pub mod bv2_impl {
                 absolute: bool,
                 /// The display path of a file that a relative path names: its path from the cwd.
                 pretty: Option<Box<[u8]>>,
-                /// Whether a file is on disk at the path: 0 not asked yet, 1 no, 2 yes.
+                /// The answer of `is_on_disk`: 0 not asked yet, 1 no, 2 yes.
                 on_disk: core::sync::atomic::AtomicU8,
             }
 
             impl File {
-                fn is_on_disk(&self, path: &[u8]) -> bool {
-                    use core::sync::atomic::Ordering::Relaxed;
-                    match self.on_disk.load(Relaxed) {
+                /// Asks `on_disk` once. An absolute key asks if the path exists, a relative path asks the disk resolver.
+                fn is_on_disk(&self, on_disk: impl FnOnce() -> bool) -> bool {
+                    use core::sync::atomic::Ordering::SeqCst;
+                    match self.on_disk.load(SeqCst) {
                         0 => {
-                            let on_disk = bun_sys::exists(path);
-                            self.on_disk.store(if on_disk { 2 } else { 1 }, Relaxed);
+                            let on_disk = on_disk();
+                            self.on_disk.store(if on_disk { 2 } else { 1 }, SeqCst);
                             on_disk
                         }
                         asked => asked == 2,
                     }
-                }
-
-                /// The disk resolver resolves the module. The parse task reads the key.
-                fn overrides_disk(&self, path: &[u8]) -> bool {
-                    self.pretty.is_some() && !self.absolute && self.is_on_disk(path)
                 }
             }
 
@@ -958,6 +954,13 @@ pub mod bv2_impl {
             pub struct KeyConflict {
                 pub key: Vec<u8>,
                 pub other: Box<[u8]>,
+            }
+
+            /// What an entry point or an import names in `files`.
+            pub(crate) enum Found {
+                InMemory(bun_resolver::Result),
+                /// A relative path for a file on disk: the disk resolver resolves this path, the parse task reads the key.
+                OnDisk(&'static [u8]),
             }
 
             impl FileMap {
@@ -1129,66 +1132,140 @@ pub mod bv2_impl {
                     self.file_written_as(entry_point).is_some()
                 }
 
-                /// True when `entry_point` names an in-memory file by text or by path.
+                /// True when `entry_point` names a file of `files` by text, or by path from the cwd.
                 pub fn contains_entry_point(&self, entry_point: &[u8]) -> bool {
                     self.entry_point(entry_point).is_some()
                 }
 
-                fn entry_point(&self, entry_point: &[u8]) -> Option<(&[u8], &File)> {
+                /// The file that `entry_point` names, and whether it is written exactly like a key.
+                fn entry_point(&self, entry_point: &[u8]) -> Option<(&[u8], &File, bool)> {
                     if entry_point.is_empty() {
                         return None;
                     }
                     if let Some((path, file)) = self.file_written_as(entry_point) {
-                        return (!file.overrides_disk(path)).then_some((path, file));
+                        return Some((path, file, true));
                     }
                     let (path, file) = if bun_paths::is_absolute_loose(entry_point) {
                         self.file(entry_point)?
                     } else {
                         self.file_in_dir(self.cwd, entry_point)?
                     };
-                    // Not written like the key: a file on disk keeps the disk resolver's route.
-                    (!file.is_on_disk(path)).then_some((path, file))
+                    Some((path, file, false))
                 }
 
-                /// The in-memory file that an entry point names by text, or by path from the cwd.
+                /// A relative path for a file on disk replaces the contents only: the disk resolver resolves the module.
+                fn overrides_disk(
+                    &self,
+                    resolver: &mut bun_resolver::Resolver<'_>,
+                    path: &[u8],
+                    file: &File,
+                ) -> bool {
+                    file.pretty.is_some()
+                        && !file.absolute
+                        && file.is_on_disk(|| {
+                            bun_sys::exists(path) && self.disk_resolver_finds(resolver, file)
+                        })
+                }
+
+                /// The path of a relative path, spelled as the disk resolver spells a path from the cwd.
+                fn disk_path<'b>(&'b self, file: &File, buf: &'b mut [u8]) -> Option<&'b [u8]> {
+                    bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                        self.cwd,
+                        buf,
+                        &[file.pretty.as_deref()?],
+                    )
+                }
+
+                /// The disk resolver has a module at the path of `file`, and the parse task finds `file` by the path of that module.
+                fn disk_resolver_finds(
+                    &self,
+                    resolver: &mut bun_resolver::Resolver<'_>,
+                    file: &File,
+                ) -> bool {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let Some(path) = self.disk_path(file, &mut **buf) else {
+                        return false;
+                    };
+                    let Ok(module) = resolver.resolve(self.cwd, path, bun_ast::ImportKind::Stmt)
+                    else {
+                        return false;
+                    };
+                    (module.path_const())
+                        .and_then(|module_path| self.file(module_path.text))
+                        .is_some_and(|(_, found)| core::ptr::eq(found, file))
+                }
+
+                /// The disk resolver resolves the path of `file`. The parse task reads the key.
+                fn on_disk(&self, arena: &bun_alloc::Arena, file: &File) -> Option<Found> {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let path = self.disk_path(file, &mut **buf)?;
+                    Some(Found::OnDisk(Self::dupe(arena, path)))
+                }
+
+                /// The file that an entry point names by text, or by path from the cwd.
                 pub(crate) fn resolve_entry_point(
                     &self,
                     arena: &bun_alloc::Arena,
+                    resolver: &mut bun_resolver::Resolver<'_>,
                     entry_point: &[u8],
-                ) -> Option<bun_resolver::Result> {
-                    let (path, file) = self.entry_point(entry_point)?;
-                    Some(Self::result(arena, path, file))
+                ) -> Option<Found> {
+                    let (path, file, written_like_the_key) = self.entry_point(entry_point)?;
+                    if file.absolute {
+                        // An absolute key that the entry point spells another way: a file on disk keeps the disk resolver's route.
+                        if !written_like_the_key && file.is_on_disk(|| bun_sys::exists(path)) {
+                            return None;
+                        }
+                    } else if self.overrides_disk(resolver, path, file) {
+                        return self.on_disk(arena, file);
+                    }
+                    Some(Found::InMemory(Self::result(arena, path, file)))
                 }
 
                 /// `./a` and `../a` name the file beside `source_file` first, others the key text.
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
+                    resolver: &mut bun_resolver::Resolver<'_>,
                     source_file: &[u8],
                     specifier: &[u8],
-                ) -> Option<bun_resolver::Result> {
+                ) -> Option<Found> {
                     if specifier.is_empty() {
                         return None;
                     }
-                    let (path, file) = if bun_paths::is_absolute_loose(specifier) {
-                        let (path, file) = self.file(specifier)?;
-                        if file.overrides_disk(path) {
-                            return None;
-                        }
-                        (path, file)
+                    // `by_path`: the disk resolver gets from `specifier` to `path` too.
+                    let ((path, file), by_path) = if bun_paths::is_absolute_loose(specifier) {
+                        (self.file(specifier)?, true)
                     } else if bun_paths::is_package_path_not_absolute(specifier) {
-                        match self.file_spelled(specifier) {
-                            Some(found) => found,
-                            None => self.file_beside(source_file, specifier)?,
-                        }
+                        let found = self.file_spelled(specifier);
+                        (
+                            found.or_else(|| self.file_beside(source_file, specifier))?,
+                            false,
+                        )
                     } else {
                         match self.file_beside(source_file, specifier) {
-                            Some((path, file)) if file.overrides_disk(path) => return None,
-                            Some(found) => found,
-                            None => self.file_spelled(specifier)?,
+                            Some(beside) => (beside, true),
+                            None => (self.file_spelled(specifier)?, false),
                         }
                     };
-                    Some(Self::result(arena, path, file))
+                    if self.overrides_disk(resolver, path, file) {
+                        return (!by_path).then(|| self.on_disk(arena, file)).flatten();
+                    }
+                    Some(Found::InMemory(Self::result(arena, path, file)))
+                }
+
+                /// 1.4.x resolved a relative import of a file under a relative key from the cwd.
+                pub(crate) fn cwd_for_import(
+                    &self,
+                    importer: &[u8],
+                    specifier: &[u8],
+                ) -> Option<&'static [u8]> {
+                    if bun_paths::is_absolute_loose(specifier)
+                        || bun_paths::is_package_path_not_absolute(specifier)
+                    {
+                        return None;
+                    }
+                    let (_, file) = self.file(importer)?;
+                    file.pretty.is_some().then_some(self.cwd)
                 }
 
                 /// The file at `specifier` joined onto the directory of `source_file`.
@@ -1240,24 +1317,26 @@ pub mod bv2_impl {
                     self.file_in_dir(effective_source_dir, specifier)
                 }
 
-                /// Copies into the arena of the build. `pretty` is set for a relative path only.
-                fn result(
-                    arena: &bun_alloc::Arena,
-                    path: &[u8],
-                    file: &File,
-                ) -> bun_resolver::Result {
+                /// Copies into the arena of the build.
+                fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
-                    let dupe = |bytes: &[u8]| -> &'static [u8] {
-                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(bytes)) }
-                    };
-                    let mut primary = crate::bun_fs::Path::init_with_namespace(dupe(path), b"file");
+                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(bytes)) }
+                }
+
+                /// `pretty` is set for a relative path only.
+                fn result(
+                    arena: &bun_alloc::Arena,
+                    path: &[u8],
+                    file: &File,
+                ) -> bun_resolver::Result {
+                    let mut primary =
+                        crate::bun_fs::Path::init_with_namespace(Self::dupe(arena, path), b"file");
                     if let Some(pretty) = &file.pretty {
-                        primary.pretty = dupe(pretty);
+                        primary.pretty = Self::dupe(arena, pretty);
                     }
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
@@ -2927,12 +3006,19 @@ pub mod bv2_impl {
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
             // Check the FileMap first for in-memory files
+            let mut disk_specifier: &[u8] = &import_record.specifier;
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(
+                let found = file_map.resolve(
                     self.arena(),
+                    // SAFETY: see `transpiler` note above.
+                    unsafe { &mut (*transpiler).resolver },
                     &import_record.source_file,
                     &import_record.specifier,
-                ) {
+                );
+                if let Some(jsc_api::JSBundler::Found::OnDisk(path)) = &found {
+                    disk_specifier = path;
+                }
+                if let Some(jsc_api::JSBundler::Found::InMemory(_file_map_result)) = found {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -3004,15 +3090,27 @@ pub mod bv2_impl {
             }
 
             let mut had_busted_dir_cache = false;
+            let mut disk_dir: &[u8] = source_dir;
+            let mut tried_cwd = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
-                    source_dir,
-                    &import_record.specifier,
+                    disk_dir,
+                    disk_specifier,
                     import_record.kind,
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
+                        if err == _resolver::Error::ModuleNotFound
+                            && !tried_cwd
+                            && let Some(cwd) = self.file_map.and_then(|files| {
+                                files.cwd_for_import(&import_record.source_file, disk_specifier)
+                            })
+                        {
+                            tried_cwd = true;
+                            disk_dir = cwd;
+                            continue;
+                        }
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
@@ -3797,6 +3895,42 @@ pub mod bv2_impl {
             }
         }
 
+        /// Enqueues `entry_point` when `files` has it in memory. If not, returns the path to ask the disk resolver for.
+        fn enqueue_in_memory_entry_point<'e>(
+            &mut self,
+            entry_point: &'e [u8],
+            target: options::Target,
+            loader: Option<Loader>,
+        ) -> Result<Option<&'e [u8]>, Error> {
+            let Some(file_map) = self.file_map else {
+                return Ok(Some(entry_point));
+            };
+            let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
+            // SAFETY: the `Transpiler` lives for `'a`, and nothing else borrows its resolver during this call.
+            let resolver = unsafe { &mut (*transpiler).resolver };
+            let mut in_memory =
+                match file_map.resolve_entry_point(self.arena(), resolver, entry_point) {
+                    None => return Ok(Some(entry_point)),
+                    Some(jsc_api::JSBundler::Found::OnDisk(path)) => return Ok(Some(path)),
+                    Some(jsc_api::JSBundler::Found::InMemory(in_memory)) => in_memory,
+                };
+            let source_index = self.enqueue_entry_item(&mut in_memory, true, target, loader)?;
+            // A relative entry point keeps the name and the directory it was written with.
+            if let Some(source_index) = source_index {
+                if !bun_paths::is_absolute_loose(entry_point) {
+                    let mut written = entry_point.to_vec();
+                    bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        &mut written,
+                    );
+                    let _ = self
+                        .graph
+                        .entry_point_original_names
+                        .put(source_index, written);
+                }
+            }
+            Ok(None)
+        }
+
         // A const-generic enum param with variant-dependent data cannot be
         // expressed on stable Rust, so this is split into three monomorphic fns.
         pub(crate) fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
@@ -3825,32 +3959,14 @@ pub mod bv2_impl {
                 }
 
                 // Check FileMap first for in-memory entry points
-                if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) =
-                        file_map.resolve_entry_point(self.arena(), entry_point)
-                    {
-                        let source_index = self.enqueue_entry_item(
-                            &mut { file_map_result },
-                            true,
-                            self.transpiler.options.target,
-                            None,
-                        )?;
-                        // A relative entry point keeps the name and the directory it was written with.
-                        if let Some(source_index) = source_index {
-                            if !bun_paths::is_absolute_loose(entry_point) {
-                                let mut written = entry_point.to_vec();
-                                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<
-                                    u8,
-                                >(&mut written);
-                                let _ = self
-                                    .graph
-                                    .entry_point_original_names
-                                    .put(source_index, written);
-                            }
-                        }
-                        continue;
-                    }
-                }
+                let Some(entry_point) = self.enqueue_in_memory_entry_point(
+                    entry_point,
+                    self.transpiler.options.target,
+                    None,
+                )?
+                else {
+                    continue;
+                };
 
                 // no plugins were matched
                 let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
@@ -5523,9 +5639,16 @@ pub mod bv2_impl {
                     if resolve.import_record.namespace.as_ref() == b"file" {
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
                             let target = resolve.import_record.original_target;
+                            let Ok(Some(entry_point)) = this.enqueue_in_memory_entry_point(
+                                &resolve.import_record.specifier,
+                                target,
+                                resolve.import_record.loader,
+                            ) else {
+                                return;
+                            };
                             let Ok(resolved) = this
                                 .transpiler_for_target(target)
-                                .resolve_entry_point(&resolve.import_record.specifier)
+                                .resolve_entry_point(entry_point)
                             else {
                                 return;
                             };
@@ -7150,10 +7273,18 @@ pub mod bv2_impl {
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
                 // Check the FileMap first for in-memory files
+                let mut disk_specifier: &[u8] = import_record.path.text;
                 if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
+                    let found = file_map.resolve(
+                        self.arena(),
+                        &mut transpiler.resolver,
+                        source.path.text,
+                        import_record.path.text,
+                    );
+                    if let Some(jsc_api::JSBundler::Found::OnDisk(path)) = &found {
+                        disk_specifier = path;
+                    }
+                    if let Some(jsc_api::JSBundler::Found::InMemory(_file_map_result)) = found {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
@@ -7217,14 +7348,26 @@ pub mod bv2_impl {
                 }
 
                 let mut had_busted_dir_cache = false;
+                let mut disk_dir: &[u8] = source_dir;
+                let mut tried_cwd = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
-                        source_dir,
-                        import_record.path.text,
+                        disk_dir,
+                        disk_specifier,
                         import_record.kind,
                     ) {
                         Ok(r) => break r,
                         Err(err) => {
+                            if err == _resolver::Error::ModuleNotFound
+                                && !tried_cwd
+                                && let Some(cwd) = self.file_map.and_then(|files| {
+                                    files.cwd_for_import(source.path.text, disk_specifier)
+                                })
+                            {
+                                tried_cwd = true;
+                                disk_dir = cwd;
+                                continue 'inner;
+                            }
                             // borrowck — `log_for_resolution_failures` returns
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via

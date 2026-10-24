@@ -747,7 +747,11 @@ pub(crate) fn compute_chunks(
                             bun_paths::platform::Auto,
                             false,
                         >(root_dir, dir_path);
-                        if !from_root.starts_with(b"..") && !bun_paths::is_absolute(from_root) {
+                        let leaves_root = from_root.strip_prefix(b"..").is_some_and(|rest| {
+                            (rest.first())
+                                .is_none_or(|&byte| bun_core::path_sep::is_sep_native(byte))
+                        });
+                        if !leaves_root && !bun_paths::is_absolute(from_root) {
                             break 'dir dir_path;
                         }
                     }

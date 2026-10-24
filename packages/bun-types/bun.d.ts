@@ -3624,8 +3624,10 @@ declare module "bun" {
      *
      * A relative path for a file on disk replaces the contents of that file
      * only. Bun still resolves the file on disk, so its `tsconfig.json` and
-     * `package.json` apply. The key must be the real path of the file: a path
-     * through a symlinked directory has no effect.
+     * `package.json` apply. For this, write the real path of the file, with
+     * the same letter case. A key for a symlink, for a path through a
+     * symlinked directory, or for a directory is a file in memory at that
+     * path.
      *
      * File contents can be provided as:
      * - `string` - The source code as a string

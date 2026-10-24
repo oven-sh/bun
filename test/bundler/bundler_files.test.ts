@@ -821,6 +821,39 @@ describe("bundler files option", () => {
       expect(await outputText(result, jsPath)).toContain(clientJs);
     });
 
+    // Without a manifest the bundle keeps an import of the page's path. No file is at
+    // that path, so the bundle does not start.
+    test("the server bundle of an in-memory .html import runs", async () => {
+      using dir = tempDir("bundler-files-html-run", {
+        "server.js": `
+          import page from "./page.html";
+          console.log(JSON.stringify({ index: page.index.split("/").pop(), loaders: page.files.map(f => f.loader).sort() }));
+        `,
+      });
+
+      await Bun.build({
+        entrypoints: [`${dir}/server.js`],
+        target: "bun",
+        outdir: `${dir}/dist`,
+        files: {
+          [`${dir}/page.html`]: pageHtml,
+          [`${dir}/page.css`]: pageCss,
+          [`${dir}/client.js`]: clientJs,
+        },
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `${dir}/dist/server.js`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`{"index":"page.html","loaders":["css","html","js"]}\n`);
+      expect(exitCode).toBe(0);
+    });
+
     test("each in-memory .html file gets one manifest, however often it is imported", async () => {
       const result = await Bun.build({
         entrypoints: ["/app/server.js"],

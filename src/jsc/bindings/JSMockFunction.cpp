@@ -936,6 +936,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
             JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
             if (auto* exc = topExceptionScope.exception()) {
+                // A termination is not a value that the implementation threw: the result stays "incomplete".
+                if (vm.isTerminationException(exc)) [[unlikely]]
+                    return {};
                 if (auto* returnValuesArray = fn->returnValues.get()) {
                     returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, MockResultType::Throw, exc->value()));
                     fn->returnValues.set(vm, fn, returnValuesArray);

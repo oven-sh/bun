@@ -183,6 +183,11 @@ unsafe extern "C" {
         cell: *mut c_void,
         extra_memory_size: usize,
     );
+    pub(super) fn Bun__Bindgen__reportExtraMemory(
+        global: *mut JSGlobalObject,
+        owner: JSValue,
+        size: usize,
+    );
     pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,

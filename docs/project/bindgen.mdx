@@ -771,6 +771,9 @@ A marking thread calls `estimated_size` while JavaScript runs. It reads only fie
 change once the object is created, or atomics: if the size changes, keep it in an atomic field, like
 `Blob::m_memoryCost` in WebKit. `memory_cost` runs on the JS thread and can read anything.
 
+When the size grows, the member that grew it calls `heap.report_extra_memory(this, grown)`. The GC decides when to
+collect from what it was told was allocated, so objects that grow without saying so pile up once they are dropped.
+
 ### `forBind`
 
 `test` and `describe` are functions with properties. JavaScript only sees a function bound to the

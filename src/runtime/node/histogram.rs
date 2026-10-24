@@ -89,15 +89,22 @@ impl Interval {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut state = self.state.lock();
         state.record_delta(now);
+        // The GC sees the new size when it next marks the histogram. That is soon enough for one sample per turn of
+        // the event loop.
         self.memory.update(&state);
         now
     }
 }
 
 impl Memory {
-    fn update(&self, state: &State) {
-        self.size
-            .store(state.histogram.memory_size(), Ordering::Relaxed);
+    /// Returns the bytes that `state`, which the caller has exclusive access to, has grown by.
+    fn update(&self, state: &State) -> usize {
+        let size = state.histogram.memory_size();
+        let before = self.size.load(Ordering::Relaxed);
+        if size != before {
+            self.size.store(size, Ordering::Relaxed);
+        }
+        size.saturating_sub(before)
     }
 }
 
@@ -116,16 +123,23 @@ impl Histogram {
     }
 
     /// `f` does not reach another histogram.
-    fn with<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
-        let with = |state: &mut State| {
-            let result = f(state);
-            self.memory.update(state);
-            result
-        };
-        match &mut *self.counts.borrow_mut() {
+    /// `receiver` is the JS object of `self`.
+    fn with<'a, T>(
+        &self,
+        heap: &JsHeap<'a>,
+        receiver: JsLocal<'a>,
+        f: impl FnOnce(&mut State) -> T,
+    ) -> T {
+        let with = |state: &mut State| (f(state), self.memory.update(state));
+        let (result, grown) = match &mut *self.counts.borrow_mut() {
             Counts::Own(state) => with(state),
             Counts::Shared(state) => with(&mut state.lock()),
+        };
+        if grown > 0 {
+            // This can collect, so the counts are no longer borrowed.
+            heap.report_extra_memory(receiver, grown);
         }
+        result
     }
 
     fn read<T>(&self, read: impl FnOnce(&bun_histogram::Histogram) -> T) -> T {
@@ -324,7 +338,7 @@ pub(crate) fn percentile_big_int<'a>(
 }
 
 pub(crate) fn reset<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, ()> {
-    histogram(heap, receiver)?.with(|state| {
+    histogram(heap, receiver)?.with(heap, receiver, |state| {
         state.histogram.reset();
         state.previous_ns = 0;
     });
@@ -357,7 +371,7 @@ pub(crate) fn record<'a>(
     } else {
         return Ok(false);
     };
-    this.with(|state| state.histogram.record(value));
+    this.with(heap, receiver, |state| state.histogram.record(value));
     Ok(true)
 }
 
@@ -366,7 +380,7 @@ pub(crate) fn record_delta<'a>(
     receiver: JsLocal<'a>,
 ) -> bindgen::Result<'a, ()> {
     let now = Timespec::now(TimespecMockMode::ForceRealTime);
-    recordable(heap, receiver)?.with(|state| state.record_delta(now));
+    recordable(heap, receiver)?.with(heap, receiver, |state| state.record_delta(now));
     Ok(())
 }
 
@@ -382,7 +396,7 @@ pub(crate) fn add<'a>(
     }
     let other = recordable(heap, other)?;
     if core::ptr::eq(this, other) {
-        this.with(State::add_to_itself);
+        this.with(heap, receiver, State::add_to_itself);
         return Ok(true);
     }
     match (&mut *this.counts.borrow_mut(), &*other.counts.borrow()) {
@@ -402,7 +416,7 @@ pub(crate) fn add<'a>(
             this.lock().add(&other);
         }
     }
-    this.with(|_| {});
+    this.with(heap, receiver, |_| {});
     Ok(true)
 }
 
@@ -422,7 +436,7 @@ fn set_enabled<'a>(
     }
     if enable {
         // The time it was disabled for is not a delay of the event loop.
-        this.with(|state| state.previous_ns = 0);
+        this.with(heap, receiver, |state| state.previous_ns = 0);
         event_loop_delay_monitor::enable(interval);
     } else {
         event_loop_delay_monitor::disable(interval);

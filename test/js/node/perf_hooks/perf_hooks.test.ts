@@ -1,4 +1,4 @@
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
+import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
@@ -34,6 +34,12 @@ test("the garbage collector knows the size of a histogram", () => {
       buckets * 8 + 1024,
     );
   }
+});
+
+test("histograms that grew are collected without an explicit GC", () => {
+  // 360 KB each.
+  for (let i = 0; i < 200; i++) perf.createHistogram().record(Number.MAX_SAFE_INTEGER);
+  expect(heapStats().objectTypeCounts.Histogram).toBeLessThan(100);
 });
 
 test("doesn't throw", () => {

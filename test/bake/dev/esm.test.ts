@@ -274,6 +274,108 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+// The client side of this rule is in test/bake/dev-and-prod.test.ts.
+{
+  const importer = `
+    import d from "babel-default";
+    import local from "../local.cjs";
+    export { d };
+    export const readLocal = () => local;
+  `;
+  const importCall = `exports.load = () => import("babel-default");`;
+  devTest("the default import of a CommonJS module in server code follows the module type of the importer", {
+    framework: minimalFramework,
+    files: {
+      "node_modules/babel-default/package.json": JSON.stringify({ name: "babel-default", main: "index.js" }),
+      "node_modules/babel-default/index.js": `
+        exports.__esModule = true;
+        exports.default = function Modal() {};
+      `,
+      "which.js": `
+        export const which = value =>
+          value === require("babel-default")
+            ? "module.exports"
+            : value === require("babel-default").default
+              ? "exports.default"
+              : typeof value;
+      `,
+      "local.cjs": `module.exports = { __esModule: true, default: "first" };`,
+      "untyped/importer.js": importer,
+      "untyped/import-call.cjs": importCall,
+      "type-module/package.json": `{ "type": "module" }`,
+      "type-module/importer.js": importer,
+      "type-module/required.js": importer,
+      "type-module/import-call.js": importCall,
+      // The record of this file has no list of export names, so the manifest comes from its evaluation.
+      "type-module/client.js": `"use client"; exports.Button = function Button() {};`,
+      "routes/index.ts": `
+        import { serverManifest } from "bun:bake/server";
+        import "../type-module/client.js";
+        import * as untyped from "../untyped/importer.js";
+        import * as typed from "../type-module/importer.js";
+        import untypedImportCall from "../untyped/import-call.cjs";
+        import typedImportCall from "../type-module/import-call.js";
+        import { which } from "../which.js";
+        export default async function () {
+          return new Response(JSON.stringify({
+            'no "type"': which(untyped.d),
+            '"type": "module"': which(typed.d),
+            'first loaded by require(), "type": "module"': which(require("../type-module/required.js").d),
+            "import() in .cjs": which((await untypedImportCall.load()).default),
+            'import() in CommonJS, "type": "module"': which((await typedImportCall.load()).default),
+            'the manifest of a "use client" CommonJS module, "type": "module"': Object.keys(serverManifest).map(
+              key => key.replaceAll("\\\\", "/"),
+            ),
+            "a module that a hot update replaces": [untyped.readLocal(), typed.readLocal()],
+          }));
+        }
+      `,
+    },
+    async test(dev) {
+      const expected = {
+        'no "type"': "exports.default",
+        '"type": "module"': "module.exports",
+        'first loaded by require(), "type": "module"': "module.exports",
+        "import() in .cjs": "exports.default",
+        'import() in CommonJS, "type": "module"': "module.exports",
+        'the manifest of a "use client" CommonJS module, "type": "module"': ["type-module/client.js#Button"],
+      };
+      await dev.fetch("/").equals({
+        ...expected,
+        "a module that a hot update replaces": ["first", { __esModule: true, default: "first" }],
+      });
+      // The server graph sends only the changed file again. The runtime patches the binding of each importer.
+      await dev.patch("local.cjs", { find: "first", replace: "second" });
+      await dev.fetch("/").equals({
+        ...expected,
+        "a module that a hot update replaces": ["second", { __esModule: true, default: "second" }],
+      });
+    },
+  });
+}
+// The server graph sends only the JSON file again. The file that imports it does not run a second time.
+devTest("a hot update of a JSON file in server code reaches a file that imports it and does not run again", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { read } from "../importer.js";
+      export default function () {
+        return new Response(JSON.stringify(read()));
+      }
+    `,
+    "importer.js": `
+      import data from "./data.json";
+      globalThis.importerRuns = (globalThis.importerRuns ?? 0) + 1;
+      export const read = () => ({ data, importerRuns: globalThis.importerRuns });
+    `,
+    "data.json": `{ "__esModule": true, "default": 1 }`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ data: { __esModule: true, default: 1 }, importerRuns: 1 });
+    await dev.patch("data.json", { find: "1", replace: "2" });
+    await dev.fetch("/").equals({ data: { __esModule: true, default: 2 }, importerRuns: 1 });
+  },
+});
 devTest("importer tracking survives flipping a module from ESM to CJS", {
   // https://github.com/oven-sh/bun/issues/31942
   files: {

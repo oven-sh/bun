@@ -691,3 +691,143 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+// After a hot update, a file that imports a CommonJS module reads the default import that `bun build` gives a file of
+// its module type: `module.exports` in an ES module by type, and `exports.default` elsewhere when `__esModule` is set.
+devTest("a hot update gives each importer of a CommonJS module the default import of its module type", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import * as untyped from "./untyped/importer.js";
+      import * as typed from "./type-module/importer.js";
+      globalThis.read = () => ({ untyped: untyped.read(), typed: typed.read() });
+      globalThis.keys = () => ({ untyped: untyped.keys(), typed: typed.keys() });
+      console.log("loaded");
+      import.meta.hot.accept();
+    `,
+    // The importers do not accept the update. The runtime patches their import binding.
+    "untyped/importer.js": `
+      import d, * as ns from "../dep.js";
+      export const read = () => d;
+      export const keys = () => Object.keys(ns).sort();
+    `,
+    "type-module/package.json": `{ "type": "module" }`,
+    "type-module/importer.js": `
+      import d, * as ns from "../dep.js";
+      export const read = () => d;
+      export const keys = () => Object.keys(ns).sort();
+    `,
+    "dep.js": `module.exports = { value: 1 };`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("loaded");
+    const update = async (source: string, options?: { dedent: boolean }) => {
+      await dev.write("dep.js", source, options);
+      await c.expectMessage("loaded");
+      return c.js`read()`;
+    };
+    const flagged = (name: string) => ({
+      source: `module.exports = { __esModule: true, default: ${JSON.stringify(name)} };`,
+      untyped: name,
+      typed: { __esModule: true, default: name },
+    });
+    expect(await c.js`read()`).toEqual({ untyped: { value: 1 }, typed: { value: 1 } });
+
+    // The module gains `__esModule`.
+    let step = flagged("flagged");
+    expect(await update(step.source)).toEqual({ untyped: step.untyped, typed: step.typed });
+
+    // Only the importer changes. Its new code is still an ES module by type.
+    await dev.patch("type-module/importer.js", { find: "() => d", replace: "() => [d]" });
+    await c.expectMessage("loaded");
+    expect(await c.js`read()`).toEqual({ untyped: step.untyped, typed: [step.typed] });
+
+    // The module becomes an ES module.
+    expect(await update(`export default "esm";`)).toEqual({ untyped: "esm", typed: ["esm"] });
+
+    // The module becomes CommonJS again.
+    step = flagged("commonjs again");
+    expect(await update(step.source)).toEqual({ untyped: step.untyped, typed: [step.typed] });
+
+    // The module loses `__esModule`.
+    expect(await update(`module.exports = { value: 5 };`)).toEqual({ untyped: { value: 5 }, typed: [{ value: 5 }] });
+
+    // An empty file is a lazy export. A module that follows it is not one.
+    // The newline makes the save a write(2): kqueue does not report a truncation alone.
+    expect(await update("\n", { dedent: false })).toEqual({ untyped: {}, typed: [{}] });
+    // The next module writes to the object that was the lazy export. Both kinds of importer get a new namespace of it.
+    expect(await update(`exports.x = 1;`)).toEqual({ untyped: { x: 1 }, typed: [{ x: 1 }] });
+    expect(await c.js`keys()`).toEqual({ untyped: ["default", "x"], typed: ["default", "x"] });
+    step = flagged("after empty");
+    expect(await update(step.source)).toEqual({ untyped: step.untyped, typed: [step.typed] });
+  },
+});
+devTest("import.meta.hot.accept of a CommonJS module gets the namespace of the accepting file", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./untyped/accepts.js";
+      import "./type-module/accepts.js";
+      import "./untyped/accepts-itself.js";
+      import "./type-module/accepts-itself.js";
+    `,
+    "untyped/accepts.js": `
+      import d from "../dep.cjs";
+      console.log("untyped: " + JSON.stringify(d));
+      import.meta.hot.accept("../dep.cjs", dep => console.log("untyped accepts: " + JSON.stringify(dep.default)));
+    `,
+    "type-module/package.json": `{ "type": "module" }`,
+    "type-module/accepts.js": `
+      import d from "../dep.cjs";
+      console.log("typed: " + JSON.stringify(d));
+      import.meta.hot.accept(["../dep.cjs"], ([dep]) => console.log("typed accepts: " + JSON.stringify(dep.default)));
+    `,
+    "dep.cjs": `module.exports = { __esModule: true, default: 1 };`,
+    // A CommonJS file that accepts its own update gets its namespace as a file of its own module type reads it.
+    "untyped/accepts-itself.js": `
+      module.exports = { __esModule: true, default: "a" };
+      import.meta.hot.accept(self => console.log("untyped accepts itself: " + JSON.stringify(self.default)));
+    `,
+    "type-module/accepts-itself.js": `
+      module.exports = { __esModule: true, default: "a" };
+      import.meta.hot.accept(self => console.log("typed accepts itself: " + JSON.stringify(self.default)));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("untyped: 1", 'typed: {"__esModule":true,"default":1}');
+    await dev.patch("dep.cjs", { find: "default: 1", replace: "default: 2" });
+    await c.expectMessageInAnyOrder("untyped accepts: 2", 'typed accepts: {"__esModule":true,"default":2}');
+    await dev.patch("untyped/accepts-itself.js", { find: `"a"`, replace: `"b"` });
+    await c.expectMessage('untyped accepts itself: "b"');
+    await dev.patch("type-module/accepts-itself.js", { find: `"a"`, replace: `"b"` });
+    await c.expectMessage('typed accepts itself: {"__esModule":true,"default":"b"}');
+  },
+});
+devTest("a hot update of a JSON file reaches the import binding of a file that imports it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { read } from "./importer.js";
+      globalThis.read = read;
+      console.log("loaded");
+      import.meta.hot.accept();
+    `,
+    "importer.js": `
+      import data from "./data.json";
+      globalThis.importerRuns = (globalThis.importerRuns ?? 0) + 1;
+      export const read = () => data;
+    `,
+    // The default import of JSON is the whole value, whatever its keys are.
+    "data.json": `{ "__esModule": true, "default": 1 }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("loaded");
+    expect(await c.js`[read(), globalThis.importerRuns]`).toEqual([{ __esModule: true, default: 1 }, 1]);
+    await dev.patch("data.json", { find: "1", replace: "2" });
+    await c.expectMessage("loaded");
+    // The client graph sends the importer of a changed JSON file again, so it runs a second time.
+    expect(await c.js`[read(), globalThis.importerRuns]`).toEqual([{ __esModule: true, default: 2 }, 2]);
+  },
+});

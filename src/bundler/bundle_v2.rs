@@ -3136,6 +3136,28 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// A hot update bundles a file by its path, where the resolver types it: the dev server gives a plugin-named file that type from the start.
+        fn dev_server_module_type(
+            &mut self,
+            path: &Fs::Path<'_>,
+            kind: ImportKind,
+            target: options::Target,
+        ) -> options::ModuleType {
+            let name = path.name();
+            if self.dev_server.is_none()
+                || path.namespace != b"file"
+                || kind.is_from_css()
+                || _resolver::module_type_from_ext(name.ext).is_some()
+            {
+                return options::ModuleType::Unknown;
+            }
+            self.transpiler_for_target(target)
+                .resolver
+                .read_dir_info_ignore_error(name.dir)
+                .and_then(|dir| dir.package_json_for_module_type)
+                .map_or(options::ModuleType::Unknown, |pkg| pkg.module_type)
+        }
+
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
         fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
             loader.unwrap_or_else(|| {
@@ -5427,6 +5449,11 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
+                            let module_type = this.dev_server_module_type(
+                                &path,
+                                resolve.import_record.kind,
+                                resolve.import_record.original_target,
+                            );
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
@@ -5449,7 +5476,7 @@ pub mod bv2_impl {
                                     .jsx
                                     .clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
-                                module_type: options::ModuleType::Unknown,
+                                module_type,
                                 loader: Some(loader),
                                 known_target: resolve.import_record.original_target,
                                 is_entry_point: resolve.import_record.kind

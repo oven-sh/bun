@@ -64,6 +64,9 @@ Ref<SourceProvider> SourceProvider::create(
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
+    // A CommonJS wrapper function only runs as a Program that JSCommonJSModule calls. As a Module, nothing calls it.
+    ASSERT(resolvedSource.isCommonJSModule == (sourceType == JSC::SourceProviderSourceType::Program));
+
     // Use BunTranspiledModule when module_info is present.
     // This allows JSC to skip parsing during the analyze phase (uses pre-computed imports/exports).
     // Bytecode cache (if present) is used separately during the evaluate phase.

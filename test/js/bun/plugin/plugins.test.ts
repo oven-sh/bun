@@ -12,6 +12,9 @@ declare global {
   var asyncObject: any;
   var asyncfail: any;
   var asyncret: any;
+  var __cjsSyncSideEffect: any;
+  var __cjsAsyncSideEffect: any;
+  var __cjsGhostRan: any;
 }
 
 plugin({
@@ -336,6 +339,681 @@ describe("module", () => {
     // @ts-expect-error
     expect((await import("bun:my-resolved-module")).hello).toBe("my-resolved-module");
     expect(require("bun:my-resolved-module").hello).toBe("my-resolved-module");
+  });
+
+  // Takes the module out of require.cache when the test ends, also when an assertion fails.
+  const uncache = (name: string) => ({ [Symbol.dispose]: () => void delete require.cache[name] });
+
+  it("sync module() returning CommonJS source works with import()", async () => {
+    using _ = uncache("my-virtual-module-cjs-sync");
+    globalThis.__cjsSyncSideEffect = 0;
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-sync");
+    expect({ ...mod }).toEqual({ default: { hello: "cjs-sync", named: 1 }, hello: "cjs-sync", named: 1 });
+    expect(globalThis.__cjsSyncSideEffect).toBe(42);
+  });
+
+  it("sync module() returning CommonJS source works with require()", () => {
+    using _ = uncache("my-virtual-module-cjs-sync");
+    globalThis.__cjsSyncSideEffect = 0;
+    const mod = require("my-virtual-module-cjs-sync");
+    expect(mod).toEqual({ hello: "cjs-sync", named: 1 });
+    expect(globalThis.__cjsSyncSideEffect).toBe(42);
+  });
+
+  it("async module() returning CommonJS source works with import()", async () => {
+    using _ = uncache("my-virtual-module-cjs-async");
+    globalThis.__cjsAsyncSideEffect = 0;
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-async");
+    expect(mod.default).toEqual({ hello: "cjs-async" });
+    expect(mod.hello).toBe("cjs-async");
+    expect(globalThis.__cjsAsyncSideEffect).toBe(99);
+  });
+
+  it("require() of an async module() returning CommonJS throws, and import() still loads it afterwards", async () => {
+    using _ = uncache("cjs-async-require-ghost");
+    let factoryDone!: Promise<void>;
+    Bun.plugin({
+      name: "cjs-async-require-ghost",
+      setup(b) {
+        b.module("cjs-async-require-ghost", () => {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          factoryDone = promise;
+          return (async () => {
+            await Promise.resolve();
+            resolve();
+            return { contents: "globalThis.__cjsGhostRan = true; module.exports = 1;", loader: "js" as const };
+          })();
+        });
+      },
+    });
+    globalThis.__cjsGhostRan = false;
+    expect(() => require("cjs-async-require-ghost")).toThrow("async module");
+    expect("cjs-async-require-ghost" in require.cache).toBe(false);
+    // Wait for the factory's promise to settle, then one more microtask turn:
+    // nothing loads the text for the require() that could not wait for it.
+    await factoryDone;
+    await Promise.resolve();
+    expect("cjs-async-require-ghost" in require.cache).toBe(false);
+    expect(globalThis.__cjsGhostRan).toBe(false);
+    expect(() => require("cjs-async-require-ghost")).toThrow("async module");
+    // @ts-expect-error
+    expect((await import("cjs-async-require-ghost")).default).toBe(1);
+    expect(globalThis.__cjsGhostRan).toBe(true);
+  });
+
+  it("require() of an async module() that awaits nothing loads its CommonJS source at once", () => {
+    using _ = uncache("cjs-fulfilled-require");
+    let calls = 0;
+    Bun.plugin({
+      name: "cjs-fulfilled-require",
+      setup(b) {
+        // The promise of this callback is already fulfilled when require() gets it.
+        b.module("cjs-fulfilled-require", async () => {
+          calls++;
+          return { contents: "module.exports = { loaded: true };", loader: "js" as const };
+        });
+      },
+    });
+    expect(require("cjs-fulfilled-require")).toEqual({ loaded: true });
+    expect(require("cjs-fulfilled-require")).toEqual({ loaded: true });
+    expect(calls).toBe(1);
+  });
+
+  it("module() returning `exports.x = ...` works", async () => {
+    using _ = uncache("my-virtual-module-cjs-exports-dot");
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-exports-dot");
+    expect(mod.foo).toBe("F");
+    expect(mod.bar).toBe("B");
+  });
+
+  it("module() returning CommonJS source propagates errors from the body", async () => {
+    using _ = uncache("my-virtual-module-cjs-throws");
+    // @ts-expect-error
+    await expect(import("my-virtual-module-cjs-throws")).rejects.toThrow("cjs body threw");
+  });
+
+  it("onLoad returning CommonJS source works with import()", async () => {
+    // @ts-expect-error
+    const mod = await import("onload-cjs:m1");
+    expect(mod.default).toEqual({ fromOnLoad: true });
+    expect(mod.fromOnLoad).toBe(true);
+  });
+
+  it("onLoad returning CommonJS source works with require()", () => {
+    const mod = require("onload-cjs:m2");
+    expect(mod).toEqual({ fromOnLoad: true });
+  });
+
+  it("module() returning CommonJS source is a module of the Bun.ModuleGraph that imports it", async () => {
+    using graph = new Bun.ModuleGraph();
+    for (const name of ["my-virtual-module-cjs-graph-sync", "my-virtual-module-cjs-graph-async"]) {
+      expect((await graph.import(name)).default).toEqual({ inGraph: true, isCached: true });
+      expect(name in require.cache).toBe(false);
+    }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/19279
+// https://github.com/oven-sh/bun/issues/21369
+// The reference for each of these is the same text in a file on disk.
+describe.concurrent("CommonJS `contents` from a plugin", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-commonjs-contents", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const json = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) => ({
+    printed: JSON.parse(stdout || "null"),
+    stderr,
+    exitCode,
+  });
+  // What `bun test` reports: each (pass) or (fail) line without its duration, and the counts. All of stderr if it has neither.
+  const report = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) => ({
+    stdout: stdout.replace(/^bun test v[^\n]*\n/, ""),
+    tests: stderr.match(/^\((?:pass|fail)\) .*$/gm)?.map(line => line.replace(/ \[[\d.]+m?s\]$/, "")) ?? stderr,
+    counts: stderr.match(/^ \d+ pass\n \d+ fail$/m)?.[0] ?? stderr,
+    exitCode,
+  });
+  // Serves each matching file's own text, as a plugin that transforms source does.
+  const passThrough = (filter: string) => `
+    import { readFileSync } from "node:fs";
+    Bun.plugin({
+      name: "pass-through",
+      setup(build) {
+        build.onLoad({ filter: ${filter} }, ({ path }) => ({ contents: readFileSync(path, "utf8"), loader: "js" }));
+      },
+    });
+  `;
+
+  // Each text is the file `<name>`. `served-<name>` is empty on disk, and a plugin serves the text of `<name>` for it.
+  describe.each([undefined, "module"] as const)("loads like the same text in a file, in a package of type %p", type => {
+    const object = { a: 1, b: { c: 2 } };
+    const flagged = { default: 1, named: 2 };
+    // [text, the namespace an import gives, what require() gives]
+    const sources: Record<string, [string, unknown, unknown]> = {
+      "module-exports.js": [`module.exports = { a: 1, b: { c: 2 } };`, { ...object, default: object }, object],
+      "exports-property.js": [`exports.a = 1; exports.b = { c: 2 };`, { ...object, default: object }, object],
+      "calls-require.js": [
+        `exports.sep = require("node:path").posix.sep;`,
+        { default: { sep: "/" }, sep: "/" },
+        { sep: "/" },
+      ],
+      "top-level-this.js": [
+        `this.kind = typeof module;`,
+        { default: { kind: "object" }, kind: "object" },
+        { kind: "object" },
+      ],
+      "es-module-flag.js": [
+        `Object.defineProperty(exports, "__esModule", { value: true }); exports.default = 1; exports.named = 2;`,
+        // In a "type": "module" package an import does not read the flag: the default export is module.exports.
+        type === "module" ? { __esModule: true, default: flagged, named: 2 } : flagged,
+        flagged,
+      ],
+      "already-bundled.js": [
+        "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {module.exports = { a: 1, b: { c: 2 } };\n})\n",
+        { ...object, default: object },
+        object,
+      ],
+      "as-bytes.js": [`module.exports = { a: 1, b: { c: 2 } };`, { ...object, default: object }, object],
+      "empty.cjs": ["", { default: {} }, {}],
+      "typescript.cts": [`const a: number = 1; module.exports = { a };`, { a: 1, default: { a: 1 } }, { a: 1 }],
+      "jsx.jsx": [`module.exports = { a: 1 };`, { a: 1, default: { a: 1 } }, { a: 1 }],
+      "tsx.tsx": [`const a: number = 1; module.exports = { a };`, { a: 1, default: { a: 1 } }, { a: 1 }],
+    };
+    const names = Object.keys(sources);
+    const files = {
+      ...Object.fromEntries(
+        names.flatMap(name => [
+          [name, sources[name][0]],
+          [`served-${name}`, ""],
+        ]),
+      ),
+      ...(type ? { "package.json": JSON.stringify({ type }) } : {}),
+    };
+    // Without `loader`, the loader is the one of the file extension.
+    const serves = (callback: "sync" | "pending", loader = true) => `
+      import { readFileSync } from "node:fs";
+      import { extname } from "node:path";
+      const loaders = { ".cts": "ts", ".jsx": "jsx", ".tsx": "tsx" };
+      const serve = ({ path }) => {
+        const text = readFileSync(path.replace(/served-(?=[\\w.-]+$)/, ""), "utf8");
+        return {
+          contents: path.endsWith("as-bytes.js") ? new TextEncoder().encode(text) : text,
+          ${loader ? `loader: loaders[extname(path)] ?? "js",` : ""}
+        };
+      };
+      Bun.plugin({
+        name: "serves",
+        setup(build) {
+          build.onLoad({ filter: /served-[\\w.-]+$/ }, ${callback === "sync" ? "serve" : "async args => (await 0, serve(args))"});
+        },
+      });
+    `;
+    const expected = (column: 1 | 2) => {
+      const each = Object.fromEntries(names.map(name => [name, sources[name][column]]));
+      return { printed: { file: each, plugin: each }, stderr: "", exitCode: 0 };
+    };
+    // An ES module that has the namespace of every file, or of every served twin, as its default export.
+    const importer = (prefix: string) =>
+      names.map((name, i) => `import * as m${i} from "./${prefix}${name}";\n`).join("") +
+      `export default { ${names.map((name, i) => `${JSON.stringify(name)}: { ...m${i} }`).join(", ")} };\n`;
+    const importers = { "imports-files.mjs": importer(""), "imports-plugin.mjs": importer("served-") };
+
+    it.each([
+      ["import()", "sync", true, "{ ...(await import(specifier)) }", 1],
+      ["import() with a promise that is pending", "pending", true, "{ ...(await import(specifier)) }", 1],
+      ["import() with no loader", "sync", false, "{ ...(await import(specifier)) }", 1],
+      ["require()", "sync", true, "require(specifier)", 2],
+      ["require() with no loader", "sync", false, "require(specifier)", 2],
+      ["import.meta.require()", "sync", true, "import.meta.require(specifier)", 2],
+    ] as const)("by %s", async (_, callback, loader, load, column) => {
+      const entry = `
+        const loaded = { file: {}, plugin: {} };
+        for (const name of ${JSON.stringify(names)}) {
+          for (const [from, specifier] of [["file", "./" + name], ["plugin", "./served-" + name]]) loaded[from][name] = ${load};
+        }
+        console.log(JSON.stringify(loaded));
+      `;
+      const result = await run({ ...files, "plugin.mjs": serves(callback, loader), "entry.mjs": entry }, [
+        "--preload",
+        "./plugin.mjs",
+        "entry.mjs",
+      ]);
+      expect(json(result)).toEqual(expected(column));
+    });
+
+    it.each(["sync", "pending"] as const)("by an import statement (%s callback)", async callback => {
+      const entry = `
+        import file from "./imports-files.mjs";
+        import plugin from "./imports-plugin.mjs";
+        console.log(JSON.stringify({ file, plugin }));
+      `;
+      const result = await run({ ...files, ...importers, "plugin.mjs": serves(callback), "entry.mjs": entry }, [
+        "--preload",
+        "./plugin.mjs",
+        "entry.mjs",
+      ]);
+      expect(json(result)).toEqual(expected(1));
+    });
+
+    // The loader fetches what a required ES module imports without a promise.
+    it("by require() of an ES module that imports it", async () => {
+      const entry = `console.log(JSON.stringify({ file: require("./imports-files.mjs").default, plugin: require("./imports-plugin.mjs").default }));`;
+      const result = await run({ ...files, ...importers, "plugin.mjs": serves("sync"), "entry.cjs": entry }, [
+        "--preload",
+        "./plugin.mjs",
+        "entry.cjs",
+      ]);
+      expect(json(result)).toEqual(expected(1));
+    });
+  });
+
+  it("runs once, whichever of import() and require() comes first", async () => {
+    // Each order for a build.module() name and for a file that onLoad serves.
+    const specifiers = (order: string) => ["virtual:" + order, `./${order}.js`];
+    const entry = `
+      import { basename } from "node:path";
+      globalThis.ran = {};
+      const counts = name => ({
+        contents: "globalThis.ran[" + JSON.stringify(name) + "] = (globalThis.ran[" + JSON.stringify(name) + "] | 0) + 1; module.exports = {};",
+        loader: "js",
+      });
+      Bun.plugin({
+        name: "serves",
+        setup(build) {
+          for (const order of ["import-first", "require-first", "import-twice"])
+            build.module("virtual:" + order, () => counts("virtual:" + order));
+          build.onLoad({ filter: /-(first|twice)\\.js$/ }, ({ path }) => counts("./" + basename(path)));
+        },
+      });
+      const same = {};
+      for (const specifier of ${JSON.stringify(specifiers("import-first"))})
+        same[specifier] = (await import(specifier)).default === require(specifier);
+      for (const specifier of ${JSON.stringify(specifiers("require-first"))})
+        same[specifier] = require(specifier) === (await import(specifier)).default;
+      for (const specifier of ${JSON.stringify(specifiers("import-twice"))})
+        same[specifier] = await Promise.all([import(specifier), import(specifier)]).then(([a, b]) => a.default === b.default);
+      console.log(JSON.stringify({ same, ran: globalThis.ran }));
+    `;
+    const files = { "entry.mjs": entry, "import-first.js": "", "require-first.js": "", "import-twice.js": "" };
+    const all = ["import-first", "require-first", "import-twice"].flatMap(specifiers);
+    expect(json(await run(files, ["entry.mjs"]))).toEqual({
+      printed: {
+        same: Object.fromEntries(all.map(specifier => [specifier, true])),
+        ran: Object.fromEntries(all.map(specifier => [specifier, 1])),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is not left in require.cache when it throws, so the next require() runs it again", async () => {
+    const entry = `
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.module("virtual:throws-once", () => ({
+            contents: "if (globalThis.attempts++ === 0) throw new Error('first attempt'); module.exports = 'second attempt';",
+            loader: "js",
+          }));
+        },
+      });
+      globalThis.attempts = 0;
+      let thrown;
+      try { require("virtual:throws-once"); } catch (error) { thrown = error.message; }
+      const cached = "virtual:throws-once" in require.cache;
+      console.log(JSON.stringify({ thrown, cached, retried: require("virtual:throws-once"), attempts: globalThis.attempts }));
+    `;
+    expect(json(await run({ "entry.cjs": entry }, ["entry.cjs"]))).toEqual({
+      printed: { thrown: "first attempt", cached: false, retried: "second attempt", attempts: 2 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/22683
+  it("is the main module when it is the entry point", async () => {
+    const files = {
+      "plugin.mjs": passThrough("/entry\\.js$/"),
+      "entry.js": `
+        console.log(JSON.stringify({ id: module.id, isMain: require.main === module }));
+        process.exitCode = 7;
+      `,
+    };
+    expect(json(await run(files, ["--preload", "./plugin.mjs", "entry.js"]))).toEqual({
+      printed: { id: ".", isMain: true },
+      stderr: "",
+      exitCode: 7,
+    });
+  });
+
+  // Before, `bun test` ran no tests in such a file and exited with 0.
+  it("runs its tests when it is a test file", async () => {
+    const files = {
+      "plugin.mjs": passThrough("/\\.test\\.js$/"),
+      "fails.test.js": `
+        const { expect, test } = require("bun:test");
+        test("fails", () => { expect(1).toBe(2); });
+      `,
+    };
+    expect(report(await run(files, ["test", "--preload", "./plugin.mjs", "./fails.test.js"]))).toEqual({
+      stdout: "",
+      tests: ["(fail) fails"],
+      counts: " 0 pass\n 1 fail",
+      exitCode: 1,
+    });
+  });
+
+  it("loads in every test file under --isolate", async () => {
+    const test = `
+      import { expect, test } from "bun:test";
+      test("require()", () => expect(require("virtual:required")).toBe(1));
+      test("import()", async () => expect((await import("virtual:imported")).default).toBe(2));
+      test("import() with a promise that is pending", async () => expect((await import("virtual:pending")).default).toBe(3));
+    `;
+    const files = {
+      "plugin.ts": `
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:required", () => ({ contents: "module.exports = 1;", loader: "js" }));
+            build.module("virtual:imported", () => ({ contents: "module.exports = 2;", loader: "js" }));
+            build.module("virtual:pending", async () => (await 0, { contents: "module.exports = 3;", loader: "js" }));
+          },
+        });
+      `,
+      "a.test.ts": test,
+      "b.test.ts": test,
+    };
+    const args = ["test", "--isolate", "--preload", "./plugin.ts", "./a.test.ts", "./b.test.ts"];
+    const passed = ["(pass) require()", "(pass) import()", "(pass) import() with a promise that is pending"];
+    expect(report(await run(files, args))).toEqual({
+      stdout: "",
+      tests: [...passed, ...passed],
+      counts: " 6 pass\n 0 fail",
+      exitCode: 0,
+    });
+  });
+
+  // --isolate keeps each file's transpiled source, by path, for the test files after it.
+  it("is not kept as the file's own source for the next test file under --isolate", async () => {
+    const test = (from: string) => `
+      import { expect, test } from "bun:test";
+      import imported from "./imported.cjs";
+      test("${from}", () => expect([imported, require("./required.cjs")]).toEqual(["${from}", "${from}"]));
+    `;
+    const files = {
+      "imported.cjs": `module.exports = "from the file";`,
+      "required.cjs": `module.exports = "from the file";`,
+      // The preload runs again for each test file. Only the first run registers the plugin.
+      "plugin.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        if (!existsSync(import.meta.dir + "/registered")) {
+          writeFileSync(import.meta.dir + "/registered", "");
+          Bun.plugin({
+            name: "serves",
+            setup(build) {
+              build.onLoad({ filter: /(imported|required)\\.cjs$/ }, () => ({ contents: "module.exports = 'from the plugin';", loader: "js" }));
+            },
+          });
+        }
+      `,
+      "a.test.ts": test("from the plugin"),
+      "b.test.ts": test("from the file"),
+    };
+    const args = ["test", "--isolate", "--preload", "./plugin.ts", "./a.test.ts", "./b.test.ts"];
+    expect(report(await run(files, args))).toEqual({
+      stdout: "",
+      tests: ["(pass) from the plugin", "(pass) from the file"],
+      counts: " 2 pass\n 0 fail",
+      exitCode: 0,
+    });
+  });
+
+  it("is a module of the Bun.ModuleGraph that loads it", async () => {
+    const text = `module.exports = { inGraph: Bun.ModuleGraph.current !== undefined, isCached: require.cache[module.filename] === module };`;
+    const files = {
+      "in-graph.cjs": `
+        const cached = () => Object.keys(require.cache).filter(key => key.startsWith("virtual:")).sort();
+        module.exports = (async () => ({
+          imported: (await import("virtual:imported")).default,
+          pending: (await import("virtual:pending")).default,
+          required: require("virtual:required"),
+          importedByRequired: require("./imports-virtual.mjs").default,
+          cached: cached(),
+        }))();
+      `,
+      "imports-virtual.mjs": `export { default } from "virtual:imported-by-required";`,
+      "entry.mjs": `
+        const text = ${JSON.stringify(text)};
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:imported", () => ({ contents: text, loader: "js" }));
+            build.module("virtual:pending", async () => (await 0, { contents: text, loader: "js" }));
+            build.module("virtual:required", () => ({ contents: text, loader: "js" }));
+            build.module("virtual:imported-by-required", () => ({ contents: text, loader: "js" }));
+          },
+        });
+        using graph = new Bun.ModuleGraph();
+        const inGraph = await (await graph.import(import.meta.dir + "/in-graph.cjs")).default;
+        const host = {
+          imported: (await import("virtual:imported")).default,
+          cached: Object.keys(require.cache).filter(key => key.startsWith("virtual:")).sort(),
+        };
+        console.log(JSON.stringify({ graph: inGraph, host }));
+      `,
+    };
+    const inGraph = { inGraph: true, isCached: true };
+    expect(json(await run(files, ["entry.mjs"]))).toEqual({
+      printed: {
+        graph: {
+          imported: inGraph,
+          pending: inGraph,
+          required: inGraph,
+          importedByRequired: inGraph,
+          cached: ["virtual:imported", "virtual:imported-by-required", "virtual:pending", "virtual:required"],
+        },
+        host: { imported: { inGraph: false, isCached: true }, cached: ["virtual:imported"] },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is wrapped by an overridden Module.wrapper like a file, by require()", async () => {
+    const text = `module.exports = { wrapped: module.wrapped === true };`;
+    const files = {
+      "file.cjs": text,
+      "entry.cjs": `
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:wrapped", () => ({ contents: ${JSON.stringify(text)}, loader: "js" }));
+          },
+        });
+        require("node:module").wrapper = ["(function(exports,require,module,__filename,__dirname){module.wrapped = true;", "})"];
+        console.log(JSON.stringify({ file: require("./file.cjs"), plugin: require("virtual:wrapped") }));
+      `,
+    };
+    expect(json(await run(files, ["entry.cjs"]))).toEqual({
+      printed: { file: { wrapped: true }, plugin: { wrapped: true } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // An import under an override does not run the text, for a file and for a plugin alike (#45322 changes both).
+  it("loads like a file under an overridden Module.wrapper, by import()", async () => {
+    const text = `globalThis.ran.push(module.filename); module.exports = { wrapped: module.wrapped === true };`;
+    const files = {
+      "file.cjs": text,
+      "entry.cjs": `
+        globalThis.ran = [];
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:sync", () => ({ contents: ${JSON.stringify(text)}, loader: "js" }));
+            build.module("virtual:pending", async () => (await 0, { contents: ${JSON.stringify(text)}, loader: "js" }));
+          },
+        });
+        require("node:module").wrapper = ["(function(exports,require,module,__filename,__dirname){module.wrapped = true;", "})"];
+        (async () => {
+          const loaded = {};
+          for (const specifier of ["./file.cjs", "virtual:sync", "virtual:pending"]) {
+            const before = globalThis.ran.length;
+            loaded[specifier] = { namespace: { ...(await import(specifier)) }, ran: globalThis.ran.length - before };
+          }
+          console.log(JSON.stringify(loaded));
+        })();
+      `,
+    };
+    const { printed, stderr, exitCode } = json(await run(files, ["entry.cjs"]));
+    expect({ sync: printed?.["virtual:sync"], pending: printed?.["virtual:pending"], stderr, exitCode }).toEqual({
+      sync: printed?.["./file.cjs"],
+      pending: printed?.["./file.cjs"],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(printed["./file.cjs"]).toBeDefined();
+  });
+
+  // The plugin's text is a string that becomes script, whichever kind of module it is.
+  it("is refused under --disallow-code-generation-from-strings=strict", async () => {
+    const entry = `
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.module("virtual:imported", () => ({ contents: "module.exports = 1 + 1;", loader: "js" }));
+          build.module("virtual:required", () => ({ contents: "module.exports = 1 + 1;", loader: "js" }));
+        },
+      });
+      const attempt = async load => { try { return await load(); } catch (error) { return error.name + ": " + error.message; } };
+      console.log(JSON.stringify({
+        imported: await attempt(async () => (await import("virtual:imported")).default),
+        required: await attempt(() => require("virtual:required")),
+      }));
+    `;
+    const refused = "EvalError: Code generation from strings disallowed for this context";
+    const withFlag = (...flags: string[]) => run({ "entry.mjs": entry }, [...flags, "entry.mjs"]);
+    expect(json(await withFlag())).toEqual({ printed: { imported: 2, required: 2 }, stderr: "", exitCode: 0 });
+    expect(json(await withFlag("--disallow-code-generation-from-strings=strict"))).toEqual({
+      printed: { imported: refused, required: refused },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/39786
+  it("keeps the exports of a CommonJS file that onLoad passes through to require()", async () => {
+    const files = {
+      "preload.js": `
+        const { readFileSync } = require("node:fs");
+        Bun.plugin({
+          name: "pass-through-source-hook",
+          setup(build) {
+            build.onLoad({ filter: /target\\.js$/, namespace: "file" }, args => ({
+              loader: "js",
+              contents: readFileSync(args.path, "utf8"),
+            }));
+          },
+        });
+      `,
+      "target.js": "module.exports.greet = function greet(name) {\n  return `hello ${name}`;\n};\n",
+      "app.js": `const { greet } = require("./target.js");\nconsole.log(greet("world"));\n`,
+    };
+    expect(await run(files, ["--preload", "./preload.js", "./app.js"])).toEqual({
+      stdout: "hello world\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/5044
+  // https://github.com/oven-sh/bun/issues/10083
+  it("keeps the named exports of a CommonJS package in node_modules that onLoad passes through", async () => {
+    const files = {
+      "plugin.mjs": passThrough("/\\.[mc]?js$/"),
+      "node_modules/fake-cjs-pkg/package.json": JSON.stringify({ name: "fake-cjs-pkg", main: "./lib/index.js" }),
+      "node_modules/fake-cjs-pkg/lib/index.js": `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.readProjectManifest = function () { return { name: "hello" }; };
+      `,
+      "entry.ts": `
+        import { readProjectManifest } from "fake-cjs-pkg";
+        const r = require("fake-cjs-pkg");
+        console.log(JSON.stringify({ esm: readProjectManifest(), cjs: r.readProjectManifest() }));
+      `,
+    };
+    expect(json(await run(files, ["--preload", "./plugin.mjs", "entry.ts"]))).toEqual({
+      printed: { esm: { name: "hello" }, cjs: { name: "hello" } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A pass-through onLoad must not change how the file's own source is
+  // interpreted: foo.cts keeps its CommonJS exports, foo.mts stays ESM.
+  // The callback is async and awaits nothing, so its promise is already fulfilled.
+  const passThroughPlugin = `
+    import { readFileSync } from "node:fs";
+    Bun.plugin({
+      name: "passthrough",
+      setup(b) {
+        b.onLoad({ filter: /foo\\.[cm]ts$/, namespace: "file" }, async args => ({
+          contents: readFileSync(args.path, "utf8"),
+          loader: "js",
+        }));
+      },
+    });
+  `;
+
+  it.each(["cts", "mts"])(
+    "pass-through onLoad of a file-namespace .%s module keeps its named exports when imported as ESM",
+    async ext => {
+      const files = {
+        "preload.ts": passThroughPlugin,
+        "foo.cts": `exports.foo = () => "foo";`,
+        "foo.mts": `export const foo = () => "foo";`,
+        "entry.ts": `
+          import * as ns from "./foo.${ext}";
+          import { foo } from "./foo.${ext}";
+          console.log(JSON.stringify({ hasFoo: Object.keys(ns).includes("foo"), foo: foo(), nsFoo: ns.foo() }));
+        `,
+      };
+      expect(json(await run(files, ["--preload", "./preload.ts", "entry.ts"]))).toEqual({
+        printed: { hasFoo: true, foo: "foo", nsFoo: "foo" },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it("pass-through onLoad of a file-namespace .cts module works with require()", async () => {
+    const files = {
+      "preload.ts": passThroughPlugin,
+      "foo.cts": `exports.foo = () => "foo";`,
+      "entry.ts": `
+        const mod = require("./foo.cts");
+        console.log(JSON.stringify({ keys: Object.keys(mod), foo: mod.foo() }));
+      `,
+    };
+    expect(json(await run(files, ["--preload", "./preload.ts", "entry.ts"]))).toEqual({
+      printed: { keys: ["foo"], foo: "foo" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

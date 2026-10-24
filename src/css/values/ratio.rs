@@ -51,4 +51,11 @@ impl Ratio {
         dest.delim(b'/', true)?;
         CSSNumberFns::to_css(self.denominator, dest)
     }
+
+    pub(crate) fn add_f32(self, other: f32) -> Ratio {
+        Ratio {
+            numerator: self.numerator + other,
+            denominator: self.denominator,
+        }
+    }
 }

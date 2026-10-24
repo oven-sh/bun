@@ -2147,7 +2147,7 @@ c {
   // The default browser targets have no range syntax (Chrome 80, Safari 14). A default
   // build keeps a strict bound strict: `(width < 1024px)` and `(width >= 1024px)` never
   // both match at 1024px. A query that is one strict bound is a negation, with the value
-  // as written. A strict bound beside another part stays a range.
+  // as written. A strict bound beside another part steps .02px past its value.
   for (const backend of ["cli", "api"] as const) {
     itBundled(`css/MediaRangeStrictBound/${backend}`, {
       backend,
@@ -2174,7 +2174,7 @@ c {
         expect(api.readFile("/out.css")).toBe(
           [
             '@import "https://example.com/narrow.css" not all and (min-width: 1024px);',
-            '@import "https://example.com/screen.css" screen and (width < 1024px);',
+            '@import "https://example.com/screen.css" screen and (max-width: 1023.98px);',
             '@import "data:text/css,@import \\"https://example.com/short.css\\" not all and (min-height: 500px);" not all and (max-width: 640px);',
             "",
             "/* tablet.css */",
@@ -2187,7 +2187,7 @@ c {
             rule("(min-width: 1024px)", ".burger", "display: none"),
             rule("not all and (max-width: 1280px)", ".wide", "color: red"),
             rule("not all and (min-width: 64rem)", ".rem", "color: red"),
-            rule("screen and (width < 768px)", ".screen", "color: red"),
+            rule("screen and (max-width: 767.98px)", ".screen", "color: red"),
             ".card {",
             "  color: #00f;",
             "}",

@@ -3,7 +3,7 @@ use crate::css_parser as css;
 use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
-use crate::values::calc::Calc;
+use crate::values::calc::{Calc, MathFunction};
 use crate::values::number::CSSNumber;
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
@@ -429,6 +429,10 @@ impl Length {
     // to_css — provided by #[derive(css::ToCss)] (Box<Calc<Length>> auto-derefs
     // to Calc::<V: CalcValue>::to_css inherent). parse KEPT (custom Calc::Value unwrap).
 
+    pub(crate) fn px(p: CSSNumber) -> Length {
+        Self::Value(LengthValue::Px(p))
+    }
+
     pub(crate) fn to_px(&self) -> Option<CSSNumber> {
         match self {
             Self::Value(a) => a.to_px(),
@@ -441,6 +445,28 @@ impl Length {
             Self::Value(v) => Self::Value(v.mul_f32(other)),
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
         }
+    }
+
+    pub(crate) fn add(self, other: Length) -> Length {
+        // Unwrap calc(...) functions so we can add inside.
+        // Then wrap the result in a calc(...) again if necessary.
+        let a = Self::unwrap_calc(self);
+        let b = Self::unwrap_calc(other);
+        let res = Length::add_internal(a, b);
+        if let Self::Calc(c) = res {
+            match *c {
+                Calc::Value(v) => return *v,
+                Calc::Function(f) if !matches!(*f, MathFunction::Calc(_)) => {
+                    return Self::Calc(Box::new(Calc::Function(f)));
+                }
+                other => {
+                    return Self::Calc(Box::new(Calc::Function(Box::new(MathFunction::Calc(
+                        other,
+                    )))));
+                }
+            }
+        }
+        res
     }
 
     pub(crate) fn add_internal(self, other: Length) -> Length {
@@ -542,6 +568,20 @@ impl Length {
         }
 
         None
+    }
+
+    fn unwrap_calc(length: Length) -> Length {
+        match length {
+            Self::Calc(c) => match *c {
+                Calc::Function(f) => match *f {
+                    MathFunction::Calc(c2) => Self::Calc(Box::new(c2)),
+                    c2 => Self::Calc(Box::new(Calc::Function(Box::new(c2)))),
+                },
+                _ => Self::Calc(c),
+            },
+            _ => length,
+        }
+        // For borrowck, this moves out of the Box once and rebuilds.
     }
 
     pub(crate) fn try_sign(&self) -> Option<f32> {

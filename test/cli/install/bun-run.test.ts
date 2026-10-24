@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, linkSync } from "fs";
+import { chmodSync, copyFileSync, existsSync, linkSync, readlinkSync, realpathSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
@@ -1584,4 +1584,57 @@ describe.concurrent("bun run", () => {
       exitCode: 0,
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/46775: the shim dir was always under the compile-time
+  // temp dir (`/tmp`, `/data/local/tmp` on Android). When that dir is not writable, `--bun`
+  // silently runs the real `node`. The temp dir env vars must move it, like they move the
+  // install temp dir.
+  describe.skipIf(isWindows)("--bun creates the node shim directory under the temp dir env vars", () => {
+    const script = `node -e 'console.log(process.env.PATH.split(":").find(e => /bun-node/.test(e))); console.log(typeof Bun);'`;
+
+    const cases: Record<string, { env: (tmp: string) => Record<string, string>; sub: string }> = {
+      "absolute TMPDIR": { env: tmp => ({ TMPDIR: tmp }), sub: "tmp" },
+      "relative TMPDIR": { env: () => ({ TMPDIR: "../tmp" }), sub: "tmp" },
+      "TMPDIR that does not exist yet": { env: tmp => ({ TMPDIR: tmp }), sub: "tmp/new/deeper" },
+      "BUN_TMPDIR wins over TMPDIR": {
+        env: tmp => ({ BUN_TMPDIR: tmp, TMPDIR: join(tmp, "..", "other") }),
+        sub: "tmp",
+      },
+    };
+
+    for (const [name, { env, sub }] of Object.entries(cases)) {
+      it(name, async () => {
+        using dir = tempDir("bun-run-node-shim-tmpdir", {
+          "project/package.json": JSON.stringify({ name: "shim-tmpdir", scripts: { go: script } }),
+          "tmp/.keep": "",
+          "other/.keep": "",
+        });
+        const tmpdir = join(realpathSync(String(dir)), sub);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--bun", "run", "go"],
+          cwd: join(String(dir), "project"),
+          // The CI runner sets BUN_TMPDIR for every test. It must not shadow the case.
+          env: { ...bunEnv, BUN_TMPDIR: undefined, ...env(tmpdir) },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [shimDir, bunType] = stdout.trim().split("\n");
+
+        expect(stderr).not.toContain("error");
+        expect({ shimDir, bunType, exitCode }).toEqual({
+          shimDir: expect.stringMatching(new RegExp(`^${escapeRegExp(tmpdir)}/bun-node-${process.getuid!()}(-|$)`)),
+          bunType: "object",
+          exitCode: 0,
+        });
+        expect(readlinkSync(join(shimDir, "node"))).toBe(realpathSync(bunExe()));
+      });
+    }
+  });
 });
+
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

@@ -390,20 +390,19 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant): `/tmp` is everybody's, this is one user's.
+    /// `<tmpdir>/bun-node-<uid>-<sha>` (or debug variant): the temp dir is
+    /// everybody's, this is one user's. `<tmpdir>` is `RealFS::tmpdir_path()`:
+    /// non-empty `BUN_TMPDIR`, then `TMPDIR`, `TMP`, `TEMP`, then the platform
+    /// default. The install temp dir and the node-gyp shim dir that share this
+    /// `PATH` use the same lookup.
     ///
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
     pub fn bun_node_dir() -> &'static ZStr {
-        const TMP: &str = if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        };
+        use bun_paths::resolve_path::{join_abs_string_spill, platform};
+
         const SUFFIX: &str = if bun_core::env::IS_DEBUG {
             "-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
@@ -413,7 +412,17 @@ impl RunCommand {
         };
         static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
         DIR.get_or_init(|| {
-            bun_core::ZBox::from_bytes(format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid()))
+            let name = format!("bun-node-{}{SUFFIX}", bun_sys::c::getuid());
+            // `$TMPDIR` can be relative. The dir goes into `PATH`, `NODE` and
+            // `npm_node_execpath` of child processes that run from other
+            // working directories, so it is made absolute once, here.
+            let mut spill = Vec::new();
+            let dir = join_abs_string_spill::<platform::Loose>(
+                bun_fs::FileSystem::get().top_level_dir(),
+                &mut spill,
+                &[bun_fs::RealFS::tmpdir_path(), name.as_bytes()],
+            );
+            bun_core::ZBox::from_bytes(dir)
         })
     }
 
@@ -614,7 +623,19 @@ impl RunCommand {
             // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
-            match bun_sys::mkdir(dir, 0o700) {
+            let created = match bun_sys::mkdir(dir, 0o700) {
+                // `$TMPDIR` can name a directory that does not exist yet.
+                // Create its parents with the default mode, the leaf stays 0700.
+                Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+                    use bun_sys::FdDirExt as _;
+                    if let Some(parent) = bun_paths::dirname(dir.as_bytes()) {
+                        let _ = bun_sys::Fd::cwd().make_path(parent);
+                    }
+                    bun_sys::mkdir(dir, 0o700)
+                }
+                result => result,
+            };
+            match created {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir) {
                     Ok(st)

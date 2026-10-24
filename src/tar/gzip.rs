@@ -16,7 +16,7 @@ mod flag {
 
 const RAW_DEFLATE: core::ffi::c_int = -15;
 /// The two identification bytes, and the compression method, which is always DEFLATE.
-pub const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
+const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
 const FLAGS: usize = MAGIC.len();
 const FIXED_HEADER_SIZE: usize = 10;
 /// The length of the extra field, and the CRC-16 of the header.
@@ -316,20 +316,6 @@ impl Decoder {
             }
         }
     }
-}
-
-/// All of `input` decompressed, if it is gzip, nothing is wrong with it, and its trailer gives a size below `limit`.
-pub fn decompress_small(input: &[u8], limit: usize) -> Option<Vec<u8>> {
-    let size = u32::from_le_bytes(*input.last_chunk()?) as usize;
-    if size >= limit {
-        return None;
-    }
-    let mut out = Vec::new();
-    // Room for one byte more, so that the decoder goes on to see that nothing follows.
-    let decoded = Decoder::new()
-        .ok()?
-        .decode(input, true, &mut out, size.saturating_add(1));
-    (matches!(decoded, Ok((_, Progress::Done))) && !out.is_empty()).then_some(out)
 }
 
 /// One gzip member with no name and no time, so the same input always gives the same bytes.

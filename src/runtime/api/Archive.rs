@@ -859,12 +859,9 @@ fn start_write_task(
     ))
 }
 
-/// Nothing vouches for the size a gzip trailer gives, and most of a larger archive may not be files.
-const GUNZIP_AT_ONCE_LIMIT: usize = 64 * 1024 * 1024;
-
 enum FileData {
     Owned(Vec<u8>),
-    /// A part of the tar bytes, which the `File` shares instead of copying.
+    /// A part of the archive's store, which the `File` shares instead of copying.
     Shared(Range<usize>),
 }
 
@@ -874,11 +871,7 @@ struct FileEntry {
     mtime: i64,
 }
 
-struct FileEntryList {
-    entries: Vec<FileEntry>,
-    /// What `FileData::Shared` is a part of, unless that is the archive's own store.
-    gunzipped: Option<Vec<u8>>,
-}
+type FileEntryList = Vec<FileEntry>;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum FilesError {
@@ -909,16 +902,12 @@ impl FilesContext {
             err => Ok(FilesResult::ArchiveErr(err)),
         };
         let archive = self.store.shared_view();
-        // In one piece, so that the files can share it. The reader counts the layers of gzip inside gzip.
-        let gunzipped = tar::gzip::decompress_small(archive, GUNZIP_AT_ONCE_LIMIT)
-            .filter(|bytes| !bytes.starts_with(&tar::gzip::MAGIC));
-        let tar_bytes = gunzipped.as_deref().unwrap_or(archive);
-        let mut reader = match bun_archive::open_memory(tar_bytes, tar::Dialect::General) {
+        let mut reader = match bun_archive::open_memory(archive, tar::Dialect::General) {
             Ok(reader) => reader,
             Err(err) => return read_error(err),
         };
 
-        let mut entries: Vec<FileEntry> = Vec::new();
+        let mut entries: FileEntryList = Vec::new();
         let mut shared_len = 0usize;
 
         loop {
@@ -967,11 +956,10 @@ impl FilesContext {
         }
 
         // A `File` keeps what it shares alive, so a few files out of many get copies of their own.
-        let share = shared_len >= tar_bytes.len() / 2;
-        if !share {
+        if shared_len < archive.len() / 2 {
             for entry in &mut entries {
                 if let FileData::Shared(range) = &entry.data {
-                    let bytes = &tar_bytes[range.clone()];
+                    let bytes = &archive[range.clone()];
                     let mut copy = Vec::new();
                     copy.try_reserve_exact(bytes.len())
                         .map_err(|_| bun_alloc::AllocError)?;
@@ -981,10 +969,7 @@ impl FilesContext {
             }
         }
 
-        Ok(FilesResult::Success(FileEntryList {
-            entries,
-            gunzipped: gunzipped.filter(|_| share),
-        }))
+        Ok(FilesResult::Success(entries))
     }
 }
 
@@ -998,11 +983,7 @@ impl TaskContext for FilesContext {
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         match &mut self.result {
-            FilesResult::Success(FileEntryList { entries, gunzipped }) => {
-                let shared_store = match gunzipped.take() {
-                    Some(bytes) => Store::init(bytes),
-                    None => self.store.clone(),
-                };
+            FilesResult::Success(entries) => {
                 let map = JSMap::create(global);
                 let Some(mut map_ptr) = JSMap::from_js(map) else {
                     return Ok(PromiseResult::Reject(
@@ -1018,7 +999,7 @@ impl TaskContext for FilesContext {
                             false,
                         ),
                         FileData::Shared(range) => {
-                            let blob = Blob::init_with_store(shared_store.clone(), global);
+                            let blob = Blob::init_with_store(self.store.clone(), global);
                             blob.offset.set(range.start as SizeType);
                             blob.size.set(range.len() as SizeType);
                             blob

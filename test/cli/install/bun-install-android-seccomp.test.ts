@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Android's app seccomp policy denies openat2(2) and fchmodat2(2) with
@@ -110,14 +110,18 @@ test.skipIf(!canFilter)("bun install survives Android-style seccomp (openat2/fch
     "dep/package.json": JSON.stringify({
       name: "dep",
       version: "1.0.0",
-      bin: { dep: "bin/dep.js" },
+      bin: { dep: "bin/dep.js", "dep-link": "bin/link.js" },
     }),
     // bin in a subdirectory so bin linking validates the parent dir with
     // openat2(RESOLVE_BENEATH), then chmods the target (fchmodat2).
     "dep/bin/dep.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
+    // A bin target that is a symlink inside the package: the file behind it is opened with
+    // openat2(RESOLVE_BENEATH) and chmodded.
+    "dep/lib/link.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
     // This makes Bun detect Android here, because the test host's kernel release string isn't Android's.
     "system/bin/linker64": "",
   });
+  symlinkSync(join("..", "lib", "link.js"), join(String(dir), "dep", "bin", "link.js"));
 
   await using proc = Bun.spawn({
     cmd: [helperBin!, bunExe(), "install"],
@@ -141,4 +145,6 @@ test.skipIf(!canFilter)("bun install survives Android-style seccomp (openat2/fch
   expect(lstatSync(binLink).isSymbolicLink()).toBe(true);
   const targetMode = statSync(join(String(dir), "node_modules", "dep", "bin", "dep.js")).mode;
   expect(targetMode & 0o111).not.toBe(0);
+  const linkedTargetMode = statSync(join(String(dir), "node_modules", "dep", "lib", "link.js")).mode;
+  expect(linkedTargetMode & 0o111).not.toBe(0);
 });

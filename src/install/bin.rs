@@ -858,6 +858,10 @@ pub struct Linker<'a> {
 
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
+
+    /// Only sets the mode of the bin targets, without creating links. For the tree that a
+    /// symlink-backend install points into, where the targets are the real files.
+    pub chmod_only: bool,
 }
 
 #[cfg(not(windows))]
@@ -975,13 +979,19 @@ impl<'a> Linker<'a> {
             }
         }
 
+        if self.chmod_only {
+            #[cfg(not(windows))]
+            self.make_executable(abs_target, &target_stat);
+            return;
+        }
+
         if let Some(seen) = self.seen.as_deref() {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
                 // The name is taken, and `bunx <this package>` starts the file itself.
                 #[cfg(not(windows))]
-                Self::make_executable(abs_target, &target_stat);
+                self.make_executable(abs_target, &target_stat);
                 return;
             }
         }
@@ -1027,16 +1037,107 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        Self::make_executable(abs_target, &target_stat);
+        self.make_executable(abs_target, &target_stat);
     }
 
+    /// `target_stat` follows a symlink, so the mode compared is the one of the file that runs.
     #[cfg(not(windows))]
-    fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
+    fn make_executable(&self, abs_target: &ZStr, target_stat: &sys::Stat) {
         let mode = exec_mode();
         if (target_stat.st_mode as Mode) & 0o777 != mode {
-            let _ = sys::lchmod(abs_target, mode);
+            // A package can ship a bin target that is a symlink. The file it points to gets the
+            // mode only if it is inside the package.
+            let is_symlink = sys::lstat(abs_target).is_ok_and(|link_stat| {
+                sys::kind_from_mode(link_stat.st_mode as Mode) == sys::FileKind::SymLink
+            });
+            if is_symlink {
+                self.chmod_symlinked_target(abs_target, mode);
+            } else {
+                let _ = sys::lchmod(abs_target, mode);
+            }
         }
         Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
+    }
+
+    /// Sets the mode of the file behind the symlink `abs_target`, if the link stays inside the
+    /// package directory. The file is opened first, and the open file is checked and chmodded, so
+    /// the link cannot be changed in between.
+    #[cfg(not(windows))]
+    fn chmod_symlinked_target(&self, abs_target: &ZStr, mode: Mode) {
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let Some(package_dir) = self.target_package_dir(package_dir_buf.as_mut_slice()) else {
+            return;
+        };
+        let fchmod_regular_file = |fd: Fd| {
+            let _close = sys::CloseOnDrop::new(fd);
+            let Ok(stat) = sys::fstat(fd) else {
+                return;
+            };
+            if sys::kind_from_mode(stat.st_mode as Mode) != sys::FileKind::File {
+                return;
+            }
+            let _ = sys::fchmod(fd, mode);
+        };
+        let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NONBLOCK;
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(rel) = Self::target_rel_to_package_dir(package_dir, abs_target)
+            && let Ok(package_dir_fd) = sys::open_dir_absolute(package_dir.as_bytes())
+        {
+            let mut rel_buf = path::path_buffer_pool::get();
+            let rel_z = resolve_path::z(rel, &mut *rel_buf);
+            let opened = sys::openat2_beneath(package_dir_fd, rel_z, flags, 0);
+            let _ = sys::close(package_dir_fd);
+            match opened {
+                Ok(fd) => return fchmod_regular_file(fd),
+                // `openat2` is unavailable: check the path of the open file instead.
+                Err(err)
+                    if matches!(
+                        err.get_errno(),
+                        sys::Errno::ENOSYS
+                            | sys::Errno::EPERM
+                            | sys::Errno::EAGAIN
+                            | sys::Errno::EINVAL
+                    ) => {}
+                // `EXDEV`: the link leaves the package directory.
+                Err(_) => return,
+            }
+        }
+
+        let mut real_package_dir_buf = path::path_buffer_pool::get();
+        let Ok(real_package_dir) = sys::realpath(package_dir, &mut *real_package_dir_buf) else {
+            return;
+        };
+        let Ok(fd) = sys::open(abs_target, flags, 0) else {
+            return;
+        };
+        let mut fd_path_buf = path::path_buffer_pool::get();
+        let is_inside = sys::get_fd_path(fd, &mut fd_path_buf).is_ok_and(|fd_path| {
+            matches!(
+                resolve_path::is_parent_or_equal(real_package_dir, fd_path),
+                resolve_path::ParentEqual::Parent
+            )
+        });
+        if is_inside {
+            fchmod_regular_file(fd);
+        } else {
+            let _ = sys::close(fd);
+        }
+    }
+
+    /// `abs_target` relative to `package_dir`, `None` if `abs_target` is not below it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn target_rel_to_package_dir<'b>(package_dir: &ZStr, abs_target: &'b ZStr) -> Option<&'b [u8]> {
+        let package_dir_bytes = package_dir.as_bytes();
+        let abs_target_bytes = abs_target.as_bytes();
+        if abs_target_bytes.len() <= package_dir_bytes.len() + 1
+            || !strings::starts_with(abs_target_bytes, package_dir_bytes)
+            || abs_target_bytes[package_dir_bytes.len()] != SEP
+        {
+            return None;
+        }
+        let rel = &abs_target_bytes[package_dir_bytes.len() + 1..];
+        (rel.len() < MAX_PATH_BYTES).then_some(rel)
     }
 
     #[cfg(not(windows))]
@@ -1424,8 +1525,9 @@ impl<'a> Linker<'a> {
         Ok(sys::symlink_running_executable(rel_target, abs_dest)?)
     }
 
+    /// `<node_modules>/<package>` without a trailing separator, `None` if it does not fit `buf`.
     #[cfg(not(windows))]
-    fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
+    fn target_package_dir<'b>(&self, buf: &'b mut [u8]) -> Option<&'b ZStr> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
@@ -1434,10 +1536,8 @@ impl<'a> Linker<'a> {
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
         let package_name = self.target_package_name.slice();
 
-        let mut package_dir_buf = path::path_buffer_pool::get();
-        let buf = package_dir_buf.as_mut_slice();
         if dest_dir_without_trailing_slash.len() + package_name.len() + 2 > buf.len() {
-            return true;
+            return None;
         }
         let mut off: usize = 0;
         buf[off..off + dest_dir_without_trailing_slash.len()]
@@ -1448,7 +1548,15 @@ impl<'a> Linker<'a> {
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
         buf[off] = 0;
-        let package_dir = ZStr::from_buf(&buf[..], off);
+        Some(ZStr::from_buf(&buf[..], off))
+    }
+
+    #[cfg(not(windows))]
+    fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let Some(package_dir) = self.target_package_dir(package_dir_buf.as_mut_slice()) else {
+            return true;
+        };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -1484,23 +1592,12 @@ impl<'a> Linker<'a> {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn target_escapes_beneath_package_dir(package_dir: &ZStr, abs_target: &ZStr) -> Option<bool> {
-        let package_dir_bytes = package_dir.as_bytes();
-        let abs_target_bytes = abs_target.as_bytes();
-        if abs_target_bytes.len() <= package_dir_bytes.len() + 1
-            || !strings::starts_with(abs_target_bytes, package_dir_bytes)
-            || abs_target_bytes[package_dir_bytes.len()] != SEP
-        {
-            return None;
-        }
-        let rel = &abs_target_bytes[package_dir_bytes.len() + 1..];
-        if rel.len() >= MAX_PATH_BYTES {
-            return None;
-        }
+        let rel = Self::target_rel_to_package_dir(package_dir, abs_target)?;
         let rel_parent = resolve_path::dirname::<PlatformAuto>(rel);
         if rel_parent.is_empty() {
             return Some(false);
         }
-        let package_dir_fd = match sys::open_dir_absolute(package_dir_bytes) {
+        let package_dir_fd = match sys::open_dir_absolute(package_dir.as_bytes()) {
             Ok(fd) => fd,
             Err(_) => return Some(true),
         };
@@ -1565,7 +1662,8 @@ impl<'a> Linker<'a> {
         bin_name: &[u8],
         buf: &'b mut [u8],
     ) -> Option<&'b ZStr> {
-        // A trailing separator would make `lchmod` follow a symlinked target; npm drops it too.
+        // A trailing separator would make `lstat` and `lchmod` follow a symlinked target; npm
+        // drops it too.
         let target = strings::without_trailing_slash(target);
 
         if !is_native_binlink_redirect {
@@ -1975,7 +2073,64 @@ pub(crate) fn link_free_bins(
             is_behind_link: Some(false),
             err: None,
             skipped_due_to_missing_bin: false,
+            chmod_only: false,
         }
         .link(global_bin_path.is_some());
     }
+}
+
+/// Sets the mode of the `bin` targets of a package in `source_dir`, the tree that a
+/// symlink-backend install points into. No links are created. `lchmod` does not reach the file
+/// behind a link, and the linker does not follow a link out of the package, so the real files get
+/// the mode here.
+///
+/// `redirected_from` is the name of the package whose `bin` field names the targets, when the
+/// native binlink optimization redirects that package's bins into this one.
+pub(crate) fn make_bins_executable(
+    bin: Bin,
+    source_dir: &[u8],
+    redirected_from: Option<&[u8]>,
+    string_buf: &[u8],
+    extern_string_buf: &[ExternalString],
+) {
+    if cfg!(windows) || bin.tag == Tag::None {
+        return;
+    }
+    let source_parent = resolve_path::dirname::<PlatformAuto>(source_dir);
+    let source_name = path::basename(source_dir);
+    if source_parent.is_empty() || source_name.is_empty() {
+        return;
+    }
+    // Two copies of the same path, because the linker reads `target_node_modules_path` while it
+    // holds `node_modules_path` by `&mut`.
+    let (Ok(target_node_modules_path), Ok(mut node_modules_path)) =
+        (AbsPath::from(source_parent), AbsPath::from(source_parent))
+    else {
+        return;
+    };
+    let source_name = strings::StringOrTinyString::init(source_name);
+    let mut abs_target_buf = path::path_buffer_pool::get();
+    let mut abs_dest_buf = path::path_buffer_pool::get();
+    let mut rel_buf = path::path_buffer_pool::get();
+    Linker {
+        bin,
+        target_node_modules_path: &raw const target_node_modules_path,
+        target_package_name: source_name,
+        seen: None,
+        node_modules_path: &mut node_modules_path,
+        // A different name from `target_package_name` makes the linker look for the redirected
+        // layouts (see `resolve_bin_target`).
+        package_name: redirected_from.map_or(source_name, strings::StringOrTinyString::init),
+        global_bin_path: ZStr::EMPTY,
+        string_buf,
+        extern_string_buf,
+        abs_target_buf: abs_target_buf.as_mut_slice(),
+        abs_dest_buf: abs_dest_buf.as_mut_slice(),
+        rel_buf: rel_buf.as_mut_slice(),
+        is_behind_link: Some(false),
+        err: None,
+        skipped_due_to_missing_bin: false,
+        chmod_only: true,
+    }
+    .link(false);
 }

@@ -731,6 +731,9 @@ impl<'a> PackageInstaller<'a> {
         let pkg_names = pkgs.items_name();
 
         let completed_trees = &self.completed_trees;
+        let copied_tree = self
+            .copy_trees
+            .is_set_allow_out_of_bound(tree_id as usize, false);
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
 
@@ -769,6 +772,7 @@ impl<'a> PackageInstaller<'a> {
                 .slice(string_buf);
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
+            let mut target_package_id = package_id;
             let mut can_retry_without_native_binlink_optimization = false;
             let mut target_node_modules_path_opt: Option<AbsPath> = None;
             let mut defer_this_bin = false;
@@ -836,6 +840,7 @@ impl<'a> PackageInstaller<'a> {
                                     pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 target_package_name =
                                     strings::StringOrTinyString::init(replacement_name);
+                                target_package_id = replacement_pkg_id;
                                 can_retry_without_native_binlink_optimization = true;
                             }
                         }
@@ -865,6 +870,29 @@ impl<'a> PackageInstaller<'a> {
             }
 
             loop {
+                // The linker does not follow the links of a symlink-backend install, so the real
+                // files get their mode first. `link_rel_buf` is free until the linker runs.
+                if !copied_tree
+                    && let Some(source) = Self::symlink_install_source(
+                        manager,
+                        lockfile,
+                        string_buf,
+                        pkg_metas,
+                        pkg_names,
+                        self.resolutions.slice(),
+                        target_package_id,
+                        link_rel_buf,
+                    )
+                {
+                    bin::make_bins_executable(
+                        bin,
+                        source,
+                        (target_package_id != package_id).then_some(alias),
+                        string_buf,
+                        lockfile.buffers.extern_strings.as_slice(),
+                    );
+                }
+
                 // `node_modules_path` (mut) and `target_node_modules_path`
                 // (read-only) refer to the same buffer when no replacement is
                 // set. Derive both from a single `*mut` so the read pointer
@@ -896,6 +924,7 @@ impl<'a> PackageInstaller<'a> {
                     is_behind_link,
                     err: None,
                     skipped_due_to_missing_bin: false,
+                    chmod_only: false,
                 };
 
                 bin_linker.link(global);
@@ -913,6 +942,7 @@ impl<'a> PackageInstaller<'a> {
                         );
                     }
                     target_package_name = package_name_;
+                    target_package_id = package_id;
                     target_node_modules_path_opt = None;
                     continue;
                 }
@@ -1274,7 +1304,9 @@ impl<'a> PackageInstaller<'a> {
 
     /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
     fn cache_entry_name(
-        &self,
+        manager: &PackageManager,
+        string_buf: &[u8],
+        metas: &[Package::Meta],
         package_id: PackageID,
         pkg_name: String,
         resolution: &Resolution,
@@ -1282,27 +1314,114 @@ impl<'a> PackageInstaller<'a> {
     ) -> &'static ZStr {
         match resolution.tag {
             resolution::Tag::Npm => package_manager::cached_npm_package_folder_name(
-                self.manager(),
-                pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice()),
+                manager,
+                pkg_name.slice(string_buf),
                 resolution.npm().version,
                 patch_contents_hash,
             ),
             resolution::Tag::Git => package_manager::cached_git_folder_name(
-                self.manager(),
+                manager,
                 resolution.git(),
                 patch_contents_hash,
             ),
             resolution::Tag::Github => package_manager::cached_github_folder_name(
-                self.manager(),
+                manager,
                 resolution.github(),
                 patch_contents_hash,
             ),
             _ => package_manager::cached_tarball_folder_name(
-                self.manager(),
-                &self.metas[package_id as usize].integrity,
+                manager,
+                &metas[package_id as usize].integrity,
                 resolution,
                 patch_contents_hash,
             ),
+        }
+    }
+
+    /// The hash of the patch file of a package that is not a workspace. `None` if the package is
+    /// not patched.
+    fn patch_contents_hash(
+        lockfile: &Lockfile,
+        string_buf: &[u8],
+        pkg_name: String,
+        resolution: &Resolution,
+    ) -> Option<u64> {
+        if lockfile.patched_dependencies.count() == 0 {
+            return None;
+        }
+        let mut name_and_version: Vec<u8> = Vec::new();
+        use std::io::Write;
+        write!(
+            &mut name_and_version,
+            "{}@{}",
+            bstr::BStr::new(pkg_name.slice(string_buf)),
+            resolution.fmt(string_buf, PathSep::Posix),
+        )
+        .expect("unreachable");
+        lockfile
+            .patched_dependencies
+            .get(&bun_semver::string::Builder::string_hash(&name_and_version))?
+            .patchfile_hash()
+    }
+
+    /// The directory that the files of `package_id` are symlinks into, when the package was
+    /// installed with the symlink backend: its cache entry, or the folder of a `file:` dependency.
+    /// `None` when the files in `node_modules` are the real files.
+    fn symlink_install_source<'b>(
+        manager: &mut PackageManager,
+        lockfile: &Lockfile,
+        string_buf: &[u8],
+        metas: &[Package::Meta],
+        pkg_names: &[String],
+        resolutions: &[Resolution],
+        package_id: PackageID,
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        let resolution = &resolutions[package_id as usize];
+        let symlink_backend =
+            PackageInstall::supported_method() == package_install::Method::Symlink;
+        match resolution.tag {
+            resolution::Tag::Npm
+            | resolution::Tag::Git
+            | resolution::Tag::Github
+            | resolution::Tag::LocalTarball
+            | resolution::Tag::RemoteTarball
+                if symlink_backend =>
+            {
+                let pkg_name = pkg_names[package_id as usize];
+                let cache_dir = package_manager::get_cache_directory(manager);
+                let mut cache_path = bun_paths::path_buffer_pool::get();
+                let cache_path = bun_sys::get_fd_path(cache_dir, &mut cache_path).ok()?;
+                let entry = Self::cache_entry_name(
+                    manager,
+                    string_buf,
+                    metas,
+                    package_id,
+                    pkg_name,
+                    resolution,
+                    Self::patch_contents_hash(lockfile, string_buf, pkg_name, resolution),
+                );
+                join_abs_string_buf_z_checked::<platform::Auto>(
+                    cache_path,
+                    buf,
+                    &[entry.as_bytes()],
+                )
+                .map(ZStr::as_bytes)
+            }
+            resolution::Tag::Folder => {
+                let folder = resolution.folder().slice(string_buf);
+                // `get_install_method` symlinks a package from its own folder.
+                if !symlink_backend && !matches!(folder, b"" | b".") {
+                    return None;
+                }
+                join_abs_string_buf_z_checked::<platform::Auto>(
+                    FileSystem::instance().top_level_dir(),
+                    buf,
+                    &[folder],
+                )
+                .map(ZStr::as_bytes)
+            }
+            _ => None,
         }
     }
 
@@ -1887,8 +2006,15 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::Github
             | resolution::Tag::LocalTarball
             | resolution::Tag::RemoteTarball => {
-                installer.cache_dir_subpath =
-                    self.cache_entry_name(package_id, pkg_name, resolution, patch_contents_hash);
+                installer.cache_dir_subpath = Self::cache_entry_name(
+                    self.manager(),
+                    string_buf!(),
+                    self.metas.slice(),
+                    package_id,
+                    pkg_name,
+                    resolution,
+                    patch_contents_hash,
+                );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {

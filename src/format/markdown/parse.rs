@@ -1525,6 +1525,10 @@ impl Builder<'_> {
         }
         // Prettier escapes these or keeps them off the start of a line, and so does this printer.
         if !self.is_for_oxfmt {
+            // The lines behind `[ ] ` are printed four columns to the right of the item's content, where they stay text.
+            if self.starts_with_check {
+                return None;
+            }
             let word = &line_text[..line_text
                 .iter()
                 .take_while(|&&byte| !is_space(byte))

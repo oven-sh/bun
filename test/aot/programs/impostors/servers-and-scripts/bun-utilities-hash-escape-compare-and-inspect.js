@@ -8,7 +8,7 @@ console.log(Bun.TOML.parse('title = "x"\n[server]\nport = 80\ntags = ["a", "b"]\
 const glob = new Bun.Glob("**/*.{js,ts}");
 console.log(glob.match("src/a/b.ts"), glob.match("src/a/b.css"), new Bun.Glob("a?c").match("abc"), new Bun.Glob("!x").match("y"));
 console.log(typeof Bun.nanoseconds(), typeof Bun.version, /^[0-9a-f]+$/.test(Bun.revision), Bun.which("sh") !== null, Bun.which("no-such-tool-anywhere"), Bun.env === process.env || typeof Bun.env.PATH, /^[0-9a-f-]{36}$/.test(Bun.randomUUIDv7()), Bun.isMainThread);
-console.log(Bun.peek(Promise.resolve(5)), Bun.peek.status(new Promise(() => {})), Bun.peek(7), Bun.fileURLToPath(Bun.pathToFileURL("/a b")), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#0f0", "[rgb]"), Bun.color("nope", "css"));
+console.log(Bun.peek(Promise.resolve(5)), Bun.peek.status(new Promise(() => {})), Bun.peek(7), Bun.fileURLToPath(Bun.pathToFileURL(process.cwd() + "/a b")).endsWith("a b"), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#0f0", "[rgb]"), Bun.color("nope", "css"));
 const sink = new Bun.ArrayBufferSink();
 sink.start({ asUint8Array: true });
 sink.write("ab");

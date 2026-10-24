@@ -1,5 +1,6 @@
-// Without `@types/bun`, TypeScript knows neither `console` nor the module "bun", and `bun check` says so. A build goes on: what Bun
-// provides is of type `any`, and the executable does what `bun run` does. Every other type error stops the build as always.
+// Without `@types/bun`, TypeScript knows neither `console` nor the module "bun", and `bun check` says so. A build goes on with the
+// declarations that Bun brings along. They hold no program to what its project has not installed: where a program does not fit them,
+// what Bun provides is of type `any`. The executable does what `bun run` does. Every other type error stops the build as always.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
@@ -532,8 +533,89 @@ server.stop(true);
       }),
     },
     checkSays: [],
-    warnings: ["TS2688"],
     prints: "string\n",
+  },
+  "what Bun provides, with its types": {
+    files: {
+      "main.ts": `import { EventEmitter } from "node:events";
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type Known<T> = IsAny<T> extends true ? never : "known";
+const global: Known<typeof process.pid> = "known";
+const ofBun: Known<typeof Bun.version> = "known";
+const ofTheWeb: Known<Response["status"]> = "known";
+const ofAModule: Known<EventEmitter["listenerCount"]> = "known";
+process.on("exit", code => { const given: Known<typeof code> = "known"; console.log(given); });
+console.log(global, ofBun, ofTheWeb, ofAModule);
+`,
+    },
+    checkSays: [],
+    prints: "known known known known\nknown\n",
+  },
+  "what Bun provides in ways that its declarations do not allow": {
+    files: {
+      "main.ts": `const port = parseInt(process.env.A_NAME_THAT_NOBODY_SETS);
+const length: number = process.argv.length.toString();
+const blob = new Blob(["{}"]);
+console.log(port, typeof length, blob.notThere, Buffer.from("ab", "utf8", "more").length);
+`,
+    },
+    checkSays: [],
+    prints: "NaN string undefined 2\n",
+  },
+  "a loop that awaits what a class below a stream of Node.js yields": {
+    files: {
+      "main.ts": `import { Readable } from "node:stream";
+class Source extends Readable {
+  _read() {
+    this.push(null);
+  }
+}
+for await (const chunk of new Source()) console.log(String(chunk));
+console.log("the end");
+`,
+    },
+    checkSays: [],
+    prints: "the end\n",
+  },
+  "the type of an instance, inferred from a class of Node.js that is passed as a constructor": {
+    files: {
+      "main.ts": `import EventEmitter from "node:events";
+function made<T extends object>(Base: new () => T): T {
+  return new Base();
+}
+made(EventEmitter).on("ping", () => console.log("ping")).emit("ping");
+`,
+    },
+    checkSays: [],
+    prints: "ping\n",
+  },
+  "options that Bun adds to what TypeScript's DOM library declares": {
+    files: {
+      "main.ts": `const response = fetch("http://localhost/", { unix: "/no/such/socket" });
+response.catch(() => console.log("the end"));
+const options: WorkerOptions = { argv: ["a"], smol: true };
+console.log(options.argv);
+`,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [] } }),
+    },
+    checkSays: [],
+    prints: '[ "a" ]\nthe end\n',
+  },
+  "a package in TypeScript that uses what Bun provides in ways that its declarations do not allow": {
+    files: {
+      "main.ts": `import { port, twice } from "typed-package";\nconsole.log(port(), twice(2), typeof process.pid);\n`,
+      "node_modules/typed-package/package.json": JSON.stringify({
+        name: "typed-package",
+        version: "1.0.0",
+        main: "index.ts",
+        types: "index.ts",
+      }),
+      "node_modules/typed-package/index.ts": `export function port(): number { return parseInt(process.env.A_NAME_THAT_NOBODY_SETS); }
+export function twice(n: number): number { return n * 2; }
+`,
+    },
+    checkSays: [],
+    prints: "NaN 4 number\n",
   },
 };
 
@@ -705,6 +787,27 @@ test(
         expect(await build(String(dir))).toEqual(built);
         expect(await run(String(dir), "compiled")).toEqual({ stdout: "string number\n", exitCode: 0, signal: null });
       }
+    }),
+  buildTimeout,
+);
+
+test(
+  "the type declarations that a project has installed count, not the ones that Bun brings along",
+  () =>
+    slot(async () => {
+      const main = `const version: string = Bun.version;\nconsole.log(typeof version);\n`;
+      using bare = tempDir("aot-installed-bun-types", { "main.ts": main });
+      expect(await build(String(bare))).toEqual(built);
+      using dir = tempDir("aot-installed-bun-types", {
+        "main.ts": main,
+        "node_modules/@types/bun/package.json": JSON.stringify({
+          name: "@types/bun",
+          version: "1.0.0",
+          types: "index.d.ts",
+        }),
+        "node_modules/@types/bun/index.d.ts": `declare var Bun: { version: number };\ndeclare var console: { log(...data: unknown[]): void };\n`,
+      });
+      expect(await build(String(dir))).toEqual({ errors: ["TS2322"], warnings: [], exitCode: 1, signal: null });
     }),
   buildTimeout,
 );

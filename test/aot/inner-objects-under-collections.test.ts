@@ -21,8 +21,13 @@ programsBuiltWith("inner-objects", "no-marking-beside-the-program", [], {
   ...overwriting,
 });
 // The checks of the run time on code that was built without them. Nothing is written over what is freed: that pattern is zero in half of the bytes of a word, which is what an empty slot of one byte holds.
-programsBuiltWith("inner-objects", "checked-by-the-run-time-alone", [], {
+const checkedByTheRunTime = {
   BUN_JSC_validateAOTRuntime: "1",
   BUN_JSC_useConcurrentGC: "0",
   BUN_JSC_slowPathAllocsBetweenGCs: "10",
-});
+};
+programsBuiltWith("inner-objects", "checked-by-the-run-time-alone", [], checkedByTheRunTime);
+// Every run takes this one. It pushes onto a frozen list, which enters a native function from inside an operation of the run time, in an executable that holds no table of built-ins to judge that function by.
+programsBuiltWith("inner-objects", "checked-by-the-run-time-alone-in-every-run", [], checkedByTheRunTime, 1, 1, [
+  "an-array-is-born-in-the-cell-of-its-object",
+]);

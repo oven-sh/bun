@@ -60,6 +60,8 @@ pub struct LoadedProgram<'s> {
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
     pub has_bun_types_installed: bool,
+    /// `@types/bun` is not installed, and the host's own is read in its place.
+    pub brings_bun_types: bool,
     without_bun_types: Option<WithoutBunTypes>,
     is_read_again: bool,
 }

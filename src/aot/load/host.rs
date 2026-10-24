@@ -49,6 +49,7 @@ use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, Plug
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_declarations;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
+use crate::load::runtime_types;
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
 use crate::load::test_runner_names;
@@ -139,6 +140,7 @@ enum ServedBy {
     PluginModule,
     EvaluatedText,
     Declarations(&'static [u8]),
+    RuntimeTypes,
     TypedFile(ScriptKind),
     Disk,
 }
@@ -261,8 +263,11 @@ impl LoadHost<'_> {
         if path == runtime_declarations::OTHER_NAMES_OF_TEST_RUNNER_PATH {
             return ServedBy::Declarations(runtime_declarations::OTHER_NAMES_OF_TEST_RUNNER);
         }
-        match path == compiler_declarations::PATH {
-            true => ServedBy::Declarations(compiler_declarations::TEXT),
+        if path == compiler_declarations::PATH {
+            return ServedBy::Declarations(compiler_declarations::TEXT);
+        }
+        match runtime_types::is_file(path) {
+            true => ServedBy::RuntimeTypes,
             false => ServedBy::Disk,
         }
     }
@@ -276,7 +281,10 @@ impl LoadHost<'_> {
                     && !is_declaration_file_name(path)
                     && self.default_loader(path) != Loader::Html
             }
-            ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::TypedFile(_) => false,
+            ServedBy::EvaluatedText
+            | ServedBy::Declarations(_)
+            | ServedBy::RuntimeTypes
+            | ServedBy::TypedFile(_) => false,
         }
     }
 
@@ -417,6 +425,7 @@ impl Host for LoadHost<'_> {
             },
             ServedBy::EvaluatedText => self.evaluated_texts.read(path),
             ServedBy::Declarations(text) => Some(Cow::Borrowed(text)),
+            ServedBy::RuntimeTypes => runtime_types::read(path).map(Cow::Owned),
             ServedBy::TypedFile(_) | ServedBy::Disk => self.disk.read(path),
         }
     }
@@ -444,7 +453,7 @@ impl Host for LoadHost<'_> {
 
     fn file_stamp(&self, path: &[u8]) -> Option<FileStamp> {
         match self.served_by(path) {
-            ServedBy::Declarations(_) => Some(FileStamp::IMMUTABLE),
+            ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Some(FileStamp::IMMUTABLE),
             ServedBy::Disk if !self.plugins.was_read(path) && !self.is_background_read(path) => {
                 self.disk.file_stamp(path)
             }
@@ -457,13 +466,19 @@ impl Host for LoadHost<'_> {
             return self.disk.is_file(path);
         }
         match self.served_by(path) {
-            ServedBy::PluginModule | ServedBy::EvaluatedText | ServedBy::Declarations(_) => true,
+            ServedBy::PluginModule
+            | ServedBy::EvaluatedText
+            | ServedBy::Declarations(_)
+            | ServedBy::RuntimeTypes => true,
             ServedBy::TypedFile(_) | ServedBy::Disk => false,
         }
     }
 
     fn is_dir(&self, path: &[u8]) -> bool {
-        !is_host_path(path) && self.disk.is_dir(path)
+        match is_host_path(path) {
+            true => runtime_types::is_dir(path),
+            false => self.disk.is_dir(path),
+        }
     }
 
     fn realpath(&self, path: &[u8]) -> Vec<u8> {
@@ -481,7 +496,7 @@ impl Host for LoadHost<'_> {
 
     fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         match is_host_path(path) {
-            true => (Vec::new(), Vec::new()),
+            true => runtime_types::entries(path),
             false => self.disk.entries(path),
         }
     }
@@ -489,7 +504,9 @@ impl Host for LoadHost<'_> {
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
         match self.served_by(path) {
             ServedBy::TypedFile(kind) => return Some(kind),
-            ServedBy::EvaluatedText | ServedBy::Declarations(_) => return None,
+            ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::RuntimeTypes => {
+                return None;
+            }
             ServedBy::PluginModule | ServedBy::Disk => {}
         }
         if is_bundled(path) || is_declaration_file_name(path) {
@@ -609,10 +626,16 @@ impl CodeHost for LoadHost<'_> {
         Some(runtime_declarations::PATH.to_vec())
     }
 
+    fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        (!self.input.options.load.takes_runtime_as_any).then(|| runtime_types::TYPE_ROOT.to_vec())
+    }
+
     fn loader_of(&self, request: &LoaderRequest<'_>) -> HostLoader {
         let path = request.path;
         match self.served_by(path) {
-            ServedBy::EvaluatedText | ServedBy::Declarations(_) => return BY_NAME,
+            ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::RuntimeTypes => {
+                return BY_NAME;
+            }
             ServedBy::PluginModule | ServedBy::TypedFile(_) | ServedBy::Disk => {}
         }
         let default_loader = self.default_loader_for(path, request.kind);
@@ -646,6 +669,10 @@ impl CodeHost for LoadHost<'_> {
                 return CodeRead::Text(text.unwrap_or_else(|| self.record_unreadable(path)));
             }
             ServedBy::Declarations(text) => return CodeRead::Text(Cow::Borrowed(text)),
+            ServedBy::RuntimeTypes => {
+                let text = runtime_types::read(path).map(Cow::Owned);
+                return CodeRead::Text(text.unwrap_or_else(|| self.record_unreadable(path)));
+            }
             ServedBy::PluginModule | ServedBy::TypedFile(_) | ServedBy::Disk => {}
         }
         if !self.should_ask_plugins(served_by, path) {
@@ -726,7 +753,7 @@ impl CodeHost for LoadHost<'_> {
         let loader = match served_by {
             ServedBy::TypedFile(script_kind) => script_loader(script_kind),
             ServedBy::EvaluatedText => Loader::Js,
-            ServedBy::Declarations(_) => Loader::Ts,
+            ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Loader::Ts,
             ServedBy::PluginModule | ServedBy::Disk => {
                 plugin_loader.unwrap_or_else(|| requested_loader(kind, path))
             }

@@ -14,7 +14,7 @@
 // ./idioms-against-the-jit.ts says how a turn is counted.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { parseArgs } from "util";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { idiomsAgainstTheJit } from "./measure-idioms";
@@ -32,7 +32,7 @@ const { values: options } = parseArgs({
 });
 const bun = resolve(options.bun);
 const folder = mkdtempSync(join(tmpdir(), "what-each-switch-is-worth-"));
-const sources = join(folder, "idioms");
+const sources = { ts: join(folder, "idioms"), js: join(folder, "untyped-idioms") };
 const [part, parts] = options.part.split("/").map(Number);
 const names = idiomsAgainstTheJit(bun, folder)
   .names.filter(name => new RegExp(options.only).test(name))
@@ -53,7 +53,7 @@ const environment = {
 };
 
 function registeredSwitches(): string[] {
-  const { stdout } = Bun.spawnSync({ cmd: [bun, "build", "--compile", "--aot", "--aot-list", "registry", join(sources, names[0] + ".js")], env: environment, cwd: folder });
+  const { stdout } = Bun.spawnSync({ cmd: [bun, "build", "--compile", "--aot", "--aot-list", "registry", join(sources.js, names[0] + ".js")], env: environment, cwd: folder });
   const registry = JSON.parse(stdout.toString());
   return [...registry.passes.filter((pass: { isOptional: boolean }) => pass.isOptional).map((pass: { name: string }) => "pass:" + pass.name), ...registry.flowResults.map((name: string) => "flow:" + name)];
 }
@@ -64,7 +64,7 @@ const startOfProgram = statSync(bun).size - (1 << 20);
 
 async function build(source: string, executable: string, flags: string[], compiler = bun) {
   rmSync(executable, { force: true });
-  await using child = Bun.spawn({ cmd: [compiler, "build", "--compile", "--aot", "--aot-threads=1", ...flags, source, "--outfile", executable], cwd: sources, env: environment, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 300_000, killSignal: "SIGKILL" });
+  await using child = Bun.spawn({ cmd: [compiler, "build", "--compile", "--aot", "--aot-threads=1", ...flags, source, "--outfile", executable], cwd: dirname(source), env: environment, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 300_000, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   if (exitCode !== 0) throw new Error(`the build: exit code ${exitCode}${child.signalCode ? ", " + child.signalCode : ""}: ${(stderr + stdout).trim().split("\n").slice(0, 2).join(" / ").slice(0, 200)}`);
   return new Uint8Array(await Bun.file(executable).slice(startOfProgram).arrayBuffer());
@@ -85,14 +85,14 @@ function differsBySwitchesAlone(a: Uint8Array, b: Uint8Array) {
 }
 
 async function cost(executable: string, turns: number, warmUp: number) {
-  const run = (turns: number) => measureCommand(sources, ["/usr/bin/time", "-f", "peak %M", executable], 900_000, { ...environment, AOT_PERF_TURNS: String(turns), AOT_PERF_WARM_UP_TURNS: String(warmUp) });
+  const run = (turns: number) => measureCommand(folder, ["/usr/bin/time", "-f", "peak %M", executable], 900_000, { ...environment, AOT_PERF_TURNS: String(turns), AOT_PERF_WARM_UP_TURNS: String(warmUp) });
   const short = await run(turns >> 2);
   const long = await run(turns);
   return { instructions: Math.max(0.5, (long.instructions! - short.instructions!) / (turns - (turns >> 2))), peakMegabytes: Number(/^peak (\d+)$/m.exec(long.stderr)?.[1]) / 1024, printed: long.stdout };
 }
 
 const rows: string[][] = [];
-const waiting = names.flatMap(name => ["ts", "js"].map(form => ({ name, form })));
+const waiting = names.flatMap(name => (["ts", "js"] as const).map(form => ({ name, form })));
 let done = 0;
 await Promise.all(
   Array.from({ length: Number(options.jobs) }, async (_, job) => {
@@ -100,7 +100,7 @@ await Promise.all(
     const executable = join(folder, String(job), "program");
     for (let next = waiting.shift(); next; next = waiting.shift()) {
       const { name, form } = next;
-      const source = join(sources, `${name}.${form}`);
+      const source = join(sources[form], `${name}.${form}`);
       try {
         const report = join(folder, String(job), "report.json");
         const program = join(folder, String(job), "program.bin");

@@ -265,6 +265,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         in_memory_file_keys: in_memory_file_keys(input),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
+        takes_runtime_as_any: false,
     }
 }
 

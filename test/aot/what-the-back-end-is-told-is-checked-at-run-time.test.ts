@@ -82,5 +82,17 @@ describe.skipIf(!listed?.includes("NoCallWrites"))(
       },
       600_000,
     );
+
+    // A second read goes in only where the word is still there to be read.
+    test.concurrent.each(["what-was-read-from-a-text-is-used-when-the-text-is-gone.js"])(
+      "%s",
+      async program => {
+        const path = join(import.meta.dir, "programs", "claims-to-the-back-end", program);
+        const plain = await spawned([bunExe(), "run", path], dirname(path), bunEnv);
+        expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
+        for (const flags of [[claims], [movedLoads]]) expect(told(await run(path, flags))).toEqual(told(plain));
+      },
+      600_000,
+    );
   },
 );

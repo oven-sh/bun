@@ -50,6 +50,7 @@ const known: Record<string, string> = {
   "passes/AOTArrayElementTests.cpp": "Opcode 1",
   "passes/AOTArrayStorageForms.cpp": "Opcode 1",
   "passes/AOTCallModules.cpp": "Opcode 3",
+  "passes/AOTCreatedObjectLayouts.cpp": "Opcode 1",
   "passes/AOTDeferDefinitions.cpp": "Opcode 2",
   "passes/AOTDeferInitializers.cpp": "Opcode 4",
   "passes/AOTEmbedConstantCollections.cpp": "Opcode 1",

@@ -25,7 +25,7 @@ def zigzag(v): return (v >> 1) ^ -(v & 1)
 
 class Image:
     def __init__(self, path):
-        f = open(path, 'rb'); self.m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ); m = self.m
+        f = open(path, 'rb'); self.m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ); m = self.m
         self.base = None; at = 0
         while True:
             at = m.find(b'BUNAOT01', at)

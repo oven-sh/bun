@@ -61,12 +61,15 @@ pub fn load_program<'s>(
         .extend_from_slice(&request.code.custom_conditions);
     let has_bun_types_installed = choose_libraries(host, options, request.libs);
     let is_application = request.project_origin != FileOrigin::Runtime;
+    let brings_bun_types =
+        is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
+    let has_bun_types = has_bun_types_installed || brings_bun_types;
     // What a file of Bun's own says is the same in every program, whichever of the others the program asks for.
     options.orders_files_as_listed = !is_application;
-    if is_application && has_bun_types_installed {
+    if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types());
     }
-    if is_application && !has_bun_types_installed {
+    if is_application && !has_bun_types {
         if let Some(path) = host.declarations_in_place_of_bun_types() {
             options.declarations_of_last_resort.clone_from(&path);
             last_files.push(path);
@@ -118,11 +121,10 @@ pub fn load_program<'s>(
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
-    let without_bun_types =
-        (is_application && !has_bun_types_installed).then_some(WithoutBunTypes {
-            has_configuration_file: !config_path.is_empty(),
-            incomplete_containers: containers_completed_by_bun_types(files),
-        });
+    let without_bun_types = (is_application && !has_bun_types).then_some(WithoutBunTypes {
+        has_configuration_file: !config_path.is_empty(),
+        incomplete_containers: containers_completed_by_bun_types(files),
+    });
     let diagnostics = ProgramOrigins {
         files: Some(files),
         origins: &origins,
@@ -136,6 +138,7 @@ pub fn load_program<'s>(
         project_origin: request.project_origin,
         diagnostics,
         has_bun_types_installed,
+        brings_bun_types,
         without_bun_types,
         is_read_again: false,
     })
@@ -449,4 +452,15 @@ fn name_bun_types(options: &mut Options) {
     if !is_named {
         types.push(b"bun".to_vec());
     }
+}
+
+fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
+    let Some(root) = host.type_root_in_place_of_bun_types() else {
+        return false;
+    };
+    let mut roots = options.effective_type_roots();
+    roots.push(root);
+    options.type_roots = Some(roots);
+    name_bun_types(options);
+    true
 }

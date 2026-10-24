@@ -75,6 +75,11 @@ pub trait CodeHost: Host {
         None
     }
 
+    /// Where the host has `@types/bun` itself, for where it is not installed. It comes before `declarations_in_place_of_bun_types`.
+    fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        None
+    }
+
     fn loader_of(&self, _request: &LoaderRequest<'_>) -> HostLoader {
         HostLoader::default()
     }

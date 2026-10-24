@@ -106,7 +106,7 @@ export { greet };
 
 `bun compile` type checks the full-types files as a project of their own, under those options. The rest is always the same: `"target": "esnext"`, `"module": "preserve"`, `"moduleResolution": "bundler"`, `"skipLibCheck": true` and `"noEmit": true`. The `tsconfig.json` of the program that installs your package doesn't count, and neither do its `lib`, its `@types` packages or what it declares globally.
 
-`@types/bun` is the exception, because it declares what Bun itself provides. Where the program has it installed, `process`, `Buffer`, `node:http` and the rest have their types in your full-types files. Where it doesn't, they're `any`. Add `"types": []` to `"compilerOptions"` to leave it out.
+`@types/bun` is the exception, because it declares what Bun itself provides. Where the program has it installed, `process`, `Buffer`, `node:http` and the rest have those types in your full-types files. Where it doesn't, they have the types of [the copy that Bun carries](/bundler/aot-troubleshooting#buns-type-declarations-arent-installed). Add `"types": []` to `"compilerOptions"` to leave it out.
 
 With `--library` and `--dts`, a `const` stays a `const` in the bundle, where `bun build` otherwise writes `var` at the top level of a module. A `const` keeps its literal type, can be a `unique symbol`, and keeps what a test has narrowed, so the full-types file means what your sources mean.
 

@@ -224,18 +224,42 @@ impl Archive {
     }
 
     pub fn read(name: &[u8]) -> Option<Vec<u8>> {
-        let number =
-            |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let archive = archive();
-        let records = &archive[4..][..number(archive) * RECORD_LEN];
-        let records = records.as_chunks::<RECORD_LEN>().0;
-        let found = records.binary_search_by(|record| record[1..][..record[0] as usize].cmp(name));
+        let records = records();
+        let found = records.binary_search_by(|record| name_of(record).cmp(name));
         let offset_and_len = &records[found.ok()?][1 + NAME_LEN..];
         bun_zstd::decompress_alloc(
-            &archive[number(offset_and_len)..][..number(&offset_and_len[4..])],
+            &archive()[u32_at(offset_and_len)..][..u32_at(&offset_and_len[4..])],
         )
         .ok()
     }
+
+    pub fn has(name: &[u8]) -> bool {
+        records()
+            .binary_search_by(|record| name_of(record).cmp(name))
+            .is_ok()
+    }
+
+    /// Sorted.
+    pub fn names_that_begin_with(prefix: &[u8]) -> impl Iterator<Item = &'static [u8]> {
+        let records = records();
+        let first = records.partition_point(|record| name_of(record) < prefix);
+        let names = records[first..].iter().map(name_of);
+        names.take_while(move |name| name.starts_with(prefix))
+    }
+}
+
+fn u32_at(bytes: &[u8]) -> usize {
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize
+}
+
+fn records() -> &'static [[u8; RECORD_LEN]] {
+    let archive = archive();
+    let records = &archive[4..][..u32_at(archive) * RECORD_LEN];
+    records.as_chunks::<RECORD_LEN>().0
+}
+
+fn name_of(record: &[u8; RECORD_LEN]) -> &[u8] {
+    &record[1..][..record[0] as usize]
 }
 
 fn number(field: &[u8]) -> Option<u32> {

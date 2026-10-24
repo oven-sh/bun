@@ -52,7 +52,11 @@ bun check ./hello.ts
 hello.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
 ```
 
-`bun compile` still builds the program. Whatever Bun provides is of type `any`, so code that uses it works but [runs slower](/bundler/aot-explain). These aren't errors in such a build:
+`bun compile` still builds the program, and it still knows the types of Bun's and Node.js's APIs. Bun carries a copy of `@types/bun` and of the two packages it depends on, `@types/node` and `undici-types`. A build reads the copy when `@types/bun` isn't installed, and so do `bun check --aot`, `bun run --aot` and `bun test --aot`. Plain `bun check` doesn't.
+
+What you install wins over the copy. With `@types/bun` in `node_modules`, the build doesn't read the copy at all. With only `@types/node` installed, the build reads your `@types/node` and takes the rest from the copy.
+
+The copy is there so the compiler knows Bun's APIs, not to hold your project to types it hasn't installed. If the program has a type error with the copy, the build starts over with whatever Bun provides typed as `any`. Code that uses it still works but [runs slower](/bundler/aot-explain). These aren't errors in that second build:
 
 - a global that Bun provides, and `require`, `module`, `exports`, `__filename` and `__dirname`
 - an import of one of Bun's modules, and an import of a file that the build loads, such as `./note.txt`
@@ -62,9 +66,7 @@ hello.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change y
 - a parameter without a type in a callback that you pass to something Bun provides, as in `process.on("exit", code => {})`
 - in a project without a `tsconfig.json`, a parameter or a variable that's implicitly `any`
 
-If your `tsconfig.json` has `"types": ["bun"]`, as `bun init` writes it, the build warns that the package isn't there (TS2688).
-
-A name that Bun doesn't provide, such as `document`, is still an error. So is an `import type` from a package that isn't installed, and every other type error. Install the declarations, and Bun's globals and modules have types.
+A name that Bun doesn't provide, such as `document`, is still an error. So is an `import type` from a package that isn't installed, and every other type error. Install the declarations, and Bun's globals and modules have types in your editor and in `bun check` too.
 
 ```bash terminal icon="terminal"
 bun add -d @types/bun

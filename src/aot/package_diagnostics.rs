@@ -20,6 +20,7 @@ pub(crate) struct PackageView<'a, 's> {
 pub(crate) struct PackageErrors<'s> {
     pub remaining: Vec<BuildDiagnostic>,
     pub demoted_directories: BTreeSet<&'s [u8]>,
+    pub has_withdrawn_trust: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -196,12 +197,14 @@ pub(crate) fn report_package_errors<'s>(
         .filter_map(demoted_package_directory)
         .chain(demoted_files(roles).filter_map(|file| package_directory(files, file)))
         .collect();
+    let has_withdrawn_trust = !groups.is_empty();
     for (key, group) in groups {
         diagnostics.add_with_checker_note(group_diagnostic(&key, &group, &counts), group.first);
     }
     PackageErrors {
         remaining,
         demoted_directories,
+        has_withdrawn_trust,
     }
 }
 

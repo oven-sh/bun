@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { describe, test } from "./supported";
 
-// What each option changes is printed, so an option that is lost shows.
+// What each option changes is printed, so an option that is lost shows. Of a warning the first line is printed: the lines
+// below it name positions, which are those of the source with --aot and those of the bundle without.
 const program = `import dns from "node:dns";
 import http from "node:http";
 const has = option => process.execArgv.some(written => written.startsWith(option));
-process.on("warning", warning => console.log("warning:", warning.name, warning.message));
+process.on("warning", warning => console.log("warning:", warning.name, warning.message.split("\\n")[0]));
 process.on("exit", code => console.log("exit:", code));
 const server = Bun.serve({ port: 0, fetch: request => new Response(request.headers.get("user-agent")) });
 console.log("execArgv:", JSON.stringify(process.execArgv));
@@ -93,7 +94,9 @@ export function execArgvAsWithoutAot(part: number, parts: number) {
           const { stdout, exitCode } = await spawned([outfile, "--own", "argument"], folder);
           found[name] = { stdout, exitCode };
         }
-        expect(found["without --aot"]).toMatchObject({ stdout: expect.stringContaining(`argv: ["--own","argument"]`) });
+        expect({ ...(found["without --aot"] as object) }).toMatchObject({
+          stdout: expect.stringContaining(`argv: ["--own","argument"]`),
+        });
         for (const [name] of kinds)
           expect({ name, ...(found[name] as object) }).toEqual({ name, ...(found["without --aot"] as object) });
       },

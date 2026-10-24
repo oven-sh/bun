@@ -147,6 +147,79 @@ const manifest = lines.join("\n") + "\n";
 fs.mkdirSync(path.dirname(output), { recursive: true });
 writeIfNotChanged(output, manifest);
 
+// A build reads nothing of the comments of a declaration file but the directives behind three slashes. Copyright notices stay.
+export function withoutComments(text: string): string {
+  let out = "";
+  let braces = 0;
+  const substitutions: number[] = [];
+  const copyTo = (from: number, end: number) => ((out += text.slice(from, end)), end);
+  const endOfTemplateText = (from: number) => {
+    for (let i = from; i < text.length; i++) {
+      if (text[i] === "\\") i++;
+      else if (text[i] === "`") return i + 1;
+      else if (text[i] === "$" && text[i + 1] === "{") return (substitutions.push(braces), i + 2);
+    }
+    return text.length;
+  };
+  for (let i = 0; i < text.length;) {
+    const [c, next] = [text[i], text[i + 1]];
+    if (c === "/" && next === "*") {
+      const end = text.indexOf("*/", i + 2);
+      const behind = end < 0 ? text.length : end + 2;
+      const comment = text.slice(i, behind);
+      out += /copyright/i.test(comment) ? comment : comment.includes("\n") ? "\n" : " ";
+      i = behind;
+    } else if (c === "/" && next === "/") {
+      const end = text.indexOf("\n", i);
+      const behind = end < 0 ? text.length : end;
+      i = text[i + 2] === "/" ? copyTo(i, behind) : behind;
+    } else if (c === '"' || c === "'") {
+      let end = i + 1;
+      while (end < text.length && text[end] !== c) end += text[end] === "\\" ? 2 : 1;
+      i = copyTo(i, end + 1);
+    } else if (c === "`") {
+      i = copyTo(i, endOfTemplateText(i + 1));
+    } else if (c === "}" && substitutions.at(-1) === braces) {
+      substitutions.pop();
+      i = copyTo(i, endOfTemplateText(i + 1));
+    } else {
+      braces += c === "{" ? 1 : c === "}" ? -1 : 0;
+      i = copyTo(i, i + 1);
+    }
+  }
+  return out.replace(/[ \t]+$/gm, "").replace(/\n{2,}/g, "\n");
+}
+
+// What a build reads in place of `@types/bun` where a project has not installed it.
+function declarationsOfRuntime(): [string, Buffer][] {
+  const bunTypes = path.join(import.meta.dirname, "..", "..", "packages", "bun-types");
+  const installed = (name: string) => path.dirname(Bun.resolveSync(`${name}/package.json`, bunTypes));
+  const packages = {
+    "bun-types": bunTypes,
+    "@types/node": installed("@types/node"),
+    "undici-types": installed("undici-types"),
+  };
+  const files: [string, Buffer][] = [
+    ["types/@types/bun/package.json", Buffer.from(`{"name":"@types/bun","types":"./index.d.ts"}\n`)],
+    ["types/@types/bun/index.d.ts", Buffer.from(`/// <reference types="bun-types" />\n`)],
+  ];
+  for (const [name, directory] of Object.entries(packages)) {
+    const declarations = [...new Bun.Glob("**/*.d.ts").scanSync({ cwd: directory })].map(file =>
+      file.replaceAll("\\", "/"),
+    );
+    for (const file of name === "bun-types" ? ["package.json"] : ["package.json", "LICENSE"]) {
+      files.push([`types/${name}/${file}`, fs.readFileSync(path.join(directory, file))]);
+    }
+    for (const file of declarations.filter(file => !file.includes("node_modules/"))) {
+      files.push([
+        `types/${name}/${file}`,
+        Buffer.from(withoutComments(fs.readFileSync(path.join(directory, file), "utf8"))),
+      ]);
+    }
+  }
+  return files;
+}
+
 if (archive) {
   const nameLength = 63;
   const recordLength = 1 + nameLength + 4 + 4;
@@ -157,6 +230,7 @@ if (archive) {
   for (const [file, text] of listOfModules.listings) files.push([file, Buffer.from(text)]);
   for (const [file, text] of engineTexts) files.push([file, Buffer.from(text)]);
   files.push(["tsconfig.json", Buffer.from(mergeTsconfig())]);
+  files.push(...declarationsOfRuntime());
   files.push(["manifest", Buffer.from(manifest)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
   const frames = files.map(([, text]) => {

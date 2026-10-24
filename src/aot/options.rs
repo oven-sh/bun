@@ -46,6 +46,8 @@ pub struct LoadOptions {
     pub in_memory_file_keys: Vec<(Vec<u8>, Vec<u8>)>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
+    /// What the run time provides is of type `any` where `@types/bun` is not installed.
+    pub takes_runtime_as_any: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -118,6 +120,7 @@ impl LoadOptions {
             in_memory_file_keys: Vec::new(),
             omits_builtin_modules: false,
             runs_tests: false,
+            takes_runtime_as_any: false,
         }
     }
 }

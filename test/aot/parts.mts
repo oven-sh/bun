@@ -311,6 +311,7 @@ export const rows: Row[] = [
   ["aot/builtins/native-contract-in-parts", 4, "./builtins/native-contract/contract", "nativeContractInParts"],
   ["aot/calls-beyond-their-reach", 3, "./joined-programs", "joinedBeyondTheReachOfCalls"],
   ["aot/code-from-disk", 8, "./code-from-disk-cases", "codeFromDisk"],
+  ["aot/code-the-compiler-never-saw", 3, "./code-the-compiler-never-saw-cases", "codeTheCompilerNeverSaw"],
   ["aot/collector-stress/full", 30, "./collector-stress/run-collector-stress", "collectorStress", ["full"]],
   ["aot/collector-stress/young", 20, "./collector-stress/run-collector-stress", "collectorStress", ["young"]],
   ["aot/compile-exec-argv-as-without-aot", 3, "./compile-exec-argv-as-without-aot-cases", "execArgvAsWithoutAot"],

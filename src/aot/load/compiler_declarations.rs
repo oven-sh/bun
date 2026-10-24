@@ -117,7 +117,7 @@ mod tests {
             assert!(!files.is_compiled(declarations));
             assert!(!files.hir(declarations).has_errors);
             assert!(!files.module(declarations).is_module());
-            assert_eq!(files_declaring(files, bun_module(files)), [declarations]);
+            assert!(files_declaring(files, bun_module(files)).contains(&declarations));
         });
     }
 

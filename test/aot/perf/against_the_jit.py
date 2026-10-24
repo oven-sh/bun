@@ -69,7 +69,8 @@ def idiom(core, name, turns):
 
     under_jit, rows = one_turn([jit, "run", os.path.join(root, name + ".js")]), []
     for form, extension in (("typed", ".ts"), ("untyped", ".js")):
-        executable = build(core, os.path.join(root, name + extension), root, "idiom-%s-%s" % (name.replace("/", "-"), form))
+        folder = os.path.join(HERE, "idioms") if form == "typed" else root
+        executable = build(core, os.path.join(folder, name + extension), folder, "idiom-%s-%s" % (name.replace("/", "-"), form))
         try:
             compiled = one_turn([executable])
         finally:

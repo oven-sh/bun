@@ -24,7 +24,7 @@ There's no new syntax and nothing to annotate. Point `bun compile` at the entry 
 
 ## Build an executable
 
-The build type checks your program, so install Bun's type declarations first. [`bun init`](/runtime/templating/init) does that for a new project. [Without them](/bundler/aot-troubleshooting#buns-type-declarations-arent-installed) the program builds too, but whatever Bun provides has no types.
+The build type checks your program. It knows Bun's and Node.js's APIs even when no type declarations are installed, because [Bun carries a copy of them](/bundler/aot-troubleshooting#buns-type-declarations-arent-installed). Your editor and `bun check` don't read that copy, so install `@types/bun` anyway. The build then uses the version you installed. [`bun init`](/runtime/templating/init) installs it for a new project.
 
 ```bash terminal icon="terminal"
 bun add -d @types/bun

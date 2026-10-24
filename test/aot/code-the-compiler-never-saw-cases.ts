@@ -370,69 +370,77 @@ const routes: Record<string, Record<string, Route>> = {
   },
 };
 
-describe.concurrent("compile/aot/code the compiler never saw", () => {
-  if (unsupported) return void test.skip(unsupported, () => {});
-  for (const [group, members] of Object.entries(routes)) {
-    for (const [name, route] of Object.entries(members)) {
-      test(
-        `${group}: ${name}`,
-        () =>
-          slot(async () => {
-            const main = "main." + (route.extension ?? "js");
-            const requireInModule =
-              route.extension === "mjs"
-                ? `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`
-                : "";
-            using dir = tempDir("aot-unseen-code", {
-              [main]: `${requireInModule}${prelude(route.wait ?? 0)}attempt(async () => { ${route.body}; });\n`,
-              "page.html": "<!doctype html><title>t</title><p>page</p>",
-              "outside.js": `globalThis.RAN = 1; console.log("RAN");\n`,
-              "run/empty.txt": "",
-            });
-            const folder = String(dir);
-            const outside = join(folder, "outside.js");
-            const withFile = (text: string) =>
-              text.replaceAll("{FILE}", isWindows ? outside.replaceAll("\\", "/") : outside);
-            const executable = join(folder, isWindows ? "program.exe" : "program");
-            const report = join(folder, "report.json");
-            const built = await spawned(
-              [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, main, "--outfile", executable],
-              folder,
-              bunEnv,
-            );
-            expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-              stderr: expect.any(String),
-              exitCode: 0,
-            });
-            const sawAnEvent = JSON.parse(readFileSync(report, "utf8")).unseenCode.length > 0;
+// A route is a build and a run. The routes of a part are built at once.
+export function codeTheCompilerNeverSaw(part: number, parts: number) {
+  describe.concurrent("compile/aot/code the compiler never saw", () => {
+    if (unsupported) return void test.skip(unsupported, () => {});
+    let index = 0;
+    for (const [group, members] of Object.entries(routes)) {
+      for (const [name, route] of Object.entries(members)) {
+        if (index++ % parts !== part - 1) continue;
+        test(
+          `${group}: ${name}`,
+          () =>
+            slot(async () => {
+              const main = "main." + (route.extension ?? "js");
+              const requireInModule =
+                route.extension === "mjs"
+                  ? `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`
+                  : "";
+              using dir = tempDir("aot-unseen-code", {
+                [main]: `${requireInModule}${prelude(route.wait ?? 0)}attempt(async () => { ${route.body}; });\n`,
+                "page.html": "<!doctype html><title>t</title><p>page</p>",
+                "outside.js": `globalThis.RAN = 1; console.log("RAN");\n`,
+                "run/empty.txt": "",
+              });
+              const folder = String(dir);
+              const outside = join(folder, "outside.js");
+              const withFile = (text: string) =>
+                text.replaceAll("{FILE}", isWindows ? outside.replaceAll("\\", "/") : outside);
+              const executable = join(folder, isWindows ? "program.exe" : "program");
+              const report = join(folder, "report.json");
+              const built = await spawned(
+                [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, main, "--outfile", executable],
+                folder,
+                bunEnv,
+              );
+              expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+                stderr: expect.any(String),
+                exitCode: 0,
+              });
+              const sawAnEvent = JSON.parse(readFileSync(report, "utf8")).unseenCode.length > 0;
 
-            const workingDirectory = join(folder, "run");
-            for (const [file, text] of Object.entries(route.filesInWorkingDirectory ?? {}))
-              await Bun.write(join(workingDirectory, file), withFile(text));
-            const env = {
-              ...bunEnv,
-              ...Object.fromEntries(Object.entries(route.env ?? {}).map(([key, value]) => [key, withFile(value)])),
-            };
-            const ran = await spawned([executable, ...(route.args ?? []).map(withFile)], workingDirectory, env);
-            expect(ran.signal).toBeNull();
-            if (route.isMachineCode) {
-              // The build says that machine code may be loaded, and the load is not refused. Whether the library or the C compiler is there depends on the machine.
-              const isRefusedAsUnseenCode = /^refused Error ERR_CODE_NOT_COMPILED$/m.test(ran.stdout);
-              expect({ sawAnEvent, isRefusedAsUnseenCode, stdout: ran.stdout }).toEqual({
-                sawAnEvent: true,
-                isRefusedAsUnseenCode: false,
+              const workingDirectory = join(folder, "run");
+              for (const [file, text] of Object.entries(route.filesInWorkingDirectory ?? {}))
+                await Bun.write(join(workingDirectory, file), withFile(text));
+              const env = {
+                ...bunEnv,
+                ...Object.fromEntries(Object.entries(route.env ?? {}).map(([key, value]) => [key, withFile(value)])),
+              };
+              const ran = await spawned([executable, ...(route.args ?? []).map(withFile)], workingDirectory, env);
+              expect(ran.signal).toBeNull();
+              if (route.isMachineCode) {
+                // The build says that machine code may be loaded, and the load is not refused. Whether the library or the C compiler is there depends on the machine.
+                const isRefusedAsUnseenCode = /^refused Error ERR_CODE_NOT_COMPILED$/m.test(ran.stdout);
+                expect({ sawAnEvent, isRefusedAsUnseenCode, stdout: ran.stdout }).toEqual({
+                  sawAnEvent: true,
+                  isRefusedAsUnseenCode: false,
+                  stdout: expect.any(String),
+                });
+                return;
+              }
+              const ranTheCode = /^RAN$/m.test(ran.stdout);
+              expect({
+                ranTheCode: ranTheCode && !sawAnEvent && !route.replacesTheProgram,
+                stdout: ran.stdout,
+              }).toEqual({
+                ranTheCode: false,
                 stdout: expect.any(String),
               });
-              return;
-            }
-            const ranTheCode = /^RAN$/m.test(ran.stdout);
-            expect({ ranTheCode: ranTheCode && !sawAnEvent && !route.replacesTheProgram, stdout: ran.stdout }).toEqual({
-              ranTheCode: false,
-              stdout: expect.any(String),
-            });
-          }),
-        600_000,
-      );
+            }),
+          600_000,
+        );
+      }
     }
-  }
-});
+  });
+}

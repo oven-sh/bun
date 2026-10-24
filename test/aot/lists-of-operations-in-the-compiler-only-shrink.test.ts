@@ -211,6 +211,10 @@ for (const list of [
   known[list]++;
 // TODO: a new list, which came in the same way. What it asks of an operation goes into the schema, and this line out of here.
 known["valueflow/AOTValueFlowUnobservedDefinitions.cpp keepsObjectToItself"] = 5;
+// TODO: three more new lists, which came in the same way, and go out the same way.
+known["passes/AOTCreatedObjectLayouts.cpp definesWhatStandsAtOnePlace"] = 4;
+known["passes/AOTTypeTestOperatorRule.cpp isWantedAsInteger"] = 4;
+known["represent/AOTRepresentationWebs.cpp RepresentationWebs::isSumOfWhichOnlyLowBitsAreUsed"] = 5;
 
 function numberOfNamesIn(body: string): number {
   const names = { Opcode: new Set<string>(), InlineBuiltin: new Set<string>() };

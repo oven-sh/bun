@@ -315,5 +315,6 @@ for (const [helper, parameter, reference] of watched) {
   const name = "h" + helper + " parameter " + parameter;
   alive.set(name, (alive.get(name) ?? 0) + 1);
 }
-for (const [name, count] of alive) console.log("KEPT " + name + ": " + count);
+// One object more or less may be alive for a word that still lies on the stack.
+for (const [name, count] of alive) if (count > 1) console.log("KEPT " + name);
 for (const [name, count] of answers) console.log("ANSWERED " + name + ": " + count);

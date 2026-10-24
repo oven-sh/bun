@@ -140,6 +140,8 @@ pub struct BuildFailed {
     pub refused_entry_points: Option<Vec<u32>>,
     /// No failure: see `compile_program_at_each_entry_point`.
     pub is_one_program: bool,
+    /// No failure yet: see `compile`.
+    pub brought_bun_types: bool,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -184,6 +186,9 @@ pub(crate) struct Build<'a> {
     pub(crate) has_left_all_entry_points: bool,
     pub(crate) is_one_program: bool,
     pub(crate) started_workers: StartedWorkers,
+    /// `LoadedProgram::brings_bun_types`
+    pub(crate) brings_bun_types: bool,
+    pub(crate) has_withdrawn_trust: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -525,6 +530,27 @@ pub fn compile(
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
+    match compile_with_options(options, provider, log) {
+        // The declarations that a build brings along hold no program to what its project has not installed.
+        Err(failure) if failure.brought_bun_types && !failure.is_internal_error => {
+            log.msgs.truncate(said_before.0);
+            (log.warnings, log.errors) = (said_before.1, said_before.2);
+            provider.clear_embedded_files();
+            let all: Vec<usize> = (0..options.entry_points.len()).collect();
+            let mut options = options_with_entry_points(options, &all);
+            options.load.takes_runtime_as_any = true;
+            compile_with_options(&options, provider, log)
+        }
+        compiled => compiled,
+    }
+}
+
+fn compile_with_options(
+    options: &Options<'_>,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Result<Compilation, BuildFailed> {
+    let said_before = (log.msgs.len(), log.warnings, log.errors);
     let mut with_worker_files: Option<Options<'_>> = None;
     loop {
         let options = with_worker_files.as_ref().unwrap_or(options);
@@ -855,9 +881,11 @@ fn compile_programs<'a>(
         Ok(outputs) => outputs,
         Err(_) if build.has_left_all_entry_points => Vec::new(),
         Err(stage) => {
-            let is_one_program = build.is_one_program;
+            let (is_one_program, brought_bun_types) =
+                (build.is_one_program, build.brings_bun_types);
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
             failure.is_one_program = is_one_program;
+            failure.brought_bun_types = brought_bun_types;
             return Err(failure);
         }
     };
@@ -886,6 +914,7 @@ fn compile_programs<'a>(
     }
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
+    let brought_bun_types = build.brings_bun_types;
     let refused_entry_points = build.find_refused_entry_points();
     let left_entry_points = core::mem::take(&mut build.left_entry_points);
     let mut started_workers = core::mem::take(&mut build.started_workers);
@@ -919,6 +948,7 @@ fn compile_programs<'a>(
             compilation: programs.pop().map(|(_, compilation)| Box::new(compilation)),
             refused_entry_points,
             is_one_program: false,
+            brought_bun_types,
         }),
     }
 }
@@ -939,6 +969,7 @@ fn fail(
         compilation: None,
         refused_entry_points,
         is_one_program: false,
+        brought_bun_types: false,
     }
 }
 
@@ -977,6 +1008,8 @@ impl<'a> Build<'a> {
             has_left_all_entry_points: false,
             is_one_program: false,
             started_workers: StartedWorkers::default(),
+            brings_bun_types: false,
+            has_withdrawn_trust: false,
         }
     }
 
@@ -1033,6 +1066,10 @@ impl<'a> Build<'a> {
                 return Err(Stage::BindModules);
             }
             let units = build.check_and_lower(&loaded, &bound);
+            // No failure: see `compile`. A package keeps the types that it has without them.
+            if build.brings_bun_types && build.has_withdrawn_trust {
+                return Err(Stage::Check);
+            }
             if !(loaded.finish_asset_reads)() {
                 return Err(Stage::Load);
             }

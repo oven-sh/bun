@@ -164,6 +164,7 @@ calls/the-stack-ends-at-the-entry-of-a-function-that-reads-its-arguments-from-th
 calls/unused-results
 calls/what-a-function-did-before-the-stack-ended-is-undone-by-its-finally
 calls/what-call-reaches-through-another-function-makes-what-it-declares-anew-at-each-entry
+claims-to-the-back-end/what-was-read-from-a-text-is-used-when-the-text-is-gone
 classes-and-closures/a-closure-made-anew-beside-a-way-that-calls-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-in-a-callback-of-an-array-method-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-in-the-callback-of-map-binds-what-that-turn-handed-it
@@ -352,6 +353,7 @@ enums/a-number-outside-the-enum-is-given-for-it-and-read-in-a-closure
 enums/constant-pow-matches-engine
 enums/enums-with-reverse-keys-of-every-kind
 errors/a-definition-by-descriptor-that-is-refused
+errors/a-read-of-an-accessor-without-a-function-object-leaves-no-frame
 errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/classes-that-extend-error
 errors/every-kind-of-place-that-throws

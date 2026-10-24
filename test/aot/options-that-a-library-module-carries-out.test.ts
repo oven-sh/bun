@@ -130,7 +130,7 @@ describe("--stack-trace-limit works like in bun run", () => {
     ]);
     for (const env of [{}, { BUN_OPTIONS: "--stack-trace-limit=6" }]) {
       const expected = await run([bunExe(), "workers.js", lists], cwd, env);
-      expect(expected).toMatchObject({
+      expect({ ...expected }).toMatchObject({
         stdout: expect.stringContaining(`["--stack-trace-limit=3"] answers 3 3\n`),
         stderr: "",
         exitCode: 0,

@@ -44,7 +44,7 @@ describe("compile/aot/every-image-of-an-executable-has-its-map", () => {
             .split("\n")
             .filter(line => line.startsWith("F\t"))
             .map(line => line.split("\t"))
-            .map(fields => `${fields[7]} ${fields[10].split("/").at(-1)}`);
+            .map(fields => `${fields[7]} ${fields[10].split(/[\\/]/).at(-1)}`);
         const maps = [functionsOf(map), functionsOf(`${map}.1`)];
         expect(maps.filter(functions => functions.includes("twice beside.ts")).length).toBeGreaterThan(0);
         expect(maps.filter(functions => functions.some(name => name.endsWith(" main.ts"))).length).toBeGreaterThan(0);

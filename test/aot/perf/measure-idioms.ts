@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { writeEverydayIdioms } from "./everyday-idioms";
-import { writeUntypedIdioms } from "./untyped-idioms";
+import { writeTypedIdioms, writeUntypedIdioms } from "./untyped-idioms";
 
 type Turns = { turns: number; warmUp: number };
 export type Cost = {
@@ -34,7 +34,7 @@ export const behindInVeryLargeProgramPath = join(
 export const flagsOfVeryLargeProgram = ["--aot-limit=MaxWarmCodeValues:1"];
 
 /**
- * Writes every idiom's sources into `folder`. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
+ * Writes every idiom's sources into `folder`: the TypeScript into one folder with a tsconfig.json, the JavaScript into another without. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
  * `inVeryLargeProgram` compiles each idiom as the same text would be compiled inside a very large program, and the idioms of ./everyday find turn() at run time.
  */
 export function idiomsAgainstTheJit(
@@ -43,7 +43,7 @@ export function idiomsAgainstTheJit(
   { collections = true, buildFlags = [] as string[], inVeryLargeProgram = false } = {},
 ) {
   if (inVeryLargeProgram) buildFlags = [...flagsOfVeryLargeProgram, ...buildFlags];
-  const sources = join(folder, "idioms");
+  const sources = { typed: join(folder, "idioms"), untyped: join(folder, "untyped-idioms") };
   const environment = {
     PATH: process.env.PATH,
     HOME: folder,
@@ -59,11 +59,11 @@ export function idiomsAgainstTheJit(
     BUN_JSC_useConcurrentJIT: "0",
   };
 
-  async function run(cmd: string[], extra: Record<string, string> = {}) {
+  async function run(cwd: string, cmd: string[]) {
     await using child = Bun.spawn({
       cmd,
-      cwd: sources,
-      env: { ...environment, ...extra },
+      cwd,
+      env: environment,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -82,7 +82,7 @@ export function idiomsAgainstTheJit(
     process.platform === "linux" && existsSync("/usr/bin/time") ? ["/usr/bin/time", "-f", "peak %M"] : [];
 
   async function counted(cmd: string[], { turns, warmUp }: Turns, extra: Record<string, string> = {}) {
-    const { instructions, peakBytes, stdout, stderr } = await measureCommand(sources, [...underTime, ...cmd], 900_000, {
+    const { instructions, peakBytes, stdout, stderr } = await measureCommand(folder, [...underTime, ...cmd], 900_000, {
       ...environment,
       AOT_PERF_TURNS: String(turns),
       AOT_PERF_WARM_UP_TURNS: String(warmUp),
@@ -146,27 +146,27 @@ export function idiomsAgainstTheJit(
       untyped: join(folder, name.replaceAll("/", "-") + "-untyped"),
     };
     try {
-      await run([
+      await run(sources.typed, [
         bun,
         "build",
         "--compile",
         "--aot",
         ...buildFlags,
-        join(sources, name + ".ts"),
+        join(sources.typed, name + ".ts"),
         "--outfile",
         executables.typed,
       ]);
-      await run([
+      await run(sources.untyped, [
         bun,
         "build",
         "--compile",
         "--aot",
         ...buildFlags,
-        join(sources, name + ".js"),
+        join(sources.untyped, name + ".js"),
         "--outfile",
         executables.untyped,
       ]);
-      const underTheJit = [bun, "run", "--no-install", join(sources, name + ".js")];
+      const underTheJit = [bun, "run", "--no-install", join(sources.untyped, name + ".js")];
       const plan =
         name in pinnedTurns
           ? { turns: pinnedTurns[name], warmUp: 5000 }
@@ -186,13 +186,14 @@ export function idiomsAgainstTheJit(
     }
   }
 
-  writeUntypedIdioms(sources);
+  writeTypedIdioms(sources.typed);
+  writeUntypedIdioms(sources.untyped);
   const names = [
     ...readdirSync(join(import.meta.dir, "idioms"), { recursive: true })
       .map(String)
       .filter(path => path.endsWith(".ts") && path !== "host.ts")
       .map(path => path.slice(0, -3).replaceAll("\\", "/")),
-    ...writeEverydayIdioms(sources, inVeryLargeProgram),
+    ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram),
   ].sort();
   return { names, measure };
 }

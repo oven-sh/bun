@@ -621,6 +621,7 @@ impl<'a> Build<'a> {
         self.diagnostics.add_load_messages(messages);
         match result {
             Ok(mut program) => {
+                self.brings_bun_types |= program.brings_bun_types;
                 let diagnostics = take(&mut program.diagnostics);
                 self.diagnostics
                     .add_build_diagnostics(Stage::Load, diagnostics);

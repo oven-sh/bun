@@ -20,6 +20,7 @@ pub(crate) mod runtime_declarations;
 pub(crate) mod runtime_host;
 pub(crate) mod runtime_modules;
 pub(crate) mod runtime_roots;
+pub(crate) mod runtime_types;
 #[cfg(test)]
 pub mod source_provider;
 pub mod sources;

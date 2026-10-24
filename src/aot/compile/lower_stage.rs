@@ -633,6 +633,7 @@ impl Build<'_> {
         incomplete: &[Incomplete],
     ) -> BTreeSet<&'s [u8]> {
         let errors = report_package_errors(&mut self.diagnostics, packages, diagnostics, roles);
+        self.has_withdrawn_trust |= errors.has_withdrawn_trust;
         self.diagnostics
             .add_build_diagnostics(Stage::Check, errors.remaining);
         self.diagnostics.add_incomplete_files(incomplete);

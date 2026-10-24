@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
 import type { CodegenFields, Config } from "./config.ts";
@@ -309,6 +310,7 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
   const bindings = resolve(cfg.cwd, "src", "jsc", "bindings");
   const manifest = resolve(cfg.codegenDir, "builtins.manifest");
   const archive = resolve(cfg.codegenDir, "builtin_sources.bin");
+  const bunTypes = resolve(cfg.cwd, "packages", "bun-types");
 
   n.build({
     outputs: [manifest, archive],
@@ -325,7 +327,13 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
       resolve(cfg.cwd, "tsconfig.base.json"),
       resolve(cfg.cwd, "src", "runtime.bun.js"),
       resolve(cfg.cwd, "src", "runtime.js"),
+      ...readdirSync(bunTypes, { recursive: true, encoding: "utf8" })
+        .filter(file => file.endsWith(".d.ts") && !file.includes("node_modules"))
+        .sort()
+        .map(file => resolve(bunTypes, file)),
+      resolve(cfg.cwd, "bun.lock"),
     ],
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

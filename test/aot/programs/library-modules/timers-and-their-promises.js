@@ -4,9 +4,11 @@ import { setTimeout as sleep, setImmediate as immediately, setInterval as every,
 
 const order = [];
 await new Promise(resolve => {
-  setTimeout(() => { order.push("timeout 2"); resolve(); }, 2);
-  setTimeout(() => order.push("timeout 0"), 0);
-  setImmediate(() => order.push("immediate"));
+  let left = 3;
+  const ran = name => { order.push(name); if (--left === 0) resolve(); };
+  setTimeout(() => ran("timeout 2"), 2);
+  setTimeout(() => ran("timeout 0"), 0);
+  setImmediate(() => ran("immediate"));
   process.nextTick(() => order.push("tick"));
   queueMicrotask(() => order.push("microtask"));
   Promise.resolve().then(() => order.push("promise"));

@@ -83,7 +83,7 @@ export const zstd: Dependency = {
       pic: true,
       // XXH_NAMESPACE must be a bare token prefix (xxhash pastes it onto
       // symbol names), not a string literal — DirectBuild.defines would
-      // wrap it in quotes. Avoids clashes with lshpack/libarchive's copies.
+      // wrap it in quotes. Avoids clashes with lsqpack/libarchive's copies.
       cflags: ["-DXXH_NAMESPACE=ZSTD_"],
     };
     return spec;

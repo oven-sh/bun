@@ -1771,12 +1771,6 @@ export function bunIncludes(cfg: Config): string[] {
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
-  // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
-  // a compat copy for this case.
-  if (cfg.linux && cfg.abi === "musl") {
-    includes.push(join(vendorDir, "lshpack/compat/queue"));
-  }
-
   return includes;
 }
 

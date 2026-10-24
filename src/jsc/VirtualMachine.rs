@@ -4186,7 +4186,7 @@ impl ResolveMode {
 /// Output slot for module resolution: the resolved path and query string.
 #[derive(Default)]
 pub struct ResolveFunctionResult<'r> {
-    pub path: &'r [u8],
+    pub path: std::borrow::Cow<'r, [u8]>,
     pub(crate) query_string: &'r [u8],
 }
 
@@ -5365,19 +5365,19 @@ impl VirtualMachine {
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
         if bun_paths::basename(specifier) == b"bun:wrap" {
-            ret.path = b"bun:wrap";
+            ret.path = b"bun:wrap".as_slice().into();
             return Ok(());
         }
         if specifier == MAIN_FILE_NAME && self.entry_point.generated {
-            ret.path = MAIN_FILE_NAME;
+            ret.path = MAIN_FILE_NAME.into();
             return Ok(());
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
-            ret.path = specifier;
+            ret.path = specifier.into();
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
-            ret.path = specifier;
+            ret.path = specifier.into();
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -5385,14 +5385,14 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            ret.path = result.path.as_bytes();
+            ret.path = result.path.as_bytes().into();
             return Ok(());
         }
         if self.module_loader.eval_source.is_some()
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
-            ret.path = specifier;
+            ret.path = specifier.into();
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -5402,7 +5402,7 @@ impl VirtualMachine {
                 .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
-                ret.path = specifier;
+                ret.path = specifier.into();
                 return Ok(());
             }
             return Err(crate::CrateError::ModuleNotFound);
@@ -5411,6 +5411,7 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        ret.query_string = query_string;
         let top_level_dir = self.top_level_dir();
         let mut source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -5421,6 +5422,56 @@ impl VirtualMachine {
         } else {
             top_level_dir
         };
+
+        #[cfg(not(windows))]
+        if bun_core::strings::contains_char(normalized_specifier, b'\\')
+            && !bun_core::strings::contains_char(normalized_specifier, 0)
+            && (bun_paths::is_absolute(normalized_specifier)
+                || normalized_specifier.starts_with(b"./")
+                || normalized_specifier.starts_with(b"../"))
+        {
+            // Runtime file keys preserve POSIX filename bytes; the bundler's loose paths do not.
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let source_dir = if bun_paths::is_absolute(source_to_use) {
+                source_to_use
+            } else {
+                top_level_dir
+            };
+            let parts: &[&[u8]] = if bun_paths::is_absolute(normalized_specifier) {
+                &[normalized_specifier]
+            } else {
+                &[source_dir, normalized_specifier]
+            };
+            if parts.iter().map(|part| part.len() + 1).sum::<usize>() < path_buf.len() {
+                let path = bun_paths::resolve_path::join_string_buf_z::<
+                    bun_paths::resolve_path::platform::Posix,
+                >(&mut path_buf, parts);
+                if matches!(
+                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), path),
+                    Ok(bun_sys::ExistsAtType::File)
+                ) {
+                    if self.transpiler.resolver.opts.preserve_symlinks {
+                        ret.path = path.as_bytes().to_vec().into();
+                        if self.finds_entry_points_by_path
+                            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(&ret.path)
+                        {
+                            ret.path = crate::compiled_program::module_key(entry).into();
+                        }
+                        return Ok(());
+                    }
+                    let mut realpath_buf = bun_paths::path_buffer_pool::get();
+                    if let Ok(realpath) = bun_sys::realpath(path, &mut realpath_buf) {
+                        ret.path = realpath.to_vec().into();
+                        if self.finds_entry_points_by_path
+                            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(&ret.path)
+                        {
+                            ret.path = crate::compiled_program::module_key(entry).into();
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
@@ -5512,15 +5563,14 @@ impl VirtualMachine {
             self.has_any_macro_remappings =
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
         }
-        ret.query_string = query_string;
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        ret.path = result_path.text;
+        ret.path = result_path.text.into();
         if self.finds_entry_points_by_path
-            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
+            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(&ret.path)
         {
-            ret.path = crate::compiled_program::module_key(entry);
+            ret.path = crate::compiled_program::module_key(entry).into();
         }
 
         Ok(())
@@ -5793,7 +5843,7 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+        Ok(Ok(bun_core::String::clone_utf8(&result.path)))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {

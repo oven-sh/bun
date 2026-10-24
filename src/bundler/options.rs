@@ -1243,7 +1243,7 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
-    pub(crate) main_fields: Box<[Box<[u8]>]>,
+    pub main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored

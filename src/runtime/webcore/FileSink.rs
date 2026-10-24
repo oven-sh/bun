@@ -276,13 +276,12 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 pub(crate) fn destroy(cx: &mut JsScope<'_>, sink: JsLocal<'_>) -> JsResult<JSValue> {
     use bun_sys_jsc::ErrorJsc;
 
-    let Some(wrapper) = JSSink::from_js(sink.to_js()) else {
+    let Some(this) = JSSink::sink_from_js(sink.to_js()) else {
         return Ok(JSValue::UNDEFINED);
     };
-    let this = wrapper.cast::<FileSink>();
-    // SAFETY: `from_js` returned the live wrapper's sink, and `JSSink<FileSink>` is
-    // `repr(transparent)` over the `FileSink` allocation that `to_js` handed to it. The guard
-    // keeps it live across `on_close`.
+    let this = this.as_ptr();
+    // SAFETY: `sink_from_js` returned the object's live sink, the allocation that `to_js` handed
+    // to it. The guard keeps it live across `on_close`.
     unsafe {
         let _guard = RefPtr::init_ref(this);
         let mut lost = None;

@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 #[cfg(target_os = "macos")]
 use core::ffi::c_short;
 use core::ffi::{c_char, c_int};

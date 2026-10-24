@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};

@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 // `Platform` is used as a const-generic param in resolve_path.rs and
 // downstream (`bun_runtime::node::path::normalize_string_t`).
 // Pinned nightly — enable the structural-match subset directly instead of the

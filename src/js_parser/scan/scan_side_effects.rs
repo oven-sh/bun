@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate::p::P;
 use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;

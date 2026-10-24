@@ -1,7 +1,6 @@
 //! Patch file parser and applier.
 
 #![allow(non_camel_case_types, non_upper_case_globals)]
-#![warn(unused_must_use)]
 #![forbid(unsafe_code)]
 
 pub mod error;

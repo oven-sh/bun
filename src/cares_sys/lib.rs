@@ -1,5 +1,4 @@
 #![allow(non_camel_case_types)]
-#![warn(unused_must_use)]
 
 #[path = "c_ares.rs"]
 pub mod c_ares_draft;

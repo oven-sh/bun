@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};

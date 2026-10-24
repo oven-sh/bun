@@ -10,7 +10,6 @@
 //! `bun_core`, so the expansion paths (`$crate::output::ScopedLogger`,
 //! `$crate::pretty_fmt!`) continue to work unchanged.
 
-#![warn(unused_must_use)]
 #![forbid(unsafe_code)]
 // ── scoped logging (the requested symbol) ────────────────────────────────
 //

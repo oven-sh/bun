@@ -6,7 +6,6 @@
 //! `print` / `print_with_writer{,_and_platform}` / `print_json` /
 //! `get_source_map_builder` driver fns live at crate root.
 
-#![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
 pub mod error;

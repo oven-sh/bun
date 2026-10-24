@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 #![forbid(unsafe_code)]
 
 // `ThreadLock` and `thread_id` live in `bun_core` (tier-0) so `bun_ptr` /

@@ -35,8 +35,6 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions: null | Function = null;
-/** How many `import()` calls are in the synchronous part of their load right now. See `loadModuleAsync`. */
-let dynamicLoads = 0;
 /** Client only. What `loadExports` loaded, and the React Fast Refresh runtime. True: only a page reload evaluates it again. */
 const roots = new Map<HMRModule, boolean>();
 /** For a module, the self-accept callback that was called last and the evaluation that it got. */
@@ -62,8 +60,10 @@ const enum ESMProps {
 export async function loadExports<T>(id: Id): Promise<T> {
   let loaded: Promise<HMRModule> | HMRModule;
   if (side === "client") {
+    const target = registry.get(id);
     try {
-      loaded = loadModuleAsync(id, false, null);
+      // A module body can make this load with `route.page()`. Like an import, it gets a module that is being evaluated as it is.
+      loaded = target?.state === State.Pending ? target : loadModuleAsync(id, false, null);
     } finally {
       // Before the wait, and when the load throws: an update that comes then has to find the mark.
       const mod = registry.get(id);
@@ -145,12 +145,10 @@ export class HMRModule {
   version = 0;
   /** How many times this module started an evaluation again */
   evaluation = 0;
-  /** Set by an evaluation that went past a top-level await. `asyncId` is the module that has the `await`. */
-  loading: { promise: Promise<HMRModule>; asyncId: Id } | null = null;
+  /** Set by the current evaluation when it waits: for an import, or on its own top-level await. */
+  loading: Promise<HMRModule> | null = null;
   /** Kept across evaluations. `import.meta.hot.data` rewrites to `data`. */
   hotData: any = {};
-  /** An update reached this module. From then on, an importer waits for an evaluation of it that is suspended on top-level await. */
-  updated = false;
 
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
@@ -193,13 +191,7 @@ export class HMRModule {
 
   /** Lowered from `.e_import` (import(id)) */
   dynamicImport(id: Id, opts?: ImportCallOptions) {
-    dynamicLoads++;
-    let found: ReturnType<typeof loadModuleAsync<true>>;
-    try {
-      found = loadModuleAsync(id, true, this);
-    } finally {
-      dynamicLoads--;
-    }
+    const found = loadModuleAsync(id, true, this);
     if (found) {
       if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
       return (found as Promise<HMRModule>).then(getEsmExports);
@@ -349,11 +341,6 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       isUserDynamic = false;
     } else {
       if (importer) addImporter(mod, importer);
-      const { loading } = mod;
-      // As in `loadModuleAsync`: only after an update reached the module, and not in a load that `import()` started.
-      if (loading !== null && mod.state === State.Pending && mod.updated && dynamicLoads === 0) {
-        throw new AsyncImportError(loading.asyncId);
-      }
       return mod;
     }
   }
@@ -442,14 +429,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       beginEvaluation(mod);
       isUserDynamic = false as IsUserDynamic;
     } else {
-      if (importer) addImporter(mod, importer);
-      const { loading } = mod;
-      // `loading` is null for a module with no top-level await in it or below it: the common exit.
-      if (loading === null || mod.state !== State.Pending) return mod;
-      // A request is not in an import cycle with the module, so it waits. On the client a module body makes this load: `route.page()`.
-      if (!importer && (side === "server" || mod.updated)) return loading.promise;
-      // No wait in a load that `import()` started: the suspended module can be the one that awaits that `import()`.
-      return mod.updated && dynamicLoads === 0 ? loading.promise : mod;
+      // An importer gets a module that is being evaluated as it is: a wait here could be a wait for itself.
+      if (importer) {
+        addImporter(mod, importer);
+        return mod;
+      }
+      // What has no importer is not in an import cycle: a request, an update, the end of a replaced body.
+      return mod.loading ?? mod;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -488,43 +474,39 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (importer) addImporter(mod, importer);
     const { evaluation } = mod;
 
-    let list: (HMRModule | Promise<HMRModule>)[], asyncId: Id | null;
+    let list: (HMRModule | Promise<HMRModule>)[], hasAsyncImport: boolean;
     try {
-      ({ list, asyncId } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+      ({ list, isAsync: hasAsyncImport } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
       // A dependency threw before this module's body ran, so the next load evaluates it again.
       mod.state = State.Stale;
       throw e;
     }
     DEBUG.ASSERT(
-      asyncId !== null //
+      hasAsyncImport //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule),
     );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    const result =
-      asyncId !== null
-        ? Promise.all(list).then(
-            list => finishLoadModuleAsync(mod, load, list, evaluation, isAsync),
-            e => {
-              if (isReplaced(mod, evaluation)) return loadReplacement(mod);
-              mod.state = State.Stale;
-              throw e;
-            },
-          )
-        : finishLoadModuleAsync(
-            mod,
-            load,
-            list as HMRModule[], // no promises as by assert above
-            evaluation,
-            isAsync,
-          );
-    if (result !== mod) {
-      // The sync loader names the module's own `await` before an import's. Same here.
-      mod.loading = { promise: result as Promise<HMRModule>, asyncId: isAsync ? id : asyncId! };
-    }
+    const result = hasAsyncImport
+      ? Promise.all(list).then(
+          list => finishLoadModuleAsync(mod, load, list, evaluation, isAsync),
+          e => {
+            if (isReplaced(mod, evaluation)) return loadReplacement(mod);
+            mod.state = State.Stale;
+            throw e;
+          },
+        )
+      : finishLoadModuleAsync(
+          mod,
+          load,
+          list as HMRModule[], // no promises as by assert above
+          evaluation,
+          isAsync,
+        );
+    if (result !== mod) mod.loading = result as Promise<HMRModule>;
     return result;
   }
 }
@@ -595,20 +577,16 @@ function loadReplacement(mod: HMRModule) {
 function endBody(mod: HMRModule, evaluation: number, late: HotDisposeFunction[] | null) {
   if (!isReplaced(mod, evaluation)) return null;
   if (!late?.length) return loadReplacement(mod);
-  // The rule of `attempt` and `settle`. On the server no update is left that can throw the errors, so they are logged.
-  const errors: unknown[] = [];
-  const promises: Promise<unknown>[] = [];
-  for (const fn of late) {
-    const p = attempt(errors, fn, mod.hotData);
-    if (p instanceof Promise) promises.push(p);
-  }
-  return settle(promises, errors).then(() => {
-    for (const error of errors) console.error(error);
+  // A callback that fails does not stop the rest. No update is left that can take the errors, so they are logged.
+  return Promise.allSettled(late.map(async fn => fn(mod.hotData))).then(results => {
+    for (const result of results) {
+      if (result.status === "rejected") console.error(result.reason);
+    }
     return loadReplacement(mod);
   });
 }
 
-/** A dispose callback that a replaced body registers. It runs once: at the end of that body, or at an update before that. */
+/** A dispose callback that a replaced body registers. It runs once: at the end of that body or at the next update, whichever comes first. */
 function once(late: HotDisposeFunction[], cb: HotDisposeFunction): HotDisposeFunction {
   let ran = false;
   const fn: HotDisposeFunction = data => {
@@ -711,8 +689,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 ) {
   let i = 0;
   let list: ReturnType<T>[] = [];
-  /** The module with the top-level await that the first import to return a promise waits on. */
-  let asyncId: Id | null = null;
+  let isAsync = false;
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
@@ -742,7 +719,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         DEBUG.ASSERT(typeof key === "string");
         i++;
       }
-      if (promiseOrModule instanceof Promise) asyncId ??= registry.get(dep)!.loading!.asyncId;
+      isAsync ||= promiseOrModule instanceof Promise;
     } else {
       DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
@@ -752,7 +729,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
     }
   }
-  return { list, asyncId };
+  return { list, isAsync };
 }
 
 function getEsmExports(m: HMRModule) {
@@ -964,7 +941,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   // Stale only now: a dispose callback that loads a reached module gets the old copy, a load during the wait the new code.
   for (const mod of reached.keys()) {
     mod.state = State.Stale;
-    mod.updated = true;
   }
   // Only now: the walk and the dispose order still count the imports that the replaced code made. See `importers`.
   for (const key of keys) {

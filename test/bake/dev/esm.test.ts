@@ -439,13 +439,14 @@ devTest("a hot update waits for a module with top-level await between the saved 
       export const leaf = "v1";
     `,
     // shared: app -> a -> t and app -> b -> t. The save gives `t` a top-level await. `a` and `b` run
-    // again. `b` asks for `t` while `t` waits, so `b` has to wait too, or it reads the old `t`.
+    // again. `a` starts `t` and waits for it. `b` gets `t` as it is and reads it when it is called:
+    // its import has the new `t` by then.
     "shared.html": emptyHtmlFile({ scripts: ["shared/app.ts"] }),
     "shared/app.ts": `
       import { a } from "./a";
       import { b } from "./b";
       import.meta.hot.accept();
-      console.log("app " + a + " " + b);
+      console.log("app " + a + " " + b());
     `,
     "shared/a.ts": `
       import { t } from "./t";
@@ -453,7 +454,7 @@ devTest("a hot update waits for a module with top-level await between the saved 
     `,
     "shared/b.ts": `
       import { t } from "./t";
-      export const b = "b(" + t + ")";
+      export const b = () => "b(" + t + ")";
     `,
     "shared/t.ts": `
       export const t = "t1";

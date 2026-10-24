@@ -1882,7 +1882,8 @@ devTest("server: a hot update evaluates the modules between the saved file and t
         return new Response(component + " " + routeName());
       }
     `,
-    // `a` and `b` both import `t`, which gets a top-level await with the save. Both wait for it.
+    // `a` and `b` both import `t`, which gets a top-level await with the save. `a` starts `t` and waits for
+    // it. `b` gets `t` as it is and reads it when it is called: its import has the new `t` by then.
     "tla/t.ts": `
       export const t = "t1";
     `,
@@ -1892,14 +1893,13 @@ devTest("server: a hot update evaluates the modules between the saved file and t
     `,
     "tla/b.ts": `
       import { t } from "./t";
-      export const b = "b(" + t + ")";
+      export const b = () => "b(" + t + ")";
     `,
     "routes/tla.ts": `
       import { a } from "../tla/a";
       import { b } from "../tla/b";
-      const made = a + " " + b;
       export default function () {
-        return new Response(made);
+        return new Response(a + " " + b());
       }
     `,
   },

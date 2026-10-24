@@ -418,12 +418,15 @@ describe.concurrent("bun test --changed", () => {
   });
 
   // A test can set the variable before the branch runs, so the scan does not use its value now.
-  test("an import in a branch that the environment turns off is in the module graph", async () => {
+  test.each([
+    ["a variable of .env", `process.env.TEST_CHANGED_GUARD !== "off"`],
+    ["NODE_ENV", `process.env.NODE_ENV === "production"`],
+  ])("an import in a branch that %s turns off is in the module graph", async (_, condition) => {
     using dir = tempDir("test-changed-env-branch", {
       "package.json": JSON.stringify({ name: "env-branch", type: "module" }),
       ".env": `TEST_CHANGED_GUARD=off\n`,
       "src/guarded.ts": `export const guarded = 1;\n`,
-      "guarded.test.ts": `import { test, expect } from "bun:test";\ntest("guarded", async () => {\n  if (process.env.TEST_CHANGED_GUARD !== "off") await import("./src/guarded");\n  expect(1).toBe(1);\n});\n`,
+      "guarded.test.ts": `import { test, expect } from "bun:test";\ntest("guarded", async () => {\n  if (${condition}) await import("./src/guarded");\n  expect(1).toBe(1);\n});\n`,
       "unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
     });
     initRepo(String(dir));

@@ -1595,8 +1595,12 @@ mod rule_parsers {
                     b"container" => {
                         let container_name: Option<ContainerName> =
                             input.try_parse(css_rules::container::ContainerName::parse).ok();
+                        let unknown_blocks = input.general_enclosed_blocks();
                         let condition: ContainerCondition =
                             css_rules::container::ContainerCondition::parse(input)?;
+                        if input.general_enclosed_blocks() != unknown_blocks {
+                            media_query::warn_general_enclosed(input, this.options, &condition);
+                        }
                         break 'brk AtRulePrelude::Container { name: container_name, condition };
                     },
                     b"starting-style" => break 'brk AtRulePrelude::StartingStyle,
@@ -3293,6 +3297,17 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
+    /// See `ParserInput::general_enclosed_blocks`.
+    #[inline]
+    pub(crate) fn general_enclosed_blocks(&self) -> u64 {
+        self.input.general_enclosed_blocks
+    }
+
+    #[inline]
+    pub(crate) fn note_general_enclosed_block(&mut self) {
+        self.input.general_enclosed_blocks += 1;
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3832,6 +3847,10 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// Monotonic count of the blocks that `media_query::parse_general_enclosed`
+    /// took for `<general-enclosed>`. A caller samples it around a parse to
+    /// learn whether the condition it got can hold one.
+    general_enclosed_blocks: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3860,6 +3879,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            general_enclosed_blocks: 0,
         }
     }
 }

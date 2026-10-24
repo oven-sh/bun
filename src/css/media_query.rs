@@ -1462,6 +1462,7 @@ impl MediaList {
 
 impl MediaQuery {
     pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaQuery> {
+        let unknown_blocks = input.general_enclosed_blocks();
         let (qualifier, explicit_media_type) = input
             .try_parse(|i| -> Result<(Option<Qualifier>, Option<MediaType>)> {
                 let qualifier = i.try_parse(Qualifier::parse).ok();
@@ -1485,6 +1486,12 @@ impl MediaQuery {
         } else {
             None
         };
+
+        if input.general_enclosed_blocks() != unknown_blocks
+            && let Some(condition) = &condition
+        {
+            warn_general_enclosed(input, options, condition);
+        }
 
         let media_type = explicit_media_type.unwrap_or(MediaType::All);
 
@@ -1588,7 +1595,9 @@ fn operand_error<C: QueryCondition>(
     if matches!(
         error.kind,
         css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
-    ) && kept.iter().any(has_general_enclosed)
+    ) && kept
+        .iter()
+        .any(|operand| first_general_enclosed(operand).is_some())
     {
         return input.new_custom_error(css::ParserError::invalid_media_query);
     }
@@ -1606,14 +1615,38 @@ fn starts_with_function<C: QueryCondition>(condition: &C) -> bool {
         .is_some_and(|raw| !raw.starts_with(b"("))
 }
 
-fn has_general_enclosed<C: QueryCondition>(condition: &C) -> bool {
+/// The source text of the first `<general-enclosed>` in `condition`.
+fn first_general_enclosed<C: QueryCondition>(condition: &C) -> Option<&'static [u8]> {
     if let Some(inner) = condition.as_not() {
-        return has_general_enclosed(inner);
+        return first_general_enclosed(inner);
     }
     if let Some((_, operands)) = condition.as_operation() {
-        return operands.iter().any(has_general_enclosed);
+        return operands.iter().find_map(first_general_enclosed);
     }
-    condition.as_general_enclosed().is_some()
+    condition.as_general_enclosed()
+}
+
+/// Reports a `<general-enclosed>` that `condition` holds. It is valid, but a
+/// browser reads it as unknown: it is a hack for an old browser, a feature
+/// this parser does not know, or a typo.
+#[cold]
+pub(crate) fn warn_general_enclosed<C: QueryCondition>(
+    input: &Parser,
+    options: &css::ParserOptions,
+    condition: &C,
+) {
+    let Some(raw) = first_general_enclosed(condition) else {
+        return;
+    };
+    let location = input.current_source_location();
+    options.warn_fmt(
+        format_args!(
+            "Unknown condition is kept as written: {}",
+            bstr::BStr::new(raw)
+        ),
+        location.line,
+        location.column,
+    );
 }
 
 /// Parse a media condition in parentheses, a style() function, or
@@ -1721,6 +1754,7 @@ fn parse_general_enclosed<C: QueryCondition>(
     if !is_closed {
         return Err(error);
     }
+    input.note_general_enclosed_block();
     Ok(general_enclosed(input.slice_from_cloned(start)))
 }
 

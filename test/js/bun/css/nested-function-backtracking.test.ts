@@ -154,6 +154,6 @@ test.concurrent.each([
     "nested-513.css",
     `${rule} (${open512}${inner}${close512}){a{color:red}}`,
   );
-  expect(stderr).toContain("error: ");
+  expect(stderr).toContain("error: Invalid media query");
   expect(exitCode).toBe(1);
 });

@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -6646,6 +6646,32 @@ describe("css tests", () => {
       "@import url(x.css) supports(transform:translate(1px) rotate(1deg));",
       '@import "x.css" supports(transform:translate(1px) rotate(1deg));',
     );
+
+    // The bundler reports each query that holds such a block. A range that
+    // starts with a function is known, so it is not reported.
+    test("a kept condition is a warning", async () => {
+      using dir = tempDir("css-general-enclosed-warning", {
+        "entry.css": `
+          @import "./dep.css" screen and (min-width:0\\0);
+          @media (max-width: $tablet) and (color), print { .a { color: red } }
+          @container scroll-state(stuck: top) { .b { color: red } }
+          @media (calc(1px + 2px) <= width) { .c { color: red } }
+        `,
+        "dep.css": ".dep { color: red }",
+      });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")], minify: true });
+      expect(result.logs.map(log => [log.level, log.message])).toEqual([
+        ["warn", "Unknown condition is kept as written: (min-width:0\\0)"],
+        ["warn", "Unknown condition is kept as written: (max-width: $tablet)"],
+        ["warn", "Unknown condition is kept as written: scroll-state(stuck: top)"],
+      ]);
+      expect(await result.outputs[0].text()).toBe(
+        "@media screen and (min-width:0\\0){.dep{color:red}}" +
+          "@media (max-width: $tablet) and (color),print{.a{color:red}}" +
+          "@container scroll-state(stuck: top){.b{color:red}}" +
+          "@media (min-width:3px){.c{color:red}}\n",
+      );
+    });
 
     for (const [source, error] of [
       // The block is not closed.

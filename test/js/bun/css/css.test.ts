@@ -7893,10 +7893,19 @@ describe("css tests", () => {
       [".a:fullscreen { @apply x; }", ".a:-webkit-full-screen{@apply x;}.a:fullscreen{@apply x;}"],
       // So does each rule that the selector list is split into for the targets.
       [".a, .b:focus-visible { @apply x; }", ".b:focus-visible{@apply x;}.a{@apply x;}"],
-      // A name that only the top level knows does not become a top-level rule.
+      // `@import` is not moved to the top level, where it would be live.
       ['.a { @import "foo.css"; }', '.a{@import "foo.css";}'],
     ])("%s", (source, expected) => {
       expect(minifyTest(source, "", browsers)).toBe(expected);
+    });
+
+    // lightningcss parses `@property` and `@position-try` in a style rule and prints them
+    // after the block. Here they are unknown at-rules, and they keep that place.
+    test("@property stays after the block", () => {
+      const source = '.a { @property --x { syntax: "*"; inherits: false } @apply y; .b { color: blue } }';
+      expect(minifyTest(source, "", browsers)).toBe(
+        '.a{@apply y;}@property --x{syntax: "*"; inherits: false}.a .b{color:#00f}',
+      );
     });
 
     describe("not minified", () => {
@@ -7965,6 +7974,19 @@ describe("css tests", () => {
         ["@apply x;", "@apply x;"],
         ["@media print { @apply x; }", "@media print{@apply x;}"],
       ])("with no style rule around it: %s", (source, expected) => {
+        expect(minifyTest(source, "", browsers)).toBe(expected);
+      });
+
+      test.each([
+        [
+          '.a { color: red; @property --x { syntax: "*"; inherits: false } }',
+          '.a{color:red}@property --x{syntax: "*"; inherits: false}',
+        ],
+        [
+          ".a { color: red; @POSITION-TRY --p { top: anchor(bottom) } }",
+          ".a{color:red}@POSITION-TRY --p{top: anchor(bottom)}",
+        ],
+      ])("for an at-rule that lightningcss prints after the block: %s", (source, expected) => {
         expect(minifyTest(source, "", browsers)).toBe(expected);
       });
 

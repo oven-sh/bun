@@ -170,7 +170,7 @@ impl<R> StyleRule<R> {
                 .rules
                 .v
                 .iter()
-                .any(|rule| matches!(rule, CssRule::Unknown(_)));
+                .any(|rule| rule.as_in_block_at_rule().is_some());
 
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
@@ -301,16 +301,14 @@ impl<R> StyleRule<R> {
             let has_nested_output = (!skip_prefixed_nested && !has_preserved_rules)
                 || self.rules.v.iter().any(|rule| {
                     !matches!(rule, CssRule::Ignored)
-                        && !(has_preserved_rules && matches!(rule, CssRule::Unknown(_)))
+                        && !(has_preserved_rules && rule.as_in_block_at_rule().is_some())
                         && !(skip_prefixed_nested && rule.is_deferred_to_final_prefix_pass())
                 });
 
             if has_preserved_rules {
-                for rule in self.rules.v.iter() {
-                    if let CssRule::Unknown(unknown) = rule {
-                        dest.newline()?;
-                        unknown.to_css(dest)?;
-                    }
+                for at_rule in self.rules.v.iter().filter_map(CssRule::as_in_block_at_rule) {
+                    dest.newline()?;
+                    at_rule.to_css(dest)?;
                 }
             }
             helpers_end(dest, has_declarations)?;

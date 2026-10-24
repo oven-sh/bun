@@ -1309,6 +1309,20 @@ function parseHeaderPairs(pairs) {
 }
 
 /**
+ * The native stream hands received header blocks to JS only while this flag
+ * is set. One flag covers every kind (initial, hints, trailing), so any of
+ * the three callbacks turns it on.
+ * Node v26.10.0: https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L1314-L1323
+ */
+function updateHeaderInterest(inner: QuicStreamInner) {
+  const wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+  if (wantsHeaders !== inner.wantsHeaders) {
+    inner.wantsHeaders = wantsHeaders;
+    inner.state.wantsHeaders = wantsHeaders;
+  }
+}
+
+/**
  * Applies session and stream callbacks from an options object to a session.
  * @param {QuicSession} session
  * @param {object} cbs
@@ -1635,6 +1649,8 @@ interface QuicStreamInner {
   writer: QuicStreamWriter | undefined;
   fileHandle: import("node:fs/promises").FileHandle | undefined;
   headers: object | undefined;
+  /** What `updateHeaderInterest` last stored in the state's wantsHeaders flag. */
+  wantsHeaders: boolean;
   pendingTrailers: object | undefined;
   onerror: Function | undefined;
   onblocked: Function | undefined;
@@ -1664,6 +1680,7 @@ class QuicStream {
     writer: undefined,
     fileHandle: undefined,
     headers: undefined,
+    wantsHeaders: false,
     pendingTrailers: undefined,
     onerror: undefined,
     onblocked: undefined,
@@ -1866,13 +1883,12 @@ class QuicStream {
     const inner = this.#inner;
     if (fn === undefined) {
       inner.onheaders = undefined;
-      inner.state.wantsHeaders = false;
     } else {
       validateFunction(fn, "onheaders");
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
-      inner.state.wantsHeaders = true;
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1891,6 +1907,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1909,6 +1926,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -2561,7 +2579,6 @@ class QuicStream {
 
     switch (kindName) {
       case "initial":
-        assert(inner.onheaders, "Unexpected stream headers event");
         inner.headers ??= block;
         if (onStreamHeadersChannel.hasSubscribers) {
           onStreamHeadersChannel.publish({
@@ -2571,7 +2588,10 @@ class QuicStream {
             headers: block,
           });
         }
-        safeCallbackInvoke(inner.onheaders, this, block);
+        {
+          const { onheaders } = inner;
+          if (onheaders) safeCallbackInvoke(onheaders, this, block);
+        }
         break;
       case "trailing":
         if (onStreamTrailersChannel.hasSubscribers) {

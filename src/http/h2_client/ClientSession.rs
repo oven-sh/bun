@@ -32,7 +32,7 @@ const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
 const LIVENESS_GRACE: Duration = Duration::from_secs(1);
 /// Cap on the idle timer while a liveness PING is unanswered, unless
 /// `BUN_CONFIG_HTTP_IDLE_TIMEOUT` is shorter. Go's default `PingTimeout`.
-const PING_ACK_TIMEOUT_SECONDS: u64 = 15;
+const PING_ACK_TIMEOUT_SECONDS: core::ffi::c_uint = 15;
 
 // 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
@@ -730,7 +730,7 @@ impl ClientSession {
         }
         self.ping_cap_armed = false;
         if self.awaiting_ping_ack {
-            let mut cap = crate::normalize_idle_timeout_seconds(PING_ACK_TIMEOUT_SECONDS);
+            let mut cap = PING_ACK_TIMEOUT_SECONDS;
             let global = crate::idle_timeout_seconds();
             if global != 0 {
                 cap = cap.min(global);

@@ -21,6 +21,31 @@ export const BunServer = b.union({
 export const getBunServerAllClosedPromise = b.fn({ args: { server: BunServer }, returns: b.any, capability: "js" });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
+/** `lenientHttpFlags`: bit 0 is llhttp's LENIENT_HEADERS, bit 1 its LENIENT_TRANSFER_ENCODING. */
+const appFlags = { requireHostHeader: b.bool.loose, lenientHttpFlags: b.u8, httpAllowHalfOpen: b.bool } as const;
+/** What an `http.Server` can change while it listens. */
+export const setServerAppFlags = b.fn({ args: { server: BunServer, ...appFlags } });
+/** 0 means the option is not set. */
+export const setServerMaxHeadersCount = b.fn({ args: { server: BunServer, maxHeadersCount: b.u32 } });
+/** `onClientError(socketHandle, errorCode, rawPacket)`, `onConnection(socketHandle, secured)`. */
+export const setServerCustomOptions = b.fn({
+  args: {
+    server: BunServer,
+    ...appFlags,
+    maxHeaderSize: b.f64.loose,
+    onClientError: b.callable,
+    onConnection: b.callable,
+  },
+  capability: "js",
+});
+
+export const BunTLSServer = b.union({ https: HTTPSServer, debugHttps: DebugHTTPSServer });
+/** What an `https.Server`'s listener takes from its `tls.Server`: seconds (0 for none), and `(hostname, socketHandle)` that runs `SNICallback`. */
+export const setTLSServerOptions = b.fn({
+  args: { server: BunTLSServer, handshakeTimeout: b.u32, onServerName: b.callable.optional },
+  capability: "js",
+});
+
 export const DeflateParams = b.dictionary({
   serverMaxWindowBits: b.f64.loose.nullable.default(15),
   clientMaxWindowBits: b.f64.loose.nullable.default(15),

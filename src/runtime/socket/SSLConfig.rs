@@ -1,15 +1,4 @@
-//! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`Default`/hash/
-//! equality/registry impls, and `as_usockets*`/`for_client_verification` were
-//! duplicated (here and in `bun_http::ssl_config`). The lower-tier
-//! `bun_http` copy is canonical (JSC-free, nullable NUL-terminated C-string
-//! field layout); this module now re-exports it and keeps ONLY the
-//! JSC-dependent constructors (`from_js` / `from_generated` / blob+path
-//! readers) plus the WebSocket C-ABI exports, which need `bun_jsc` /
-//! `webcore::Blob` / `node_fs` (tier-6).
-//!
-//! `from_js`/`from_generated` cannot be inherent `impl SSLConfig` (orphan
-//! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
-//! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
+//! The JSC-dependent half of `bun_http::ssl_config`: parsing a `tls` object needs `bun_jsc`, `webcore::Blob` and `node_fs`.
 
 use core::ffi::c_char;
 
@@ -115,47 +104,70 @@ fn read_from_blob(
     Ok(zbox_into_raw(&zbox))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// fromJS / fromGenerated — extension trait (orphan-rule workaround)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
-/// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
-/// An unset `rejectUnauthorized` is `true` for a server and `NODE_TLS_REJECT_UNAUTHORIZED` for a client, as in Node.js.
-pub(crate) trait SSLConfigFromJs: Sized {
-    fn from_js(
-        vm: &VirtualMachine,
-        global: &JSGlobalObject,
-        value: JSValue,
-        is_server: bool,
-    ) -> JsResult<Option<Self>>;
-
-    fn from_generated(
-        vm: &VirtualMachine,
-        global: &JSGlobalObject,
-        generated: &generated::TLSOptions,
-        is_server: bool,
-    ) -> JsResult<Option<Self>>;
+/// The protocol code for a `minVersion` / `maxVersion` option, 0 if it isn't set.
+fn protocol_version(
+    global: &JSGlobalObject,
+    bound: &str,
+    version: &generated::TLSVersion,
+) -> JsResult<i32> {
+    let name = match version {
+        generated::TLSVersion::None => return Ok(0),
+        generated::TLSVersion::Code(code) => return Ok(*code),
+        generated::TLSVersion::Name(name) => name,
+    };
+    match protocol_version_code(name.to_utf8().slice()) {
+        0 => Err(global
+            .err(
+                jsc::ErrorCode::TLS_INVALID_PROTOCOL_VERSION,
+                format_args!("\"{name}\" is not a valid {bound} TLS protocol version"),
+            )
+            .throw()),
+        code => Ok(code),
+    }
 }
 
-impl SSLConfigFromJs for SSLConfig {
-    fn from_js(
+pub(crate) fn protocol_version_code(name: &[u8]) -> i32 {
+    match name {
+        b"TLSv1" => 0x0301,
+        b"TLSv1.1" => 0x0302,
+        b"TLSv1.2" => 0x0303,
+        b"TLSv1.3" => 0x0304,
+        _ => 0,
+    }
+}
+
+/// What a `tls` object asks for. `None` inside: it sets no option, like `tls: {}`, and each API decides if that still turns TLS on.
+pub(crate) struct ParsedTls(Option<SSLConfig>);
+
+impl ParsedTls {
+    /// For an API where `tls: {}` means `tls: true`.
+    pub(crate) fn or_defaults(self, vm: &VirtualMachine, is_server: bool) -> SSLConfig {
+        self.0
+            .unwrap_or_else(|| vm.tls_config(Default::default(), is_server))
+    }
+
+    /// For an API where `tls: {}` means no `tls`.
+    pub(crate) fn or_none(self) -> Option<SSLConfig> {
+        self.0
+    }
+
+    pub(crate) fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
         is_server: bool,
-    ) -> JsResult<Option<SSLConfig>> {
+    ) -> JsResult<Self> {
         let generated = generated::TLSOptions::from_js(global, value)?;
         Self::from_generated(vm, global, &generated, is_server)
     }
 
-    fn from_generated(
+    pub(crate) fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &generated::TLSOptions,
         is_server: bool,
-    ) -> JsResult<Option<SSLConfig>> {
-        let mut result = SSLConfig::zero();
+    ) -> JsResult<Self> {
+        let mut result = bun_http::ssl_config::Builder::default();
         // `result` cleanup handled by Drop on error-path `?`
         let mut any = false;
 
@@ -180,14 +192,11 @@ impl SSLConfigFromJs for SSLConfig {
         }
 
         result.low_memory_mode = generated.low_memory_mode;
-        result.reject_unauthorized = generated
-            .reject_unauthorized
-            .unwrap_or_else(|| is_server || vm.get_tls_reject_unauthorized())
-            as i32;
+        result.reject_unauthorized = generated.reject_unauthorized;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
-        result.ssl_min_version = generated.ssl_min_version;
-        result.ssl_max_version = generated.ssl_max_version;
+        result.ssl_min_version = protocol_version(global, "minimum", &generated.ssl_min_version)?;
+        result.ssl_max_version = protocol_version(global, "maximum", &generated.ssl_max_version)?;
         result.session_timeout = generated.session_timeout;
         result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
         if let Some(sigalgs) = generated.sigalgs.as_ref() {
@@ -259,7 +268,6 @@ impl SSLConfigFromJs for SSLConfig {
         }
         if let Some(ciphers) = generated.ciphers.as_ref() {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
-            result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
         }
 
@@ -271,38 +279,28 @@ impl SSLConfigFromJs for SSLConfig {
             || generated.client_renegotiation_window != 0;
 
         if !any {
-            return Ok(None);
+            return Ok(Self(None));
         }
-        // After `any`: the fallback does not make `tls: {}` a TLS configuration.
-        if generated.ciphers.is_none() {
-            apply_default_ciphers(vm, &mut result);
-        }
-        Ok(Some(result))
+        Ok(Self(Some(vm.tls_config(result, is_server))))
     }
 }
 
-/// The `SSLConfig` for the `tls: true` shorthand: every option at its
-/// documented default, unlike `SSLConfig::zero()`.
-pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConfig {
-    let mut cfg = SSLConfig::zero();
-    cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
-    apply_default_ciphers(vm, &mut cfg);
-    cfg
-}
-
-/// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
+/// For a request without TLS options: its default context is built on the HTTP thread, which sees neither `tls.DEFAULT_CIPHERS` nor `tls.setDefaultCACertificates`.
 pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
-    vm.tls_default_ciphers()?;
-    Some(bun_http::ssl_config::global_registry::intern(
-        tls_true_defaults(vm, false),
-    ))
-}
-
-/// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.
-fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
-    if let Some(ciphers) = vm.tls_default_ciphers() {
-        cfg.set_default_ciphers(ciphers);
+    if !vm.tls_client_defaults_set() {
+        return None;
     }
+    // `NODE_TLS_REJECT_UNAUTHORIZED` can change between requests.
+    let reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    let cached = vm.as_mut().rare_data().http_client_tls_defaults.clone();
+    if let Some(config) = cached.filter(|config| config.reject_unauthorized == reject_unauthorized)
+    {
+        return Some(config);
+    }
+    let config =
+        bun_http::ssl_config::global_registry::intern(vm.tls_config(Default::default(), false));
+    vm.as_mut().rare_data().http_client_tls_defaults = Some(config.clone());
+    Some(config)
 }
 
 /// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
@@ -471,7 +469,7 @@ fn handle_single_file(
 // WebSocket C-ABI exports (parseSSLConfig / freeSSLConfig)
 //
 // LAYERING: the consumer is `src/http_jsc/websocket_client/
-// WebSocketUpgradeClient.rs`, but `SSLConfig::from_js`
+// WebSocketUpgradeClient.rs`, but `ParsedTls::from_js`
 // dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
 // this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
 // the cycle without an opaque stub. The boxed payload is the canonical
@@ -491,16 +489,9 @@ extern "C" fn Bun__WebSocket__parseSSLConfig(
     // SAFETY: `bun_vm()` returns the live VM for this global; the WebSocket
     // constructor only runs on the JS thread with an initialized VM.
     let vm = global_this.bun_vm();
-    // Use SSLConfig::from_js for clean and safe parsing
-    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value, false) {
-        Ok(c) => c,
-        // Exception is already set on globalThis
-        Err(_) => return None,
-    };
-    // No TLS options provided or all defaults → null
-    let config = config_opt?;
-    // Allocate on heap and return pointer (ownership transferred to caller).
-    Some(Box::new(config))
+    // On `Err` the exception is already set on `global_this`. `tls: {}` is a WebSocket without TLS options.
+    let config = ParsedTls::from_js(vm, global_this, tls_value, false).ok()?;
+    config.or_none().map(Box::new)
 }
 
 /// Free an SSLConfig previously returned by `parseSSLConfig`.

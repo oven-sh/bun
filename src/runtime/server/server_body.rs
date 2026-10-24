@@ -12,6 +12,7 @@ use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
 use crate::node::types::PathLikeExt as _;
+use crate::socket::listener::{Connections, ServerNameAnswer};
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -29,8 +30,8 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
-    Node, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, EncodedSliceJsc as _, GlobalRef, JSGlobalObject, JSPromise, JSValue,
+    JsError, JsResult, Node, StringJsc as _, VirtualMachine,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -1303,10 +1304,7 @@ fn on_timeout_for_idle_warn() {
 // `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
-pub(super) use super::{
-    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
-    ServerFlags, UserRoute,
-};
+pub(super) use super::{CreateJsRequest, NewServer, ServerFlags, UserRoute};
 
 /// Generic over the
 /// per-transport `RequestContext` so the same body serves HTTP/1 and HTTP/3.
@@ -1403,6 +1401,227 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.inspector_server_id.set(DebuggerId::init(0));
             }
         }
+    }
+
+    /// node:http 'clientError'. `callback(socketHandle, errorCode, rawPacket)`.
+    pub(crate) fn set_on_client_error(&self, global: &JSGlobalObject, callback: JSValue) {
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
+            return;
+        };
+        let mut on_clienterror = callback;
+        super::wrap_handler_slot(
+            &mut on_clienterror,
+            server_js,
+            global,
+            Self::js_gc_on_client_error_set,
+        );
+        self.on_clienterror.set(on_clienterror);
+        extern "C" fn thunk<const SSL: bool, const DEBUG: bool>(
+            user_data: *mut c_void,
+            _ssl: c_int,
+            socket: *mut uws_sys::us_socket_t,
+            error_code: u8,
+            raw_packet: *mut u8,
+            raw_packet_len: c_int,
+        ) {
+            // SAFETY: `user_data` is the server registered below, which outlives its connections. Shared, because the callback re-enters JS.
+            let this = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
+            let packet: &[u8] = if raw_packet_len > 0 {
+                // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len` readable bytes when `raw_packet_len > 0`.
+                unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
+            } else {
+                &[]
+            };
+            crate::dispatch::fold(this.on_client_error_callback(
+                bun_opaque::opaque_deref_mut(socket),
+                error_code,
+                packet,
+            ));
+        }
+        bun_opaque::opaque_deref_mut(app)
+            .on_client_error(thunk::<SSL, DEBUG>, self.as_ctx_ptr().cast::<c_void>());
+    }
+
+    /// node:http 'connection' and 'secureConnection'. `callback(socketHandle, secured)`.
+    pub(crate) fn set_on_connection(&self, global: &JSGlobalObject, callback: JSValue) {
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
+            return;
+        };
+        // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
+        let first = self.on_connection.get().is_empty();
+        let mut on_connection = callback;
+        super::wrap_handler_slot(
+            &mut on_connection,
+            server_js,
+            global,
+            Self::js_gc_on_connection_set,
+        );
+        self.on_connection.set(on_connection);
+        extern "C" fn thunk<const SSL: bool, const DEBUG: bool>(
+            socket: *mut uws_sys::us_socket_t,
+            event: i32,
+            user_data: *mut c_void,
+        ) {
+            // SAFETY: `user_data` is the server registered below, which outlives its connections. Shared, because the callback re-enters JS.
+            let this = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
+            this.on_connection_event(socket.cast::<c_void>(), event);
+        }
+        if first {
+            bun_opaque::opaque_deref_mut(app)
+                .filter(thunk::<SSL, DEBUG>, self.as_ctx_ptr().cast::<c_void>());
+        }
+    }
+
+    pub(crate) fn on_client_error_callback(
+        &self,
+        socket: &mut uws::Socket,
+        error_code: u8,
+        raw_packet: &[u8],
+    ) -> JsResult<()> {
+        if self.js_value_for_dispatch().is_none() {
+            return Ok(());
+        }
+        let callback = self.on_clienterror.get();
+        if callback.is_empty() {
+            return Ok(());
+        }
+        {
+            let is_ssl = SSL;
+            let global = self.global();
+            let node_socket = jsc::from_js_host_call(&global, || {
+                Bun__getOrCreateNodeHTTPServerSocket(
+                    is_ssl,
+                    std::ptr::from_mut(socket).cast::<c_void>(),
+                    &global,
+                )
+            })?;
+            if node_socket.is_undefined_or_null() {
+                return Ok(());
+            }
+
+            let error_code_value = JSValue::js_number(error_code as f64);
+            let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
+            // SAFETY: event_loop() returns a live raw pointer tied to the global.
+            let _scope =
+                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            callback.call(
+                &global,
+                JSValue::UNDEFINED,
+                &[node_socket, error_code_value, raw_packet_value],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// node:http: reports a connection to JS at TCP accept (`2`), and a TLS one again when its handshake ends (`1`) or runs out of time (`0`).
+    pub(crate) fn on_connection_event(&self, socket: *mut c_void, event: i32) {
+        let secured = match event {
+            // Plain TCP sends `1` right after.
+            2 if SSL => Some(false),
+            1 => Some(SSL),
+            0 => None,
+            _ => return,
+        };
+        crate::dispatch::fold(self.on_connection_callback(socket, secured));
+    }
+
+    /// Calls the JS `onConnection` callback with the JSNodeHTTPServerSocket and `secured`, null for a handshake that timed out. Skips a failed handshake.
+    fn on_connection_callback(&self, socket: *mut c_void, secured: Option<bool>) -> JsResult<()> {
+        if self.js_value_for_dispatch().is_none() {
+            return Ok(());
+        }
+        let callback = self.on_connection.get();
+        if callback.is_empty() {
+            return Ok(());
+        }
+        let global = self.global();
+        let node_socket = match secured {
+            Some(true) => Bun__NodeHTTP__securedServerSocket(socket),
+            Some(false) => jsc::from_js_host_call(&global, || {
+                Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
+            })?,
+            None => Bun__getNodeHTTPServerSocketThisValue(SSL, socket),
+        };
+        if node_socket.is_empty_or_undefined_or_null() {
+            return Ok(());
+        }
+        // SAFETY: event_loop() returns a live raw pointer tied to the global.
+        let _scope =
+            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        callback.call(
+            &global,
+            JSValue::UNDEFINED,
+            &[node_socket, secured.map_or(JSValue::NULL, JSValue::from)],
+        )?;
+        Ok(())
+    }
+
+    /// node:https `handshakeTimeout`, in seconds. `on_connection_event` hears when it runs out.
+    pub(crate) fn set_handshake_timeout(&self, seconds: u32) {
+        if let Some(app) = self.app.get() {
+            bun_opaque::opaque_deref_mut(app).set_handshake_timeout(seconds);
+        }
+    }
+
+    /// Stores node:https's `SNICallback` dispatcher, or `JSValue::ZERO` for none. The listen socket asks it from the first one on.
+    pub(crate) fn set_on_server_name(&self, global: &JSGlobalObject, callback: JSValue) {
+        let (Some(server_js), Some(listener)) = (self.js_value_for_dispatch(), self.listener.get())
+        else {
+            return;
+        };
+        let mut on_server_name = callback;
+        super::wrap_handler_slot(
+            &mut on_server_name,
+            server_js,
+            global,
+            Self::js_gc_on_server_name_set,
+        );
+        self.on_server_name.set(on_server_name);
+        if on_server_name.is_empty() {
+            return;
+        }
+        extern "C" fn thunk<const SSL: bool, const DEBUG: bool>(
+            user: *mut c_void,
+            hostname: *const core::ffi::c_char,
+            abort_handshake: *mut c_int,
+            socket: *mut uws_sys::us_socket_t,
+        ) -> *mut uws_sys::SslCtx {
+            // SAFETY: `user` is the server registered below, which outlives its connections. `hostname` is NUL-terminated for the call.
+            let (this, hostname) = unsafe {
+                (
+                    &*user.cast::<NewServer<SSL, DEBUG>>(),
+                    core::ffi::CStr::from_ptr(hostname),
+                )
+            };
+            this.on_server_name_callback(socket, hostname)
+                .into_raw(abort_handshake)
+        }
+        bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>())
+            .on_server_name(thunk::<SSL, DEBUG>, self.as_ctx_ptr().cast::<c_void>());
+    }
+
+    /// Runs inside BoringSSL's select-certificate callback, so it enters no event loop scope.
+    fn on_server_name_callback(
+        &self,
+        socket: *mut uws_sys::us_socket_t,
+        hostname: &core::ffi::CStr,
+    ) -> ServerNameAnswer {
+        let callback = self.on_server_name.get();
+        if callback.is_empty() || self.js_value_for_dispatch().is_none() {
+            return ServerNameAnswer::Default;
+        }
+        let node_socket = Bun__getNodeHTTPServerSocketThisValue(SSL, socket.cast::<c_void>());
+        if node_socket.is_empty() {
+            return ServerNameAnswer::Default;
+        }
+        let global = self.global();
+        // Latin-1, like Node's `OneByteString`.
+        let hostname = EncodedSlice::latin1(hostname.to_bytes()).to_js(&global);
+        ServerNameAnswer::from_js(
+            callback
+                .call(&global, JSValue::UNDEFINED, &[hostname, node_socket])
+                .unwrap_or_else(|err| global.take_exception(err)),
+        )
     }
 }
 
@@ -1931,10 +2150,8 @@ where
             // Static routes will get cleaned up when the server is stopped
             return Ok(false);
         }
-        self.config.with_mut(|config| {
-            *config = config.clone_for_reloading_static_routes()?;
-            Ok::<(), crate::Error>(())
-        })?;
+        self.config
+            .with_mut(|config| config.normalize_static_routes_list());
         self.app_mut().clear_routes();
         for_each_mux_app!(self, |mux| {
             mux.clear_routes();
@@ -2159,7 +2376,11 @@ where
                 && !self.flags.get().contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
         {
-            self.stop(abrupt);
+            self.stop(if abrupt {
+                Connections::Close
+            } else {
+                Connections::Keep
+            });
         }
 
         rc
@@ -2169,7 +2390,7 @@ where
         if self.has_listener()
             || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
-            self.stop(true);
+            self.stop(Connections::Close);
         }
     }
 
@@ -3115,350 +3336,8 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
-    pub(crate) fn on_client_error_callback(
-        &self,
-        socket: &mut uws::Socket,
-        error_code: u8,
-        raw_packet: &[u8],
-    ) -> JsResult<()> {
-        if self.js_value_for_dispatch().is_none() {
-            return Ok(());
-        }
-        let callback = self.on_clienterror.get();
-        if callback.is_empty() {
-            return Ok(());
-        }
-        {
-            let is_ssl = SSL;
-            let global = self.global();
-            let node_socket = jsc::from_js_host_call(&global, || {
-                Bun__getOrCreateNodeHTTPServerSocket(
-                    is_ssl,
-                    std::ptr::from_mut(socket).cast::<c_void>(),
-                    &global,
-                )
-            })?;
-            if node_socket.is_undefined_or_null() {
-                return Ok(());
-            }
-
-            let error_code_value = JSValue::js_number(error_code as f64);
-            let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-            callback.call(
-                &global,
-                JSValue::UNDEFINED,
-                &[
-                    JSValue::from(is_ssl),
-                    node_socket,
-                    error_code_value,
-                    raw_packet_value,
-                ],
-            )?;
-        }
-        Ok(())
-    }
-
-    /// node:http compat: a connection was accepted on this server (for TLS,
-    /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
-    /// `onConnection` callback so `node:http` can emit 'connection' before any
-    /// request bytes arrive.
-    pub(crate) fn on_connection_callback(&self, socket: *mut c_void) -> JsResult<()> {
-        if self.js_value_for_dispatch().is_none() {
-            return Ok(());
-        }
-        let callback = self.on_connection.get();
-        if callback.is_empty() {
-            return Ok(());
-        }
-        let global = self.global();
-        let node_socket = jsc::from_js_host_call(&global, || {
-            Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
-        })?;
-        if node_socket.is_undefined_or_null() {
-            return Ok(());
-        }
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-        callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
-        Ok(())
-    }
-
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
-}
-
-// ─── Exported fns ────────────────────────────────────────────────────────────
-fn server_set_on_client_error(
-    global: &JSGlobalObject,
-    server: JSValue,
-    callback: JSValue,
-) -> JsResult<JSValue> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set clientError: The 'this' value is not a Server."
-        )));
-    }
-
-    if !callback.is_function() {
-        return Err(global.throw(format_args!(
-            "Failed to set clientError: The provided value is not a function."
-        )));
-    }
-
-    macro_rules! handle {
-        ($T:ty) => {
-            if let Some(this) = server.as_class_ref::<$T>() {
-                if let Some(app) = this.app.get() {
-                    let mut on_clienterror = callback;
-                    super::wrap_handler_slot(
-                        &mut on_clienterror,
-                        server,
-                        global,
-                        <$T>::js_gc_on_client_error_set,
-                    );
-                    this.on_clienterror.set(on_clienterror);
-                    // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
-                    // wrap our typed callback in an extern "C" thunk that slices raw_packet.
-                    extern "C" fn thunk(
-                        user_data: *mut c_void,
-                        _ssl: c_int,
-                        socket: *mut uws_sys::us_socket_t,
-                        error_code: u8,
-                        raw_packet: *mut u8,
-                        raw_packet_len: c_int,
-                    ) {
-                        // SAFETY: user_data is the `*mut Self` registered below; socket is a live
-                        // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty)
-                        // buffer. Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
-                        let packet: &[u8] = if raw_packet_len > 0 {
-                            // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
-                            // readable bytes when `raw_packet_len > 0`.
-                            unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
-                        } else {
-                            &[]
-                        };
-                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        crate::dispatch::fold(this.on_client_error_callback(
-                            bun_opaque::opaque_deref_mut(socket),
-                            error_code,
-                            packet,
-                        ));
-                    }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app)
-                        .on_client_error(thunk, this.as_ctx_ptr().cast::<c_void>());
-                }
-                return Ok(JSValue::UNDEFINED);
-            }
-        };
-    }
-    handle!(HTTPServer);
-    handle!(HTTPSServer);
-    handle!(DebugHTTPServer);
-    handle!(DebugHTTPSServer);
-    debug_assert!(false);
-    Ok(JSValue::UNDEFINED)
-}
-
-fn server_set_on_connection(
-    global: &JSGlobalObject,
-    server: JSValue,
-    callback: JSValue,
-) -> JsResult<JSValue> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set onConnection: The 'this' value is not a Server."
-        )));
-    }
-
-    if !callback.is_function() {
-        return Err(global.throw(format_args!(
-            "Failed to set onConnection: The provided value is not a function."
-        )));
-    }
-
-    macro_rules! handle {
-        ($T:ty) => {
-            if let Some(this) = server.as_class_ref::<$T>() {
-                if let Some(app) = this.app.get() {
-                    // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
-                    let first = this.on_connection.get().is_empty();
-                    let mut on_connection = callback;
-                    super::wrap_handler_slot(
-                        &mut on_connection,
-                        server,
-                        global,
-                        <$T>::js_gc_on_connection_set,
-                    );
-                    this.on_connection.set(on_connection);
-                    // uws filters fire with `1` when an HTTP connection is opened
-                    // (for TLS, when its handshake completes) and `-1` on close;
-                    // only the open notification is forwarded to JS.
-                    extern "C" fn thunk(
-                        socket: *mut uws_sys::us_socket_t,
-                        opened: i32,
-                        user_data: *mut c_void,
-                    ) {
-                        if opened != 1 {
-                            return;
-                        }
-                        // SAFETY: user_data is the `*mut Self` registered below;
-                        // socket is a live uWS socket for this server's group.
-                        // Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
-                    }
-                    if first {
-                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app)
-                            .filter(thunk, this.as_ctx_ptr().cast::<c_void>());
-                    }
-                }
-                return Ok(JSValue::UNDEFINED);
-            }
-        };
-    }
-    handle!(HTTPServer);
-    handle!(HTTPSServer);
-    handle!(DebugHTTPServer);
-    handle!(DebugHTTPSServer);
-    debug_assert!(false);
-    Ok(JSValue::UNDEFINED)
-}
-
-fn server_set_app_flags(
-    global: &JSGlobalObject,
-    server: JSValue,
-    require_host_header: bool,
-    use_strict_method_validation: bool,
-    lenient_http_flags: u8,
-    http_allow_half_open: bool,
-) -> JsResult<JSValue> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set requireHostHeader: The 'this' value is not a Server."
-        )));
-    }
-
-    let Some(server) = super::AnyServer::from_js(server) else {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    };
-    server.set_flags(
-        require_host_header,
-        use_strict_method_validation,
-        lenient_http_flags,
-        http_allow_half_open,
-    );
-    Ok(JSValue::UNDEFINED)
-}
-
-fn server_set_max_http_header_size(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_header_size: u64,
-) -> JsResult<JSValue> {
-    let Some(server) = super::AnyServer::from_js(server) else {
-        return Err(global.throw(format_args!(
-            "Failed to set maxHeaderSize: The 'this' value is not a Server."
-        )));
-    };
-    server.set_max_http_header_size(max_header_size);
-    Ok(JSValue::UNDEFINED)
-}
-
-fn server_set_max_headers_count(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_headers_count: u32,
-) -> JsResult<JSValue> {
-    let Some(server) = super::AnyServer::from_js(server) else {
-        return Err(global.throw(format_args!(
-            "Failed to set maxHeadersCount: The 'this' value is not a Server."
-        )));
-    };
-    server.set_max_headers_count(max_headers_count);
-    Ok(JSValue::UNDEFINED)
-}
-
-// `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
-// (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
-// exception left on the global. Signatures match the C++ callers in
-// `node:http`/`node:https` (`bindings/NodeHTTP.cpp`).
-//
-// NOTE: these are plain `extern "C"` (NOT `#[bun_jsc::host_call]` / sysv64).
-// The C++ declarations in
-// NodeHTTP.cpp are bare `extern "C"` with no `SYSV_ABI`, so on Windows the
-// caller uses Win64 ABI. Using `host_call` here forced sysv64 on the Rust
-// side, scrambling the `server` argument and tripping the `is_object()` guard.
-#[unsafe(export_name = "Server__setAppFlags")]
-extern "C" fn server_set_app_flags_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    require_host_header: bool,
-    use_strict_method_validation: bool,
-    lenient_http_flags: u8,
-    http_allow_half_open: bool,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_app_flags(
-            global,
-            server,
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        ),
-    )
-}
-
-#[unsafe(export_name = "Server__setOnClientError")]
-extern "C" fn server_set_on_client_error_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    callback: JSValue,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(global, server_set_on_client_error(global, server, callback))
-}
-
-#[unsafe(export_name = "Server__setOnConnection")]
-extern "C" fn server_set_on_connection_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    callback: JSValue,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
-}
-
-#[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
-extern "C" fn server_set_max_http_header_size_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_header_size: u64,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_max_http_header_size(global, server, max_header_size),
-    )
-}
-
-#[unsafe(export_name = "Server__setMaxHeadersCount")]
-extern "C" fn server_set_max_headers_count_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_headers_count: u32,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_max_headers_count(global, server, max_headers_count),
-    )
 }
 
 // ─── Externs ─────────────────────────────────────────────────────────────────
@@ -3482,6 +3361,12 @@ unsafe extern "C" {
         socket: *mut c_void,
         global: &JSGlobalObject,
     ) -> JSValue;
+
+    // `socket` is a live TLS `uws::Socket*`. Runs no JS.
+    safe fn Bun__NodeHTTP__securedServerSocket(socket: *mut c_void) -> JSValue;
+
+    // The JSNodeHTTPServerSocket attached to a live node:http `uws::Socket*`, or empty. Runs no JS.
+    safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
     // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or

@@ -17,6 +17,7 @@ const {
   validateInteger,
   validateFunction,
   validateOneOf,
+  validatePort,
 } = require("internal/validators");
 const {
   ConnResetException,
@@ -31,6 +32,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
+const { kSelectSNIContext, kSNIContexts, kSNIError, kTLSHandle } = require("internal/net/symbols");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -57,9 +59,6 @@ const {
   hasServerResponseFinished,
   NodeHTTPBodyReadState,
   drainMicrotasks,
-  setServerCustomOptions,
-  setServerAppFlags,
-  setServerMaxHeadersCount,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   kOutHeaders,
@@ -89,6 +88,8 @@ const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
+// True on a TLS connection from accept until 'secureConnection', when Node's connectionListener takes it.
+const kHandshaking = Symbol("http.server.socketHandshaking");
 function closeHandle(handle) {
   if (!handle.closed) handle.close();
 }
@@ -111,6 +112,11 @@ function traceServerRequestEnd() {
 
 const getBunServerAllClosedPromise = $bindgen("node_http_binding.bind.ts", "getBunServerAllClosedPromise");
 const getBunServerOpenCount = $bindgen("node_http_binding.bind.ts", "getBunServerOpenCount");
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
+const setServerAppFlags = $bindgen("node_http_binding.bind.ts", "setServerAppFlags");
+const setServerCustomOptions = $bindgen("node_http_binding.bind.ts", "setServerCustomOptions");
+const setServerMaxHeadersCount = $bindgen("node_http_binding.bind.ts", "setServerMaxHeadersCount");
+const setTLSServerOptions = $bindgen("node_http_binding.bind.ts", "setTLSServerOptions");
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -119,6 +125,7 @@ const kOptimizeEmptyRequests = Symbol("kOptimizeEmptyRequests");
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
+const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const DateNow = Date.now;
 
@@ -285,12 +292,33 @@ function normalizeServerTls(tls) {
 function connectionListener(this: Server, socket) {
   // A tunnel socket that was handed to 'connect'/'upgrade' has left the native listener: re-emitted, it is a connection like any other.
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
-  (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(this, socket, {
+  const tlsServer = this[tlsSymbol];
+  // Its 'connection' listener wraps the socket in a TLSSocket, which comes back as 'secureConnection'.
+  if (tlsServer) tlsServer.emit("connection", socket);
+  else connectionListenerHTTP1(this, socket);
+}
+
+function secureConnectionListener(this: Server, socket) {
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
+  connectionListenerHTTP1(this, socket);
+}
+
+function connectionListenerHTTP1(server: Server, socket) {
+  (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(server, socket, {
     http1Options: {
-      IncomingMessage: this[kIncomingMessage],
-      ServerResponse: this[kServerResponse],
+      IncomingMessage: server[kIncomingMessage],
+      ServerResponse: server[kServerResponse],
     },
   });
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L103-L106
+function onTLSClientError(this: Server, err, socket) {
+  if (!this.emit("clientError", err, socket)) socket.destroy(err);
+}
+
+function emitTLSClientErrorNT(server: Server, err, socket) {
+  server.emit("tlsClientError", err, socket);
 }
 
 type NodeHTTPServer = import("node:http").Server;
@@ -300,6 +328,7 @@ interface Server extends NodeHTTPServer {
   httpValidation?: "strict" | "relaxed" | "insecure";
   requireHostHeader: boolean;
   httpAllowHalfOpen: boolean;
+  allowHalfOpen: boolean;
   blockList?: import("node:net").BlockList;
 }
 function Server(options, callback): void {
@@ -324,6 +353,7 @@ function Server(options, callback): void {
   this[kListenerGeneration] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
+  let isTLS = false;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -332,113 +362,23 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers =
-      this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca
-        ? require("internal/tls")
-        : undefined;
-
-    // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
-    // them into plain key/cert/ca so the native TLS config sees PEM material.
-    let tlsOptions = options;
-    if (options.pfx) {
-      tlsOptions = tlsHelpers.processPfxOptions(options);
-    }
-
-    let cert = tlsOptions.cert;
-    if (cert) {
-      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-    }
-
-    let key = tlsOptions.key;
-    if (key) {
-      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-    }
-
-    let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-    }
-    if (ca) {
-      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-    }
-
-    let passphrase = options.passphrase || undefined;
-    if (passphrase && typeof passphrase !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-    }
-
-    let serverName = options.servername;
-    if (serverName && typeof serverName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
-    }
-
-    let secureOptions = options.secureOptions || 0;
-    if (secureOptions && typeof secureOptions !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-    }
-
-    if (tlsHelpers) {
-      const { secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // A falsy value counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
-      const secureProtocol = options.secureProtocol || undefined;
-      const minVersionOption = options.minVersion || undefined;
-      const maxVersionOption = options.maxVersion || undefined;
-      const sessionTimeout = options.sessionTimeout || undefined;
-      tlsHelpers.validateSecureContextOptions({
-        ...options,
-        secureProtocol,
-        minVersion: minVersionOption,
-        maxVersion: maxVersionOption,
-        sessionTimeout,
-        passphrase,
-        ciphers: options.ciphers || undefined,
-        clientCertEngine: options.clientCertEngine || undefined,
-        ticketKeys: options.ticketKeys || undefined,
-        // BoringSSL has no DHE suites to apply it to.
-        dhparam: undefined,
-      });
-      const crl = options.crl || undefined;
-      if (crl) {
-        tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
-      }
-      if (options.honorCipherOrder !== false) secureOptions |= tlsHelpers.SSL_OP_CIPHER_SERVER_PREFERENCE;
-      // secureProtocol, or else minVersion/maxVersion, as the integer range the native layer applies; 0 keeps its defaults.
-      let minVersion, maxVersion;
-      const ciphers = options.ciphers ? tlsHelpers.stripTls13CipherNames(options.ciphers) : undefined;
-      const range = secureProtocolToVersionRange(secureProtocol);
-      if (range) {
-        minVersion = range[0];
-        maxVersion = range[1];
-      } else {
-        minVersion = tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : minVersionOption);
-        maxVersion = tlsStringToProtocolVersion(maxVersionOption);
-      }
-      this[tlsSymbol] = normalizeServerTls({
-        serverName,
-        key: tlsHelpers.normalizePemKeyOption(key, passphrase),
-        cert,
-        ca,
-        crl,
-        sessionTimeout: sessionTimeout ?? 0,
-        sigalgs: options.sigalgs,
-        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
-        passphrase,
-        secureOptions,
-        minVersion,
-        maxVersion,
-        ciphers: ciphers?.cipherList || undefined,
-        requestCert: options.requestCert,
-        rejectUnauthorized: options.rejectUnauthorized,
-      });
-    }
+    isTLS = !!(this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca);
   }
 
-  this[optionsSymbol] = options;
   storeHTTPOptions.$call(this, options);
+  // Node's http.Server always allows half-open sockets. https.Server takes the option, like tls.Server.
+  this.allowHalfOpen = this[isTlsSymbol] ? !!options.allowHalfOpen : true;
+  // This tls.Server never listens. It validates the TLS options and owns the SecureContext, like the one Node's https.Server extends.
+  if (isTLS) {
+    const { ignoredByHttpsServer } = require("internal/tls");
+    const tlsServer = (this[tlsSymbol] = new (require("node:tls").Server)({ ...options, ...ignoredByHttpsServer }));
+    tlsServer.on("secureConnection", socket => this.emit("secureConnection", socket));
+    tlsServer.on("tlsClientError", (err, socket) => this.emit("tlsClientError", err, socket));
+    this.on("secureConnection", secureConnectionListener);
+    this.on("tlsClientError", onTLSClientError);
+  }
+  // listen() needs these, so a server whose TLS options threw can't listen in cleartext.
+  this[optionsSymbol] = options;
 
   if (callback) this.on("request", callback);
   return this;
@@ -493,6 +433,7 @@ function checkConnections(this: Server) {
   }
 
   for (const socket of connections) {
+    if (socket[kHandshaking]) continue;
     const handle = socket[kHandle];
     if (handle?.isRequestTimedOut?.(headersTimeout, requestTimeout)) {
       onRequestTimeout(socket);
@@ -519,11 +460,11 @@ Server.prototype.unref = function () {
 
 Server.prototype.closeAllConnections = function () {
   http1Fallback?.closeAllHttp1Connections(this);
-  // Like Node, the listener and the sockets handed to 'connect' and 'upgrade' listeners stay.
+  // Like Node, this skips the listener, sockets handed to 'connect' / 'upgrade' listeners, and TLS connections still in their handshake.
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
-      if (!socket[kHandedOff]) socket.destroyNow();
+      if (!socket[kHandedOff] && !socket[kHandshaking]) socket.destroyNow();
     }
   }
 };
@@ -622,14 +563,21 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host;
   let socketPath;
-  let tls = this[tlsSymbol];
+  const tlsServer = this[tlsSymbol];
+  // The context already has the verify mode. socket.authorized reads requestCert.
+  let tls = tlsServer && {
+    __proto__: null,
+    secureContext: tlsServer._sharedCreds.context,
+    requestCert: tlsServer._requestCert === true,
+    serverName: tlsServer.servername,
+  };
 
   // This logic must align with:
   // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
   const argc = arguments.length;
   if (argc > 0) {
     const arg0 = arguments[0];
-    if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
+    if ($isObject(arg0)) {
       // (options[...][, cb])
       addServerAbortSignalOption(this, arg0);
       port = arg0.port;
@@ -637,8 +585,8 @@ Server.prototype.listen = function () {
       socketPath = arg0.path;
 
       const otherTLS = arg0.tls;
-      if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ __proto__: null, ...otherTLS });
+      if ($isObject(otherTLS)) {
+        tls = normalizeServerTls({ __proto__: null, ...otherTLS, secureContext: undefined });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
@@ -658,11 +606,11 @@ Server.prototype.listen = function () {
     port = 0;
   }
 
-  if (typeof port === "string") {
-    const portNumber = parseInt(port);
-    if (!Number.isNaN(portNumber)) {
-      port = portNumber;
-    }
+  // A bad port throws and a valid one overrides `path`: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2332-L2334
+  if (typeof port === "number" || typeof port === "string") {
+    validatePort(port, "options.port");
+    port = +port | 0;
+    socketPath = undefined;
   }
 
   const lastArg = arguments[argc - 1];
@@ -711,6 +659,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
   {
     // What the first connection and the first request need, so that neither waits for it.
     getNodeHTTPServerSocket();
+    if (tls) inheritFromTLSSocket();
     traceEvents ??= require("internal/trace_events");
 
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
@@ -732,7 +681,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
       onNodeHTTPRequest(
-        bunServer,
         url: string,
         method: string,
         // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
@@ -749,7 +697,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isPipelinedDispatch?: boolean,
       ) {
         if (!socket) {
-          socket = new (getNodeHTTPServerSocket())(server, socketHandle, !!tls, listenerGeneration);
+          socket = createNodeHTTPServerSocket(server, socketHandle, listenerGeneration);
         }
 
         if (isPipelinedDispatch) {
@@ -1142,37 +1090,47 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     const handle = this[serverSymbol];
     listenerGeneration = {
+      server: this,
       isUnix: !!socketPath,
+      tls,
       nativeClosed: false,
       drainedAtClose: false,
     };
     this[kListenerGeneration] = listenerGeneration;
     getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));
     applyServerCustomOptions(this);
-
-    if (this?._unref) {
-      this[serverSymbol]?.unref?.();
+    const tlsServer = this[tlsSymbol];
+    if (tlsServer) {
+      for (const { 0: hostname, 1: context } of tlsServer[kSNIContexts]) {
+        addServerName(handle, hostname, context.context);
+      }
+      const handshakeTimeout = tlsServer._handshakeTimeout;
+      setTLSServerOptions(
+        handle,
+        handshakeTimeout > 0 ? MathMin(MathCeil(handshakeTimeout / 1000), 0xffffffff) : 0,
+        tlsServer._SNICallback ? onServerName.bind(tlsServer) : undefined,
+      );
     }
 
+    if (this._unref) handle.unref();
+
     // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
-    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    process.nextTick(emitListeningNextTick, this, handle.hostname, handle.port);
   }
 };
 
 // Pushes the per-server parser/handler options down to the native listener.
-// Always sets strict method validation, for node.js compatibility.
 function applyServerCustomOptions(server: Server) {
   const handle = server[serverSymbol];
   if (!handle) return;
   setServerCustomOptions(
     handle,
     server.requireHostHeader,
-    true,
     serverLenientFlags(server),
+    !!server.httpAllowHalfOpen,
     typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
     onServerClientError.bind(server, server[kListenerGeneration]),
     onServerConnection.bind(server, server[kListenerGeneration]),
-    !!server.httpAllowHalfOpen,
   );
   setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
 }
@@ -1197,7 +1155,7 @@ function httpAllowHalfOpenSet(this: Server, value) {
   const next = !!value;
   if (previous === next) return;
   const handle = this[serverSymbol];
-  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, serverLenientFlags(this), next);
+  if (handle) setServerAppFlags(handle, this.requireHostHeader, serverLenientFlags(this), next);
 }
 
 // Node.js keeps httpAllowHalfOpen as an own enumerable property of the server.
@@ -1240,16 +1198,44 @@ function defineMaxHeadersCount(server: Server) {
   });
 }
 
-// Native callback fired when the server accepts a connection (for TLS, when
-// its handshake completes), before any request bytes - like Node.js's
-// net.Server 'connection' / tls.Server 'secureConnection' events.
-function onServerConnection(this: Server, listenerGeneration, socketHandle) {
-  if (socketHandle.duplex) {
-    // Already wrapped (shouldn't happen for a brand-new connection).
+// Native callback fired for a ClientHello that names a server. `this` is the tls.Server that has the SNICallback.
+function onServerName(this: import("node:tls").Server, hostname: string, socketHandle) {
+  const socket = socketHandle.duplex;
+  return this[kSelectSNIContext](hostname, socket[kTLSHandle], socket);
+}
+
+// Native callback fired at TCP accept, and for TLS once more: with `secured` when the handshake succeeds, with null when it runs out of handshakeTimeout.
+function onServerConnection(this: Server, listenerGeneration, socketHandle, secured: boolean | null) {
+  if (secured === null) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1056-L1058
+    this.emit("tlsClientError", $ERR_TLS_HANDSHAKE_TIMEOUT(), socketHandle.duplex);
     return;
   }
-  const isTLS = !!this[tlsSymbol];
-  const socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS, listenerGeneration);
+  if (secured) {
+    const socket = socketHandle.duplex;
+    socket[kHandshaking] = false;
+    socket._secureEstablished = true;
+    // Own properties, as in Node: what the handshake settled stays readable once the connection has closed.
+    const tlsHandle = socket[kTLSHandle];
+    socket.servername = tlsHandle.getServername() ?? false;
+    socket.alpnProtocol = tlsHandle.alpnProtocol;
+    if (listenerGeneration.tls.requestCert) {
+      socket.authorizationError = tlsHandle.verifyErrorCode;
+      socket.authorized = socket.authorizationError === null;
+    }
+    socket.on("timeout", onNodeHTTPServerSocketTimeout);
+    // Keep a shorter timeout that a 'connection' listener armed. It may have fired during the handshake, so restart it.
+    const serverTimeout = this.timeout;
+    if (serverTimeout && !(socket.timeout > 0 && socket.timeout < serverTimeout)) {
+      socket.setTimeout(serverTimeout);
+    } else {
+      socket._unrefTimer();
+    }
+    socket.parser = createServerParserShim(socket);
+    this.emit("secureConnection", socket);
+    return;
+  }
+  const socket = createNodeHTTPServerSocket(this, socketHandle, listenerGeneration);
 
   // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
   // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
@@ -1290,13 +1276,9 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     }
   }
 
-  // Node's connectionListener attaches the HTTPParser (socket.parser) before
-  // emitting 'connection'; expose the shim here so listeners see it populated.
-  socket.parser = createServerParserShim(socket);
+  // Like Node, socket.parser is set from 'connection' on for plain TCP and from 'secureConnection' on for TLS.
+  if (!listenerGeneration.tls) socket.parser = createServerParserShim(socket);
   this.emit("connection", socket);
-  if (isTLS && socketHandle.secureEstablished) {
-    this.emit("secureConnection", socket);
-  }
 }
 
 // Like Node.js: server.setTimeout only records the per-socket inactivity
@@ -1351,13 +1333,7 @@ enum HttpParserError {
 // socketOnError, exactly like Node's onParserExecuteCommon: the server's
 // 'clientError' listener (or the default handler) decides what to write back
 // and when to destroy the connection.
-function onServerClientError(
-  listenerGeneration,
-  ssl: boolean,
-  socket: unknown,
-  errorCode: number,
-  rawPacket: ArrayBuffer,
-) {
+function onServerClientError(listenerGeneration, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   // A prior request on this keep-alive connection may already have wrapped
   // the native handle (the native side returns the existing handle); a second
@@ -1365,7 +1341,7 @@ function onServerClientError(
   // kTrackedConnections. Reuse it, and only announce genuinely new
   // connections - the existing duplex already had its 'connection' event.
   const existingDuplex = (socket as any).duplex;
-  const nodeSocket = existingDuplex ?? new (getNodeHTTPServerSocket())(self, socket, ssl, listenerGeneration);
+  const nodeSocket = existingDuplex ?? createNodeHTTPServerSocket(self, socket, listenerGeneration);
   if (!existingDuplex) {
     nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
@@ -1638,6 +1614,7 @@ function onSocketTimeoutTimerExpired(socket) {
 // contract (`req.socket instanceof net.Socket`); all I/O still goes through
 // the native NodeHTTP handle, not a net handle.
 let NodeHTTPServerSocket;
+let NodeHTTPServerTLSSocket;
 type NodeHTTPServerSocket = InstanceType<ReturnType<typeof getNodeHTTPServerSocket>>;
 type NetSocketPrototypeAccessors =
   | "bufferSize"
@@ -1675,9 +1652,9 @@ function getNodeHTTPServerSocket() {
     [kHandoffResponse] = undefined;
     [kDestroySoon] = false;
     [kHandedOff] = false;
+    [kHandshaking] = false;
     server: Server;
     _httpMessage;
-    _secureEstablished = false;
     // Node's connectionListener sets socket._paused when it stops reading a
     // connection whose pipelined responses have buffered past the high water mark.
     _paused = false;
@@ -1686,21 +1663,21 @@ function getNodeHTTPServerSocket() {
     #closeHandled = false;
     #peer;
     #closingHandle;
-    #resetSupported;
+    #listenerGeneration;
     #closeError: Error | undefined = undefined;
-    declare encrypted: boolean;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
     declare _readableState: { emitClose: boolean };
     declare writableBuffer: { chunk: Buffer }[];
-    constructor(server: Server, handle, encrypted, listenerGeneration) {
+    constructor(server: Server, handle, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
       // net.Socket would otherwise default it to false.
+      const allowHalfOpen = listenerGeneration.tls ? server.allowHalfOpen : true;
       super(
         server[kHighWaterMark] !== undefined
-          ? { highWaterMark: server[kHighWaterMark], allowHalfOpen: true }
-          : { allowHalfOpen: true },
+          ? { highWaterMark: server[kHighWaterMark], allowHalfOpen }
+          : { allowHalfOpen },
       );
       // net.Socket's constructor wires net-handle machinery this class replaces:
       // its 'end' listener installs writeAfterFIN (breaks half-open tunnels), and
@@ -1711,14 +1688,15 @@ function getNodeHTTPServerSocket() {
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
-      this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
+      this.#listenerGeneration = listenerGeneration;
       this[kHandle] = handle;
-      this._secureEstablished = !!handle?.secureEstablished;
       handle.onclose = this.#onClose.bind(this);
       handle.duplex = this;
 
-      this.encrypted = encrypted;
-      this.on("timeout", onNodeHTTPServerSocketTimeout);
+      // onServerConnection() arms a TLS connection's http timeouts at 'secureConnection'.
+      const handshaking = !!listenerGeneration.tls && !handle.secureEstablished;
+      if (handshaking) this[kHandshaking] = true;
+      else this.on("timeout", onNodeHTTPServerSocketTimeout);
       // Like Node.js's socketOnError: connection errors are routed to the
       // server's 'clientError' event instead of crashing as unhandled 'error'
       // events on the socket.
@@ -1727,7 +1705,7 @@ function getNodeHTTPServerSocket() {
       // Like Node.js's connectionListener: server.setTimeout's per-socket
       // inactivity timeout is armed when the connection is established.
       const serverTimeout = server.timeout;
-      if (serverTimeout) {
+      if (serverTimeout && !handshaking) {
         this.setTimeout(serverTimeout);
       }
     }
@@ -1752,9 +1730,6 @@ function getNodeHTTPServerSocket() {
       if (!handle) return;
       this.#peer = {
         remoteAddress: handle.remoteAddress,
-        servername: handle.servername,
-        peerCertVerified: handle.peerCertVerified,
-        authorizationError: handle.authorizationError,
       };
     }
 
@@ -1860,8 +1835,12 @@ function getNodeHTTPServerSocket() {
           this.#closeError = er.code === closeError.code ? er : closeError;
         }
       }
-      const server = this.server;
-      const tracked = server?.[kTrackedConnections];
+      // this.server changes when the socket is passed to another server's emit('connection').
+      const server = this.#listenerGeneration.server;
+      const sniError = this[kSNIError];
+      // On the next tick, still before 'close', so a listener that throws can't skip the cleanup below.
+      if (sniError) process.nextTick(emitTLSClientErrorNT, server, sniError, this);
+      const tracked = server[kTrackedConnections];
       if (tracked) {
         tracked.delete(this);
         if (tracked.size === 0 && server[kPendingDrainClose]) {
@@ -2095,27 +2074,29 @@ function getNodeHTTPServerSocket() {
       }
     }
 
-    // SNI hostname the client sent in its ClientHello, or false when the TLS
-    // client sent none (matches Node's server-side TLSSocket.servername).
-    get servername() {
-      if (!this.encrypted) return undefined;
-      const name = (this[kHandle] ?? this.#peer)?.servername;
-      return typeof name === "string" && name.length > 0 ? name : false;
+    // inheritFromTLSSocket() removes this class's prototype from a TLS socket's chain.
+    static [Symbol.hasInstance](value) {
+      return $isObject(value) && #closeHandled in value;
     }
 
-    // Like Node's server-side TLSSocket: `authorized` is only ever true when the
-    // server requested a client certificate and its verification succeeded;
-    // `authorizationError` carries the X.509 verification error code otherwise.
-    get authorized() {
-      if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return false;
-      return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
-    }
+    // Node's plain net.Socket has none of these names, and callers tell the two apart with `"encrypted" in socket`.
+    static {
+      NodeHTTPServerTLSSocket = class TLSSocket extends this {
+        encrypted = true;
+        isServer = true;
+        alpnProtocol = false;
+        servername = false;
+        authorized = false;
+        authorizationError = null;
+        _secureEstablished = !!this[kHandle].secureEstablished;
+        #tlsHandle: $Bindgen.NodeHTTPServerSocketTLS | undefined;
 
-    get authorizationError() {
-      if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return null;
-      return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
+        // _handle stays null, because net.Socket would drive the connection through it.
+        get [kTLSHandle]() {
+          const handle = this[kHandle];
+          return handle ? (this.#tlsHandle ??= new NodeHTTPServerSocketTLS(handle)) : null;
+        }
+      };
     }
 
     ref() {
@@ -2151,7 +2132,7 @@ function getNodeHTTPServerSocket() {
 
     resetAndDestroy() {
       if (this[kHandle]) {
-        if (!this.#resetSupported) {
+        if (this.#listenerGeneration.tls || this.#listenerGeneration.isUnix) {
           throw $ERR_INVALID_HANDLE_TYPE();
         }
         this.resetAndClosing = true;
@@ -2270,6 +2251,26 @@ function getNodeHTTPServerSocket() {
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
   return NodeHTTPServerSocket;
+}
+
+let inheritsFromTLSSocket = false;
+let NodeHTTPServerSocketTLS: $Bindgen.NodeHTTPServerSocketTLSConstructor;
+// Makes `req.socket instanceof tls.TLSSocket` true: NodeHTTPServerSocket's members, then TLSSocket's, then net.Socket's.
+function inheritFromTLSSocket() {
+  if (inheritsFromTLSSocket) return;
+  inheritsFromTLSSocket = true;
+  const TLSSocketPrototype = require("node:tls").TLSSocket.prototype;
+  const prototype = NodeHTTPServerTLSSocket.prototype;
+  Object.setPrototypeOf(
+    prototype,
+    Object.create(TLSSocketPrototype, Object.getOwnPropertyDescriptors(NodeHTTPServerSocket.prototype)),
+  );
+  NodeHTTPServerSocketTLS = $bindgen("socket_body.bind.ts", "NodeHTTPServerSocketTLS");
+}
+
+function createNodeHTTPServerSocket(server: Server, handle, listenerGeneration) {
+  const PlainSocket = getNodeHTTPServerSocket();
+  return new (listenerGeneration.tls ? NodeHTTPServerTLSSocket : PlainSocket)(server, handle, listenerGeneration);
 }
 
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has

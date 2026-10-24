@@ -1662,14 +1662,20 @@ impl FetchTasklet {
             ..Default::default()
         };
 
+        if matches!(fail, http::Error::Cert(_)) {
+            // Node's fetch reports the TLS error as `.cause`.
+            let global = &self.global_this;
+            let cause = fetch_error.clone().to_error_instance(global);
+            let err_js = fetch_error.to_type_error_instance(global);
+            err_js.put(global, b"cause", cause);
+            return BodyValueError::JSValue(StrongOptional::create(err_js, global));
+        }
+
         BodyValueError::SystemTypeError(fetch_error)
     }
 
     fn connect_errno_name(&self) -> Option<&'static str> {
-        if self.result.connect_errno == 0 {
-            return None;
-        }
-        bun_sys::SystemErrno::init(i64::from(self.result.connect_errno)).map(Into::into)
+        self.result.connect_errno.map(Into::into)
     }
 
     /// `ERR_PROXY_TUNNEL` with the `status`, `statusText` and `headers` of the

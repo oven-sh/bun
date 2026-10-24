@@ -1,7 +1,6 @@
 //! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
-use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
@@ -12,6 +11,8 @@ use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::AsCtxPtr;
+
+use crate::socket::listener::Connections;
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
@@ -46,7 +47,7 @@ pub(crate) use web_socket_server_context::Handler as WebSocketServerHandler;
 
 #[path = "ServerConfig.rs"]
 pub(crate) mod server_config;
-pub(crate) use server_config::ServerConfig;
+pub(crate) use server_config::{ServerConfig, ServerTls};
 
 #[path = "StaticRoute.rs"]
 pub(crate) mod static_route;
@@ -93,8 +94,6 @@ pub(crate) use any_request_context::AnyRequestContext;
 /// a closure because the two apps are different types.
 macro_rules! for_each_mux_app {
     ($self:expr, |$mux:ident| $body:block) => {{
-        #[allow(unused_imports)]
-        use server_config::MuxApp as _;
         if Self::HAS_H3 {
             if let Some(app) = $self.h3_app.get() {
                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -196,9 +195,15 @@ const N_HTTP_METHODS: usize = 36;
 bun_jsc::impl_abort_handle_owner!(
     [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
     abort_handle,
-    |this, _cause| {
+    |this, cause| {
+        let connections = match cause {
+            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+                Connections::CloseAsThreadEnds
+            }
+            _ => Connections::Close,
+        };
         // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
-        unsafe { &*this }.stop(true)
+        unsafe { &*this }.stop(connections)
     }
 );
 
@@ -297,12 +302,15 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) user_routes: JsCell<Vec<UserRoute<SSL, DEBUG>>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_client_error`.
+    /// `JSValue::ZERO` when unset; written by `set_on_client_error`.
     pub(crate) on_clienterror: core::cell::Cell<JSValue>,
 
     /// Raw shadow of the wrapper's `m_onConnection` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
+    /// `JSValue::ZERO` when unset; written by `set_on_connection`.
     pub(crate) on_connection: core::cell::Cell<JSValue>,
+
+    /// node:https `SNICallback`. Raw shadow of the `onServerName` internal field, `JSValue::ZERO` when unset.
+    pub(crate) on_server_name: core::cell::Cell<JSValue>,
 
     pub(crate) inspector_server_id: core::cell::Cell<jsc::DebuggerId>,
 
@@ -1350,7 +1358,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.timeout(this_ref.config.get().idle_timeout);
 
         let global = this_ref.global_this();
-        let this_object = this_ref.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
 
         // Compute the JS method-name string up front so the FFI closure
         // doesn't need to reborrow `req` (it's already `&mut`-borrowed below).
@@ -1395,7 +1402,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             on_request_ffi(
                 any_server_packed,
                 global,
-                this_object,
                 callback,
                 method_string,
                 req,
@@ -1711,10 +1717,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener.get().is_some() || (Self::HAS_H3 && self.h3_listener.get().is_some())
     }
 
-    pub(crate) fn set_flags(
+    /// node:http always validates the method strictly.
+    pub(crate) fn set_node_http_flags(
         &self,
         require_host_header: bool,
-        use_strict_method_validation: bool,
         lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
@@ -1722,7 +1728,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_flags(
                 require_host_header,
-                use_strict_method_validation,
+                true,
                 lenient_http_flags,
                 http_allow_half_open,
             );
@@ -1757,8 +1763,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.poll_ref.with_mut(|r| r.unref(self.vm.loop_ctx()));
     }
 
-    pub(crate) fn stop_listening(&self, abrupt: bool) {
+    /// Abrupt stop: close the listen sockets and every connection of `app`.
+    fn close_app(app: *mut uws_sys::NewApp<SSL>, connections: Connections) {
+        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        let app = bun_opaque::opaque_deref_mut(app);
+        if connections == Connections::CloseAsThreadEnds {
+            app.close_as_thread_ends();
+        } else {
+            app.close();
+        }
+    }
+
+    pub(crate) fn stop_listening(&self, connections: Connections) {
         // httplog!("stopListening", .{});
+        let abrupt = connections != Connections::Keep;
 
         // A graceful stop leaves connections open, and this handle is how their context's stop
         // reaches them: it stays until they are gone (`deinit_if_we_can`).
@@ -1806,8 +1824,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.flags.set(self.flags.get() | ServerFlags::TERMINATED);
                 if let Some(app) = self.app.get() {
                     self.deinit_running.set(true);
-                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).close();
+                    Self::close_app(app, connections);
                     self.deinit_running.set(false);
                 }
                 self.config.with_mut(|config| {
@@ -1883,8 +1900,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // guard across the drain so that nested call early-returns —
             // `stop()` runs `deinit_if_we_can` itself right after this returns.
             self.deinit_running.set(true);
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app.get().unwrap()).close();
+            Self::close_app(self.app.get().unwrap(), connections);
             self.deinit_running.set(false);
             // Only clear after the drain — `on_close` defers reach
             // `on_websocket_closed` through `handler.server`, so wiping it
@@ -1898,7 +1914,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn stop(&self, abrupt: bool) {
+    /// `CloseAsThreadEnds`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
+    pub(crate) fn stop(&self, connections: Connections) {
         if self.config.get().allow_hot && !self.config.get().id.is_empty() {
             // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
             unsafe {
@@ -1908,7 +1925,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        self.stop_listening(abrupt);
+        self.stop_listening(connections);
         self.deinit_if_we_can();
     }
 
@@ -2213,6 +2230,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             user_routes: JsCell::new(Vec::new()),
             on_clienterror: core::cell::Cell::new(JSValue::ZERO),
             on_connection: core::cell::Cell::new(JSValue::ZERO),
+            on_server_name: core::cell::Cell::new(JSValue::ZERO),
             inspector_server_id: core::cell::Cell::new(jsc::DebuggerId::init(0)),
             ws_package_handler: JsCell::new(None),
         }));
@@ -2857,38 +2875,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if SSL {
             bun_boringssl::load();
-            let Some(ssl_options) = this_ref
-                .config
-                .get()
-                .ssl_config
-                .as_ref()
-                .map(|c| c.as_usockets())
-            else {
-                // unreachable in practice — fromJS guarantees ssl_config when SSL.
-                let _ = global.throw(format_args!(
-                    "Failed to create HTTPS server: missing tls config"
-                ));
+            // The options point into `config.tls`, which nothing below replaces.
+            let (default_ctx, ssl_options) = match &this_ref.config.get().tls {
+                ServerTls::Context(ctx) => (Some(ctx.clone()), None),
+                ServerTls::Options { default, .. } => {
+                    let options = default.as_usockets();
+                    (create_ssl_ctx(&options), Some(options))
+                }
+                ServerTls::Off => (None, None),
+            };
+            let Some(default_ctx) = default_ctx else {
+                if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
+                    let _ = global.throw(format_args!("Failed to create HTTP server"));
+                }
                 // SAFETY: caller contract — `this` is the live boxed server from `init()`.
                 Self::deinit(this);
                 return JSValue::ZERO;
             };
-
-            app = match uws_sys::NewApp::<SSL>::create(&ssl_options) {
-                Some(a) => a,
-                None => {
-                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                        let _ = global.throw(format_args!("Failed to create HTTP server"));
-                    }
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-            };
+            app = uws_sys::NewApp::<SSL>::create(Some(&default_ctx));
             this_ref.app.set(Some(app));
 
-            if Self::HAS_H3 && this_ref.config.get().http3 {
+            if let Some(ssl_options) = ssl_options
+                .as_ref()
+                .filter(|_| Self::HAS_H3 && this_ref.config.get().http3)
+            {
                 let idle_timeout = this_ref.config.get().idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
+                let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -2910,118 +2922,75 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             route_list_value = this_ref.set_routes();
 
-            // add serverName to the SSL context using the default ssl options
-            let server_name = this_ref
-                .config
-                .get()
-                .ssl_config
-                .as_ref()
-                .and_then(|c| c.server_name_cstr())
-                .filter(|n| !n.to_bytes().is_empty());
-            if let Some(server_name) = server_name {
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(server_name, &ssl_options, false)
-                    .is_err()
+            if let ServerTls::Options {
+                default,
+                server_names,
+            } = &this_ref.config.get().tls
+            {
+                // Its own name selects the default context ahead of a wildcard entry.
+                if let Some(server_name) = default
+                    .server_name_cstr()
+                    .filter(|name| !name.to_bytes().is_empty())
                 {
-                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                        let _ = global.throw(format_args!(
-                            "Failed to add serverName: {}",
-                            bstr::BStr::new(server_name.to_bytes())
-                        ));
-                    }
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).add_server_name(
+                        server_name,
+                        &default_ctx,
+                        false,
+                    );
                 }
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-            }
 
-            // SNI: per-hostname contexts
-            let sni_len = this_ref
-                .config
-                .get()
-                .sni
-                .as_ref()
-                .map_or(0, |s| s.slice().len());
-            for i in 0..sni_len {
-                let (name_ptr, name_len, sni_opts) = {
-                    let cfg = this_ref.config.get();
-                    let sni_ssl_config = &cfg.sni.as_ref().unwrap().slice()[i];
-                    let Some(sni_name) = sni_ssl_config.server_name_cstr() else {
+                for server_name in server_names {
+                    let Some(name) = server_name
+                        .server_name_cstr()
+                        .filter(|name| !name.to_bytes().is_empty())
+                    else {
                         continue;
                     };
-                    if sni_name.to_bytes().is_empty() {
-                        continue;
-                    }
-                    (
-                        sni_name.as_ptr(),
-                        sni_name.to_bytes().len(),
-                        sni_ssl_config.as_usockets(),
-                    )
-                };
-                // SAFETY: name_ptr/name_len point into config.sni[i].server_name.
-                let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
-                // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                    let options = server_name.as_usockets();
 
-                if Self::HAS_H3 {
-                    if let Some(h3_app) = this_ref.h3_app.get() {
-                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                        if bun_opaque::opaque_deref_mut(h3_app)
-                            .add_server_name_with_options(z, &sni_opts)
-                            .is_err()
-                        {
-                            if !global.has_exception() {
-                                let _ = global.throw(format_args!(
-                                    "Failed to add serverName \"{}\" for HTTP/3",
-                                    bstr::BStr::new(sni_name.to_bytes())
-                                ));
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = this_ref.h3_app.get() {
+                            // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                            if bun_opaque::opaque_deref_mut(h3_app)
+                                .add_server_name_with_options(
+                                    bun_core::ZStr::from_cstr(name),
+                                    &options,
+                                )
+                                .is_err()
+                            {
+                                if !global.has_exception() {
+                                    let _ = global.throw(format_args!(
+                                        "Failed to add serverName \"{}\" for HTTP/3",
+                                        bstr::BStr::new(name.to_bytes())
+                                    ));
+                                }
+                                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                                Self::deinit(this);
+                                return JSValue::ZERO;
                             }
-                            // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                            Self::deinit(this);
-                            return JSValue::ZERO;
                         }
                     }
-                }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(sni_name, &sni_opts, true)
-                    .is_err()
-                {
-                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                        let _ = global.throw(format_args!(
-                            "Failed to add serverName: {}",
-                            bstr::BStr::new(sni_name.to_bytes())
-                        ));
-                    }
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
+                    // A build that succeeds can still leave errors queued.
+                    let Some(ctx) =
+                        create_ssl_ctx(&options).filter(|_| !throw_ssl_error_if_necessary(global))
+                    else {
+                        if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
+                            let _ = global.throw(format_args!(
+                                "Failed to add serverName: {}",
+                                bstr::BStr::new(name.to_bytes())
+                            ));
+                        }
+                        // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                        Self::deinit(this);
+                        return JSValue::ZERO;
+                    };
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).add_server_name(name, &ctx, true);
                 }
             }
         } else {
-            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
-            {
-                Some(a) => a,
-                None => {
-                    if !global.has_exception() {
-                        let _ = global.throw(format_args!("Failed to create HTTP server"));
-                    }
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-            };
+            app = uws_sys::NewApp::<SSL>::create(None);
             this_ref.app.set(Some(app));
             if !Self::attach_http2(this, app) {
                 return JSValue::ZERO;
@@ -3253,6 +3222,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     );
     slot_setter!(js_gc_on_client_error_set, on_client_error_set_cached);
     slot_setter!(js_gc_on_connection_set, on_connection_set_cached);
+    slot_setter!(js_gc_on_server_name_set, on_server_name_set_cached);
     slot_setter!(js_gc_ws_on_open_set, ws_on_open_set_cached);
     slot_setter!(js_gc_ws_on_message_set, ws_on_message_set_cached);
     slot_setter!(js_gc_ws_on_close_set, ws_on_close_set_cached);
@@ -3551,7 +3521,6 @@ mod ffi {
         pub(super) safe fn NodeHTTPServer__onRequest_http(
             any_server: usize,
             global: &jsc::JSGlobalObject,
-            this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
@@ -3562,7 +3531,6 @@ mod ffi {
         pub(super) safe fn NodeHTTPServer__onRequest_https(
             any_server: usize,
             global: &jsc::JSGlobalObject,
-            this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
@@ -3572,13 +3540,22 @@ mod ffi {
     }
 }
 
+/// Servers with the same options share a context, unless it reads files. `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
+fn create_ssl_ctx(
+    options: &uws_sys::BunSocketContextOptions,
+) -> Option<bun_boringssl_sys::OwnedSslCtx> {
+    let mut err = uws::create_bun_socket_error_t::none;
+    // A context from the cache builds nothing, so an error that another call left queued would pass for this one's.
+    bun_boringssl_sys::ERR_clear_error();
+    crate::api::SSLContextCache::SSLContextCache::get_or_create_for_server(options, &mut err)
+}
+
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on
 /// `global` and return true.
 fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     let err_code = bun_boringssl_sys::ERR_get_error();
     if err_code != 0 {
         let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
-        bun_boringssl_sys::ERR_clear_error();
         return true;
     }
     false
@@ -3811,21 +3788,6 @@ impl AnyServer {
         AnyServer {
             tag,
             ptr: server.cast::<()>().cast_mut(),
-        }
-    }
-
-    /// `None` if `value` is not what `Bun.serve` returns. `value` keeps the server alive.
-    pub(crate) fn from_js(value: JSValue) -> Option<AnyServer> {
-        if let Some(server) = value.as_class_ref::<HTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
-        } else if let Some(server) = value.as_class_ref::<HTTPSServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
-        } else if let Some(server) = value.as_class_ref::<DebugHTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
-        } else {
-            value
-                .as_class_ref::<DebugHTTPSServer>()
-                .map(|server| Self::from(std::ptr::from_ref(server)))
         }
     }
 
@@ -4122,29 +4084,6 @@ impl AnyServer {
 
     pub(crate) fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
         any_server_dispatch!(self, |s| s.get_url_as_string())
-    }
-
-    pub(crate) fn set_flags(
-        &self,
-        require_host_header: bool,
-        use_strict_method_validation: bool,
-        lenient_http_flags: u8,
-        http_allow_half_open: bool,
-    ) {
-        any_server_dispatch!(self, |s| s.set_flags(
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        ))
-    }
-
-    pub(crate) fn set_max_http_header_size(&self, max_header_size: u64) {
-        any_server_dispatch!(self, |s| s.set_max_http_header_size(max_header_size))
-    }
-
-    pub(crate) fn set_max_headers_count(&self, max_headers_count: u32) {
-        any_server_dispatch!(self, |s| s.set_max_headers_count(max_headers_count))
     }
 }
 

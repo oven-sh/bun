@@ -746,13 +746,16 @@ export const socketFaultInjection = {
   clear: $bindgen("socket_body.bind.ts", "clearSocketFaults"),
 };
 
+/** Runs the uSockets timeout sweep of this thread's loop `count` times. The loop runs one every 4 seconds. */
+export const sweepSocketTimers = $bindgen("socket_body.bind.ts", "sweepSocketTimers");
+
 export const namedPipeInternals = {
   /**
    * Live native contexts behind sockets over Windows named pipes: one per
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $bindgen("socket_body.bind.ts", "namedPipeContextLiveCount"),
+  liveCount: $bindgen("socket_body.bind.ts", "namedPipeLiveCount"),
 };
 
 export const duplexTLSInternals = {
@@ -761,7 +764,7 @@ export const duplexTLSInternals = {
    * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
    * socket, until the task that frees it after the close has run.
    */
-  liveCount: $bindgen("socket_body.bind.ts", "duplexUpgradeContextLiveCount"),
+  liveCount: $bindgen("socket_body.bind.ts", "upgradedDuplexLiveCount"),
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
@@ -836,6 +839,10 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
+  /** The sockets the usockets timeout sweep runs for. Its timer is armed while this isn't 0. */
+  sweepTimerCount: number;
+  /** When the next sweep is due, in ns of the monotonic clock, or -1 while the timer is off. Not on Windows, where libuv has the timer. */
+  sweepDeadline?: number;
 } = $bindgen("event_loop.bind.ts", "getActiveTasks");
 
 export const hostedGitInfo = {

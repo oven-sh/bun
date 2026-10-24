@@ -283,6 +283,8 @@ pub mod raw {
             protocol: c_int,
             err: &mut c_int,
         ) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_adopt_socket(fd: LIBUS_SOCKET_DESCRIPTOR, type_: c_int) -> c_int;
+        pub safe fn bsd_disown_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
         pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
         pub safe fn bsd_set_reuseaddr(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int;
         /// SAFETY: `addr` must point to `addrlen` bytes of a `sockaddr_in`/`in6`.

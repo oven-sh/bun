@@ -44,6 +44,7 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
+use crate::api::SSLContextCache::SSLContextCache;
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
@@ -71,7 +72,7 @@ pub(crate) struct RuntimeState {
     pub(crate) sql_rare: bun_sql_jsc::jsc::RareData,
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
-    pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
+    pub(crate) ssl_ctx_cache: SSLContextCache,
     /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
@@ -245,14 +246,6 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
     if vm.as_mut().rare_data().default_client_ssl_ctx.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
-        let state = runtime_state();
-        debug_assert!(
-            !state.is_null(),
-            "default_client_ssl_ctx before init_runtime_state"
-        );
-        // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
         // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
         // each client SSL to VERIFY_PEER + the shared bundled-root store, so
         // `new WebSocket("wss://…")` (which shares this CTX and defaults to
@@ -260,12 +253,8 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held, so the entry never tombstones.
-        let ctx = if vm.tls_default_ciphers().is_some() {
-            cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
-        } else {
-            cache.get_or_create_opts(&Default::default(), &mut err)
-        };
-        match ctx {
+        let config = vm.tls_config(Default::default(), false);
+        match SSLContextCache::get_or_create(&config, &mut err) {
             Some(ctx) => vm.as_mut().rare_data().default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
@@ -291,15 +280,7 @@ fn ssl_ctx_cache_get_or_create(
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
-    let state = runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "ssl_ctx_cache_get_or_create before init_runtime_state"
-    );
-    // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
-    // address for the VM's lifetime and is only touched from the JS thread.
-    let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    SSLContextCache::get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

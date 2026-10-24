@@ -2871,14 +2871,8 @@ impl H2FrameParser {
     fn transport_write_runs_js(&self) -> bool {
         match self.native_socket.get() {
             BunSocket::None => true,
-            BunSocket::Tls(s) | BunSocket::TlsWriteonly(s) => matches!(
-                s.get().socket.get().socket,
-                bun_uws::InternalSocket::UpgradedDuplex(_)
-            ),
-            BunSocket::Tcp(s) | BunSocket::TcpWriteonly(s) => matches!(
-                s.get().socket.get().socket,
-                bun_uws::InternalSocket::UpgradedDuplex(_)
-            ),
+            BunSocket::Tls(s) | BunSocket::TlsWriteonly(s) => s.get().socket.get().write_runs_js(),
+            BunSocket::Tcp(s) | BunSocket::TcpWriteonly(s) => s.get().socket.get().write_runs_js(),
         }
     }
 
@@ -3037,7 +3031,7 @@ impl H2FrameParser {
     fn transport_send_rejected(&self) -> bool {
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                socket.get().socket.get().ssl_send_rejected()
+                socket.get().socket.get().rejected_send_error() != 0
             }
             // A plain socket is closed at once, which ends its streams before the error is reported.
             _ => false,

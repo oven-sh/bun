@@ -1269,16 +1269,10 @@ mod _event_loop_draft {
     fn on_start(opts: InitOpts) {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
 
-        // Normalising once here (see `normalize_idle_timeout_seconds`) keeps
-        // the h1 (`HTTPClient::set_timeout`) and h2
-        // (`ClientSession::rearm_timeout`) paths identical without duplicating
-        // the math at each call site.
         crate::IDLE_TIMEOUT_SECONDS.store(
-            crate::normalize_idle_timeout_seconds(
-                bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
-                    .get()
-                    .unwrap_or(300),
-            ),
+            bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
+                .get()
+                .map_or(300, |seconds| u32::try_from(seconds).unwrap_or(u32::MAX)),
             core::sync::atomic::Ordering::Relaxed,
         );
 

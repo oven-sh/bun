@@ -1405,6 +1405,21 @@ pub(crate) fn get_active_tasks(
         num_polls,
         // SAFETY: usockets_loop() returns the live process-global loop.
         iteration: unsafe { (*event_loop.usockets_loop()).iteration_number() },
+        // SAFETY: as above.
+        sweep_timer_count: unsafe {
+            (*event_loop.usockets_loop())
+                .internal_loop_data
+                .sweep_timer_count
+        },
+        #[cfg(windows)]
+        sweep_deadline: None,
+        #[cfg(not(windows))]
+        // SAFETY: as above.
+        sweep_deadline: Some(unsafe {
+            (*event_loop.usockets_loop())
+                .internal_loop_data
+                .sweep_next_tick_ns
+        } as f64),
     }
 }
 

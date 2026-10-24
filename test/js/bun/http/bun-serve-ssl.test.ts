@@ -725,3 +725,155 @@ describe.concurrent("client certificate policy", () => {
     });
   });
 });
+
+// node:https passes the context it built in createServer() this way. No other server reads the key.
+test("Bun.serve() ignores tls.secureContext", async () => {
+  const pem = (name: string) => readFileSync(join(import.meta.dir, "../../node/test/fixtures/keys", name), "utf8");
+  const secureContext = tls.createSecureContext({ key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") }).context;
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: { ...tlsCert, secureContext } as Bun.TLSOptions,
+    fetch: () => new Response("ok"),
+  });
+  const client = tls.connect({ port: server.port, host: "127.0.0.1", ca: tlsCert.cert });
+  await once(client, "secureConnect");
+  const { CN } = client.getPeerCertificate().subject;
+  client.destroy();
+  expect(CN).toBe("server-bun");
+});
+
+describe("tls.minVersion and tls.maxVersion take node:tls's version names", () => {
+  const serve = (bounds: Bun.TLSOptions) =>
+    Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { ...tlsCert, ...bounds }, fetch: () => new Response("ok") });
+
+  test.each(["TLSv1.2", "TLSv1.3"] as const)("Bun.serve negotiates %s when it's both bounds", async version => {
+    using server = serve({ minVersion: version, maxVersion: version });
+    const client = tls.connect({ port: server.port, host: "127.0.0.1", ca: tlsCert.cert, servername: "localhost" });
+    await once(client, "secureConnect");
+    const negotiated = client.getProtocol();
+    client.destroy();
+    expect(negotiated).toBe(version);
+  });
+
+  test("fetch applies them", async () => {
+    using server = serve({ minVersion: "TLSv1.3" });
+    const request = (bounds: Bun.TLSOptions) =>
+      fetch(`https://localhost:${server.port}/`, { tls: { ca: tlsCert.cert, ...bounds } }).then(
+        response => response.text(),
+        () => "refused",
+      );
+    expect([await request({ minVersion: "TLSv1.3" }), await request({ maxVersion: "TLSv1.2" })]).toEqual([
+      "ok",
+      "refused",
+    ]);
+  });
+
+  test("a number that is no protocol code leaves the default bounds", async () => {
+    const versions = ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"] as const;
+    // The versions that a client pinned to one version at a time gets.
+    const accepted = async (bounds: object) => {
+      using server = serve(bounds);
+      const got: string[] = [];
+      for (const version of versions) {
+        const { promise, resolve } = Promise.withResolvers<boolean>();
+        const client = tls
+          .connect({
+            port: server.port,
+            host: "127.0.0.1",
+            ca: tlsCert.cert,
+            servername: "localhost",
+            minVersion: version,
+            maxVersion: version,
+            ciphers: "ALL",
+          })
+          .on("secureConnect", () => resolve(true))
+          .on("error", () => resolve(false));
+        if (await promise) got.push(version);
+        client.destroy();
+      }
+      return got;
+    };
+    // The clients do speak TLS 1.0 and 1.1.
+    expect(await accepted({ minVersion: "TLSv1" })).toEqual([...versions]);
+    for (const code of [5, 0x0305]) {
+      expect(await accepted({ minVersion: code })).toEqual(["TLSv1.2", "TLSv1.3"]);
+      expect(await accepted({ maxVersion: code })).toEqual(["TLSv1.2", "TLSv1.3"]);
+    }
+  });
+
+  test("another string throws ERR_TLS_INVALID_PROTOCOL_VERSION", () => {
+    expect(() => serve({ minVersion: "TLSv9" as any })).toThrow(
+      expect.objectContaining({
+        code: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+        message: '"TLSv9" is not a valid minimum TLS protocol version',
+      }),
+    );
+  });
+});
+
+// In a child, under `bun test`: expect().resolves is what runs the event loop from inside a handler.
+test("stop(true) survives a handler that closes other connections and runs the event loop", async () => {
+  using dir = tempDir("serve-stop-nested-tick", {
+    "stop.test.js": /* js */ `
+      import { expect, test } from "bun:test";
+      import tls from "node:tls";
+      const { key, cert } = JSON.parse(process.env.TEST_TLS);
+
+      test("stop(true)", async () => {
+        const count = 6;
+        const controllers = [];
+        const stopped = Promise.withResolvers();
+        let ranLoop = false;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert },
+          idleTimeout: 0,
+          fetch(request) {
+            request.signal.addEventListener("abort", () => {
+              if (ranLoop) return;
+              ranLoop = true;
+              // "Connection: close": the end of a response closes its connection, once the peer has answered.
+              for (const controller of controllers) controller.end();
+              expect(new Promise(resolve => setTimeout(resolve, 400, 1))).resolves.toBe(1);
+            });
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  controllers.push(controller);
+                  controller.write("unfinished");
+                  await controller.flush();
+                  await new Promise(() => {});
+                },
+              }),
+            );
+          },
+        });
+        let answered = 0;
+        for (let i = 0; i < count; i++) {
+          const client = tls.connect({ port: server.port, host: "127.0.0.1", ca: cert, servername: "localhost" });
+          client.on("error", () => {});
+          client.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
+          client.once("data", () => {
+            // From a timer, so that no tick of the socket loop is on the stack.
+            if (++answered === count) setTimeout(() => stopped.resolve(server.stop(true)), 1);
+          });
+        }
+        await stopped.promise;
+        expect(ranLoop).toBe(true);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "stop.test.js"],
+    env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert }) },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

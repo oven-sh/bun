@@ -35,6 +35,41 @@ import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
+describe.each([
+  ["http", createServer],
+  ["https", createHttpsServer],
+])("%s listen()", (_name, create) => {
+  it.each([65536, -1, 1.5, NaN, "65536", "1.5", ""])("throws ERR_SOCKET_BAD_PORT for port %p", async port => {
+    for (const args of [[port], [port, "127.0.0.1"], [{ port }], [{ port, path: "unused.sock" }]]) {
+      const server = create();
+      const onError = mock();
+      server.on("error", onError);
+      expect(() => (server.listen as any)(...args)).toThrow(
+        expect.objectContaining({ name: "RangeError", code: "ERR_SOCKET_BAD_PORT" }),
+      );
+      await new Promise(resolve => setImmediate(resolve));
+      expect(onError).not.toHaveBeenCalled();
+      expect(server.listening).toBe(false);
+    }
+  });
+
+  it("rejects an options.port string that only starts with a number", () => {
+    expect(() => create().listen({ port: "80x" as any })).toThrow(
+      expect.objectContaining({ name: "RangeError", code: "ERR_SOCKET_BAD_PORT" }),
+    );
+  });
+
+  it("prefers options.port over options.path", async () => {
+    const server = create();
+    await once(server.listen({ port: "0" as any, host: "127.0.0.1", path: "unused.sock" }), "listening");
+    try {
+      expect((server.address() as AddressInfo).port).toBeGreaterThan(0);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
@@ -69,19 +104,29 @@ describe("node:http", () => {
       }
     });
     it("is not marked encrypted (#5867)", async () => {
+      // `"encrypted" in socket` is how callers tell a TLSSocket from a net.Socket, so a false value reads as HTTPS.
+      const tlsOnly = ["encrypted", "authorized", "authorizationError", "servername", "_secureEstablished"];
+      const seen: Record<string, string[]> = {};
+      const server = createServer((req, res) => {
+        seen.request = tlsOnly.filter(name => name in req.socket);
+        res.end("Hello World");
+      });
+      server.on("connection", socket => {
+        seen.connection = tlsOnly.filter(name => name in socket);
+      });
       try {
-        var server = createServer((req, res) => {
-          expect((req.connection as any).encrypted).toBe(false);
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World");
-        });
-        const url = await listen(server);
-        const res = await fetch(new URL("", url));
-        expect(await res.text()).toBe("Hello World");
-      } catch (e) {
-        throw e;
+        const { port } = new URL(await listen(server));
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        http
+          .get({ port, agent: false }, res => {
+            seen.client = tlsOnly.filter(name => name in res.socket);
+            res.resume().on("end", resolve).on("error", reject);
+          })
+          .on("error", reject);
+        await promise;
+        expect(seen).toEqual({ connection: [], request: [], client: [] });
       } finally {
-        server!.close();
+        server.close();
       }
     });
     it("request & response body streaming (large)", async () => {
@@ -450,8 +495,7 @@ describe("node:http", () => {
   });
 
   describe("request", () => {
-    function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      let timer;
+    function runTest(done: Function, callback: (server: Server, port: number, done: (err?: unknown) => void) => void) {
       const server = createServer((req, res) => {
         if (Object.getPrototypeOf(req.headers) !== Object.prototype) {
           // Like Node.js, req.headers is a plain object.
@@ -462,7 +506,7 @@ describe("node:http", () => {
           if (reqUrl.pathname === "/redirect") {
             // Temporary redirect
             res.writeHead(301, {
-              Location: `http://localhost:${(server as any).port}/redirected`,
+              Location: `http://localhost:${(server.address() as AddressInfo).port}/redirected`,
             });
             res.end("Got redirect!\n");
             return;
@@ -492,22 +536,8 @@ describe("node:http", () => {
             res.end("Hello World");
             return;
           }
-          if (reqUrl.pathname.includes("timeout")) {
-            if (timer) clearTimeout(timer);
-            req.on("timeout", () => {
-              console.log("req timeout");
-            });
-            res.on("timeout", () => {
-              console.log("res timeout");
-            });
-            timer = setTimeout(() => {
-              if (res.closed) {
-                return;
-              }
-
-              res.end("Hello World");
-              timer = null;
-            }, 3000).unref();
+          if (reqUrl.pathname === "/timeout") {
+            // Never respond. The client destroys the request when it times out.
             return;
           }
           if (reqUrl.pathname === "/pathTest") {
@@ -584,12 +614,12 @@ describe("node:http", () => {
           res.end("Hello World");
         }
       });
-      server.listen({ port: 0 }, (_?: any, __?: any, port?: number) => {
+      server.listen({ port: 0 }, () => {
         var _done = (...args) => {
           server.close();
           done(...args);
         };
-        callback(server, port!, _done);
+        callback(server, (server.address() as AddressInfo).port, _done);
       });
     }
 
@@ -745,40 +775,76 @@ describe("node:http", () => {
     });
 
     it("should allow us to set timeout with request.setTimeout or `timeout` in options", done => {
-      runTest(done, (server, serverPort, done) => {
-        const createDone = createDoneDotAll(done);
-        const req1Done = createDone();
-        const req2Done = createDone();
-
-        const req1 = request(
-          {
-            host: "localhost",
-            port: serverPort,
-            path: "/timeout",
-            timeout: 500,
-          },
-          res => {
-            req1Done(new Error("Should not have received response"));
-          },
-        );
-        req1.on("timeout", () => req1Done());
-
-        const req2 = request(
-          {
-            host: "localhost",
-            port: serverPort,
-            path: "/timeout",
-          },
-          res => {
-            req2Done(new Error("Should not have received response"));
-          },
-        );
-
-        req2.setTimeout(500, () => {
-          req2Done();
-        });
-        req1.end();
-        req2.end();
+      runTest(done, async (server, serverPort, done) => {
+        const requests: {
+          req: http.ClientRequest;
+          reason: Error;
+          events: string[];
+          errors: Error[];
+          destroyedAtTimeout: boolean[];
+          closed: Promise<void>;
+        }[] = [];
+        let failure;
+        try {
+          for (const useOptions of [true, false]) {
+            const reason = new Error(useOptions ? "options timeout cleanup" : "setTimeout cleanup");
+            const req = request({
+              host: "localhost",
+              port: serverPort,
+              path: "/timeout",
+              ...(useOptions ? { timeout: 500 } : {}),
+            });
+            const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+            const state = {
+              req,
+              reason,
+              events: [] as string[],
+              errors: [] as Error[],
+              destroyedAtTimeout: [] as boolean[],
+              closed,
+            };
+            requests.push(state);
+            req.on("socket", () => state.events.push("socket"));
+            req.on("response", res => {
+              state.events.push("response");
+              res.resume();
+              req.destroy(reason);
+            });
+            req.on("error", error => {
+              state.events.push("error");
+              state.errors.push(error);
+            });
+            req.once("close", () => {
+              state.events.push("close");
+              onClose();
+            });
+            const onTimeout = () => {
+              state.events.push("timeout");
+              state.destroyedAtTimeout.push(req.destroyed);
+              req.destroy(reason);
+            };
+            if (useOptions) req.on("timeout", onTimeout);
+            else req.setTimeout(500, onTimeout);
+            req.end();
+          }
+          // 'timeout' doesn't destroy the request, so wait for both destroy() calls to finish.
+          await Promise.all(requests.map(({ closed }) => closed));
+          for (const { req, reason, events, errors, destroyedAtTimeout } of requests) {
+            expect(events).toEqual(["socket", "timeout", "error", "close"]);
+            expect(destroyedAtTimeout).toEqual([false]);
+            expect(errors).toHaveLength(1);
+            expect(errors[0]).toBe(reason);
+            expect(req.destroyed).toBe(true);
+          }
+        } catch (error) {
+          failure = error;
+        } finally {
+          for (const { req, reason } of requests) {
+            if (!req.destroyed) req.destroy(reason);
+          }
+          await Promise.all(requests.map(({ closed }) => closed));
+          done(failure);
+        }
       });
     });
 
@@ -1183,16 +1249,30 @@ describe("node:http", () => {
       });
     });
 
-    it("should emit a socket event when connecting", async done => {
-      runTest(done, async (server, serverPort, done) => {
+    it("should emit a socket event when connecting", done => {
+      runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
-        // Destroying an in-flight request surfaces a "socket hang up" error,
-        // exactly like Node.js; swallow it so it does not leak into the next
-        // test as an unhandled error.
-        req.on("error", () => {});
-        req.on("socket", function onRequestSocket(socket) {
+        const events: string[] = [];
+        const errors: Error[] = [];
+        req.on("error", error => {
+          events.push("error");
+          errors.push(error);
+        });
+        req.on("socket", () => {
+          events.push("socket");
           req.destroy();
-          done();
+        });
+        req.once("close", () => {
+          events.push("close");
+          try {
+            expect(events).toEqual(["socket", "error", "close"]);
+            expect(errors).toHaveLength(1);
+            expect(errors[0]).toHaveProperty("code", "ECONNRESET");
+            expect(req.destroyed).toBe(true);
+            done();
+          } catch (error) {
+            done(error);
+          }
         });
         req.end();
       });
@@ -1524,31 +1604,28 @@ describe("node https server", async () => {
     key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),
     cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
   };
-  const createServer = onRequest => {
-    return new Promise<{ server: https.Server; done: () => void; url: URL }>(resolve => {
-      const server = createHttpsServer(httpsOptions, (req, res) => {
-        onRequest(req, res);
-      });
-      listen(server, "https").then(url => {
-        resolve({
-          server,
-          done: () => server.close(),
-          url,
-        });
-      });
-    });
-  };
-  it("is marked encrypted (#5867)", async () => {
-    const { server, url, done } = await createServer(async (req, res) => {
-      expect(req.connection.encrypted).toBe(true);
+  it.each([
+    { how: "https.createServer(options)", start: () => createHttpsServer(httpsOptions).listen(0) },
+    { how: "http.createServer().listen({ tls })", start: () => createServer().listen({ port: 0, tls: httpsOptions }) },
+  ])("the socket of $how is marked encrypted (#5867)", async ({ start }) => {
+    let seen;
+    const server = start().on("request", (req, res) => {
+      const { encrypted, _secureEstablished, authorized, authorizationError, servername } = req.connection;
+      seen = { encrypted, _secureEstablished, authorized, authorizationError, servername };
       res.end();
     });
     try {
-      await fetch(url, { tls: { rejectUnauthorized: false } });
-    } catch (e) {
-      throw e;
+      await once(server, "listening");
+      await fetch(`https://localhost:${server.address().port}`, { tls: { rejectUnauthorized: false } });
+      expect(seen).toEqual({
+        encrypted: true,
+        _secureEstablished: true,
+        authorized: false,
+        authorizationError: null,
+        servername: "localhost",
+      });
     } finally {
-      done();
+      server.close();
     }
   });
 });
@@ -5428,6 +5505,29 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
+it("connectionListener reads from an injected socket that its previous owner paused", async () => {
+  const server = createServer((_req, res) => res.end("injected-ok"));
+  const front = createNetServer(socket => {
+    socket.pause();
+    server.emit("connection", socket);
+  });
+  try {
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const { promise, resolve, reject } = Promise.withResolvers<{ statusCode: number | undefined; body: string }>();
+    get({ host: "127.0.0.1", port: (front.address() as AddressInfo).port, agent: false }, response => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => (body += chunk));
+      response.on("end", () => resolve({ statusCode: response.statusCode, body }));
+      response.on("error", reject);
+    }).on("error", reject);
+    expect(await promise).toEqual({ statusCode: 200, body: "injected-ok" });
+  } finally {
+    front.close();
+    server.close();
+  }
+});
+
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
 // belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
 // (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the
@@ -7887,6 +7987,71 @@ it("addTrailers() and end() don't crash on the response of a request that was up
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "alive\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+it("a request that finished releases its end() callback", async () => {
+  const server = createServer((req, res) => void req.resume().on("end", () => res.end()));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const requests: http.ClientRequest[] = [];
+  const captured: WeakRef<object>[] = [];
+  try {
+    for (let i = 0; i < 20; i++) {
+      const req = http.request({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        method: "POST",
+        agent: false,
+      });
+      requests.push(req);
+      const value = { i };
+      captured.push(new WeakRef(value));
+      req.end("x", () => void value.i);
+      const [res] = await once(req, "response");
+      await once(res.resume(), "end");
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+    expect(captured.filter(ref => ref.deref() !== undefined).length).toBeLessThan(5);
+    expect(requests).toHaveLength(20);
+  } finally {
+    server.close();
+  }
+});
+
+describe("a client request destroyed in the middle of its upload", () => {
+  it.each([
+    ["write(chunk, cb)", "destroy(err)", ["error EBOOM", "write EBOOM"]],
+    ["end(cb)", "destroy(err)", ["error EBOOM", "end EBOOM"]],
+    ["end(chunk, cb)", "destroy(err)", ["error EBOOM", "end EBOOM"]],
+    ["end(cb)", "destroy()", ["end ECANCELED", "error ECONNRESET"]],
+    ["end(chunk, cb)", "destroy()", ["end ECANCELED", "error ECONNRESET"]],
+  ])("fails the callback of %s after %s", async (call, destroy, expected) => {
+    const peers: import("node:net").Socket[] = [];
+    const server = createNetServer({ pauseOnConnect: true }, peer => void peers.push(peer.on("error", () => {})));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const req = http.request({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", method: "POST" });
+    try {
+      const events: string[] = [];
+      const log = (name: string) => (err?: NodeJS.ErrnoException | null) => void events.push(`${name} ${err?.code}`);
+      req.on("finish", log("finish"));
+      req.on("error", log("error"));
+      await once(req, "socket");
+      await once(req.socket!, "connect");
+      // The peer isn't reading, so the request's own writes queue behind a stuck one.
+      const filler = Buffer.alloc(1 << 20);
+      while (req.socket!.write(filler)) {}
+      if (call === "write(chunk, cb)") req.write("chunk", log("write"));
+      else if (call === "end(cb)") req.end(log("end"));
+      else req.end("chunk", log("end"));
+      req.destroy(destroy === "destroy()" ? undefined : Object.assign(new Error("boom"), { code: "EBOOM" }));
+      await new Promise(resolve => req.once("close", resolve));
+      expect(events).toEqual(expected);
+    } finally {
+      req.destroy();
+      for (const peer of peers) peer.destroy();
+      server.close();
+    }
+  });
 });
 
 it("a listener can cancel Readable.toWeb(req) and end the response in the same tick", async () => {

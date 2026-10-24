@@ -29,13 +29,10 @@ pub struct SocketGroup {
     pub iterator: *mut us_socket_t,
     pub prev: *mut SocketGroup,
     pub next: *mut SocketGroup,
-    pub global_tick: u32,
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
     /// `close_all`/`destroy` must account for them separately.
     pub low_prio_count: u16,
-    pub timestamp: u8,
-    pub long_timestamp: u8,
     pub linked: u8,
 }
 
@@ -49,7 +46,6 @@ pub struct VTable {
     pub on_close:
         Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
     pub on_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_long_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_end: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_connect_error: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
     pub on_connecting_error:
@@ -59,13 +55,13 @@ pub struct VTable {
 }
 
 // Must match `struct us_socket_group_t` in libusockets.h.
-// 9 ptrs + u32 + u16 + 3×u8, padded to 8-byte alignment.
+// 9 ptrs + u16 + u8, padded to 8-byte alignment.
 const _: () = assert!(
-    core::mem::size_of::<SocketGroup>() == 9 * core::mem::size_of::<*mut c_void>() + 16,
+    core::mem::size_of::<SocketGroup>() == 9 * core::mem::size_of::<*mut c_void>() + 8,
     "SocketGroup layout drifted from us_socket_group_t"
 );
 const _: () = assert!(
-    core::mem::size_of::<VTable>() == 11 * core::mem::size_of::<*mut c_void>(),
+    core::mem::size_of::<VTable>() == 10 * core::mem::size_of::<*mut c_void>(),
     "VTable layout drifted from us_socket_vtable_t"
 );
 
@@ -125,6 +121,12 @@ impl SocketGroup {
     pub fn close_all(&mut self) {
         // SAFETY: forwarding to C; `self` is a valid initialized group.
         unsafe { us_socket_group_close_all(self) }
+    }
+
+    /// [`close_all`](Self::close_all) for a thread that ends: see `thread_ends` in libusockets.h.
+    pub fn close_all_as_thread_ends(&mut self) {
+        // SAFETY: forwarding to C; `self` is a valid initialized group.
+        unsafe { us_socket_group_close_all_ex(self, 1, 1) }
     }
 
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
@@ -211,6 +213,21 @@ impl SocketGroup {
                 socket_ext_size,
                 err,
             )
+        }
+    }
+
+    /// Decodes an error uSockets reported for a listen, a connect or a close: an errno, or a Windows error code.
+    pub fn errno(err: c_int) -> Option<bun_errno::SystemErrno> {
+        if err == 0 {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            bun_errno::SystemErrno::init(err.unsigned_abs())
+        }
+        #[cfg(not(windows))]
+        {
+            bun_errno::SystemErrno::init(i64::from(err))
         }
     }
 
@@ -313,6 +330,11 @@ unsafe extern "C" {
     // `close_all` reenters Rust callbacks that touch this group via aliasing
     // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
+    fn us_socket_group_close_all_ex(
+        group: *mut SocketGroup,
+        also_listeners: c_int,
+        thread_ends: c_int,
+    );
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

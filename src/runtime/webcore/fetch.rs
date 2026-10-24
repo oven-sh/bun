@@ -273,13 +273,13 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
+    // A request to an origin the environment proxies never dials it.
     let vm = VirtualMachine::get();
-    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
+    if vm.env_loader().get_http_proxy_for(&url).is_some() {
         reclaim_href!();
         return Ok(());
     }
-    http::async_http::preconnect(url, true);
+    http::async_http::preconnect(url, true, crate::socket::http_client_defaults(vm));
     Ok(())
 }
 

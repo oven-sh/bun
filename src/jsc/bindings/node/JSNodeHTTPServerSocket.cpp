@@ -55,7 +55,6 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structu
     }
     auto* object = new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl, response);
     object->finishCreation(vm);
-    object->syncPeerCertificateVerification();
     return object;
 }
 
@@ -502,39 +501,6 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
     return us_socket_is_ssl_handshake_finished(socket);
 }
 
-const char* JSNodeHTTPServerSocket::sniServername() const
-{
-    if (!is_ssl || !socket) {
-        return nullptr;
-    }
-    return us_socket_sni_servername(socket);
-}
-
-void JSNodeHTTPServerSocket::syncPeerCertificateVerification()
-{
-    if (!is_ssl || upgraded || !socket || !us_socket_ssl_handshake_callback_has_fired(socket))
-        return;
-    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket));
-    if (!httpResponseData)
-        return;
-    peer_cert_verified = httpResponseData->peerCertVerified;
-    peerCertVerifyErrorCode = httpResponseData->peerCertVerifyErrorCode;
-}
-
-bool JSNodeHTTPServerSocket::isPeerCertificateVerified()
-{
-    syncPeerCertificateVerification();
-    return peer_cert_verified;
-}
-
-const char* JSNodeHTTPServerSocket::peerCertificateVerificationError()
-{
-    if (!is_ssl)
-        return nullptr;
-    syncPeerCertificateVerification();
-    return peerCertVerifyErrorCode;
-}
-
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
 {
     if (socket) {
@@ -777,7 +743,6 @@ void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
 
 void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
 {
-    syncPeerCertificateVerification();
     this->socket = nullptr;
     this->closeReadError = readError;
     this->peer_ended = peerEnded;
@@ -1132,6 +1097,16 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
     }
 
     return JSValue::encode(JSC::jsNull());
+}
+
+// At the end of a TLS handshake: the socket attached at accept. Empty if the handshake failed or nothing is attached.
+extern "C" JSC::EncodedJSValue Bun__NodeHTTP__securedServerSocket(us_socket_t* us_socket)
+{
+    auto* serverSocket = getNodeHTTPServerSocket<true>(us_socket);
+    if (!serverSocket || !serverSocket->isAuthorized()) {
+        return {};
+    }
+    return JSValue::encode(serverSocket);
 }
 
 JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

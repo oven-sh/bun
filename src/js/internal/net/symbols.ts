@@ -1,12 +1,24 @@
 export default {
+  // The tls.Server that accepted this TLSSocket. Cleared by that server's 'connection' listener.
+  kAcceptedTLS: Symbol("kAcceptedTLS"),
   kArmHandshakeTimeout: Symbol("kArmHandshakeTimeout"),
   // Set while a socket must receive nothing (an idle socket in an http.Agent
   // pool): the read path destroys the socket instead of delivering the bytes.
   kDestroyOnRead: Symbol("kDestroyOnRead"),
   kPreHandshakeWrite: Symbol("kPreHandshakeWrite"),
+  // net.Socket.prototype method for child_process: Node's handle.readStop().
+  kReadStop: Symbol("kReadStop"),
   // Internal handshake-settled signal: server-side sockets emit no user
   // 'secureConnect' (node parity), so internal deferrals park on this instead.
   kSecureConnectDone: Symbol("kSecureConnectDone"),
+  // net.Server.prototype method: runs the server's SNICallback for one handshake. https.Server calls it for its own connections.
+  kSelectSNIContext: Symbol("kSelectSNIContext"),
+  // The error of an SNICallback, on the socket whose handshake it aborted, for 'tlsClientError'.
+  kSNIError: Symbol("kSNIError"),
+  // tls.Server's addContext() map of hostname to SecureContext. https.Server adds the entries to its own listener.
+  kSNIContexts: Symbol("kSNIContexts"),
+  // tls.TLSSocket.prototype getter: the native object with the connection's TLS members. It's `_handle`, except on an https.Server's sockets.
+  kTLSHandle: Symbol("kTLSHandle"),
   kVerifyError: Symbol("kVerifyError"),
   // net.Socket.prototype method behind the client-side `new tls.TLSSocket(socket)`.
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),

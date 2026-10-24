@@ -36,6 +36,11 @@ impl ListenSocket {
         ))
     }
 
+    /// Call before another process gets a duplicate of this socket (see `bsd_accept_socket`).
+    pub fn set_shared(&mut self) {
+        us_listen_socket_set_shared(self)
+    }
+
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close, or when `hostname` is registered again.
     ///
@@ -43,11 +48,12 @@ impl ListenSocket {
     /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and
     /// stores the pointer past this call, so the caller cannot legitimately
     /// hold exclusive `&mut` access.
+    /// A connection that names `hostname` keeps the listener's verify mode.
     pub fn add_server_name(&mut self, hostname: &core::ffi::CStr, ssl_ctx: *mut SslCtx) {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it).
-        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx) }
+        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, 0) }
     }
 
     /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
@@ -56,12 +62,13 @@ impl ListenSocket {
         unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
     }
 
-    /// `cb` receives a null `ListenSocket` once this listen socket closed.
+    /// `cb(user, hostname, abort_handshake, socket)` also runs for connections accepted before this listen socket closed, so `user` has to outlive them.
     pub fn on_server_name(
         &mut self,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+        cb: extern "C" fn(*mut c_void, *const c_char, *mut c_int, *mut us_socket_t) -> *mut SslCtx,
+        user: *mut c_void,
     ) {
-        us_listen_socket_on_server_name(self, cb)
+        us_listen_socket_on_server_name(self, cb, user)
     }
 }
 
@@ -71,14 +78,17 @@ impl ListenSocket {
 // `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
+    safe fn us_listen_socket_set_shared(ls: &mut ListenSocket);
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,
         ssl_ctx: *mut SslCtx,
+        own_client_auth: c_int,
     );
     fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+        cb: extern "C" fn(*mut c_void, *const c_char, *mut c_int, *mut us_socket_t) -> *mut SslCtx,
+        user: *mut c_void,
     );
 }

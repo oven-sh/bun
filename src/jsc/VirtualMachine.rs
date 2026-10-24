@@ -729,6 +729,7 @@ impl VMHolder {
         None
     }
 
+    /// WebKit's `WTF::RunLoop` calls this through a weak symbol, so nothing in this repository names it. Without it a Worker's run loop isn't Bun's.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()
@@ -4321,10 +4322,36 @@ impl VirtualMachine {
     }
 
     /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
-    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+    pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
         self.rare_data
             .as_deref()
             .and_then(RareData::tls_default_ciphers)
+    }
+
+    /// Returns the `tls.setDefaultCACertificates()` list, or `None` if it was never called.
+    pub(crate) fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
+        self.rare_data.as_deref().and_then(RareData::tls_default_ca)
+    }
+
+    /// Fills what `given` leaves out from `NODE_TLS_REJECT_UNAUTHORIZED` (clients only), `tls.DEFAULT_CIPHERS` and `tls.setDefaultCACertificates()`.
+    pub fn tls_config(
+        &self,
+        given: bun_http::ssl_config::Builder,
+        is_server: bool,
+    ) -> bun_http::ssl_config::SSLConfig {
+        let reject_unauthorized = given
+            .reject_unauthorized
+            .unwrap_or_else(|| is_server || self.get_tls_reject_unauthorized());
+        given.build(
+            reject_unauthorized,
+            self.tls_default_ciphers(),
+            self.tls_default_ca(),
+        )
+    }
+
+    /// Returns true if `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` overrides what a client with no TLS options uses.
+    pub fn tls_client_defaults_set(&self) -> bool {
+        self.tls_default_ciphers().is_some() || self.tls_default_ca().is_some()
     }
 
     /// Registers a spawned subprocess with the auto-killer.
@@ -6051,6 +6078,12 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
+            // The next file's `node:tls` starts from the stock defaults, so native clients must too.
+            let had_ca = rare.tls_default_ca.take().is_some();
+            let had_ciphers = rare.tls_default_ciphers.take().is_some();
+            if had_ca || had_ciphers {
+                rare.drop_client_tls_defaults();
+            }
         }
         let _ = self.event_loop_mut().drain_microtasks();
 

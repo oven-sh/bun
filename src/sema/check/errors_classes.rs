@@ -5,7 +5,7 @@
 //!
 //! Mirrors `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
 //! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration` and `checkConstructorDeclaration`
-//! in TypeScript 7.0.2's checker.go.
+//! in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::MemberOwner;
@@ -55,6 +55,7 @@ impl<'p> Checker<'p, '_> {
         let class = &hir[c];
         let base = self.base_of_class(file, c, sym);
         if let ClassBase::Is { constructor, base } = base {
+            self.check_jsdoc_augments_tag_matches_extends(file, c, base);
             let static_base_type = self.apparent_type(constructor);
             self.check_base_type_accessibility(file, c, static_base_type);
             if self.is_type_variable(constructor) {
@@ -112,6 +113,47 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
+    /// `checkJSDocAugmentsTagMatchesExtends`
+    fn check_jsdoc_augments_tag_matches_extends(&mut self, file: FileId, c: ClassId, base: TypeId) {
+        let hir = self.hir(file);
+        let extends = hir[c].extends;
+        for tag in hir.augments_tags_of(c) {
+            // It's an `ExpressionWithTypeArguments`, so `getIntendedTypeFromJSDocTypeReference` doesn't apply.
+            let tagged = self.get_type_reference_type(file, tag.class_name);
+            let TypeNodeKind::Ref { name, .. } = hir[tag.class_name].kind else {
+                continue;
+            };
+            let Some(source_name) = name.iter().last().map(|last| &hir[last]) else {
+                continue;
+            };
+            let target: &[u8] = if hir::is_entity_name_expression(hir, extends) {
+                if self.is_identical(tagged, base) {
+                    continue;
+                }
+                // `getIdentifierFromEntityNameExpression`
+                match hir[extends].kind {
+                    ExprKind::Ident(name) | ExprKind::Dot { name, .. } => self.atoms().bytes(name),
+                    _ => b"",
+                }
+            } else if self.is_assignable(base, tagged) {
+                continue;
+            } else {
+                let (_, start, end) = self.span_of_parenthesized_expr(file, extends);
+                hir.text
+                    .get(start as usize..end as usize)
+                    .unwrap_or_default()
+            };
+            let start = source_name.pos();
+            let end = self.end_of_identifier_at(file, source_name.text, start);
+            let names = [
+                Arg::Atom(tag.tag_name),
+                Arg::Atom(source_name.text),
+                Arg::Bytes(target),
+            ];
+            self.error_at((file, start, end), 8023, &names);
+        }
+    }
+
     /// `getBaseConstructorTypeOfClass` and `getBaseTypes(classType)[0]` for the class `c` of `sym`.
     fn base_of_class(&mut self, file: FileId, c: ClassId, sym: Sym) -> ClassBase {
         let class = &self.hir(file)[c];
@@ -136,20 +178,12 @@ impl<'p> Checker<'p, '_> {
     /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own
     /// declaration.
     fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
-        let Some(&first) = self.signatures(apparent, true).first() else {
-            return;
-        };
-        let declared = self.declared_sig(first);
+        let sigs = self.signatures(apparent, true);
         let hir = self.hir(file);
-        if let Some((declared_in, func, _)) = self.sig_decl(declared)
-            && self.hir(declared_in)[func].flags.contains(Flags::PRIVATE)
-            // `t.symbol`. tsgo dereferences nil for a type that has none.
-            && let Some(symbol) = self.symbol_of_type(apparent).and_then(|it| it.as_binder_symbol())
-            // `GetClassLikeDeclarationOfSymbol(t.symbol)` is nil for an interface.
-            && !(self.enclosing_classes(file, hir[c].extends).into_iter())
-                .any(|enclosing_class| self.class_sym(file, enclosing_class) == symbol)
+        if let Some((_, class)) =
+            self.constructor_accessibility_error(file, hir[c].extends, &sigs, Flags::PRIVATE)
         {
-            let name = super::errors_names_and_exports::fully_qualified_name(self, symbol, None);
+            let name = super::errors_names_and_exports::fully_qualified_name(self, class, None);
             self.error(
                 file,
                 hir.node(c).with(Part::Base),
@@ -238,11 +272,11 @@ impl<'p> Checker<'p, '_> {
         let visits_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
-            // `ModifierFlags()`: the modifiers written before `static { }` are only in its list.
-            let flags = match member.kind {
-                MemberKind::StaticBlock => member.flags | hir.modifiers_to_flags(member.modifiers),
-                _ => member.flags,
-            };
+            // `getSymbolOfDeclaration(member) == nil`
+            if member.kind == MemberKind::StaticBlock {
+                continue;
+            }
+            let flags = member.flags;
             if !visits_all
                 && !flags.contains(Flags::OVERRIDE)
                 && (member.kind != MemberKind::Constructor
@@ -305,6 +339,17 @@ impl<'p> Checker<'p, '_> {
         let code = |code: u32| if is_js { js_override_code(code) } else { code };
         let has_override = member.flags.contains(Flags::OVERRIDE);
         let no_implicit_override = self.p.files.options.no_implicit_override;
+        if matches!(base, ClassBase::Unknown) {
+            return;
+        }
+        if has_override
+            && let PropKey::Computed(name) = member.key
+            && self.is_non_bindable_dynamic_name(file, name)
+        {
+            let at = self.span_of_overrider(file, member);
+            self.error_at(at, code(4127), &[]);
+            return;
+        }
         let (constructor, base) = match base {
             ClassBase::Unknown => return,
             ClassBase::Nothing => {
@@ -317,14 +362,6 @@ impl<'p> Checker<'p, '_> {
             }
             ClassBase::Is { constructor, base } => (constructor, base),
         };
-        if has_override
-            && let PropKey::Computed(name) = member.key
-            && self.is_non_bindable_dynamic_name(file, name)
-        {
-            let at = self.span_of_overrider(file, member);
-            self.error_at(at, code(4127), &[]);
-            return;
-        }
         if !has_override && !no_implicit_override {
             return;
         }

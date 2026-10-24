@@ -645,27 +645,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        // `GetLeftmostExpression(left, stopAtCallExpressions)`
+        // `GetLeftmostAccessExpression`
         let mut at = left;
-        loop {
-            let next = match hir[at].kind {
-                ExprKind::Unary {
-                    op: UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => operand,
-                ExprKind::Binary { left, .. } => left,
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Cond { test, .. } => test,
-                ExprKind::TaggedTemplate(call) => hir[call].callee,
-                ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
-                ExprKind::AsConst(x) | ExprKind::NonNull(x) => x,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                _ => break,
-            };
-            if is_parenthesized(self.hir(file), next) {
+        while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[at].kind {
+            if is_parenthesized(self.hir(file), obj) {
                 return false;
             }
-            at = next;
+            at = obj;
         }
         let ExprKind::Ident(name) = hir[at].kind else {
             return false;

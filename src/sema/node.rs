@@ -64,7 +64,7 @@ kinds! {
     InferKeyword IntrinsicKeyword IsKeyword KeyOfKeyword ModuleKeyword NamespaceKeyword NeverKeyword OutKeyword ReadonlyKeyword
     RequireKeyword NumberKeyword ObjectKeyword SatisfiesKeyword SetKeyword StringKeyword SymbolKeyword TypeKeyword UndefinedKeyword
     UniqueKeyword UnknownKeyword UsingKeyword FromKeyword GlobalKeyword BigIntKeyword OverrideKeyword OfKeyword DeferKeyword
-    QualifiedName ComputedPropertyName TypeParameter Parameter Decorator PropertySignature PropertyDeclaration MethodSignature
+    SourceKeyword QualifiedName ComputedPropertyName TypeParameter Parameter Decorator PropertySignature PropertyDeclaration MethodSignature
     MethodDeclaration ClassStaticBlockDeclaration Constructor GetAccessor SetAccessor CallSignature ConstructSignature
     IndexSignature TypePredicate TypeReference FunctionType ConstructorType TypeQuery TypeLiteral ArrayType TupleType OptionalType
     RestType UnionType IntersectionType ConditionalType InferType ParenthesizedType ThisType TypeOperator IndexedAccessType
@@ -222,7 +222,7 @@ parts! {
     Extends = 6,
     /// The `HeritageClause` with the `implements` keyword.
     Implements = 7,
-    /// The `ExpressionWithTypeArguments` a class extends: `GetExtendsHeritageClauseElement`.
+    /// The `ExpressionWithTypeArguments` a class extends: `GetClassExtendsHeritageElement`.
     Base = 8,
     /// The `VariableDeclarationList`. In the head of a `for`, the statement it belongs to isn't a tsgo node.
     DeclarationList = 9,
@@ -903,7 +903,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                         .any(|child| self.jsx_child(child))
                     || self.one(node.with(Part::Closing))
             }
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 self.one(node.with(Part::Keyword))
                     || self.list(file.type_args_of_import_call(args))
                     // `import()`: the placeholder for the specifier isn't a node.
@@ -943,6 +943,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             StmtKind::Enum(e) => self.one(node.with(Part::Name)) || self.span(file[e].members),
             StmtKind::Module(m) => {
                 self.one(node.with(Part::Name))
+                    || self.one(file[m].attributes)
                     || match file.nested_namespace(m) {
                         Some(nested) => self.one(nested),
                         None => self.part(node, Part::Body, file[m].has_body),
@@ -1083,7 +1084,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             | Part::Specifier
             | Part::Namespace
             | Part::LocalName => false,
-            Part::Keyword => self.part(row, Part::Name, file.is_deferred_import_call(row)),
+            Part::Keyword => self.part(row, Part::Name, file.is_import_call_with_phase(row)),
             Part::Literal => {
                 file.kind_of_part(part, row) == Kind::PrefixUnaryExpression
                     && self.one(row.with(Part::Operand))
@@ -1542,11 +1543,10 @@ impl<'s> File<'s> {
                 .is_some_and(|rest| rest.starts_with(b"import"))
     }
 
-    /// `import.defer("m")`
-    fn is_deferred_import_call(&self, row: Node) -> bool {
-        !self.deferred_import_calls.is_empty()
-            && matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::ImportCall { args, .. }
-                if self.deferred_import_calls.iter().any(|call| call.0 == self.id_at(args, 0))))
+    /// `import.defer("m")`, `import.source("m")`
+    fn is_import_call_with_phase(&self, row: Node) -> bool {
+        matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::ImportCall { phase, .. }
+            if phase != ImportPhase::Evaluation))
     }
 
     fn is_self_closing(&self, j: JsxId) -> bool {
@@ -1994,7 +1994,7 @@ impl<'s> File<'s> {
             Part::JsxExpression => Kind::JsxExpression,
             Part::Specifier => Kind::StringLiteral,
             Part::Keyword => match self.data(row) {
-                NodeData::Expr(_) if self.is_deferred_import_call(row) => Kind::MetaProperty,
+                NodeData::Expr(_) if self.is_import_call_with_phase(row) => Kind::MetaProperty,
                 NodeData::Expr(_) => Kind::ImportKeyword,
                 NodeData::Type(_) => Kind::AssertsKeyword,
                 _ => Kind::AwaitKeyword,
@@ -2225,6 +2225,16 @@ impl<'s> File<'s> {
         }
     }
 
+    /// True if there's a `?.` in the entity name `name`, which is an error.
+    pub fn is_optional_chain(&self, name: Span<NameId>) -> bool {
+        self.names[name.range()]
+            .array_windows()
+            .any(|[before, after]| {
+                let between = self.text.get(before.pos() as usize..after.pos() as usize);
+                between.is_some_and(|text| bun_core::strings::contains_char(text, b'?'))
+            })
+    }
+
     fn kind_of_type(&self, t: TypeNodeId, node: Node) -> Kind {
         match self[t].kind {
             TypeNodeKind::Error => Kind::Unknown,
@@ -2245,12 +2255,13 @@ impl<'s> File<'s> {
                 Keyword::This => Kind::ThisType,
                 Keyword::Intrinsic => Kind::IntrinsicKeyword,
             },
-            // An element of a heritage clause has the same syntax as a type reference.
-            TypeNodeKind::Ref { .. }
+            // `parseTypeHeritageClauseElement`, `isValidHeritageTypeReferenceExpression`: an element of a heritage clause
+            // is a type reference, unless its name has a `?.` or it's from an `@implements` tag.
+            TypeNodeKind::Ref { name, .. }
                 if matches!(
                     self.parent(node).part(),
                     Some(Part::Extends | Part::Implements)
-                ) =>
+                ) && (self.is_optional_chain(name) || self.is_in_jsdoc(self[t].pos)) =>
             {
                 Kind::ExpressionWithTypeArguments
             }
@@ -2659,6 +2670,7 @@ impl File<'_> {
             NodeData::Expr(e) => match self[e].kind {
                 ExprKind::Fn(f) => self[f].flags,
                 ExprKind::Class(c) => self[c].flags,
+                ExprKind::Assign { .. } => self.jsdoc_modifiers_of(e),
                 _ => Flags::empty(),
             },
             NodeData::Type(_) | NodeData::Prop(_) => {
@@ -3280,6 +3292,12 @@ impl File<'_> {
     /// `node.Flags&NodeFlagsAmbient != 0`. An ambient node makes all its descendants ambient, except its own decorators
     /// and modifiers, which the parser has already parsed by the time it knows the node is ambient.
     pub fn is_ambient(&self, mut node: Node) -> bool {
+        if self.kind == FileKind::Declaration {
+            return true;
+        }
+        if !self.ambient_or_type_ranges().contain(self.start(node)) {
+            return false;
+        }
         let mut is_modifier = false;
         while node.is_some() {
             if !is_modifier && self.flags(node).contains(Flags::AMBIENT) {
@@ -3288,7 +3306,7 @@ impl File<'_> {
             is_modifier = matches!(self.data(node), NodeData::Modifier(_));
             node = self.parent(node);
         }
-        self.kind == FileKind::Declaration
+        false
     }
 
     /// `node.Flags&NodeFlagsAwaitContext != 0`, as set by the parser's first pass. Returns `Err` if it's the context of
@@ -3315,9 +3333,9 @@ impl File<'_> {
                 // `parseEnumDeclaration` exits both contexts for the members only. `parseModuleBlock` stays in the
                 // enclosing contexts.
                 Kind::EnumDeclaration if self.kind(below) == Kind::EnumMember => return Ok(false),
-                // `parseType` exits both contexts. The types a class implements are parsed as expressions.
+                // `parseType` exits both contexts. The elements of a heritage clause are parsed as expressions.
                 _ if matches!(self.data(above), NodeData::Type(_))
-                    && kind != Kind::ExpressionWithTypeArguments =>
+                    && self.kind(self.parent(above)) != Kind::HeritageClause =>
                 {
                     return Ok(false);
                 }
@@ -3336,12 +3354,22 @@ impl File<'_> {
                         return Ok(false);
                     }
                 }
-                // The part of an exported class after its type parameters.
+                // The part of an exported class after its type parameters, unless the class is in a block.
                 Kind::ClassDeclaration | Kind::ClassExpression
                     if is_await
                         && self.flags(above).contains(Flags::EXPORT)
                         && (matches!(self.data(below), NodeData::Member(_))
-                            || matches!(below.part(), Some(Part::Extends | Part::Implements))) =>
+                            || matches!(below.part(), Some(Part::Extends | Part::Implements)))
+                        && (self.find_ancestor(above, |n| {
+                            matches!(
+                                self.kind(n),
+                                Kind::Block
+                                    | Kind::ModuleBlock
+                                    | Kind::CaseClause
+                                    | Kind::DefaultClause
+                            )
+                        }))
+                        .is_none() =>
                 {
                     return Ok(true);
                 }

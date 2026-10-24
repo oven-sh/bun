@@ -2,7 +2,7 @@
 //! 1240, 1241, 1270, 1271.
 //!
 //! Mirrors `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and
-//! `checkGrammarDecorator` in TypeScript 7.0.2's checker.go and grammarchecks.go.
+//! `checkGrammarDecorator` in TypeScript 7.1's checker.go and grammarchecks.go.
 
 use super::call::{CallLike, ExpectsReturn};
 use super::errors_statements::is_binder_diagnostic;
@@ -361,6 +361,7 @@ impl<'p, 's> Checker<'p, 's> {
         });
         self.synth(Shape {
             props: vec_from_iter_in(members, self.arena),
+            has_no_instantiable_symbol: true,
             ..Shape::new_in(self.arena)
         })
     }
@@ -438,7 +439,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             DecoratorOwner::Member(_) => {
-                if params.len() <= 2 {
+                if self.parameter_count(params) <= 2 {
                     2
                 } else {
                     3
@@ -464,9 +465,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkDecorators` never visits decorators on a missing declaration or on a `this` parameter.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
-            self.reported.retain(|d| {
-                d.start < start || d.start >= end || d.by_emit || is_binder_diagnostic(d.code)
-            });
+            self.reported
+                .retain(|d| d.start < start || d.start >= end || is_binder_diagnostic(d.code));
         }
         for i in 0..hir.decorators.len() {
             let (owner, e) = hir.decorators[i];
@@ -485,10 +485,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.never_checked.borrow_mut().push((at_sign + 1, end));
                 self.reported.retain(|d| {
-                    d.start <= at_sign
-                        || d.start >= end
-                        || d.by_emit
-                        || is_binder_diagnostic(d.code)
+                    d.start <= at_sign || d.start >= end || is_binder_diagnostic(d.code)
                 });
                 continue;
             }

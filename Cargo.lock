@@ -1141,6 +1141,7 @@ dependencies = [
  "bun_lint_oxlint",
  "bun_semver",
  "bun_text_diff",
+ "bun_zstd",
  "rustc-hash",
  "smallvec",
 ]

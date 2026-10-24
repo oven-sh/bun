@@ -1,4 +1,4 @@
-//! TypeScript 7.0.2's grammarchecks.go, for signatures, members, object literals and variables. The
+//! TypeScript 7.1's grammarchecks.go, for signatures, members, object literals and variables. The
 //! walk (check_source_file.rs) and `checkObjectLiteral` call these where checker.go does. Each
 //! returns whether it reported, and the caller continues or stops as checker.go does.
 //!
@@ -852,7 +852,8 @@ impl Checker<'_, '_> {
             let container = self.files().sym(file, container);
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
-        let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
+        // The names so far, and the kinds of the properties that have each name.
+        let (mut seen, mut kinds) = (OrderedSet::default(), SmallVec::<[u8; 8]>::new());
         for p in properties.iter() {
             let prop = &hir[p];
             let current_kind = match prop.kind {
@@ -919,24 +920,26 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let Some(existing) = seen.iter_mut().find(|seen| seen.0 == effective_name) else {
-                seen.push((effective_name, current_kind));
+            let (at, is_new) = seen.insert_full(effective_name);
+            if is_new {
+                kinds.push(current_kind);
                 continue;
-            };
+            }
+            let existing = &mut kinds[at];
             let name = hir.name(hir.node(p));
-            if current_kind & existing.1 & METHOD != 0 {
+            if current_kind & *existing & METHOD != 0 {
                 let (start, end) = self.get_error_range_for_node(file, name);
                 let text = self.source_text(file, start, end);
                 self.grammar_error_at((file, start, end), 2300, &[Arg::Bytes(&text)]);
-            } else if current_kind & existing.1 & PROPERTY_ASSIGNMENT != 0 {
+            } else if current_kind & *existing & PROPERTY_ASSIGNMENT != 0 {
                 self.grammar_error_on_node(file, name, 1117, &[]);
             } else if current_kind & GET_OR_SET_ACCESSOR != 0
-                && existing.1 & GET_OR_SET_ACCESSOR != 0
+                && *existing & GET_OR_SET_ACCESSOR != 0
             {
-                if existing.1 == GET_OR_SET_ACCESSOR || current_kind == existing.1 {
+                if *existing == GET_OR_SET_ACCESSOR || current_kind == *existing {
                     return self.grammar_error_on_node(file, name, 1118, &[]);
                 }
-                existing.1 |= current_kind;
+                *existing |= current_kind;
             } else {
                 return self.grammar_error_on_node(file, name, 1119, &[]);
             }

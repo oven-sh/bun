@@ -3,7 +3,7 @@
 //!
 //! With `importHelpers`, syntax the target doesn't support is emitted as calls to functions imported from `tslib`,
 //! which must exist. Mirrors `checkExternalEmitHelpers`, `resolveHelpersModule`, `getHelperNames` and the callers of
-//! the first, in TypeScript 7.0.2's checker.go.
+//! the first, in TypeScript 7.1's checker.go.
 //!
 //! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So the requesting
 //! positions are collected and sorted in the order it visits them: source order, except for nodes that
@@ -16,7 +16,7 @@ use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::{ModuleKind, ScriptTarget};
 use crate::util::SharedSort;
 
-// `ExternalEmitHelpers`, except the two that are never requested.
+// `ExternalEmitHelpers`, except the one that's never requested.
 const REST: u32 = 1 << 0;
 const DECORATE: u32 = 1 << 1;
 const METADATA: u32 = 1 << 2;
@@ -35,6 +35,7 @@ const CLASS_PRIVATE_FIELD_IN: u32 = 1 << 15;
 const SET_FUNCTION_NAME: u32 = 1 << 16;
 const PROP_KEY: u32 = 1 << 17;
 const ADD_DISPOSABLE_RESOURCE_AND_DISPOSE_RESOURCES: u32 = 1 << 18;
+const REWRITE_RELATIVE_IMPORT_EXTENSION: u32 = 1 << 19;
 
 /// `externalHelpersModuleNameText`
 const TSLIB: &str = "tslib";
@@ -63,6 +64,7 @@ fn helper_names(helper: u32, legacy_decorators: bool) -> &'static [&'static str]
         ADD_DISPOSABLE_RESOURCE_AND_DISPOSE_RESOURCES => {
             &["__addDisposableResource", "__disposeResources"]
         }
+        REWRITE_RELATIVE_IMPORT_EXTENSION => &["__rewriteRelativeImportExtension"],
         _ => &[],
     }
 }
@@ -190,6 +192,12 @@ impl Checker<'_, '_> {
                 (None, _) => None,
                 (Some(_), CLASS_PRIVATE_FIELD_GET) => Some(3),
                 (Some(_), CLASS_PRIVATE_FIELD_SET) => Some(4),
+                // The helper gets the content mappers' extensions as two more arguments.
+                (Some(_), REWRITE_RELATIVE_IMPORT_EXTENSION)
+                    if !files.options.content_mapper_extension_rewrites.is_empty() =>
+                {
+                    Some(3)
+                }
                 (Some(_), _) => continue,
             };
             let mut args = vec![TSLIB.as_bytes().to_vec(), name.as_bytes().to_vec()];
@@ -276,7 +284,7 @@ impl Checker<'_, '_> {
     ) -> Vec<Request> {
         // `GetEmitScriptTarget`
         let target = match self.files().options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
+            ScriptTarget::None => ScriptTarget::ES2026,
             target => target,
         };
         let index = self.exprs_by_kind(file);
@@ -287,7 +295,47 @@ impl Checker<'_, '_> {
         self.emit_helpers_of_decorators(file, target, &mut requests);
         self.emit_helpers_of_class_expressions(file, target, checked, &mut requests);
         self.emit_helpers_of_private_names(file, target, &index, checked, &mut requests);
+        self.emit_helpers_of_computed_specifiers(file, &index, checked, &mut requests);
         requests
+    }
+
+    /// `checkImportCallExpression` and `checkCallExpression`: with `rewriteRelativeImportExtensions`, a specifier that
+    /// isn't a string literal is rewritten when the program runs.
+    fn emit_helpers_of_computed_specifiers(
+        &self,
+        file: FileId,
+        index: &ExprsByKind,
+        checked: &[(ExprId, (u32, u32))],
+        requests: &mut Vec<Request>,
+    ) {
+        if !self.files().options.rewrite_relative_import_extensions {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let imports = index.of(ExprTag::ImportCall).iter().filter_map(|&e| {
+            let ExprKind::ImportCall { args, .. } = hir[e].kind else {
+                return None;
+            };
+            let specifier = hir.id_at(args, 0);
+            (!matches!(hir[specifier].kind, ExprKind::Missing)).then_some((e, specifier))
+        });
+        let calls = index.of(ExprTag::Call).iter().filter(|_| hir.is_js);
+        let requires = calls.filter_map(|&e| Some((e, crate::bind::require_argument(hir, e)?)));
+        for (e, specifier) in imports.chain(requires) {
+            if is_string_literal_like(hir, specifier) {
+                continue;
+            }
+            let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {
+                continue;
+            };
+            let start = self.start_inside_parentheses(file, e);
+            requests.push(Request {
+                order: order_of_expression(e, (deferred, start), checked),
+                start,
+                end: self.end_inside_parentheses(file, e),
+                helpers: REWRITE_RELATIVE_IMPORT_EXTENSION,
+            });
+        }
     }
 
     /// The number of times `checkNodeDeferred` defers a direct child of `at`. It defers the body of a function
@@ -510,11 +558,7 @@ impl Checker<'_, '_> {
                         ask(0, whole, IMPORT_STAR);
                         continue;
                     }
-                    let mode = files.mode_of_import(file, import.mode);
-                    if files
-                        .module_of_specifier_as(file, import.spec, mode)
-                        .is_some()
-                    {
+                    if files.module_of_import(file, &import).is_some() {
                         for spec in import.named.iter() {
                             let named = hir[spec];
                             if named.imported == known::default {

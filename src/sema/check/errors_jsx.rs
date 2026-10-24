@@ -5,7 +5,7 @@
 //!
 //! Mirrors `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`, `getIntrinsicTagSymbol`,
 //! `getJsxNamespace`, `getJsxFactoryEntity`, `getJSXFragmentType`, `resolveJsxOpeningLikeElement`,
-//! `elaborateJsxComponents` and `checkJsxReturnAssignableToAppropriateBound` in TypeScript 7.0.2's jsx.go, and
+//! `elaborateJsxComponents` and `checkJsxReturnAssignableToAppropriateBound` in TypeScript 7.1's jsx.go, and
 //! `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
 //! `getCandidateForOverloadFailure` in its checker.go. `getJsxNamespaceContainerForImplicitImport` mirrors TypeScript
 //! 7.1.
@@ -30,11 +30,10 @@ impl Checker<'_, '_> {
         let options = &self.p.files.options;
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.atoms();
-        // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        let path = self.files().module(file).file_name();
+        let path = self.files().module(file).language_file_name();
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
-            .filter(|_| crate::resolve::is_jsx_file_name(path))
+            .filter(|_| crate::resolve::imports_jsx_runtime(path))
             .map(|spec| atoms.intern(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the JSX runtime module is imported implicitly, and must exist.
         let runtime_is_missing =
@@ -343,17 +342,16 @@ impl Checker<'_, '_> {
                 self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
             }
         }
-        let mut seen: Vec<PropKey> = Vec::new();
+        let mut seen = OrderedSet::default();
         for p in jsx.attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
                 continue;
             }
-            if seen.contains(&attr.key) {
+            if !seen.insert(attr.key) {
                 let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
                 return self.grammar_error_at(at, 17001, &[]);
             }
-            seen.push(attr.key);
             // The parser places the `Missing` of `name={}` at the `{`.
             if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
                 let at = (file, hir[attr.value].pos, attr.end);
@@ -455,7 +453,9 @@ impl Checker<'_, '_> {
         // `resolveUntypedCall`, `resolveErrorCall`: the attributes are checked regardless of how the tag resolves.
         let unresolved = |c: &mut Self, ret: TypeId| {
             if !is_jsx_open_fragment {
+                let outer = c.enter_jsx_attributes(file, e);
                 c.jsx_attributes_type(file, e);
+                c.expression_without_query = outer;
             }
             ResolvedCall { sig: None, ret }
         };
@@ -588,6 +588,7 @@ impl Checker<'_, '_> {
         is_checked_once: bool,
     ) -> TypeId {
         self.push_contextual_type(file, e, Some(contextual_type), false);
+        let outer_expression = self.enter_jsx_attributes(file, e);
         let ty = if is_checked_once {
             self.inference_contexts.push(InferenceContextInfo {
                 file,
@@ -619,8 +620,18 @@ impl Checker<'_, '_> {
                 |c, _| c.jsx_attributes_type(file, e),
             )
         };
+        self.expression_without_query = outer_expression;
         self.pop_contextual_type();
         ty
+    }
+
+    /// The start of `checkExpressionEx(node.Attributes(), ..)` for the element `e`. Returns the value to restore
+    /// `expression_without_query` to.
+    fn enter_jsx_attributes(&mut self, file: FileId, e: ExprId) -> Option<(CurrentNode, usize)> {
+        self.reset_instantiation_count();
+        let attributes = self.hir(file).node(e).with(Part::Attributes);
+        self.expression_without_query
+            .replace((CurrentNode::Node(file, attributes), self.stack.len()))
     }
 
     /// `checkApplicableSignatureForJsxCallLikeElement`

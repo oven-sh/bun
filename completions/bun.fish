@@ -93,6 +93,10 @@ complete -c bun \
 	-n $flag_applies --no-files -l 'use' -r -d 'Use a framework (ex: next)'
 complete -c bun \
 	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
+complete -c bun \
+	-n $flag_applies --no-files -l 'check' -d 'Type check before running. Nothing runs if there are type errors'
+complete -c bun \
+	-n $flag_applies --no-files -l 'runExternalCode' -d 'With --check: run the programs from node_modules that contentMappers in tsconfig.json lists'
 
 # Complete dev and create as first subcommand.
 complete -c bun \
@@ -228,6 +232,7 @@ complete -c bun -n "__fish_seen_subcommand_from check" -l "threads" -r -d "Numbe
 complete -c bun -n "__fish_seen_subcommand_from check" -l "timing" -d "Print load and check times"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the working directory"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "no-script" -d "Run the type checker even if the project has a check script"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "runExternalCode" -d "Run the programs from node_modules that contentMappers in tsconfig.json lists"
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"
@@ -256,6 +261,7 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -s "f" -l "format" -r -d "
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "all" -d "Show every problem (pretty and agent group identical problems above 50)"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "o" -l "output-file" -r -F -d "Write the report to a file"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "quiet" -d "Report errors only"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "verbose" -d "Print every note"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "max-warnings" -r -d "Exit with 1 if there are more warnings than this"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "color" -d "Always use colors"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-color" -d "Never use colors"

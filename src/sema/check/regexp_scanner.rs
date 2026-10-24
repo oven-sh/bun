@@ -1,7 +1,7 @@
 //! Parses regular expression literals the way an engine does and reports errors 1499 to 1538, plus
 //! the scanner's errors about escapes and missing syntax (1005, 1125, 1126, 1198, 1199, 1487, 1488).
 //!
-//! Ported from TypeScript 7.0.2:
+//! Ported from TypeScript 7.1:
 //! - regexp.go and unicodeproperties.go from the scanner
 //! - `ReScanSlashToken`, `scanEscapeSequence`, `scanUnicodeEscape`, `scanIdentifier` and
 //!   `scanIdentifierParts` from scanner.go, as far as regular expressions use them
@@ -25,7 +25,7 @@ impl Checker<'_, '_> {
         }
         // `GetEmitScriptTarget`
         let target = match self.p.files.options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
+            ScriptTarget::None => ScriptTarget::ES2026,
             target => target,
         };
         let mut scan_errors: Vec<RegExpError> = Vec::new();
@@ -114,8 +114,6 @@ struct ClassSetExpression {
     /// `expressionMayContainStrings` of `scanClassSetSubExpression`.
     sub_expression_may_contain_strings: bool,
     start: usize,
-    /// The expression's first character.
-    first: u8,
     operand: ClassAtom,
     continues_after: ClassSetOperand,
 }
@@ -197,6 +195,16 @@ fn check_regular_expression_literal(
     parser.any_unicode_mode = flags & ANY_UNICODE_MODE != 0;
     parser.unicode_sets_mode = flags & UNICODE_SETS != 0;
     parser.run();
+}
+
+/// The state of the alternative that contains a group, while the group's disjunction is scanned.
+struct OpenGroup {
+    /// `isPreviousTermQuantifiable` after the group.
+    is_quantifiable: bool,
+    /// Length of `named_capturing_groups` at the start of the alternative.
+    alternative_names: usize,
+    /// Number of names that earlier alternatives of the enclosing disjunctions defined.
+    disjunction_names: usize,
 }
 
 /// `regExpParser`, plus the parts of its underlying `Scanner` that it uses.
@@ -344,31 +352,38 @@ impl<'a> RegExpParser<'a> {
     /// `scanDisjunction`: `Alternative ('|' Alternative)*`. A group's disjunction is scanned by the
     /// same loop. tsgo recurses instead, on a stack that grows.
     fn scan_disjunction(&mut self) {
-        // For each open group, the state of the alternative that contains it:
-        // `isPreviousTermQuantifiable` after the group, and the length of `named_capturing_groups`
-        // at the start of the alternative.
-        let mut open_groups: Vec<(bool, usize)> = Vec::new();
+        let mut open_groups: Vec<OpenGroup> = Vec::new();
+        // `disjunctionNames` of every open disjunction, innermost last.
+        let mut disjunction_names: Vec<usize> = Vec::new();
         let mut is_previous_term_quantifiable = false;
         let mut outer = self.named_capturing_groups.len();
         loop {
             let is_in_group = !open_groups.is_empty();
             let opened = self.scan_alternative(is_in_group, is_previous_term_quantifiable);
             is_previous_term_quantifiable = false;
-            if let Some(is_group_quantifiable) = opened {
-                open_groups.push((is_group_quantifiable, outer));
+            if let Some(is_quantifiable) = opened {
+                open_groups.push(OpenGroup {
+                    is_quantifiable,
+                    alternative_names: outer,
+                    disjunction_names: disjunction_names.len(),
+                });
                 outer = self.named_capturing_groups.len();
                 continue;
             }
-            self.named_capturing_groups.truncate(outer);
+            disjunction_names.extend(self.named_capturing_groups.drain(outer..));
             if self.peek() == Some(b'|') {
                 self.pos += 1;
                 continue;
             }
-            let Some(enclosing) = open_groups.pop() else {
+            let Some(group) = open_groups.pop() else {
                 return;
             };
+            // One of the group's alternatives matches, so the rest of the enclosing alternative sees all their names.
+            self.named_capturing_groups
+                .extend(disjunction_names.drain(group.disjunction_names..));
             self.scan_expected_char(b')');
-            (is_previous_term_quantifiable, outer) = enclosing;
+            is_previous_term_quantifiable = group.is_quantifiable;
+            outer = group.alternative_names;
         }
     }
 
@@ -436,6 +451,14 @@ impl<'a> RegExpParser<'a> {
                                     if self.pos == flags_start + 1 {
                                         self.error(1504, flags_start, self.pos - flags_start);
                                     }
+                                }
+                                if self.pos != flags_start && self.target < ScriptTarget::ES2025 {
+                                    self.error_with(
+                                        18062,
+                                        flags_start,
+                                        self.pos - flags_start,
+                                        || vec![b"es2025".to_vec()],
+                                    );
                                 }
                                 self.scan_expected_char(b':');
                                 is_previous_term_quantifiable = true;
@@ -548,10 +571,7 @@ impl<'a> RegExpParser<'a> {
                 None => self.error(1499, self.pos, size),
                 Some(flag) if curr_flags & flag != 0 => self.error(1500, self.pos, size),
                 Some(flag) if flag & MODIFIERS == 0 => self.error(1509, self.pos, size),
-                Some(flag) => {
-                    curr_flags |= flag;
-                    self.check_flag_availability(flag, self.pos, size);
-                }
+                Some(flag) => curr_flags |= flag,
             }
             self.pos += size;
         }
@@ -827,10 +847,11 @@ impl<'a> RegExpParser<'a> {
     /// `scanGroupName`, past the `<`.
     fn scan_group_name(&mut self, is_reference: bool) {
         let start = self.pos;
-        let name = self.scan_identifier();
-        if self.pos == start {
+        let Some(name) = self.scan_identifier() else {
             self.error(1514, self.pos, 0);
-        } else if is_reference {
+            return;
+        };
+        if is_reference {
             self.group_name_references.push((start, self.pos, name));
         } else if self
             .named_capturing_groups
@@ -839,32 +860,42 @@ impl<'a> RegExpParser<'a> {
         {
             self.error(1515, start, self.pos - start);
         } else {
+            // An earlier group of this name can only be in another alternative. Below ES2018 the group is an error already.
+            if (ScriptTarget::ES2018..ScriptTarget::ES2025).contains(&self.target)
+                && self.group_specifiers.contains(&name)
+            {
+                self.error_with(18063, start, self.pos - start, || vec![b"es2025".to_vec()]);
+            }
             self.named_capturing_groups
                 .push(self.group_specifiers.len());
             self.group_specifiers.push(name);
         }
     }
 
-    /// `scanIdentifier`, `scanIdentifierParts`. Returns the name with its escapes decoded. The name
-    /// can't start with an escape.
-    fn scan_identifier(&mut self) -> Cow<'a, [u8]> {
+    /// `scanIdentifier`, `scanIdentifierParts` for a group name. Returns the name with its escapes decoded.
+    fn scan_identifier(&mut self) -> Option<Cow<'a, [u8]>> {
         let text = self.text;
         let start = self.pos;
         let (mut ch, mut size) = decode_rune(&text[self.pos..]);
-        if !is_identifier_start(ch) {
-            return Cow::Borrowed(&text[start..start]);
-        }
-        loop {
-            self.pos += size;
-            (ch, size) = decode_rune(&text[self.pos..]);
-            if !is_identifier_part(ch) {
-                break;
+        let mut name = Vec::new();
+        if is_identifier_start(ch) {
+            loop {
+                self.pos += size;
+                (ch, size) = decode_rune(&text[self.pos..]);
+                if !is_identifier_part(ch) {
+                    break;
+                }
             }
+            if ch != BACKSLASH {
+                return Some(Cow::Borrowed(&text[start..self.pos]));
+            }
+            name.extend_from_slice(&text[start..self.pos]);
+        } else if ch == BACKSLASH {
+            let escaped = self.scan_identifier_escape(is_identifier_start)?;
+            name.extend_from_slice(escaped.encode_utf8(&mut [0; 4]).as_bytes());
+        } else {
+            return None;
         }
-        if ch != BACKSLASH {
-            return Cow::Borrowed(&text[start..self.pos]);
-        }
-        let mut name = text[start..self.pos].to_vec();
         let mut start = self.pos;
         loop {
             let (ch, size) = decode_rune(&text[self.pos..]);
@@ -872,21 +903,46 @@ impl<'a> RegExpParser<'a> {
                 self.pos += size;
                 continue;
             }
+            let escape_start = self.pos;
             if ch == BACKSLASH
-                && let Some(escaped) = self.peek_unicode_escape()
-                && is_identifier_part(escaped)
-                && let Some(escaped) = char::from_u32(escaped)
+                && let Some(escaped) = self.scan_identifier_escape(is_identifier_part)
             {
-                name.extend_from_slice(&text[start..self.pos]);
+                name.extend_from_slice(&text[start..escape_start]);
                 name.extend_from_slice(escaped.encode_utf8(&mut [0; 4]).as_bytes());
-                self.scan_unicode_escape(true);
                 start = self.pos;
                 continue;
             }
             break;
         }
         name.extend_from_slice(&text[start..self.pos]);
-        Cow::Owned(name)
+        Some(Cow::Owned(name))
+    }
+
+    /// `scanIdentifierEscape`, at a backslash. A group name may also spell a character as two `\uXXXX` surrogates,
+    /// with or without `u` or `v`.
+    fn scan_identifier_escape(&mut self, is_valid: fn(u32) -> bool) -> Option<char> {
+        let escaped = self.peek_unicode_escape()?;
+        if is_valid(escaped) {
+            self.scan_unicode_escape(true);
+            return char::from_u32(escaped);
+        }
+        if self.peek_at(2) == Some(b'{') || !(0xD800..=0xDBFF).contains(&escaped) {
+            return None;
+        }
+        let save_pos = self.pos;
+        self.scan_unicode_escape(false);
+        if self.peek() == Some(b'\\')
+            && self.peek_at(2) != Some(b'{')
+            && let Some(low @ 0xDC00..=0xDFFF) = self.peek_unicode_escape()
+        {
+            let code_point = 0x10000 + ((escaped - 0xD800) << 10) + (low - 0xDC00);
+            if is_valid(code_point) {
+                self.scan_unicode_escape(false);
+                return char::from_u32(code_point);
+            }
+        }
+        self.pos = save_pos;
+        None
     }
 
     /// `isClassContentExit` for the next character.
@@ -991,7 +1047,6 @@ impl<'a> RegExpParser<'a> {
             expression_may_contain_strings: false,
             sub_expression_may_contain_strings: false,
             start: self.pos,
-            first: self.peek().unwrap_or(0),
             operand: ClassAtom::None,
             continues_after: ClassSetOperand::First,
         };
@@ -1040,8 +1095,6 @@ impl<'a> RegExpParser<'a> {
                                 ClassSetExpressionType::ClassIntersection,
                             );
                         }
-                        // tsgo's message shows the expression's first character, not the `&`.
-                        self.error_unexpected(self.pos, class.first);
                     }
                     _ => {
                         if is_character_complement && self.may_contain_strings {
@@ -1069,6 +1122,10 @@ impl<'a> RegExpParser<'a> {
             }
             ClassSetOperand::Union => {
                 class.operand = operand;
+                if is_character_complement && self.may_contain_strings {
+                    self.error(1518, class.start, self.pos - class.start);
+                }
+                class.expression_may_contain_strings |= self.may_contain_strings;
                 self.scan_class_union(class, false)
             }
             ClassSetOperand::SubExpression(expression_type) => {
@@ -1108,21 +1165,15 @@ impl<'a> RegExpParser<'a> {
                     class.continues_after = ClassSetOperand::RangeEnd(self.pos);
                     return true;
                 }
-                b'&' if is_at_switch => {
+                b'&' if is_at_switch && self.peek_at(1) == Some(b'&') => {
                     class.start = self.pos;
-                    self.pos += 1;
+                    self.pos += 2;
+                    self.error(1519, self.pos - 2, 2);
                     if self.peek() == Some(b'&') {
+                        self.error_unexpected(self.pos, ch);
                         self.pos += 1;
-                        self.error(1519, self.pos - 2, 2);
-                        if self.peek() == Some(b'&') {
-                            self.error_unexpected(self.pos, ch);
-                            self.pos += 1;
-                        }
-                        class.operand = ClassAtom::Text;
-                    } else {
-                        self.error_unexpected(self.pos - 1, ch);
-                        class.operand = ClassAtom::Char(u32::from(ch));
                     }
+                    class.operand = ClassAtom::Text;
                     continue;
                 }
                 _ => {}

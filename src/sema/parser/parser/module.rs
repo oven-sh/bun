@@ -248,7 +248,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let declarations = (self.f.imports.len(), self.f.exports.len());
         let base = self.s.props.len();
-        let (mut mode, mut has_only_strings) = (ResolutionMode::None, true);
+        let (mut mode, mut has_mode, mut has_only_strings) = (ResolutionMode::None, false, true);
         let lists = self.enter_list(ListKind::ImportAttributes);
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ImportAttributes) {
             // `parseImportAttribute`
@@ -273,7 +273,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 _ => None,
             };
             has_only_strings &= is_at_string && text.is_some();
-            if token == T::String && self.lx.text_of(key) == b"resolution-mode" {
+            // `GetResolutionModeOverride`: the first attribute with that name counts.
+            if !has_mode && token == T::String && self.lx.text_of(key) == b"resolution-mode" {
+                has_mode = true;
                 // `IsStringLiteralLike`
                 let text = text.filter(|_| !self.is_parenthesized(value));
                 mode = match text.map(|it| self.lx.text_of(it)) {
@@ -311,10 +313,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 false if is_in_type => {}
                 false => self.check_expressions_of_declaration(open, declarations),
             }
-        }
-        // `resolution-mode` only counts when it's the only attribute.
-        if self.s.props.len() != base + 1 {
-            mode = ResolutionMode::None;
         }
         let props = take_span!(self, props, base);
         let object = self.finish_expr(ExprKind::Object(props), open);
@@ -511,12 +509,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.next();
         let saved = self.clear_top_level_await_context();
         let clause_start = self.pos();
+        let phase_candidate = self.current_import_phase_modifier();
         let mut identifier = None;
         if self.is_identifier() || self.token() == T::TypeOf && self.is_flow() {
             identifier = Some((self.lx.atom, self.pos(), self.token()));
             self.next_after_name();
         }
-        let (mut type_only, mut is_deferred) = (false, false);
+        let (mut type_only, mut phase) = (false, ImportPhase::Evaluation);
         if let Some((_, keyword_pos, T::Type | T::TypeOf)) = identifier {
             let is_modifier = (self.token() != T::From
                 || self.is_identifier() && matches!(self.peek(), T::From | T::Equals))
@@ -530,32 +529,32 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.next_after_name();
                 }
             }
-        } else if let Some((name, keyword_pos, token)) = identifier
-            // Babel and oxc also have a `source` phase. It's stored like `defer`, and the text distinguishes them.
-            && (token == T::Defer
-                || (self.options.dialect.babel || self.options.dialect.oxc)
-                    && self.lx.text_of(name) == b"source")
-        {
-            is_deferred = match self.token() {
+        } else if let Some((_, keyword_pos, _)) = identifier
+            && phase_candidate != ImportPhase::Evaluation
+            // `shouldParseImportPhaseModifier`
+            && match self.token() {
                 T::From => self.peek() != T::String,
                 token => !matches!(token, T::Comma | T::Equals),
-            };
-            if is_deferred {
-                // `source` only allows `import source x from "a"`.
-                if token != T::Defer && !self.is_identifier() {
-                    self.report();
-                }
-                self.unfinish_name(keyword_pos);
-                identifier = None;
-                if self.is_identifier() {
-                    identifier = Some((self.lx.atom, self.pos(), self.token()));
-                    self.next_after_name();
-                }
+            }
+        {
+            phase = phase_candidate;
+            // The other dialects only allow `import source x from "a"`. In TypeScript that's the checker's error.
+            if phase == ImportPhase::Source
+                && self.options.dialect.typescript_5
+                && !self.is_identifier()
+            {
+                self.report();
+            }
+            self.unfinish_name(keyword_pos);
+            identifier = None;
+            if self.is_identifier() {
+                identifier = Some((self.lx.atom, self.pos(), self.token()));
+                self.next_after_name();
             }
         }
         // Without a `=`, oxc keeps parsing the import clause and then reports the missing `from`.
         if let Some((name, name_pos, _)) = identifier
-            && !is_deferred
+            && phase == ImportPhase::Evaluation
             && !matches!(self.token(), T::Comma | T::From)
             && (self.token() == T::Equals || !self.options.dialect.oxc)
         {
@@ -633,23 +632,25 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
         }
         self.context = saved;
-        // `tryParseImportClause`: without a clause there's nothing for the modifier to apply to.
-        if is_deferred && !has_clause {
+        // `tryParseImportClause`: before TypeScript 7.1, a modifier without bindings made no clause.
+        if phase != ImportPhase::Evaluation && !has_clause && self.options.dialect.typescript_5 {
             match self.parses_like_acorn_or_babel() {
                 true => self.report(),
-                false => is_deferred = false,
+                false => phase = ImportPhase::Evaluation,
             }
         }
-        let clause_end = match has_clause {
+        let clause_end = match has_clause || phase != ImportPhase::Evaluation {
             true => self.prev_end(),
             false => clause_start,
         };
         if has_clause {
             self.expect(T::From);
         }
-        let kind = match has_clause {
-            true => SpecifierKind::Import,
-            false => SpecifierKind::SideEffect,
+        let kind = match phase {
+            ImportPhase::Source => SpecifierKind::SourceImport,
+            ImportPhase::Defer => SpecifierKind::Import,
+            ImportPhase::Evaluation if has_clause => SpecifierKind::Import,
+            ImportPhase::Evaluation => SpecifierKind::SideEffect,
         };
         let (spec, mode) = self.module_specifier(kind, false, type_only);
         self.semicolon();
@@ -679,13 +680,37 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             named,
             has_named_imports,
             type_only,
-            is_deferred,
+            phase,
             mode,
             stmt: StmtId::NONE,
         });
         let statement = self.add_stmt(StmtKind::Import(declaration), start, modifiers);
         self.f[declaration].stmt = statement;
         statement
+    }
+
+    /// `currentImportPhaseModifier`
+    fn current_import_phase_modifier(&self) -> ImportPhase {
+        let dialect = self.options.dialect;
+        match self.token() {
+            // TypeScript 7.1 compares the source text, so a word with an escape is a name.
+            T::Defer | T::Source if self.lx.has_escape && !dialect.typescript_5 => {
+                ImportPhase::Evaluation
+            }
+            T::Defer => ImportPhase::Defer,
+            T::Source if self.has_source_phase() => ImportPhase::Source,
+            _ => ImportPhase::Evaluation,
+        }
+    }
+
+    /// True if `import source x from "m"` and `import.source("m")` are syntax in the file's dialect. In a TypeScript
+    /// file they are in every dialect, as in TypeScript 7.1.
+    pub(super) fn has_source_phase(&self) -> bool {
+        if !self.options.is_javascript {
+            return true;
+        }
+        let dialect = self.options.dialect;
+        dialect.babel || dialect.oxc || !dialect.typescript_5
     }
 
     /// `parseImportEqualsDeclaration`, at the `=`.

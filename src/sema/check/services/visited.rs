@@ -18,8 +18,8 @@ pub(in crate::check) enum VisitedKind {
     /// An identifier in place of the required string of `import a = require("m")` or
     /// `export * from "m"`, which is not in an expression context.
     ModuleSpecifier(ExprId),
-    /// The `defer` of `import.defer("m")`.
-    ImportDeferName(ExprId),
+    /// The `defer` of `import.defer("m")`, the `source` of `import.source("m")`.
+    ImportPhaseName(ExprId),
     /// The `const` of `x as const` and of `<const>x`.
     ConstOfAsConst(ExprId),
     /// An intrinsic element's name in a tag of this JSX element, and the string the HIR stores for
@@ -58,11 +58,11 @@ pub(in crate::check) enum VisitedKind {
     /// The identifier at an index in the `A.B.C` of a type reference.
     TypeReferenceName(TypeNodeId, u32),
     /// The identifier at an index in the `A.B.C` of `implements A.B.C`, or of the `extends A.B.C`
-    /// of an interface. The HIR stores a type reference there, but in TypeScript's tree it's an
-    /// `ExpressionWithTypeArguments` (`parseHeritageClause`).
+    /// of an interface (`parseTypeHeritageClauseElement`).
     HeritageClauseName(TypeNodeId, u32),
-    /// The property access in it that ends with the identifier at an index: `A.B`, `A.B.C`.
-    HeritageClausePropertyAccess(TypeNodeId, u32),
+    /// The qualified name in it that ends with the identifier at an index: `A.B`, `A.B.C`. The
+    /// baselines print these (`IsNameOfHeritageClauseTypeReference`).
+    HeritageClauseQualifiedName(TypeNodeId, u32),
     /// The identifier at an index in the `A.B` of `import("m").A.B`.
     ImportTypeQualifierName(TypeNodeId, u32),
     /// The identifier at an index in the `a.b` of `import x = a.b`.
@@ -115,10 +115,10 @@ impl Checker<'_, '_> {
             Some(match hir.data(owner) {
                 NodeData::Type(t) => match hir[t].kind {
                     TypeNodeKind::Ref { name: all, .. } if is_access => {
-                        VisitedKind::HeritageClausePropertyAccess(t, name.0 - all.start)
+                        VisitedKind::HeritageClauseQualifiedName(t, name.0 - all.start)
                     }
                     TypeNodeKind::Ref { name: all, .. }
-                        if hir.kind(owner) == Kind::ExpressionWithTypeArguments =>
+                        if hir.kind(hir.parent(owner)) == Kind::HeritageClause =>
                     {
                         VisitedKind::HeritageClauseName(t, name.0 - all.start)
                     }
@@ -182,7 +182,7 @@ impl Checker<'_, '_> {
                 (Part::Qualified, NodeData::Name(name)) => return in_entity_name(name, true),
                 (Part::Name, NodeData::Expr(e)) => match hir[e].kind {
                     ExprKind::AsConst(_) => VisitedKind::ConstOfAsConst(e),
-                    ExprKind::ImportCall { .. } => VisitedKind::ImportDeferName(e),
+                    ExprKind::ImportCall { .. } => VisitedKind::ImportPhaseName(e),
                     ExprKind::Fn(f) => return name_of(Decl::Fn(f)),
                     ExprKind::Class(c) => return name_of(Decl::Class(c)),
                     _ => VisitedKind::AccessName(e),

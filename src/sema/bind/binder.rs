@@ -51,6 +51,7 @@ impl Table {
             self.few.push((name, symbol));
             return None;
         }
+        cold_path();
         let mut many = spare.pop().unwrap_or_default();
         many.extend(self.few.drain(..));
         many.insert(name, symbol);
@@ -617,7 +618,10 @@ impl<'f, 's> Binder<'f, 's> {
         let f = self.f;
         let is_private = match decl {
             Decl::Member(it) => matches!(f[it].key, PropKey::Private(_)),
-            Decl::EnumMember(it) => is_private_name_at(f, f[it].pos),
+            Decl::EnumMember(it) => {
+                cold_path();
+                is_private_name_at(f, f[it].pos)
+            }
             _ => false,
         };
         if is_private {
@@ -714,6 +718,7 @@ impl<'f, 's> Binder<'f, 's> {
                     self.tables[table.idx()].insert(name, symbol, &mut self.spare_names);
                 }
                 if is_replaceable_by_method {
+                    cold_path();
                     self.b.symbols[symbol.idx()].flags |= replaceable;
                 }
                 symbol
@@ -749,12 +754,14 @@ impl<'f, 's> Binder<'f, 's> {
             }
         };
         if is_computed_name == IsComputedName::Yes {
+            cold_path();
             self.b.computed_symbols.push((table, symbol));
         }
         self.add_declaration_to_symbol(symbol, decl, includes);
         let there = &mut self.b.symbols[symbol.idx()];
         // A symbol with any declaration other than `export { a as b }` is in scope.
         if existing == Some(symbol) {
+            cold_path();
             there.flags.remove(SymFlags::EXPORT_ONLY);
         }
         if there.parent.is_none() {
@@ -1775,8 +1782,14 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `Resolve` for the value `name`, limited to what the file declares. Runs once everything is
-    /// declared. Returns `None` for `argumentsSymbol`.
-    fn resolve(&self, mut scope: ScopeId, name: Atom) -> Option<SymbolId> {
+    /// declared. Returns `None` for `argumentsSymbol`. If the search continues outside of a namespace or an enum,
+    /// `innermost_namespace` is set to the scope of the first one.
+    fn resolve(
+        &self,
+        mut scope: ScopeId,
+        name: Atom,
+        innermost_namespace: &mut ScopeId,
+    ) -> Option<SymbolId> {
         let (b, tables) = (&self.b, &self.tables);
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
@@ -1791,6 +1804,7 @@ impl<'f, 's> Binder<'f, 's> {
                     tables[b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()].get(name)
                 && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
             {
+                cold_path();
                 return Some(SymbolId::NONE);
             }
             // `meaning&ast.SymbolFlagsType`: a class's or interface's type parameter shares one
@@ -1826,6 +1840,7 @@ impl<'f, 's> Binder<'f, 's> {
                     _ => (SymFlags::VALUE | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
                 })
             {
+                cold_path();
                 return Some(symbol);
             }
             // A method's or accessor's name is its child, so its locals are searched. From there
@@ -1839,6 +1854,7 @@ impl<'f, 's> Binder<'f, 's> {
                 && !(b.symbols[symbol.idx()].flags & SymFlags::VALUE)
                     .intersects(SymFlags::TYPE | SymFlags::FUNCTION_SCOPED_VARIABLE)
             {
+                cold_path();
                 return Some(symbol);
             }
             if name == known::arguments
@@ -1846,6 +1862,11 @@ impl<'f, 's> Binder<'f, 's> {
                 && b.has_arguments(self.f, f)
             {
                 return None;
+            }
+            if innermost_namespace.is_none()
+                && matches!(s.kind, ScopeKind::Module(_) | ScopeKind::Enum(_))
+            {
+                *innermost_namespace = scope;
             }
             from = s.kind;
             scope = s.parent;
@@ -1934,7 +1955,8 @@ impl<'f, 's> Binder<'f, 's> {
             return self.b.arguments_objects.binary_search(&e).is_ok();
         }
         let scope = self.scope_of_name(node);
-        let Some(symbol) = self.resolve(scope, known::arguments) else {
+        let mut innermost_namespace = ScopeId::NONE;
+        let Some(symbol) = self.resolve(scope, known::arguments, &mut innermost_namespace) else {
             return true;
         };
         self.b
@@ -2037,7 +2059,8 @@ impl<'f, 's> Binder<'f, 's> {
             if name == known::empty {
                 continue;
             }
-            let Some(symbol) = self.resolve(scope, name) else {
+            let mut innermost_namespace = ScopeId::NONE;
+            let Some(symbol) = self.resolve(scope, name, &mut innermost_namespace) else {
                 self.b.arguments_objects.push(expr);
                 continue;
             };
@@ -2048,6 +2071,10 @@ impl<'f, 's> Binder<'f, 's> {
                 && self.is_intrinsic_jsx_identifier(expr)
             {
                 continue;
+            }
+            if symbol.is_some() && innermost_namespace.is_some() {
+                cold_path();
+                (self.b.idents_out_of_namespaces).push((expr, innermost_namespace));
             }
             if symbol.is_none() {
                 self.b.free_idents.push((expr, scope));
@@ -2075,7 +2102,10 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.unchecked_exprs.as_mut_slice().sort_unstable();
         self.b.unchecked_types.as_mut_slice().sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
+        self.b.yields.sort_unstable_by_key(|it| it.0);
+        self.b.exits.sort_unstable_by_key(|it| it.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
+        (self.b.idents_out_of_namespaces).sort_unstable_by_key(|it| it.0);
         self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
         // strictly.
@@ -2112,10 +2142,9 @@ impl<'f, 's> Binder<'f, 's> {
             // on the order in which a hash map yields its entries.
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             debug_assert!(self.b.entries[start..].is_sorted_by(|a, b| a.1 < b.1));
-            self.b.tables.push((start as u32, table.len() as u32));
+            self.b.tables.push(self.b.entries.len() as u32);
         }
-        let large_entries = large_table_entries(&self.b.tables, &self.b.entries);
-        self.b.large_tables.extend(large_entries);
+        fill_name_slots(&self.b.tables, &self.b.entries, &mut self.b.name_slots);
         self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Write out the labels' edges.
         let used_labels = self.label_edges.iter().filter(|it| it.node.is_some());
@@ -2135,7 +2164,8 @@ impl<'f, 's> Binder<'f, 's> {
         ) = measure_flow(&self.b.flow, &self.b.flow_edges, &self.b.flow_shared);
         // `collectExternalModuleReferences`
         let uses = self.f.specifier_uses.iter();
-        let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());
+        let dynamic =
+            uses.filter(|u| u.kind.is_dynamic() && !u.kind.is_source_phase() && u.spec.is_some());
         let mut dynamic: Vec<(u32, Atom)> = dynamic.map(|u| (u.pos, u.spec)).collect();
         dynamic.sort_by_key(|dynamic| dynamic.0);
         let dynamic = dynamic.iter().map(|dynamic| dynamic.1);
@@ -2220,6 +2250,7 @@ impl<'f, 's> Binder<'f, 's> {
         // `checkDecorators` never reaches the decorators of a statement that isn't a class. A
         // class's decorators are bound with it.
         for modifier in self.f.stmt_modifiers(id).iter() {
+            cold_path();
             if let ModifierKind::Decorator(decorator) = self.f[modifier].kind
                 && !matches!(self.f[id].kind, StmtKind::Class(_))
             {
@@ -2333,7 +2364,7 @@ impl<'f, 's> Binder<'f, 's> {
                     );
                     self.b.enum_member_owner[m.idx()] = e;
                     if self.f[m].computed_name.is_some() {
-                        self.unchecked_expr(self.f[m].computed_name, Parent::EnumInit(m));
+                        self.expr(self.f[m].computed_name, Parent::EnumInit(m));
                     }
                     if self.f[m].init.is_some() {
                         self.expr(self.f[m].init, Parent::EnumInit(m));
@@ -2498,7 +2529,16 @@ impl<'f, 's> Binder<'f, 's> {
             StmtKind::Import(import) => {
                 let i = &self.f[import];
                 self.b.import_scope[import.idx()] = self.scope;
-                self.statement_specifier(i.spec);
+                // `resolveImportsAndModuleAugmentations` skips the specifier of a source phase import.
+                if i.phase != ImportPhase::Source {
+                    self.statement_specifier(i.spec);
+                } else if i.default.is_some() {
+                    let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::TRANSIENT;
+                    let target = self.new_symbol(flags, i.default);
+                    let declarations = &mut self.b.symbols[target.idx()].decls;
+                    declarations.push(Decl::ImportDefault(import));
+                    self.b.source_phase_targets.push((import, target));
+                }
                 let (alias, excludes) = (SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES);
                 let default = i.default.is_some().then_some(Decl::ImportDefault(import));
                 let namespace = i
@@ -2606,6 +2646,7 @@ impl<'f, 's> Binder<'f, 's> {
                 | StmtKind::TypeAlias(_)
                 | StmtKind::Fn(_)
         ) {
+            cold_path();
             self.yields.truncate(counted);
         }
         self.is_reached = outer_is_reached;
@@ -2879,7 +2920,17 @@ impl<'f, 's> Binder<'f, 's> {
         let container = self.b.container_scope(self.scope);
         let is_in_file = matches!(self.b.scopes[container.idx()].kind, ScopeKind::File);
         let is_global = is_in_file && !self.f.has_module_syntax;
+        // `TryParsePattern`
+        let is_pattern = matches!(decl.name, ModuleName::String(name) if name.is_some()
+            && bun_core::strings::count_char(self.atoms.bytes(name), b'*') == 1);
         let symbol = match decl.name {
+            // `getDeclarationName`: every pattern with import attributes has a name that nothing else has.
+            // `mergePatternAmbientModules` merges those whose attributes are the same.
+            ModuleName::String(name)
+                if is_pattern && decl.attributes.is_some() && !is_augmentation =>
+            {
+                self.bind_anonymous_declaration(Decl::Module(m), flags, name)
+            }
             ModuleName::String(name)
                 if is_in_file || self.enclosing_ambient_module(container).is_some() =>
             {
@@ -2922,16 +2973,16 @@ impl<'f, 's> Binder<'f, 's> {
                 self.declare_symbol_and_add_to_symbol_table(Decl::Module(m), flags, excludes)
             }
         };
-        // `bindModuleDeclaration`, `TryParsePattern`
+        // `bindModuleDeclaration`
         if let ModuleName::String(name) = decl.name
             && !is_augmentation
-            && name.is_some()
-            && (self.atoms.bytes(name).iter())
-                .filter(|&&c| c == b'*')
-                .count()
-                == 1
+            && is_pattern
         {
             self.b.pattern_ambient_modules.push((name, symbol));
+        }
+        // Names in the attributes don't resolve to what the module declares.
+        if decl.attributes.is_some() {
+            self.ty(decl.attributes);
         }
         // `collectModuleReferences`: anywhere else it augments nothing. 2669
         if decl.name == ModuleName::Global
@@ -3622,11 +3673,18 @@ impl<'f, 's> Binder<'f, 's> {
             scope,
             enclosing: saved.7,
             returns: IdList::new(rs, rl),
-            yields: IdList::new(ys, yl),
             end,
-            exit,
             contains_this: self.seen_this,
+            is_context_sensitive: false,
         };
+        if yl != 0 {
+            self.b.yields.push((id, IdList::new(ys, yl)));
+        }
+        self.b.fns[id.idx()].is_context_sensitive = (self.b)
+            .is_context_sensitive_function_like_declaration(self.f, id, IdList::new(ys, yl));
+        if exit.is_some() {
+            self.b.exits.push((id, exit));
+        }
         // `ContainerFlagsPropagatesThisKeyword`. An index signature isn't a control flow container
         // at all.
         let propagates = match f.kind {
@@ -3728,6 +3786,9 @@ impl<'f, 's> Binder<'f, 's> {
         }
         for t in self.f.ids(c.implements) {
             self.ty(t);
+        }
+        for tag in self.f.augments_tags_of(id) {
+            self.ty(tag.class_name);
         }
         let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
         self.tys(c.other_implements);
@@ -4268,14 +4329,13 @@ impl<'f, 's> Binder<'f, 's> {
                 self.tys(args)
             }
             TypeNodeKind::Import { args, .. } => {
-                // `checkImportType` only reads `resolution-mode`.
                 // In JavaScript, two copies of a JSDoc type share one.
                 if let Some(attributes) = self.f.attributes_of_import_type(id)
                     && matches!(self.b.parent_of_expr(attributes), Parent::None)
                 {
                     let saved = (self.true_target, self.false_target);
                     (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
-                    self.unchecked_expr(attributes, Parent::File);
+                    self.expr(attributes, Parent::File);
                     (self.true_target, self.false_target) = saved;
                 }
                 self.tys(args)
@@ -4609,6 +4669,7 @@ impl<'f, 's> Binder<'f, 's> {
                 let name = self.associated_declaration;
                 self.b.expr_flow[id.idx()] = self.flow;
                 if name.is_some() {
+                    cold_path();
                     self.b.identifiers_in_parameters.push((id, name));
                 }
             }
@@ -4853,7 +4914,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.expr(e, me);
             }
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 // `checkImportCallExpression` never checks them.
                 let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
                 self.tys(self.f.type_args_of_import_call(args));

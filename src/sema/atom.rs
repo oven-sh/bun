@@ -8,6 +8,7 @@ use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
 use crate::util::{AppendVec, GrowingSlots, SHARDS, spread_hash};
 use std::alloc::Global;
+use std::hint::cold_path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// An interned name. Its number is its index in a list that every parser thread appends to, so it
@@ -342,6 +343,7 @@ known_atoms! {
     IArguments = "IArguments",
     TemplateStringsArray = "TemplateStringsArray",
     ImportMeta = "ImportMeta",
+    AbstractModuleSource = "AbstractModuleSource",
     Error = "Error",
     Map = "Map",
     Set = "Set",
@@ -426,6 +428,7 @@ known_atoms! {
     async_ = "async",
     AsyncDisposable = "AsyncDisposable",
     tslib = "tslib",
+    with = "with",
     // Names that lint rules look for.
     callee = "callee",
     caller = "caller",
@@ -913,6 +916,7 @@ impl<'p, 's> Atoms<'p, 's> {
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &'p [u8] {
         if atom.is_own() {
+            cold_path();
             self.own.atom_bytes(atom)
         } else {
             self.published.bytes(atom)
@@ -928,6 +932,7 @@ impl<'p, 's> Atoms<'p, 's> {
     #[inline]
     fn class(&self, atom: Atom) -> u32 {
         if atom.is_own() {
+            cold_path();
             return class_of(self.bytes(atom));
         }
         self.published.class(atom)

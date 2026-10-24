@@ -2,11 +2,12 @@
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
+use super::types::{NodeKind, Types};
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
 use crate::code_path;
-use crate::estree::Dialect;
+use crate::estree::{Dialect, is_typescript_estree};
 use crate::fix::Fix;
 use crate::language::{LanguageOptions, SourceType};
 use crate::linter::{normalize_plugin_name, write_json};
@@ -128,12 +129,42 @@ struct State {
     /// Keyed by selector text.
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
-    /// [`Host::rules_that_asked_for_types`]
-    asked_for_types: Vec<Arc<Rule>>,
+    asked_for_types: Vec<AskedForTypes>,
+    /// The kinds of node that rules have wanted the type of. It's sorted.
+    kinds_with_types: Vec<NodeKind>,
+}
+
+impl State {
+    fn want_types_of(&mut self, kinds: &[NodeKind]) {
+        for kind in kinds {
+            if let Err(at) = self.kinds_with_types.binary_search(kind) {
+                self.kinds_with_types.insert(at, *kind);
+            }
+        }
+    }
+}
+
+/// A rule that [has asked for types](Host::has_asked_for_types).
+struct AskedForTypes {
+    rule: Arc<Rule>,
+    /// What it read from the types that isn't known. It doesn't run on any more files.
+    unknown: Option<Box<[u8]>>,
+    /// [`Host::skip_for_types`]
+    was_skipped: bool,
+}
+
+/// A rule that didn't run on some file.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct SkippedForTypes {
+    pub id: Box<[u8]>,
+    /// What it read from the types that isn't known. `None` means its files have no types.
+    pub unknown: Option<Box<[u8]>>,
 }
 
 /// The start of the error that `getParserServices` in `@typescript-eslint/utils` throws, in every version.
 const NEEDS_TYPES_ERROR_PREFIX: &[u8] = b"You have used a rule which requires ";
+/// What follows it in the error of `refuse` in `worker/main.js`. Then comes what the rule read.
+const UNKNOWN_TYPE_INFORMATION: &[u8] = b"type information that bun lint does not have: ";
 
 /// A run's plugins, shared by all threads.
 pub struct Host<'e> {
@@ -193,6 +224,13 @@ impl Work for IndexedWork<'_> {
     }
 }
 
+/// Whether rules get the types of all kinds of node.
+#[derive(Copy, Clone)]
+enum AllKinds {
+    No,
+    Yes,
+}
+
 /// The arguments of [`Host::run_on_block`] other than the file.
 #[derive(Copy, Clone)]
 struct RunOptions<'h> {
@@ -200,6 +238,9 @@ struct RunOptions<'h> {
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
     physical_path_len: Option<usize>,
+    types: Option<&'h Types>,
+    /// What [`ask::WANTED_TYPE`] says is added to it.
+    kinds_without_types: &'h Guarded<Vec<NodeKind>>,
 }
 
 const PLUGIN_PROTOCOL_ERROR: &[u8] =
@@ -314,10 +355,29 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// True if `rule` has asked for types, which JavaScript rules can't get. It isn't run on any more files.
+    /// True if `rule` has asked for types. From then on it only runs on files that have types.
     pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
-            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
+            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(&it.rule, rule))
+    }
+
+    /// True if `rule` [has asked for types](Host::has_asked_for_types) and hasn't read anything from them that isn't
+    /// known. So it runs on a file that has types, and linting a file with types is worth it.
+    pub(crate) fn can_use_types(&self, rule: &Arc<Rule>) -> bool {
+        self.has_been_asked_for_types.load(Ordering::Relaxed)
+            && (self.state.lock().asked_for_types.iter())
+                .any(|it| Arc::ptr_eq(&it.rule, rule) && it.unknown.is_none())
+    }
+
+    /// True if a rule gets types from `file`'s `parserServices`, provided the file is linted with types.
+    pub(crate) fn hands_out_types(file: &File) -> bool {
+        is_typescript_estree(file)
+    }
+
+    /// False if `rule` [has asked for types](Host::has_asked_for_types) that it can't get from `file`.
+    pub(crate) fn can_run(&self, rule: &Arc<Rule>, file: &File) -> bool {
+        !self.has_asked_for_types(rule)
+            || (file.types.is_some() && Self::hands_out_types(file) && self.can_use_types(rule))
     }
 
     /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
@@ -325,22 +385,88 @@ impl<'e> Host<'e> {
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
         // With an oxlint config, the error's class precedes the message.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        if !message.starts_with(NEEDS_TYPES_ERROR_PREFIX) {
+        let Some(what) = message.strip_prefix(NEEDS_TYPES_ERROR_PREFIX) else {
             return false;
+        };
+        let unknown = what.strip_prefix(UNKNOWN_TYPE_INFORMATION).map(Box::from);
+        let mut state = self.state.lock();
+        let asked = &mut state.asked_for_types;
+        match asked.iter_mut().find(|it| Arc::ptr_eq(&it.rule, rule)) {
+            Some(known) => known.unknown = known.unknown.take().or(unknown),
+            None => asked.push(AskedForTypes {
+                rule: Arc::clone(rule),
+                unknown,
+                was_skipped: false,
+            }),
         }
-        if !self.has_asked_for_types(rule) {
-            self.state.lock().asked_for_types.push(Arc::clone(rule));
-            self.has_been_asked_for_types.store(true, Ordering::Relaxed);
-        }
+        self.has_been_asked_for_types.store(true, Ordering::Relaxed);
         true
     }
 
-    /// The rules that [have asked for types](Host::has_asked_for_types), sorted by name.
-    pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
-        let mut rules = self.state.lock().asked_for_types.clone();
-        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
-        rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
+    /// `rule`, which [has asked for types](Host::has_asked_for_types), didn't run on a file.
+    pub(crate) fn skip_for_types(&self, rule: &Arc<Rule>) {
+        let mut state = self.state.lock();
+        let mut asked = state.asked_for_types.iter_mut();
+        if let Some(asked) = asked.find(|it| Arc::ptr_eq(&it.rule, rule)) {
+            asked.was_skipped = true;
+        }
+    }
+
+    /// The rules that [were skipped](Host::skip_for_types), sorted by name.
+    pub fn rules_skipped_for_types(&self) -> Vec<SkippedForTypes> {
+        let state = self.state.lock();
+        let skipped = state.asked_for_types.iter().filter(|it| it.was_skipped);
+        let mut rules: Vec<SkippedForTypes> = skipped
+            .map(|it| SkippedForTypes {
+                id: it.rule.id.clone(),
+                unknown: it.unknown.clone(),
+            })
+            .collect();
+        crate::utils::sort::sort(&mut rules);
+        // Each config file that imports a plugin has its own rules.
+        rules.dedup();
         rules
+    }
+
+    /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, how much there is, these rules'
+    /// positions, and what they can learn about the types in `file`. `None` if none of them has asked.
+    ///
+    /// How much there is: 0 if `file` has no types, 1 for the kinds of node that rules have wanted the type of so far, 2
+    /// for `all_kinds`.
+    ///
+    /// Without types, the rules still get `parserServices` that look as if there were types. That shows, without a type
+    /// check, whether a rule reads something that isn't known.
+    fn types_for<'a>(
+        &self,
+        file: &'a File<'a>,
+        enabled: &[&Configured],
+        all_kinds: AllKinds,
+    ) -> Option<Types> {
+        if !Self::hands_out_types(file) {
+            return None;
+        }
+        let positions = (0..).zip(enabled);
+        let asked = positions.filter(|it| self.has_asked_for_types(&it.1.rule));
+        let extent = match (file.types.is_some(), all_kinds) {
+            (false, _) => 0,
+            (true, AllKinds::No) => 1,
+            (true, AllKinds::Yes) => 2,
+        };
+        let mut words = vec![0, extent];
+        words.extend(asked.map(|it| it.0));
+        words[0] = words.len() as u32 - 2;
+        if words[0] == 0 {
+            return None;
+        }
+        let mut types = Types {
+            words,
+            ..Types::default()
+        };
+        if extent != 0 {
+            let kinds = (extent == 1).then(|| self.state.lock().kinds_with_types.clone());
+            types.add_nodes(file, kinds.as_deref());
+        }
+        Some(types)
     }
 
     /// The known plugins, each with its location: the `[directory, specifier, alias]` of [`Host::load`], or the
@@ -557,22 +683,40 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
         parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
-        let run_options = RunOptions {
-            settings,
-            enabled,
-            wants_fixes,
-            physical_path_len,
+        let kinds_without_types = Guarded::new(Vec::new());
+        let run = |all_kinds: AllKinds| {
+            let types = self.types_for(file, enabled, all_kinds);
+            let run_options = RunOptions {
+                settings,
+                enabled,
+                wants_fixes,
+                physical_path_len,
+                types: types.as_ref(),
+                kinds_without_types: &kinds_without_types,
+            };
+            let size = file.text().len();
+            let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
+            if self.engine.thread_has_realm() {
+                (self.engine).with_vm_here(size, &mut |vm| {
+                    outcome = self.run_in(vm, file, &run_options)
+                })?;
+            } else if let Some(parse_again) = parse_again {
+                self.engine.with_vm(size, &mut |vm| {
+                    parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
+                })?;
+            }
+            outcome
         };
-        let size = file.text().len();
         let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
-        if self.engine.thread_has_realm() {
-            (self.engine).with_vm_here(size, &mut |vm| {
-                outcome = self.run_in(vm, file, &run_options)
-            })?;
-        } else if let Some(parse_again) = parse_again {
-            self.engine.with_vm(size, &mut |vm| {
-                parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
-            })?;
+        // A rule that wants the type of a new kind of node gets a stand-in, and what the rules did doesn't count: they
+        // run again. With all kinds there are no new ones.
+        for all_kinds in [AllKinds::No, AllKinds::No, AllKinds::Yes] {
+            outcome = run(all_kinds);
+            let new = std::mem::take(&mut *kinds_without_types.lock());
+            if new.is_empty() {
+                break;
+            }
+            self.state.lock().want_types_of(&new);
         }
         let (reports, used) = outcome?;
         scopes::mark_used(file, used.into_iter());
@@ -591,6 +735,8 @@ impl<'e> Host<'e> {
             enabled,
             wants_fixes,
             physical_path_len,
+            types,
+            kinds_without_types,
         } = *run_options;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
@@ -606,7 +752,9 @@ impl<'e> Host<'e> {
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
-            | (u32::from(ast::shortens_nodes(file)) << 8);
+            | (u32::from(ast::shortens_nodes(file)) << 8)
+            | (u32::from(types.is_some()) << 9)
+            | (u32::from(file.language().eslint_major < 10) << 10);
         wire::words(
             &mut message,
             &[
@@ -656,6 +804,23 @@ impl<'e> Host<'e> {
             }
             ask::REPORTS => reports::read(details, &offsets, &mut reported.borrow_mut()),
             ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
+            ask::TYPES => wire::words(out, types.map_or(&[][..], |it| &it.words)),
+            ask::TYPE_NAMES => out.extend_from_slice(types.map_or(&[][..], |it| &it.names)),
+            ask::WANTED_TYPE => {
+                let mut kind: NodeKind = [0; 2];
+                let mut at = 0;
+                for byte in details {
+                    match byte {
+                        b' ' => at = 1,
+                        digit => {
+                            kind[at] = kind[at]
+                                .wrapping_mul(10)
+                                .wrapping_add(digit.wrapping_sub(b'0'));
+                        }
+                    }
+                }
+                kinds_without_types.lock().push(kind);
+            }
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {

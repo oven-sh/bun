@@ -872,6 +872,80 @@ describe.concurrent("sortImports sources", () => {
     }
   });
 
+  test("an import keeps its phase, whichever sorter moves it", async () => {
+    const lines = [
+      `import source a from "a.wasm";`,
+      `import z from "z";`,
+      `import source b from "./b.wasm";`,
+      `import defer * as d from "./d";`,
+      `console.log(a, z, b, d);`,
+    ];
+    const files = { "a.ts": [1, 2, 3, 0, 4].map(at => `${lines[at]}\n`).join("") };
+    const plugin = (name: string, options?: object) => ({
+      ".prettierrc": JSON.stringify({ plugins: [name], ...options }),
+    });
+    const results = await Promise.all([
+      format({ ...bunfig, ...files }),
+      format({ ".oxfmtrc.json": `{ "sortImports": true }`, ...files }),
+      format({ ...plugin("@trivago/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), ...files }),
+      format({ ...plugin("@ianvs/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), ...files }),
+      format({ ...plugin("prettier-plugin-organize-imports"), ...files }),
+    ]);
+    for (const result of results) {
+      expect(result.files["a.ts"].split("\n").filter(Boolean)).toEqual(lines);
+      expect(result.second.files).toEqual(result.files);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
+  test("an import with a phase is never merged with another import of the module", async () => {
+    const source = `import source a from "./m.wasm";`;
+    const deferred = `import defer * as a from "./m";`;
+    const pairs = [
+      [source, `import { b } from "./m.wasm";`],
+      [source, `import * as b from "./m.wasm";`],
+      [source, `import b from "./m.wasm";`],
+      [source, `import source b from "./m.wasm";`],
+      [source, `import type { b } from "./m.wasm";`],
+      [deferred, `import { b } from "./m";`],
+      [deferred, `import * as b from "./m";`],
+      [deferred, `import b from "./m";`],
+      [deferred, `import defer * as b from "./m";`],
+      [deferred, `import source b from "./m";`],
+    ];
+    // Which import the others are merged into depends on the order.
+    const cases = pairs.flatMap(pair => [pair, pair.toReversed()]);
+    const uses = "console.log(a as typeof b);\n";
+    const files = Object.fromEntries(cases.map((lines, index) => [`${index}.ts`, `${lines.join("\n")}\n${uses}`]));
+    // The imports around it still merge, where the sorter merges.
+    const around = [`import { c } from "./m.wasm";`, source, `import { b } from "./m.wasm";`];
+    files["around.ts"] = `${around.join("\n")}\nconsole.log(a, b, c);\n`;
+    const merged = [`import { b, c } from "./m.wasm";`, source];
+    const plugin = (name: string, options?: object) => ({
+      ".prettierrc": JSON.stringify({ plugins: [name], ...options }),
+    });
+    const sorters: [config: Record<string, string>, around: string[]][] = [
+      [bunfig, merged],
+      [{ ".oxfmtrc.json": `{ "sortImports": true }` }, around],
+      [plugin("@trivago/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), around],
+      [plugin("@ianvs/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), merged],
+      [plugin("prettier-plugin-organize-imports"), merged],
+    ];
+    const results = await Promise.all(sorters.map(([config]) => format({ ...config, ...files })));
+    const importsOf = (text: string) =>
+      text
+        .split("\n")
+        .filter(line => line.startsWith("import "))
+        .sort();
+    for (const [at, result] of results.entries()) {
+      expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+      const found = cases.map((_, index) => importsOf(result.files[`${index}.ts`]));
+      expect(found).toEqual(cases.map(lines => lines.toSorted()));
+      expect(importsOf(result.files["around.ts"])).toEqual(sorters[at][1].toSorted());
+      expect(result.second).toMatchObject({ stderr: "", exitCode: 0, files: result.files });
+    }
+  });
+
   test("a Flow file is still a Flow file after its imports are sorted", async () => {
     const code = (imports: string) =>
       `// @flow\n${imports}export function f(x: ?number): %checks {\n  return !!x;\n}\n`;

@@ -81,11 +81,8 @@ export async function inBatches<T>(items: T[], run: (item: T) => Promise<void>) 
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-/**
- * `deep`: nested too deeply for an unoptimized build's stack, or too slow in one.
- * `theirs`: what TypeScript 7.1 reports, where `bun check` follows it and the installed tsc reports something else.
- */
-type Case = { files: Record<string, string>; build?: true; deep?: true; theirs?: string[] };
+/** `deep`: nested too deeply for an unoptimized build's stack, or too slow in one. */
+type Case = { files: Record<string, string>; build?: true; deep?: true };
 
 /** Returns the programs of differential-cases.json that this build and system can check, each written to `root`/name. */
 export async function writtenCases(root: string, isWanted: (it: Case, index: number) => boolean) {
@@ -140,8 +137,7 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
           ]);
           // tsc runs last, because `tsc -b` writes files.
-          const theirs =
-            it.theirs ?? (await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root));
+          const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
           else if (!Bun.deepEquals(theirs, onOneThread)) different[name] = { theirs, onOneThread };
         });

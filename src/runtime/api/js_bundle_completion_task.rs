@@ -42,6 +42,7 @@ use crate::api::js_bundler::js_bundler::{
     CompileOptions, Config as JSBundlerConfig, Plugin, PluginJscExt,
 };
 use crate::api::output_file_jsc::OutputFileJsc as _;
+use crate::cli::content_mapper_process::KillSwitch;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
@@ -74,6 +75,8 @@ pub(crate) struct JSBundleCompletionTask {
     /// the bundle thread (`CompletionDispatch::is_cancelled`: stop waiting on
     /// plugins, fail the build).
     pub(crate) cancelled: core::sync::atomic::AtomicBool,
+    /// Stops the content mappers of the build's type check, whose answers the bundle thread waits for without a limit.
+    content_mappers: KillSwitch,
     /// The bundle thread's uws loop while this build runs there, so a
     /// cancelling VM can wake its Mini loop out of an idle wait.
     pub(crate) bundle_loop: core::sync::atomic::AtomicPtr<bun_uws::Loop>,
@@ -185,6 +188,7 @@ impl JSBundleCompletionTask {
             )),
             log: bun_ast::Log::init(),
             cancelled: core::sync::atomic::AtomicBool::new(false),
+            content_mappers: KillSwitch::default(),
             bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
             stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
@@ -611,9 +615,10 @@ impl JSBundleCompletionTask {
     ///   for the bundle thread to free when it dequeues it — the VM does not
     ///   wait behind other VMs' builds.
     /// * Already on the bundle thread: tombstone the plugin — which answers what
-    ///   the plugins still hold as cancelled — then cancel and wake the bundle
-    ///   thread; it consumes those answers, fails the build and posts the
-    ///   completion, which teardown waits for and releases.
+    ///   the plugins still hold as cancelled — then cancel, stop the content
+    ///   mappers and wake the bundle thread; it consumes those answers, fails
+    ///   the build and posts the completion, which teardown waits for and
+    ///   releases.
     ///
     /// # Safety
     /// `this` is live (its completion has not run); JS thread.
@@ -651,6 +656,7 @@ impl JSBundleCompletionTask {
                 crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
             }
             (*this).cancelled.store(true, Ordering::Release);
+            (*this).content_mappers.stop();
             let l = (*this).bundle_loop.load(Ordering::Acquire);
             if !l.is_null() {
                 bun_uws::us_wakeup_loop(l);
@@ -889,6 +895,11 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
     unsafe { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
 }
 
+/// `JSBundleCompletionTask::content_mappers` of a build that is on the bundle thread.
+pub(crate) fn kill_switch_of(completion: NonNull<Bv2OpaqueCompletion>) -> KillSwitch {
+    from_completion_handle(completion).content_mappers.clone()
+}
+
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     is_cancelled: |c| {
         from_completion_handle(c)
@@ -1088,9 +1099,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
-        transpiler.options.type_check = config
-            .check
-            .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
+        transpiler.options.type_check = config.check;
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

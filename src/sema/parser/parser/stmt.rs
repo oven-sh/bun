@@ -298,7 +298,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         && !self.newline_before();
                 }
                 T::Interface | T::Type => return self.next_is_identifier_on_same_line(),
-                T::Defer if self.recovers() => return self.next_is_identifier_on_same_line(),
+                T::Defer | T::Source if self.recovers() => {
+                    return self.next_is_identifier_on_same_line();
+                }
                 T::Module | T::Namespace => {
                     self.next();
                     // oxc clears the await context for the declaration.
@@ -1102,6 +1104,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn module_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         let flags = self.ambient() | flags & Flags::EXPORT;
         let (name, name_pos, specifies_module);
+        let mut attributes = TypeNodeId::NONE;
         match self.token() {
             // `parseAmbientExternalModuleDeclaration`
             T::Global => {
@@ -1134,6 +1137,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
                 specifies_module = false;
                 self.next_after_string();
+                if self.token() == T::With && !self.is_ecmascript {
+                    self.next();
+                    attributes = self.type_literal();
+                }
             }
         }
         let (body, has_body) = match self.token() {
@@ -1147,6 +1154,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             name,
             name_pos,
             flags,
+            attributes,
             body,
             has_body,
             specifies_module,
@@ -1205,6 +1213,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             name: ModuleName::Ident(name),
             name_pos,
             flags,
+            attributes: TypeNodeId::NONE,
             body,
             has_body: true,
             specifies_module,

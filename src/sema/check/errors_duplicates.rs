@@ -1,7 +1,7 @@
 //! Conflicting declarations of one name: 2300 2451 2528 2567 2649 2699. Also declarations that merge only under certain
 //! conditions: 2309 2323 2433 2434.
 //!
-//! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` in binder.go, which reject a
+//! In TypeScript 7.1 this is spread over `declareSymbolEx` and `declareModuleMember` in binder.go, which reject a
 //! declaration excluded by the symbol already in the table, `mergeSymbol` in checker.go, which does the same across
 //! files, `checkObjectTypeForDuplicateDeclarations`, `checkExternalModuleExports` and `checkTypeParameters`. The
 //! declarations the binder rejected are recorded (`Bound::redeclarations`) and are reported here.
@@ -14,6 +14,7 @@ use crate::bind::{
     assignment_declaration_kind, flags_of_member,
 };
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the declaration's own symbol,
 /// to which it contributes its flags. The local symbol of a name in a module or a namespace also lists the declarations
@@ -153,19 +154,21 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `getDisplayName`: the source text of the name node. `export = e` and `export default e` have no name node and
         // use `getDeclarationName`.
-        let display_name: &[u8] = match node {
-            Decl::ExportExpr(it) if matches!(hir[it].kind, StmtKind::ExportAssign(_)) => b"export=",
-            Decl::ExportExpr(_) => b"default",
+        let display_name: Cow<'_, [u8]> = match node {
+            Decl::ExportExpr(it) if matches!(hir[it].kind, StmtKind::ExportAssign(_)) => {
+                Cow::Borrowed(&b"export="[..])
+            }
+            Decl::ExportExpr(_) => Cow::Borrowed(&b"default"[..]),
             _ if !matches!(node, Decl::Member(_) | Decl::Property(_))
                 && self.is_declaration_name_missing(file, node) =>
             {
                 end = NO_LENGTH;
-                b"(Missing)"
+                Cow::Borrowed(&b"(Missing)"[..])
             }
-            _ => (hir.text.get(start as usize..end as usize)).unwrap_or_default(),
+            _ => super::spans::text_of_node_at(hir, start, end),
         };
         let message_needs_name = !matches!(message, 2528 | 2567);
-        let args = [Arg::Bytes(display_name)];
+        let args = [Arg::Bytes(&display_name)];
         Some(self.new_diagnostic(
             (file, start, end),
             message,
@@ -703,9 +706,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         let before = files.rank_of_file(file) as usize;
         files.order.iter().take(before).any(|&other| {
-            // A file with an `export *` isn't a leaf, and a leaf's data is freed after its task.
-            !files.module(other).is_leaf
-                && !self.bound(other).export_stars.is_empty()
+            !self.bound(other).export_stars.is_empty()
                 && files.module(other).is_module()
                 && self.is_checked_no_later_than(other, file)
                 && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))
@@ -818,7 +819,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
-        let mut names: SmallVec<[(Atom, bool, u8); 4]> = SmallVec::new();
+        let (mut names, mut states) = (OrderedSet::default(), SmallVec::<[u8; 4]>::new());
         // 1 for an instance member, 2 for a static member.
         let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
         for m in members.iter() {
@@ -857,14 +858,14 @@ impl Checker<'_, '_> {
                 if count < 2 || kind == 0 {
                     continue;
                 }
-                match names.iter_mut().find(|n| (n.0, n.1) == (name, is_static)) {
-                    None => names.push((name, is_static, kind)),
-                    Some(state) if state.2 == 1 || state.2 == 2 && kind != 2 => {
-                        state.2 = 3;
+                match names.insert_full((name, is_static)) {
+                    (_, true) => states.push(kind),
+                    (at, false) if states[at] == 1 || states[at] == 2 && kind != 2 => {
+                        states[at] = 3;
                         let is_static = Some(is_static);
                         self.report_duplicate_member_errors(file, members, name, is_static, 2300);
                     }
-                    Some(_) => {}
+                    _ => {}
                 }
             }
             if check_private_names && let (Some(name), PropKey::Private(_)) = (name, member.key) {
@@ -922,10 +923,15 @@ impl Checker<'_, '_> {
                 let first = first.filter(|_| is_stored);
                 let first = first.and_then(|(of, first)| self.span_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(declaration_span);
-                // `GetTextOfNode` doesn't skip the `*` before the name.
-                let from = super::spans::start_of_error_range(self.hir(of), from, to);
+                let text = super::spans::text_of_node_at(self.hir(of), from, to);
+                // `DeclarationNameToString`
+                if self.is_declaration_name_missing(file, declaration) {
+                    let at = (file, declaration_span.1, declaration_span.1);
+                    self.error_at(at, code, &[Arg::Bytes(b"(Missing)")]);
+                    continue;
+                }
                 let text = match is_stored || self.atoms().is_symbol_name(name) {
-                    true => Arg::Bytes(&self.hir(of).text[from as usize..to as usize]),
+                    true => Arg::Bytes(&text),
                     false => Arg::Atom(name),
                 };
                 self.error_at(declaration_span, code, &[text]);

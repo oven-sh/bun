@@ -1195,7 +1195,7 @@ impl<'a> Lexer<'a> {
         // "'#!' can only be used at the start of a file."
         if self.at(start + 1) == b'!' {
             self.report(18026, (start, start + 2), &[]);
-            return self.set(T::Invalid, start, start + 1);
+            return self.set(T::Invalid, start, start + 2);
         }
         self.report(1127, (start, start + 1), &[]);
         self.has_escape = false;

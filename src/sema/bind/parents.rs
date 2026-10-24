@@ -13,10 +13,9 @@ pub(super) const NO_FUNCTION: FnInfo = FnInfo {
     scope: ScopeId::NONE,
     enclosing: FnId::NONE,
     returns: IdList::EMPTY,
-    yields: IdList::EMPTY,
     end: UNREACHABLE,
-    exit: FlowId::NONE,
     contains_this: false,
+    is_context_sensitive: false,
 };
 
 /// The lists to fill in. Each is as long as the file's matching list and starts out with empty
@@ -337,7 +336,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Template { exprs, .. } => list!(exprs),
             ExprKind::Array(items) => list!(items),
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 list!(args);
                 if !f.import_call_type_args.is_empty() {
                     tys!(f.type_args_of_import_call(args));

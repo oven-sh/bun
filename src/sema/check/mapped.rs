@@ -6,9 +6,13 @@ use super::shortcuts::task_fact;
 use super::*;
 use crate::bind::Decl;
 use crate::bind::Parent;
-use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppercase_unicode_15};
 use crate::util::SharedSort;
 use smallvec::SmallVec;
+
+/// `maxTemplateLiteralTypeLength`, in bytes.
+const MAX_TEMPLATE_LITERAL_TYPE_LENGTH: usize = 50_000_000;
+/// `maxTemplateLiteralTypeSpans`
+const MAX_TEMPLATE_LITERAL_TYPE_SPANS: usize = 100_000;
 
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None` is an access produced by instantiation
 /// or by a constraint. `Other` is a name in a pattern, where nothing is reported yet.
@@ -125,6 +129,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         mapper: MapperId,
     ) -> MapperId {
+        let source = self.non_distributed(source);
         let target = self.types().map(mapper, target).unwrap_or(target);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
             SmallVec::from_slice(self.types().mapping(mapper));
@@ -201,6 +206,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (object, index, is_resolved)
             }
             TypeData::Substitution { base, constraint } => {
+                cold_path();
                 self.generic_object_flags_of_all(&[base, constraint])
             }
             _ => {
@@ -266,6 +272,7 @@ impl<'p, 's> Checker<'p, 's> {
         if mapped.name_ty.is_none() {
             return false;
         }
+        cold_path();
         let declared = self.declared_name_type_of_mapped(file, node);
         let param = self.type_param(file, mapped.param);
         let with_keys = self.mapper_with_pair(mapper, param, constraint);
@@ -436,7 +443,13 @@ impl<'p, 's> Checker<'p, 's> {
         let stored = match result {
             Ok(stored) if is_inner => stored.held_back(),
             Ok(stored) => stored,
-            Err(_) if replaces || self.is_resolving_base_types_of(ty) => Stored::new(),
+            Err(_)
+                if replaces
+                    || self.is_resolving_base_types_of(ty)
+                    || self.stack.contains(&Query::Shape(ty)) =>
+            {
+                Stored::new()
+            }
             Err(_) => return keys,
         };
         if replaces {
@@ -446,15 +459,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if `ty` is the declared type of a class or interface whose `getBaseTypes` is in
-    /// progress, and it doesn't have `ObjectFlagsUnresolvedMembers`.
+    /// True if `ty` is the declared type of a class or interface whose `getBaseTypes` is in progress.
     fn is_resolving_base_types_of(&mut self, ty: TypeId) -> bool {
         let TypeData::Ref { target, .. } = *self.data(ty) else {
             return false;
         };
-        self.base_types_so_far.iter().any(|it| it.0 == target)
-            && !self.inheriting.iter().any(|it| it.0 == ty)
-            && self.declared_type(target) == ty
+        self.base_types_so_far.iter().any(|it| it.0 == target) && self.declared_type(target) == ty
     }
 
     fn get_literal_type_from_properties_uncached(
@@ -631,8 +641,14 @@ impl<'p, 's> Checker<'p, 's> {
         // A symbol-keyed name also encodes which symbol it is, so it isn't read from the syntax.
         let is_by_syntax = match key {
             PropKey::Name(_) => true,
-            PropKey::Computed(_) => !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX),
-            _ => false,
+            PropKey::Computed(_) => {
+                cold_path();
+                !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
+            }
+            _ => {
+                cold_path();
+                false
+            }
         };
         // A late-bound symbol has a `nameType`, which spells its name. The name of `[+2]` is `+2`.
         let is_late_bound =
@@ -642,7 +658,20 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(ty) = self.literal_type_from_property_name(file, key, name_kind, 0)
             && (!is_late_bound || self.property_name_of_type(ty) == Some(prop.name))
         {
-            return Some(ty);
+            // `lateBindMember` and `checkObjectLiteral` store the type of the expression in brackets as it is, which
+            // is a fresh type for a literal, an enum member or an unannotated constant.
+            let is_in_object_literal = matches!(prop.source, PropSource::Literal(..));
+            return Some(match (key, name_kind) {
+                (PropKey::Computed(e), _) if is_late_bound || is_in_object_literal => {
+                    self.check_computed_property_name(file, e)
+                }
+                (_, NameKind::ComputedString | NameKind::ComputedNumber)
+                    if is_in_object_literal =>
+                {
+                    self.fresh(ty)
+                }
+                _ => ty,
+            });
         }
         self.key_type_of_name(prop.name)
     }
@@ -1086,7 +1115,10 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let include_undefined = access_flags.contains(AccessFlags::INCLUDE_UNDEFINED);
         let access_expression = match access_node {
-            AccessNode::ElementAccess(file, e) => Some((file, e)),
+            AccessNode::ElementAccess(file, e) => {
+                cold_path();
+                Some((file, e))
+            }
             _ => None,
         };
         let name = self.property_name_of_type(index);
@@ -1100,6 +1132,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let prop_type = self.type_of_prop(prop, mapper);
                     return Some(match access_node {
                         AccessNode::ElementAccess(file, e) => {
+                            cold_path();
                             self.flow_type_of_reference(file, e, prop_type)
                         }
                         AccessNode::IndexedAccessType(..)
@@ -1377,6 +1410,10 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
+            // The other members are only asked for the index signatures that the first one has.
+            if all.is_empty() && members.index_infos().is_empty() {
+                return SmallVec::new();
+            }
             all.push(members);
         }
         let mut infos = SmallVec::new();
@@ -1537,6 +1574,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::UNRESOLVED;
         };
         let check_declared = self.type_from_node(file, check);
+        let check_declared = self.non_distributed(check_declared);
         // `T extends U ? X : Y` with a naked `T` distributes over a union.
         if self.flags(check_declared) & tf::TYPE_PARAMETER != 0
             && let Some(value) = self.types().map(mapper, check_declared)
@@ -1664,13 +1702,16 @@ impl<'p, 's> Checker<'p, 's> {
             // `[A] extends [B]` is deferred on its elements like `A extends B` would be.
             let check_tuples = match &root {
                 Some(root) => root.check_tuples,
-                None => match (
-                    self.simple_tuple_len(file, check),
-                    self.simple_tuple_len(file, extends),
-                ) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => false,
-                },
+                None => {
+                    cold_path();
+                    match (
+                        self.simple_tuple_len(file, check),
+                        self.simple_tuple_len(file, extends),
+                    ) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => false,
+                    }
+                }
             };
             let check_is_generic =
                 self.is_generic(check_ty) || check_tuples && self.has_generic_element(check_ty);
@@ -1919,7 +1960,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Err(declared);
         }
         if is_distributive
-            && let Some(value) = self.types().map(root_mapper, root_check)
+            && let Some(value) = (self.types()).map(root_mapper, self.non_distributed(root_check))
             && (self.is_union(value) || value.is_never())
         {
             return Err(declared);
@@ -1930,9 +1971,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `computeBaseConstraint` of the conditional type `this`.
     pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> Option<TypeId> {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
-        // `conditionalConstraintDepth`. The second test fires before `enter` would reject a query for lack of stack.
-        if self.conditional_constraint_depth >= 100 || self.is_most_of_stack_in_use() {
+        // `conditionalConstraintDepth`
+        if self.conditional_constraint_depth >= 100 {
             self.bailed_out();
+            return None;
+        }
+        // typescript-go's stack grows, so there `instantiationCount` ends the recursion. This fires before `enter`
+        // would reject a query for lack of stack.
+        if self.is_most_of_stack_in_use() {
+            self.instantiation_count = 5_000_000;
+            self.instantiation_too_deep();
             return None;
         }
         self.conditional_constraint_depth += 1;
@@ -1943,7 +1991,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_circular = self.flags(check_declared) & tf::TYPE_PARAMETER != 0
             && matches!(
                 self.data(checked),
-                TypeData::TypeParam(..) | TypeData::ThisParam(_)
+                TypeData::TypeParam(..)
+                    | TypeData::ThisParam(_)
+                    | TypeData::Marker(Marker::Distributed(_))
             )
             && !self.has_non_circular_base_constraint(checked);
         let constraint = if is_circular {
@@ -2033,7 +2083,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.mapped_constraints_in_progress
             .push((key, self.stack.len(), false));
-        let constraint = self.instantiated_constraint_of_mapped_param(file, node, mapper);
+        let (hits, limits, cycles) = (self.instantiation_limit_hits, self.limits, self.cycles);
+        let declared = self
+            .constraint_of_mapped_param(file, node)
+            .unwrap_or(TypeId::ERROR);
+        let constraint = self.instantiate(declared, mapper);
+        // `getConstraintFromTypeParameter` assigns `tp.constraint` once, even if an instantiation limit was hit.
+        if self.instantiation_limit_hits != hits
+            && self.limits == limits
+            && self.cycles == cycles
+            && self.instantiation_count < 5_000_000
+        {
+            (self.instantiations_up_to_a_limit).insert((declared, mapper), (0, constraint, false));
+        }
         // `!popTypeResolution()` in `getResolvedBaseConstraint`
         if (self.mapped_constraints_in_progress.pop()).is_some_and(|it| it.2) {
             (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());
@@ -2082,6 +2144,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some((self.type_from_node(file, of), true));
         }
         let declared = self.type_from_node(file, constraint);
+        let declared = self.non_distributed(declared);
         match *self.data(declared) {
             TypeData::TypeParam(..) => match self.constraint_of_type_param(declared) {
                 Some(c) => match *self.data(c) {
@@ -2113,6 +2176,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self.p.type_node_types.get(&self.task, &(file, constraint));
         self.is_type_node_settled(file, constraint)
             && declared.is_some_and(|declared| {
+                let declared = self.non_distributed(declared);
                 !matches!(self.data(declared), TypeData::TypeParam(..))
                     || (self.p.type_param_constraints.get(&self.task, &declared)).is_some()
             })
@@ -2484,9 +2548,7 @@ impl<'p, 's> Checker<'p, 's> {
             match mapped.optional {
                 // `getTemplateTypeFromMappedType` adds the optionality to the declared template type.
                 MappedModifier::Add => c.optional_property(ty),
-                MappedModifier::Remove if is_optional => {
-                    c.filter(ty, |_, m| !m.is_undefined() && m != TypeId::VOID)
-                }
+                MappedModifier::Remove if is_optional => c.remove_missing_or_undefined_type(ty),
                 _ => ty,
             }
         };
@@ -2636,6 +2698,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return ty;
                 }
                 let declared = self.type_from_node(file, check);
+                let declared = self.non_distributed(declared);
                 let Some(checked) = self.types().map(mapper, declared) else {
                     return ty;
                 };
@@ -3109,6 +3172,7 @@ impl<'p, 's> Checker<'p, 's> {
                 |c: &Self| created.unwrap_or_else(|| c.mapper_with_pair(mapper, param, key));
             let names = match name_declared {
                 Some(declared) => {
+                    cold_path();
                     let with_key = with_key(self);
                     self.instantiate(declared, with_key)
                 }
@@ -3120,9 +3184,11 @@ impl<'p, 's> Checker<'p, 's> {
                 (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
                     .map(|(prop, _)| prop),
-                (Some(Modifiers::Union(union)), Some(name)) => self
-                    .get_property_of_type(*union, name)
-                    .map(|(prop, _)| prop),
+                (Some(Modifiers::Union(union)), Some(name)) => {
+                    cold_path();
+                    self.get_property_of_type(*union, name)
+                        .map(|(prop, _)| prop)
+                }
                 _ => None,
             };
             // `addMemberForKeyTypeWorker`
@@ -3130,6 +3196,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let name = if name_ty == key {
                     key_name
                 } else {
+                    cold_path();
                     self.property_name_of_type(name_ty)
                 };
                 let existing_index = match name {
@@ -3204,7 +3271,10 @@ impl<'p, 's> Checker<'p, 's> {
                                 && key != TypeId::UNRESOLVED;
                             let (own_mapper, name_type) = match is_separate_key {
                                 true => (mapper, key),
-                                false => (with_key(self), TypeId::UNRESOLVED),
+                                false => {
+                                    cold_path();
+                                    (with_key(self), TypeId::UNRESOLVED)
+                                }
                             };
                             // The type, which is the template under `with_key`, is resolved on
                             // demand (`type_of_mapped_prop`).
@@ -3320,6 +3390,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut new_texts: Vec<Vec<u8>> = vec![self.atoms().bytes(texts[0]).to_vec()];
         let mut new_types: Vec<TypeId> = Vec::new();
+        let mut text_length = new_texts[0].len();
         for (i, &ty) in types.iter().enumerate() {
             let literal: Option<Vec<u8>> = match *self.data(ty.plain()) {
                 TypeData::StringLit { value, .. }
@@ -3350,8 +3421,10 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
             let next = self.atoms().bytes(texts[i + 1]);
+            text_length += next.len();
             match literal {
                 Some(text) => {
+                    text_length += text.len();
                     let last = new_texts.last_mut().unwrap();
                     last.extend_from_slice(&text);
                     last.extend_from_slice(next);
@@ -3366,9 +3439,11 @@ impl<'p, 's> Checker<'p, 's> {
                             .last_mut()
                             .unwrap()
                             .extend_from_slice(self.atoms().bytes(inner_texts[0]));
+                        text_length += self.atoms().bytes(inner_texts[0]).len();
                         for (j, &t) in inner_types.iter().enumerate() {
                             new_types.push(t);
                             new_texts.push(self.atoms().bytes(inner_texts[j + 1]).to_vec());
+                            text_length += self.atoms().bytes(inner_texts[j + 1]).len();
                         }
                         new_texts.last_mut().unwrap().extend_from_slice(next);
                     } else if self.is_generic_index_type(ty)
@@ -3381,6 +3456,12 @@ impl<'p, 's> Checker<'p, 's> {
                         return TypeId::STRING;
                     }
                 }
+            }
+            if text_length > MAX_TEMPLATE_LITERAL_TYPE_LENGTH
+                || new_types.len() > MAX_TEMPLATE_LITERAL_TYPE_SPANS
+            {
+                self.error_at_current_node(2589);
+                return TypeId::ERROR;
             }
         }
         for text in &mut new_texts {
@@ -3555,4 +3636,36 @@ enum Modifiers<'p> {
     /// requested by name may be created. Example: `interface B { id: string; shape?: keyof typeof shapes }`,
     /// with a `Pick<A | B, "id">` in the initializer of `shapes`.
     Union(TypeId),
+}
+
+/// True if `c` is unassigned in Unicode 15, whose tables `ToUpperJS` and `ToLowerJS` use, but has a case mapping in
+/// `char`'s tables, which are Unicode 17's.
+fn is_cased_since_unicode_16(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1C89}'..='\u{1C8A}'
+            | '\u{A7CB}'..='\u{A7CF}'
+            | '\u{A7D2}'
+            | '\u{A7D4}'
+            | '\u{A7DA}'..='\u{A7DC}'
+            | '\u{10D50}'..='\u{10D65}'
+            | '\u{10D70}'..='\u{10D85}'
+            | '\u{16EA0}'..='\u{16EB8}'
+            | '\u{16EBB}'..='\u{16ED3}'
+    )
+}
+
+/// `char::to_lowercase` with Unicode 15's tables.
+fn to_lowercase_unicode_15(c: char) -> impl Iterator<Item = char> {
+    let is_unmapped = is_cased_since_unicode_16(c);
+    let mapped = c.to_lowercase().filter(move |_| !is_unmapped);
+    mapped.chain(is_unmapped.then_some(c))
+}
+
+/// `char::to_uppercase` with Unicode 15's tables.
+fn to_uppercase_unicode_15(c: char) -> impl Iterator<Item = char> {
+    let is_unmapped =
+        is_cased_since_unicode_16(c) || c.to_uppercase().any(is_cased_since_unicode_16);
+    let mapped = c.to_uppercase().filter(move |_| !is_unmapped);
+    mapped.chain(is_unmapped.then_some(c))
 }

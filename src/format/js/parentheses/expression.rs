@@ -3,7 +3,9 @@
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
 use crate::js::print::return_or_throw_statement::has_argument_leading_comments;
-use crate::js::utils::typecast::{has_comments, has_comments_that_count, is_cast_target};
+use crate::js::utils::typecast::{
+    has_comments, is_cast_target, operand_gets_parentheses_for_comments,
+};
 use crate::prelude::*;
 use AstNodes as N;
 
@@ -132,7 +134,9 @@ fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
                 return Some(b'a');
             }
             // A unary expression prints parentheses around an operand with comments.
-            ExprKind::Unary { .. } if !f.is_quiet() && has_comments_that_count(current, f) => {
+            ExprKind::Unary { .. }
+                if !f.is_quiet() && operand_gets_parentheses_for_comments(current, f) =>
+            {
                 return None;
             }
             // `current` is the end of `parent`.

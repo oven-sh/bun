@@ -4,7 +4,7 @@
 //! Mirrors `checkPropertyAccessExpressionOrQualifiedName`, `reportNonexistentProperty`,
 //! `checkPropertyAccessibilityAtLocation`, `checkElementAccessExpression`, `getPropertyTypeForIndexType`, and
 //! `checkVariableLikeDeclaration` with `getBindingElementTypeFromParentType` for binding elements, in TypeScript
-//! 7.0.2's checker.go.
+//! 7.1's checker.go.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
@@ -36,6 +36,8 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
         ("es2022", &["at"]),
         ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
     ]),
+    ("IteratorConstructor", &[("es2026", &["concat"])]),
+    ("JSON", &[("es2026", &["isRawJSON", "rawJSON"])]),
     ("ArrayBuffer", &[
         ("es2024", &["maxByteLength", "resizable", "resize", "detached", "transfer", "transferToFixedLength"]),
     ]),
@@ -63,7 +65,7 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ]),
     ("ArrayConstructor", &[
         ("es2015", &["from", "of"]),
-        ("esnext", &["fromAsync"]),
+        ("es2026", &["fromAsync"]),
     ]),
     ("ObjectConstructor", &[
         ("es2015", &["assign", "getOwnPropertySymbols", "keys", "is", "setPrototypeOf"]),
@@ -81,10 +83,11 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
             "trunc", "fround", "cbrt",
         ]),
         ("es2025", &["f16round"]),
+        ("es2026", &["sumPrecise"]),
     ]),
     ("Map", &[
         ("es2015", &["entries", "keys", "values"]),
-        ("esnext", &["getOrInsert", "getOrInsertComputed"]),
+        ("es2026", &["getOrInsert", "getOrInsertComputed"]),
     ]),
     ("MapConstructor", &[("es2024", &["groupBy"])]),
     ("Set", &[
@@ -104,7 +107,7 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
         ("es2015", &["for", "keyFor"]),
         ("es2019", &["description"]),
     ]),
-    ("WeakMap", &[("esnext", &["getOrInsert", "getOrInsertComputed"])]),
+    ("WeakMap", &[("es2026", &["getOrInsert", "getOrInsertComputed"])]),
     ("String", &[
         ("es2015", &[
             "codePointAt", "includes", "endsWith", "normalize", "repeat", "startsWith", "anchor", "big", "blink", "bold", "fixed",
@@ -140,7 +143,11 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ]),
     ("RelativeTimeFormat", &[("es2020", &["format", "formatToParts", "resolvedOptions"])]),
     ("Int8Array", TYPED_ARRAY_FEATURES),
-    ("Uint8Array", TYPED_ARRAY_FEATURES),
+    ("Uint8Array", &[
+        ("es2022", &["at"]),
+        ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
+        ("es2026", &["toBase64", "setFromBase64", "toHex", "setFromHex"]),
+    ]),
     ("Uint8ClampedArray", TYPED_ARRAY_FEATURES),
     ("Int16Array", TYPED_ARRAY_FEATURES),
     ("Uint16Array", TYPED_ARRAY_FEATURES),
@@ -151,8 +158,8 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("BigInt64Array", TYPED_ARRAY_FEATURES),
     ("BigUint64Array", TYPED_ARRAY_FEATURES),
     ("Error", &[("es2022", &["cause"])]),
-    ("ErrorConstructor", &[("esnext", &["isError"])]),
-    ("Uint8ArrayConstructor", &[("esnext", &["fromBase64", "fromHex"])]),
+    ("ErrorConstructor", &[("es2026", &["isError"])]),
+    ("Uint8ArrayConstructor", &[("es2026", &["fromBase64", "fromHex"])]),
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 
@@ -268,7 +275,7 @@ impl<'p> Checker<'p, '_> {
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
-            if self.enclosing_classes(file, e).is_empty() {
+            if self.enclosing_classes(file, e).next().is_none() {
                 self.error_at((file, pos, 0), 18016, &[]);
                 continue;
             }
@@ -614,7 +621,6 @@ impl<'p> Checker<'p, '_> {
                             chain == Chain::No
                                 && self.declaring_class(prop).is_some_and(|class| {
                                     self.enclosing_classes(file, e)
-                                        .into_iter()
                                         .any(|c| self.class_sym(file, c) == class)
                                 })
                         } else {
@@ -850,9 +856,9 @@ impl<'p> Checker<'p, '_> {
         let Some(name_text) = self.property_name_of_type(expr_type) else {
             return;
         };
-        if self.get_property_of_type(parent_type, name_text).is_none() {
+        let Some((property, _)) = self.get_property_of_type(parent_type, name_text) else {
             return;
-        }
+        };
         let initializer = bound.pat_parent[pattern.idx()].initializer(hir);
         let is_super = initializer.is_some() && matches!(hir[initializer].kind, ExprKind::Super);
         // `GetRootDeclaration`: the location the access is checked from.
@@ -861,6 +867,9 @@ impl<'p> Checker<'p, '_> {
             PatParent::Param(param) => Parent::ParamDefault(param),
             _ => return,
         };
+        if property.flags.contains(PropFlags::PRIVATE) && self.may_mark_property(property) {
+            self.mark_property_as_referenced(file, parent_type, name_text, None, None);
+        }
         let error_node = |c: &Self| (file, at_name, c.end_of_name_at(file, at_name));
         self.check_property_accessibility_at_location(
             file,
@@ -876,51 +885,51 @@ impl<'p> Checker<'p, '_> {
         );
     }
 
-    /// `reportNonexistentProperty`. `e` is the `a.b` whose name is at `start`, or the `#b` at `start`.
-    pub(super) fn report_nonexistent_property(
+    /// The `addDeferredDiagnostic` call in `checkPropertyAccessExpressionOrQualifiedName`: printing the containing type
+    /// resolves all of it, which could report a circularity that isn't one. `at` is the start of the name.
+    pub(super) fn report_nonexistent_property_later(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        name: Atom,
-        start: u32,
-        containing: TypeId,
-        is_unchecked_js: bool,
+        at: (FileId, u32),
+        missing: NonexistentProperty,
     ) {
-        // `NodeCheckFlagsTypeChecked`: the error is already being built.
-        if self
-            .reporting_nonexistent
-            .iter()
-            .any(|r| r.0 == file && r.1 == e)
-        {
+        let node = (at.0, missing.access);
+        if self.non_existent_properties.contains_key(&node) {
             return;
         }
-        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic. TypeScript 7.0 never reports it
-        // after that, so what it prints depends on which file or statement gets here first. 7.1 always reports it. So
-        // nothing that was evaluated for the type being printed is cached: not the access, and not the call, array or
-        // object around it. The walk of its file evaluates them again and reports.
-        if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
-            self.note_error_in(file);
-            let innermost = self.frames.len().saturating_sub(1);
-            let floor = self.printing_floors.last().copied().unwrap_or(innermost);
-            self.mark_tainted_from(floor.min(innermost));
-            return;
+        self.note_error_in(at.0);
+        if self.is_reported_too_late(None, at.0) {
+            return self.mark_tainted_from(0);
         }
-        let created = self.non_existent_properties.insert((file, e), false);
-        if created == Some(true) {
-            self.non_existent_properties.insert((file, e), true);
-            return;
+        let reported = self.reported.len();
+        let mut callback = Reported::bare(self.span_of_token(at.0, at.1), 2339);
+        callback.deferred = Some(Deferred::NonexistentProperty(missing));
+        self.add_deferred_diagnostic(callback);
+        // The first callback for a node reports. If it was added while analyzing a loop, it has the types collected so
+        // far, and the walk's callback with the final type reports nothing.
+        if self.is_in_flow_loop() {
+            self.log_reported_in_flow_loop(reported, at.0, missing.access);
+            self.non_existent_properties.insert(node, false);
         }
-        self.reporting_nonexistent.push((file, e, self.stack.len()));
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
-        // In tsgo printing a type can close a cycle, so the first time this message is built `with_printer` isn't a
-        // barrier for cycle detection. If the message was dropped along with a result that wasn't cached, it's built
-        // again here, which tsgo never has to do. That second time (`reprinting`) its types are printed behind the
-        // barrier and don't count as a serialization level.
-        let reprinting = std::mem::replace(&mut self.reprinting, created.is_some());
+    }
+
+    /// `reportNonexistentProperty` for the `#b` at `at`, or for the name at `at`. Returns `None` if the node's error
+    /// exists already, or if it's a suggestion that nobody reads.
+    pub(super) fn nonexistent_property_error(
+        &mut self,
+        at: (FileId, u32),
+        missing: NonexistentProperty,
+    ) -> Option<Reported> {
+        let (file, start) = at;
+        let NonexistentProperty {
+            access: e,
+            name,
+            containing,
+            is_unchecked_js,
+        } = missing;
+        // `NodeCheckFlagsTypeChecked`
+        if self.non_existent_properties.insert((file, e), true) == Some(true) {
+            return None;
+        }
         let at = self.span_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and the promised type are queried for a `#x` by its source text, which isn't any property's
@@ -952,7 +961,7 @@ impl<'p> Checker<'p, '_> {
         let container = self.type_to_string(container);
         let args = [Arg::Bytes(&missing), Arg::Bytes(&container)];
         let apparent = self.apparent_type(containing);
-        let diagnostic = if !is_private && self.static_side_has(containing, name) {
+        let mut diagnostic = if !is_private && self.static_side_has(containing, name) {
             let member = cat!(container, b".", missing);
             let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
@@ -984,20 +993,9 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
-        self.reporting_nonexistent.pop();
-        self.reprinting = reprinting;
-        // A query re-entered while building the message is no reason to roll back the message.
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
-        let reported = self.reported.len();
-        self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
-        // `NodeCheckFlagsTypeChecked`: tsgo reports once per node. If it reports while analyzing a loop, with the types
-        // collected so far, that report stands, and the walk doesn't report again with the final type.
-        if self.is_in_flow_loop() {
-            self.log_reported_in_flow_loop(reported, file, e);
-            self.non_existent_properties.insert((file, e), true);
-        }
+        // `addErrorOrSuggestion`
+        diagnostic.is_suggestion = is_unchecked_js && diagnostic.code == 2568;
+        (!diagnostic.is_suggestion || self.captures_suggestions()).then_some(diagnostic)
     }
 
     /// `getSuggestedSymbolForNonexistentProperty` for the name in `e` and the apparent type that lacks it. Returns the
@@ -1108,19 +1106,38 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// The classes enclosing `e`, innermost first.
-    pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> SmallVec<[ClassId; 4]> {
+    pub(super) fn enclosing_classes(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> impl Iterator<Item = ClassId> {
         let hir = self.hir(file);
         Self::classes_from(hir, hir.get_containing_class(hir.node(e)))
     }
 
     /// `class`, then `GetContainingClass` applied repeatedly.
-    fn classes_from(hir: &File, mut class: Node) -> SmallVec<[ClassId; 4]> {
-        let mut classes = SmallVec::new();
-        while class.is_some() {
-            classes.push(hir.class_of(class));
-            class = hir.get_containing_class(class);
+    fn classes_from(hir: &File, class: Node) -> impl Iterator<Item = ClassId> {
+        let next = |&class: &Node| Some(hir.get_containing_class(class)).filter(|it| it.is_some());
+        std::iter::successors(Some(class).filter(|it| it.is_some()), next)
+            .map(|class| hir.class_of(class))
+    }
+
+    /// FOR SPEED. The first of `enclosing_classes_of_parent`, if `parent` is an expression in the
+    /// body of one of its methods, or in function expressions there.
+    fn class_of_method_around(&self, file: FileId, parent: Parent) -> Option<Sym> {
+        let Parent::Expr(mut inside) = parent else {
+            return None;
+        };
+        loop {
+            let function = self.function_directly_around(file, inside)?;
+            match self.bound(file).fns[function.idx()].owner {
+                FnOwner::Expr(owner) => inside = owner,
+                _ => {
+                    let class = self.class_of_member_fn(file, function)?;
+                    return Some(self.class_sym(file, class));
+                }
+            }
         }
-        classes
     }
 
     /// Same as `enclosing_classes`, for a direct child of `parent`. `Parent::Expr(e)` represents `e` itself, so only
@@ -1129,7 +1146,7 @@ impl<'p> Checker<'p, '_> {
         &self,
         file: FileId,
         parent: Parent,
-    ) -> SmallVec<[ClassId; 4]> {
+    ) -> impl Iterator<Item = ClassId> {
         let hir = self.hir(file);
         let innermost = match parent {
             Parent::Expr(e) => hir.get_containing_class(hir.node(e)),
@@ -1214,9 +1231,8 @@ impl<'p> Checker<'p, '_> {
             && declared_in == file
             && self
                 .classes_enclosing_private_name(file, e)
-                .iter()
-                .skip_while(|&&class| class != lexical_class)
-                .any(|&class| class == type_class)
+                .skip_while(|&class| class != lexical_class)
+                .any(|class| class == type_class)
         {
             // Private names with the same source text get a distinct name per class.
             let atoms = &self.atoms();
@@ -1247,7 +1263,7 @@ impl<'p> Checker<'p, '_> {
         &self,
         file: FileId,
         e: ExprId,
-    ) -> SmallVec<[ClassId; 4]> {
+    ) -> impl Iterator<Item = ClassId> {
         let hir = self.hir(file);
         Self::classes_from(
             hir,
@@ -1268,6 +1284,12 @@ impl<'p> Checker<'p, '_> {
         writing: bool,
     ) -> Flags {
         match (Self::value_declaration(prop), &prop.source) {
+            (_, &PropSource::Intersected(of, ref parts)) => {
+                // `propSet`, without the types of index signatures.
+                let is_property = |part: &&Prop| !part.flags.contains(PropFlags::WRITE_PARTIAL);
+                let parts: SmallVec<[&Prop; 4]> = parts.iter().filter(is_property).collect();
+                self.modifier_flags_of_synthetic_property(of, &parts, writing)
+            }
             (Some(&PropSource::Symbol(sym)), _) => {
                 let flags = match self.files().value_declaration(sym) {
                     Some((f, Decl::ParameterProperty(p))) => self.hir(f)[p].flags,
@@ -1301,31 +1323,39 @@ impl<'p> Checker<'p, '_> {
                     flags
                 }
             }
-            (None, PropSource::Intersected(_, parts)) => {
-                let parts: SmallVec<[&Prop; 4]> = parts.iter().collect();
-                self.modifier_flags_of_synthetic_property(&parts)
-            }
             _ => Flags::empty(),
         }
     }
 
-    /// `getDeclarationModifierFlagsFromSymbolEx` under `CheckFlagsSynthetic`: private if one of `parts` is, else public
-    /// if one is, else protected. Static if one is.
-    fn modifier_flags_of_synthetic_property(&mut self, parts: &[&Prop]) -> Flags {
+    /// `getDeclarationModifierFlagsFromSymbolEx` under `CheckFlagsSynthetic`, for the property that
+    /// `createUnionOrIntersectionProperty` combines from `parts`. It's as accessible as the most accessible of them,
+    /// except that a union's property is only as writable as the least writable of them, unless they have a declaration
+    /// in common. Static if one is.
+    fn modifier_flags_of_synthetic_property(
+        &mut self,
+        containing: TypeId,
+        parts: &[&Prop],
+        writing: bool,
+    ) -> Flags {
         let (mut some, mut is_public) = (Flags::empty(), false);
         for part in parts {
-            let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, false);
+            let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, writing);
             some |= modifiers;
             is_public |= !modifiers.intersects(Flags::PRIVATE | Flags::PROTECTED);
         }
-        let access = if some.contains(Flags::PRIVATE) {
-            Flags::PRIVATE
+        let by_reach = [Flags::PROTECTED, Flags::PRIVATE];
+        let access = if writing
+            && self.is_union(containing)
+            && some.intersects(Flags::PRIVATE | Flags::PROTECTED)
+            && !(parts.len() > 1 && Self::has_common_declaration(parts, self.arena))
+        {
+            by_reach.into_iter().rfind(|&access| some.contains(access))
         } else if is_public {
-            Flags::empty()
+            None
         } else {
-            Flags::PROTECTED
+            by_reach.into_iter().find(|&access| some.contains(access))
         };
-        access | (some & Flags::STATIC)
+        access.unwrap_or_default() | (some & Flags::STATIC)
     }
 
     /// `getPropertyOfObjectType`
@@ -1397,27 +1427,16 @@ impl<'p> Checker<'p, '_> {
         {
             return true;
         }
-        // `markPropertyAsReferenced` comes before every `checkPropertyAccessibility`. Only an `a.b`
-        // can be a write-only access.
-        if error_node.is_some()
-            && first.flags.contains(PropFlags::PRIVATE)
-            && matches!(first.source, PropSource::Symbol(symbol) if symbol.file != file)
-        {
-            let node_for_check_write_only = match self.hir(file).data(location) {
-                NodeData::Expr(e) => Some(e),
-                _ => None,
-            };
-            self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
-        }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
-        // If they all share one declaration, its modifiers and its parent are used.
+        // If those that have a declaration share it, its parent is used. If they all do, so are its modifiers.
         let declared = Self::prop_with_shared_value_declaration(constituents.iter().copied());
         let is_declared_once = parts.len() == 1 || declared.is_some();
         let first = declared.unwrap_or(first);
-        let flags = if is_declared_once {
+        let is_declared = |prop: &&Prop| Self::value_declaration(prop).is_some();
+        let flags = if is_declared_once && constituents.iter().all(is_declared) {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
-            self.modifier_flags_of_synthetic_property(&constituents)
+            self.modifier_flags_of_synthetic_property(containing, &constituents, writing)
         };
         let is_static = flags.contains(Flags::STATIC);
         if is_super {
@@ -1475,27 +1494,39 @@ impl<'p> Checker<'p, '_> {
         if !flags.intersects(hidden) {
             return true;
         }
-        let classes = match at {
-            Parent::Expr(e) if e.is_some() => self.enclosing_classes(file, e),
-            _ => self.enclosing_classes_of_parent(file, at),
+        // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
+        // type. If an intersection has members with a `this` type, its apparent type is a new
+        // intersection without an alias, but `apparent_type` returns the original intersection.
+        let is_apparent_type =
+            matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
+        // `getDeclaringClass`: a property synthesized from several declarations has no parent.
+        let declaring_class = self.declaring_class(first).filter(|_| is_declared_once);
+        let declaring_class_or_containing_type = |c: &mut Self| match declaring_class {
+            Some(class) => c.declared_type(class),
+            None if is_apparent_type => c.apparent_type_of_intersection(containing),
+            None => containing,
         };
-        let enclosing: SmallVec<[Sym; 4]> = classes
-            .into_iter()
-            .map(|c| self.class_sym(file, c))
-            .collect();
         if flags.contains(Flags::PRIVATE) {
-            // With several declarations, it reduces an intersection to `never` and isn't a property of a union.
-            let declaring = self.declaring_class(first).filter(|_| is_declared_once);
-            let Some(declaring) = declaring.filter(|declaring| !enclosing.contains(declaring))
-            else {
+            if declaring_class.is_some() && declaring_class == self.class_of_method_around(file, at)
+            {
                 return true;
-            };
-            let class = self.declared_type(declaring);
+            }
+            let mut enclosing = self.enclosing_classes_of_parent(file, at);
+            if declaring_class
+                .is_some_and(|declaring| enclosing.any(|c| self.class_sym(file, c) == declaring))
+            {
+                return true;
+            }
+            drop(enclosing);
+            let class = declaring_class_or_containing_type(self);
             return self.report_inaccessible(error_node, 2341, first, &[class]);
         }
         if is_super {
             return true;
         }
+        let enclosing: SmallVec<[Sym; 4]> = (self.enclosing_classes_of_parent(file, at))
+            .map(|c| self.class_sym(file, c))
+            .collect();
         // `isClassDerivedFromDeclaringClasses`: the classes that declare the protected ones among `parts`.
         let mut declaring: Vec<Sym> = Vec::new();
         for part in &parts {
@@ -1546,19 +1577,8 @@ impl<'p> Checker<'p, '_> {
                 enclosing_class = Some(target);
             }
         }
-        // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
-        // type. If an intersection has members with a `this` type, its apparent type is a new
-        // intersection without an alias, but `apparent_type` returns the original intersection.
-        let is_apparent_type =
-            matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
         let Some(enclosing_class) = enclosing_class else {
-            // `getDeclaringClass`: a property synthesized from several declarations has no parent.
-            let class = self.declaring_class(first).filter(|_| is_declared_once);
-            let class = match class {
-                Some(class) => self.declared_type(class),
-                None if is_apparent_type => self.apparent_type_of_intersection(containing),
-                None => containing,
-            };
+            let class = declaring_class_or_containing_type(self);
             return self.report_inaccessible(error_node, 2445, first, &[class]);
         };
         if is_static {

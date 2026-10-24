@@ -5,7 +5,7 @@
 //! * Return types: 2505 1064 1058 1062, 1228 1229 2677 1230 1225.
 //!
 //! Mirrors `checkTypeParameter`, `checkTypeParameterDeferred`, `checkSignatureDeclaration`,
-//! `checkAsyncFunctionReturnType` and `checkTypePredicate` in TypeScript 7.0.2's checker.go.
+//! `checkAsyncFunctionReturnType` and `checkTypePredicate` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
@@ -134,7 +134,8 @@ impl Checker<'_, '_> {
             // `checkDeferredNode`: `c.currentNode = node`, `c.instantiationCount = 0`
             let node = CurrentNode::Node(file, hir.node(tp));
             let saved = self.current_source_element.replace(node);
-            let instantiation_count = std::mem::take(&mut self.instantiation_count);
+            let instantiation_count = self.instantiation_count;
+            self.reset_instantiation_count();
             self.check_type_assignable_to(source, target, Some(at), Some(2636));
             self.instantiation_count = instantiation_count;
             self.current_source_element = saved;
@@ -163,6 +164,7 @@ impl Checker<'_, '_> {
         let TypeNodeKind::Predicate { param, ty, asserts } = hir[node].kind else {
             return;
         };
+        self.check_type_node(file, ty);
         let text = &hir.text[..];
         // `getTypePredicateParent`. A `ParenthesizedType`, which has no node, isn't such a parent.
         let parent = hir
@@ -187,9 +189,8 @@ impl Checker<'_, '_> {
             self.error(file, node, 1228, &[]);
             return;
         };
-        // `getTypePredicateOfSignature` resolves the type before `checkSourceElement` visits its parts.
+        // `getTypePredicateOfSignature`
         self.type_from_node(file, ty);
-        self.check_type_node(file, ty);
         if param == known::this {
             return;
         }

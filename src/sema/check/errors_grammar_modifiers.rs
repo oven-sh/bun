@@ -1,4 +1,4 @@
-//! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as stored in the HIR.
+//! `checkGrammarModifiers` (TypeScript 7.1, grammarchecks.go), on `node.Modifiers()` as stored in the HIR.
 
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent};
@@ -162,36 +162,6 @@ impl Checker<'_, '_> {
                     .iter()
                     .any(|&(start, end)| start < d.start && d.start < end)
         });
-    }
-
-    /// `checkGrammarClassDeclarationHeritageClauses` returns at its first error. The front end reports a class's
-    /// `@augments` tags (8023) separately from its clauses, so this removes the errors that tsgo never gets to. No
-    /// query may be in progress.
-    pub(super) fn check_grammar_augments_tags(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        for &(class, tag) in hir.unmatched_augments_tags.iter() {
-            let node = hir.node(class);
-            let body = match hir[class].members.iter().next() {
-                Some(first) => hir[first].loc.pos,
-                None => self.end_of_node(file, node),
-            };
-            let (clauses, extends) = (hir.start(node)..body, hir[hir[class].extends].pos);
-            // tsgo reads the tags once the first `extends` clause has passed 1172, 1173 and 1174.
-            let returns_before = self.reported.iter().any(|d| {
-                d.file == file
-                    && clauses.contains(&d.start)
-                    && (matches!(d.code, 1173 | 1174) || d.code == 1175 && d.start < extends)
-            });
-            if returns_before || self.grammar_error_in_modifiers(file, class).is_some() {
-                self.reported
-                    .retain(|d| d.file != file || d.code != 8023 || d.start != tag);
-                continue;
-            }
-            self.remove_heritage_clause_grammar_errors(file, node);
-            // `.. || c.checkGrammarTypeParameterList(..)`
-            self.reported
-                .retain(|d| d.file != file || d.code != 1098 || !clauses.contains(&d.start));
-        }
     }
 
     /// `checkGrammarTypeParameterList`: `<>` after the name of a class, or after `class`.

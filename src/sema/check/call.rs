@@ -116,11 +116,13 @@ pub(super) struct CallState<'a> {
     pub(super) candidates: Sigs,
     pub(super) arg_check_mode: CheckMode,
     pub(super) is_single_non_generic_candidate: bool,
-    /// FOR SPEED: there's one candidate, it isn't generic, and the call isn't being resolved again.
-    /// The contextual type pushed for an argument is the parameter type of the resolved signature,
+    /// FOR SPEED: there's one candidate, and the call isn't being resolved again. The contextual type
+    /// pushed for an argument in `CheckModeNormal` is the parameter type of the resolved signature,
     /// so an argument that tsgo checks uncached (`checkExpression`) and again in the deferred check
-    /// is checked once.
+    /// is checked once. Inferring the type arguments of a generic candidate still checks it uncached.
     pub(super) checks_arguments_once: bool,
+    /// `recursiveResolution`
+    is_recursive_resolution: bool,
     pub(super) candidates_for_argument_error: Sigs,
     pub(super) candidate_for_argument_arity_error: Option<SigId>,
     pub(super) candidate_for_type_argument_error: Option<SigId>,
@@ -154,158 +156,14 @@ enum SigParent {
 
 impl<'p, 's> Checker<'p, 's> {
     /// `isContextSensitive`. For `JsxAttributes`, see `is_jsx_attributes_context_sensitive`.
+    #[inline]
     pub fn is_context_sensitive(&self, file: FileId, e: ExprId) -> bool {
-        if self.is_stack_low() {
-            return false;
-        }
-        let hir = self.hir(file);
-        match hir[e].kind {
-            // There is no case for an accessor.
-            ExprKind::Fn(f) => {
-                !matches!(hir[f].kind, FnKind::Getter | FnKind::Setter)
-                    && self.is_context_sensitive_function_like_declaration(file, f)
-            }
-            ExprKind::Yield { value, .. } => {
-                value.is_some() && self.is_context_sensitive(file, value)
-            }
-            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
-            ExprKind::Object(props) => props.iter().any(|p| {
-                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
-                    && hir[p].value.is_some()
-                    && self.is_context_sensitive(file, hir[p].value)
-            }),
-            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
-            ExprKind::Cond { branches, .. } => {
-                let Branches { yes, no } = hir.branches(branches);
-                self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => self.is_context_sensitive(file, left) || self.is_context_sensitive(file, right),
-            _ => false,
-        }
-    }
-
-    /// `isContextSensitiveFunctionLikeDeclaration`
-    fn is_context_sensitive_function_like_declaration(&self, file: FileId, f: FnId) -> bool {
-        /// Results aren't cached for fewer nested functions than this.
-        const MANY: u64 = 8;
-        // Every enclosing function asks this about each function nested in it, each time down to
-        // the innermost one, so the answer for a deep nest is cached. It only depends on the syntax
-        // tree. A function that only returns another function has that function's answer, unless
-        // its own parameters decide, so this loops instead of recursing.
-        let times_cut_short = self.times_cut_short.get();
-        let asked_before = self.context_sensitivity_visits.get();
-        let (mut at, mut passed) = (f, 0);
-        let answer = loop {
-            (self.context_sensitivity_visits).set(self.context_sensitivity_visits.get() + 1);
-            if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
-                break known;
-            }
-            if self.has_context_sensitive_parameters(file, at) {
-                break true;
-            }
-            let Some(returned) = self.sole_returned_function(file, at) else {
-                break self.has_context_sensitive_return_expression(file, at)
-                    || self.has_context_sensitive_yield_expression(file, at);
-            };
-            (at, passed) = (returned, passed + 1);
-        };
-        // An answer that was cut short by a low stack depends on the caller, so it isn't cached.
-        if self.context_sensitivity_visits.get() - asked_before > MANY
-            && self.times_cut_short.get() == times_cut_short
-        {
-            let mut known = self.context_sensitive_functions.borrow_mut();
-            let mut at = Some(f);
-            for _ in 0..=passed {
-                let Some(it) = at else { break };
-                known.insert((file, it), answer);
-                at = self.sole_returned_function(file, it);
-            }
-        }
-        answer
-    }
-
-    /// Returns the function expression that's the only thing `f` returns, if
-    /// `hasContextSensitiveReturnExpression` and `hasContextSensitiveYieldExpression` look at
-    /// nothing else.
-    fn sole_returned_function(&self, file: FileId, f: FnId) -> Option<FnId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let func = &hir[f];
-        if !func.type_params.is_empty()
-            || func.ret.is_some()
-            || func.flags.contains(Flags::GENERATOR)
-        {
-            return None;
-        }
-        let value = match func.body {
-            FnBody::None => return None,
-            FnBody::Expr(body) => body,
-            FnBody::Block(_) => {
-                let mut returns = bound.ids(bound.fns[f.idx()].returns);
-                match (returns.next().map(|s| hir[s].kind), returns.next()) {
-                    (Some(StmtKind::Return(value)), None) if value.is_some() => value,
-                    _ => return None,
-                }
-            }
-        };
-        match hir[value].kind {
-            ExprKind::Fn(returned)
-                if !matches!(hir[returned].kind, FnKind::Getter | FnKind::Setter) =>
-            {
-                Some(returned)
-            }
-            _ => None,
-        }
+        self.bound(file).is_context_sensitive(self.hir(file), e)
     }
 
     /// `HasContextSensitiveParameters`
     pub(super) fn has_context_sensitive_parameters(&self, file: FileId, f: FnId) -> bool {
-        let hir = self.hir(file);
-        let func = &hir[f];
-        if !func.type_params.is_empty() {
-            return false;
-        }
-        // `node.Parameters()`, of which the `this` parameter is the first.
-        if func.this_param.is_some() && func.this_ty(hir).is_none()
-            || func.params.iter().any(|p| hir[p].ty.is_none())
-        {
-            return true;
-        }
-        func.kind != FnKind::Arrow
-            && func.this_param.is_none()
-            && self.bound(file).fns[f.idx()].contains_this
-    }
-
-    /// `hasContextSensitiveReturnExpression`
-    fn has_context_sensitive_return_expression(&self, file: FileId, f: FnId) -> bool {
-        let hir = self.hir(file);
-        let func = &hir[f];
-        if !func.type_params.is_empty() || func.ret.is_some() {
-            return false;
-        }
-        match func.body {
-            FnBody::None => false,
-            FnBody::Expr(body) => self.is_context_sensitive(file, body),
-            FnBody::Block(_) => {
-                let bound = self.bound(file);
-                bound.ids(bound.fns[f.idx()].returns).any(|s| {
-                    matches!(hir[s].kind, StmtKind::Return(value)
-                        if value.is_some() && self.is_context_sensitive(file, value))
-                })
-            }
-        }
-    }
-
-    /// `hasContextSensitiveYieldExpression`
-    fn has_context_sensitive_yield_expression(&self, file: FileId, f: FnId) -> bool {
-        let bound = self.bound(file);
-        self.hir(file)[f].flags.contains(Flags::GENERATOR)
-            && bound
-                .ids(bound.fns[f.idx()].yields)
-                .any(|y| self.is_context_sensitive(file, y))
+        (self.bound(file)).has_context_sensitive_parameters(self.hir(file), f)
     }
 
     /// `links.resolvedSignature` of `call`, if it's cached, with the signature's return type.
@@ -365,6 +223,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
+            cold_path();
             return self.any_signature_while_arguments_are_checked();
         }
         if self.calls_to_resolve_afresh.is_some()
@@ -464,7 +323,10 @@ impl<'p, 's> Checker<'p, 's> {
         // A call that's requested while it's being resolved is resolved again, and `resolveCall`
         // reports its errors in the state at that time. Only the first resolution is retained.
         if is_in_progress {
-            if let Some(reported) = reported
+            // Each resolution from the temporary types of a loop reports, as below.
+            if self.is_in_flow_loop() {
+                self.reported.extend(reported.into_iter().flatten());
+            } else if let Some(reported) = reported
                 && (self.p.diagnostics_of_re_resolved_calls)
                     .get_ref(&self.task, &(file, call))
                     .is_none()
@@ -981,8 +843,12 @@ impl<'p, 's> Checker<'p, 's> {
         if is_new
             && !sigs.is_empty()
             && (self
-                .inaccessible_constructor(file, call, sigs[0])
-                .map(|(code, _)| code)
+                .constructor_accessibility_error(
+                    file,
+                    call,
+                    &sigs,
+                    Flags::PRIVATE | Flags::PROTECTED,
+                )
                 .is_some()
                 || self.has_abstract_construct_signature(callee))
         {
@@ -1153,7 +1019,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         };
         let callee = self.hir(file)[c].callee;
-        let called = self.type_of_expr(file, callee);
+        let called = self.check_expression_again(file, callee);
         let func_type = self.check_non_null_type(file, callee, called);
         self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Construct)
     }
@@ -1174,7 +1040,7 @@ impl<'p, 's> Checker<'p, 's> {
         if hir[c].chain != Chain::No {
             return self.return_type_of_single_non_generic_signature_of_call_chain(file, c);
         }
-        let called = self.type_of_expr(file, callee);
+        let called = self.check_expression_again(file, callee);
         let func_type = self.check_non_null_type(file, callee, called);
         self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Call)
     }
@@ -1200,7 +1066,7 @@ impl<'p, 's> Checker<'p, 's> {
         c: CallId,
     ) -> Option<TypeId> {
         let Call { callee, chain, .. } = self.hir(file)[c];
-        let func_type = self.type_of_expr(file, callee);
+        let func_type = self.check_expression_again(file, callee);
         let return_type =
             self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Call)?;
         // `nonOptionalType != funcType`, `propagateOptionalTypeMarker`
@@ -1243,13 +1109,14 @@ impl<'p, 's> Checker<'p, 's> {
             arg_check_mode: CheckMode::empty(),
             is_single_non_generic_candidate: false,
             checks_arguments_once: false,
+            is_recursive_resolution: false,
             candidates_for_argument_error: Sigs::new(),
             candidate_for_argument_arity_error: None,
             candidate_for_type_argument_error: None,
         };
         s.is_single_non_generic_candidate =
             s.candidates.len() == 1 && self.sig_type_params(s.candidates[0]).is_empty();
-        s.checks_arguments_once = s.is_single_non_generic_candidate
+        s.checks_arguments_once = s.candidates.len() == 1
             && matches!(node, CallLike::Call(_) | CallLike::Jsx(_))
             // `getResolvedSignature` resets `resolutionStart` only the first time.
             && self.resolution_start == self.stack.len()
@@ -1265,12 +1132,15 @@ impl<'p, 's> Checker<'p, 's> {
             s.arg_check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
         }
         let mut result = None;
+        s.is_recursive_resolution = self.call_resolution_stack.contains(&(file, call));
+        self.call_resolution_stack.push((file, call));
         if s.candidates.len() > 1 {
             result = self.choose_overload(&mut s, Relation::Subtype);
         }
         if result.is_none() {
             result = self.choose_overload(&mut s, Relation::Assignable);
         }
+        self.call_resolution_stack.pop();
         let is_chosen = result.is_some();
         let sig = match result {
             Some(sig) => sig,
@@ -1366,6 +1236,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut context =
                         Box::new(Inference::for_params(&type_params, Some(candidate)));
                     context.any_default = self.hir(s.file).is_js;
+                    // A recursive resolution of a call with one candidate skips the constraints, which could
+                    // otherwise be circular.
+                    context.no_constraint_checks =
+                        s.is_recursive_resolution && s.candidates.len() == 1;
                     let check_mode = s.arg_check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
                     let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
                     if context.skipped_generic_function {
@@ -1491,6 +1365,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut return_context =
                         Inference::for_params(&context.params, Some(signature));
                     return_context.any_default = context.any_default;
+                    return_context.no_constraint_checks = context.no_constraint_checks;
                     let return_source_type = match outer_context {
                         Some(level) => {
                             self.instantiate_with_outer_return_mapper(level, contextual_type)
@@ -1732,6 +1607,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut clone = Inference::for_params(&n.params, n.sig);
         clone.candidates.clone_from(&n.candidates);
         clone.any_default = n.any_default;
+        clone.no_constraint_checks = n.no_constraint_checks;
         clone.no_default = n.no_default || no_default;
         clone
     }
@@ -1748,6 +1624,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut part = Inference::for_params(&params, n.sig);
         part.candidates = inferences.map(|(_, c)| c.clone()).collect();
         part.any_default = n.any_default;
+        part.no_constraint_checks = n.no_constraint_checks;
         part.no_default = n.no_default;
         Some(Box::new(part))
     }
@@ -2345,6 +2222,7 @@ impl<'p, 's> Checker<'p, 's> {
             let SigData::DefaultConstruct { base: Some(of), .. } = *self.types().sig(sig) else {
                 break;
             };
+            cold_path();
             sig = self.types().sig_origin(of);
         }
         sig
@@ -2442,7 +2320,7 @@ impl<'p, 's> Checker<'p, 's> {
             context: None,
         });
         let outer = self.suspend_recheck();
-        let ty = self.type_of_expr(file, e);
+        let ty = self.check_expression_again(file, e);
         self.end_recheck(outer);
         self.inference_contexts.pop();
         self.pop_contextual_type();
@@ -2569,19 +2447,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => flag,
             });
         }
-        // For a `const` type parameter it's readonly, unless `rest` may be a mutable array type
-        // (`isMutableArrayLikeType`).
-        let mut readonly = is_const;
-        if is_const {
-            let any_array = self.array_of(TypeId::ANY);
-            for &m in self.parts(rest) {
-                if self.is_mutable_array_or_tuple(m)
-                    || !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, any_array)
-                {
-                    readonly = false;
-                }
-            }
-        }
+        // For a `const` type parameter it's readonly, unless `rest` may be a mutable array type.
+        let readonly =
+            is_const && !(self.parts(rest).iter()).any(|&m| self.is_mutable_array_like(m));
         self.normalized_tuple(&elems, &flags, readonly)
     }
 

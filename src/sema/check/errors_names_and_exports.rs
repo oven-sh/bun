@@ -1,7 +1,7 @@
 //! Property names, names in namespaces, and type-only names used as values: 2464, 2694 2713 2724 2749, 1361 1362.
 //!
 //! Mirrors `checkComputedPropertyName`, `resolveQualifiedName`, `getTypeOnlyAliasDeclarationEx` and the end of
-//! `onSuccessfullyResolvedSymbol` in TypeScript 7.0.2's checker.go, and `IsValidTypeOnlyAliasUseSite` in its
+//! `onSuccessfullyResolvedSymbol` in TypeScript 7.1's checker.go, and `IsValidTypeOnlyAliasUseSite` in its
 //! ast/utilities.go. Also has the position where `declareSymbolEx` in its binder.go reports a conflicting default
 //! export or `export =`.
 
@@ -36,7 +36,6 @@ impl Checker<'_, '_> {
         for (e, start) in keys {
             if bound.is_unchecked(e.idx())
                 || unchecked.contain(start)
-                || self.cached_by_emit.contains(&e)
                 || self.is_never_checked(start)
                 || self.is_computed_name_never_checked(file, e)
             {
@@ -184,8 +183,7 @@ impl Checker<'_, '_> {
             return b"(Missing)".to_vec();
         }
         let (start, end) = (hir.start(name), self.end_of_node(file, name));
-        let start = super::spans::start_of_error_range(hir, start, end);
-        let raw_text = self.source_text(file, start, end);
+        let raw_text = super::spans::text_of_node_at(hir, start, end).into_owned();
         // The default library's text isn't stored.
         match hir.text(name) {
             text if raw_text.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),

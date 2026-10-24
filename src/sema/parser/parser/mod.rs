@@ -156,7 +156,7 @@ file_lists! {
     jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_stmts, modifiers_of_props, with_bodies, detached_semicolons,
     import_attributes,
-    deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
+    import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
     specifier_expressions, exports_from_expressions,
 }
@@ -345,7 +345,7 @@ pub(crate) fn run<'a>(
             scratch.names.begin_own(len.min(1 << 12));
         }
     }
-    let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
+    let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.reads_typescript_jsdoc);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
     let mut f = scratch.recycled.take().unwrap_or_default();
     let mut file = recycled_file(&mut f);
@@ -377,7 +377,7 @@ pub(crate) fn run<'a>(
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
-    let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
+    let is_general = options.recovers || jsdoc.reads || is_flow;
     let seed = Seed {
         lx,
         file,
@@ -477,7 +477,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             class_depth: 0,
             options,
             recovers: options.recovers,
-            reads_jsdoc: jsdoc.wanted != 0,
+            reads_jsdoc: jsdoc.reads,
             jsdoc,
             comments: comments::CommentTracker::default(),
             lists: 0,

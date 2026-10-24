@@ -12,7 +12,7 @@
 //!
 //! Mirrors `checkWithStatement`, `checkReturnStatement`, `checkIfStatement`, `checkForInStatement`,
 //! `checkForOfStatement`, `checkReferenceExpression`, `checkCatchClause`, `checkVariableStatement` and
-//! `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, `checkGrammarStatementInAmbientContext`,
+//! `checkVariableLikeDeclaration` in TypeScript 7.1's checker.go, `checkGrammarStatementInAmbientContext`,
 //! `checkGrammarForInOrForOfStatement`, `checkGrammarVariableDeclarationList`, `checkGrammarAwaitOrAwaitUsing`,
 //! `checkGrammarYieldExpression` and, for `using`, `checkGrammarModifiers` in its grammarchecks.go,
 //! `checkStrictModeWithStatement` in its binder.go, and `reparseTopLevelAwait` in its parser.go.
@@ -345,6 +345,40 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `node` is an import type, or it's below the type arguments of one, which `checkImportType` doesn't visit.
+    /// `getTypeFromTypeNode` resolves them if the import type refers to a generic type, and reports what's wrong with
+    /// them, down to the type literals and function types. What's in those is resolved when a query needs it.
+    pub(super) fn never_check_deferred_types(&mut self, file: FileId, node: Node) {
+        let hir = self.hir(file);
+        if let NodeData::Type(t) = hir.data(node) {
+            match hir[t].kind {
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) => {
+                    // 2344 is reported at the type argument.
+                    let range = (hir[t].pos + 1, self.end_of_type_node(file, t));
+                    return self.never_check_unless_visited_by_query(file, node, range);
+                }
+                TypeNodeKind::Import { spec, args, .. } if spec.is_some() => {
+                    for argument in hir.ids(args) {
+                        if (self.p.type_node_types.get(&self.task, &(file, argument))).is_some() {
+                            self.never_check_deferred_types(file, hir.node(argument));
+                        } else {
+                            self.never_check(
+                                hir[argument].pos,
+                                self.end_of_type_node(file, argument),
+                            );
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        hir.for_each_child(node, &mut |child| {
+            self.never_check_deferred_types(file, child);
+            false
+        });
+    }
+
     /// The ranges of the outermost expressions, type nodes and declared names below `node` whose type is stored.
     fn ranges_visited_by_queries(
         &mut self,
@@ -361,6 +395,8 @@ impl Checker<'_, '_> {
                 NodeData::Type(t)
                     if (self.p.type_node_types.get(&self.task, &(file, t))).is_some() =>
                 {
+                    // What's in a type literal or a function type below `t` is resolved on demand too.
+                    self.never_check_deferred_types(file, child);
                     Some((hir[t].pos, self.end_of_type_node(file, t)))
                 }
                 NodeData::Pat(name)
@@ -379,8 +415,7 @@ impl Checker<'_, '_> {
         });
     }
 
-    /// The start of `checkReturnStatement`: 1108 18041. Returns the containing function if the returned expression
-    /// should be checked.
+    /// From `checkReturnStatement`: 1108 18041. Returns the containing function unless the statement is misplaced.
     pub(super) fn check_grammar_return_statement(
         &mut self,
         file: FileId,
@@ -394,11 +429,6 @@ impl Checker<'_, '_> {
                 None => 1108,
             };
             self.grammar_error_at((file, hir[s].start, 0), code, &[]);
-        }
-        if let StmtKind::Return(e) = hir[s].kind
-            && e.is_some()
-        {
-            self.never_check(self.start_of(file, e), hir[s].loc.end);
         }
         None
     }
@@ -844,7 +874,26 @@ impl Checker<'_, '_> {
         } else {
             (file, at, self.error_end_of(file, decl.init))
         };
-        self.check_type_assignable_to(source, target, Some(at), Some(2850 + u32::from(is_await)));
+        if is_await {
+            self.check_type_assignable_to(source, target, Some(at), Some(2851));
+            return;
+        }
+        let mut diags = Vec::new();
+        if self.check_type_assignable_to_ex(source, target, Some(at), Some(2850), Some(&mut diags))
+        {
+            return;
+        }
+        let Some(mut diagnostic) = diags.into_iter().next() else {
+            return;
+        };
+        if self.get_global_type(known::AsyncDisposable, 0).is_some() {
+            let disposable = self.global_ref(known::AsyncDisposable, &[]);
+            let optional = self.union(&[disposable, TypeId::NULL, TypeId::UNDEFINED]);
+            if self.is_assignable(source, optional) {
+                diagnostic.message_chain.push(Reported::bare(at, 18116));
+            }
+        }
+        self.add_diagnostic(diagnostic);
     }
 
     /// Reports the errors in `e` that were discarded when `e` was first checked, two messages deep.
@@ -932,7 +981,6 @@ impl Checker<'_, '_> {
         if !never_checked.is_empty() {
             self.reported.retain(|d| {
                 !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
-                    || d.by_emit
                     || d.by_another_node
                     // Reported on the node that isn't checked, and only by the check of its parent.
                     || matches!(d.code, 1039 | 1136 | 1141 | 1254)

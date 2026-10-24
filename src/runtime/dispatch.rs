@@ -886,6 +886,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         }
 
         poll_tag::FILE_SINK => poll_arm!(FileSinkPoll),
+        poll_tag::CONTENT_MAPPER_WRITER => poll_arm!(crate::cli::content_mapper_process::Poll),
         poll_tag::STATIC_PIPE_WRITER => poll_arm!(StaticPipeWriterPoll<Subprocess<'_>>),
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
             poll_arm!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>)

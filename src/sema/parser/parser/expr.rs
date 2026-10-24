@@ -7,6 +7,15 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
+/// `shouldConsumeBinaryOperator`: true if `operator` binds before an operator of `current_precedence`. At equal
+/// precedence only `**` does, which is right associative.
+#[inline(always)]
+fn should_consume_binary_operator(operator: T, current_precedence: u8) -> bool {
+    let precedence = operator.binary_precedence();
+    precedence > current_precedence
+        || precedence == current_precedence && operator == T::AsteriskAsterisk
+}
+
 fn binary_operator(token: T) -> BinOp {
     match token {
         T::Plus => BinOp::Add,
@@ -669,8 +678,21 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_too_deep() {
             return left;
         }
-        // The precedence of the operator of `left`, if this loop built `left`. Otherwise `OperatorPrecedenceHighest`.
+        // The precedence of the operator of `left`, or `OperatorPrecedenceHighest` if it has none. Of the binary
+        // expressions, `parseUnaryExpressionOrHigher` only returns `a ** b`.
         let mut last_precedence = u8::MAX;
+        if matches!(self.token(), T::As | T::Satisfies)
+            && matches!(
+                self.f.exprs.get(left.idx()),
+                Some(Expr {
+                    kind: ExprKind::Binary { op: BinOp::Pow, .. },
+                    ..
+                })
+            )
+            && !self.is_parenthesized(left)
+        {
+            last_precedence = T::AsteriskAsterisk.binary_precedence();
+        }
         loop {
             // "We either have a binary operator here, or we're finished."
             if self.token() == T::GreaterThan {
@@ -678,12 +700,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             let token = self.token();
             let new_precedence = token.binary_precedence();
-            // `**` is right associative.
-            let consumes = match token {
-                T::AsteriskAsterisk => new_precedence >= precedence,
-                _ => new_precedence > precedence,
-            };
-            if !consumes {
+            if !should_consume_binary_operator(token, precedence) {
                 return left;
             }
             match token {
@@ -714,12 +731,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                             }
                         };
                     left = self.finish_expr(kind, start);
-                    // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
-                    // the `as T` could not be erased.
+                    // "Stop if the next operator would bind before the last operator when the
+                    // assertion is erased": `a + b as T * c`, `a ** b as T ** c`.
                     if self.token() == T::GreaterThan {
                         self.lx.rescan_greater_than();
                     }
-                    if self.token().binary_precedence() > last_precedence && !self.is_flow() {
+                    if should_consume_binary_operator(self.token(), last_precedence)
+                        && !self.is_flow()
+                    {
                         return left;
                     }
                 }
@@ -812,9 +831,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Consumes the `const` of `e as const` or `<const>e`.
     fn const_assertion_type(&mut self) {
         self.next();
-        // `const<>`
+        // `const<>`: `checkAssertion` checks the type node, so `checkGrammarTypeArguments` sees the list.
         if self.recovers() && self.token() == T::LessThan {
+            let less_than = self.pos();
             self.next();
+            let at = (less_than, self.pos() + 1);
+            self.flag(DiagnosticKind::Grammar, 1099, at, &[]);
             self.next();
             return;
         }
@@ -1274,34 +1296,48 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.missing_expression(1109);
         }
         self.next();
-        let mut is_deferred = false;
+        let mut phase = ImportPhase::Evaluation;
         if self.token() == T::Dot {
             self.next();
-            match self.name_after_import_and_dot() {
+            phase = match self.name_after_import_and_dot() {
                 b"meta" if self.token() == T::Identifier => {
                     self.next();
                     self.f.rare_syntax |= rare::IMPORT_META;
                     return self.finish_expr(ExprKind::ImportMeta, start);
                 }
-                // For Babel and oxc, `source` is a phase too. It's stored like `defer`, and the source text
-                // distinguishes them.
-                b"defer" if self.peek() == T::OpenParen => {}
-                b"defer" if self.recovers() && self.is_callee(true) => {}
-                b"source" if self.options.dialect.babel || self.options.dialect.oxc => {}
+                b"defer" => ImportPhase::Defer,
+                b"source" if self.has_source_phase() => ImportPhase::Source,
                 _ => return self.unknown_import_meta_property(start),
+            };
+            // The other dialects report an `import.source` that isn't called at the token after it.
+            let is_source_for_others =
+                phase == ImportPhase::Source && self.options.dialect.typescript_5;
+            if !is_source_for_others
+                && self.peek() != T::OpenParen
+                && !(self.recovers() && self.is_callee(true))
+            {
+                return self.unknown_import_meta_property(start);
             }
-            // `parseIdentifierName`
-            self.next_after_name();
-            is_deferred = true;
+            self.import_meta_property_name();
             // `IsImportCall` doesn't look at the `?.`.
             if self.recovers() {
                 self.eat(T::QuestionDot);
             }
         }
         match self.token() {
-            T::OpenParen => self.import_call(start, is_deferred).0,
-            _ => self.import_without_arguments(start, is_deferred),
+            T::OpenParen => self.import_call(start, phase).0,
+            _ => self.import_without_arguments(start, phase),
         }
+    }
+
+    /// `parseImportMetaPropertyName`: TypeScript 7.1 reports an escape in `defer` and in `source`.
+    fn import_meta_property_name(&mut self) {
+        if !matches!(self.token(), T::Defer | T::Source) || self.options.dialect.typescript_5 {
+            return self.next_after_name();
+        }
+        let (pos, end) = (self.lx.start, self.lx.end);
+        self.next();
+        self.finish_name(pos, end);
     }
 
     /// Returns `meta`, `defer` or `source`, or an empty slice. TypeScript's parser recognizes these names even when
@@ -1338,8 +1374,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// At the `(` of an `import(..)` that starts at `start`. Returns the call and its arguments.
-    fn import_call(&mut self, start: u32, is_deferred: bool) -> (ExprId, IdList<ExprId>) {
+    fn import_call(&mut self, start: u32, phase: ImportPhase) -> (ExprId, IdList<ExprId>) {
         self.next();
+        let specifier_kind = match phase {
+            ImportPhase::Source => SpecifierKind::SourceImportCall,
+            _ => SpecifierKind::ImportCall,
+        };
         let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
         let base = self.s.ids.len();
         let parens = self.f.parens.len();
@@ -1354,7 +1394,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.s.ids.push(argument.0);
             // `IsStringLiteralLike`: `("m")` is a `ParenthesizedExpression`.
             if self.s.ids.len() == base + 1 && self.f.parens.len() == parens {
-                self.call_specifier(argument, SpecifierKind::ImportCall);
+                self.call_specifier(argument, specifier_kind);
             }
             if !self.eat(T::Comma)
                 && !self.continues_without_comma(ListKind::ArgumentExpressions, element)
@@ -1373,23 +1413,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_for_oxc() {
             oxc::import_call(&mut self.f, self.lx.src, start, args, close);
         }
-        if is_deferred && !args.is_empty() {
-            let specifier = self.f.id_at(args, 0);
-            self.f.deferred_import_calls.push((specifier, close));
-        }
-        (self.finish_expr(ExprKind::ImportCall { args }, start), args)
+        let call = self.finish_expr(ExprKind::ImportCall { args, phase }, start);
+        (call, args)
     }
 
     /// `parseCallExpressionRest`, after an `import` that isn't followed by `(`. The keyword is stored as a missing
     /// expression.
     #[cold]
     #[inline(never)]
-    fn import_without_arguments(&mut self, start: u32, is_deferred: bool) -> ExprId {
+    fn import_without_arguments(&mut self, start: u32, phase: ImportPhase) -> ExprId {
         if !self.recovers() || self.token() != T::LessThan {
             self.fail();
             return ExprId::NONE;
         }
-        if !is_deferred {
+        if phase == ImportPhase::Evaluation {
             self.import_without_call_like_oxc(start);
         }
         let (less_than, reported) = (self.pos(), self.f.diagnostics.len());
@@ -1407,7 +1444,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 index += 1;
                 index <= reported || it.kind == DiagnosticKind::Parse
             });
-            let (call, args) = self.import_call(start, is_deferred);
+            let (call, args) = self.import_call(start, phase);
             if !args.is_empty() {
                 let specifier = self.f.id_at(args, 0);
                 self.f.import_call_type_args.push((specifier, type_args));
@@ -1460,8 +1497,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => self.lx.text().to_vec(),
         };
         let word = &word[..];
-        // `parseIdentifierName`
-        self.next_after_name();
+        self.import_meta_property_name();
         // This looks past type arguments and a `?.` to find the call.
         let is_callee = match self.token() {
             T::OpenParen => true,
@@ -1474,8 +1510,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             _ => false,
         };
-        match (word, is_callee) {
-            (b"defer", false) => {
+        // `IsImportPhaseMetaProperty`
+        let is_phase = word == b"defer" || word == b"source" && self.has_source_phase();
+        match (is_phase, is_callee) {
+            (true, false) => {
                 let after = (at.1, Diagnostic::NO_LENGTH);
                 self.flag(DiagnosticKind::Grammar, 1005, after, &[b"("]);
             }
@@ -2606,6 +2644,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if kind == PropKind::Init
             && matches!(self.token(), T::Question | T::Exclamation)
             && !self.is_ecmascript
+            && !self.is_typescript_for_oxc
         {
             postfix_token = self.pos();
             self.next();

@@ -4,6 +4,8 @@
 //! same driver as `bun check`. The output uses the format of the `.errors.txt` baselines committed
 //! there, so the two can be compared.
 
+mod content_mappers;
+
 use bun_core::strings;
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
@@ -195,6 +197,8 @@ const HARNESS_OPTIONS: &[&str] = &[
     "reportdiagnostics",
     "capturesuggestions",
     "typescriptversion",
+    // A compiler option that only a command line can set. Here it gives the file system its content mappers.
+    "runexternalcode",
 ];
 
 /// The tests, their baselines and the libraries in one file, written by `sync.ts`. Each file is
@@ -292,6 +296,8 @@ pub struct Virtual {
     mounted: Vec<(Vec<u8>, Vec<u8>)>,
     bundle: Option<&'static Bundle>,
     disk: bun_sema_driver::host::Disk,
+    /// `@runExternalCode: true`: the content mappers of `content_mappers`.
+    content_mapper_processes: Option<bun_sema::content_mapper::Processes>,
 }
 
 impl Virtual {
@@ -308,7 +314,13 @@ impl Virtual {
             is_case_sensitive,
             mounted,
             disk: bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/"),
+            content_mapper_processes: None,
         }
+    }
+
+    fn run_external_code(&mut self) {
+        let mappers = Box::<content_mappers::TestMappers>::default();
+        self.content_mapper_processes = Some(bun_sema::content_mapper::Processes::new(mappers));
     }
 
     fn key(&self, path: &[u8]) -> Vec<u8> {
@@ -473,6 +485,12 @@ impl Host for Virtual {
     }
     fn parse_package_json(&self, arena: &bun_sema::session::Arena, text: &[u8]) -> Option<Json> {
         self.disk.parse_package_json(arena, text)
+    }
+    fn parse_json(&self, arena: &bun_sema::session::Arena, text: &[u8]) -> Option<Json> {
+        self.disk.parse_json(arena, text)
+    }
+    fn content_mapper_processes(&self) -> Option<&bun_sema::content_mapper::Processes> {
+        self.content_mapper_processes.as_ref()
     }
     // Runs on one pool thread, like `bun check --threads 1`. That thread has the same stack size as
     // in production and knows its stack limit.
@@ -775,10 +793,10 @@ fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
             out.push_str(" - ");
         }
         out.push_str(&format!(
-            "{}{}{RESET}{GREY} TS{}: {RESET}{}",
+            "{}{}{RESET}{GREY} {}: {RESET}{}",
             category_color(d.category),
             d.category.name(),
-            d.code as i32,
+            text(&d.code_label().unwrap_or_default()),
             text(&d.text)
         ));
         // `File_appears_to_be_binary`
@@ -994,10 +1012,18 @@ pub enum Kind {
     Declarations,
     /// The `traceResolution` log.
     Traces,
+    /// The files that content mappers produced, and their errors.
+    ContentMappers,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [Kind::Types, Kind::Symbols, Kind::Declarations, Kind::Traces];
+    pub const ALL: [Kind; 5] = [
+        Kind::Types,
+        Kind::Symbols,
+        Kind::Declarations,
+        Kind::Traces,
+        Kind::ContentMappers,
+    ];
 
     fn extension(self) -> &'static str {
         match self {
@@ -1005,6 +1031,7 @@ impl Kind {
             Kind::Symbols => "symbols",
             Kind::Declarations => "js",
             Kind::Traces => "trace.json",
+            Kind::ContentMappers => "contentmapper",
         }
     }
 }
@@ -1155,8 +1182,8 @@ fn sanitize_trace(lines: &[Vec<u8>], is_case_sensitive: bool) -> Vec<u8> {
     for line in lines {
         let is_missing = |file: &[u8]| [b"File '", file, b"' does not exist."].concat();
         let is_found = |file: &[u8]| [b"Found 'package.json' at '", file, b"'."].concat();
-        let sanitized = if strings::contains(line, b"'7.0.2'") {
-            line.replacen("'7.0.2'", "'FakeTSVersion'", 1)
+        let sanitized = if strings::contains(line, b"'7.1.0-beta'") {
+            line.replacen("'7.1.0-beta'", "'FakeTSVersion'", 1)
         } else if let Some(start) =
             line.strip_suffix(b"' does not exist according to earlier cached lookups.")
         {
@@ -1279,6 +1306,8 @@ fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
         source_line: 0,
         related: Vec::new(),
         project: 0,
+        external_source: Box::default(),
+        found_at: None,
     };
     let (longer, mut shorter) = match before > after {
         true => (pre.diagnostics, post.diagnostics),
@@ -1452,6 +1481,66 @@ struct Ran {
     has_non_dts_files: bool,
     /// `result.Trace`, with `traceResolution`.
     trace: Option<Vec<u8>>,
+    /// The files for which `GetContentMapper` returns a mapper, in program order.
+    mapped: Vec<MappedUnit>,
+}
+
+/// A file that a content mapper produced.
+struct MappedUnit {
+    /// `FileName()`
+    name: String,
+    /// `ScriptKind.String()`
+    script_kind: &'static str,
+    /// `Definition.Extensions` of its mapper.
+    extensions: Vec<Vec<u8>>,
+    /// `OriginalText()` and `Text()`
+    original: Vec<u8>,
+    text: Vec<u8>,
+}
+
+/// `getContentMapperBaseline`
+fn content_mapper_baseline(
+    mapped: &[MappedUnit],
+    diagnostics: &[Diagnostic],
+    lib_dir: &str,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    let with_trailing_newline = |out: &mut Vec<u8>, text: &[u8]| {
+        out.extend_from_slice(text);
+        if !text.is_empty() && !text.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+    };
+    for file in mapped {
+        let header = format!(
+            "//// [{}] (ScriptKind: {}, ContentMapper: [{}])\n--- Original ---\n",
+            without_prefixes(&file_name(file.name.as_bytes()), lib_dir),
+            file.script_kind,
+            text(&file.extensions.join(&b" "[..]))
+        );
+        out.extend_from_slice(header.as_bytes());
+        with_trailing_newline(&mut out, &file.original);
+        out.extend_from_slice(b"--- Transformed ---\n");
+        with_trailing_newline(&mut out, &file.text);
+        out.push(b'\n');
+    }
+    out.extend_from_slice(b"=== Diagnostics ===\n\n");
+    let is_mapped = |d: &&Diagnostic| mapped.iter().any(|it| it.name.as_bytes() == d.found_in());
+    let in_mapped_files: Vec<Diagnostic> = diagnostics.iter().filter(is_mapped).cloned().collect();
+    if in_mapped_files.is_empty() {
+        out.extend_from_slice(b"<no content>\n");
+        return out;
+    }
+    // `ansiEscape`: `\x1b\[[0-9;]*m`
+    let rendered = with_color_and_context(&in_mapped_files);
+    let mut plain = String::new();
+    let mut parts = split(&rendered, "\u{1b}[");
+    plain.push_str(parts.next().unwrap_or_default());
+    for part in parts {
+        plain.push_str(find(part, "m").map_or(part, |end| &part[end + 1..]));
+    }
+    out.extend_from_slice(without_prefixes(&plain, lib_dir).as_bytes());
+    out
 }
 
 /// Runs one test in one configuration. Returns `None` if typescript-go doesn't run it.
@@ -1516,6 +1605,9 @@ fn run_one(
         .map_or_else(|| SRC.to_owned(), |dir| absolute(dir, "/"));
     let mut named_by_config: Option<Vec<Vec<u8>>> = None;
     let mut config_unit = None;
+    let runs_external_code = settings
+        .get("runexternalcode")
+        .is_some_and(|it| it == "true");
     if let Some(at) = config_at {
         let mut only_units = Virtual::new(true, Vec::new(), None);
         for unit in &units {
@@ -1523,6 +1615,15 @@ fn run_one(
                 absolute(&unit.name, &config_cwd).as_bytes(),
                 unit.content.clone(),
             );
+        }
+        for (link, target) in &links {
+            only_units.add_link(
+                absolute(link, &config_cwd).as_bytes(),
+                absolute(target, &config_cwd).as_bytes(),
+            );
+        }
+        if runs_external_code {
+            only_units.run_external_code();
         }
         let config_path = absolute(&units[at].name, &config_cwd);
         let project = config::load_overriding(
@@ -1573,6 +1674,9 @@ fn run_one(
     }
 
     let mut host = Virtual::new(is_case_sensitive, mounted, setup.bundle);
+    if runs_external_code {
+        host.run_external_code();
+    }
     for unit in roots.iter().chain(&others) {
         host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
     }
@@ -1632,11 +1736,6 @@ fn run_one(
         }
         project.files.clone_from(&files);
         project.options.files.clone_from(&files);
-        // `NewProgram` gets options and file names, so there's no `ConfigFile` to explain a root
-        // file with.
-        project.options.file_specs.clear();
-        project.options.include_specs.clear();
-        project.options.is_default_include_spec = false;
         project.options.captures_suggestions = settings
             .get("capturesuggestions")
             .is_some_and(|v| v.eq_ignore_ascii_case("true"));
@@ -1721,6 +1820,15 @@ fn run_one(
     let no_emit_on_error = project.options.no_emit_on_error;
     let emits_declarations = project.options.emits_declarations;
     let (out_dir, allow_js) = (project.options.out_dir.clone(), project.options.allow_js);
+    // What `ChangeToDeclarationExtension` reads.
+    let options_of_mappers = bun_sema::resolve::Options {
+        content_mappers: project.options.content_mappers.clone(),
+        content_mapper_extension_rewrites: project
+            .options
+            .content_mapper_extension_rewrites
+            .clone(),
+        ..Default::default()
+    };
     // For each declaration file: its source's index in the program, whether `getOutputPath` finds
     // it, its name and its text.
     let dts: Guarded<Vec<(u32, bool, Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
@@ -1751,7 +1859,14 @@ fn run_one(
             }
             None => path.to_vec(),
         };
-        let looked_up = bun_sema::resolve::output_declaration_file_name(&looked_up, None);
+        let looked_up = match files.module(file).content_mapped {
+            Some(_) => Some(bun_sema::program::change_to_declaration_extension(
+                files.options,
+                looked_up,
+                files.is_case_sensitive,
+            )),
+            None => bun_sema::resolve::output_declaration_file_name(&looked_up, None),
+        };
         // Ordered like the program's files.
         let order = files.order;
         let source_index = order
@@ -1807,6 +1922,51 @@ fn run_one(
         let began = std::time::Instant::now();
         bun_sema_driver::check_project(&host, project, &request, Report::default(), began)
     };
+    let mapped: Guarded<Option<Vec<MappedUnit>>> = Guarded::new(None);
+    let collect_mapped = |checker: &bun_sema::check::Checker<'_, '_>| {
+        let mut mapped = mapped.lock();
+        if mapped.is_some() {
+            return;
+        }
+        let files = &checker.p.files;
+        let units = files.order.iter().filter_map(|&file| {
+            let module = files.module(file);
+            let info = module.content_mapped?;
+            let name = &info.virtual_file_name;
+            let has_extension = |all: &[&str]| all.iter().any(|it| name.ends_with(it.as_bytes()));
+            info.canonical_file_name.is_none().then(|| MappedUnit {
+                name: text(module.file_name()),
+                script_kind: match () {
+                    () if has_extension(&[".tsx"]) => "ScriptKindTSX",
+                    () if has_extension(&[".jsx"]) => "ScriptKindJSX",
+                    () if has_extension(&[".json"]) => "ScriptKindJSON",
+                    () if has_extension(&[".js", ".mjs", ".cjs"]) => "ScriptKindJS",
+                    () => "ScriptKindTS",
+                },
+                extensions: files.options.content_mappers[info.mapper]
+                    .extensions
+                    .clone(),
+                original: info.original_text.to_vec(),
+                text: module.hir.text.to_vec(),
+            })
+        });
+        *mapped = Some(units.collect());
+    };
+    let has_mappers = !project.options.content_mappers.is_empty();
+    let only_collect_mapped = |checker: &mut bun_sema::check::Checker<'_, '_>,
+                               _: bun_sema::program::FileId| {
+        collect_mapped(checker);
+    };
+    let write_types = |checker: &mut bun_sema::check::Checker<'_, '_>,
+                       file: bun_sema::program::FileId| {
+        collect_mapped(checker);
+        write_types(checker, file);
+    };
+    let write_dts = |checker: &mut bun_sema::check::Checker<'_, '_>,
+                     file: bun_sema::program::FileId| {
+        collect_mapped(checker);
+        write_dts(checker, file);
+    };
     // `compileFilesWithHost`: `preProgram` is only checked. `postProgram` emits first, and the
     // types and symbols are read from it.
     let mut trace = None;
@@ -1826,13 +1986,23 @@ fn run_one(
             let mut project = parsed_command_line();
             project.options.emits_first = true;
             let traces_resolution = project.options.trace_resolution;
-            let write_types = (also == Also::TypesAndSymbols).then_some(&write_types as AfterFile);
-            let post = check(project, write_types);
+            let after_file = match also {
+                Also::TypesAndSymbols => Some(&write_types as AfterFile),
+                _ => has_mappers.then_some(&only_collect_mapped as AfterFile),
+            };
+            let post = check(project, after_file);
             if traces_resolution {
                 trace = Some(sanitize_trace(&post.resolution_trace, is_case_sensitive));
             }
             merge_pre_and_post_emit_errors(pre, post)
         }
+    };
+    let mapped = mapped.lock().take().unwrap_or_default();
+    // `newCompilerTest`: the baselines show the text that the compiler checked.
+    let content_of = |unit: &Unit| {
+        let name = absolute(&unit.name, &cwd);
+        let mapped = mapped.iter().find(|it| it.name == name);
+        mapped.map_or_else(|| unit.content.clone(), |it| it.text.clone())
     };
     let sections = std::mem::take(&mut *sections.lock());
     let mut found: Vec<Walked> = sections.into_iter().flat_map(|it| it.1).collect();
@@ -1841,7 +2011,7 @@ fn run_one(
         let name = absolute(&unit.name, &cwd);
         // `program.GetSourceFile(f.UnitName) != nil`
         if let Some(at) = found.iter().position(|it| it.name == name) {
-            walked.push((found.remove(at), unit.content.clone()));
+            walked.push((found.remove(at), content_of(unit)));
         }
     }
     // `tsSources`
@@ -1849,11 +2019,11 @@ fn run_one(
         .map(|unit| {
             let name = base_name(&unit.name);
             let name = rfind(name, "\\").map_or(name, |at| &name[at + 1..]);
-            [b"//// [", name.as_bytes(), b"]\r\n", &unit.content[..]].concat()
+            [b"//// [", name.as_bytes(), b"]\r\n", &content_of(unit)[..]].concat()
         })
         .collect();
     let mut declarations = std::mem::take(&mut *dts.lock());
-    // `HandleNoEmitOnError`
+    // `HandleNoEmitOptions`
     if no_emit_on_error && !report.diagnostics.is_empty() {
         declarations.clear();
     }
@@ -1893,7 +2063,14 @@ fn run_one(
                 }
                 _ => name.as_bytes().to_vec(),
             };
-            let name = bun_sema::resolve::output_declaration_file_name(&moved, None)?;
+            let name = match mapped.iter().any(|it| it.name == name) {
+                true => bun_sema::program::change_to_declaration_extension(
+                    &options_of_mappers,
+                    moved,
+                    is_case_sensitive,
+                ),
+                false => bun_sema::resolve::output_declaration_file_name(&moved, None)?,
+            };
             declarations.iter().find(|it| it.0 == name)
         };
         let mut lists: [Vec<Unit>; 2] = [Vec::new(), Vec::new()];
@@ -1911,7 +2088,8 @@ fn run_one(
                         content: unit.content.clone(),
                     });
                 } else if (is_one_of(&[".ts", ".tsx", ".mts", ".cts"])
-                    || allow_js && is_one_of(&[".js", ".jsx", ".mjs", ".cjs"]))
+                    || allow_js && is_one_of(&[".js", ".jsx", ".mjs", ".cjs"])
+                    || mapped.iter().any(|it| it.name == name))
                     && let Some((name, content)) = find_result_code_file(&name)
                     && !lists
                         .iter()
@@ -1934,6 +2112,8 @@ fn run_one(
         .chain(roots.iter().copied())
         .chain(others.iter().copied())
         .map(|unit| (absolute(&unit.name, &cwd), unit.content.clone()))
+        // `verifyDiagnostics`: the files that content mappers produced have their own baseline.
+        .filter(|input| !mapped.iter().any(|it| it.name == input.0))
         .collect();
     Some(Ran {
         report,
@@ -1945,6 +2125,7 @@ fn run_one(
         repeats_without_checking: emits_declarations && !no_check && !no_emit,
         has_non_dts_files: (roots.iter().chain(&others)).any(|it| !it.name.ends_with(".d.ts")),
         trace,
+        mapped,
     })
 }
 
@@ -2068,7 +2249,8 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
     let mut configurations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for name in suite.names {
         // A test name can contain dots, so the baseline kind is stripped from the end.
-        const KINDS: [&str; 7] = [
+        const KINDS: [&str; 8] = [
+            ".contentmapper",
             ".errors.txt",
             ".sourcemap.txt",
             ".trace.json",
@@ -2107,7 +2289,10 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                     // Its larger file commits before its end. The recheck finds those comparisons answered and
                     // explains one error differently.
                     let differs_if_rechecked = base == "complexRecursiveCollections.ts";
+                    // It expects TS6385, a suggestion. `bun check` makes no suggestions about deprecated declarations.
+                    let expects_deprecation = base == "deprecatedReferenceInEnumComputedNameNoFlake.ts";
                     if SKIPPED.contains(&base)
+                        || expects_deprecation
                         || setup.discards_first_visits && differs_if_rechecked
                         || setup.only.is_some_and(|only| !contains(path, only))
                         || i % setup.every.max(1) != setup.first
@@ -2240,6 +2425,18 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             let expected = baseline(Kind::Traces).unwrap_or_default();
                             others.push(compare(Kind::Traces, ours, &expected));
                         }
+                        // `verifyContentMapper`
+                        if let Ok(Some(ran)) = &ran
+                            && !ran.mapped.is_empty()
+                        {
+                            let ours = content_mapper_baseline(
+                                &ran.mapped,
+                                &ran.report.diagnostics,
+                                setup.lib_dir,
+                            );
+                            let expected = baseline(Kind::ContentMappers).unwrap_or_default();
+                            others.push(compare(Kind::ContentMappers, &ours, &expected));
+                        }
                         // `len(result.Diagnostics) > 0`
                         let has_errors =
                             !matches!(&ran, Ok(Some(ran)) if ran.report.diagnostics.is_empty());
@@ -2336,11 +2533,19 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 others,
                             },
                             Ok(None) => continue,
-                            Ok(Some(Ran { report, inputs, .. })) => {
+                            Ok(Some(Ran {
+                                mut report,
+                                inputs,
+                                mapped,
+                                ..
+                            })) => {
                                 let expected = setup
                                     .read(&format!("{}/{configured}.errors.txt", suite.baselines))
                                     .map(|bytes| replace(&text(&bytes), "\r\n", "\n"))
                                     .unwrap_or_default();
+                                report.diagnostics.retain(|d| {
+                                    !mapped.iter().any(|it| it.name.as_bytes() == d.found_in())
+                                });
                                 let ours = if report.diagnostics.is_empty() {
                                     String::new()
                                 } else {
@@ -2550,14 +2755,18 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         let compared: Vec<(&Outcome, &Option<String>)> = (all.iter())
             .filter_map(|o| Some((o, &o.others.iter().find(|it| it.0 == kind)?.1)))
             .collect();
-        if compared.is_empty() {
+        // Few tests have content mappers, so a sample of the tests may have none. No flag turns this kind off.
+        if compared.is_empty() && kind != Kind::ContentMappers {
             continue;
         }
         let same = compared.iter().filter(|it| it.1.is_none()).count();
         others_all_match &= same == compared.len();
         output_line!(
             "{same:>6} {:>6.2}%  of {} {kind:?}, byte for byte",
-            same as f64 * 100.0 / compared.len() as f64,
+            match compared.len() {
+                0 => 100.0,
+                count => same as f64 * 100.0 / count as f64,
+            },
             compared.len()
         );
         let differences = compared

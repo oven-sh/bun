@@ -35,7 +35,6 @@ const tsconfig = JSON.stringify({
 test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for modules in cycles", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
-    // With 52 or 60 modules TypeScript 7.0 reports TS2321 in every file and 7.1 in none. Up to 48 they agree.
     ...modulesInCycles(isDebug || isASAN ? 24 : 48),
   });
   const root = String(dir);
@@ -44,6 +43,48 @@ test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for m
     linesOf([bunExe(), "check", "--threads=1"], root, root),
   ]);
   expect(theirs.length).toBeGreaterThan(100);
+  expect(ours).toEqual(theirs);
+});
+
+// The arguments keep the types they get in the last check against the one candidate, also if they don't fit it.
+test.concurrent.skipIf(!tsc)("matches tsc on calls of one generic signature that its arguments don't fit", async () => {
+  using dir = tempDir("bun-check-generic-calls", {
+    "tsconfig.json": tsconfig,
+    "a.ts": `
+      declare function f<T>(a: T, cb: (x: T) => T, b: { k: T }): void;
+      f(1, x => "s", { k: true });
+      declare function g<T extends string>(a: T, b: { v: T; w: (p: T) => void }): T;
+      g(1, { v: "a", w: p => p.length });
+      g("x", { v: 1, w: p => p.foo });
+      declare function h<T>(a: T[], b: [T, T]): void;
+      h([1, "a"], [true, { z: 1 }, 3]);
+      h([{ a: 1 }], [{ a: "s", b: 2 }, { a: 1 }]);
+      declare function k<T, U>(a: { [K in keyof T]: T[K] }, b: (t: T) => U, c: U extends string ? number : string): U;
+      k({ a: 1, b: "x" }, t => t.a, 1);
+      k({ a: 1, b: "x" }, t => t.c, "s");
+      declare function m<const T>(a: T, b: T): void;
+      m([1, 2], { q: [1, x => x] });
+      declare function n<T>(a: T, b: NoInfer<T>): void;
+      n({ a: 1, f: (x: number) => x }, { a: "s", f: y => y.foo });
+      declare function o<T>(this: void, a: () => T, b: T): void;
+      o(() => ({ a: 1 }), { a: "x", c: [undefinedName] });
+      o(() => 1, \`a\${1 as any as symbol}\`);
+      function p<T extends { a: number }>(x: T, y: Partial<T>) { return x; }
+      p({ a: "s" }, { a: 1, b: () => this });
+      p({ a: 1, b: 2 }, { c: 3, a: [1].map(v => v.foo) });
+      new Map<string, number>([["a", "b"], [1, 2]]);
+      new Set([1, "a"]).add({ a: (z) => z });
+      Promise.resolve({ a: 1 }).then(v => v.b, e => e.c).then<number>(q => q);
+      [1, 2].reduce((acc, v) => acc.concat(v), []);
+      [1, 2].map(v => ({ v, w: v.x }), { t: this });
+    `,
+  });
+  const root = String(dir);
+  const [theirs, ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    linesOf([bunExe(), "check"], root, root),
+  ]);
+  expect(theirs.length).toBeGreaterThan(20);
   expect(ours).toEqual(theirs);
 });
 
@@ -89,6 +130,62 @@ test.concurrent.skipIf(!tsc || !hasRunner)("reports the same whichever files sha
   expect(counts["one task"].tasks).toBeLessThan(counts["by cost"].tasks / 4);
   expect(counts["last file first"].tasks).toBeGreaterThanOrEqual(counts["last file first"].files);
   expect(counts["each file twice"].tasks).toBeGreaterThan(counts["each file twice"].files);
+  expect(exitCode).toBe(0);
+});
+
+// tsc gets to a limit once. It stores the error type, and the files that use the type later find it.
+test.concurrent.skipIf(!tsc || !hasRunner)("gets to an instantiation limit once, not once per file", async () => {
+  const files: Record<string, string> = {
+    "tsconfig.json": tsconfig,
+    "lib.ts": `
+      export type Wrap<N extends number, T, A extends 1[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, 1]>;
+      export type Leaves<T> = T extends object ? { [K in keyof T]: Leaves<T[K]> }[keyof T] : T;
+    `,
+    "hub.ts": `
+      import type { Leaves, Wrap } from "./lib";
+      declare function deep<T>(t: T): Leaves<Wrap<60, T>>;
+      export const hub = { a: 1, z: deep(1) };
+    `,
+  };
+  for (let i = 0; i < 12; i++)
+    files[`use${i}.ts`] = `import { hub } from "./hub";\nexport const a${i}: string = hub.a;\n`;
+  // The runner checks a program in the first two ways, and in one of the other four by its position.
+  const copies = ["p0", "p1", "p2", "p3"];
+  using dir = tempDir(
+    "bun-check-limit",
+    Object.fromEntries(copies.flatMap(copy => Object.entries(files).map(([name, text]) => [`${copy}/${name}`, text]))),
+  );
+  const root = String(dir);
+  const cwd = join(root, "p0");
+  await using proc = spawn({
+    timeout: longLimit,
+    cmd: [
+      bunExe(),
+      "check",
+      "--run-typescript-tests",
+      "--task-groupings",
+      `--lib=${dirname(tsc!)}`,
+      `--root=${root}`,
+      ...copies,
+    ],
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [theirs, stdout, exitCode, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], cwd, cwd),
+    proc.stdout.text(),
+    proc.exited,
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", `--threads=${threads}`], cwd, cwd)),
+  ]);
+  expect(theirs.filter(line => line.includes("TS5114"))).toHaveLength(1);
+  expect(theirs).toHaveLength(13);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+  const lines = stdout.split(/\r?\n/).filter(line => line);
+  const counts = lines.splice(-6);
+  expect(lines).toEqual([]);
+  // In program order the first task that gets there is trusted, so none is discarded.
+  expect(counts.slice(0, 2)).toEqual(["by cost: 56 tasks, 56 files", "one task: 4 tasks, 56 files"]);
   expect(exitCode).toBe(0);
 });
 
@@ -576,21 +673,7 @@ test.concurrent.skipIf(!tsc)("reports TS2879 at the first fragment checked, on a
   for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
-// Without React's types, a file gets one TS2875. TypeScript 7.0 reports it at the tag a checker reaches first, which
-// depends on what else that checker has checked. TypeScript 7.1 reports it at the first tag in the text, and so does
-// `bun check`. These are the positions TypeScript 7.1 reports for `modulesOfComponents(56)`, module by module.
-const firstTags = `
-  c0.tsx(1,21) c1.tsx(2,21) c2.tsx(2,21) c3.tsx(2,34) c4.tsx(3,22) c5.tsx(3,41) c6.tsx(4,13)
-  c7.tsx(5,13) c8.tsx(3,61) c9.tsx(4,30) c10.tsx(4,26) c11.tsx(4,34) c12.tsx(6,10) c13.tsx(5,13)
-  c14.tsx(4,21) c15.tsx(4,21) c16.tsx(4,21) c17.tsx(4,34) c18.tsx(5,22) c19.tsx(4,41) c20.tsx(5,13)
-  c21.tsx(6,13) c22.tsx(4,61) c23.tsx(5,30) c24.tsx(5,26) c25.tsx(4,34) c26.tsx(6,10) c27.tsx(5,13)
-  c28.tsx(4,21) c29.tsx(4,21) c30.tsx(4,21) c31.tsx(4,34) c32.tsx(5,22) c33.tsx(4,41) c34.tsx(5,13)
-  c35.tsx(6,13) c36.tsx(4,61) c37.tsx(5,30) c38.tsx(5,26) c39.tsx(4,34) c40.tsx(6,10) c41.tsx(5,13)
-  c42.tsx(4,21) c43.tsx(4,21) c44.tsx(4,21) c45.tsx(4,34) c46.tsx(5,22) c47.tsx(4,41) c48.tsx(5,13)
-  c49.tsx(6,13) c50.tsx(4,61) c51.tsx(5,30) c52.tsx(5,26) c53.tsx(4,34) c54.tsx(6,10) c55.tsx(5,13)
-`
-  .trim()
-  .split(/\s+/);
+// Without React's types, a file gets one TS2875, at the first tag in the text.
 const isJsxRuntimeError = (line: string) => line.includes("error TS2875:");
 const jsxRuntimeErrorPositions = (lines: string[]) => lines.filter(isJsxRuntimeError).map(line => line.split(":")[0]);
 
@@ -605,10 +688,8 @@ test.concurrent.skipIf(!tsc)("reports TS2875 at the file's first tag on any thre
     linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
     ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
   ]);
-  for (const lines of ours) {
-    expect(jsxRuntimeErrorPositions(lines).sort()).toEqual(firstTags.slice(0, modules).sort());
-    expect(lines.filter(line => !isJsxRuntimeError(line))).toEqual(theirs.filter(line => !isJsxRuntimeError(line)));
-  }
+  expect(theirs.filter(isJsxRuntimeError).length).toBe(modules);
+  for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
 // The first tag counts even if it's never checked, like the second class in `extends` or the body of `with`. A file in
@@ -1592,7 +1673,7 @@ differential("matches tsc on an unread parameter property that's a binding patte
   }
 });
 
-// The target of `export =`, merged with what `declare module "m"` adds, is printed with the name of the file it's in.
+// The target of `export =`, merged with what `declare module "m"` adds, is printed as `import("m")`.
 // `@types/react-dom` augments "react" like this.
 differential("prints a module with `export =` like tsc, for every augmentation and kind of import", async () => {
   const exported = {
@@ -2079,7 +2160,6 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
     `["q", null, 1]`,
     "[]",
   ];
-  // A reference's `path` is left out, because TypeScript 7.0.2 crashes unless it's a string.
   const positions: ((value: string) => string)[] = [
     value => `{ "compilerOptions": { "strict": ${value} } }`,
     value => `{ "compilerOptions": { "target": ${value} } }`,
@@ -2113,12 +2193,14 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
       `{ "compilerOptions": { "target": /* a */ /* b */${value} , "lib": [ /* c */ ${value} /* d */ , // e\n ${value} ] } }`,
     value => `{\r\n  "compilerOptions": {\r\n    "strict":\r\n\t${value}\r\n  }\r\n}`,
     value => value,
+    value => `{ "references": [{ "path": ${value} }] }`,
+    value => `{ "references": [{ "path": "../lib", "circular": ${value} }] }`,
   ];
   // Each case takes two processes, so only the diagonals are sampled. That still covers every position and every value,
   // except in a debug build.
   const step = isDebug || isASAN ? 280 : 12;
   const cases = positions.flatMap((position, i) => values.filter((_, j) => (i + j) % step === 0).map(position));
-  // The root is an array. TypeScript 7.0.2 uses the first object in it as the configuration, and only reports the array
+  // The root is an array. TypeScript uses the first object in it as the configuration, and only reports the array
   // (TS5092) if it contains no object.
   const implicit = (value: boolean) => `{ "compilerOptions": { "noImplicitAny": ${value} } }`;
   cases.push(

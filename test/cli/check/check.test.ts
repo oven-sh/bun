@@ -503,7 +503,7 @@ describe.concurrent("bun check", () => {
       },
     });
     const exitCode = await proc.exited;
-    expect(output).toContain("Loading");
+    expect(output).toMatch(/Loading|Checking/);
     expect(output).toContain("TS2322");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
@@ -667,6 +667,93 @@ module.exports = { scope };
     }
   });
 
+  // The base types of an interface that two files declare have an error in each file. The task of the second file doesn't
+  // report the error in the first file. That file's task does, and it's done later here, because the file is long.
+  test("reports the errors of one query in two files, whichever file's task is done first", async () => {
+    const names = Array.from({ length: 4 }, (_, i) => `C${i}`);
+    using dir = project({
+      "s.ts":
+        names.map(name => `export interface ${name} { a: 1 }\n`).join("") +
+        `declare module "./n" {\n${names.map(name => `  interface ${name} extends ${name} {}\n`).join("")}}\n` +
+        Array.from({ length: 600 }, (_, i) => `export const x${i} = [1, 2].map(v => ({ v, i: ${i} })).length;\n`).join(
+          "",
+        ),
+      "n.ts":
+        `import type { ${names.map(name => `${name} as _${name}`).join(", ")} } from "./s";\nexport * from "./s";\n` +
+        `declare module "./n" {\n${names.map(name => `  interface ${name} extends _${name} {}\n`).join("")}}\n`,
+    });
+    const expected = ["n.ts", "s.ts"].flatMap((file, at) =>
+      names.map(
+        (name, i) =>
+          `${file}(${i + [4, 6][at]},13): error TS2310: Type '${name}' recursively references itself as a base type.`,
+      ),
+    );
+    const threads = [1, 2, 2, 3, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(expected.join("\n"));
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // By the variances of `Extract`, `Declared<T>` isn't related to `Indexed<T>`. `U` is invariant, so where TypeScript
+  // reports that, it continues and compares the two conditional types structurally. That succeeds and replaces the
+  // failure: `run(name)` has no error, and what's checked later finds the two related. The task of `b.ts` gets to the
+  // returned expressions first, because `a.ts` is long.
+  test("relates two conditional types from the first error about them on, whichever file's task gets there first", async () => {
+    using dir = project({
+      "a.ts": `interface Mutation<E = unknown> { e: E }
+interface Model<M extends Record<string, Mutation> = Record<string, Mutation>> { mutations: M }
+type Mutations<T> = T extends Model<infer M> ? M : never;
+type ErrorOf<T> = T extends Mutation<infer E> ? E : never;
+type Declared<T> = Extract<keyof Mutations<T>, string>;
+type Indexed<T extends Model> = Extract<keyof T["mutations"], string>;
+interface Options<T extends Model> {
+  mutate<Name extends Declared<T>>(name: Name): ErrorOf<Mutations<T>[Name]>;
+}
+declare function build<T extends Model>(options: Options<T>): Options<T>;
+${Array.from({ length: 600 }, (_, i) => `export const x${i} = [1, 2].map(v => ({ v, i: ${i} })).length;\n`).join("")}
+export function returnsTheCall<T extends Model>() {
+  return build<T>({ mutate: name => run(name) });
+  function run<Name extends Indexed<T>>(name: Name): ErrorOf<T["mutations"][Name]> { return null!; }
+}
+export function returnsTheFirstOfThree<T extends Model, N extends Declared<T>>(n: N) {
+  function run<Name extends Indexed<T>>(name: Name): Name { return name; }
+  function pick<Name extends Indexed<T>>(name: Name): 1;
+  function pick(name: unknown): 2;
+  function pick(name: unknown): number { return 0; }
+  const before: never = pick(n);
+  const first = run(n);
+  const after: never = pick(n);
+  return first;
+}
+export function returnsAnotherCall<T extends Model, N extends Declared<T>>(n: N) {
+  function run<Name extends Indexed<T>>(name: Name): ErrorOf<T["mutations"][Name]> { return null!; }
+  function pick<Name extends Indexed<T>>(name: Name): 1;
+  function pick(name: unknown): 2;
+  function pick(name: unknown): number { return 0; }
+  build<T>({ mutate: name => run(name) });
+  return pick(n);
+}
+`,
+      "b.ts": `import { returnsAnotherCall, returnsTheCall, returnsTheFirstOfThree } from "./a";
+export function measure<A, B extends A>(a: Extract<A, string>, b: Extract<B, string>) {
+  a = b;
+  return a;
+}
+export const types: [never, never, never] = [returnsTheCall, returnsTheFirstOfThree, returnsAnotherCall];
+`,
+    });
+    const threads = [1, 2, 2, 4, 8, 16];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(`a.ts(621,9): error TS2322: Type '2' is not assignable to type 'never'.
+a.ts(623,9): error TS2322: Type '1' is not assignable to type 'never'.
+b.ts(6,46): error TS2322: Type '<T extends Model>() => Options<T>' is not assignable to type 'never'.
+b.ts(6,62): error TS2322: Type '<T extends Model, N extends Declared<T>>(n: N) => Extract<keyof T["mutations"], string>' is not assignable to type 'never'.
+b.ts(6,86): error TS2322: Type '<T extends Model, N extends Declared<T>>(n: N) => 1' is not assignable to type 'never'.`);
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // `a.ts`, `b.ts` and `c.ts` import each other, and the type of `routes` depends on itself. What tsc reports depends
   // on where it enters that cycle. Here that's `0first.ts`, which doesn't import those files. It gets there through a
   // declaration that a file outside the import cycle makes visible everywhere.
@@ -794,8 +881,8 @@ export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
   });
 
   // An error message prints a type, which infers a return type, which reports an error whose message prints a type, and so
-  // on. TypeScript discards an error that is created two messages deep. 7.0 never reports a missing property after that, so
-  // its output depends on which file or statement gets there first. 7.1 reports it when the walk reaches it, and so do we.
+  // on. TypeScript discards an error that is created two messages deep. A missing property is reported at the end of the
+  // file's check, when nothing is being printed.
   describe("reports a missing property that's first reached while an error message prints a type", () => {
     const filler = (prefix: string, lines: number) =>
       Array.from(
@@ -1717,13 +1804,15 @@ export function lastInAnObject() { ({ ...x6 } = o); }
         `export const probe: never = [${imported.map((_, at) => `v${at}`)}] as const;\n`,
     });
     const { stdout, exitCode } = await check(dir);
-    expect(stdout).toBe(`a.ts(7,14): error TS2322: Type '[2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`);
+    expect(stdout).toBe(
+      `a.ts(7,14): error TS2322: Type 'readonly [2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`,
+    );
     expect(exitCode).toBe(1);
   });
 
-  // A mapped type's property has no declaration of its own, so if only one constituent declares the property, that
-  // declaration's modifiers apply. The expected output is tsc's.
-  test("keeps `readonly`, `private` and `protected` on a property shared with a mapped type in an intersection or union", async () => {
+  // The constituents' properties decide, not the modifiers of the one declaration they have: a mapped type's property has
+  // that declaration too, without the modifiers. The expected output is tsc's.
+  test("drops `readonly`, `private` and `protected` from a property shared with a mapped type in an intersection or union", async () => {
     using dir = tempDir("bun-check", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: {
@@ -1792,14 +1881,8 @@ u.balance
     });
     const { stdout, exitCode } = await check(dir);
     expect(stdout.split("\n")).toEqual([
-      `index.ts(9,3): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
-      `protected.ts(8,3): error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.`,
-      `protected.ts(9,3): error TS2341: Property 'pin' is private and only accessible within class 'Account'.`,
-      `readers.ts(7,8): error TS2704: The operand of a 'delete' operator cannot be a read-only property.`,
-      `readers.ts(8,5): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
-      `readers.ts(10,14): error TS2322: Type '{ readonly id?: string | undefined; }' is not assignable to type 'never'.`,
-      `swapped.ts(7,3): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
-      `union.ts(8,3): error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.`,
+      `readers.ts(10,14): error TS2322: Type '{ id?: string | undefined; }' is not assignable to type 'never'.`,
+      `swapped.ts(8,1): error TS2578: Unused '@ts-expect-error' directive.`,
     ]);
     expect(exitCode).toBe(1);
   });
@@ -1926,7 +2009,8 @@ export function l4<U extends { a: unknown }, V extends { a: unknown }>(v: U["a"]
       `intersections.ts(19,9): error TS2322: Type 'readonly U[] | [U] | E' is not assignable to type 'symbol'.`,
       `  Type 'E' is not assignable to type 'symbol'.`,
       `normalized.ts(4,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
-      `normalized.ts(9,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
+      `normalized.ts(9,9): error TS2322: Type 'U | { z: 3; }' is not assignable to type 'string'.`,
+      `  Type 'U' is not assignable to type 'string'.`,
       `normalized.ts(14,9): error TS2322: Type '{ z: 3; } | (U[K] & V[K])' is not assignable to type 'string'.`,
       `  Type '{ z: 3; }' is not assignable to type 'string'.`,
       `normalized.ts(19,9): error TS2322: Type '{ z: 3; } | U["a"] | V["a"]' is not assignable to type 'string'.`,
@@ -2572,7 +2656,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
-    // TypeScript 7.0.2 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
+    // TypeScript 7.1 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
     // union's property resolves the types of the properties it combines, and `shape`'s is still being resolved.
     test.each([`Pick<N, "id">`, `Omit<N, "shape">`, `Pick<N, Exclude<keyof N, "shape">>`])(
       "accepts %s of a union whose other property's type is still being resolved",
@@ -3714,6 +3798,21 @@ export const c: 1 = handler;
       );
     });
 
+    test("a generated declaration file keeps `/index` in a specifier if a file has the directory's name", async () => {
+      using dir = monorepo({
+        "packages/lib/src/box.ts": `export interface Box {\n  label: string;\n}\n`,
+        "packages/lib/src/box/index.ts": `export interface Box {\n  value: number;\n}\n`,
+        "packages/lib/src/make.ts": `import type { Box } from "./box/index";\nexport declare function make(): Box;\n`,
+        // The declaration file contains `import("./box/index").Box`. `import("./box")` is box.ts.
+        "packages/lib/src/index.ts": `import { make } from "./make";\nexport const made = make();\n`,
+        "packages/app/src/index.ts": `import { made } from "../../lib/src/index";\nexport const wrong: string = made.value;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+    });
+
     describe("a referenced project written in JavaScript", () => {
       const library = {
         "packages/lib/tsconfig.json": JSON.stringify({
@@ -4152,7 +4251,7 @@ export { n, area, u };
     );
 
     // The first module after the sort is the one used to name the type. Here no module can be used, so the error quotes
-    // it. Where the ordering is cyclic, which one comes first depends on the sort algorithm. The names are tsc 7.0.2's.
+    // it. Where the ordering is cyclic, which one comes first depends on the sort algorithm. The names are tsc 7.1's.
     test.each([
       [5, 5, "lib/shared/shim"],
       [10, 11, "page08"],
@@ -5208,6 +5307,50 @@ export {};
       `);
     });
 
+    test("the key type of a computed property name is as fresh as the type of the name's expression", async () => {
+      using dir = project({
+        "a.ts": `enum E { A = "x", B = "y" }
+const fresh = "a";
+const regular: "b" = "b";
+const literal = { [fresh]: 1, [regular]: 1, ["c"]: 1, [0]: 1, [E.A]: 1 };
+class Class { [fresh] = 1; [regular] = 1; ["c"] = 1; [0] = 1; [E.A] = 1 }
+type Mapped = { [K in keyof typeof literal]: K };
+declare function key<T, K extends keyof T>(of: T, name: K): Extract<keyof T, K>;
+declare const instance: Class, mapped: Mapped;
+let l1 = key(literal, "a"), l2 = key(literal, "b"), l3 = key(literal, "c"), l4 = key(literal, 0), l5 = key(literal, E.A);
+let c1 = key(instance, "a"), c2 = key(instance, "b"), c3 = key(instance, "c"), c4 = key(instance, 0), c5 = key(instance, E.A);
+let m1 = mapped.a, m2 = mapped.b, m3 = mapped.c, m4 = mapped[0], m5 = mapped[E.A];
+let s1 = key({ ...literal }, "a");
+declare const only: keyof { [E.A]: 1 }, onlyOfLiteral: keyof typeof single;
+const single = { [E.A]: 1 };
+let e1 = only, e2 = onlyOfLiteral;
+const widened: never[] = [l1, l2, l3, l4, l5, c1, c2, c3, c4, c5, m1, m2, m3, m4, m5, s1, e1, e2];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(16,27): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,31): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(16,35): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,39): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(16,43): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,47): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,51): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(16,55): error TS2322: Type '"c"' is not assignable to type 'never'.
+        a.ts(16,59): error TS2322: Type '0' is not assignable to type 'never'.
+        a.ts(16,63): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,67): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,71): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(16,75): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,79): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(16,83): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,87): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,91): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,95): error TS2322: Type 'E.A' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a property access on every kind of type, and reports TS2339 where it's missing", async () => {
       using dir = project({
         "types.ts": `export interface OnlyType { a: 1 }
@@ -6220,6 +6363,212 @@ dynamic.getSSRProps = binding => {
       }
     });
 
+    // TypeScript measures the variances of all the type parameters of a generic type when one of them is first read. What it
+    // gets, and what the measurement stores in the cache of comparisons, depends on that moment and on that order.
+    describe("what depends on when variances are measured", () => {
+      // TypeScript measures all the variances of G and H together, with the first of the two in progress. H's second one reads
+      // as independent then. Measured alone, later, it's covariant.
+      const declarations = {
+        "the cycle comes back through the second type argument": `
+interface G<A, B> { h: H<string, A>; b: B }
+interface H<X, Y> { g: G<X, Y> }`,
+        "the cycle comes back through the first type argument": `
+interface G<A, B> { h: H<A, string>; b: B }
+interface H<X, Y> { g: G<X, Y> }`,
+      };
+      const h = `
+declare let hs: H<1, "a">;
+let h1: H<1, "b"> = hs;`;
+      const g = `
+declare let gs: G<"a", 1>;
+let g1: G<"b", 1> = gs;`;
+      for (const [name, types] of Object.entries(declarations)) {
+        test.each([
+          ["H", h + g],
+          ["G", g + h],
+        ])(
+          `two types that refer to each other are measured together: ${name}, %s is compared first`,
+          async (_, probes) => {
+            using dir = project({ "a.ts": types + probes });
+            const { stdout } = await check(dir);
+            expect(stdout).toBe("");
+          },
+        );
+        test.each([2, 8])(`the same with each comparison in its own file: ${name}, on %d threads`, async threads => {
+          using dir = project({ "d.d.ts": types, "h.ts": h + "\nexport {};", "g.ts": g + "\nexport {};" });
+          const { stdout } = await check(dir, ["--threads", String(threads)]);
+          expect(stdout).toBe("");
+        });
+      }
+
+      // What's left in the cache by measuring B decides what C gets.
+      test("the variances of a type that refers to itself are measured in order", async () => {
+        using dir = project({
+          "a.ts": `
+interface G<A, B, C> { f1: (x: B) => void; m2(x: C): void; next: (x: G<B, C, A>) => void }
+const p7: G<"a", "a", "a"> = null! as G<"a", "a", string>;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(3,7): error TS2322: Type 'G<"a", "a", string>' is not assignable to type 'G<"a", "a", "a">'.
+            Type 'string' is not assignable to type '"a"'."
+        `);
+      });
+
+      // `Wrapper` doesn't refer to itself, and the comparison only needs the variance of B. But measuring A is what reads the
+      // variances of `Core` first, before `Other` is compared. In TypeScript 7.0 and 7.1 the second comparison fails only if
+      // `Other` is read first.
+      const types = `
+type Core<A, B, C> = { other: Other<B>; self: (x: Core<C, C, B>) => C };
+interface Other<T> { core: Core<number, T, number>; f(x: Other<1>): Core<"k", T, T> }
+interface Wrapper<A, B, C> { m: (x: Core<A, C, Core<number, C, "k">>) => C }`;
+      const wrapper = `
+declare let w: Wrapper<1, unknown, 1>;
+export let w2: Wrapper<1, string, 1> = w;`;
+      const other = `
+declare let o: Other<{ x: 1 }>;
+export let o2: Other<{ x: 1; y: 2 }> = o;`;
+      test("a type that leads to a cycle can be what reads it first", async () => {
+        using dir = project({ "a.ts": types + wrapper + other });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+      test("and the cycle is read first by what comes first", async () => {
+        using dir = project({ "a.ts": types + other + wrapper });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(6,12): error TS2322: Type 'Other<{ x: 1; }>' is not assignable to type 'Other<{ x: 1; y: 2; }>'.
+            Property 'y' is missing in type '{ x: 1; }' but required in type '{ x: 1; y: 2; }'."
+        `);
+      });
+
+      // Measuring X resolves the conditional type, whose comparison is the first to read the variances of `A` and `B`.
+      test("a conditional type that's resolved during a measurement", async () => {
+        using dir = project({
+          "a.ts": `
+declare let narrow: Wrapper<1, 2>;
+export let wide: Wrapper<number, number> = narrow;
+export const c: Wrapper<1, 2>["c"] = { x: 1, y: 2 };
+interface A<T> { b: B<T> }
+interface B<T> { a: A<T>; v: T }
+interface Wrapper<X, Y> { c: A<"a"> extends A<string> ? { x: X; y: Y } : never }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+
+      // Resolving `self` compares two instantiations of `Self`, which reads the variances of `Self`, and measuring those
+      // resolves `self`. What comes out depends on which of the two starts.
+      test("a type whose members ask for its own variances", async () => {
+        using dir = project({
+          "a.ts": `
+export const c: Outer<1, 2, any> extends Outer<1, 2, string> ? 1 : 2 = 1;
+interface Outer<A, B, C> { inner: Inner<A, B, C> }
+interface Inner<A, B, C> extends Self<B> { m: Self<{ x: 1 }> extends Self<C> ? A : B }
+interface Self<T> { self: Self<{ x: 1; y: 2 }> extends Self<{ x: 1 }> ? { [K in keyof T]-?: T } : Self<T>["self"] }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`"a.ts(2,14): error TS2322: Type '1' is not assignable to type '2'."`);
+      });
+
+      // Measuring A compares `First<B, sub>` with `First<B, super>`, which measures `First` and `Second`. Their measurement
+      // restarts and stores a failure in the cache for the same two types. The comparison that started it replaces that.
+      test("a comparison whose result replaces what a restarted measurement stored", async () => {
+        using dir = project({
+          "a.ts": `
+type Second<T> = { first: First<T, 1> };
+interface Wrapper<A, B> { m: First<B, A> }
+declare let w: Wrapper<string, void>;
+export let w2: Wrapper<string, number> = w;
+declare let v: Wrapper<"a", 1>;
+export let v2: Wrapper<string, 1> = v;
+declare class First<A, B> { f: (x: A) => void; b: B; second: Second<(x: First<1, string>) => B> }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(5,12): error TS2322: Type 'Wrapper<string, void>' is not assignable to type 'Wrapper<string, number>'.
+            Type 'number' is not assignable to type 'void'."
+        `);
+      });
+
+      // Measuring the first type parameter of `Inner` compares `Self<sub>` with `Self<super>` by the variance of `Self`. Once
+      // that's measured, the two are its marker types, and they're compared structurally, with another result.
+      test("the marker types of a type that refers to itself, compared before it's measured", async () => {
+        using dir = project({
+          "a.ts": `
+declare let w: Outer<1, never, string, "z">;
+export let w2: Outer<1, string, string, "z"> = w;
+interface Outer<A, B, C, D> { inner: Inner<string, D, C, B> }
+interface Inner<A, B, C, D> { m: Self<() => D>; n: readonly Self<D>[]; f(): [...C[], Self<A>] }
+interface Self<T> { t: T; f(x: (this: Self<1>) => void): Self<(this: Self<T>) => void> }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+
+      // No type here refers to itself. While B is measured, `Inner<A, super>` and `Inner<A, sub>` have the same key in the cache
+      // as two marker types of `Inner`. Measuring A has compared those, so the result is found there, without the mark
+      // "unreliable" that reading the variance of `Inner` would add. So B allows no structural comparison, which would succeed.
+      test("a comparison that finds the result of an earlier measurement under its own key", async () => {
+        using dir = project({
+          "a.ts": `
+interface Inner<A, B> { b: B; x: { [K in keyof B]: A } }
+interface Outer<A, B, C> { k: keyof B; inner: Inner<A, B> | C }
+declare let s: Outer<1, "a", any>;
+export let t: Outer<1, "b", string> = s;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(5,12): error TS2322: Type 'Outer<1, "a", any>' is not assignable to type 'Outer<1, "b", string>'.
+            Type '"a"' is not assignable to type '"b"'."
+        `);
+      });
+
+      // The other way around. The first comparison only needs the variance of B, but measuring A measures `Mid`, and there
+      // `Inner<super, Q>` and `Inner<sub, Q>` are the first two instantiations of `Inner` to be compared. Nothing is in the cache
+      // yet, so they're compared by the variances of `Inner`, P is marked, and the last line is compared structurally.
+      test("a comparison that's the first to read the variances, under the key of two marker types", async () => {
+        using dir = project({
+          "a.ts": `
+interface Inner<A, B> { a: A; x: { [K in keyof A]: B } }
+interface Mid<P, Q> { k: keyof P; i: Inner<P, Q> | Q }
+interface Outer<A, B> { m: Mid<A, 1>; x: Inner<B[], 1> }
+declare let s1: Outer<1, "a">;
+export let t1: Outer<1, "a" | "b"> = s1;
+declare let s2: Mid<"a", any>;
+export let t2: Mid<"b", string> = s2;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+
+      test("a type parameter that isn't used", async () => {
+        using dir = project({
+          "a.ts": `
+interface Box<In, Out, Unused> { put(x: In): void; set: (x: In) => void; get: Out }
+declare let a: Box<string, "a", 1>;
+export let ok1: Box<"x", string, 2> = a;
+export let bad1: Box<unknown, "a", 1> = a;
+export let bad2: Box<string, "b", 1> = a;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(5,12): error TS2322: Type 'Box<string, "a", 1>' is not assignable to type 'Box<unknown, "a", 1>'.
+            Type 'unknown' is not assignable to type 'string'.
+          a.ts(6,12): error TS2322: Type 'Box<string, "a", 1>' is not assignable to type 'Box<string, "b", 1>'.
+            Type '"a"' is not assignable to type '"b"'."
+        `);
+      });
+    });
+
     // The argument is wrong: without the cycle through `keyof typeof shapes`, TypeScript reports TS2345. Inside the initializer
     // that the type refers back to, the comparison re-enters itself, and TypeScript 7.0 and 7.1 keep the inner result.
     test("keeps the first result of a comparison that re-enters itself through a variable's initializer", async () => {
@@ -7174,8 +7523,7 @@ export const alsoWrong = wrong.nope;
     // first asked about every enclosing call. That took minutes to days. Now the checker gives up on the whole
     // expression. The file is reported as incomplete, and errors deeper than the checker got aren't reported. The last
     // column is an error in the expression that tsc reports too. The checker finds it with two thirds of its stack, so
-    // larger frames on another platform don't lose it. For array and object literals more than 100 deep tsc also
-    // reports TS2321, which `bun check` doesn't do yet.
+    // larger frames on another platform don't lose it.
     test.skipIf(isDebug || isASAN).each([
       ["calls", "f(", ")", 3_000, ""],
       ["new", "new f(", ")", 3_000, ""],
@@ -7290,6 +7638,33 @@ export const wrong: number = "";`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports declaration errors once there are no other errors, like `tsc --noEmit`", async () => {
+      const files = {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, declaration: true, outDir: "out" },
+        }),
+        "a.ts": `namespace N {
+  interface Hidden {
+    a: number;
+  }
+  export declare const hidden: Hidden;
+}
+export const shown = N.hidden;
+`,
+      };
+      const declarationError =
+        "a.ts(7,14): error TS4025: Exported variable 'shown' has or is using private name 'Hidden'.";
+      const typeError = "b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.";
+      using broken = project({ ...files, "b.ts": `export const wrong: number = "";\n` });
+      expect((await check(broken)).stdout).toBe(typeError);
+      // `tsc -b` emits, unless the project has `noEmit`.
+      expect((await check(broken, ["-b"])).stdout).toBe(`${declarationError}\n${typeError}`);
+      using fixed = project({ ...files, "b.ts": `export const right: number = 1;\n` });
+      const { stdout, exitCode } = await check(fixed);
+      expect(stdout).toBe(declarationError);
+      expect(exitCode).toBe(1);
+    });
+
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
 
     test("isolatedDeclarations: reports every property of `export default {} satisfies T`", async () => {
@@ -7318,11 +7693,11 @@ export const wrong: number = "";`,
 }
 `,
       });
-      const { stdout, exitCode } = await check(dir, isolatedDeclarations);
-      expect(stdout).toMatchInlineSnapshot(`
-        "recursive.ts(2,10): error TS7023: 'next' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        recursive.ts(2,10): error TS9008: Method must have an explicit return type annotation with --isolatedDeclarations."
-      `);
+      // With `noImplicitAny` there's a TS7023, and no declaration errors next to it.
+      const { stdout, exitCode } = await check(dir, [...isolatedDeclarations, "--noImplicitAny", "false"]);
+      expect(stdout).toMatchInlineSnapshot(
+        `"recursive.ts(2,10): error TS9008: Method must have an explicit return type annotation with --isolatedDeclarations."`,
+      );
       expect(exitCode).toBe(1);
     });
 
@@ -7367,7 +7742,7 @@ export const outer = struct({ a: str, b: struct({ c: str }) });
 
     test("isolatedDeclarations: `exports.a = e` is an assignment to an expando, `module.exports = e` isn't", async () => {
       using dir = project({
-        "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true,"allowJs":true,"checkJs":true,"declaration":true,"isolatedDeclarations":true}}`,
+        "tsconfig.json": `{"compilerOptions":{"strict":true,"outDir":"out","target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true,"allowJs":true,"checkJs":true,"declaration":true,"isolatedDeclarations":true}}`,
         "lib.d.ts": `export declare function f(): number;
 `,
         "properties.cjs": `const { f } = require("./lib");
@@ -7378,9 +7753,10 @@ module.exports.two = { n: f() };
 module.exports = { one: f() };
 `,
       });
-      const { stdout, exitCode } = await check(dir);
+      // A build that emits reports declaration errors next to other errors.
+      const { stdout, exitCode } = await check(dir, ["-b"]);
       expect(stdout).toMatchInlineSnapshot(`
-        "tsconfig.json(1,162): error TS5053: Option 'allowJs' cannot be specified with option 'isolatedDeclarations'.
+        "tsconfig.json(1,163): error TS5053: Option 'allowJs' cannot be specified with option 'isolatedDeclarations'.
         whole.cjs(2,1): error TS9013: Expression type can't be inferred with --isolatedDeclarations.
         whole.cjs(2,25): error TS9013: Expression type can't be inferred with --isolatedDeclarations."
       `);
@@ -7646,6 +8022,46 @@ export class C { static readonly S: unique symbol = Symbol("s"); }
       expect(exitCode).toBe(1);
     });
 
+    test("TS7053 for an index into a parameter's binding element whose default is `{}`, in a function expression", async () => {
+      using dir = project({
+        "a.ts": `export const f1 = ({ q = {} }, k: string) => q[k];
+export const f2 = ([q = {}], k: string) => q[k];
+export const f3 = ({ q = {} }) => q["x"];
+export const f4 = function ({ q = {} }, k: string) { return q[k]; };
+export const f5 = { m({ q = {} }, k: string) { return q[k]; } };
+export const f6 = ({ q = [{}] }, k: string) => q[0][k];
+export const f7 = ({ p: { q = {} } = {} }, k: string) => q[k];
+export const f8 = ({ q = {} } = {}, k: string) => q[k];
+export const f9: (x: { q?: {} }) => void = ({ q = {} }) => q["x"];
+export const keys = ({ params = {} }) =>
+  Object.keys(params)
+    // @ts-expect-error
+    .filter(key => params[key]);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,46): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(2,44): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(3,35): error TS7053: Element implicitly has an 'any' type because expression of type '"x"' can't be used to index type '{}'.
+          Property 'x' does not exist on type '{}'.
+        a.ts(4,61): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(5,55): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(6,48): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(7,58): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(8,51): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(9,60): error TS2339: Property 'x' does not exist on type '{}'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("qualifies two types that share a name with `import(...)` in the message", async () => {
       using dir = project({
         "a.ts": `import { use } from "one";
@@ -7761,12 +8177,12 @@ take({ ...new K() });
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(5,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: (() => Promise<string>) | undefined; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(6,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: (x: Map<string, number>) => void; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        "a.ts(5,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ... | undefined; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(6,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
         a.ts(7,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(8,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>[]; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(10,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: () => Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(12,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: () => Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(8,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(10,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(12,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
         a.ts(14,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
         a.ts(15,48): error TS2304: Cannot find name 'Missing'.
         a.ts(16,6): error TS2741: Property 'required' is missing in type '{ kind: "single"; other: Missing; method(x: Map<string, number>): Promise<string>; readonly acc: Promise<string>; }' but required in type '{ [key: string]: unknown; required: number; }'.
@@ -7884,7 +8300,7 @@ export const b: number = obj;
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(3,14): error TS2322: Type '{ obj: { items: ({ x: number; y?: undefined; err?: undefined; } | { x: number; y: number; err?: undefined; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'.
-        a.ts(4,14): error TS2322: Type '{ obj: { items: ({ y?: undefined; err?: undefined; x: number; } | { err?: undefined; x: number; y: number; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'."
+        a.ts(4,14): error TS2322: Type '{ obj: { items: ({ x: number; y?: undefined; err?: undefined; } | { x: number; y: number; err?: undefined; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -8095,6 +8511,54 @@ export const r: A1<[Z, Z]> = [{ v: 1 }, { v: 1 }];
       expect(exitCode).toBe(0);
     });
 
+    test("compares a type with the apparent type of a mapped type over `NoInfer<T[]>`", async () => {
+      using dir = project({
+        "a.ts": `type Same<T extends unknown[]> = { [K in keyof T]: T[K] };
+type Boxed<T> = { [K in keyof T]: { value: T[K] } };
+export const a1: Same<NoInfer<[string]>> = ["x"];
+export const a2: Same<NoInfer<string[]>> = ["x"];
+export const a3: Boxed<NoInfer<[string]>> = [{ value: "x" }];
+export const a4: Boxed<NoInfer<readonly string[]>> = [{ value: "x" }];
+export const a5: Boxed<NoInfer<[string] | [number, number]>> = [{ value: 1 }, { value: 2 }];
+declare function f<T extends unknown[]>(b: T, a: Same<NoInfer<T>>): void;
+declare const x: [string];
+f(x, x);
+// Still errors.
+declare const numbers: [number];
+declare const two: [string, string];
+declare const boxes: { value: number }[];
+export const b1: Same<NoInfer<[string]>> = numbers;
+export const b2: Same<NoInfer<[string]>> = two;
+export const b3: Boxed<NoInfer<string[]>> = boxes;
+export const b4: Boxed<NoInfer<[string]>> = { 0: { value: "x" } };
+f(x, numbers);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,14): error TS2322: Type '[number]' is not assignable to type 'Same<NoInfer<[string]>>'.
+          The types returned by 'pop()' are incompatible between these types.
+            Type 'number | undefined' is not assignable to type 'string | undefined'.
+              Type 'number' is not assignable to type 'string'.
+        a.ts(16,14): error TS2322: Type '[string, string]' is not assignable to type 'Same<NoInfer<[string]>>'.
+          The types returned by 'sort(...)' are incompatible between these types.
+            Type '[string, string]' is not assignable to type '[string]'.
+              Source has 2 element(s) but target allows only 1.
+        a.ts(17,14): error TS2322: Type '{ value: number; }[]' is not assignable to type 'Boxed<NoInfer<string[]>>'.
+          The types returned by 'pop()' are incompatible between these types.
+            Type '{ value: number; } | undefined' is not assignable to type '{ value: string; } | undefined'.
+              Type '{ value: number; }' is not assignable to type '{ value: string; }'.
+                Types of property 'value' are incompatible.
+                  Type 'number' is not assignable to type 'string'.
+        a.ts(18,14): error TS2740: Type '{ 0: { value: string; }; }' is missing the following properties from type 'Boxed<NoInfer<[string]>>': pop, push, concat, join, and 35 more.
+        a.ts(19,6): error TS2345: Argument of type '[number]' is not assignable to parameter of type 'Same<NoInfer<[string]>>'.
+          The types returned by 'pop()' are incompatible between these types.
+            Type 'number | undefined' is not assignable to type 'string | undefined'.
+              Type 'number' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("doesn't report an unknown compiler option set to `null`", async () => {
       using dir = project({
         "tsconfig.json": `{
@@ -8288,6 +8752,132 @@ export const u: [number] | [number, string] = [1, 2];
           Type '[number, string, boolean]' is not assignable to type '[number, string]'.
             Source has 3 element(s) but target allows only 2.
         a.ts(2,51): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // The constraints of the two type parameters aren't related by the variances of `Extract`, so `n` is rejected. Where
+    // TypeScript reports that, it compares the two conditional types structurally, which succeeds.
+    test("continues with the next argument if the comparison that reports the error succeeds", async () => {
+      using dir = project({
+        "a.ts": `interface Model<M extends Record<string, unknown> = Record<string, unknown>> { mutations: M }
+type Mutations<T> = T extends Model<infer M> ? M : never;
+export function f<T extends Model, N extends Extract<keyof Mutations<T>, string>>(n: N) {
+  function two<Name extends Extract<keyof T["mutations"], string>>(name: Name, other: number): Name { return name; }
+  return [two(n, "a"), two(n, "b")];
+}
+export function g<T extends Model, N extends Extract<keyof Mutations<T>, string>>(n: N) {
+  function rest<Name extends Extract<keyof T["mutations"], string>>(name: Name, ...others: number[]): Name { return name; }
+  return [rest(n, 1, "a"), rest(n, "b")];
+}
+export function h<T extends Model, N extends Extract<keyof Mutations<T>, string>>(n: N) {
+  function three<Name extends Extract<keyof T["mutations"], string>>(name: Name, again: Name, other: number): Name { return name; }
+  return [three(n, n, "a"), three(n, n, "b")];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,18): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(5,31): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(9,22): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(9,36): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(13,23): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(13,41): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // The same for `this`. In `g` and `two` nothing else is wrong, so the call has no error at all. In `k` the comparison
+    // that reports the error fails too.
+    test("continues with the arguments if the comparison that reports the error about `this` succeeds", async () => {
+      using dir = project({
+        "a.ts": `interface Model<M extends Record<string, unknown> = Record<string, unknown>> { mutations: M }
+type Mutations<T> = T extends Model<infer M> ? M : never;
+type Declared<T> = Extract<keyof Mutations<T>, string>;
+type Indexed<T extends Model> = Extract<keyof T["mutations"], string>;
+export function f<T extends Model, N extends Declared<T>>(o: { v: N; m(this: { v: Indexed<T> }, other: number): 1 }) {
+  return [o.m("a"), o.m("b")];
+}
+export function g<T extends Model, N extends Declared<T>>(o: { v: N; m(this: { v: Indexed<T> }, other: number): 1 }) {
+  const first: never = o.m(1);
+  return [first, o.m(2)];
+}
+export function h<T extends Model, N extends Declared<T>>(o: {
+  v: N;
+  m(this: { v: Indexed<T> }, other: number): 1;
+  m(this: { v: Indexed<T> }, other: boolean): 2;
+}) {
+  return [o.m("a"), o.m(true)];
+}
+export function two<T extends Model, N extends Declared<T>>(n: N) {
+  function pair<Name extends Indexed<T>>(name: Name, other: number): Name { return name; }
+  const first: never = pair(n, 1);
+  return [first, pair(n, 2)];
+}
+export function k<T extends Model>(o: Declared<T> & { m(this: Indexed<T>, other: number): void }) {
+  o.m("a");
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(6,15): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(6,25): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(9,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(17,15): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'string' is not assignable to parameter of type 'boolean'.
+        a.ts(21,9): error TS2322: Type 'Extract<keyof T["mutations"], string>' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(25,3): error TS2684: The 'this' context of type 'Extract<keyof Mutations<T>, string> & { m(this: Extract<keyof T["mutations"], string>, other: number): void; }' is not assignable to method's 'this' of type 'Extract<keyof T["mutations"], string>'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the callee again after the quick type of a call, and after the test for a recursive call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => { kind: string };
+declare const id: <T>(value: T) => T;
+declare class Box { kind: string }
+export function statement() {
+  fail();
+  while (c || c) { make(); }
+}
+export function initializer() {
+  fail();
+  while (c || c) { const made = make(); }
+}
+export function generic() {
+  fail();
+  while (c || c) { const made = id(1); }
+}
+export function construct(box: typeof Box) {
+  fail();
+  while (c || c) { const made = new box(); }
+}
+export function returned() {
+  fail();
+  while (c || c) { if (c) return make(); }
+}
+export const inferredFirst = () => {
+  fail();
+  while (c || c) { if (c) return make(); }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,33): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(16,33): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(20,37): error TS2351: This expression is not constructable.
+          Type 'never' has no construct signatures.
+        a.ts(28,34): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
       `);
       expect(exitCode).toBe(1);
     });
@@ -9804,6 +10394,912 @@ export declare function css(style: Style): void;
       }
     });
 
+    test("checks the targets of a destructuring assignment again after the contextual type of its right side", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+export function plain(o: { p: number }) {
+  fail();
+  while (c || c) { o.p = 1; }
+}
+export function array(o: { p: number }) {
+  fail();
+  while (c || c) { [o.p] = [1]; }
+}
+export function object(o: { p: number }) {
+  fail();
+  while (c || c) { ({ a: o.p } = { a: 1 }); }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,20): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(9,23): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(13,28): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the expression of a switch again to find out whether the switch is exhaustive", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+type Shape = { kind: "a" } | { kind: "b" };
+export function statement(shape: Shape): number {
+  fail();
+  while (c && c) {}
+  shape.kind;
+}
+export function exhaustive(shape: Shape): number {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    case "a":
+      return 1;
+  }
+}
+export function withDefault(shape: Shape): number {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    default:
+      return 1;
+  }
+}
+export const inferredFirst = (shape: Shape) => {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    case "a":
+      return 1;
+  }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,17): error TS2339: Property 'kind' does not exist on type 'never'.
+        a.ts(28,17): error TS2339: Property 'kind' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("asks whether the end of a function without a return type can be reached", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+type Shape = { kind: "a" } | { kind: "b" };
+export function declaration(shape: Shape) {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    case "a":
+      break;
+  }
+}
+export class Methods {
+  method(shape: Shape) {
+    fail();
+    while (c && c) {}
+    switch (shape.kind) {
+      case "a":
+        break;
+    }
+  }
+  returnsVoid(shape: Shape): void {
+    fail();
+    while (c && c) {}
+    switch (shape.kind) {
+      case "a":
+        break;
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,17): error TS2339: Property 'kind' does not exist on type 'never'.
+        a.ts(16,19): error TS2339: Property 'kind' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the right operand of a logical operator in a test again", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+class Box { p = 1 }
+export function whole(o: { p: number }) {
+  fail();
+  while (c || c) { if (o.p) {} }
+}
+export function left(o: { p: number }) {
+  fail();
+  while (c || c) { if (o.p || c) {} }
+}
+export function rightOfOr(o: { p: number }) {
+  fail();
+  while (c || c) { if (c || o.p) {} }
+}
+export function rightOfAnd(o: { p: number }) {
+  fail();
+  while (c || c) { if (c && o.p) {} }
+}
+export function conditional(o: { p: number }) {
+  fail();
+  while (c || c) { c || o.p ? 1 : 2; }
+}
+export function notATest(o: { p: number }) {
+  fail();
+  while (c || c) { c || o.p; }
+}
+export function leftOfAnd(o: { p: number }) {
+  fail();
+  while (c || c) { (c || o.p) && c; }
+}
+export function operator(value: unknown) {
+  fail();
+  while (c || c) { if (c || value instanceof Box) {} }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(14,31): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(18,31): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(22,27): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(30,28): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(34,29): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the expression of a for in statement again for the type of the statement's variable", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+export function declared(o: { p: object }) {
+  fail();
+  while (c || c) { for (const key in o.p) {} }
+}
+export function assigned(o: { p: object }, key: string) {
+  fail();
+  while (c || c) { for (key in o.p) {} }
+}
+export function usedBefore(o: { p: object }) {
+  fail();
+  while (c || c) {
+    key;
+    for (var key in o.p) {}
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,40): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(15,23): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the arguments of a generic call again after the inference of its type arguments", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare function plain(value: unknown): void;
+declare function generic<T>(value: T): void;
+declare function overloaded(value: string): void;
+declare function overloaded(value: unknown): void;
+export function f(o: { p: number }) {
+  fail();
+  while (c || c) { plain(o.p); }
+}
+export function g(o: { p: number }) {
+  fail();
+  while (c || c) { generic(o.p); }
+}
+export function h(o: { p: number }) {
+  fail();
+  while (c || c) { overloaded(o.p); }
+}
+export function i(o: { p: number }) {
+  fail();
+  while (c || c) { generic<number>(o.p); }
+}
+export function j(o: { p: number }) {
+  fail();
+  while (c || c) { generic([o.p]); }
+}
+export function k(o: { p: number }) {
+  fail();
+  while (c || c) { generic(o); }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(13,30): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(25,31): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the expression of a case clause again for the types of the clauses", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+export function access(o: { p: boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p:
+  }
+}
+export function call(o: { p(): boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p():
+  }
+}
+export function chain(o: { p(): boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p?.():
+  }
+}
+export function argument(o: { p: boolean }, is: (value: boolean) => boolean) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case is(o.p):
+  }
+}
+export function withDefault(o: { p: boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p:
+    default:
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,12): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(14,12): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(21,12): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the arguments of a generic call again if control flow analysis resolves the call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => number;
+declare function assertDefined<T>(value: T): asserts value is NonNullable<T>;
+declare function assertNumber(value: unknown): asserts value is number;
+export function checkedFirst(o: { p?: number }) {
+  fail();
+  while (c && c) {}
+  assertDefined(o.p);
+  return make();
+}
+export const resolvedFirst = (o: { p?: number }) => {
+  fail();
+  while (c && c) {}
+  assertDefined(o.p);
+  return make();
+};
+export const notGeneric = (o: { p?: number }) => {
+  fail();
+  while (c && c) {}
+  assertNumber(o.p);
+  return make();
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,19): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(15,19): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(16,10): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(22,10): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the callee of a type guard call again for the effects of the call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const isString: (value: unknown) => value is string;
+export function narrowed(u: unknown) {
+  fail();
+  return () => {
+    try {
+      u = 1;
+    } catch {
+      while (c && c) {}
+      while (typeof u === "string") {
+        if (isString(u)) u;
+        if (isString(u)) c;
+      }
+    }
+  };
+}
+export function notNarrowed(u: unknown) {
+  fail();
+  return () => {
+    try {
+      u = 1;
+    } catch {
+      while (c && c) {}
+      while (typeof u === "string") {
+        if (isString(u)) c;
+        if (isString(u)) c;
+      }
+    }
+  };
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(13,13): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("narrows a union of primitive types that is compared with a literal to the regular literal type", async () => {
+      using dir = project({
+        "a.ts": `enum Color { Red, Green }
+enum Size { Small, Large }
+enum Word { A = "a", B = "b" }
+declare const key: unique symbol;
+export function union(x: number | undefined) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function notAUnion(x: number) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function text(x: string | null) {
+  if (x === "a") {
+    let y = x;
+    y = "b";
+  }
+}
+export function big(x: bigint | boolean) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
+  }
+}
+export function loose(x: number | undefined) {
+  if (x == 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function withObject(x: number | { a: 1 }) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function withVoid(x: number | void) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function enumAndText(x: Color | string) {
+  if (x === "a") {
+    let y = x;
+    y = "b";
+  }
+}
+export function oneEnum(x: Color | bigint) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
+  }
+}
+export function numericEnumAndLiteral(x: Color | "z" | bigint) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
+  }
+}
+export function stringEnumAndLiteral(x: Word | 5 | bigint) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
+  }
+}
+export function twoEnums(x: Color | Size | string) {
+  if (x === "a") {
+    let y = x;
+    y = "b";
+  }
+}
+export function symbols(x: symbol | undefined) {
+  if (x === key) {
+    let y = x;
+    y = Symbol();
+  }
+}
+export function property(o: { p: number | undefined }) {
+  if (o.p === 1) {
+    let { p = 1 } = o;
+    p = 2;
+  }
+}
+export function inSwitch(x: number | undefined) {
+  switch (x) {
+    case 1:
+      let y = x;
+      y = 2;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(20,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(26,5): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(50,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(56,5): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(86,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(93,7): error TS2322: Type '2' is not assignable to type '1'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the callee of a returned call again for the test for a recursive call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => number;
+declare const list: number[];
+export function returned(o: object) {
+  fail();
+  block: {
+    for (const key in o) {}
+    if (c || c || c) break block;
+  }
+  for (const item of list) {
+    try {
+      return make();
+    } catch {
+    } finally {
+      make();
+    }
+  }
+}
+export function notReturned(o: object) {
+  fail();
+  block: {
+    for (const key in o) {}
+    if (c || c || c) break block;
+  }
+  for (const item of list) {
+    try {
+      make();
+    } catch {
+    } finally {
+      make();
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,22): error TS2488: Type 'never' must have a '[Symbol.iterator]()' method that returns an iterator.
+        a.ts(16,7): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(26,22): error TS2488: Type 'never' must have a '[Symbol.iterator]()' method that returns an iterator."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("keeps what the resolution of a call reports while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  for (const item of list) {
+    if (x === y) {
+      x = (() => y)();
+    }
+    y = id(next[y]);
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(10,12): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(12,12): error TS2345: Argument of type '"b" | "c"' is not assignable to parameter of type '"b"'.
+          Type '"c"' is not assignable to type '"b"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("keeps the type of a loop that was stored last", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+declare function id<T>(value: T): T;
+export function f(z: Letter) {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  while (more) {
+    z = next[x];
+    while (z === y) {}
+    x = id<Letter>(y);
+  }
+}
+export function g(z: Letter) {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  while (y) {
+    z = next[x];
+    while (z === y) {}
+    x = id<Letter>(y);
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(10,12): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the body of a function without the loops in progress to infer a type predicate", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  for (;;) {
+    y = list.find(item => item === x) ?? y;
+    if (next[y] === x) continue;
+  }
+}
+export function g() {
+  let x: Letter = "a";
+  let z: Letter = "b";
+  while (next[x] === z) {
+    x = list.find(item => item === z) ?? z;
+  }
+  const probe: never = x;
+}
+export function notInTheTest() {
+  let x: Letter = "a";
+  let z: Letter = "b";
+  while (list.length) {
+    x = list.find(item => item === z) ?? z;
+  }
+  const probe: never = x;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(18,9): error TS2322: Type 'Letter' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(26,9): error TS2322: Type '"a" | "b"' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("keeps what is reported while a loop is analyzed if a circular return type follows", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  while (next[x] === y) {
+    y = next[id(y)];
+    if (more) {
+      ({ p: y } = { p: (() => y)() });
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,14): error TS2538: Type 'unknown' cannot be used as an index type.
+        a.ts(11,25): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("stores nothing that follows from the type of a loop while another loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  do {
+    y;
+    y = "b";
+    if (more) y = x;
+    do {
+      x = y;
+      x = next[x];
+    } while (more);
+  } while (more);
+  const probe: never = x;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(16,9): error TS2322: Type 'Letter' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks each part of an expression once per request while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => { kind: string };
+declare const list: number[];
+export function f(o: { kind: string }, maybe: { kind: string } | undefined) {
+  fail();
+  for (const item of list) {
+    while (maybe?.kind === "a") {}
+    for (; (c && c) || c; maybe = o) {
+      switch (true) {
+        case make().kind === "a":
+          break;
+      }
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(8,19): error TS2339: Property 'kind' does not exist on type 'never'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("computes an argument again after one more loop has come into analysis", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function pair<T>(first: T, second: T): T;
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let z: Letter = "b";
+  for (const item of list) {
+    do {
+      z = pair(z, z);
+      z = next[z];
+    } while (more);
+  }
+  const probe: never = z;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(14,9): error TS2322: Type 'Letter' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("keeps what the first visit computed when the right operand of a logical operator is checked again", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare function pair<T>(first: T, second: T): T;
+declare function assertB(value: unknown): asserts value is "b";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = list[0];
+  for (const item of list) {
+    for (; more; x = [y][0]) {
+      x = z;
+      y = (more || next[y] === y) && z !== z ? pair(z, x) : next[x];
+    }
+    assertB(y);
+    try {
+    } catch {
+      while (next[y] === z) {
+        y = ((z === "a" ?? next[y] === y) && x) || x;
+        y = id(y);
+      }
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,20): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap.
+        a.ts(21,15): error TS2869: Right operand of ?? is unreachable because the left operand is never nullish.
+        a.ts(21,28): error TS2367: This comparison appears to be unintentional because the types '"c"' and '"b"' have no overlap."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks the right operand of a logical operator anew while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "a";
+  while (more) {
+    x = (y !== "b" && z !== y) || y !== "b" ? next[z] : y;
+    y = list.find(item => item === x) ?? x;
+  }
+}
+export function g() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "a";
+  while (z === y) {
+    do {
+      z = (next[z] === z || more) && next[y] === z ? x : next[x];
+    } while (more);
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(10,35): error TS2367: This comparison appears to be unintentional because the types '"a"' and '"b"' have no overlap.
+        a.ts(20,38): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("keeps what every resolution of a call reports while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function onlyB(value: "b"): "c";
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  while (more) {
+    do {
+      [x] = [onlyB(x)];
+    } while (more);
+    for (const item of list) {
+      x = "b";
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,20): error TS2345: Argument of type '"a"' is not assignable to parameter of type '"b"'.
+        a.ts(9,20): error TS2345: Argument of type '"a" | "c"' is not assignable to parameter of type '"b"'.
+          Type '"a"' is not assignable to type '"b"'.
+        a.ts(9,20): error TS2345: Argument of type 'Letter' is not assignable to parameter of type '"b"'.
+          Type '"a"' is not assignable to type '"b"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks a reference again that is being checked if a loop has been analyzed in the meantime", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "a";
+  for (const item of list) {
+    for (; y === x; x = next[y]) {}
+    z = (() => y)();
+    for (; next[y] === z; x = z) {}
+    x = (() => x)();
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,12): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap.
+        a.ts(12,10): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks an initializer in the mode of the request on the second visit while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare function onlyB(value: "b"): "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "b";
+  do {
+    if (more) {
+      let same: boolean = y === "b";
+      z = id(same) ? y : z!;
+    }
+    switch (true) {
+      case id(y) === z:
+        x = onlyB(y);
+    }
+    let other: boolean | undefined = next[z] === y;
+    y = id(id(other)) ? y : next[x];
+    if (more) {
+    } else {
+      y = (() => z)();
+      z = id(next[y]);
+    }
+  } while (more);
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(17,19): error TS2345: Argument of type 'Letter' is not assignable to parameter of type '"b"'.
+          Type '"a"' is not assignable to type '"b"'.
+        a.ts(23,12): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };
@@ -9893,7 +11389,7 @@ export function g12() { if (!o["m"]) { const n: never = o["m"]; return n; } retu
         a.ts(17,70): error TS2322: Type 'undefined' is not assignable to type 'string | number'.
         a.ts(20,25): error TS2412: Type 'undefined' is not assignable to type 'string | number' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target.
         a.ts(20,43): error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target.
-        b.ts(2,46): error TS2322: Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): (...args: B) => R; }' is not assignable to type 'never'.
+        b.ts(2,46): error TS2322: Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): ...; }' is not assignable to type 'never'.
         b.ts(4,42): error TS2322: Type '() => void' is not assignable to type 'never'.
         b.ts(6,51): error TS2322: Type '() => string' is not assignable to type 'never'.
         b.ts(13,43): error TS2322: Type '() => void' is not assignable to type 'never'.
@@ -10230,6 +11726,39 @@ export { A1 };
       expect(exitCode).toBe(1);
     });
 
+    test("doesn't report TS2358 or TS2407 for the `never` of a loop that isn't analyzed completely", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const n: never;
+class C {}
+n instanceof C;
+for (const k in n) {}
+export function left(a: C | string) {
+  fail();
+  while (c || c) { a instanceof C; a instanceof C; }
+}
+export function right(b: typeof C) {
+  fail();
+  while (c || c) { n instanceof b; n instanceof b; }
+}
+export function forIn(a: object) {
+  fail();
+  while (c || c) { for (const k in a) {} for (const k in a) {} }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,1): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+        a.ts(6,17): error TS2407: The right-hand side of a 'for...in' statement must be of type 'any', an object type or a type parameter, but here has type 'never'.
+        a.ts(9,36): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+        a.ts(13,36): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+        a.ts(17,58): error TS2407: The right-hand side of a 'for...in' statement must be of type 'any', an object type or a type parameter, but here has type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("the suggestion for a misspelled name breaks ties in program order", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
@@ -10349,6 +11878,36 @@ interface Schema { kind: string }
 interface Literal<T> extends Schema { value: T }
 type Wrap<T extends Schema[]> = T extends [] ? never : T;
 export type Result<T extends string> = Wrap<Assert<UnionToTuple<{ [K in T]: Literal<K> }[T]>, Schema[]>>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // In TypeScript 7.1 `A[K]` is an instantiation of the same declaration as `A`, also if `A` is a mapped type applied
+    // to it. In 7.0 every `Chain<..>[K]` is unlike the others, so the constraint is followed to its end, `string`.
+    test.each(["Chain<[...N, 0], K>", "Id<Chain<[...N, 0], K>>"])(
+      "stops looking for the constraint of an indexed access after 10 instantiations of %s",
+      async next => {
+        using dir = project({
+          "a.ts": `type Id<T> = { [P in keyof T]: T[P] };
+interface Chain<N extends 0[], K extends "p"> { p: N["length"] extends 20 ? string : ${next}[K] }
+export function f<K extends "p">(x: Chain<[], K>[K]) { x.length; }
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe("a.ts(3,58): error TS2339: Property 'length' does not exist on type 'Chain<[], K>[K]'.");
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // 7.0 follows both constraints to their ends, `number` and `string`, and reports TS2322.
+    test("assumes that two indexed accesses are related after 3 instantiations of each object type", async () => {
+      using dir = project({
+        "a.ts": `interface A<N extends 0[], K extends "p"> { tag: "a"; p: N["length"] extends 5 ? string : A<[...N, 0], K>[K] }
+interface B<N extends 0[], K extends "p"> { tag: "b"; p: N["length"] extends 5 ? number : B<[...N, 0], K>[K] }
+export function f<K extends "p">(a: A<[], K>[K], b: B<[], K>[K]) { a = b; }
 `,
       });
       const { stdout, exitCode } = await check(dir);
@@ -10691,6 +12250,65 @@ export function b8() { let s: S | null = mk(); while (s) { const t = s.get(); co
       expect(exitCode).toBe(1);
     });
 
+    test("keeps the signature of a generic assertion that the analysis of another reference resolves", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare function make<T>(): T;
+declare const assertIs: <T>(value: unknown, expected: T) => asserts value is T;
+export const f = () => {
+  fail();
+  try {
+    for (const item of [1]) {}
+    var assigned = 1;
+  } catch {
+    assertIs(assigned, 1);
+    assertIs(assigned, 2);
+  }
+  const kind = make<"a" | "b">();
+  switch (kind) {
+    case "a":
+      return;
+  }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,5): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("doesn't check the arguments again of a call that the analysis of another reference resolves", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const assertIs: <T>(value: unknown, expected: T) => asserts value is T;
+declare const kind: "a" | "b";
+export const f = (o: { p?: { q: string } }) => {
+  fail();
+  try {
+    for (const item of [1]) {}
+    var assigned = 1;
+  } catch {
+    assertIs(assigned, 1);
+    assertIs(o.p?.q, "a");
+  }
+  switch (kind) {
+    case "a":
+      fail();
+  }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,5): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a generic assertion in a loop for every reference, which reports TS7022", async () => {
       using dir = project({
         "a.ts": `declare function deep<T>(a: unknown, e: T): asserts a is T;
@@ -10766,7 +12384,8 @@ export function t7(c: boolean) {
 
     test("truncates a long type at the same place however many declarations come before it", async () => {
       using dir = project({
-        // The length estimate counts the internal name of a property keyed by a `unique symbol`.
+        // The length estimate counts the internal name of a property keyed by a `unique symbol`, which ends with the
+        // 15 digits of the symbol's id.
         "index.ts": `${Array.from({ length: 1200 }, (_, i) => `declare const d${i}: ${i};`).join("\n")}
 declare const NamedGroupsS: unique symbol; declare const CapturedGroupsArrS: unique symbol; declare const ValueS: unique symbol; declare const FlagsS: unique symbol;
 declare const r: RegExp;
@@ -10775,7 +12394,7 @@ export const m: { [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefi
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
-        `"index.ts(1203,14): error TS2739: Type 'RegExp' is missing the following properties from type '{ [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefined)[]; [ValueS]: string; [FlagsS]: "d" | "i" | "m" | "s" | "u" | "y"; }': [NamedGroupsS], [CapturedGroupsArrS], [ValueS], [FlagsS]"`,
+        `"index.ts(1203,14): error TS2739: Type 'RegExp' is missing the following properties from type '{ [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefined)[]; [ValueS]: string; [FlagsS]: "d" | ... 4 more ... | "y"; }': [NamedGroupsS], [CapturedGroupsArrS], [ValueS], [FlagsS]"`,
       );
       expect(exitCode).toBe(1);
     });
@@ -10875,12 +12494,12 @@ export function go(input: RequestInfo, init?: RequestInit) {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(20,44): error TS2345: Argument of type 'string | { readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null; ... 20 more ...; clone: (...' is not assignable to parameter of type 'URL | RequestInfo'.
-          Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null; ... 20 more ...; clone: () => { .....' is not assignable to type 'URL | RequestInfo'.
-            Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null; ... 20 more ...; clone: () => { .....' is not assignable to type 'Request'.
+        "a.ts(20,44): error TS2345: Argument of type 'string | { readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null; ... 20 more ...; clone: ...; }' is not assignable to parameter of type 'URL | RequestInfo'.
+          Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null; ... 20 more ...; clone: ...; }' is not assignable to type 'URL | RequestInfo'.
+            Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null; ... 20 more ...; clone: ...; }' is not assignable to type 'Request'.
               Types of property 'body' are incompatible.
-                Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>> | null'.
-                  Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; }' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>>'.
+                Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>> | null'.
+                  Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; }' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>>'.
                     The types returned by 'getReader(...)' are incompatible between these types.
                       Type 'ReadableStreamReader<Uint8Array<ArrayBuffer>>' is not assignable to type 'ReadableStreamBYOBReader'.
                         Type 'ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>' is not assignable to type 'ReadableStreamBYOBReader'.
@@ -10934,7 +12553,7 @@ export const e7: UU<Req> = null! as Req; export const e8: Req = null! as UU<Req>
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(6,85): error TS2322: Type '2' is not assignable to type '1'.
         a.ts(7,67): error TS2322: Type 'number' is not assignable to type 'never'.
-        a.ts(8,66): error TS2322: Type '[1]' is not assignable to type 'never'.
+        a.ts(8,66): error TS2322: Type 'readonly [1]' is not assignable to type 'never'.
         a.ts(9,61): error TS2322: Type '1' is not assignable to type 'never'.
         a.ts(10,75): error TS2322: Type '"a"' is not assignable to type 'never'.
         a.ts(11,58): error TS2322: Type '{ a: 1; }' is not assignable to type 'never'.
@@ -10969,7 +12588,7 @@ export const e7: UU<Req> = null! as Req; export const e8: Req = null! as UU<Req>
         a.ts(27,14): error TS2322: Type '{ a: 1; c: { one: 1; }; }' is not assignable to type 'never'.
         a.ts(30,14): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...[]; }; self: ...; arr: ...[]; }' is not assignable to type 'never'.
         a.ts(30,57): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...[]; }; self: ...; arr: ...[]; }' is not assignable to type 'never'.
-        a.ts(30,110): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...[]; }; self: ...; arr: ...[]; }[]' is not assignable to type 'never'."
+        a.ts(30,110): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...; }; self: ...; arr: ...; }[]' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -11069,11 +12688,11 @@ declare function take(x: never): void; take({ a: [1] } as const);
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(2,30): error TS2322: Type '{ readonly a: [1, { readonly b: "x"; }]; }' is not assignable to type 'never'.
-        a.ts(3,14): error TS2322: Type '{ readonly a: { b: [1]; }; }' is not assignable to type 'never'.
-        a.ts(4,14): error TS2322: Type '[[1]]' is not assignable to type 'never'.
-        a.ts(5,14): error TS2322: Type '{ readonly a: [1]; }' is not assignable to type 'never'.
-        a.ts(6,45): error TS2345: Argument of type '{ readonly a: [1]; }' is not assignable to parameter of type 'never'."
+        "a.ts(2,30): error TS2322: Type '{ readonly a: readonly [1, { readonly b: "x"; }]; }' is not assignable to type 'never'.
+        a.ts(3,14): error TS2322: Type '{ readonly a: { readonly b: readonly [1]; }; }' is not assignable to type 'never'.
+        a.ts(4,14): error TS2322: Type 'readonly [readonly [1]]' is not assignable to type 'never'.
+        a.ts(5,14): error TS2322: Type '{ readonly a: readonly [1]; }' is not assignable to type 'never'.
+        a.ts(6,45): error TS2345: Argument of type '{ readonly a: readonly [1]; }' is not assignable to parameter of type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -11282,6 +12901,84 @@ export function k8() { let s: S | null = mk(); while (s) { const cur = s.kids.at
         a.ts(19,66): error TS7022: 'cur' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(20,66): error TS7022: 'cur' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(21,66): error TS7022: 'cur' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // `return` checks `v` before it asks for the return type of `h`. Narrowing `v` infers a type predicate for `p`, which
+    // leads back to `v`, and by then `p` has none.
+    test("narrowing by a function whose parameter's initializer calls the narrowing function isn't a circularity", async () => {
+      using dir = project({
+        "a.ts": `function h(v: string | number) { if (p(v)) { return v; } return 0; }
+function p(x: string | number, { a } = { a: h(1) }) { return !!x; }
+export const n1: never = h(1);
+export const n2: never = p;
+function h2(v: string | number) { if (p2(v)) { return v; } return 0; }
+function p2(x: string | number, y = h2(1)) { return !!x; }
+export const n3: never = h2(1);
+export const n4: never = p2;
+function p3(x: string | number, y = h3(1)) { return !!x; }
+function h3(v: string | number) { if (p3(v)) { return v; } return 0; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(4,14): error TS2322: Type '(x: string | number, { a }?: { a: string | number; }) => boolean' is not assignable to type 'never'.
+        a.ts(7,14): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(8,14): error TS2322: Type '(x: string | number, y?: string | number) => boolean' is not assignable to type 'never'.
+        a.ts(9,33): error TS7022: 'y' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(10,10): error TS7023: 'h3' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // While `[k]` is being checked, it declares no member.
+    test("a computed name whose type is read from the type it's a member of isn't a circularity", async () => {
+      using dir = project({
+        "a.ts": `declare const k: I[typeof w];
+declare const w: "w";
+interface I { [w]: "v"; [k]: 2 }
+export const i: never = null! as I;
+type T = { a: "b"; [l]: number };
+declare const l: T["a"];
+export const t: never = null! as T;
+export class C { static a = "x" as const; static [C.a] = 1; }
+export const c: never = C.x;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,20): error TS2339: Property 'w' does not exist on type 'I'.
+        a.ts(4,14): error TS2322: Type 'I' is not assignable to type 'never'.
+        a.ts(7,14): error TS2322: Type 'T' is not assignable to type 'never'.
+        a.ts(8,51): error TS2449: Class 'C' used before its declaration.
+        a.ts(9,14): error TS2322: Type 'any' is not assignable to type 'never'.
+        a.ts(9,27): error TS2339: Property 'x' does not exist on type 'typeof C'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // The message prints the type of `this`, with the return types of the methods that are being checked.
+    test("a property that's missing on `this` in a method of an object literal isn't a circularity", async () => {
+      using dir = project({
+        "a.ts": `export const a = { m() { return this.z; }, f() { return this.z; }, g: () => 1 + {} };
+declare function make<D, M>(o: { data: D; methods: M & ThisType<D & M> }): D & M;
+export const b = make({ data: { x: 1 }, methods: { get i() { return this.x; }, f() { return this.i; } } });
+declare function id<T>(x: T): T;
+export const c = { m() { return this.z; }, g: id(() => missing) };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,38): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.
+        a.ts(1,62): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.
+        a.ts(1,77): error TS2365: Operator '+' cannot be applied to types 'number' and '{}'.
+        a.ts(3,74): error TS2339: Property 'x' does not exist on type '{ readonly i: any; f(): any; }'.
+        a.ts(5,38): error TS2339: Property 'z' does not exist on type '{ m(): any; g: () => any; }'.
+        a.ts(5,56): error TS2304: Cannot find name 'missing'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -11717,7 +13414,8 @@ export const p3: N.PE = {};
       expect(exitCode).toBe(1);
     });
 
-    test("reports errors about a merged interface's base types at its first declaration in the program", async () => {
+    // The declarations of scripts come before those in `declare global`.
+    test("reports errors about a merged interface's base types at its first declaration", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.ts", "d.ts"]}`,
         "a.d.ts": `export {};
@@ -11760,22 +13458,22 @@ declare global {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.d.ts(6,13): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
+        "b.d.ts(1,11): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
           Types of property 'x' are incompatible.
             Type 'number' is not assignable to type 'string'.
-        a.d.ts(7,13): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
+        b.d.ts(2,11): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
           Named property 'k' of types 'P1' and 'P2' are not identical.
-        a.d.ts(9,13): error TS2430: Interface 'Twice' incorrectly extends interface 'Base'.
-          Types of property 'x' are incompatible.
-            Type 'number' is not assignable to type 'string'.
-        a.d.ts(11,13): error TS2430: Interface 'InTs' incorrectly extends interface 'Base'.
-          Types of property 'x' are incompatible.
-            Type 'number' is not assignable to type 'string'.
-        a.d.ts(12,13): error TS2430: Interface 'Late' incorrectly extends interface 'BaseB'.
-          Types of property 'x' are incompatible.
-            Type 'number' is not assignable to type 'string'.
         b.d.ts(4,11): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'.
-        b.d.ts(10,11): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'."
+        b.d.ts(5,11): error TS2430: Interface 'Twice' incorrectly extends interface 'Base'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+        b.d.ts(8,11): error TS2430: Interface 'Late' incorrectly extends interface 'BaseB'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+        b.d.ts(10,11): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'.
+        c.ts(1,11): error TS2430: Interface 'InTs' incorrectly extends interface 'Base'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -11801,10 +13499,10 @@ interface I { s: string }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.d.ts(5,13): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
+        "b.d.ts(1,11): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
           Types of property 'x' are incompatible.
             Type 'number' is not assignable to type 'string'.
-        a.d.ts(6,13): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
+        b.d.ts(2,11): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
           Named property 'k' of types 'P1' and 'P2' are not identical.
         b.d.ts(3,15): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'."
       `);
@@ -11967,13 +13665,14 @@ export const all: never[] = [null! as typeof a, null! as typeof b, null! as D, n
       );
       expect(stdout).toMatchInlineSnapshot(`
         "augments.ts(2,13): error TS2614: Module '"*.svg"' has no exported member 'added'. Did you mean to use 'import added from "*.svg"' instead?
+        augments.ts(4,10): error TS2305: Module '"twice/*"' has no exported member 'third'.
         augments.ts(7,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
         augments.ts(7,33): error TS2322: Type '"added to a.svg"' is not assignable to type 'never'.
         augments.ts(7,40): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
         augments.ts(7,43): error TS2322: Type 'any' is not assignable to type 'never'.
         augments.ts(7,52): error TS2322: Type '1' is not assignable to type 'never'.
         augments.ts(7,59): error TS2322: Type '3' is not assignable to type 'never'.
-        augments.ts(7,66): error TS2322: Type '3' is not assignable to type 'never'.
+        augments.ts(7,66): error TS2322: Type 'any' is not assignable to type 'never'.
         imports.ts(7,15): error TS2307: Cannot find module 'aba' or its corresponding type declarations.
         imports.ts(15,15): error TS2307: Cannot find module 'svg' or its corresponding type declarations.
         imports.ts(18,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
@@ -12375,9 +14074,9 @@ export declare const a4: A4; export const n4: never = a4;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(6,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(8,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(10,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        "a.ts(6,18): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(8,18): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(10,18): error TS5114: Instantiations of type 'DeepPartial' appear infinitely circular.
         a.ts(11,43): error TS2322: Type 'any' is not assignable to type 'never'.
         a.ts(12,43): error TS2322: Type 'any' is not assignable to type 'never'.
         a.ts(13,43): error TS2322: Type '{ h?: any; }' is not assignable to type 'never'."
@@ -12465,7 +14164,7 @@ export class Book {
       expect(exitCode).toBe(1);
     });
 
-    test("has a class's own members in place while its base types are instantiated", async () => {
+    test("resolves a class's members again when the instantiation of its base types requests them", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; parse(): Output; }
 declare class RecordSchema<Value extends Schema> extends Schema<Record<string, Value["_output"]>> {}
@@ -12505,14 +14204,20 @@ export const mutual: never = (null! as FromA<unknown>)._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(14,14): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'never'.
-        a.ts(15,14): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'never'.
-        a.ts(19,14): error TS2322: Type 'unknown[]' is not assignable to type 'never'.
-        a.ts(23,14): error TS2322: Type '"own"' is not assignable to type 'never'.
-        a.ts(24,14): error TS2322: Type 'keyof Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<...>>>>>>>>>>>' is not assignable to type 'never'.
+        "a.ts(8,70): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'.
+        a.ts(14,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'.
+        a.ts(19,14): error TS2322: Type 'any[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][]' is not assignable to type 'never'.
+        a.ts(19,28): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Array'.
+        a.ts(23,14): error TS2322: Type 'keyof Keys<...>' is not assignable to type 'never'.
           Type '"_output"' is not assignable to type 'never'.
-        a.ts(28,14): error TS2322: Type '[1, unknown]' is not assignable to type 'never'.
-        a.ts(34,14): error TS2322: Type '["a", ["b", unknown]]' is not assignable to type 'never'."
+        a.ts(23,28): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(24,14): error TS2322: Type 'keyof Keys<...>' is not assignable to type 'never'.
+          Type '"_output"' is not assignable to type 'never'.
+        a.ts(28,14): error TS2322: Type '[1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, any]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(28,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(34,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ...]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(34,30): error TS5114: Instantiations of type 'Schema' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
@@ -12540,7 +14245,7 @@ const h: never = g;
         a.ts(5,62): error TS2322: Type '{ [P in keyof T]+?: T[P] | undefined; }' is not assignable to type 'never'.
         a.ts(6,92): error TS2322: Type '{ +readonly [P in keyof T as \`x\${P & string}\`]+?: T[P] | undefined; }' is not assignable to type 'never'.
         a.ts(8,42): error TS2322: Type 'M<T>' is not assignable to type 'never'.
-        a.ts(8,65): error TS2322: Type '{ [n: number]: M<T>; length: number; toString(): string; toLocaleString(): string; toLocaleString(locales: string | string[], options?: Intl.NumberFormatOptions & Intl.DateTimeFormatOptions): string; ... 37 more ...; with(index: number, value: M<...>): M<...>[]; }' is not assignable to type 'never'.
+        a.ts(8,65): error TS2322: Type '{ [n: number]: M<T>; length: number; toString(): string; toLocaleString(): string; toLocaleString(locales: string | string[], options?: Intl.NumberFormatOptions & Intl.DateTimeFormatOptions): string; ... 37 more ...; with(index: number, value: M<...>): ...; }' is not assignable to type 'never'.
         a.ts(10,7): error TS2322: Type '<T>(m: { +readonly [P in keyof T]+?: T[P]; }) => { +readonly [P in keyof T]+?: T[P] | undefined; }' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
@@ -12855,10 +14560,10 @@ export type W2 = { w: Wrap<[1]> };
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(3,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(8,56): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(12,23): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(16,18): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(3,18): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(8,56): error TS5114: Instantiations of type 'Grow' appear infinitely circular.
+        a.ts(12,23): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(16,18): error TS5115: Instantiations of the following types appear infinitely circular: 'Box', 'Wrap'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -13163,7 +14868,7 @@ export const d: never = null! as import("./i").B1;
       expect(exitCode).toBe(1);
     });
 
-    test("resolves ten type references that each need a member of all the others for their base type", async () => {
+    test("reports TS5115 once for ten type references that each need a member of all the others for their base type", async () => {
       using dir = project({
         "a.ts": `// Ten type references that each need a member of all the others to instantiate their base type.
 declare abstract class Schema<Out = any> { readonly _output: Out; }
@@ -13187,9 +14892,9 @@ export const y: never = t._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(16,14): error TS2322: Type 'string | Record<string, unknown>' is not assignable to type 'never'.
-          Type 'string' is not assignable to type 'never'.
-        a.ts(18,14): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'never'."
+        "a.ts(5,11): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'.
+        a.ts(16,14): error TS2322: Type 'any' is not assignable to type 'never'.
+        a.ts(18,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -13225,19 +14930,19 @@ export type B7 = S7<[U7]>;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(3,23): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(6,19): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(9,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(12,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(15,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(18,23): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(21,24): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(24,18): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(3,23): error TS5114: Instantiations of type 'S0' appear infinitely circular.
+        a.ts(6,19): error TS5114: Instantiations of type 'S1' appear infinitely circular.
+        a.ts(9,18): error TS5114: Instantiations of type 'S2' appear infinitely circular.
+        a.ts(12,18): error TS5114: Instantiations of type 'S3' appear infinitely circular.
+        a.ts(15,18): error TS5114: Instantiations of type 'S4' appear infinitely circular.
+        a.ts(18,23): error TS5114: Instantiations of type 'S5' appear infinitely circular.
+        a.ts(21,24): error TS5114: Instantiations of type 'S6' appear infinitely circular.
+        a.ts(24,18): error TS5114: Instantiations of type 'S7' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
 
-    test("accepts a recursive conversion between two families of generic classes", async () => {
+    test("reports TS5115 for a recursive conversion between two families of generic classes", async () => {
       using dir = project({
         "a.ts": `// A conversion from validators to schemas, both recursive. The key of a record is a union of ten, so each level has ten \`SRec\` references.
 type Opt = "o" | "r";
@@ -13262,8 +14967,10 @@ export function convert<X extends GV>(schema: Schema): From<X> { return schema a
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(0);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(16,88): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'."`,
+      );
+      expect(exitCode).toBe(1);
     });
 
     test("reports TS7022 for a class field whose initializer compares `this` with a type", async () => {
@@ -13333,6 +15040,72 @@ export class D9 { x = { a: { ...new D9() } }; y = 1; }
       `);
       expect(exitCode).toBe(1);
     });
+
+    // A property of an intersection is optional if every property, method or accessor among its constituents is. A
+    // variable of `globalThis` or of a namespace isn't one of those, and its type has no `undefined`.
+    test.each([[[]], [["--exactOptionalPropertyTypes"]]])(
+      "a copy of an optional property has the type of the property, without another `undefined` %j",
+      async flags => {
+        using dir = project({
+          "a.ts": `declare global { var flags: {}; }
+declare const w: { flags?: {} } & typeof globalThis;
+declare const r: { flags?: string };
+const v1: typeof globalThis = { ...w };
+const v2: typeof globalThis = { ...w, ...w };
+const v3: typeof globalThis = { ...w, ...r };
+const v4: typeof globalThis = { ...w } as const;
+const v5: typeof globalThis = { ...w, flags: undefined };
+declare const u: { flags?: {} } & typeof globalThis | { flags?: {} } & typeof globalThis & { z: 1 };
+const v6: typeof globalThis = { ...u };
+function f<T extends { flags?: {} }>(t: T) { const v7: typeof globalThis = { ...w, ...t }; }
+const { ...rest } = w;
+const v8: typeof globalThis = rest;
+declare namespace M { var flags: {}; }
+declare const m: { flags?: {} } & typeof M;
+const v9: typeof M = { ...m };
+declare function pick<T>(x: { flags?: T }): T;
+const v10: {} = pick({ ...w });
+const v11: {} = pick(rest);
+declare const s: typeof globalThis & { flags?: string };
+const v12: typeof globalThis = s;
+declare const w2: { flags?: {} } & typeof globalThis & { flags?: string };
+const v13: typeof globalThis = { ...w2 };
+function g({ a = 2 } = { a: 1 }) {}
+g({ a: undefined });
+declare global { var then: (onfulfilled: (value: number) => void) => void; }
+declare const p: { then?: (onfulfilled: (value: number) => void) => void } & typeof globalThis;
+async function h() { const v14: number = await p; }
+declare function mapv<X>(o: { [P in "flags"]: X }): X;
+const v15: {} = mapv({ ...m });
+declare const c: typeof rest & { flags?: string };
+const v16: typeof globalThis = c;
+declare function infv<T>(o: { [P in keyof T]: T[P] }): T;
+const v17: { flags: {} } = infv({ ...m });
+export {};
+`,
+          "b.tsx": `declare var React: { createElement: any };
+declare namespace JSX { interface Element {} interface ElementAttributesProperty { props: {} } }
+declare global { var flags: {}; }
+declare const w: { flags?: {} } & typeof globalThis;
+declare function C(p: typeof globalThis): JSX.Element;
+const e = <C {...w} />;
+const e2 = <C {...w} flags={undefined} />;
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--jsx", "react", ...flags]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(8,39): error TS2322: Type 'undefined' is not assignable to type '{}'.
+          a.ts(25,5): error TS2322: Type 'undefined' is not assignable to type 'number'.
+          a.ts(30,22): error TS2345: Argument of type '{ flags?: {}; }' is not assignable to parameter of type '{ flags: {}; }'.
+            Property 'flags' is optional in type '{ flags?: {}; }' but required in type '{ flags: {}; }'.
+          a.ts(34,7): error TS2322: Type '{ flags?: {}; }' is not assignable to type '{ flags: {}; }'.
+            Property 'flags' is optional in type '{ flags?: {}; }' but required in type '{ flags: {}; }'.
+          b.tsx(7,22): error TS2322: Type 'undefined' is not assignable to type '{}'."
+        `);
+        expect(exitCode).toBe(1);
+      },
+    );
 
     test("accepts inference from an instance of the class whose field is being resolved", async () => {
       using dir = project({
@@ -13596,7 +15369,7 @@ export class C9<T> extends K { static prototype = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("reports TS1003 for a private name after `typeof this.` in a type", async () => {
+    test("resolves a private name after `typeof this.` in a type", async () => {
       using dir = project({
         "a.ts": `export class C1 { #m = 1; a!: typeof this.#m; }
 export class C2 { #m = 1; u(x: C2) { let a: typeof x.#m; } }
@@ -13610,13 +15383,9 @@ export class C7 { m = { n: 1 }; a!: typeof this.m.#n; }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(1,45): error TS1003: Identifier expected.
-        a.ts(2,56): error TS1003: Identifier expected.
-        a.ts(3,48): error TS1003: Identifier expected.
-        a.ts(4,50): error TS1003: Identifier expected.
-        a.ts(6,37): error TS1003: Identifier expected.
-        a.ts(7,52): error TS1003: Identifier expected.
-        a.ts(8,53): error TS1003: Identifier expected."
+        "a.ts(5,34): error TS2339: Property '#m' does not exist on type 'C5'.
+        a.ts(6,35): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+        a.ts(8,51): error TS2339: Property '#n' does not exist on type '{ n: number; }'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -14032,6 +15801,90 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
       expect(exitCode).toBe(1);
     });
 
+    test("reports an instantiation limit that's reached while JSX attributes are checked at the attributes", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve"}}`,
+        "function.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+export const x = (
+  <C
+    // @ts-expect-error
+    name="a"
+    other={1}
+  />
+);
+`,
+        "type-arguments.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+export const x = <C<string> /* comment */ name="a" other={1} />;
+`,
+        "nested.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+declare function D(props: { id: string; element: JSX.Element }): JSX.Element;
+export const x = <D id="a" element={<C name="a" other={1} />} />;
+`,
+        "class.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare class C<T> { constructor(props: { name: T; other: W<T> }); props: { name: T; other: W<T> }; }
+export const x = <C name="a" other={1} />;
+`,
+        "overloads.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T>; a: 1 }): JSX.Element;
+declare function C<T>(props: { name: T; other: W<T>; b: 1 }): JSX.Element;
+export const x = <C name="a" other={1} b={1} />;
+`,
+        "children.tsx": `declare global { namespace JSX { interface Element {} interface ElementChildrenAttribute { children: {} } } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T, children: [W<T>, T] }): JSX.Element;
+export const x = <C name="a">{1}{"a"}</C>;
+`,
+        "child.tsx": `declare global { namespace JSX { interface Element {} interface ElementChildrenAttribute { children: {} } } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T, children: W<T> }): JSX.Element;
+export const x = <C name="a">{1}</C>;
+`,
+        "no-attributes.tsx": `declare global { namespace JSX { interface Element {} interface ElementChildrenAttribute { children: {} } } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { children: W<T>[] }): JSX.Element;
+export const x = <C<string>   >{1}{2}</C>;
+`,
+        "no-initializer.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+export const x = <C name="a" other />;
+`,
+        "spread.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+declare const rest: { name: "a"; other: 1 };
+export const x = <C {...rest} />;
+`,
+        "function-attribute.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: (x: W<T>) => void }): JSX.Element;
+export const x = <C name="a" other={x => {}} />;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "child.tsx(4,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        children.tsx(4,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        class.tsx(4,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        function-attribute.tsx(4,37): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        nested.tsx(5,40): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        no-attributes.tsx(4,28): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        no-initializer.tsx(4,18): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        overloads.tsx(5,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        spread.tsx(5,18): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        type-arguments.tsx(4,43): error TS5114: Instantiations of type 'W' appear infinitely circular."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS1117 and TS17001 for a name repeated in an object literal or in JSX attributes", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve"}}`,
@@ -14228,7 +16081,7 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
     test("reports TS6133 for a name used only in a node that's never checked", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve", "noUnusedLocals": true}}`,
-        "a.ts": `// a reference in a node that is never checked is no reference
+        "a.ts": `// a reference in a node that is never checked is no reference. A misplaced \`export =\`, \`return\` or \`yield\` is checked
 export namespace N { const x = 1; export = x; }
 export function f() { const only = 1; const g = function* () {}; g(); class C { static { return only; } } return C; }
 export function h(this: any) { const w = 1; with (this) { w; } }
@@ -14238,17 +16091,236 @@ export function m(a = () => { const z = 1; yield z; }) { return a; }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(2,28): error TS6133: 'x' is declared but its value is never read.
-        a.ts(2,35): error TS1063: An export assignment cannot be used in a namespace.
-        a.ts(3,29): error TS6133: 'only' is declared but its value is never read.
+        "a.ts(2,35): error TS1063: An export assignment cannot be used in a namespace.
         a.ts(3,90): error TS18041: A 'return' statement cannot be used inside a class static block.
         a.ts(4,38): error TS6133: 'w' is declared but its value is never read.
         a.ts(4,45): error TS1101: 'with' statements are not allowed in strict mode.
         a.ts(4,45): error TS2410: The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.
         a.ts(5,29): error TS6133: 'y' is declared but its value is never read.
         a.ts(5,44): error TS1123: Variable declaration list cannot be empty.
-        a.ts(6,37): error TS6133: 'z' is declared but its value is never read.
         a.ts(6,44): error TS1163: A 'yield' expression is only allowed in a generator body."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a name inside a declaration of the symbol it resolves to is no reference", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true}}`,
+        "a.ts": `declare const dec: any;
+@dec((x: B) => x) class B {}
+@dec(() => C) class C {}
+interface Foo { x: typeof Foo }
+const Foo = 1;
+type Bar = typeof Bar;
+declare const Bar: number;
+class Baz { static s = Baz; }
+interface Baz { y: typeof Baz }
+// The function's symbol is the exported one. The parameter's type is the local interface.
+interface Props { a: number }
+export function Props(p: Props) { return p; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,25): error TS6196: 'B' is declared but never used.
+        a.ts(3,21): error TS6196: 'C' is declared but never used.
+        a.ts(4,11): error TS6196: 'Foo' is declared but never used.
+        a.ts(5,7): error TS6133: 'Foo' is declared but its value is never read.
+        a.ts(6,6): error TS6196: 'Bar' is declared but never used.
+        a.ts(8,7): error TS6196: 'Baz' is declared but never used.
+        a.ts(9,11): error TS6196: 'Baz' is declared but never used."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a type reference that's never resolved, or that finds no type, is no reference", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true}}`,
+        "a.ts": `import { value } from "./m";
+type Local = number;
+type Used = number;
+export declare const x: import("./missing").G<Local>;
+export declare const y: import("./m").G<Used>;
+export declare const z: value;
+`,
+        "m.ts": `export type G<T> = T;
+export const value = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,10): error TS6133: 'value' is declared but its value is never read.
+        a.ts(2,6): error TS6196: 'Local' is declared but never used.
+        a.ts(4,32): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(6,25): error TS2749: 'value' refers to a value, but is being used as a type here. Did you mean 'typeof value'?"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the options of an import type are always checked, its type arguments only if the module resolves", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true, "noUnusedParameters": true}}`,
+        "a.ts": `type A1 = 1;
+type A2 = 1;
+type A3 = 1;
+type A4 = 1;
+type A5 = 1;
+const v1 = 1;
+const v2 = 1;
+export type T1 = import("./missing", { with: { a: 0 as A1 } }).G<A2>;
+export type T2 = import("./m", { with: { a: 0 as A3 } }).G<A4>;
+export type T3 = import("./missing", { with: { a: v1 } });
+export type G1<X> = import("./missing", { with: { a: 0 as X } });
+export type G2<X> = import("./missing").G<X>;
+export type G3<X> = import("./m").G<X>;
+export type G4<X> = import("./m", { with: { a: (p: X, q: number) => p } }).G<1>;
+export const c1 = import("./m", { with: { a: v2 as A5 } });
+export function f<X>() { let u: import("./missing", { with: { a: 0 as X } }) | undefined; return u; }
+`,
+        "m.ts": `export type G<T> = T;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => /TS6\d\d\d:/.test(line))).toEqual([
+        "a.ts(2,6): error TS6196: 'A2' is declared but never used.",
+        "a.ts(12,16): error TS6196: 'X' is declared but never used.",
+        "a.ts(14,55): error TS6133: 'q' is declared but its value is never read.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a reference counts whichever file's check resolves it first", async () => {
+      // Every other file asks for types that are inferred from the only references to `Local`, `local` and the private members.
+      const users = Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [
+          `u${i}.ts`,
+          `import { f, g, K } from "./a";\nexport const x${i} = [f().a, g()(undefined), new K(1).m(), new K(1).v];\n`,
+        ]),
+      );
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true}}`,
+        "a.ts": `type Local = { a: number };
+interface Other { b: number }
+const local = 1;
+type Unused = 1;
+export function f() { return { a: local } as Local; }
+export function g() { return (p?: Other) => p; }
+export class K {
+  private p = 1;
+  private unread = 1;
+  #h = 1;
+  constructor(private q: number) {}
+  private n() { return this.p + this.#h; }
+  m() { const { q } = this; return q + this.n(); }
+  get v() { return this["p"]; }
+}
+`,
+        ...users,
+      });
+      for (const { stdout, exitCode } of await Promise.all([1, 2, 8].map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          "a.ts(4,6): error TS6196: 'Unused' is declared but never used.\n" +
+            "a.ts(9,11): error TS6133: 'unread' is declared but its value is never read.",
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("checks what a misplaced statement, `yield` or type predicate contains", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "commonjs", "lib": ["es2022"], "types": []}}`,
+        "a.ts": `namespace N1 { interface I {} export = I; }
+namespace N2 { namespace M { export interface J {} } export = M; }
+namespace N3 { export = missing1; }
+class C { static { return missing2 + missing3; } }
+function h() { yield missing4; }
+return missing5;
+class K { get a(): this is Missing6 { return true; } }
+type CT = new (x: any) => x is Missing7;
+`,
+        // The first name of an exported entity name may be a namespace without values.
+        "b.ts": `namespace Types { export interface T {} }
+export = Types.T;
+`,
+        "c.ts": `interface OnlyType {}
+export default (OnlyType);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,31): error TS1063: An export assignment cannot be used in a namespace.
+        a.ts(2,54): error TS1063: An export assignment cannot be used in a namespace.
+        a.ts(3,16): error TS1063: An export assignment cannot be used in a namespace.
+        a.ts(3,25): error TS2304: Cannot find name 'missing1'.
+        a.ts(4,20): error TS18041: A 'return' statement cannot be used inside a class static block.
+        a.ts(4,27): error TS2304: Cannot find name 'missing2'.
+        a.ts(4,38): error TS2304: Cannot find name 'missing3'.
+        a.ts(5,16): error TS1163: A 'yield' expression is only allowed in a generator body.
+        a.ts(5,22): error TS2304: Cannot find name 'missing4'.
+        a.ts(6,1): error TS1108: A 'return' statement can only be used within a function body.
+        a.ts(6,8): error TS2304: Cannot find name 'missing5'.
+        a.ts(7,20): error TS1228: A type predicate is only allowed in return type position for functions and methods.
+        a.ts(7,28): error TS2304: Cannot find name 'Missing6'.
+        a.ts(8,27): error TS1228: A type predicate is only allowed in return type position for functions and methods.
+        a.ts(8,32): error TS2304: Cannot find name 'Missing7'.
+        c.ts(2,17): error TS2693: 'OnlyType' only refers to a type, but is being used as a value here."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`export default I` uses an imported type, unless the statement is misplaced", async () => {
+      using dir = project({
+        "types.ts": `export interface I { a: 1 }
+export namespace NT { export interface J {} }
+export type T = string;
+`,
+        "a.ts": `import type { I } from "./types";
+export default I;
+`,
+        "b.ts": `import { NT } from "./types";
+export default NT;
+`,
+        "c.ts": `import { T } from "./types";
+export default T;
+`,
+        "d.ts": `namespace N1 { interface I {} export = I; }
+namespace N2 { type T = 1; export default T; }
+function f() { interface K {} export default K; }
+export { N1, N2, f };
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "d.ts(1,26): error TS6196: 'I' is declared but never used.
+        d.ts(1,31): error TS1063: An export assignment cannot be used in a namespace.
+        d.ts(2,21): error TS6196: 'T' is declared but never used.
+        d.ts(2,28): error TS1319: A default export can only be used in an ECMAScript-style module.
+        d.ts(3,26): error TS6196: 'K' is declared but never used.
+        d.ts(3,31): error TS1258: A default export must be at the top level of a file or module declaration."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports TS2866 for an exported name that is a type here and a global value", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "lib": ["es2022"], "types": [], "isolatedModules": true}}`,
+        "types.ts": `export interface Date { a: 1 }
+export interface Map { b: 1 }
+`,
+        "a.ts": `import { Date } from "./types";
+export default Date;
+`,
+        "b.ts": `import { Map } from "./types";
+export = Map;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,10): error TS2866: Import 'Date' conflicts with global value used in this file, so must be declared with a type-only import when 'isolatedModules' is enabled.
+        a.ts(2,16): error TS1292: 'Date' resolves to a type and must be marked type-only in this file before re-exporting when 'isolatedModules' is enabled. Consider using 'export type { Date as default }'.
+        b.ts(1,10): error TS2866: Import 'Map' conflicts with global value used in this file, so must be declared with a type-only import when 'isolatedModules' is enabled.
+        b.ts(2,1): error TS1203: Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.
+        b.ts(2,10): error TS1291: 'Map' resolves to a type and must be marked type-only in this file before re-exporting when 'isolatedModules' is enabled. Consider using 'import type' where 'Map' is imported."
       `);
       expect(exitCode).toBe(1);
     });
@@ -14538,6 +16610,45 @@ const show = [rest, pk, c];
       expect(exitCode).toBe(1);
     });
 
+    // `createUnionOrIntersectionProperty`: instantiations of one member that have the same type count as that member.
+    test("drops a method from the spread of an intersection whose constituents inherit it from one class", async () => {
+      using dir = project({
+        "a.ts": `class Base {
+  init(): this { return this; }
+  get size(): this { return this; }
+}
+class A extends Base { x = 1; }
+class B extends Base { y = 1; }
+class G<T> {
+  same(): number { return 1; }
+  differs(): T { return null as any; }
+}
+declare const v1: Base & A;
+declare const v2: A & B;
+declare const v3: G<string> & G<number>;
+declare const v4: G<string> & { same(): number };
+export const r1: never = { ...v1 };
+export const r2: never = { ...v2 };
+const s3 = { ...v3 };
+export const r3: never = null as any as keyof typeof s3;
+const s4 = { ...v4 };
+export const r4: never = null as any as keyof typeof s4;
+const { x, ...rest } = v1;
+export const r5: never = rest;
+export const ok: typeof r1 | { x: number } = { x };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,14): error TS2322: Type '{ x: number; }' is not assignable to type 'never'.
+        a.ts(16,14): error TS2322: Type '{ x: number; y: number; }' is not assignable to type 'never'.
+        a.ts(18,14): error TS2322: Type '"differs"' is not assignable to type 'never'.
+        a.ts(20,14): error TS2322: Type '"same"' is not assignable to type 'never'.
+        a.ts(22,14): error TS2322: Type '{}' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 for an optional member whose initializer compares `this`", async () => {
       using dir = project({
         "a.ts": `export class C1 { x? = \`\${this}\` as const; }
@@ -14715,6 +16826,1815 @@ declare const i9: P7<number> & { z: 1 }; i9.m();
           No constituent of type 'string | number' is callable.
         a.ts(10,45): error TS6234: This expression is not callable because it is a 'get' accessor. Did you mean to use it without '()'?
           Type 'Number' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("what's in a type literal or a function type in the type arguments of an import type is only checked on demand", async () => {
+      using dir = project({
+        "w.ts": `export interface W<T> { w: T }
+export interface V<T extends string> { v: T }
+`,
+        "a.ts": `// Resolved with the import type.
+export declare const a1: import("./w").W<A1>;
+export declare const a2: import("./w").W<A2[] | [A3] | Array<A4> | keyof A5 | A6["a"] | \`\${A7}\`>;
+export declare const a3: import("./w").W<A8 extends 1 ? 2 : 3>;
+export declare const a4: import("./w").W<import("./w").W<A9>>;
+export declare const a5: import("./w").W<import("./missing").T | Array<string, number>>;
+// Resolved on demand.
+export declare const b1: import("./w").W<{ a: B1; b(): B2; (): B3; [key: string]: B4 }>;
+export declare const b2: import("./w").W<((a: B5) => B6) | (new () => B7)>;
+export declare const b3: import("./w").W<import("./w").W<{ a: B8 }>[]>;
+export declare const b4: import("./w").W<{ a: import("./missing").T; b: Array<string, number> }>;
+export declare const c1: import("./w").W<{ a: C1; b: C2; c: { d: C3 } }>;
+c1.w.a;
+export declare const c2: import("./w").W<(a: C4) => C5>;
+c2.w(1);
+export declare const c3: import("./w").V<{ a: C6 }>;
+// A type reference's type arguments are visited.
+export declare const d1: Array<{ a: D1 }>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,42): error TS2304: Cannot find name 'A1'.
+        a.ts(3,42): error TS2304: Cannot find name 'A2'.
+        a.ts(3,50): error TS2304: Cannot find name 'A3'.
+        a.ts(3,62): error TS2304: Cannot find name 'A4'.
+        a.ts(3,74): error TS2304: Cannot find name 'A5'.
+        a.ts(3,79): error TS2304: Cannot find name 'A6'.
+        a.ts(3,92): error TS2304: Cannot find name 'A7'.
+        a.ts(4,42): error TS2304: Cannot find name 'A8'.
+        a.ts(5,58): error TS2304: Cannot find name 'A9'.
+        a.ts(6,49): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(6,66): error TS2314: Generic type 'Array<T>' requires 1 type argument(s).
+        a.ts(12,47): error TS2304: Cannot find name 'C1'.
+        a.ts(14,46): error TS2304: Cannot find name 'C4'.
+        a.ts(14,53): error TS2304: Cannot find name 'C5'.
+        a.ts(16,42): error TS2344: Type '{ a: C6; }' does not satisfy the constraint 'string'.
+        a.ts(16,47): error TS2304: Cannot find name 'C6'.
+        a.ts(18,37): error TS2304: Cannot find name 'D1'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the type arguments of an import type are only checked if it refers to a generic type", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "noUnusedLocals": true, "allowJs": true, "checkJs": true, "types": [] } }
+`,
+        "ok.ts": `export type Box<T> = { value: T };
+export type Plain = 1;
+export namespace ns { export type Inner<T> = T[] }
+export interface Face<T extends string> { value: T }
+export class Klass<T> { value!: T }
+export type Z = 1;
+export type Y = 2;
+export type W = 3;
+`,
+        "a.ts": `export type A1 = import("./missing").Box<import("./missing2").Other>;
+export type A2 = import("./missing").Box<import("./missing2").Other<import("./missing3").Third>>;
+export type A3 = import("./ok").Box<import("./missing2").Other>;
+export type A4 = import("./ok").Box<import("./missing2").Other<import("./missing3").Third>>;
+export type A5 = import("./ok").Nope<import("./missing2").Other>;
+export type A6 = import("./ok").Plain<import("./missing2").Other>;
+export type A7 = import("./missing").Box<Undeclared>;
+export type A8 = import("./missing").Box<Undeclared[]>;
+export type A9 = import("./missing").Box<[import("./missing2").Other]>;
+export type B1 = import("./missing").Box<import("./missing2").Other | 1>;
+export type B2 = import("./missing").Box<typeof import("./missing2")>;
+export type B3 = import("./missing").Box<Array<import("./missing2").Other>>;
+export type B4 = import("./ok").ns.Nope<import("./missing2").Other>;
+export type B5 = import("./ok").ns.Inner<import("./missing2").Other>;
+export type B6 = typeof import("./missing")<import("./missing2").Other>;
+export declare function f<T = import("./missing").Box<{}, import("./missing2").Other>>(x: T): import("./missing").Box<import("./missing2").Other>;
+export interface I { [key: string]: import("./missing").Box<{}, import("./missing2").Other> }
+`,
+        "b.ts": `import type { Z, Y, W } from "./ok";
+type Local = 1;
+type Local2 = 1;
+export type C1 = import("./ok").Box<Undeclared>;
+export type C2 = import("./ok").Box<import("./m2").X, import("./m3").Y>;
+export type C3 = import("./ok").Face<import("./m2").X>;
+export type C4 = import("./ok").Face<number>;
+export type C5 = import("./ok").Klass<import("./m2").X>;
+export type C6 = import("./ok").Klass<import("./m2").X, import("./m3").Y>;
+export type C7 = import("./ok").Box<{ a: import("./m2").O }>;
+export type C8 = import("./missing").Box<{ a: import("./m2").O }>;
+export type C9 = import("./missing").Box<Z>;
+export type D1 = import("./ok").Box<Y>;
+export type D2 = import("./missing").Box<Local>;
+export type D3 = import("./ok").Nope<Local2, W>;
+export type D4 = import("./ok").Box<import("./ok").Nope<import("./m2").X>>;
+export type D5 = import("./ok").Box<import("./ok").Box<import("./m2").X>>;
+export type D6<T> = import("./missing").Box<T extends infer U ? U : never>;
+export type D7 = import("./missing").Box<typeof undeclaredValue>;
+export type D8 = import("./missing").Box<keyof import("./m2").X>;
+export type D9 = import("./missing").Box<\`\${import("./m2").X}\`>;
+export type E1 = import("./missing").Box<import("./m2")>;
+export type E2 = import("./ok").Box<>;
+export type E3 = import("./missing").Box<>;
+export const v = null! as import("./missing").Box<import("./m2").X>;
+export function g(x: import("./missing").Box<import("./m2").X>) { return x; }
+export class K<T = import("./missing").Box<import("./m2").X>> implements import("./missing").I<import("./m2").X> { t!: T }
+`,
+        "j.js": `/** @type {import("./missing").Box<import("./m2").X>} */
+export const a = null;
+/** @param {import("./ok").Box<import("./m2").X>} x */
+export function f(x) { return x; }
+/** @typedef {import("./missing").Box<import("./m2").X>} T */
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(2,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(3,44): error TS2307: Cannot find module './missing2' or its corresponding type declarations.
+        a.ts(4,44): error TS2307: Cannot find module './missing2' or its corresponding type declarations.
+        a.ts(5,33): error TS2694: Namespace '"<dir>/ok"' has no exported member 'Nope'.
+        a.ts(6,18): error TS2315: Type 'Plain' is not generic.
+        a.ts(7,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(8,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(9,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(10,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(11,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(12,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(13,36): error TS2694: Namespace '"<dir>/ok".ns' has no exported member 'Nope'.
+        a.ts(14,49): error TS2307: Cannot find module './missing2' or its corresponding type declarations.
+        a.ts(15,32): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(16,38): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(16,102): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(17,44): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(1,15): error TS6196: 'Z' is declared but never used.
+        b.ts(1,21): error TS6196: 'W' is declared but never used.
+        b.ts(2,6): error TS6196: 'Local' is declared but never used.
+        b.ts(3,6): error TS6196: 'Local2' is declared but never used.
+        b.ts(4,37): error TS2304: Cannot find name 'Undeclared'.
+        b.ts(5,18): error TS2314: Generic type 'Box' requires 1 type argument(s).
+        b.ts(6,45): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        b.ts(7,38): error TS2344: Type 'number' does not satisfy the constraint 'string'.
+        b.ts(8,46): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        b.ts(9,18): error TS2314: Generic type 'Klass<T>' requires 1 type argument(s).
+        b.ts(11,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(12,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(14,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(15,33): error TS2694: Namespace '"<dir>/ok"' has no exported member 'Nope'.
+        b.ts(16,52): error TS2694: Namespace '"<dir>/ok"' has no exported member 'Nope'.
+        b.ts(17,63): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        b.ts(18,28): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(19,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(20,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(21,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(22,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(23,18): error TS2314: Generic type 'Box' requires 1 type argument(s).
+        b.ts(24,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(25,34): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(26,29): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(27,27): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(27,74): error TS2500: A class can only implement an identifier/qualified-name with optional type arguments.
+        b.ts(27,103): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
+        j.js(1,19): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        j.js(3,39): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        j.js(5,22): error TS2307: Cannot find module './missing' or its corresponding type declarations."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("a type literal nested in one in the type arguments of an import type is only checked on demand too", async () => {
+      using dir = project({
+        "lib.ts": `export type Box<T extends Record<string, { a: unknown }>> = { t: T };
+export type Plain<T> = { t: T };
+export type Obj<T extends { k: { a: unknown } }> = { t: T };
+export type Two<T extends { k: { a: unknown; b: unknown } }> = { t: T };
+`,
+        "lib2.ts": `export type Str<T extends { k: { a: string } }> = { t: T };
+export type Rec<T extends Record<string, { a: string }>> = { t: T };
+export type Fn<T extends (x: { a: string }) => { r: string }> = { t: T };
+export type Deep<T extends { k: { a: { b: { c: string } } } }> = { t: T };
+export type Arr<T extends { a: string }[]> = { t: T };
+export type Use<T extends { k: unknown }> = T["k"];
+export type Keys<T> = keyof T;
+export interface Face<T extends { k: { a: string } }> { t: T }
+export declare class Klass<T extends { k: { a: string } }> { t: T }
+export type Wrap<T> = { w: T };
+`,
+        "a.ts": `export declare const x1: import("./lib").Box<{ k: { a: 1 } } & { k: { b: import("./m1").X } }>;
+export declare const x2: import("./lib").Box<{ k: { b: import("./m2").X } } & { k: { a: 1 } }>;
+export declare const x3: import("./lib").Plain<{ k: { a: 1 } } & { k: { b: import("./m3").X } }>;
+export declare const x4: import("./lib").Obj<{ k: { a: 1 } } & { k: { b: import("./m4").X } }>;
+export declare const x5: import("./lib").Obj<{ k: { b: import("./m5").X } } & { k: { a: 1 } }>;
+export declare const x6: import("./lib").Two<{ k: { a: 1 } } & { k: { b: import("./m6").X } }>;
+export declare const x7: import("./lib").Box<{ k: { a: 1; b: import("./m7").X } }>;
+export declare const x8: import("./lib").Obj<{ k: { a: 1; b: import("./m8").X } }>;
+export declare const x9: import("./lib").Box<{ k: { a: 1 }; j: { a: { c: import("./m9").X } } }>;
+export declare const y1: import("./lib").Box<{ k: { a: 1 } } & { j: { a: import("./n1").X } }>;
+export declare const y2: import("./lib").Box<{ k: { a: 1 } } | { k: { a: import("./n2").X } }>;
+export declare const y3: import("./lib").Box<{ k: { a: 1 } } & ({ q: import("./n3").X } | { r?: false })>;
+`,
+        "b.ts": `export declare const s1: import("./lib2").Str<{ k: { a: import("./p1").X; z: import("./p2").X } }>;
+export declare const s2: import("./lib2").Rec<{ k: { a: import("./p3").X; z: import("./p4").X }; j: { a: "s"; z: { y: import("./p5").X } } }>;
+export declare const s3: import("./lib2").Fn<(x: { a: import("./p6").X; z?: import("./p7").X }) => { r: import("./p8").X; z: import("./p9").X }>;
+export declare const s4: import("./lib2").Deep<{ k: { a: { b: { c: import("./q1").X; z: import("./q2").X }; z: import("./q3").X } } }>;
+export declare const s5: import("./lib2").Arr<{ a: import("./q4").X; z: import("./q5").X }[]>;
+export declare const s6: import("./lib2").Use<{ k: { a: import("./q6").X } }>;
+export declare const s7: import("./lib2").Keys<{ k: { a: import("./q7").X } }>;
+export declare const s8: import("./lib2").Face<{ k: { a: import("./q8").X; z: import("./q9").X } }>;
+export declare const s9: import("./lib2").Klass<{ k: { a: import("./r1").X; z: import("./r2").X } }>;
+export declare const t1: import("./lib2").Wrap<import("./lib2").Wrap<{ k: import("./r3").X }>>;
+export declare const t2: import("./lib2").Wrap<Array<{ k: import("./r4").X }>>;
+export declare const t3: import("./lib2").Wrap<[{ k: import("./r5").X }, import("./r6").X]>;
+export declare const t4: import("./lib2").Wrap<{ k: import("./r7").X }>;
+export const u4: 0 = t4.w.k;
+export declare const t5: import("./lib2").Wrap<{ k: { j: import("./r8").X; i: import("./r9").X } }>;
+export const u5: 0 = t5.w.k.j;
+export declare const t6: import("./lib2").Wrap<{ m(): import("./v1").X; get g(): import("./v2").X; [key: string]: import("./v3").X | (() => unknown); new (): import("./v4").X; (): import("./v5").X }>;
+export declare const t7: import("./lib2").Wrap<{ k: Undeclared1; j: { i: Undeclared2 } }>;
+export const u7: 0 = t7.w.j;
+export declare const t8: import("./lib2").Wrap<<T extends import("./v6").X>(x: T) => { k: import("./v7").X }>;
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(12,46): error TS2344: Type '{ k: { a: 1; }; } & ({ q: any; } | { r?: false | undefined; })' does not satisfy the constraint 'Record<string, { a: unknown; }>'.
+            Type '{ k: { a: 1; }; } & { r?: false | undefined; }' is not assignable to type 'Record<string, { a: unknown; }>'.
+              Property 'r' is incompatible with index signature.
+                Type 'boolean' is not assignable to type '{ a: unknown; }'.
+          a.ts(12,77): error TS2307: Cannot find module './n3' or its corresponding type declarations.
+          b.ts(1,64): error TS2307: Cannot find module './p1' or its corresponding type declarations.
+          b.ts(2,64): error TS2307: Cannot find module './p3' or its corresponding type declarations.
+          b.ts(3,62): error TS2307: Cannot find module './p6' or its corresponding type declarations.
+          b.ts(3,112): error TS2307: Cannot find module './p8' or its corresponding type declarations.
+          b.ts(4,75): error TS2307: Cannot find module './q1' or its corresponding type declarations.
+          b.ts(5,59): error TS2307: Cannot find module './q4' or its corresponding type declarations.
+          b.ts(8,65): error TS2307: Cannot find module './q8' or its corresponding type declarations.
+          b.ts(9,66): error TS2307: Cannot find module './r1' or its corresponding type declarations.
+          b.ts(12,81): error TS2307: Cannot find module './r6' or its corresponding type declarations.
+          b.ts(13,60): error TS2307: Cannot find module './r7' or its corresponding type declarations.
+          b.ts(15,65): error TS2307: Cannot find module './r8' or its corresponding type declarations.
+          b.ts(18,74): error TS2304: Cannot find name 'Undeclared2'.
+          b.ts(19,14): error TS2322: Type '{ i: Undeclared2; }' is not assignable to type '0'."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("an import type with type arguments that's first reached from another file leaves that file's errors alone", async () => {
+      using dir = project({
+        // a.ts comes first in the program, and asks for the type of `x`.
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["b.ts"] }),
+        "w.ts": `export type W<T> = T;
+`,
+        "a.ts": `import { x } from "./b";
+export const z = x;
+export type A0 = { m0 };
+export type A1 = { m1 };
+export type A2 = { m2 };
+export type A3 = { m3 };
+`,
+        "b.ts": `import "./a";
+declare function g<T>(): T;
+export const x = g<import("./w").W<{ p }>>();
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,20): error TS7008: Member 'm0' implicitly has an 'any' type.
+        a.ts(4,20): error TS7008: Member 'm1' implicitly has an 'any' type.
+        a.ts(5,20): error TS7008: Member 'm2' implicitly has an 'any' type.
+        a.ts(6,20): error TS7008: Member 'm3' implicitly has an 'any' type."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports TS4023 for a cycle through a mapped type or a function type that's the body of a hidden type alias", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, declaration: true, outDir: "out" },
+        }),
+        "m.d.ts": `type Mapped<T> = { -readonly [K in keyof T]: Draft1<T[K]> };
+type Parenthesized<T> = ({ [K in keyof T]: Draft2<T[K]> });
+type Literal<T> = { value: T extends { sub: infer V } ? Draft3<V> : never };
+type Fn<T> = (value: T) => T extends { sub: infer V } ? Draft4<V> : never;
+type New<T> = new (value: T) => T extends { sub: infer V } ? Draft5<V> : never;
+type Union<T> = { [K in keyof T]: Draft6<T[K]> } | undefined;
+export type Draft1<T> = T extends object ? Mapped<T> : T;
+export type Draft2<T> = T extends object ? Parenthesized<T> : T;
+export type Draft3<T> = T extends object ? Literal<T> : T;
+export type Draft4<T> = T extends object ? Fn<T> : T;
+export type Draft5<T> = T extends object ? New<T> : T;
+export type Draft6<T> = T extends object ? Union<T> : T;
+export declare function d1<S>(s: S, r: (state: Draft1<S>) => void): typeof r;
+export declare function d2<S>(s: S, r: (state: Draft2<S>) => void): typeof r;
+export declare function d3<S>(s: S, r: (state: Draft3<S>) => void): typeof r;
+export declare function d4<S>(s: S, r: (state: Draft4<S>) => void): typeof r;
+export declare function d5<S>(s: S, r: (state: Draft5<S>) => void): typeof r;
+export declare function d6<S>(s: S, r: (state: Draft6<S>) => void): typeof r;
+export {};
+`,
+        "a.ts": `import { d1, d2, d3, d4, d5, d6 } from "./m";
+type Tree = { id: string; sub: Tree };
+declare const tree: Tree, flat: { id: string };
+export const a1 = d1(tree, state => {});
+export const a2 = d2(tree, state => {});
+export const a3 = d3(tree, state => {});
+export const a4 = d4(tree, state => {});
+export const a5 = d5(tree, state => {});
+export const a6 = d6(tree, state => {});
+export const b1 = d1(flat, state => {});
+export const { length } = d1(tree, state => {});
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS4023: Exported variable 'a1' has or is using name 'Mapped' from external module "<dir>/m" but cannot be named.
+        a.ts(5,14): error TS4023: Exported variable 'a2' has or is using name 'Parenthesized' from external module "<dir>/m" but cannot be named.
+        a.ts(6,14): error TS4023: Exported variable 'a3' has or is using name 'Literal' from external module "<dir>/m" but cannot be named.
+        a.ts(7,14): error TS4023: Exported variable 'a4' has or is using name 'Fn' from external module "<dir>/m" but cannot be named.
+        a.ts(8,14): error TS4023: Exported variable 'a5' has or is using name 'New' from external module "<dir>/m" but cannot be named.
+        a.ts(9,14): error TS5088: The inferred type of 'a6' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary.
+        a.ts(11,14): error TS4023: Exported variable '{ length }' has or is using name 'Mapped' from external module "<dir>/m" but cannot be named."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the checks of an interface don't see an augmentation through a re-export that follows a direct augmentation", async () => {
+      using dir = project({
+        "both/expect.ts": `export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T; not: Assertion<T> }
+`,
+        "both/reexport.ts": `import "./direct";
+export { Assertion } from "./expect";
+`,
+        "both/direct.ts": `export {};
+declare module "./expect" {
+  interface Assertion<T> { snapshot(): void }
+}
+`,
+        "both/through.ts": `import { Assertion } from "./reexport";
+import { Assertion as Original } from "./expect";
+interface M<T> { a(): T; extra: T }
+interface N { own: string }
+declare module "./reexport" {
+  interface Assertion<T = any> extends M<T>, N {}
+}
+declare const assertion: Assertion<1>, original: Original<1>;
+export const all = [assertion.extra, assertion.snapshot, assertion.not.extra, original.extra, original.not.extra];
+`,
+        "through/expect.ts": `export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T; not: Assertion<T> }
+`,
+        "through/reexport.ts": `import "./direct";
+export { Assertion } from "./expect";
+`,
+        "through/direct.ts": `export {};
+`,
+        "through/through.ts": `import "./reexport";
+interface M<T> { a(): T }
+declare module "./reexport" {
+  interface Assertion<T = any> extends M<T> {}
+}
+`,
+        "direct/expect.ts": `export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T; not: Assertion<T> }
+`,
+        "direct/reexport.ts": `import "./direct";
+export { Assertion } from "./expect";
+`,
+        "direct/direct.ts": `export {};
+interface M<T> { a(): T }
+declare module "./expect" {
+  interface Assertion<T> extends M<T> {}
+}
+`,
+        "direct/through.ts": `import "./reexport";
+declare module "./reexport" {
+  interface Assertion<T = any> { extra: T }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "direct/expect.ts(2,18): error TS2320: Interface 'Assertion<T>' cannot simultaneously extend types 'Base<T>' and 'M<T>'.
+          Named property 'a' of types 'Base<T>' and 'M<T>' are not identical.
+        through/expect.ts(2,18): error TS2320: Interface 'Assertion<T>' cannot simultaneously extend types 'Base<T>' and 'M<T>'.
+          Named property 'a' of types 'Base<T>' and 'M<T>' are not identical."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the checks of a class or an interface keep the base types of the declarations before an augmentation through a re-export", async () => {
+      const direct = `export {};
+declare module "./expect" {
+  interface Assertion { snapshot(): void }
+}
+`;
+      const through = `export {};
+interface M { m(): void }
+declare module "./reexport" {
+  interface Assertion extends M {}
+}
+`;
+      const shapes: Record<string, [expect: string, direct: string, through: string]> = {
+        abstract: [
+          `export abstract class Base { abstract a(): void; b(): void {} }
+export abstract class Assertion extends Base {}
+export interface Assertion { b: number }
+`,
+          direct,
+          through,
+        ],
+        class1: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base {}
+export interface Assertion { a: number }
+`,
+          direct,
+          through,
+        ],
+        class2: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base {}
+`,
+          `export {};
+interface D { a: number }
+declare module "./expect" {
+  interface Assertion extends D {}
+}
+`,
+          through,
+        ],
+        cycle: [
+          `import "./through";
+export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion<T> { snapshot(): void }
+}
+`,
+          `import "./reexport";
+interface M<T> { a(): T }
+declare module "./reexport" {
+  interface Assertion<T = any> extends M<T> {}
+}
+`,
+        ],
+        generic: [
+          `export class Base<T> { a(): T { return null!; } }
+export class Assertion<T> extends Base<T> {}
+export interface Assertion<T> { a: number }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion<T> { snapshot(): T }
+}
+`,
+          `export {};
+interface M<T> { m(): T }
+declare module "./reexport" {
+  interface Assertion<T> extends M<T> {}
+}
+`,
+        ],
+        hiddenbase: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base {}
+`,
+          direct,
+          `export {};
+interface M { a: number }
+declare module "./reexport" {
+  interface Assertion extends M {}
+}
+`,
+        ],
+        hiddenimplements: [
+          `export interface I { a(): void }
+export class Assertion implements I { a(): void {} }
+`,
+          direct,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { a: number }
+}
+`,
+        ],
+        implements: [
+          `export interface I { a(): void }
+export class Base { b(): void {} }
+export class Assertion extends Base implements I { a(): void {} }
+export interface Assertion { b: number }
+`,
+          direct,
+          through,
+        ],
+        implements2: [
+          `export interface I { a(): void; z: number }
+export class Assertion implements I { a(): void {} }
+`,
+          direct,
+          through,
+        ],
+        index: [
+          `export interface Assertion { [key: string]: number }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion { d: string }
+}
+`,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { t: string }
+}
+`,
+        ],
+        index3: [
+          `export class Assertion { [key: string]: number }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion { d: string }
+}
+`,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { t: string }
+}
+`,
+        ],
+        override: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base { a(): void {} }
+`,
+          direct,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { b: number }
+}
+`,
+        ],
+        samebase: [
+          `export interface A1 { a(): void }
+export interface Assertion extends A1 { a: number }
+`,
+          direct,
+          `import { A1 } from "./expect";
+declare module "./reexport" {
+  interface Assertion extends A1 {}
+}
+`,
+        ],
+        two: [
+          `export interface A1 { a(): void }
+export interface A2 { a(): number }
+export interface Assertion extends A1 {}
+export interface Assertion extends A2 {}
+`,
+          direct,
+          through,
+        ],
+        two2: [
+          `export interface A1 { a(): void }
+export interface Assertion extends A1 {}
+export interface Assertion { a: number }
+`,
+          direct,
+          through,
+        ],
+        typeparams2: [
+          `export interface Assertion<T> { own: T }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion<U> { snapshot(): U }
+}
+`,
+          `export {};
+declare module "./reexport" {
+  interface Assertion<T> { u: T }
+}
+`,
+        ],
+      };
+      using dir = project(
+        Object.fromEntries(
+          Object.entries(shapes).flatMap(([name, [expect, direct, through]]) => [
+            [`${name}/expect.ts`, expect],
+            [`${name}/direct.ts`, direct],
+            [`${name}/reexport.ts`, `import "./direct";\nexport { Assertion } from "./expect";\n`],
+            [`${name}/through.ts`, through],
+          ]),
+        ),
+      );
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "abstract/expect.ts(2,23): error TS2415: Class 'Assertion' incorrectly extends base class 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        abstract/expect.ts(3,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        class1/expect.ts(2,14): error TS2415: Class 'Assertion' incorrectly extends base class 'Base'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        class1/expect.ts(3,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'Base'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        class2/direct.ts(4,13): error TS2320: Interface 'Assertion' cannot simultaneously extend types 'Base' and 'D'.
+          Named property 'a' of types 'Base' and 'D' are not identical.
+        cycle/expect.ts(3,18): error TS2320: Interface 'Assertion<T>' cannot simultaneously extend types 'Base<T>' and 'M<T>'.
+          Named property 'a' of types 'Base<T>' and 'M<T>' are not identical.
+        generic/expect.ts(2,14): error TS2415: Class 'Assertion<T>' incorrectly extends base class 'Base<T>'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => T'.
+        generic/expect.ts(3,18): error TS2430: Interface 'Assertion<T>' incorrectly extends interface 'Base<T>'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => T'.
+        hiddenimplements/expect.ts(2,39): error TS2300: Duplicate identifier 'a'.
+        hiddenimplements/through.ts(3,25): error TS2300: Duplicate identifier 'a'.
+        implements/expect.ts(3,14): error TS2415: Class 'Assertion' incorrectly extends base class 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        implements/expect.ts(4,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        implements2/expect.ts(2,14): error TS2420: Class 'Assertion' incorrectly implements interface 'I'.
+          Property 'z' is missing in type 'Assertion' but required in type 'I'.
+        index/direct.ts(3,25): error TS2411: Property 'd' of type 'string' is not assignable to 'string' index type 'number'.
+        index/through.ts(3,25): error TS2411: Property 't' of type 'string' is not assignable to 'string' index type 'number'.
+        index3/direct.ts(3,25): error TS2411: Property 'd' of type 'string' is not assignable to 'string' index type 'number'.
+        index3/through.ts(3,25): error TS2411: Property 't' of type 'string' is not assignable to 'string' index type 'number'.
+        samebase/expect.ts(2,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'A1'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        two/expect.ts(3,18): error TS2320: Interface 'Assertion' cannot simultaneously extend types 'A1' and 'A2'.
+          Named property 'a' of types 'A1' and 'A2' are not identical.
+        two2/expect.ts(2,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'A1'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        typeparams2/direct.ts(3,13): error TS2428: All declarations of 'Assertion' must have identical type parameters.
+        typeparams2/expect.ts(1,18): error TS2428: All declarations of 'Assertion' must have identical type parameters.
+        typeparams2/through.ts(3,13): error TS2428: All declarations of 'Assertion' must have identical type parameters."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an augmentation of a module after one through a re-export, and a second re-export, keep the earlier declarations", async () => {
+      // In each: the declaration, what "./expect" is augmented with twice, what the two modules that re-export it are
+      // augmented with, and the uses. `@` is A or B.
+      const kinds: Record<string, [declaration: string, direct: string, through: string, use: string]> = {
+        interface: [
+          `export interface X { own: 1 }`,
+          `interface X { direct@: 1 }`,
+          `interface X { through@: 1 }`,
+          `declare const a: A, b: B, c: C;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+export const ab: A = b, ba: B = a, ac: A = c, ca: C = a, bc: B = c, cb: C = b;
+`,
+        ],
+        class: [
+          `export class X { own = 1; static s = 1 }`,
+          `interface X { direct@: 1 }`,
+          `interface X { through@: 1 }`,
+          `declare const a: A, b: B, c: C;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+export const ab: A = b, ba: B = a, ac: A = c, ca: C = a, bc: B = c, cb: C = b;
+A.s; B.s; C.s; new A().throughA; new B().throughA; new C().throughA;
+`,
+        ],
+        namespace: [
+          `export namespace X { export const own = 1; }`,
+          `namespace X { const direct@: 1; }`,
+          `namespace X { const through@: 1; }`,
+          `A.own; A.directA; A.directB; A.throughA; A.throughB;
+B.own; B.directA; B.directB; B.throughA; B.throughB;
+C.own; C.directA; C.directB; C.throughA; C.throughB;
+`,
+        ],
+        enum: [
+          `export enum X { own }`,
+          `enum X { direct@ = 10 }`,
+          `enum X { through@ = 20 }`,
+          `A.own; A.directA; A.directB; A.throughA; A.throughB;
+B.own; B.directA; B.directB; B.throughA; B.throughB;
+C.own; C.directA; C.directB; C.throughA; C.throughB;
+`,
+        ],
+        classns: [
+          `export class X { own = 1 }`,
+          `namespace X { const direct@: 1; }`,
+          `namespace X { const through@: 1; }`,
+          `A.directA; A.directB; A.throughA; A.throughB;
+B.directA; B.directB; B.throughA; B.throughB;
+C.directA; C.directB; C.throughA; C.throughB;
+`,
+        ],
+        nested: [
+          `export namespace X { export interface Y { own: 1 } }`,
+          `namespace X { interface Y { direct@: 1 } }`,
+          `namespace X { interface Y { through@: 1 } }`,
+          `declare const a: A.Y, b: B.Y, c: C.Y;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+`,
+        ],
+        generic: [
+          `export interface X<T = any> { own: T }`,
+          `interface X<T> { direct@: T }`,
+          `interface X<T> { through@: T }`,
+          `declare const a: A<1>, b: B<1>, c: C<1>;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+export const ab: A<1> = b, ba: B<1> = a, bc: B<1> = c, cb: C<1> = b;
+`,
+        ],
+      };
+      const files: Record<string, string> = {};
+      for (const [kind, [declaration, direct, through, use]] of Object.entries(kinds)) {
+        files[`${kind}/expect.ts`] = declaration;
+        for (const copy of ["A", "B"]) {
+          files[`${kind}/chunk${copy}.ts`] =
+            `export {};\ndeclare module "./expect" {\n  ${direct.replaceAll("@", copy)}\n}\n`;
+          files[`${kind}/vitest${copy}.ts`] = `import "./chunk${copy}";\nexport { X } from "./expect";\n`;
+          files[`${kind}/browser${copy}.ts`] =
+            `import "./vitest${copy}";\ndeclare module "./vitest${copy}" {\n  ${through.replaceAll("@", copy)}\n}\n`;
+        }
+        files[`${kind}/use.ts`] =
+          `import "./browserA";\nimport "./browserB";\nimport { X as A } from "./vitestA";\n` +
+          `import { X as B } from "./vitestB";\nimport { X as C } from "./expect";\n${use}`;
+      }
+      using dir = project(files);
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "class/use.ts(7,21): error TS2551: Property 'directB' does not exist on type 'X'. Did you mean 'directA'?
+        class/use.ts(7,44): error TS2551: Property 'throughB' does not exist on type 'X'. Did you mean 'throughA'?
+        class/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        class/use.ts(9,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        class/use.ts(10,14): error TS2741: Property 'throughA' is missing in type 'import("<dir>/class/vitestB").X' but required in type 'import("<dir>/class/vitestA").X'.
+        class/use.ts(10,25): error TS2739: Type 'import("<dir>/class/vitestA").X' is missing the following properties from type 'import("<dir>/class/vitestB").X': directB, throughB
+        class/use.ts(10,36): error TS2741: Property 'throughA' is missing in type 'import("<dir>/class/vitestB").X' but required in type 'import("<dir>/class/vitestA").X'.
+        class/use.ts(10,47): error TS2739: Type 'import("<dir>/class/vitestA").X' is missing the following properties from type 'import("<dir>/class/vitestB").X': directB, throughB
+        class/use.ts(11,42): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        class/use.ts(11,60): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        classns/use.ts(6,14): error TS2551: Property 'directB' does not exist on type 'typeof X'. Did you mean 'directA'?
+        classns/use.ts(6,37): error TS2551: Property 'throughB' does not exist on type 'typeof X'. Did you mean 'throughA'?
+        classns/use.ts(7,25): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        classns/use.ts(8,25): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        enum/use.ts(6,21): error TS2551: Property 'directB' does not exist on type 'typeof X'. Did you mean 'directA'?
+        enum/use.ts(6,44): error TS2551: Property 'throughB' does not exist on type 'typeof X'. Did you mean 'throughA'?
+        enum/use.ts(7,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        enum/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        generic/use.ts(7,21): error TS2551: Property 'directB' does not exist on type 'X<1>'. Did you mean 'directA'?
+        generic/use.ts(7,44): error TS2551: Property 'throughB' does not exist on type 'X<1>'. Did you mean 'throughA'?
+        generic/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'X<1>'. Did you mean 'throughB'?
+        generic/use.ts(9,32): error TS2551: Property 'throughA' does not exist on type 'X<1>'. Did you mean 'throughB'?
+        generic/use.ts(10,14): error TS2741: Property 'throughA' is missing in type 'import("<dir>/generic/vitestB").X<1>' but required in type 'import("<dir>/generic/vitestA").X<1>'.
+        generic/use.ts(10,28): error TS2739: Type 'import("<dir>/generic/vitestA").X<1>' is missing the following properties from type 'import("<dir>/generic/vitestB").X<1>': directB, throughB
+        interface/use.ts(7,21): error TS2551: Property 'directB' does not exist on type 'X'. Did you mean 'directA'?
+        interface/use.ts(7,44): error TS2551: Property 'throughB' does not exist on type 'X'. Did you mean 'throughA'?
+        interface/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        interface/use.ts(9,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        interface/use.ts(10,14): error TS2741: Property 'throughA' is missing in type 'import("<dir>/interface/vitestB").X' but required in type 'import("<dir>/interface/vitestA").X'.
+        interface/use.ts(10,25): error TS2739: Type 'import("<dir>/interface/vitestA").X' is missing the following properties from type 'import("<dir>/interface/vitestB").X': directB, throughB
+        interface/use.ts(10,36): error TS2741: Property 'throughA' is missing in type 'import("<dir>/interface/vitestB").X' but required in type 'import("<dir>/interface/vitestA").X'.
+        interface/use.ts(10,47): error TS2739: Type 'import("<dir>/interface/vitestA").X' is missing the following properties from type 'import("<dir>/interface/vitestB").X': directB, throughB
+        namespace/use.ts(6,21): error TS2551: Property 'directB' does not exist on type 'typeof X'. Did you mean 'directA'?
+        namespace/use.ts(6,44): error TS2551: Property 'throughB' does not exist on type 'typeof X'. Did you mean 'throughA'?
+        namespace/use.ts(7,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        namespace/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("says '(Missing)' for duplicate JSDoc properties without a name", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true },
+        }),
+        "a.js": `/**
+ * @typedef {object} CopyInfo
+ * @property {function(): string} getText
+ * @property {function(): void} success
+ * @property {(reason: any) => void} error
+ */
+export {};
+`,
+        "b.ts": `export interface I { a: 1; a: 2 }
+export interface J { "": 1; "": 2 }
+export class C { ""= 1; ""= 2 }
+`,
+        "c.js": `/**
+ * @typedef {object} T
+ * @property {string}
+ * @property {number}
+ */
+/**
+ * @typedef {object} U
+ * @property {string} a
+ * @property {number} a
+ */
+export {};
+`,
+        "e.js": `/**
+ * @callback F
+ * @param {function(): string} a
+ * @param {function(): string} b
+ */
+/**
+ * @typedef {object} V
+ * @property {object} o
+ * @property {function(): string} o.a
+ * @property {function(): string} o.b
+ */
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.js(3,23): error TS2300: Duplicate identifier '(Missing)'.
+        a.js(3,23): error TS1005: '}' expected.
+        a.js(4,23): error TS2300: Duplicate identifier '(Missing)'.
+        a.js(4,23): error TS1005: '}' expected.
+        b.ts(1,22): error TS2300: Duplicate identifier 'a'.
+        b.ts(1,28): error TS2300: Duplicate identifier 'a'.
+        b.ts(1,28): error TS2717: Subsequent property declarations must have the same type.  Property 'a' must be of type '1', but here has type '2'.
+        b.ts(2,22): error TS2300: Duplicate identifier '""'.
+        b.ts(2,29): error TS2300: Duplicate identifier '""'.
+        b.ts(2,29): error TS2717: Subsequent property declarations must have the same type.  Property '""' must be of type '1', but here has type '2'.
+        b.ts(3,18): error TS2300: Duplicate identifier '""'.
+        b.ts(3,25): error TS2300: Duplicate identifier '""'.
+        c.js(4,4): error TS2300: Duplicate identifier '(Missing)'.
+        c.js(4,4): error TS1003: Identifier expected.
+        c.js(4,22): error TS2300: Duplicate identifier '(Missing)'.
+        c.js(4,22): error TS2717: Subsequent property declarations must have the same type.  Property '(Missing)' must be of type 'string', but here has type 'number'.
+        c.js(4,22): error TS1003: Identifier expected.
+        c.js(8,23): error TS2300: Duplicate identifier 'a'.
+        c.js(9,23): error TS2300: Duplicate identifier 'a'.
+        c.js(9,23): error TS2717: Subsequent property declarations must have the same type.  Property 'a' must be of type 'string', but here has type 'number'.
+        e.js(3,20): error TS1005: '}' expected.
+        e.js(4,20): error TS1005: '}' expected.
+        e.js(9,23): error TS2300: Duplicate identifier '(Missing)'.
+        e.js(9,23): error TS1005: '}' expected.
+        e.js(10,23): error TS2300: Duplicate identifier '(Missing)'.
+        e.js(10,23): error TS1005: '}' expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the checks of an interface are those of its first clone if two re-exports clone the second one", async () => {
+      using dir = project({
+        "expect.ts": `export interface Base { a(): void }
+export interface X extends Base { own: 1 }
+`,
+        "chunk.ts": `export {};
+declare module "./expect" {
+  interface X { direct: 1 }
+}
+`,
+        "vitest.ts": `import "./chunk";
+export { X } from "./expect";
+`,
+        "browser.ts": `import "./vitest";
+interface M { a(): number }
+declare module "./vitest" {
+  interface X extends M {}
+}
+`,
+        "outer1.ts": `import "./browser";
+export { X } from "./vitest";
+`,
+        "outer2.ts": `import "./browser";
+export { X } from "./vitest";
+`,
+        "zaug1.ts": `import "./outer1";
+declare module "./outer1" {
+  interface X { o1: 1 }
+}
+`,
+        "zaug2.ts": `import "./outer2";
+declare module "./outer2" {
+  interface X { o2: 1 }
+}
+`,
+        "zuse.ts": `import "./zaug1";
+import "./zaug2";
+import { X as E } from "./expect";
+import { X as V } from "./vitest";
+import { X as O1 } from "./outer1";
+import { X as O2 } from "./outer2";
+declare const e: E, v: V, o1: O1, o2: O2;
+e.own; e.direct; e.o1;
+v.own; v.direct; v.o1; v.o2;
+o1.own; o1.direct; o1.o1; o1.o2;
+o2.own; o2.direct; o2.o1; o2.o2;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "zuse.ts(8,20): error TS2339: Property 'o1' does not exist on type 'X'.
+        zuse.ts(9,20): error TS2339: Property 'o1' does not exist on type 'X'.
+        zuse.ts(10,30): error TS2339: Property 'o2' does not exist on type 'X'.
+        zuse.ts(11,23): error TS2339: Property 'o1' does not exist on type 'X'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a class and its base type with the class's this type get the same index signatures while those are resolved", async () => {
+      using dir = project({
+        "assign.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { const base: Container = this; const self: Parts = this; return this.n(); }
+  n() { return 1; }
+  k(x: symbol) { return [this[x], super[x]]; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "base_first.ts": `declare const sym: symbol;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "declared_first.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "generic.ts": `declare const sym: symbol;
+export const first = (null! as Parts<2>).n;
+function helper() { return (null! as Parts<2>).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts<U> extends Container<U> {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container<2>, q: Parts<2>, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "own_getter.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+  get [sym]() { return 2; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "statics.ts": `declare const sym: symbol;
+export const first = Parts.n;
+function helper() { return Parts.m(); }
+export class Container {
+  static get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  static m() { return this.n(); }
+  static n() { return 1; }
+}
+declare const s: symbol;
+export const p2: 0 = Container[s];
+export const p3: 0 = Parts[s];
+`,
+        "string_key.ts": `declare const key: string;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [key]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: string;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "super_call.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  b() { return 1; }
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return super.b(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "this_first.ts": `declare const sym: symbol;
+function helper() { return (null! as Parts).m(); }
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "two_heirs.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return [(null! as Parts).m(), (null! as Other).m()]; }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+export class Other extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const o: Other;
+export const p4: 0 = o[s];
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "two_levels.ts": `declare const sym: symbol;
+export const first = (null! as Sub).n;
+function helper() { return (null! as Sub).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+export class Sub extends Parts {
+  o() { return this.m(); }
+}
+declare const r: Sub;
+export const p4: 0 = r[s];
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "assign.ts(11,26): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'Parts'.
+        assign.ts(11,35): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'Container<1>'.
+        assign.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        assign.ts(15,14): error TS2322: Type 'number' is not assignable to type '0'.
+        base_first.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        base_first.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        declared_first.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        declared_first.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        generic.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        generic.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        own_getter.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        own_getter.ts(15,14): error TS2322: Type 'number' is not assignable to type '0'.
+        statics.ts(2,22): error TS2449: Class 'Parts' used before its declaration.
+        statics.ts(7,28): error TS2507: Type 'typeof Container' is not a constructor function type.
+        statics.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        statics.ts(13,22): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'typeof Parts'.
+        super_call.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        super_call.ts(15,14): error TS2322: Type 'number' is not assignable to type '0'.
+        this_first.ts(3,28): error TS2449: Class 'Container' used before its declaration.
+        this_first.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        this_first.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        two_heirs.ts(17,22): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'Other'.
+        two_heirs.ts(19,14): error TS2322: Type 'number[]' is not assignable to type '0'.
+        two_heirs.ts(20,14): error TS2322: Type 'number[]' is not assignable to type '0'.
+        two_levels.ts(16,14): error TS2322: Type 'number' is not assignable to type '0'.
+        two_levels.ts(18,14): error TS2322: Type 'number' is not assignable to type '0'.
+        two_levels.ts(19,14): error TS2322: Type 'number' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("relates a mapped type over a type parameter that extends an array or a tuple to an intersection", async () => {
+      using dir = project({
+        "a.ts": `type Writable<T> = { -readonly [P in keyof T]: T[P] };
+interface Config { name: string; enumValues: string[] | undefined }
+type Constraint = Config & { enumValues: [string, ...string[]] };
+export function g<U extends string, T extends Readonly<[U, ...U[]]>, N extends string>(w: Writable<T>, n: N) {
+  const a: [string, ...string[]] = w;
+  const b: string[] | undefined = w;
+  const c: string[] & [string, ...string[]] = w;
+  const d: { enumValues: [string, ...string[]] } = { enumValues: w };
+  const e: Constraint = null! as { name: N; enumValues: Writable<T> };
+  const f: Constraint["enumValues"] = w;
+  return [a, b, c, d, e, f];
+}
+declare class B1<T extends Constraint> { t: T; constructor(name: T["name"]); }
+declare class B2<T extends Constraint> { t: T; constructor(name: T["name"], e: { v: T["enumValues"] }); }
+declare class B3<T extends { enumValues: [string, ...string[]] }> { t: T; constructor(e: { v: T["enumValues"] }); }
+export function h<U extends string, T extends Readonly<[U, ...U[]]>, N extends string>(w: Writable<T>, n: N) {
+  const r1: B1<{ name: N; enumValues: Writable<T> }> = new B1(n);
+  const r2: B2<{ name: N; enumValues: Writable<T> }> = new B2(n, { v: w });
+  const r3: B3<{ enumValues: Writable<T> }> = new B3({ v: w });
+  return [r1, r2, r3];
+}
+`,
+        "b.ts": `type Writable<T> = { -readonly [P in keyof T]: T[P] };
+type Numbers<T> = { [P in keyof T]: number };
+type Optional<T> = { [P in keyof T]?: T[P] };
+export function arrays<T extends readonly string[]>(w: Writable<T>, n: Numbers<T>, o: Optional<T>) {
+  const a: string[] & { length: number } = w;
+  const b: string[] & { extra: 1 } = w;
+  const c: string[] & number[] = w;
+  const d: number[] & { length: number } = n;
+  const e: string[] & { length: number } = n;
+  const f: (string | undefined)[] & { length: number } = o;
+  const g: readonly string[] & { readonly length: number } = w;
+  return [a, b, c, d, e, f, g];
+}
+export function tuples<T extends readonly [string, number]>(w: Writable<T>) {
+  const a: [string, number] & { length: 2 } = w;
+  const b: [string, number] & { length: 3 } = w;
+  const c: (string | number)[] & [string, number] = w;
+  return [a, b, c];
+}
+export function objects<T extends { a: 1 }>(w: Writable<T>) {
+  const a: { a: 1 } & { b?: 2 } = w;
+  const b: { a: 1 } & { a: number } = w;
+  return [a, b];
+}
+`,
+        "c.ts": `type Writable<T> = { -readonly [P in keyof T]: T[P] };
+interface Config<D extends string, C extends string> {
+  name: string;
+  dataType: D;
+  columnType: C;
+  data: unknown;
+  driverParam: unknown;
+  enumValues: string[] | undefined;
+}
+type Initial<TName extends string, TValues extends [string, ...string[]]> = Builder<{
+  name: TName;
+  dataType: "string";
+  columnType: "PgEnumColumn";
+  data: TValues[number];
+  enumValues: TValues;
+  driverParam: string;
+}>;
+interface PgEnum<TValues extends [string, ...string[]]> {
+  <TName extends string>(name?: TName): Initial<TName, TValues>;
+  readonly enumValues: TValues;
+}
+class Builder<T extends Config<"string", "PgEnumColumn"> & { enumValues: [string, ...string[]] }> {
+  config!: T;
+  constructor(name: T["name"], enumInstance: PgEnum<T["enumValues"]>) {}
+}
+export function f<U extends string, T extends Readonly<[U, ...U[]]>>(values: T | Writable<T>): PgEnum<Writable<T>> {
+  const enumInstance: PgEnum<Writable<T>> = Object.assign(
+    <TName extends string>(name?: TName): Initial<TName, Writable<T>> => new Builder(name ?? ("" as TName), enumInstance),
+    { enumValues: values } as const,
+  );
+  return enumInstance;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "b.ts(6,9): error TS2322: Type 'Writable<T>' is not assignable to type 'string[] & { extra: 1; }'.
+          Type 'Writable<T>' is not assignable to type '{ extra: 1; }'.
+            Property 'extra' is missing in type 'string[]' but required in type '{ extra: 1; }'.
+        b.ts(7,9): error TS2322: Type 'Writable<T>' is not assignable to type 'string[] & number[]'.
+          Type 'Writable<T>' is not assignable to type 'number[]'.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(8,9): error TS2322: Type 'Numbers<T>' is not assignable to type 'number[] & { length: number; }'.
+          Type 'Numbers<T>' is not assignable to type 'number[]'.
+        b.ts(9,9): error TS2322: Type 'Numbers<T>' is not assignable to type 'string[] & { length: number; }'.
+          Type 'Numbers<T>' is not assignable to type 'string[]'.
+        b.ts(10,9): error TS2322: Type 'Optional<T>' is not assignable to type '(string | undefined)[] & { length: number; }'.
+          Type 'Optional<T>' is not assignable to type '(string | undefined)[]'.
+        b.ts(16,9): error TS2322: Type 'Writable<T>' is not assignable to type 'never'.
+          The intersection '[string, number] & { length: 3; }' was reduced to 'never' because property 'length' has conflicting types in some constituents."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("infers through a Record in a function type or a type literal that's written in the type argument of a Record", async () => {
+      using dir = project({
+        "a.ts": `interface Props0<F> { frontmatter: F }
+type File<F> = Props0<F> & Record<string, unknown>;
+type DocMap<F> = Record<string, (() => Promise<File<F>>) & { base: string }>;
+declare function load<F>(files: Record<string, () => Promise<File<F>>>): F;
+declare const m: DocMap<{ title: string }>;
+declare const r: Record<string, () => Promise<File<{ title: string }>>>;
+export const pa: 0 = load(m);
+export const pb: 0 = load(r);
+interface Loader<F> { preload: (path: string) => Promise<File<F>> }
+declare function load2<F>(files: Record<string, () => Promise<File<F>>>): Loader<F>;
+export const pc: 0 = load2(m);
+export const pd: 0 = load2(r);
+`,
+        "c.ts": `interface Props0<F> { frontmatter: F }
+type File<F> = Props0<F> & Record<string, unknown>;
+type File2<F> = Props0<F> & { [key: string]: unknown };
+type X = { title: string };
+declare function l10<F>(x: Record<string, () => File<F>>): F;
+declare function l11<F>(x: Record<string, Promise<File<F>>>): F;
+declare function l12<F>(x: Record<string, () => Promise<File<F>>>): F;
+declare function l13<F>(x: Record<string, () => Promise<File2<F>>>): F;
+declare function l14<F>(x: Record<string, () => Promise<Props0<F>>>): F;
+declare function l15<F>(x: Record<string, () => File<F>[]>): F;
+declare function l16<F>(x: Record<string, { a: File<F> }>): F;
+declare function l17<F>(x: { [key: string]: () => Promise<File<F>> }): F;
+export const p10: 0 = l10(null! as Record<string, () => File<X>>);
+export const p11: 0 = l11(null! as Record<string, Promise<File<X>>>);
+export const p12: 0 = l12(null! as Record<string, () => Promise<File<X>>>);
+export const p13: 0 = l13(null! as Record<string, () => Promise<File2<X>>>);
+export const p14: 0 = l14(null! as Record<string, () => Promise<Props0<X>>>);
+export const p15: 0 = l15(null! as Record<string, () => File<X>[]>);
+export const p16: 0 = l16(null! as Record<string, { a: File<X> }>);
+export const p17: 0 = l17(null! as { [key: string]: () => Promise<File<X>> });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,14): error TS2322: Type '{ title: string; }' is not assignable to type '0'.
+        a.ts(8,14): error TS2322: Type '{ title: string; }' is not assignable to type '0'.
+        a.ts(11,14): error TS2322: Type 'Loader<{ title: string; }>' is not assignable to type '0'.
+        a.ts(12,14): error TS2322: Type 'Loader<{ title: string; }>' is not assignable to type '0'.
+        c.ts(13,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(14,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(15,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(16,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(17,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(18,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(19,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(20,14): error TS2322: Type 'X' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a value that another file's declaration of a namespace or an enum exports hides one declared outside of it", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "noUnusedLocals": true, "types": [] } }
+`,
+        "one.ts": `namespace N {
+  export const x = 1;
+  export let v: string | undefined;
+  export function f() { return 1; }
+  export class C { a = 1; }
+  export namespace M { export const deep = 1; }
+  export enum Color { Red }
+}
+enum E { A = 1 }
+const enum CE { A = 1 }
+`,
+        "two.ts": `const x = "outer";
+let v: number | undefined;
+function f() { return "outer"; }
+class C { b = 2; }
+const deep = "outer";
+const A = "outer";
+const Red = "outer";
+namespace N {
+  export const y: 0 = x;
+  export const z: 0 = f();
+  export const w: 0 = new C().a;
+  if (v) { v.length; v.toFixed(); }
+  v = "s"; v = 1;
+  export const o = { x, v };
+  export const oo: 0 = o;
+  export namespace M { export const d: 0 = deep; export const e: 0 = x; }
+  export enum Color { Blue = Red }
+  export function g(p = x) { const r: 0 = p; return () => x; }
+  export const h: 0 = g()();
+}
+enum E { B = A }
+const enum CE { B = A }
+namespace Other { export const y: 0 = x; export const d: 0 = deep; }
+const keep = [E.B, CE.B, N.Color.Blue, Other.y, A, Red];
+`,
+        "mod.ts": `export namespace N { export const x = 1; }
+export const marker = 1;
+`,
+        "aug.ts": `import "./mod";
+const x = "outer";
+declare module "./mod" {
+  namespace N { const y: typeof x; }
+}
+export {};
+`,
+        "useaug.ts": `import { N } from "./mod";
+import "./aug";
+export const r: 0 = N.y;
+`,
+        "g.d.ts": `declare namespace N { const x: 1; type T = 1; class C { a: 1 } namespace Inner { type U = 1 } }
+declare namespace S { const x: 1; type T = 1 }
+`,
+        "m.ts": `export {};
+declare const x: "outer";
+type T = "outer";
+declare class C { b: 2 }
+declare namespace Inner { type U = "outer" }
+declare global {
+  namespace N {
+    interface P { v: typeof x; t: T; c: typeof C; ci: C; u: Inner.U }
+    const y: typeof x;
+    function f(a?: typeof x): T;
+  }
+}
+declare const p: N.P;
+export const r1: 0 = p.v, r2: 0 = p.t, r3: 0 = new p.c().a, r4: 0 = p.ci.a, r5: 0 = p.u, r6: 0 = N.y, r7: 0 = N.f();
+`,
+        "ae.d.ts": `export declare class AssertionError { b: 2 }
+`,
+        "cy.d.ts": `declare namespace Chai {
+  interface ChaiStatic { AssertionError: typeof AssertionError }
+  export class AssertionError { a: 1 }
+}
+`,
+        "types.d.ts": `import { AssertionError as Imported } from "./ae";
+declare global {
+  namespace Chai {
+    export interface ChaiStatic { AssertionError: typeof AssertionError }
+    export interface Probe { p: typeof AssertionError; t: AssertionError }
+    export type { Imported as AssertionError };
+  }
+}
+export const AssertionError: typeof Imported;
+`,
+        "use.ts": `declare const c: Chai.Probe;
+new c.p().a; new c.p().b; c.t.a; c.t.b;
+declare const d: Chai.AssertionError;
+d.a; d.b;
+new Chai.AssertionError().a; new Chai.AssertionError().b;
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "aug.ts(2,7): error TS6133: 'x' is declared but its value is never read.
+          console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
+          g.d.ts(1,29): error TS2451: Cannot redeclare block-scoped variable 'x'.
+          g.d.ts(1,53): error TS2300: Duplicate identifier 'C'.
+          m.ts(3,6): error TS6196: 'T' is declared but never used.
+          m.ts(9,11): error TS2451: Cannot redeclare block-scoped variable 'y'.
+          m.ts(14,14): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,27): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,40): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,61): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,77): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,103): error TS2322: Type '1' is not assignable to type '0'.
+          one.ts(2,16): error TS2451: Cannot redeclare block-scoped variable 'x'.
+          one.ts(5,16): error TS2300: Duplicate identifier 'C'.
+          two.ts(9,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(9,16): error TS2451: Cannot redeclare block-scoped variable 'y'.
+          two.ts(10,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(11,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(12,24): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+          two.ts(13,12): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(15,16): error TS2322: Type '{ x: 1; v: string | undefined; }' is not assignable to type '0'.
+          two.ts(16,37): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(16,63): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(18,36): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(18,36): error TS6133: 'r' is declared but its value is never read.
+          two.ts(19,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(23,32): error TS2322: Type '"outer"' is not assignable to type '0'.
+          two.ts(23,55): error TS2322: Type '"outer"' is not assignable to type '0'.
+          types.d.ts(6,19): error TS2484: Export declaration conflicts with exported declaration of 'AssertionError'.
+          use.ts(2,24): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          use.ts(2,38): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          use.ts(4,8): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          use.ts(5,56): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          useaug.ts(3,14): error TS2322: Type '1' is not assignable to type '0'."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("reports TS2744 for a later type parameter that's the check type of a conditional type", async () => {
+      using dir = project({
+        "a.ts": `type Box<A, B = unknown> = [A, B];
+export type T1<A = B, B = 1> = [A, B];
+export type T2<A = Box<B>, B = 1> = [A, B];
+export type T3<A = B extends undefined ? {} : B, B = 1> = [A, B];
+export type T4<A = Box<B extends undefined ? {} : B>, B = 1> = [A, B];
+export type T5<A = Box<1, B extends undefined ? {} : B>, B = 1> = [A, B];
+export type T6<A = { x: B }, B = 1> = [A, B];
+export type T7<A = () => B, B = 1> = [A, B];
+export type T8<A = B[], B = 1> = [A, B];
+export type T9<A = [B], B = 1> = [A, B];
+export type U1<A = keyof B, B = 1> = [A, B];
+export type U2<A = B["x"], B extends { x: 1 } = { x: 1 }> = [A, B];
+export type U3<A = { [K in keyof B]: 1 }, B = 1> = [A, B];
+export type U4<A = B | 1, B = 1> = [A, B];
+export type U5<A = 1 extends B ? 1 : 2, B = 1> = [A, B];
+export type U6<A = 1 extends 1 ? B : 2, B = 1> = [A, B];
+export type U7<A = 1 extends infer X ? [X, B] : 2, B = 1> = [A, B];
+export type U8<A = A, B = 1> = [A, B];
+export interface I { <A = B extends undefined ? {} : B, B = 1>(a: A, b: B): void; m<A = Box<B extends 1 ? B : 2>, B = 1>(): [A, B] }
+export declare function f<A = B extends undefined ? {} : B, B = 1>(a: A, b: B): void;
+export declare class C<A = Box<B extends undefined ? {} : B>, B = 1> { a: A; b: B }
+export type F = <A extends Box<1> = Box<1, B extends undefined ? {} : B>, B = 1>(a: A, b: B) => void;
+export type U9<A = \`\${B & string}\`, B = 1> = [A, B];
+export type V1<A = typeof import("./a") extends B ? 1 : 2, B = 1> = [A, B];
+export type V2<A = (b: B) => b is B, B = 1> = [A, B];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(3,24): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(4,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(4,47): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(5,24): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(5,51): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(6,27): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(6,54): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(7,25): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(8,26): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(9,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(10,21): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(11,26): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(12,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(13,34): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(14,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(15,30): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(16,34): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(17,44): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(18,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,27): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,54): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,93): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,107): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(20,31): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(20,58): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(21,32): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(21,59): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(22,44): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(22,71): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(23,23): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(24,49): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(25,24): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(25,35): error TS2744: Type parameter defaults can only reference previously declared type parameters."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a binding element with a default doesn't keep the name of an unresolved type", async () => {
+      using dir = project({
+        "a.ts": `import type { Missing } from "missing";
+declare const table: Record<"x" | "y", string>;
+type P1 = Omit<Missing, "a"> & { variant?: "x" | "y" };
+type WithoutRef<Props> = Props extends any ? ("ref" extends keyof Props ? Omit<Props, "ref"> : Props) : Props;
+type C1<T> = T extends any ? T : never;
+type C2<T> = T extends string ? T : T;
+type C3<T> = "ref" extends keyof T ? 1 : T;
+type C4<T> = T extends any ? Omit<T, "ref"> : never;
+export function f(a: WithoutRef<P1>, b: WithoutRef<Missing>, c: C1<Missing>, d: C2<Missing>, e: C3<Missing>, g: C4<Missing>, h: C1<P1>) {
+  table[a]; table[b]; table[c]; table[d]; table[e]; table[g]; table[h];
+  const { variant = "x" } = a; table[variant];
+  const { variant: v2 = "x" } = b; table[v2];
+}
+declare function wrap<P>(f: (props: WithoutRef<P>, ref: number) => void): void;
+wrap<P1>(function ({ variant = "x", other, ...props }, ref) { table[variant]; table[other]; table[props]; });
+wrap<Missing>(function ({ variant = "x", other, ...props }, ref) { table[variant]; table[other]; table[props]; });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,30): error TS2307: Cannot find module 'missing' or its corresponding type declarations.
+        a.ts(10,9): error TS2538: Type 'Omit<P1, "ref">' cannot be used as an index type.
+        a.ts(10,19): error TS2538: Type 'Omit<Missing, "ref">' cannot be used as an index type.
+        a.ts(10,23): error TS7053: Element implicitly has an 'any' type because expression of type 'Missing' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(10,33): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(10,43): error TS7053: Element implicitly has an 'any' type because expression of type '1' can't be used to index type 'Record<"x" | "y", string>'.
+          Property '1' does not exist on type 'Record<"x" | "y", string>'.
+        a.ts(10,59): error TS2538: Type 'Omit<Missing, "ref">' cannot be used as an index type.
+        a.ts(10,69): error TS2538: Type 'P1' cannot be used as an index type.
+        a.ts(11,32): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(12,36): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(15,63): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(15,79): error TS7053: Element implicitly has an 'any' type because expression of type 'Missing' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(15,99): error TS2538: Type '{ [x: string]: Missing; [x: number]: Missing; [x: symbol]: Missing; }' cannot be used as an index type.
+        a.ts(16,68): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(16,84): error TS7053: Element implicitly has an 'any' type because expression of type 'Missing' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(16,104): error TS2538: Type '{ [x: string]: Missing; [x: number]: Missing; [x: symbol]: Missing; }' cannot be used as an index type."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("every check sees that another file's export of a namespace hides a value declared outside of it", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "noUnusedLocals": true, "noUnusedParameters": true, "types": [], "isolatedModules": false } }
+`,
+        "assigned-one.ts": `namespace N { export let q: string | undefined; export let w: string | undefined; export let param: number; }
+`,
+        "assigned-three.ts": `namespace N { neverAssigned = "s"; param = 1; }
+`,
+        "assigned-two.ts": `declare function init(): string | undefined;
+let q = init();
+let w = init();
+namespace N { q = undefined; export function reset() { w = undefined; } }
+if (q) { const f = () => q.length; f(); }
+if (w) { const f = () => w.length; f(); }
+function outer(param: string | undefined) {
+  if (param) { return () => param.length; }
+  return undefined;
+}
+let neverAssigned: string;
+namespace N { export let neverAssigned: string; }
+outer(neverAssigned);
+`,
+        "aug.ts": `import "./mod";
+let a: boolean;
+let onlyHere: boolean;
+let unusedLet: number;
+const enum CE { A = "outer" }
+class K { i = "outer" }
+declare module "./mod" {
+  namespace N {
+    let a2: typeof a;
+    let k2: typeof K;
+    let ce: typeof CE.A;
+    let here: typeof onlyHere;
+  }
+}
+export {};
+`,
+        "mod.ts": `export namespace N { export let a: string | number = 1; export const enum CE { A = 1 } export class K { i = 1 } }
+`,
+        "one.ts": `namespace N {
+  export let a: string | number | undefined;
+  export let b: string | number = 1;
+  export const c = { k: 1 } as const;
+  export let d: string;
+  export let auto;
+  export let e: string | undefined;
+  export function fn(x: string): string;
+  export function fn(x: number): number;
+  export function fn(x: any) { return x; }
+  export enum En { A = 1 }
+  export const enum CEn { A = 1 }
+  export class K { static s = 1; i = 1; }
+  export let g: { p?: string } = {};
+  export var hoisted = 1;
+  export namespace Deep { export let z: string | number = 1; }
+}
+enum Top { P = 1 }
+`,
+        "order-four.ts": `namespace N { export const oc: 0 = k; export const od = new kk2(); }
+class k {}
+class kk2 {}
+`,
+        "order-one.ts": `namespace N { export const x = 1; export let m: string | number = 1; export const k = 1; }
+`,
+        "order-three.ts": `let m: string | number;
+namespace N {
+  export function f() { return m; }
+  export const oa: 0 = m;
+}
+m = "s";
+namespace N {
+  export const ob: 0 = m;
+}
+`,
+        "order-two.ts": `namespace N { export const y: 0 = x; }
+const x = "outer";
+`,
+        "two.ts": `let a: boolean | undefined;
+let b: boolean;
+const c = { k: "outer" } as const;
+let d: number;
+let auto;
+let e: number | undefined;
+function fn(x: boolean) { return x; }
+enum En { A = "outer" }
+const enum CEn { A = "outer" }
+class K { static s = "outer"; i = "outer"; }
+let g: { p?: number } = {};
+var hoisted = "outer";
+let z: boolean = true;
+const P = "outer";
+namespace N {
+  // narrowing by typeof, truthiness and assignment, in the body and in functions
+  if (typeof a === "string") { const r: 0 = a; } else if (typeof a === "number") { const r: 0 = a; } else { const r: 0 = a; }
+  a = "s"; export const a1: 0 = a;
+  a = 1; export const a2: 0 = a;
+  a = true;
+  export function f1() { if (a) { const r: 0 = a; } a = undefined; return a; }
+  export const f2 = () => { b = "s"; const r: 0 = b; return () => b; };
+  b = 2; export const b1: 0 = b; export const b2: 0 = (() => b)();
+  export const c1: 0 = c.k;
+  export const d1: 0 = d;
+  d = "s"; d = 1;
+  auto = 1; export const au1: 0 = auto; auto = "s"; export const au2: 0 = auto;
+  export function f3() { return auto; }
+  e ??= "s"; export const e1: 0 = e; e = 1;
+  export const n1: 0 = fn("s"), n2: 0 = fn(1), n3 = fn(true);
+  export const en1: 0 = En.A, en2: 0 = CEn.A;
+  export const k1: 0 = K.s, k2: 0 = new K().i;
+  export class L extends K { j = this.i; }
+  export const l1: 0 = new L().j;
+  if (g.p) { const r: 0 = g.p; }
+  g = { p: 1 }; g.p = 1;
+  export const h1: 0 = hoisted;
+  for (a of ["x"]) { const r: 0 = a; }
+  for (b in {}) { const r: 0 = b; }
+  [a, b] = ["q", 2]; ({ a, b } = { a: 1, b: "w" });
+  a++; b += 1;
+  export const t1 = \`\${a}\${b}\`;
+  export function f4(p = a, q = () => b) { const r: [0, 0] = [p, q()]; return r; }
+  export namespace Deep { z = "s"; export const z1: 0 = z; z = true; export const a3: 0 = a; }
+  export const typed: typeof a = true, typed2: typeof K = K, typed3: typeof En.A = En.A;
+  export const sat = a satisfies string | number | undefined;
+  delete g.p;
+  label: while (a) { a = undefined; break label; }
+  switch (a) { case "x": { const r: 0 = a; break; } case true: break; }
+  try { a = "t"; } catch { a = 2; } finally { const r: 0 = a; }
+}
+enum Top { Q = P }
+function usesOuter() { return [a, b, c, d, auto, e, fn, En, CEn.A, K, g, hoisted, z, P, Top.Q]; }
+usesOuter();
+`,
+        "useaug.ts": `import { N } from "./mod";
+import "./aug";
+export const r1: 0 = N.a2, r2: 0 = new N.k2().i, r3: 0 = N.ce, r4: 0 = N.here;
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "assigned-two.ts(5,26): error TS18048: 'q' is possibly 'undefined'.
+          assigned-two.ts(6,26): error TS18048: 'w' is possibly 'undefined'.
+          assigned-two.ts(13,7): error TS2454: Variable 'neverAssigned' is used before being assigned.
+          aug.ts(2,5): error TS6133: 'a' is declared but its value is never read.
+          aug.ts(4,5): error TS6133: 'unusedLet' is declared but its value is never read.
+          aug.ts(5,12): error TS6196: 'CE' is declared but never used.
+          aug.ts(6,7): error TS6196: 'K' is declared but never used.
+          aug.ts(11,20): error TS2475: 'const' enums can only be used in property or index access expressions or the right hand side of an import declaration or export assignment or type query.
+          console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
+          one.ts(6,14): error TS7005: Variable 'auto' implicitly has an 'any' type.
+          order-four.ts(1,28): error TS2322: Type '1' is not assignable to type '0'.
+          order-four.ts(1,61): error TS2449: Class 'kk2' used before its declaration.
+          order-three.ts(4,16): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          order-three.ts(8,16): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          order-two.ts(1,28): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(5,5): error TS7034: Variable 'auto' implicitly has type 'any' in some locations where its type cannot be determined.
+          two.ts(17,38): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(17,38): error TS6133: 'r' is declared but its value is never read.
+          two.ts(17,90): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(17,90): error TS6133: 'r' is declared but its value is never read.
+          two.ts(17,115): error TS2322: Type 'undefined' is not assignable to type '0'.
+          two.ts(17,115): error TS6133: 'r' is declared but its value is never read.
+          two.ts(18,25): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(19,23): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(20,3): error TS2322: Type 'true' is not assignable to type 'string | number | undefined'.
+          two.ts(21,41): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          two.ts(21,41): error TS6133: 'r' is declared but its value is never read.
+          two.ts(22,44): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(22,44): error TS6133: 'r' is declared but its value is never read.
+          two.ts(23,23): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(23,47): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(24,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(25,16): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(26,12): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(29,27): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(29,38): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(30,16): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(30,33): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(30,56): error TS2769: No overload matches this call.
+            The last overload gave the following error.
+              Argument of type 'boolean' is not assignable to parameter of type 'number'.
+          two.ts(31,16): error TS2322: Type 'En' is not assignable to type '0'.
+          two.ts(31,31): error TS2322: Type 'CEn' is not assignable to type '0'.
+          two.ts(32,16): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(32,29): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(34,16): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(35,20): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(35,20): error TS6133: 'r' is declared but its value is never read.
+          two.ts(36,9): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(36,17): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(37,16): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(38,28): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(38,28): error TS6133: 'r' is declared but its value is never read.
+          two.ts(39,25): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(39,25): error TS6133: 'r' is declared but its value is never read.
+          two.ts(43,63): error TS2322: Type 'string | number | undefined' is not assignable to type '0'.
+            Type 'undefined' is not assignable to type '0'.
+          two.ts(43,66): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          two.ts(44,49): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(44,60): error TS2322: Type 'boolean' is not assignable to type 'string | number'.
+          two.ts(44,83): error TS2322: Type 'string | number | undefined' is not assignable to type '0'.
+            Type 'undefined' is not assignable to type '0'.
+          two.ts(45,16): error TS2322: Type 'boolean' is not assignable to type 'number'.
+          two.ts(49,21): error TS2678: Type 'string' is not comparable to type 'number'.
+          two.ts(49,34): error TS6133: 'r' is declared but its value is never read.
+          two.ts(49,58): error TS2678: Type 'boolean' is not comparable to type 'number'.
+          two.ts(50,53): error TS2322: Type 'string | number | undefined' is not assignable to type '0'.
+            Type 'undefined' is not assignable to type '0'.
+          two.ts(50,53): error TS6133: 'r' is declared but its value is never read.
+          two.ts(53,44): error TS7005: Variable 'auto' implicitly has an 'any' type.
+          useaug.ts(3,14): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          useaug.ts(3,28): error TS2322: Type 'number' is not assignable to type '0'.
+          useaug.ts(3,50): error TS2322: Type 'CE' is not assignable to type '0'.
+          useaug.ts(3,64): error TS2322: Type 'boolean' is not assignable to type '0'."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
+      using dir = project({
+        "a.ts": `declare function hold<S>(value: S): S;
+function getter<T>(value: T) {
+  return hold({ get current() { return value; } });
+}
+function annotated<T>(value: T) {
+  return hold({ get current(): T { return value; }, other: value });
+}
+function setter<T>(value: T) {
+  return hold({ set current(next: T) { value = next; } });
+}
+function both<T>(value: T) {
+  return hold({ get current(): T { return value; }, set current(next: T | undefined) {} });
+}
+function nested<T>(value: T) {
+  return hold({ inner: { get current() { return value; } } });
+}
+function twice<T>(value: T) {
+  return <U>(other: U) => hold({ get pair(): [T, U] { return [value, other]; } });
+}
+export const n: number = getter(1).current;
+export const r1: never = getter(1);
+export const r2: never = annotated("a");
+export const r3: never = setter(1);
+export const r4: never = both(1);
+export const r5: never = nested(1);
+export const r6: never = twice(1)("a");
+both(1).current = "a";
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(21,14): error TS2322: Type '{ readonly current: number; }' is not assignable to type 'never'.
+        a.ts(22,14): error TS2322: Type '{ readonly current: string; other: string; }' is not assignable to type 'never'.
+        a.ts(23,14): error TS2322: Type '{ current: number; }' is not assignable to type 'never'.
+        a.ts(24,14): error TS2322: Type '{ get current(): number; set current(next: number | undefined); }' is not assignable to type 'never'.
+        a.ts(25,14): error TS2322: Type '{ inner: { readonly current: number; }; }' is not assignable to type 'never'.
+        a.ts(26,14): error TS2322: Type '{ readonly pair: [number, string]; }' is not assignable to type 'never'.
+        a.ts(27,1): error TS2322: Type 'string' is not assignable to type 'number'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -14936,6 +18856,79 @@ export class Second {
       `);
     });
 
+    test("`typeof this.m` inside the private member `m` counts as a read of it", async () => {
+      using dir = project({
+        "a.ts": `
+export class A {
+  private byType(): typeof this.byType { return null!; }
+  private byValue(): unknown { return this.byValue; }
+  #byType(): typeof this.#byType { return null!; }
+  #byValue(): unknown { return this.#byValue; }
+  static #ofClass(): typeof A.#ofClass { return null!; }
+}
+`,
+      });
+      const { stdout } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,11): error TS6133: 'byValue' is declared but its value is never read.
+        a.ts(6,3): error TS6133: '#byValue' is declared but its value is never read.
+        a.ts(7,10): error TS6133: '#ofClass' is declared but its value is never read."
+      `);
+    });
+
+    test("checks the `a.#b` of `typeof a.#b` like the expression", async () => {
+      using dir = project({
+        "a.ts": `
+export class A {
+  #value: string | number = 1;
+  static #nested = { deep: 1 };
+  set #writeOnly(value: number) {}
+  check(a: A, b: B) {
+    if (typeof a.#value === "string") {
+      const narrowed: typeof a.#value = 1;
+    }
+    const deep: typeof A.#nested.deep = "";
+    const written: typeof a.#writeOnly = 1;
+    const other: typeof b.#value = 1;
+    class Inner {
+      #value = true;
+      shadowed(a: A): typeof a.#value { return 1; }
+    }
+  }
+}
+export class B { #value = 1; }
+export type Outside = typeof A.#nested;
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,13): error TS2322: Type 'number' is not assignable to type 'string'.
+        a.ts(10,11): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(11,27): error TS2806: Private accessor was defined without a getter.
+        a.ts(12,27): error TS18013: Property '#value' is not accessible outside class 'B' because it has a private identifier.
+        a.ts(15,32): error TS18014: The property '#value' cannot be accessed on type 'A' within this class because it is shadowed by another private identifier with the same spelling.
+        a.ts(20,32): error TS18013: Property '#nested' is not accessible outside class 'A' because it has a private identifier."
+      `);
+    });
+
+    test("reports TS7080 for the `A.#b` of `typeof A.#b.c` in a declaration file", async () => {
+      using dir = project({
+        "a.ts": `
+export class A {
+  static #nested = { deep: 1 };
+  deep!: typeof A.#nested.deep;
+  method(callback: (value: typeof this.deep) => typeof A.#nested): void {}
+  private hidden!: typeof A.#nested;
+}
+`,
+      });
+      const { stdout } = await check(dir, ["--declaration"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,17): error TS7080: Declaration emit elides private members, but '#nested' refers to a private member. Write an explicit type here.
+        a.ts(5,56): error TS7080: Declaration emit elides private members, but '#nested' refers to a private member. Write an explicit type here."
+      `);
+    });
+
     test("reports TS7022 and TS7023 for functions that return a class member whose initializer calls them", async () => {
       using dir = project({
         "a.ts": `export function r1() { class K { static p = [g(), h()]; } function g() { return K.p; } function h() { return K.p; } return K; }
@@ -15029,6 +19022,50 @@ export function u7() { const o = { a: [g(), h()] }; const { a } = o; function g(
       expect(exitCode).toBe(1);
     });
 
+    test("finishes when the type argument of a base class doubles with every circular instantiation", async () => {
+      // tsc 7.1 doesn't finish this one.
+      using dir = project({
+        "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; }
+declare class C9<Value extends Schema> extends Schema<Value extends { _output: infer O } ? [O, Value["_output"]] : "no"> {}
+type F9<V> = V extends string ? Schema<V> : C9<F9<V>>;
+export const e9: never = (null! as F9<unknown>)._output;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS2322: Type '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[any, any], [any, any]], [[any, any], [any, any]]], [[[any, any], ...], ...]], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...]...' is not assignable to type 'never'.
+        a.ts(4,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // `B<X, U, V>` and `B<Y, U, V>` both have `e` from `Base<"k", V>`, so it's one property, and comparing the two
+    // never asks for its type.
+    test("doesn't resolve the type of a property that two instantiations inherit from the same base type", async () => {
+      using dir = project({
+        "a.ts": `interface A<T, U, V> { a: (x: B<V, U, T>) => void; b?: <W>(x: W, y: C<V, U, T>) => W }
+interface B<T, U, V> extends Base<"k", V> { f(x: A<B<T, T, V>, [...T[], B<string, U, U>], V>): C<(this: B<string, { x: 1 }, T[]>) => void, "k", V>; c?: B<{ x: 1; y: 2 }, { x: 1 }, 1> extends B<{ x: 1 }, { x: 1 }, 1> ? keyof V : U }
+interface C<T, U, V> { d: { [K in keyof V]: B<T, "k", string> } }
+type Base<T, U> = { e: A<number, U, T> extends A<U, string, U> ? U : T };
+export {};
+`,
+        // Resolving it while the variances of `B` were measured took 6 s in a release build.
+        "b.ts": `interface A<T, U, V> { a: (x: B<V, U, T>) => void; b?: <W>(x: W, y: C<V, U, T>) => W }
+interface B<T, U, V> extends Base<"k", V> { g: (x: B<T, T, 1>) => void; f(x: A<B<T, T, V>, [...T[], B<string, U, U>], V>): C<(this: B<string, { x: 1 }, T[]>) => void, "k", V>; c?: B<{ x: 1; y: 2 }, { x: 1 }, 1> extends B<{ x: 1 }, { x: 1 }, 1> ? keyof V : U }
+interface C<T, U, V> { h: Partial<C<1, number, T>>; d: { [K in keyof V]: B<T, "k", string> } }
+type Base<T, U> = { i(x: Base<"k", "k">): B<string, number, "a"> extends B<string, number, string> ? U : U; e: A<number, U, T> extends A<U, string, U> ? U : T };
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,21): error TS2502: 'e' is referenced directly or indirectly in its own type annotation.
+        b.ts(4,43): error TS2577: Return type annotation circularly references itself.
+        b.ts(4,109): error TS2502: 'e' is referenced directly or indirectly in its own type annotation."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a conditional type passed as the type argument of a base class that refers to its own members", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; }
@@ -15059,9 +19096,6 @@ export const e7: never = (null! as F7<unknown>)._output;
 declare class C8<Value extends Schema> extends Schema<[Value] extends [{ _output: number }] ? "yes" : "no"> {}
 type F8<V> = V extends string ? Schema<V> : C8<F8<V>>;
 export const e8: never = (null! as F8<unknown>)._output;
-declare class C9<Value extends Schema> extends Schema<Value extends { _output: infer O } ? [O, Value["_output"]] : "no"> {}
-type F9<V> = V extends string ? Schema<V> : C9<F9<V>>;
-export const e9: never = (null! as F9<unknown>)._output;
 declare class C10<Value extends Schema> extends Schema<Value extends Schema<infer O> ? [O] : "no"> {}
 type F10<V> = V extends string ? Schema<V> : C10<F10<V>>;
 export const e10: never = (null! as F10<unknown>)._output;
@@ -15081,21 +19115,32 @@ export const second: never = (null! as FromB<unknown>)._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(4,14): error TS2322: Type '"no"' is not assignable to type 'never'.
+        "a.ts(4,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(4,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(7,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(7,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(10,14): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(10,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(13,14): error TS2322: Type '1' is not assignable to type 'never'.
-        a.ts(16,14): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(13,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(16,14): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(16,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(19,14): error TS2322: Type '"no"' is not assignable to type 'never'.
+        a.ts(19,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(22,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(22,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(25,14): error TS2322: Type '"no"' is not assignable to type 'never'.
+        a.ts(25,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(28,14): error TS2322: Type '"no"' is not assignable to type 'never'.
-        a.ts(31,14): error TS2322: Type '[unknown, unknown]' is not assignable to type 'never'.
-        a.ts(34,14): error TS2322: Type '[unknown]' is not assignable to type 'never'.
-        a.ts(37,14): error TS2322: Type '"no"' is not assignable to type 'never'.
-        a.ts(40,14): error TS2322: Type '{ readonly _output: 1; }' is not assignable to type 'never'.
-        a.ts(45,14): error TS2322: Type '["a", ["b", unknown]]' is not assignable to type 'never'.
-        a.ts(46,14): error TS2322: Type '["b", unknown]' is not assignable to type 'never'."
+        a.ts(28,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(31,14): error TS2322: Type '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[any]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(31,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(34,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(34,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(37,14): error TS2322: Type '{ readonly _output: 1; }' is not assignable to type 'never'.
+        a.ts(42,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ...]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(42,29): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(43,14): error TS2322: Type '["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ...]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -16200,8 +20245,8 @@ export const r16: keyof typeof k5 = null!; export const r17: never = r16;
         a.ts(9,14): error TS2322: Type '(v: PropertyKey) => boolean' is not assignable to type 'never'.
         a.ts(11,14): error TS2322: Type '() => string' is not assignable to type 'never'.
         a.ts(13,14): error TS2322: Type '(() => string) & (() => string)' is not assignable to type 'never'.
-        a.ts(14,14): error TS2322: Type '{ <T>(this: new () => T, thisArg: T): void; <T, A extends any[]>(this: new (...args: A) => T, thisArg: T, args: A): void; } & { <T, R>(this: (this: T) => R, thisArg: T): R; <T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R; }' is not assignable to type 'never'.
-        a.ts(15,14): error TS2322: Type '{ <T>(this: T, thisArg: any): T; <A extends any[], B extends any[], R>(this: new (...args: [...A, ...B]) => R, thisArg: any, ...args: A): new (...args: B) => R; } & { <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<...>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [......]) => R,...' is not assignable to type 'never'.
+        a.ts(14,14): error TS2322: Type '{ <T>(this: new () => T, thisArg: T): void; <T, A extends any[]>(this: new (...args: A) => T, thisArg: T, args: A): void; } & { <T, R>(this: (this: T) => R, thisArg: T): R; <T, A extends any[], R>(this: ..., thisArg: T, args: A): R; }' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type '{ <T>(this: T, thisArg: any): T; <A extends any[], B extends any[], R>(this: new (...args: [...A, ...B]) => R, thisArg: any, ...args: A): new (...args: B) => R; } & { <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<...>; <T, A extends any[], B extends any[], R>(this: ..., thisArg: T, ...args: A): ...; }' is not assignable to type 'never'.
         a.ts(16,14): error TS2322: Type 'IC & IF' is not assignable to type '{ call: 1; }'.
           Types of property 'call' are incompatible.
             Type '(<T, A extends any[]>(this: new (...args: A) => T, thisArg: T, ...args: A) => void) & (<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, ...args: A) => R)' is not assignable to type '1'.
@@ -16279,15 +20324,15 @@ export function f(b: B<string>) { function g(a: A<string>) {} g(b); }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(5,49): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        b.ts(5,41): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        c.ts(5,46): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        d.ts(5,63): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(5,49): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        b.ts(5,41): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        c.ts(5,46): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        d.ts(5,63): error TS5114: Instantiations of type 'W' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
 
-    test("accepts default type arguments that need a member of a union that's being resolved", async () => {
+    test("reports TS5115 once for default type arguments that need a member of a union that's being resolved", async () => {
       using dir = project({
         "a.ts": `// A conversion from validators to schemas, both recursive. The key of a record is a union of ten, so each level has ten \`SRec\` references.
 type Opt = "o" | "r";
@@ -16324,8 +20369,10 @@ export const converted = arr(conv(element));
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(0);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(23,39): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'."`,
+      );
+      expect(exitCode).toBe(1);
     });
 
     test("accepts `this` types in a class's JSDoc comments, and reports TS2526 where there's no `this` type", async () => {
@@ -16709,7 +20756,6 @@ export const wrong: 0 = withSpread.p
       expect(stdout).toMatchInlineSnapshot(`
         "never.ts(7,14): error TS2322: Type '2' is not assignable to type '0'.
         private.ts(9,14): error TS2322: Type '"kind"' is not assignable to type '0'.
-        spread.ts(7,12): error TS2540: Cannot assign to 'p' because it is a read-only property.
         spread.ts(9,10): error TS2540: Cannot assign to 'p' because it is a read-only property.
         spread.ts(11,8): error TS2540: Cannot assign to 'p' because it is a read-only property.
         spread.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
@@ -16785,7 +20831,7 @@ class B0 {}
 function C1(v) { this.v = v; }
 new C1();
 new C1(1);
-// C2: TS8023 for the first @extends only
+// C2: TS8023 for each @extends
 /** @extends {G0<string>} @extends {G0<number>} */
 class C2 extends B0 {}
 // T1: a dotted typedef name in a class body
@@ -16818,6 +20864,7 @@ const k2d = /** @type {const} */ (/** @satisfies {Missing} */ (1));
         a.js(7,1): error TS7009: 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
         a.js(8,1): error TS7009: 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
         a.js(10,15): error TS8023: JSDoc '@extends G0' does not match the 'extends B0' clause.
+        a.js(10,37): error TS8023: JSDoc '@extends G0' does not match the 'extends B0' clause.
         a.js(14,25): error TS1235: A namespace declaration is only allowed at the top level of a namespace or module.
         a.js(21,26): error TS2322: Type '{ a: number; }' is not assignable to type 'string'.
         a.js(22,34): error TS2353: Object literal may only specify known properties, and 'a' does not exist in type 'string[]'.
@@ -16880,6 +20927,27 @@ export const d7s: never = new D7().m;
         a.ts(13,32): error TS1225: Cannot find parameter 'x'.
         a.ts(14,14): error TS2322: Type '(a: string) => x is string' is not assignable to type 'never'.
         a.ts(17,14): error TS2322: Type '(a: string) => typeof a' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a constructor that isn't accessible need not be the first construct signature", async () => {
+      using dir = project({
+        "a.ts": `class A { protected constructor(x: string) {} }
+class B { constructor(x: number) {} }
+declare const M: typeof B & typeof A;
+new M(1);
+export class D extends M { m() { new M(1); } }
+class P { private constructor() {} static make() { return class extends P {}; } }
+declare const N: typeof B & typeof P;
+export class Q extends N {}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,1): error TS2674: Constructor of class 'A' is protected and only accessible within the class declaration.
+        a.ts(5,34): error TS2674: Constructor of class 'A' is protected and only accessible within the class declaration.
+        a.ts(8,24): error TS2675: Cannot extend a class 'P'. Class constructor is marked as private."
       `);
       expect(exitCode).toBe(1);
     });
@@ -18395,7 +22463,6 @@ declare const c: boolean;
         "a.ts(2,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(3,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(4,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(5,11): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(6,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(6,27): error TS7022: 'r' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(7,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
@@ -18554,13 +22621,10 @@ class F { x = ((v: ReturnType<() => F["x"]>) => true); y = 1 }
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(2,5): error TS7022: 'A' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(2,42): error TS2313: Type parameter 'K' has a circular constraint.
         a.ts(3,5): error TS7022: 'B' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(4,5): error TS7022: 'C' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(4,51): error TS2577: Return type annotation circularly references itself.
         a.ts(5,5): error TS7022: 'D' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(6,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(6,52): error TS2577: Return type annotation circularly references itself.
         a.ts(7,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer."
       `);
       expect(exitCode).toBe(1);
@@ -18568,13 +22632,22 @@ class F { x = ((v: ReturnType<() => F["x"]>) => true); y = 1 }
 
     test("reports TS2589 for a mapped type whose `as` clause reads the type that's being resolved", async () => {
       using dir = project({
-        "a.ts": `declare class D { static x: { [K in keyof typeof D as (typeof D)[K] & string]: 1 }; }
+        "a.ts": `declare class D { static x: { [K in "x" as (typeof D)[K] & string]: 1 }; }
+`,
+        // The constraint of \`(typeof E)[K]\` is the union \`E | { .. }\`. It lists no property, so none of \`string\` is looked
+        // up in it, and nothing needs the members of the mapped type until \`E.x\` is compared.
+        "b.ts": `declare class E { static x: { [K in keyof typeof E as (typeof E)[K] & string]: 1 }; }
+`,
+        "c.ts": `declare class F { static x: { [K in keyof typeof F as (typeof F)[K] & string]: 1 }; }
+export const v: never = F.x;
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"a.ts(1,29): error TS2589: Type instantiation is excessively deep and possibly infinite."`,
-      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,29): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        c.ts(2,14): error TS2322: Type '{ [x: ... & string]: 1; [x: string]: 1; }' is not assignable to type 'never'.
+        c.ts(2,14): error TS2589: Type instantiation is excessively deep and possibly infinite."
+      `);
       expect(exitCode).toBe(1);
     });
 
@@ -18850,13 +22923,13 @@ export function h3() { const a = Mix(K); const b = Mix(a); const r: never = b; c
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(3,30): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & { ...; } & typeof K' is not assignable to type 'never'.
+        "a.ts(3,30): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & ... & typeof K' is not assignable to type 'never'.
         a.ts(4,30): error TS2417: Class static side 'typeof C' incorrectly extends base class static side '{ prototype: Mix.(Anonymous class); } & { prototype: Mix.(Anonymous class); } & typeof K'.
           Type 'typeof C' is not assignable to type 'typeof K'.
             Types of property 's' are incompatible.
               Type 'string' is not assignable to type 'number'.
-        a.ts(5,66): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & { ...; } & typeof K' is not assignable to type 'never'.
-        a.ts(5,86): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & { ...; } & typeof K' is not assignable to type '{ q: 1; }'."
+        a.ts(5,66): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & ... & typeof K' is not assignable to type 'never'.
+        a.ts(5,86): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & ... & typeof K' is not assignable to type '{ q: 1; }'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -18869,7 +22942,7 @@ export function h3() { const a = Mix(K); const b = Mix(a); const r: never = b; c
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(1,152): error TS2417: Class static side 'typeof C' incorrectly extends base class static side '{ m?: number | undefined; prototype: Mix.(Anonymous class); } & { readonly prototype: Object; getPrototypeOf(o: any): any; getOwnPropertyDescriptor(o: any, p: PropertyKey): PropertyDescriptor | undefined; ... 20 more ...; groupBy<K extends PropertyKey, T>(items: Iterable<...>, keySelector: (item: T, index: number) =...'.
+        "a.ts(1,152): error TS2417: Class static side 'typeof C' incorrectly extends base class static side '{ m?: number | undefined; prototype: Mix.(Anonymous class); } & { readonly prototype: Object; getPrototypeOf(o: any): any; getOwnPropertyDescriptor(o: any, p: PropertyKey): PropertyDescriptor | undefined; ... 20 more ...; groupBy<K extends PropertyKey, T>(items: Iterable<...>, keySelector: ...): Partial<...>; }'.
           Type 'typeof C' is not assignable to type '{ m?: number; prototype: Mix.(Anonymous class); }'.
             Property 'm' is private in type '{ m?: number | undefined; prototype: Mix.(Anonymous class); }' but not in type 'typeof C'."
       `);
@@ -19316,6 +23389,28 @@ export function d18(v: O & { r: 1 } | void) { delete v.p; }
       expect(exitCode).toBe(1);
     });
 
+    test("prints `{ ...; }` for an object type without a symbol once the length limit is reached", async () => {
+      using dir = project({
+        "a.ts": `declare function dec(target: unknown, key: string): void;
+interface Reference<T> { unwrap(): T }
+interface HouseDecorationSlotWithALongName { id: number }
+class Item {
+  @dec slot?: { id: number; } & Reference<HouseDecorationSlotWithALongName & object> & Reference<HouseDecorationSlotWithALongName & { a: 1 }>;
+  @dec short?: number;
+}
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,4): error TS1240: Unable to resolve signature of property decorator when called as an expression.
+          Argument of type 'ClassFieldDecoratorContext<Item, ({ id: number; } & Reference<HouseDecorationSlotWithALongName & object> & Reference<HouseDecorationSlotWithALongName & ...>) | undefined> & { ...; }' is not assignable to parameter of type 'string'.
+        a.ts(6,4): error TS1240: Unable to resolve signature of property decorator when called as an expression.
+          Argument of type 'ClassFieldDecoratorContext<Item, number | undefined> & { name: "short"; private: false; static: false; }' is not assignable to parameter of type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("truncates two `NoInfer<..>` in one type argument list at half the length", async () => {
       using dir = project({
         "a.ts": `import type { Far, Near } from "./m";
@@ -19346,7 +23441,7 @@ export interface Near { near: 1 }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(6,11): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Wrap<Wrap<{ ...; }>>>, NoInfer<{ ...; } & { ...; }>>'.
+        "a.ts(6,11): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Wrap<Wrap<...>>>, NoInfer<... & ...>>'.
         a.ts(9,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Far>, NoInfer<Near>>'.
         a.ts(11,5): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Far>, Near>'.
         a.ts(13,6): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Far>, NoInfer<Far>>'.
@@ -19372,13 +23467,13 @@ namespace M125 { declare function f(): { both: [ReturnType<typeof f>, ReturnType
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(1,331): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
-        a.ts(2,336): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, ... 4 more ..., 8]; }'.
-        a.ts(3,339): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, ... 5 more ..., 8]; }'.
-        a.ts(4,342): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, ... 6 more ..., 8]; }'.
-        a.ts(5,345): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [...]; }'.
-        a.ts(6,351): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [...]; }'.
-        a.ts(7,356): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { ...; }; u: [...]; }'."
+        "a.ts(1,331): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(2,336): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(3,339): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(4,342): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(5,345): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(6,351): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, ... 4 more ..., 8]; }'.
+        a.ts(7,356): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, ... 6 more ..., 8]; }'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -19761,6 +23856,31 @@ export const s: string = x;
       expect(exitCode).toBe(1);
     });
 
+    test("`defer` and `source` with an escape aren't import phase modifiers", async () => {
+      using dir = project({
+        "a.ts": `export default 1;
+`,
+        "b.ts": String.raw`import d\u0065fer from "./a";
+import s\u006furce from "./a";
+export const sum: number = defer + source;
+`,
+        "c.ts": String.raw`import.d\u0065fer("./a");
+import.s\u006furce("./a");
+`,
+        "d.ts": String.raw`import d\u0065fer * as a from "./a";
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "c.ts(1,8): error TS1260: Keywords cannot contain escape characters.
+        c.ts(2,8): error TS1260: Keywords cannot contain escape characters.
+        d.ts(1,19): error TS1005: '=' expected.
+        d.ts(1,24): error TS1005: ';' expected.
+        d.ts(1,26): error TS1434: Unexpected keyword or identifier."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reads package.json as strict JSON, and uses the last of two duplicate keys", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "module": "nodenext", "target": "esnext", "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
@@ -19926,13 +24046,13 @@ export async function wrong() {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(50,13): error TS2339: Property 'nope' does not exist on type '{ get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; login: { ...; } & { ...; }; search: { ...; } & { ...; }; users: ((params: { ...; }) => { ...; ...'.
+        "a.ts(50,13): error TS2339: Property 'nope' does not exist on type '{ get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & ...; login: ... & ...; search: ... & ...; users: ... & ... 1 more ... & ...; v1: ... & ...; }'.
         a.ts(53,21): error TS2353: Object literal may only specify known properties, and 'ident' does not exist in type '{ id: string | number; }'.
-        a.ts(58,28): error TS2339: Property 'get' does not exist on type '((params: { kind: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<...> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; '~path': string; } & { ...; }) & {} & { ...; }'.
+        a.ts(58,28): error TS2339: Property 'get' does not exist on type '((params: { kind: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<...> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & ...; '~path': string; } & ...) & ... & ...'.
         a.ts(60,9): error TS2322: Type 'string | null' is not assignable to type 'number'.
           Type 'null' is not assignable to type 'number'.
         a.ts(62,9): error TS2322: Type 'string' is not assignable to type 'boolean'.
-        a.ts(66,19): error TS2339: Property 'put' does not exist on type '((params: { id: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; delete: ((body?: unknown, options?: { ...; } | undefine...'."
+        a.ts(66,19): error TS2339: Property 'put' does not exist on type '((params: { id: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & ...; delete: ... & ...; '~path': string; profile: ... & ...; } & ...'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -20333,15 +24453,15 @@ export const deferred: Deferred<"a"> = 1;
       const { stdout, exitCode } = await check(dir);
       // The type has one level per round, up to the limit.
       expect(stdout.replace(repeat("x", 99), "<99 x>")).toMatchInlineSnapshot(`
-        "a.ts(2,43): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(3,40): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(4,54): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(5,42): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(6,38): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(7,41): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(8,50): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        "a.ts(2,43): error TS5114: Instantiations of type 'Template' appear infinitely circular.
+        a.ts(3,40): error TS5114: Instantiations of type 'Union' appear infinitely circular.
+        a.ts(4,54): error TS5114: Instantiations of type 'Intersection' appear infinitely circular.
+        a.ts(5,42): error TS5114: Instantiations of type 'Keyof' appear infinitely circular.
+        a.ts(6,38): error TS5114: Instantiations of type 'Indexed' appear infinitely circular.
+        a.ts(7,41): error TS5114: Instantiations of type 'Argument' appear infinitely circular.
+        a.ts(8,50): error TS5114: Instantiations of type 'Intrinsic' appear infinitely circular.
         a.ts(10,14): error TS2322: Type '1' is not assignable to type '\`<99 x>\${any}\`'.
-        a.ts(12,14): error TS2322: Type 'number' is not assignable to type '[[[[[[[[[[[[...]]]]]]]]]]]]'."
+        a.ts(12,14): error TS2322: Type 'number' is not assignable to type '[...]'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -20844,13 +24964,13 @@ export const loaded = loader.load(key, options, key);
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(17,6): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        b.ts(8,6): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(17,6): error TS5114: Instantiations of type 'ValidateJSON' appear infinitely circular.
+        b.ts(8,6): error TS5114: Instantiations of type 'ValidateJSON' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
 
-    // The expected output of each program is TypeScript 7.0.2's.
+    // The expected output of each program is TypeScript 7.1's.
     describe("cached parts of conditional types, mapped types and aliases", () => {
       test("checks conditional types in relations, in inference and in messages", async () => {
         using dir = project({
@@ -21360,7 +25480,7 @@ export {};
           a.ts(26,24): error TS2322: Type 'D<T>' is not assignable to type 'D<U>'.
             Type 'T' is not assignable to type 'U'.
               'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
-          a.ts(32,30): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          a.ts(32,30): error TS5114: Instantiations of type 'Walk' appear infinitely circular.
           a.ts(33,9): error TS2322: Type 'any[]' is not assignable to type 'never'."
         `);
         expect(exitCode).toBe(1);
@@ -21407,11 +25527,38 @@ export {};
         );
         const { stdout, exitCode } = await check(dir);
         expect(stdout).toMatchInlineSnapshot(`
-          "intersection-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
-          mapped-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          "intersection-over.ts(3,17): error TS5114: Instantiations of type 'All' appear infinitely circular.
+          mapped-over.ts(3,17): error TS5114: Instantiations of type 'Leaves' appear infinitely circular.
           tail-over.ts(2,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
-          tuple-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
-          union-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite."
+          tuple-over.ts(3,17): error TS5114: Instantiations of type 'Depth' appear infinitely circular.
+          union-over.ts(3,17): error TS5114: Instantiations of type 'Flat' appear infinitely circular."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("doesn't instantiate the type of an object literal that has no outer type parameters", async () => {
+        // `getObjectTypeInstantiation` returns it as it is, so the nesting doesn't add to the instantiation depth.
+        const nested = (leaf: string) => `declare class A<T, K = 1> { a: T; k: K }
+declare function box<F>(fields: F): A<F>;
+${leaf}
+const v0 = box({ p: leaf });
+${Array.from({ length: 60 }, (_, i) => `const v${i + 1} = box({ p: v${i} });`).join("\n")}
+function pair<U>(u: U) { return { v: v60, u }; }
+export const n: never = pair(1).v.k;
+`;
+        using dir = project({
+          // The first branch's `T` is an outer type parameter of the deferred reference in the second branch.
+          "deferred.ts": nested(`declare class B<T, K = 1> { b: T; k: K }
+type Optional<V> = V extends A<infer T> ? A<T | undefined> : V extends B<infer T> ? B<T | undefined> : never;
+declare const leaf: Optional<B<string>>;`),
+          "mapped.ts": nested(`type M<T> = { [K in keyof T]: T[K] };
+const l1 = { x: 1 }, l2 = { y: 1 };
+declare const leaf: M<typeof l1 | typeof l2>;`),
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "deferred.ts(68,14): error TS2322: Type '1' is not assignable to type 'never'.
+          mapped.ts(68,14): error TS2322: Type '1' is not assignable to type 'never'."
         `);
         expect(exitCode).toBe(1);
       });
@@ -21936,7 +26083,7 @@ export {};
       });
     });
 
-    // The expected output of each program is TypeScript 7.0.2's.
+    // The expected output of each program is TypeScript 7.1's.
     describe("cached facts about signatures, literal types, members and scopes", () => {
       test("narrows by declared type predicates of functions, methods, unions of signatures and optional calls", async () => {
         using dir = project({
@@ -22556,8 +26703,49 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       });
     });
 
-    // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.0.2's.
-    test("reports TS2589 at the same recursion depth as tsc for every way a type can recur", async () => {
+    // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.1's.
+    test("reports one error, once, for a mapped type over the keys of its own instantiation", async () => {
+      using dir = project({
+        "a.ts": `
+          type R<N extends number, A extends 0[] = []> = A["length"] extends N ? { end: 1 } : { [K in keyof R<N, [...A, 0]>]: K };
+          export type Fits = R<31>;
+          export type First = R<32>;
+          export type Again = R<32>;
+          interface C<P extends number> { m<U>(a0: R<P>, a1: U): void }
+          declare const c: C<32>;
+          c.m<number>(null!, 1);
+          c.m<number>();
+        `,
+        "b.ts": `
+          type L<N extends number, A extends 1[] = []> = A["length"] extends N ? "end" : Lowercase<L<N, [...A, 1]>>;
+          export type Fits = L<47>;
+          export type First = L<48>;
+        `,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,31): error TS5114: Instantiations of type 'R' appear infinitely circular.
+        a.ts(9,13): error TS2554: Expected 2 arguments, but got 0.
+        b.ts(4,31): error TS5115: Instantiations of the following types appear infinitely circular: 'Lowercase', 'L'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports TS2589 in a declaration whose constraint has no end", async () => {
+      using dir = project({
+        "a.ts": `
+          type R<N extends number, A extends 0[] = []> = A["length"] extends N ? { end: 1 } : { [K in keyof R<N, [...A, 0]>]: R<N, [...A, 0]>[K] };
+          export type X = R<1>;
+        `,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(2,127): error TS2589: Type instantiation is excessively deep and possibly infinite."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports TS5114 at the same recursion depth as tsc for every way a type can recur", async () => {
       // `E` is the element type of the counting tuples, and it's different in every file. The first `length` lookup on
       // a tuple takes two more levels, and tuple types are shared by the whole program.
       const wrap = `type Wrap<N extends number, T = 1, A extends E[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, E]>;`;
@@ -22670,7 +26858,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
             files[file] = lines.join("\n") + "\n";
             if (over) {
               expected.push(
-                `${file}(${lines.length},${column}): error TS2589: Type instantiation is excessively deep and possibly infinite.`,
+                `${file}(${lines.length},${column}): error TS5114: Instantiations of type 'F' appear infinitely circular.`,
               );
             }
           }
@@ -22686,6 +26874,114 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       using dir = project(files);
       const { stdout, exitCode } = await check(dir);
       expect(stdout.split("\n").sort()).toEqual(expected.sort());
+      expect(exitCode).toBe(1);
+    });
+
+    test("an intersection of mapped types over one object type isn't reduced to never", async () => {
+      using dir = project({
+        "a.ts": `type O = { a: 0; b: 0 };
+type X<T> = { [K in keyof T]: "x" };
+type Y<T> = { [K in keyof T]: "y" };
+export const sameObject: 0 = null! as X<O> & Y<O>;
+export const property: 0 = (null! as X<O> & Y<O>).a;
+export const throughConstraint: 0 = null! as Pick<O, "a"> & X<O> & Y<O>;
+export const otherObject: 0 = null! as X<O> & Y<{ a: 0; b: 0 }>;
+export const notMapped: 0 = null! as X<O> & { a: "y" };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS2322: Type 'X<O> & Y<O>' is not assignable to type '0'.
+        a.ts(6,14): error TS2322: Type 'Pick<O, "a"> & X<O> & Y<O>' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // `isDeclarationContainedBy` compares positions only, with every declaration of the class, whatever file they're in.
+    test("lists the members that lie within the class or a namespace merged with it first", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...JSON.parse(tsconfig).compilerOptions,
+            module: "nodenext",
+            moduleResolution: "nodenext",
+            esModuleInterop: true,
+          },
+        }),
+        "node_modules/base/package.json": `{ "name": "base", "version": "1.0.0", "types": "index.d.ts" }`,
+        "node_modules/base/index.d.ts": `declare class Base {
+    static early: number;
+    static readonly fixed: number;
+    static inNamespaceRange: number;
+    static padding01: number; static padding02: number; static padding03: number; static padding04: number;
+    static padding05: number; static padding06: number; static padding07: number; static padding08: number;
+    static late: number;
+}
+export = Base;
+`,
+        "node_modules/lib/package.json": `{ "name": "lib", "version": "1.0.0", "types": "index.d.ts" }`,
+        "node_modules/lib/index.d.ts": `import Base = require("base");
+declare class Lib extends Base { static own: number; }
+declare namespace Lib {
+    class Inner {}
+    const constant: number;
+    function make(): void;
+}
+export = Lib;
+`,
+        "a.ts": `import type * as lib from "lib";
+import Lib = require("lib");
+export const statics: typeof Lib = {};
+export const namespaceImport: typeof lib = {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2740: Type '{}' is missing the following properties from type 'typeof Lib': fixed, padding01, padding02, own, and 13 more.
+        a.ts(4,14): error TS2740: Type '{}' is missing the following properties from type 'typeof Lib': padding01, padding02, own, Inner, and 14 more."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a type parameter is a different type inside a conditional type that distributes over it", async () => {
+      using dir = project({
+        "a.ts": `type Need<T, U extends T> = [T, U];
+type InFunctionType<T, U extends () => T> = T extends any ? Need<() => T, U> : never;
+type InMappedType<T, U extends { [K in keyof T]: T[K] }> = T extends any ? Need<{ [K in keyof T]: T[K] }, U> : never;
+type InTypeLiteral<T, U extends T> = T extends any ? { a: Need<T, U> } : never;
+type Parenthesized<T, U extends T> = (T) extends any ? Need<T, U> : never;
+type NotNaked<T, U extends T> = [T] extends [any] ? Need<T, U> : never;
+type OtherParameter<T, U extends T> = U extends any ? Need<T, U> : never;
+type Keys<T, U extends keyof T> = T extends any ? [Need<keyof T, U>, Pick<T, U>, T[U]] : never;
+type Index<T> = { [K in keyof T]: K }[T extends any[] ? keyof T & number : keyof T];
+function toDistributed<T>(x: T): T extends any ? T : never {
+  return x;
+}
+function fromDistributed<T>(x: T extends any ? T : never): T {
+  return x;
+}
+declare function infer1<T>(x: T extends any ? T | Promise<T> : never): T;
+declare function infer2<T>(x: T extends any ? { [K in keyof T]: T[K] } : never): T;
+export const results: never = [infer1(1), infer2({ a: 1 })];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,75): error TS2344: Type 'U' does not satisfy the constraint '() => T'.
+          Type '() => T' is not assignable to type '() => T'. Two different types with this name exist, but they are unrelated.
+            Type 'T' is not assignable to type 'T'. Two different types with this name exist, but they are unrelated.
+              'T' is only assignable to the non-distributed 'T', but 'T' has been distributed here.
+        a.ts(3,107): error TS2344: Type 'U' does not satisfy the constraint '{ [K in keyof T]: T[K]; }'.
+          Type '{ [K in keyof T]: T[K]; }' is not assignable to type '{ [K in keyof T]: T[K]; }'. Two different types with this name exist, but they are unrelated.
+            Type 'keyof T' is not assignable to type 'keyof T'. Two different types with this name exist, but they are unrelated.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+        a.ts(4,67): error TS2344: Type 'U' does not satisfy the constraint 'T'.
+          'U' is only assignable to the non-distributed 'T', but 'T' has been distributed here.
+        a.ts(11,3): error TS2719: Type 'T' is not assignable to type 'T'. Two different types with this name exist, but they are unrelated.
+          'T' is only assignable to the non-distributed 'T', but 'T' has been distributed here.
+        a.ts(18,14): error TS2322: Type '(number | { a: unknown; })[]' is not assignable to type 'never'."
+      `);
       expect(exitCode).toBe(1);
     });
 
@@ -22781,7 +27077,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         `"a.ts(1,22): error TS2585: 'Promise' only refers to a type, but is being used as a value here. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."`,
       );
       expect(bad.stderr).toMatchInlineSnapshot(`
-        "error: --target must be one of: es6, es2015, es2016, es2017, es2018, es2019, es2020, es2021, es2022, es2023, es2024, es2025, esnext
+        "error: --target must be one of: es6, es2015, es2016, es2017, es2018, es2019, es2020, es2021, es2022, es2023, es2024, es2025, es2026, esnext
         note: run 'bun check --help' for more information"
       `);
       expect(missing.stderr).toMatchInlineSnapshot(`
@@ -22828,7 +27124,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(stdout).toMatchInlineSnapshot(`
         "console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
         tsconfig.json(1,34): error TS5024: Compiler option 'strict' requires a value of type boolean.
-        tsconfig.json(1,51): error TS6046: Argument for '--target' option must be: 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'.
+        tsconfig.json(1,51): error TS6046: Argument for '--target' option must be: 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'es2026', 'esnext'.
         tsconfig.json(1,58): error TS5023: Unknown compiler option 'nonsense'."
       `);
       expect(exitCode).toBe(1);
@@ -22844,6 +27140,354 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         tsconfig.json(1,96): error TS5023: Unknown compiler option 'out'."
       `);
       expect(exitCode).toBe(1);
+    });
+
+    test("suggests the option that an unknown option in tsconfig.json resembles", async () => {
+      using dir = project({
+        "tsconfig.json": `{
+  "compilerOptions": { "lib": ["esnext"], "types": [], "strct": true, "wach": true, "qqqqqq": true },
+  "typeAcquisition": { "enabl": true, "qqqqqq": true }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(2,56): error TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?
+        tsconfig.json(2,71): error TS5025: Unknown compiler option 'wach'. Did you mean 'watch'?
+        tsconfig.json(2,85): error TS5023: Unknown compiler option 'qqqqqq'.
+        tsconfig.json(3,24): error TS17018: Unknown type acquisition option 'enabl'. Did you mean 'enable'?
+        tsconfig.json(3,39): error TS17010: Unknown type acquisition option 'qqqqqq'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports the first compiler option at the root of a tsconfig.json without `compilerOptions`", async () => {
+      using dir = project({
+        // `noEmit` is also an option of `tsc --build`, and those aren't reported.
+        "tsconfig.json": `{ "noEmit": true, "types": [], "lib": ["esnext"] }`,
+        "nested/tsconfig.json": `{ "strict": true, "compilerOptions": { "types": [], "lib": ["esnext"] } }`,
+        "nested/a.ts": `export const a = 1;\n`,
+      });
+      const [root, nested] = await Promise.all([check(dir), check(dir, ["-p", "nested"])]);
+      expect(root.stdout).toContain(
+        "tsconfig.json(1,19): error TS6258: 'types' should be set inside the 'compilerOptions' object of the config json file",
+      );
+      expect(root.stdout).not.toContain("'lib' should be set");
+      expect(root.exitCode).toBe(1);
+      expect(nested).toMatchObject({ stdout: "", exitCode: 0 });
+    });
+
+    test("reports a tsconfig.json whose root isn't an object at the root value", async () => {
+      using dir = project({ "tsconfig.json": `// Why?\n  [1, 2]\n`, "console.d.ts": "" });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        "tsconfig.json(2,3): error TS5092: The root value of a 'tsconfig.json' file must be an object.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports a project reference without a valid `path` or with an invalid `circular`", async () => {
+      using dir = project({
+        "tsconfig.json": `{
+  "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true },
+  "files": ["console.d.ts"],
+  "references": [
+    {},
+    { "path": 1 },
+    { "path": "" },
+    { "path": "./lib", "circular": "yes" }
+  ]
+}
+`,
+        "lib/tsconfig.json": `{ "compilerOptions": { "composite": true, "lib": ["esnext"], "types": [] }, "files": [] }`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(5,5): error TS5024: Compiler option 'reference.path' requires a value of type string.
+        tsconfig.json(6,15): error TS5024: Compiler option 'reference.path' requires a value of type string.
+        tsconfig.json(7,15): error TS18051: Compiler option 'reference.path' cannot be given an empty string.
+        tsconfig.json(8,36): error TS5024: Compiler option 'reference.circular' requires a value of type boolean."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports network paths in tsconfig.json, in a `/// <reference>` and on the command line", async () => {
+      using dir = project({
+        "tsconfig.json": `{
+  "extends": "//server/base.json",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": [],
+    "outDir": "//server/out",
+    "rootDir": "\\\\\\\\server\\\\src",
+    "tsBuildInfoFile": "/??/info",
+    "typeRoots": ["types", "//server/types"],
+    "paths": { "a": ["//server/a"], "b": ["/??/b"] }
+  },
+  "files": ["a.ts", "//server/b.ts"],
+  "include": ["//server/*"],
+  "exclude": ["//server/*"],
+  "references": [{ "path": "//server/lib" }]
+}
+`,
+        "a.ts": "",
+        "lib/tsconfig.json": tsconfig,
+        "lib/b.ts": `/// <reference path="//server/c.ts" />\n`,
+      });
+      const [fromFile, fromFlag, fromReference] = await Promise.all([
+        check(dir),
+        check(dir, ["-p", "lib", "--outDir", "//server/out"]),
+        check(dir, ["-p", "lib"]),
+      ]);
+      expect(fromFile.stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(2,14): error TS5116: Network path '//server/base.json' is not supported.
+        tsconfig.json(6,15): error TS5116: Network path '//server/out' is not supported.
+        tsconfig.json(7,16): error TS5116: Network path '//server/src' is not supported.
+        tsconfig.json(8,24): error TS5116: Network path '/??/info' is not supported.
+        tsconfig.json(9,28): error TS5116: Network path '//server/types' is not supported.
+        tsconfig.json(10,22): error TS5116: Network path '//server/a' is not supported.
+        tsconfig.json(10,43): error TS5116: Network path '/??/b' is not supported.
+        tsconfig.json(12,21): error TS5116: Network path '//server/b.ts' is not supported.
+        tsconfig.json(13,15): error TS5116: Network path '//server/*' is not supported.
+        tsconfig.json(14,15): error TS5116: Network path '//server/*' is not supported.
+        tsconfig.json(15,28): error TS5116: Network path '//server/lib' is not supported."
+      `);
+      expect(fromFile.exitCode).toBe(1);
+      expect(fromFlag.stdout).toBe("error TS5116: Network path '//server/out' is not supported.");
+      expect(fromFlag.exitCode).toBe(1);
+      expect(fromReference.stdout).toBe("lib/b.ts(1,22): error TS5116: Network path '//server/c.ts' is not supported.");
+      expect(fromReference.exitCode).toBe(1);
+    });
+
+    // A path may begin with `//` on POSIX, where it means the same as with one `/`. TypeScript takes its first name for a
+    // server.
+    describe.skipIf(isWindows)("a project on a network share", () => {
+      const share = (files: Record<string, string>) =>
+        project({
+          "base.json": tsconfig,
+          "a.ts": `export const a: string = 1;\n`,
+          ...files,
+        });
+
+      test("is checked, with every kind of relative path", async () => {
+        using dir = share({
+          "tsconfig.json": `{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./out",
+    "declaration": true,
+    "declarationDir": "\${configDir}/declarations",
+    "incremental": true,
+    "tsBuildInfoFile": "./out/info",
+    "typeRoots": ["./types"],
+    "types": ["t"],
+    "rootDirs": ["./src", "./generated"],
+    "paths": { "@lib/*": ["./lib/*"] }
+  },
+  "files": ["src/a.ts"],
+  "exclude": ["out"],
+  "references": [{ "path": "./dep" }]
+}
+`,
+          "src/a.ts": `/// <reference path="../lib/global.d.ts" />
+import { fromPaths } from "@lib/x";
+import { fromRootDirs } from "./generated";
+import { fromReference } from "../dep";
+export const a: string = [fromPaths, fromRootDirs, fromReference, fromReferencePath, fromTypeRoots] as const;
+`,
+          "lib/global.d.ts": `declare const fromReferencePath: 1;\n`,
+          "lib/x.ts": `export const fromPaths = 2;\n`,
+          "generated/generated.ts": `export const fromRootDirs = 3;\n`,
+          "dep/tsconfig.json": `{ "extends": "../base.json", "compilerOptions": { "composite": true, "noEmit": false }, "files": ["index.ts"] }`,
+          "dep/index.ts": `export const fromReference = 4;\n`,
+          "types/t/index.d.ts": `declare const fromTypeRoots: 5;\n`,
+        });
+        const { stdout, exitCode } = await check(dir, ["-p", `/${dir}`]);
+        expect(stdout).toBe(
+          "/<dir>/src/a.ts(5,14): error TS2322: Type 'readonly [2, 3, 4, 1, 5]' is not assignable to type 'string'.",
+        );
+        expect(exitCode).toBe(1);
+      });
+
+      test("can't name a path on another server, or a device path", async () => {
+        using dir = share({
+          "tsconfig.json": `{
+  "extends": "//other/base.json",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": [],
+    "outDir": "//other/out",
+    "rootDir": "\\\\\\\\other\\\\src",
+    "tsBuildInfoFile": "/??/info",
+    "typeRoots": ["types", "//?/types", "//./types"],
+    "paths": { "a": ["//other/a"], "b": ["/??/b"] }
+  },
+  "files": ["a.ts", "//other/b.ts", "/??/b.ts"],
+  "include": ["//other/*", "//*/*"],
+  "exclude": ["//other/*"],
+  "references": [{ "path": "//other/lib" }]
+}
+`,
+          "lib/tsconfig.json": `{ "extends": "../base.json", "files": ["b.ts"] }`,
+          "lib/b.ts": `/// <reference path="//other/c.ts" />\n/// <reference path="/??/c.ts" />\n`,
+        });
+        const [fromFile, fromFlag, fromReference] = await Promise.all([
+          check(dir, ["-p", `/${dir}`]),
+          check(dir, ["-p", `/${dir}/lib`, "--outDir", "//other/out"]),
+          check(dir, ["-p", `/${dir}/lib`]),
+        ]);
+        expect(fromFile.stdout).toMatchInlineSnapshot(`
+          "/<dir>/tsconfig.json(2,14): error TS5116: Network path '//other/base.json' is not supported.
+          /<dir>/tsconfig.json(6,15): error TS5116: Network path '//other/out' is not supported.
+          /<dir>/tsconfig.json(7,16): error TS5116: Network path '//other/src' is not supported.
+          /<dir>/tsconfig.json(8,24): error TS5116: Network path '/??/info' is not supported.
+          /<dir>/tsconfig.json(9,28): error TS5116: Network path '//?/types' is not supported.
+          /<dir>/tsconfig.json(9,41): error TS5116: Network path '//./types' is not supported.
+          /<dir>/tsconfig.json(10,22): error TS5116: Network path '//other/a' is not supported.
+          /<dir>/tsconfig.json(10,42): error TS5116: Network path '/??/b' is not supported.
+          /<dir>/tsconfig.json(12,21): error TS5116: Network path '//other/b.ts' is not supported.
+          /<dir>/tsconfig.json(12,37): error TS5116: Network path '/??/b.ts' is not supported.
+          /<dir>/tsconfig.json(13,15): error TS5116: Network path '//other/*' is not supported.
+          /<dir>/tsconfig.json(13,28): error TS5116: Network path '//*/*' is not supported.
+          /<dir>/tsconfig.json(14,15): error TS5116: Network path '//other/*' is not supported.
+          /<dir>/tsconfig.json(15,28): error TS5116: Network path '//other/lib' is not supported."
+        `);
+        expect(fromFile.exitCode).toBe(1);
+        expect(fromFlag.stdout).toBe("error TS5116: Network path '//other/out' is not supported.");
+        expect(fromFlag.exitCode).toBe(1);
+        expect(fromReference.stdout).toMatchInlineSnapshot(`
+          "/<dir>/lib/b.ts(1,22): error TS5116: Network path '//other/c.ts' is not supported.
+          /<dir>/lib/b.ts(2,22): error TS5116: Network path '/??/c.ts' is not supported."
+        `);
+        expect(fromReference.exitCode).toBe(1);
+      });
+
+      test("can name an absolute path on its own server, whose name ignores ASCII case", async () => {
+        using dir = share({ "b.ts": "" });
+        const [server, ...rest] = String(dir).slice(1).split("/");
+        const isLowerCase = (letter: string) => letter === letter.toLowerCase();
+        const otherCase = server.replace(/[a-z]/gi, it => (isLowerCase(it) ? it.toUpperCase() : it.toLowerCase()));
+        expect(otherCase).not.toBe(server);
+        writeFileSync(
+          join(String(dir), "tsconfig.json"),
+          JSON.stringify({
+            extends: `/${dir}/base.json`,
+            compilerOptions: { outDir: `//${otherCase}/${rest.join("/")}/out`, paths: { b: [`/${dir}/b.ts`] } },
+            files: [`/${dir}/a.ts`],
+          }),
+        );
+        writeFileSync(
+          join(String(dir), "a.ts"),
+          `/// <reference path="/${dir}/b.ts" />\nexport const a: string = 1;\n`,
+        );
+        const { stdout, exitCode } = await check(dir, ["-p", `/${dir}`]);
+        expect(stdout).toBe("/<dir>/a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.");
+        expect(exitCode).toBe(1);
+      });
+
+      test("can't name a server if one of the two names is only the start of the other", async () => {
+        using dir = share({ "a.ts": "" });
+        const [server] = String(dir).slice(1).split("/");
+        const rootDirs = [`//${server}2/a`, `//${server.slice(0, -1)}/a`];
+        writeFileSync(
+          join(String(dir), "tsconfig.json"),
+          JSON.stringify({ extends: "./base.json", compilerOptions: { rootDirs }, files: ["a.ts"] }),
+        );
+        const { stdout, exitCode } = await check(dir, ["-p", `/${dir}`]);
+        expect(stdout.split("\n").map(line => line.slice(line.indexOf("error")))).toEqual(
+          rootDirs.map(path => `error TS5116: Network path '${path}' is not supported.`),
+        );
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    test("a file in `files` hides the files that `include` matches with the same name and a lesser extension", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true }, "files": ["a.ts", "./a.ts"], "include": ["a.*"] }`,
+        "a.ts": "",
+        "a.d.ts": "",
+      });
+      const { stdout } = await check(dir, ["--listFilesOnly"]);
+      expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual(["<dir>/a.ts"]);
+    });
+
+    test("normalizes an absolute path in `include`", async () => {
+      using dir = project({ "a.ts": "", "lib/b.ts": `export const b: number = "";\n`, "app/c.ts": "" });
+      const include = [`${String(dir).replaceAll("\\", "/")}/app/../lib/*.ts`];
+      writeFileSync(
+        join(String(dir), "app", "tsconfig.json"),
+        JSON.stringify({ compilerOptions: JSON.parse(tsconfig).compilerOptions, include }),
+      );
+      const { stdout, exitCode } = await check(dir, ["-p", "app"]);
+      expect(stdout).toBe("lib/b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.");
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(isCaseInsensitive)("compares `rootDir` and `baseUrl` case-sensitively", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "rootDir": "SRC" }, "files": ["src/a.ts"] }`,
+        "src/a.ts": "",
+        "src/tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "baseUrl": "../SRC/b" }, "files": ["a.ts"] }`,
+      });
+      const [rootDir, baseUrl] = await Promise.all([check(dir), check(dir, ["-p", "src"])]);
+      expect(rootDir.stdout).toMatchInlineSnapshot(`
+        "error TS6059: File '<dir>/src/a.ts' is not under 'rootDir' '<dir>/SRC'. 'rootDir' is expected to contain all source files.
+          The file is in the program because:
+            Part of 'files' list in tsconfig.json"
+      `);
+      expect(baseUrl.stdout).toMatchInlineSnapshot(`
+        "src/tsconfig.json(1,72): error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
+          Use '"paths": {"*": ["../SRC/b/*"]}' instead."
+      `);
+    });
+
+    // U+017F folds to `s`, but its lowercase form is itself.
+    test("`rootDir` isn't compared by case folding", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "rootDir": "ſrc" }, "files": ["src/a.ts"] }`,
+        "src/a.ts": "",
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toStartWith(`error TS6059: File '<dir>/src/a.ts' is not under 'rootDir' '<dir>/ſrc'.`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports a missing value in a JSON file at the end of the token before it", async () => {
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        "a.ts": `import a from "./a.json";\nconsole.log(a);\n`,
+        "a.json": `{\n  "a":   ,\n  "b": [1,   , 2],\n  "c"\n}\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const message =
+        "Property value can only be string literal, numeric literal, 'true', 'false', 'null', object literal or array literal.";
+      expect(stdout.split("\n").filter(line => line.includes("TS1328"))).toEqual([
+        `a.json(2,7): error TS1328: ${message}`,
+        `a.json(3,11): error TS1328: ${message}`,
+        `a.json(4,6): error TS1328: ${message}`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an option with an invalid value removes the inherited path that starts with `${configDir}`", async () => {
+      const options = `"lib": ["esnext"], "types": [], "noEmit": true`;
+      using dir = project({
+        "base.json": `{ "compilerOptions": { ${options}, "rootDir": "\${configDir}/src" }, "files": ["a.ts"] }`,
+        "tsconfig.json": `{ "extends": "./base.json" }`,
+        "invalid.json": `{ "extends": "./base.json", "compilerOptions": { "rootDir": 1 } }`,
+        "twice.json": `{ "compilerOptions": { ${options}, "rootDir": "\${configDir}/src", "rootDir": "." }, "files": ["a.ts"] }`,
+        "a.ts": "",
+      });
+      const [inherited, invalid, twice] = await Promise.all(
+        ["tsconfig.json", "invalid.json", "twice.json"].map(config => check(dir, ["-p", config])),
+      );
+      const outside = `error TS6059: File '<dir>/a.ts' is not under 'rootDir' '<dir>/src'.`;
+      expect(inherited.stdout).toStartWith(outside);
+      expect(invalid.stdout).toBe(
+        "invalid.json(1,61): error TS5024: Compiler option 'rootDir' requires a value of type string.",
+      );
+      expect(twice.stdout).toStartWith(outside);
     });
 
     test("reports an error when there's nothing to check", async () => {
@@ -23842,7 +28486,6 @@ describe.concurrent("--check", () => {
     const assignment = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
     const parameter = `a.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
     const strict = `${assignment}\n${parameter}`;
-    // tsc 7.0.2's output, except where noted.
     const expected: Record<string, [string[], string][]> = {
       "reads a response file": [
         [["@args.txt"], assignment],
@@ -23851,13 +28494,11 @@ describe.concurrent("--check", () => {
         [["@args.txt", "--strict"], strict],
         [["@missing.txt"], `error TS5083: Cannot read file '<dir>/missing.txt'.`],
         [["@open.txt"], `error TS6045: Unterminated quoted string in response file '<dir>/open.txt'.`],
-        // tsc reads past the end of a file that doesn't end in whitespace, and crashes.
         [["@lines.txt"], assignment],
-        // tsc reads these until its stack overflows.
-        [["@self.txt"], `error TS5083: Cannot read file '<dir>/self.txt'.`],
-        [["@one.txt"], `error TS5083: Cannot read file '<dir>/one.txt'.`],
-        // It also overflows on a long chain of files. `bun check` allows 64 nested files.
-        [["@chain0.txt"], `error TS5083: Cannot read file '<dir>/chain64.txt'.`],
+        // A file that's being read isn't read again.
+        [["@self.txt"], assignment],
+        [["@one.txt"], assignment],
+        [["@chain0.txt"], `error TS5083: Cannot read file '<dir>/chain70.txt'.`],
       ],
       "`null` unsets an option": [
         [["--strict", "false"], assignment],
@@ -23888,10 +28529,10 @@ describe.concurrent("--check", () => {
         "outer.txt": `@args.txt\n`,
         "open.txt": `--strict "false\n`,
         "lines.txt": `--strict\nfalse`,
-        "self.txt": `@self.txt\n`,
+        "self.txt": `@self.txt --strict false\n`,
         ...Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`chain${i}.txt`, `@chain${i + 1}.txt\n`])),
         "one.txt": `@two.txt\n`,
-        "two.txt": `@one.txt\n`,
+        "two.txt": `@one.txt --strict false\n`,
         "empty/not-a-tsconfig.json": `{}\n`,
       });
       const results = await Promise.all(expected[kind].map(([args]) => check(dir, args)));
@@ -24380,7 +29021,7 @@ describe.concurrent("--check", () => {
     test.each(commands)("bun %j runs after the check passes", async (cmd, expected) => {
       using dir = project(files("1"));
       const { output, exitCode, signalCode } = await inTerminal(String(dir), cmd);
-      expect(output).toContain("Loading");
+      expect(output).toMatch(/Loading|Checking/);
       expect(output).toContain(expected);
       expect(signalCode).toBeNull();
       expect(exitCode).toBe(0);
@@ -25010,6 +29651,10 @@ describe.concurrent("--check", () => {
     const size = isDebug || isASAN ? 50 : 400;
     // Lines, not depth: nothing here nests.
     const long = isDebug || isASAN ? 3000 : 40000;
+    // Members of one list. A search through the list for each member makes these take 7 to 15 s in a release build.
+    const wide = isDebug || isASAN ? 256 : 4096;
+    // Names in one declaration or one object literal, where such a search takes 9 s.
+    const many = isDebug || isASAN ? 2048 : 131072;
     const templates: [name: string, n: number, source: (n: number) => string][] = [
       [
         "a sequence of `if` statements in a `finally` block",
@@ -25183,6 +29828,66 @@ describe.concurrent("--check", () => {
             .join("\n")}`,
       ],
       [
+        "an interface with many members and an object literal that has them all",
+        many,
+        n =>
+          `interface T { ${range(n)
+            .map(i => `a${i}?: number;`)
+            .join(" ")} }\nexport const t: T = { ${range(n)
+            .map(i => `a${i}: ${i}`)
+            .join(", ")} };`,
+      ],
+      [
+        "an object literal with a computed name for each member of an enum",
+        many,
+        n =>
+          `enum E { ${range(n)
+            .map(i => `m${i}`)
+            .join(", ")} }\nexport const o: Record<E, number> = {\n${range(n)
+            .map(i => `  [E.m${i}]: ${i},`)
+            .join("\n")}\n};`,
+      ],
+      [
+        "a class with many pairs of accessors",
+        many / 2,
+        n =>
+          `export class C {\n${range(n)
+            .map(i => `  get a${i}(): number { return ${i}; }\n  set a${i}(v: number) {}`)
+            .join("\n")}\n}`,
+      ],
+      [
+        "a call of a union of functions, whose parameter is an intersection",
+        wide,
+        n =>
+          `${range(n)
+            .map(i => `interface A${i} { v${i}: number }`)
+            .join("\n")}\ndeclare const f: ${range(n)
+            .map(i => `((x: A${i}) => ${i})`)
+            .join(" | ")};\ndeclare const arg: ${range(n)
+            .map(i => `A${i}`)
+            .join(" & ")};\nexport const r = f(arg);`,
+      ],
+      [
+        "a chain of calls on a builder that adds a member to an intersection",
+        wide,
+        n =>
+          `interface B<T> { add<K extends string, V>(k: K, v: V): B<T & { [P in K]: V }>; build(): T }\ndeclare const b: B<{}>;\nconst r = b${range(
+            n,
+          )
+            .map(i => `\n  .add("a${i}", ${i})`)
+            .join("")}.build();\nr.a0; r.a${n - 1};\nexport {};`,
+      ],
+      [
+        "type parameters that each default to the one before",
+        wide / 2,
+        n =>
+          `interface G<T0 = 0, ${range(n - 1)
+            .map(i => `T${i + 1} = T${i}`)
+            .join(", ")}> { v: T${n - 1} }\n${range(n)
+            .map(i => `declare let g${i}: G<${i}>;\ng${i}.v;`)
+            .join("\n")}\nexport {};`,
+      ],
+      [
         // Each call's type mentions the type before it several times. Inference between the type arguments walked every
         // path: 2.7 times as long for each call, and 127 s for `tsc` 7.0.2 at 20 calls.
         "a chain of calls on a builder that collects its arguments' types in a tuple",
@@ -25252,6 +29957,38 @@ ${range(n)
           .flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
         expect(errors).toEqual(range(n + 1).map(i => `${i + 2} TS2322`));
         expect(exitCode).toBe(1);
+      },
+    );
+
+    // A member of `U` costs tsc about 4,000 instantiations, so it gets to 5,000,000 at 1,248 members in one statement.
+    test.skipIf(isDebug || isASAN)(
+      "statements just under the limit of 5,000,000 instantiations get no TS2589",
+      async () => {
+        const members = (n: number) =>
+          range(n)
+            .map(i => `"m${i}"`)
+            .join(" | ");
+        using dir = project({
+          "work.d.ts": `type D = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type Keys = \`\${D}\${D}\${D}\`;
+type Each<T> = { [K in Keys]: T extends [K, unknown] ? 2 : 1 }[Keys];
+type Work<U, T> = U extends unknown ? Each<[U, T]> : never;
+type U500 = ${members(500)};
+type U900 = ${members(900)};
+type U1240 = ${members(1240)};
+type Heavy<T> = Work<U1240, T> extends never ? never : { v: 1; t: T };
+interface Box<T> { v: Work<T extends 3 ? U900 : U500, T> extends never ? never : 1 }
+declare function heavy<T>(t: T): Heavy<T>;
+`,
+          "call.ts": `export const hub = heavy(1 as const);\n`,
+          "use.ts": `export const x: Box<2> = later;\nvar later = heavy(4 as const);\n`,
+          // The types of `a` and `b` in the target are instantiated by the comparison, 1,400 members together.
+          "comparison.ts": `declare const s: { a: { v: 1 }; b: { v: 1 } };\nexport const x: { a: Box<3>; b: Box<5> } = s;\n`,
+        });
+        for (const { stdout, exitCode } of await Promise.all([1, 8].map(n => check(dir, ["--threads", String(n)])))) {
+          expect(stdout).toBe("use.ts(1,26): error TS2454: Variable 'later' is used before being assigned.");
+          expect(exitCode).toBe(1);
+        }
       },
     );
 

@@ -414,6 +414,46 @@ describe.concurrent("bun lint", () => {
     expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual(names.map(() => true));
   });
 
+  test("the syntax that's new in TypeScript 7.1 is linted in a TypeScript file with every kind of config", async () => {
+    const code = [
+      'declare module "*.css" with { type: "css" } {}',
+      'declare module "*.txt" with { type: "text" };',
+      'declare module "*.bin" with {};',
+      'import source wasm from "./a.wasm";\nexport type Wasm = typeof wasm;',
+      'export const loading = import.source("./b.wasm");',
+      "export class Counter {\n  #count = 1;\n  pair(other: Counter): [typeof this.#count, typeof other.#count] {\n    return [this.#count, other.#count];\n  }\n}",
+    ];
+    // A declaration file has no statements.
+    const extensions = (text: string) => [
+      "ts",
+      "tsx",
+      "mts",
+      "cts",
+      ...(/^(declare|import) /.test(text) ? ["d.ts"] : []),
+    ];
+    const names = code.flatMap((text, index) => extensions(text).map(extension => `${index}.${extension}`)).sort();
+    // The last line is there to be reported, which shows that the file was parsed.
+    const files = Object.fromEntries(
+      names.map(name => [name, `${code[parseInt(name)]}\nexport declare const z: 1;\n`]),
+    );
+    const rules = { "id-length": "error" };
+    const parser = `{ meta: { name: "typescript-eslint/parser" } }`;
+    const configs: Record<string, string>[] = [
+      { "bunfig.toml": '[lint.rules]\n"id-length" = "error"\n' },
+      { ".oxlintrc.json": JSON.stringify({ rules }) },
+      {
+        "eslint.config.js": `export default [{ files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: ${parser} }, rules: ${JSON.stringify(rules)} }];\n`,
+      },
+      { ".eslintrc.json": JSON.stringify({ root: true, parser: "@typescript-eslint/parser", rules }) },
+    ];
+    const results = await Promise.all(configs.map(config => lint({ ...config, ...files }, ["-f", "unix", ...names])));
+    for (const { stdout } of results) {
+      const lines = stdout.split("\n").filter(line => /^\S*\d\.[a-z.]+:\d/.test(line));
+      const found = lines.map(line => [basename(line.split(":")[0]), /id-length/.test(line)]);
+      expect(found.sort()).toEqual(names.map(name => [name, true]));
+    }
+  });
+
   // Each row is what oxlint 1.87 prints, in the same order. tsc, typescript-estree, espree and Babel reject an escape
   // in a JSX name.
   test("with .oxlintrc.json, a unicode escape in a JSX name isn't decoded", async () => {
@@ -5342,6 +5382,114 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
+      // From tsgolint 7.0.2003. It walks the comments too, where TypeScript parses the type of some tags.
+      test("no-unnecessary-type-parameters counts a type parameter in the type of a JSDoc tag", async () => {
+        const counted = [
+          "@returns {T}",
+          "@return {T}",
+          "@param {T} a",
+          "@arg {T} a",
+          "@argument {T} a",
+          "@type {T}",
+          "@this {T}",
+          "@throws {T}",
+          "@exception {T}",
+          "@satisfies {T}",
+          "@typedef {T} X",
+          "@template {T} U",
+          "@implements {T}",
+          "@augments {T}",
+          "@extends {T}",
+          "@returns {T[]}",
+          "@returns {Array<T>}",
+          "@returns {Map<string, T>}",
+          "@returns {{ a: T }}",
+          "@returns {(x: T) => void}",
+          "@returns {?T}",
+          "@returns {T=}",
+          "@param {...T} a",
+          "@returns {T | string}",
+          "@returns {keyof T}",
+          "@returns { T }",
+          "@returns {A extends B ? T : never}",
+          "@returns {A extends B ? never : T}",
+          "@returns {{ a?: T }}",
+          "@returns {T?}",
+        ];
+        const ignored = [
+          "@enum {T}",
+          "@property {T} a",
+          "@template T",
+          "@see {T}",
+          "{@link T}",
+          "@unknown {T}",
+          "@yields {T}",
+          "@deprecated {T}",
+          "@returns {T.x}",
+          "@returns {x.T}",
+          "@returns {typeof T}",
+          "@returns {{ T: string }}",
+          "@returns {{ T?: string }}",
+          "@returns {{ T(): void }}",
+          "@returns {(T: string) => void}",
+          "@returns {'T'}",
+          "@returns {TT}",
+          "@returns {string} T",
+          "@returns T",
+          "text {T}",
+        ];
+        const members = (tags: string[]) => tags.map(tag => `  /** ${tag} */ m<T = string>(a?: string): T;`);
+        const places = [
+          `export interface A {`,
+          `  /** @returns {T} */ /** second */ a<T = string>(): T;`,
+          `  /** first */ /** @returns {T} */ b<T = string>(): T;`,
+          `  /** @returns {T} */ <T = string>(): T;`,
+          `}`,
+          `/** @returns {T} */ export function c<T = string>(): T { return undefined as T; }`,
+          `/** @returns {T} */ export default function <T = string>(): T { return undefined as T; }`,
+          `export const d = /** @returns {T} */ function <T = string>(): T { return undefined as T; };`,
+          `export const e = /** @returns {T} */ <T = string>(): T => undefined as T;`,
+          `export const f = {\n/** @returns {T} */ m<T = string>(): T { return undefined as T; } };`,
+          `export class G {\n/** @returns {T} */ static m<T = string>(): T { return undefined as T; } }`,
+          // These comments belong to something else.
+          `export const f2 = { /** @returns {T} */ m<T = string>(): T { return undefined as T; } };`,
+          `export class G2 { /** @returns {T} */ static m<T = string>(): T { return undefined as T; } }`,
+          `/* @returns {T} */ export function h<T = string>(): T { return undefined as T; }`,
+          `/** @returns {T} */ export const i = function <T = string>(): T { return undefined as T; };`,
+          `/** @returns {T} */ export type J = <T = string>() => T;`,
+          `export type K = /** @returns {T} */ <T = string>() => T;`,
+          `export const l = { /** @returns {T} */ p: <T = string>(): T => undefined as T };`,
+          `export class M { /** @returns {T} */ p = <T = string>(): T => undefined as T; }`,
+          // The only use that's not in the body, so that's where the report is.
+          `/** @type {T} */ export class N<T = string> { a?: T; }`,
+        ];
+        const { raw } = await lint(
+          {
+            ".oxlintrc.json": rc({ rules: { "typescript/no-unnecessary-type-parameters": "error" } }),
+            "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } }),
+            "counted.ts": `export interface A {\n${members(counted).join("\n")}\n}\n`,
+            "ignored.ts": `export interface A {\n${members(ignored).join("\n")}\n}\n`,
+            "places.ts": places.join("\n") + "\n",
+          },
+          ["-f", "unix", "--type-aware"],
+        );
+        const at = (file: string) =>
+          [...raw.matchAll(/^(\w+\.ts):(\d+):(\d+): /gm)].filter(it => it[1] === file).map(it => `${it[2]}:${it[3]}`);
+        expect(at("counted.ts")).toEqual([]);
+        expect(at("ignored.ts").map(it => Number(it.split(":")[0]))).toEqual(ignored.map((_, index) => index + 2));
+        expect(at("places.ts")).toEqual([
+          "14:58",
+          "15:63",
+          "16:53",
+          "17:63",
+          "18:55",
+          "19:55",
+          "20:59",
+          "21:58",
+          "22:12",
+        ]);
+      });
+
       // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
       // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
       test("type-aware rules see through redundant parentheses", async () => {
@@ -5386,6 +5534,12 @@ maybe(() => { return f; });
             if (!byId.has(id)) byId.set(id, new Set());
             byId.get(id)!.add(raw ?? unescaped(plain));
           }
+        }
+        // An empty line after a message means that its text ends in a line break.
+        const ofOxlint = readFileSync(join(root, "oxlint_messages.txt"), "utf8");
+        for (const [, id, text, empty] of ofOxlint.matchAll(/^([\w-]+) (.*)\n(\n?)/gm)) {
+          if (!byId.has(id)) byId.set(id, new Set());
+          byId.get(id)!.add(text + empty);
         }
         const key = (rule: string, id: string, text: string) => {
           const low = (hash: number | bigint) => Number(BigInt.asUintN(32, BigInt(hash)));
@@ -6671,7 +6825,7 @@ maybe(() => { return f; });
     ];
     test.each([
       ["9.39.5", nine],
-      // With an eslint.config.mjs, ESLint 8 is closer to 9 than to 10.
+      // ESLint 8.57.1 reports the same.
       ["8.57.1", nine],
       ["10.12.0", ten],
       [undefined, ten],
@@ -6682,6 +6836,354 @@ maybe(() => { return f; });
         it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
       );
       expect(reports).toEqual(expected);
+    });
+
+    // From ESLint 8.57.1, 9.39.5 and 10.12.0. ESLint 8 doesn't have no-useless-assignment.
+    test.each([
+      [
+        "8.57.1",
+        [
+          "no-eval 1:1-1:5 eval can be harmful.",
+          "id-length 2:11-2:18 Identifier name #'abcdef' is too long (> 3).",
+          "no-magic-numbers 2:21-2:22 No magic number: 1.",
+          "no-magic-numbers 3:31-3:32 No magic number: 2.",
+          "no-magic-numbers 4:13-4:14 No magic number: 1.",
+          "no-magic-numbers 4:16-4:18 No magic number: -1.",
+          "no-implicit-coercion 4:20-4:23 use `Number(1n)` instead.",
+          "no-magic-numbers 4:21-4:23 No magic number: 1n.",
+          "no-magic-numbers 5:21-5:22 No magic number: 3.",
+          "no-loop-func 5:33-5:44 Function declared in a loop contains unsafe references to variable(s) 'i', 'i'.",
+          "object-shorthand 6:13-6:41 Expected property shorthand.",
+          "object-shorthand 6:43-6:73 Expected property shorthand.",
+          "object-shorthand 6:75-6:87 Expected property shorthand.",
+          "no-misleading-character-class 7:12-7:18 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:20-7:32 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:34-7:52 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-implicit-coercion 8:11-8:14 use `Boolean(x)` instead.",
+          "no-implicit-coercion 8:17-8:19 use `Number(y)` instead.",
+        ],
+      ],
+      [
+        "9.39.5",
+        [
+          "no-eval 1:1-1:5 eval can be harmful.",
+          "id-length 2:11-2:18 Identifier name #'abcdef' is too long (> 3).",
+          "no-magic-numbers 2:21-2:22 No magic number: 1.",
+          "no-useless-assignment 3:20-3:21 This assigned value is not used in subsequent statements.",
+          "no-magic-numbers 3:31-3:32 No magic number: 2.",
+          "no-magic-numbers 4:12-4:14 No magic number: +1.",
+          "no-magic-numbers 4:16-4:18 No magic number: -1.",
+          "no-implicit-coercion 4:20-4:23 Unexpected implicit coercion encountered. Use `Number(1n)` instead.",
+          "no-magic-numbers 4:20-4:23 No magic number: +1n.",
+          "no-magic-numbers 5:21-5:22 No magic number: 3.",
+          "no-loop-func 5:33-5:44 Function declared in a loop contains unsafe references to variable(s) 'i'.",
+          "object-shorthand 6:75-6:87 Expected property shorthand.",
+          "no-misleading-character-class 7:14-7:16 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:23-7:25 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:28-7:30 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:47-7:49 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-implicit-coercion 8:11-8:14 Unexpected implicit coercion encountered. Use `Boolean(x)` instead.",
+          "no-implicit-coercion 8:17-8:19 Unexpected implicit coercion encountered. Use `Number(y)` instead.",
+        ],
+      ],
+      [
+        "10.12.0",
+        [
+          "no-eval 1:1-1:5 `eval` can be harmful.",
+          "id-length 2:11-2:18 Identifier name '#abcdef' is too long (> 3).",
+          "no-magic-numbers 2:21-2:22 No magic number: 1.",
+          "no-useless-assignment 3:20-3:21 The value assigned to 'v' is not used in subsequent statements.",
+          "no-magic-numbers 3:31-3:32 No magic number: 2.",
+          "no-magic-numbers 4:12-4:14 No magic number: +1.",
+          "no-magic-numbers 4:16-4:18 No magic number: -1.",
+          "no-implicit-coercion 4:20-4:23 Unexpected implicit coercion encountered. Use `Number(1n)` instead.",
+          "no-magic-numbers 4:20-4:23 No magic number: +1n.",
+          "no-magic-numbers 5:21-5:22 No magic number: 3.",
+          "no-loop-func 5:33-5:44 Function declared in a loop contains unsafe references to variable(s) 'i'.",
+          "object-shorthand 6:75-6:87 Expected property shorthand.",
+          "no-misleading-character-class 7:14-7:16 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:23-7:25 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:28-7:30 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:47-7:49 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-implicit-coercion 8:11-8:14 Unexpected implicit coercion encountered. Use `Boolean(x)` instead.",
+          "no-implicit-coercion 8:17-8:19 Unexpected implicit coercion encountered. Use `Number(y)` instead.",
+        ],
+      ],
+    ])("messages and locations that have changed, with eslint %s", async (version, expected) => {
+      const later = version === "8.57.1" ? "" : `"no-useless-assignment": "error", `;
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{ rules: { ${later}"no-eval": "error", "id-length": ["error", { min: 0, max: 3 }], "no-magic-numbers": "error", "no-loop-func": "error", "object-shorthand": "error", "no-misleading-character-class": "error", "no-implicit-coercion": "error" } }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": `eval("1");
+class A { #abcdef = 1; m() { return this.#abcdef; } }
+function f() { let v = 1; v = 2; return v; }
+const n = [+1, -1, +1n];
+for (var i = 0; i < 3; i++) { g(() => i + i); }
+const o = { x: /** @type {number} */ (x), "y": /** @type {number} */ (y), z: /* c */ z };
+const r = [/[\u{1F44D}]/, /a[\u{1F44D}]b[\u{1F44D}]/, new RegExp("[\u{1F44D}]")];
+const c = !!x + +y;
+console.log(A, f, n, o, r, c);
+`,
+        },
+        ["-f", "json", "a.js"],
+      );
+      const reports = (JSON.parse(raw)[0].messages as any[]).map(
+        it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
+      );
+      // Two rules report \`+1n\`, at the same place.
+      expect(reports.sort()).toEqual(expected.sort());
+    });
+
+    // From ESLint 8.57.1 and 9.39.5.
+    test.each([
+      [
+        "8.57.1",
+        [
+          "a.js 3:10 no-inner-declarations, 5:8 no-constant-condition, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion",
+          "b.js 3:10 no-inner-declarations, 5:8 no-constant-condition, 6:25 no-implicit-coercion, 8:12 no-unused-vars",
+          "c.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 3:10 no-inner-declarations, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion, 7:22 no-unused-vars",
+        ],
+      ],
+      [
+        "9.39.5",
+        [
+          "a.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 6:12 no-implicit-coercion, 6:18 no-implicit-coercion, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion, 7:22 no-unused-vars",
+          "b.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 6:12 no-implicit-coercion, 6:18 no-implicit-coercion, 6:25 no-implicit-coercion, 7:22 no-unused-vars, 8:12 no-unused-vars",
+          "c.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 6:12 no-implicit-coercion, 6:18 no-implicit-coercion, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion, 7:22 no-unused-vars",
+        ],
+      ],
+    ])("the default options with an eslint.config.mjs and eslint %s", async (version, expected) => {
+      const source = `try { f(); } catch (e) {}
+class A { ["x"]() {} }
+if (a) { function g() {} g(); }
+function f(globalThis) { return [globalThis, A]; }
+while (true) { f(); }
+const n = [- -a, a - 0, +a, !!a];
+try { f(n); } catch (unused) {}
+function h(x, y) { return y; }
+h();
+`;
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [
+  { languageOptions: { globals: { a: "readonly" } }, rules: { "no-unused-vars": "error", "no-useless-computed-key": "error", "no-inner-declarations": "error", "no-shadow-restricted-names": "error", "no-constant-condition": "error", "no-implicit-coercion": "error" } },
+  { files: ["b.js"], rules: { "no-unused-vars": ["error", { args: "all" }], "no-implicit-coercion": ["error", { boolean: false }], "no-inner-declarations": ["error", "both"] } },
+  { files: ["c.js"], rules: { "no-unused-vars": ["error", { caughtErrors: "all" }], "no-useless-computed-key": ["error", { enforceForClassMembers: true }], "no-constant-condition": ["error", { checkLoops: false }] } },
+];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": source,
+          "b.js": source,
+          "c.js": source,
+        },
+        ["-f", "json", "a.js", "b.js", "c.js"],
+      );
+      const found = (JSON.parse(raw) as any[]).map(
+        it =>
+          `${basename(it.filePath)} ${it.messages.map((it: any) => `${it.line}:${it.column} ${it.ruleId}`).join(", ")}`,
+      );
+      expect(found).toEqual(expected);
+    });
+
+    // ESLint 8.57.1 reports nothing in any of these, and 9.39.5 the `e`.
+    describe("ESLint 8's default options apply however a rule is turned on", () => {
+      const project = (version: string, rules: string) => ({
+        "eslint.config.mjs": `export default [{ rules: ${rules} }];`,
+        "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+        "a.js": "try { f(); } catch (e) {}\nfunction f() {}\n",
+      });
+      const on = `{ "no-unused-vars": "error" }`;
+      const routes: [string, (version: string) => Record<string, string>, string[]][] = [
+        ["the config file", version => project(version, on), []],
+        ["--rule", version => project(version, "{}"), ["--rule", "no-unused-vars: error"]],
+        [
+          "--rule with options",
+          version => project(version, "{}"),
+          ["--rule", `no-unused-vars: [error, { args: all }]`],
+        ],
+        [
+          "a comment",
+          version => ({
+            ...project(version, "{}"),
+            "a.js": `/* eslint no-unused-vars: "error" */ ${project(version, "{}")["a.js"]}`,
+          }),
+          [],
+        ],
+        [
+          "a comment with options",
+          version => ({
+            ...project(version, "{}"),
+            "a.js": `/* eslint no-unused-vars: ["error", { "args": "all" }] */ ${project(version, "{}")["a.js"]}`,
+          }),
+          [],
+        ],
+        [
+          "bunfig.toml",
+          version => ({ ...project(version, "{}"), "bunfig.toml": `[lint.rules]\n"no-unused-vars" = "error"\n` }),
+          [],
+        ],
+      ];
+      test("--print-config shows what the config says, and nothing else", async () => {
+        const printed = async (rules: object) =>
+          JSON.parse((await lint(project("8.57.1", JSON.stringify(rules)), ["--print-config", "a.js"])).raw).rules;
+        expect(await printed({ "no-var": "error" })).toEqual({ "no-var": [2] });
+        expect(await printed({ "no-unused-vars": "off" })).toEqual({ "no-unused-vars": [0] });
+        expect(await printed({ "no-implicit-coercion": ["error", { boolean: false }] })).toEqual({
+          "no-implicit-coercion": [2, { boolean: false }],
+        });
+      });
+
+      test.each(routes)("%s", async (_, files, flags) => {
+        const reports = async (version: string) =>
+          (JSON.parse((await lint(files(version), ["-f", "json", ...flags, "a.js"])).raw)[0].messages as any[]).map(
+            it => it.message,
+          );
+        expect(await reports("8.57.1")).toEqual([]);
+        expect(await reports("9.39.5")).toEqual(["'e' is defined but never used."]);
+      });
+    });
+
+    // From ESLint 8.57.1 with @typescript-eslint/parser 7.18.0, and 9.39.5 and 10.12.0 with 8.71.1. `Promise` and `Symbol`
+    // are only types in the parser's libraries.
+    test.each([
+      ["8.57.1", ".eslintrc.json", ["globalThis", "document", "Foo"]],
+      ["8.57.1", "eslint.config.mjs", ["globalThis", "document", "Foo"]],
+      ["9.39.5", "eslint.config.mjs", ["globalThis", "document", "Foo"]],
+      ["10.12.0", "eslint.config.mjs", ["Promise", "Symbol", "globalThis", "document", "Foo"]],
+    ])(
+      "before ESLint 10, a value resolves to a type of TypeScript's libraries: eslint %s, %s",
+      async (version, config, names) => {
+        const configs: Record<string, string> = {
+          ".eslintrc.json": JSON.stringify({
+            root: true,
+            parser: "@typescript-eslint/parser",
+            rules: { "no-undef": "error" },
+          }),
+          "eslint.config.mjs": `export default [{
+            files: ["**/*.ts"],
+            languageOptions: { ecmaVersion: 5, sourceType: "script" },
+            rules: { "no-undef": "error" },
+          }];`,
+        };
+        const { raw } = await lint(
+          {
+            [config]: configs[config],
+            "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+            "a.ts":
+              "var a = [Promise.resolve(1), Symbol(), new Map(), globalThis, document];\ntype B = Promise<Foo>;\n",
+          },
+          ["-f", "json", "a.ts"],
+        );
+        const messages = JSON.parse(raw)[0].messages as { message: string }[];
+        expect(messages.map(it => it.message)).toEqual(names.map(name => `'${name}' is not defined.`));
+      },
+    );
+
+    // From ESLint 8.57.1 and 9.39.5.
+    test.each([
+      ["8.57.1", ["String(x)", "Number(x)", "Number(x)", "Boolean(x)", "String(x)", "s = String(s)"], []],
+      ["9.39.5", ["Boolean(x)"], ["String(x)", "Number(x)", "Number(x)", "String(x)", "s = String(s)"]],
+    ])("what no-implicit-coercion suggests was a fix in ESLint 8: eslint %s", async (version, fixes, suggestions) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{
+            rules: { "no-implicit-coercion": ["error", { disallowTemplateShorthand: true }] },
+          }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": 'export const f = x => ["" + x, +x, x * 1, !!x, `${x}`];\nlet s = "a";\ns += "";\nexport { s };\n',
+        },
+        ["-f", "json", "a.js"],
+      );
+      const messages = JSON.parse(raw)[0].messages as any[];
+      expect(messages.flatMap(it => (it.fix ? [it.fix.text] : []))).toEqual(fixes);
+      expect(messages.flatMap(it => (it.suggestions ?? []).map((it: any) => it.fix.text))).toEqual(suggestions);
+    });
+
+    // From typescript-eslint 8.71.1 under ESLint 9.39.5 and 10.12.0, and 7.18.0 under ESLint 8.57.1.
+    test.each([
+      ["8.57.1", ["1:5 Variable 'a' should be initialized on declaration."]],
+      ["9.39.5", ["1:5 Variable 'a' should be initialized on declaration."]],
+      ["10.12.0", []],
+    ])("@typescript-eslint/init-declarations without options, with eslint %s", async (version, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{
+            files: ["**/*.ts"],
+            plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+            rules: { "@typescript-eslint/init-declarations": "error" },
+          }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.ts": "let a: number;\nlet b = 1;\nexport { a, b };\n",
+        },
+        ["-f", "json", "a.ts"],
+      );
+      const reports = (JSON.parse(raw)[0].messages as any[]).map(it => `${it.line}:${it.column} ${it.message}`);
+      expect(reports).toEqual(expected);
+    });
+
+    // From ESLint 8.57.1 too. In version 9 the location changed with 9.38.
+    test.each([
+      ["8.57.1", ["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]],
+      ["9.39.5", ["1:1-1:11 11", "5:3-5:9 4", "6:3-6:9 3", "7:11-7:23 3", "9:13-9:15 4", "10:13-10:14 3"]],
+    ])("complexity with an eslint.config.mjs and eslint %s", async (version, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{ rules: { complexity: ["error", 0] } }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": `function a(x, y = 1, { z = 2 } = {}, [w = 3] = []) {
+  return x?.y?.z ?? (x ? y : z) ?? w;
+}
+class B {
+  method(x) { return x?.a || x?.b; }
+  static { if (a) a(); else if (B) a(1); }
+  field = a ? 1 : a?.b;
+}
+const c = x => { ({ x = 1 } = x); [x = 2] = x; x ||= 1; return x; };
+const d = { e(x) { return x && x.y && x.z; } };
+console.log(a, B, c, d);
+`,
+        },
+        ["-f", "json", "a.js"],
+      );
+      const found = (JSON.parse(raw)[0].messages as any[]).map(
+        it => `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${/complexity of (\d+)/.exec(it.message)?.[1]}`,
+      );
+      expect(found).toEqual(expected);
+    });
+
+    // From ESLint 8.57.1 too.
+    describe("before ESLint 10, no-shadow allows the name of a function expression anywhere in the variable's declaration", () => {
+      const source = `const A = wrap(function A() {});
+const B = function B() {};
+const { C } = wrap(function C() {});
+const D = wrap(class D {});
+const E = wrap(() => function E() {});
+function f(G = wrap(function G() {})) {}
+let H; H = wrap(function H() {});
+const I = [function I() {}];
+console.log(A, B, C, D, E, f, H, I);
+`;
+      const flat = { "eslint.config.mjs": `export default [{ rules: { "no-shadow": "error" } }];` };
+      const legacy = {
+        ".eslintrc.json": JSON.stringify({
+          root: true,
+          parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+          rules: { "no-shadow": "error" },
+        }),
+      };
+      test.each([
+        ["8.57.1", legacy, "EGH"],
+        ["9.39.5", flat, "EGH"],
+        ["10.12.0", flat, "ACDEGHI"],
+      ])("eslint %s", async (version, config, expected) => {
+        const installed = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }) };
+        const { raw } = await lint({ "a.js": source, ...config, ...installed }, ["-f", "json", "a.js"]);
+        const names = (JSON.parse(raw)[0].messages as any[]).map(
+          it => /^'(\w)' is already declared/.exec(it.message)?.[1],
+        );
+        expect(names.join("")).toBe(expected);
+      });
     });
 
     // Since ESLint 10, `eslint-scope` treats a JSX element's name as a reference. Before that, a plugin's rule has to
@@ -7045,6 +7547,30 @@ export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
           "switch.cjs:1:1 scopes global[] function[outer] switch[helper] function[] function[] block[inner] function[] block[] catch[inner] block[]",
         ],
       });
+    });
+
+    // This is what oxlint 1.87.0 reports.
+    test("JSX isn't a use of a `React` that's otherwise only used as a type, so a value may shadow it", async () => {
+      const source = (use: string) => `import * as React from "react";
+export type Props = React.ComponentProps<"button">;
+export const element = <div />;
+${use}export async function load() {
+  const React = await import("react");
+  return React.version;
+}
+`;
+      const { stdout, exitCode } = await lint(
+        {
+          ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-shadow": "error" } }`,
+          "type.tsx": source(""),
+          "value.tsx": source("export const version = React.version;\n"),
+        },
+        ["-f", "unix"],
+      );
+      expect(stdout.split("\n").filter(it => it.includes("no-shadow"))).toEqual([
+        "value.tsx:6:9: 'React' is already declared in the upper scope. [Error/eslint(no-shadow)]",
+      ]);
+      expect(exitCode).toBe(1);
     });
 
     // The mark is set on the variable that the plugin sees, not on oxlint's.
@@ -9305,7 +9831,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         return stderr.split("\n").filter(it => it.startsWith("note: "));
       };
       expect(await notes("5.8.3")).toEqual([
-        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7",
+        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7.1",
       ]);
       expect(await notes("7.0.2")).toEqual([]);
       expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
@@ -9315,6 +9841,98 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       // No rule needs types.
       const untyped = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`);
       expect(await notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" })).toEqual([]);
+    });
+
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3.
+    test("without parserOptions.lib, the names that TypeScript's libraries define are those of the file's tsconfig.json", async () => {
+      const tsconfig = (options: object) =>
+        JSON.stringify({ compilerOptions: { strict: true, module: "esnext", types: [], ...options } });
+      const text = `export type A = [DOMRect, ClientRect, NotThere];\nexport const b = document;\n`;
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.js": `${files["eslint.config.js"].replace(`rules: { `, `rules: { "no-undef": "error", `).slice(0, -2)},
+            { files: ["explicit/*.ts"], languageOptions: { parserOptions: { lib: ["es2020"] } } },
+          ];`,
+          "dom/tsconfig.json": tsconfig({ lib: ["dom", "esnext"] }),
+          "dom/a.ts": text,
+          "target/tsconfig.json": tsconfig({ target: "es2022" }),
+          "target/a.ts": text,
+          "only/tsconfig.json": tsconfig({ lib: ["es2020"] }),
+          "only/a.ts": text,
+          "explicit/tsconfig.json": tsconfig({ lib: ["dom", "esnext"] }),
+          "explicit/a.ts": text,
+        },
+        ["-f", "unix"],
+      );
+      const undefinedIn = (directory: string) =>
+        [...stdout.matchAll(/(\w+)\/a\.ts:\d+:\d+: '(\w+)' is not defined/g)]
+          .filter(it => it[1] === directory)
+          .map(it => it[2]);
+      expect(undefinedIn("dom")).toEqual(["NotThere", "document"]);
+      expect(undefinedIn("target")).toEqual(["NotThere", "document"]);
+      expect(undefinedIn("only")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+      expect(undefinedIn("explicit")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The same with TypeScript 5.9.3 and 6.0.3, whose default targets differ: each implies `dom`. Neither knows es2026.
+    test.each(["5.9.3", "6.0.3", undefined])(
+      "the libraries of a tsconfig.json without a target, or with one that typescript-eslint doesn't know (typescript: %s)",
+      async version => {
+        const tsconfig = (options: object) =>
+          JSON.stringify({ compilerOptions: { strict: true, module: "esnext", types: [], ...options } });
+        const text = `export type A = [DOMRect, ClientRect, NotThere];\nexport const b = [document, new Promise(() => {}), new Map()];\n`;
+        const { stdout, exitCode } = await lint(
+          {
+            "eslint.config.js": files["eslint.config.js"].replace(`rules: { `, `rules: { "no-undef": "error", `),
+            ...(version && { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) }),
+            "none/tsconfig.json": tsconfig({}),
+            "none/a.ts": text,
+            "target/tsconfig.json": tsconfig({ target: "es2026" }),
+            "target/a.ts": text,
+            "lib/tsconfig.json": tsconfig({ lib: ["es2026"] }),
+            "lib/a.ts": text,
+          },
+          ["-f", "unix"],
+        );
+        const undefinedIn = (directory: string) =>
+          [...stdout.matchAll(/(\w+)\/a\.ts:\d+:\d+: '(\w+)' is not defined/g)]
+            .filter(it => it[1] === directory)
+            .map(it => it[2]);
+        expect(undefinedIn("none")).toEqual(["NotThere", "document"]);
+        expect(undefinedIn("target")).toEqual(["NotThere", "document"]);
+        expect(undefinedIn("lib")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // Same as ESLint 10.12.0 with typescript-eslint 8.71.1.
+    test("a rule that only a comment turns on gets types too", async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          ...files,
+          "eslint.config.js": files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`),
+          "a.ts": `/* eslint @typescript-eslint/no-floating-promises: "error" */\n${files["a.ts"]}`,
+        },
+        ["-f", "unix", "a.ts", "b.ts"],
+      );
+      expect(stdout).toContain("a.ts:3:1: Promises must be awaited");
+      expect(exitCode).toBe(1);
+    });
+
+    test("without a config file, a script and a module get the same libraries", async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "bunfig.toml": `[lint.rules]\n"no-undef" = "error"\n"@typescript-eslint/no-floating-promises" = "error"\n`,
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, lib: ["dom", "esnext"], types: [] } }),
+          "script.ts": "let x: ClientRect | NotThere | undefined;\nconsole.log(x);\n",
+          "module.ts": "export let x: ClientRect | NotThere | undefined;\n",
+        },
+        ["-f", "unix"],
+      );
+      const found = [...stdout.matchAll(/(\w+\.ts):\d+:\d+: '(\w+)' is not defined/g)].map(it => `${it[1]} ${it[2]}`);
+      expect(found.sort()).toEqual(["module.ts NotThere", "script.ts NotThere"]);
+      expect(exitCode).toBe(1);
     });
 
     // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's
@@ -13426,7 +14044,7 @@ describe.concurrent("nativePluginRules", () => {
       };
       const result = await lint({ ...files, ...bunfig("false") }, ["a.js"], { mayFail: true });
       expect(result.stderr).toContain(
-        "1 rule did not run because rules that run in JavaScript cannot use type information: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
+        "1 rule did not run because there is no type information for the files: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
       );
       expect(result.exitCode).toBe(2);
     },

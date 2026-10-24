@@ -4,13 +4,14 @@
 //! A port of `internal/tsoptions/tsconfigparsing.go` and `internal/vfs/vfsmatch/vfsmatch.go`.
 
 use crate::config_options::{Declaration, In, converted, is_enum, is_file_path, is_list};
+use crate::content_mapper::{self, ExtensionRewrite, Mapper};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
-    get_base_file_name, get_path_components, get_relative_path_from_directory, inside,
-    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension,
-    supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
+    get_base_file_name, get_path_components, get_relative_path_from_directory,
+    is_refused_network_path, is_rooted_disk_path, is_same_path, join, known_extension,
+    remove_file_extension, root_length, supported_extensions, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
@@ -344,10 +345,13 @@ struct Raw {
     compiler: Vec<(Vec<u8>, Json)>,
     /// `explicitNullFields`: the options that are `null` in `raw`, which only covers the file itself.
     explicit_null_fields: Vec<Vec<u8>>,
+    /// All the options in `raw`, whatever their values.
+    raw_fields: Vec<Vec<u8>>,
     files: List,
     include: List,
     exclude: List,
     references: List,
+    content_mappers: List,
     /// `rawConfig.GetOrZero("extends") != nil`
     has_extends: bool,
 }
@@ -420,6 +424,12 @@ fn substitute_if_template(value: &[u8], base: &[u8]) -> Option<Vec<u8>> {
     starts_with_config_dir_template(value).then(|| substitute_config_dir(value, base))
 }
 
+/// `isNetworkPathValue`
+pub fn is_network_path_value(value: &[u8], base: &[u8]) -> bool {
+    let value = strings::replace_owned(value, b"\\", b"/");
+    is_refused_network_path(&displayed_path(&join(base, &value)), &displayed_path(base))
+}
+
 /// `normalizeNonListOptionValue`, for an option that `IsFilePath`.
 pub(crate) fn normalize_non_list_option_value(value: &[u8], base: &[u8]) -> Vec<u8> {
     let value = strings::replace_owned(value, b"\\", b"/");
@@ -430,9 +440,25 @@ pub(crate) fn normalize_non_list_option_value(value: &[u8], base: &[u8]) -> Vec<
     }
 }
 
-/// `ParseCompilerOptions`. A field with its zero value (`""`, or `None` for a nil list) is simply absent from
-/// `all_options`.
+/// `compilerOptionContainsConfigDirTemplate`
+fn contains_config_dir_template(key: &[u8], value: &Json) -> bool {
+    let mut paths = match value {
+        Json::Array(paths) => paths.iter(),
+        path => std::slice::from_ref(path).iter(),
+    };
+    is_file_path(key) && paths.any(|it| it.as_str().is_some_and(starts_with_config_dir_template))
+}
+
+/// `compilerOptionsParser.ParseOption`. A field with its zero value (`""`, or `None` for a nil list) is simply absent
+/// from `all_options`. A path that starts with `${configDir}` is in `unresolvedPaths`, which is applied last, so it wins
+/// over a later value of the same file that doesn't.
 fn parse_compiler_options(key: &[u8], value: Option<Json>, all_options: &mut Vec<(Vec<u8>, Json)>) {
+    let is_unresolved = |value: &Json| contains_config_dir_template(key, value);
+    if (all_options.iter()).any(|(name, value)| name == key && is_unresolved(value))
+        && !value.as_ref().is_some_and(is_unresolved)
+    {
+        return;
+    }
     all_options.retain(|(name, _)| name != key);
     let value = value.filter(|value| value.as_str() != Some(b""));
     all_options.extend(value.map(|value| (key.to_vec(), value)));
@@ -534,6 +560,16 @@ fn parse_config(
     }
 }
 
+/// `mergeParsedCompilerOptions`. An option that `source` specifies, even with an invalid value, removes the path in
+/// `target` that starts with `${configDir}`.
+fn merge_parsed_compiler_options(target: &mut Vec<(Vec<u8>, Json)>, source: &mut Raw) {
+    target.retain(|(key, value)| {
+        !(source.raw_fields.contains(key) && contains_config_dir_template(key, value))
+    });
+    let specified = std::mem::take(&mut source.compiler);
+    merge_compiler_options(target, specified, &source.explicit_null_fields);
+}
+
 /// A configuration file, and what it has inherited so far.
 struct PendingConfig {
     path: Vec<u8>,
@@ -617,7 +653,10 @@ fn open_config(
             } else {
                 b"tsconfig.json"
             };
-            errors.push(ConfigError::new(5092, &[name]));
+            errors.push(ConfigError {
+                at: file.root_expression_span().map(at),
+                ..ConfigError::new(5092, &[name])
+            });
             Json::Object(Vec::new())
         }
     };
@@ -656,7 +695,8 @@ fn open_config(
         }
     }
     for value_node in values_of(b"compilerOptions") {
-        let problems = crate::config_options::problems(&file, value_node, In::CompilerOptions);
+        let problems =
+            crate::config_options::problems(&file, value_node, In::CompilerOptions, base);
         // `convertJsonOption`: an invalid value is treated as unspecified. So is an invalid element of a list.
         let omitted: Vec<_> = (problems.iter())
             .map(|problem| (problem.property, problem.index))
@@ -695,23 +735,27 @@ fn open_config(
     }
     // For a repeated name, `raw` has the last value.
     let compiler = json.get(b"compilerOptions").and_then(Json::as_object);
-    own.explicit_null_fields = (compiler.into_iter().flatten())
+    let raw_fields = || compiler.into_iter().flatten();
+    own.raw_fields = raw_fields().map(|option| option.0.clone()).collect();
+    own.explicit_null_fields = raw_fields()
         .filter(|option| option.1 == Json::Null)
         .map(|option| option.0.clone())
         .collect();
     // `convertJsonOption` for the properties outside `compilerOptions`.
     if let Some(root) = file.root {
-        let problems = crate::config_options::problems(&file, root, In::Root);
+        let problems = crate::config_options::problems(&file, root, In::Root, base);
         errors.extend(problems.into_iter().map(from_problem));
     }
     for value_node in values_of(b"typeAcquisition") {
-        let problems = crate::config_options::problems(&file, value_node, In::TypeAcquisition);
+        let problems =
+            crate::config_options::problems(&file, value_node, In::TypeAcquisition, base);
         errors.extend(problems.into_iter().map(from_problem));
     }
     own.files = List::of(json.get(b"files"));
     own.include = List::of(json.get(b"include"));
     own.exclude = List::of(json.get(b"exclude"));
     own.references = List::of(json.get(b"references"));
+    own.content_mappers = List::of(json.get(b"contentMappers"));
     let extends = json.get(b"extends");
     own.has_extends = extends.is_some_and(|extends| *extends != Json::Null);
     // `getExtendsConfigPathOrArray`. With several `extends`, the last one wins.
@@ -753,8 +797,9 @@ fn open_config(
 
 impl PendingConfig {
     /// `extended`: the file at `extended_path`, which is the next of the files this one extends.
-    fn inherit(&mut self, extended_path: &[u8], extended: Raw, is_case_sensitive: bool) {
+    fn inherit(&mut self, extended_path: &[u8], mut extended: Raw, is_case_sensitive: bool) {
         let (own, inherited) = (&self.own, &mut self.inherited);
+        merge_parsed_compiler_options(&mut inherited.compiler, &mut extended);
         // A property that the extending file doesn't specify itself takes its value from the last extended file,
         // relative to that file's directory.
         // `relativeDifference`: from the extending file's directory. 18003 prints the result.
@@ -795,12 +840,10 @@ impl PendingConfig {
         inherit(&own.include, &mut inherited.include, extended.include);
         inherit(&own.exclude, &mut inherited.exclude, extended.exclude);
         inherit(&own.files, &mut inherited.files, extended.files);
-        let explicit_null_fields = &extended.explicit_null_fields;
-        merge_compiler_options(
-            &mut inherited.compiler,
-            extended.compiler,
-            explicit_null_fields,
-        );
+        // The last extended file that has the property wins, even if its value isn't a list.
+        if extended.content_mappers.is_specified {
+            inherited.content_mappers = extended.content_mappers;
+        }
     }
 
     /// Returns the file merged with everything it has inherited.
@@ -815,12 +858,10 @@ impl PendingConfig {
         if inherited.files.is_specified {
             own.files = inherited.files;
         }
-        let specified = std::mem::take(&mut own.compiler);
-        merge_compiler_options(
-            &mut inherited.compiler,
-            specified,
-            &own.explicit_null_fields,
-        );
+        if inherited.content_mappers.items.is_some() && !own.content_mappers.is_specified {
+            own.content_mappers = inherited.content_mappers;
+        }
+        merge_parsed_compiler_options(&mut inherited.compiler, &mut own);
         own.compiler = inherited.compiler;
         own
     }
@@ -835,6 +876,10 @@ fn extends_config_path(
     errors: &mut Vec<ConfigError>,
 ) -> Option<Vec<u8>> {
     let extended = strings::replace_owned(extended, b"\\", b"/");
+    if is_network_path_value(&extended, base) {
+        errors.push(ConfigError::new(5116, &[&extended]));
+        return None;
+    }
     if is_rooted_disk_path(&extended) || extended.starts_with(b"./") || extended.starts_with(b"../")
     {
         let mut path = join(base, &extended);
@@ -887,13 +932,21 @@ fn invalid_dot_dot_after_recursive_wildcard(s: &[u8]) -> bool {
 fn validate_specs(
     specs: Vec<Vec<u8>>,
     key: &'static [u8],
+    base: &[u8],
     problems: &mut Vec<Problem>,
 ) -> Vec<Vec<u8>> {
     specs
         .into_iter()
         .filter(|spec| {
+            // `?` is a wildcard in a spec, so `/??/` isn't a network path here.
+            let path = join(base, spec);
+            let path = displayed_path(&path);
+            let code = if path.starts_with(b"//")
+                && is_refused_network_path(&path, &displayed_path(base))
+            {
+                5116
             // `disallowTrailingRecursion`
-            let code = if key == b"include" && invalid_trailing_recursion(spec) {
+            } else if key == b"include" && invalid_trailing_recursion(spec) {
                 5010
             } else if invalid_dot_dot_after_recursive_wildcard(spec) {
                 5065
@@ -926,7 +979,7 @@ pub fn load_overriding(
         return Err(errors);
     };
     let base = dirname::<Posix>(path);
-    let references = get_project_references(&raw.references, base);
+    let references = get_project_references(&raw.references, base, &mut Vec::new());
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, overrides(has_references), &[]);
     Ok(project_from_raw(host, session, path, base, raw, errors))
@@ -949,15 +1002,38 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
 }
 
 /// `getProjectReferences`. `None` is nil.
-fn get_project_references(references: &List, base: &[u8]) -> Option<Vec<ProjectReference>> {
-    let references = references.items.as_ref()?.iter();
-    // `parseProjectReference`
-    let references = references.filter_map(|reference| {
-        let path = reference.get(b"path").and_then(Json::as_str)?;
-        let circular = reference.get(b"circular").and_then(Json::as_bool) == Some(true);
-        (!path.is_empty()).then(|| ProjectReference {
+fn get_project_references(
+    references: &List,
+    base: &[u8],
+    problems: &mut Vec<Problem>,
+) -> Option<Vec<ProjectReference>> {
+    let references = references.items.as_ref()?.iter().enumerate();
+    let references = references.filter_map(|(index, reference)| {
+        // `parseProjectReference`
+        reference.as_object()?;
+        let mut report = |code, args: &[&[u8]], property: &'static [u8]| {
+            let at = ConfigLocation::ReferenceProperty(index, property);
+            problems.push(Problem::new(code, args, at));
+        };
+        let Some(path) = reference.get(b"path").and_then(Json::as_str) else {
+            report(5024, &[b"reference.path", b"string"], b"path");
+            return None;
+        };
+        if path.is_empty() {
+            report(18051, &[b"reference.path"], b"path");
+            return None;
+        }
+        if is_network_path_value(path, base) {
+            report(5116, &[path], b"path");
+            return None;
+        }
+        let circular = reference.get(b"circular");
+        if circular.is_some_and(|circular| circular.as_bool().is_none()) {
+            report(5024, &[b"reference.circular", b"boolean"], b"circular");
+        }
+        Some(ProjectReference {
             path: join(base, path),
-            circular,
+            circular: circular.and_then(Json::as_bool) == Some(true),
         })
     });
     Some(references.collect())
@@ -974,18 +1050,14 @@ fn project_from_raw(
 ) -> Project {
     // `handleOptionConfigDirTemplateSubstitution`
     for (key, value) in &mut raw.compiler {
+        let is_unresolved = contains_config_dir_template(key, value);
         match value {
-            Json::String(s) if is_file_path(key) => {
-                if let Some(substituted) = substitute_if_template(s, base) {
-                    *s = substituted;
-                }
-            }
-            Json::Array(list) if is_file_path(key) => {
+            Json::String(s) if is_unresolved => *s = substitute_config_dir(s, base),
+            // In every path of the list, wherever it has the template.
+            Json::Array(list) if is_unresolved => {
                 for item in list {
-                    if let Json::String(s) = item
-                        && let Some(substituted) = substitute_if_template(s, base)
-                    {
-                        *s = substituted;
+                    if let Json::String(s) = item {
+                        *s = substitute_config_dir(s, base);
                     }
                 }
             }
@@ -1057,7 +1129,7 @@ fn project_from_raw(
             .map(|spec| substitute_if_template(&spec, base).unwrap_or(spec))
             .collect()
     };
-    let validated_include = validate_specs(raw.include.strings(), b"include", &mut problems);
+    let validated_include = validate_specs(raw.include.strings(), b"include", base, &mut problems);
     let include = substitute_all(validated_include.clone());
     options.include_specs = validated_include
         .into_iter()
@@ -1066,14 +1138,47 @@ fn project_from_raw(
     let exclude = substitute_all(validate_specs(
         raw.exclude.strings(),
         b"exclude",
+        base,
         &mut problems,
     ));
+    let mut validated_files = raw.files.strings();
+    validated_files.retain(|spec| {
+        let is_network_path = is_network_path_value(spec, base);
+        if is_network_path {
+            let at = ConfigLocation::TopElement(b"files", spec.clone());
+            problems.push(Problem::new(5116, &[spec], at));
+        }
+        !is_network_path
+    });
+    let references = get_project_references(&raw.references, base, &mut problems);
     let outside_options = ConfigError::from_problems(host, session, config_path, &problems);
     errors.extend(outside_options.into_iter().map(|error| ConfigError {
         is_about_options: false,
         ..error
     }));
-    let validated_files = raw.files.strings();
+    let mut problems = Vec::new();
+    options.content_mappers = content_mappers(
+        host,
+        session,
+        &raw.content_mappers,
+        &options,
+        &match config_path {
+            b"" => join(base, b"tsconfig.json"),
+            _ => config_path.to_vec(),
+        },
+        &mut problems,
+    );
+    let about_mappers = ConfigError::from_problems(host, session, config_path, &problems);
+    errors.extend(about_mappers.into_iter().map(|error| ConfigError {
+        is_about_options: false,
+        ..error
+    }));
+    if !options.content_mappers.is_empty() {
+        options.content_mapper_extension_rewrites =
+            content_mapper::extension_rewrites(&options.content_mappers, host.is_case_sensitive());
+        options.compiler_options_for_content_mappers =
+            Some(marshal_compiler_options(&compiler, config_path));
+    }
     let literal = substitute_all(validated_files.clone());
     options.file_specs = validated_files
         .into_iter()
@@ -1091,7 +1196,6 @@ fn project_from_raw(
         ));
     }
     options.files.clone_from(&files);
-    let references = get_project_references(&raw.references, base);
     Project {
         config_path: config_path.to_vec(),
         options,
@@ -1114,6 +1218,322 @@ fn project_from_raw(
             None => Vec::new(),
         },
     }
+}
+
+/// `parseContentMapper`. Returns `None` if `value` isn't an object or has an error.
+fn parse_content_mapper(value: &Json, index: usize, problems: &mut Vec<Problem>) -> Option<Mapper> {
+    value.as_object()?;
+    let reported = problems.len();
+    let mut requires = |property: &[u8], value_type: &[u8]| {
+        let at = ConfigLocation::ContentMapper(index, b"");
+        problems.push(Problem::new(5024, &[property, value_type], at));
+    };
+    let mut mapper = Mapper::default();
+    match value.get(b"package").and_then(Json::as_str) {
+        Some(package) if !package.is_empty() => mapper.package = package.to_vec(),
+        _ => requires(b"contentMapper.package", b"string"),
+    }
+    // `parseStringArrayStrict`
+    let extensions = value.get(b"extensions").and_then(Json::as_array);
+    let extensions = extensions.and_then(|list| {
+        let strings = list.iter().map(|it| it.as_str().map(<[u8]>::to_vec));
+        strings.collect::<Option<Vec<_>>>()
+    });
+    match extensions {
+        Some(extensions) => mapper.extensions = extensions,
+        None => requires(b"contentMapper.extensions", b"string[]"),
+    }
+    if let Some(outputs) = (value.get(b"outputExtensions")).filter(|it| **it != Json::Null) {
+        match string_map(outputs) {
+            Some(outputs) => mapper.output_extensions = outputs,
+            None => requires(b"contentMapper.outputExtensions", b"object or null"),
+        }
+    }
+    match value.get(b"options") {
+        Some(options @ Json::Object(_)) => mapper.options = Some(options.clone()),
+        Some(_) => requires(b"contentMapper.options", b"object"),
+        None => {}
+    }
+    (problems.len() == reported).then_some(mapper)
+}
+
+/// `parseStringStringMapStrict`. The result is sorted by source extension.
+fn string_map(value: &Json) -> Option<Vec<ExtensionRewrite>> {
+    let entries = value.as_object()?.iter().map(|(source, target)| {
+        Some(ExtensionRewrite {
+            source: source.clone(),
+            target: target.as_str()?.to_vec(),
+        })
+    });
+    let mut entries: Vec<ExtensionRewrite> = entries.collect::<Option<_>>()?;
+    // If a name is repeated, the last value counts.
+    entries.reverse();
+    entries.shared_sort_by(|a, b| a.source.cmp(&b.source));
+    entries.dedup_by(|next, first| next.source == first.source);
+    Some(entries)
+}
+
+/// The part of `parseJsonConfigFileContentWorker` about `contentMappers`. Returns the mappers that are in use. Their
+/// packages are looked up from `containing_file`, and only their `package.json` is read.
+fn content_mappers(
+    host: &dyn Host,
+    session: &Session,
+    list: &List,
+    options: &Options,
+    containing_file: &[u8],
+    problems: &mut Vec<Problem>,
+) -> Vec<Mapper> {
+    let is_case_sensitive = host.is_case_sensitive();
+    // Each mapper with its index in the list.
+    let mut mappers: Vec<(usize, Mapper)> = Vec::new();
+    for (index, element) in list.items.iter().flatten().enumerate() {
+        mappers.extend(parse_content_mapper(element, index, problems).map(|it| (index, it)));
+    }
+    let canonical = |extension: &[u8]| to_path(extension, is_case_sensitive).into_owned();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    for (index, mapper) in &mut mappers {
+        let index = *index;
+        mapper.extensions.retain(|extension| {
+            let code = if !extension.starts_with(b".") {
+                18065
+            } else if content_mapper::contains_path_separator(extension) {
+                18123
+            } else if content_mapper::has_reserved_source_extension(extension) {
+                18066
+            } else if !seen.insert(canonical(extension)) {
+                18067
+            } else {
+                return true;
+            };
+            let at = ConfigLocation::ContentMapperExtension(index, extension.clone());
+            problems.push(Problem::new(code, &[extension], at));
+            false
+        });
+        let mut report = |code: u32, extension: &[u8]| {
+            let at = ConfigLocation::ContentMapper(index, b"outputExtensions");
+            problems.push(Problem::new(code, &[extension], at));
+        };
+        for ExtensionRewrite { source, target } in &mapper.output_extensions {
+            for extension in [source, target] {
+                if content_mapper::contains_path_separator(extension) {
+                    report(18123, extension);
+                } else if !content_mapper::is_valid_extension(extension) {
+                    report(18118, extension);
+                }
+            }
+            let mut registered = mapper.extensions.iter();
+            if !registered.any(|it| canonical(it) == canonical(source)) {
+                report(18119, source);
+            }
+        }
+    }
+    if mappers.is_empty() {
+        return Vec::new();
+    }
+    // Without permission to run them, their extensions aren't registered and their files are unknown files.
+    if host.content_mapper_processes().is_none() {
+        problems.push(Problem::new(18068, &[], ConfigLocation::ContentMappersKey));
+        return Vec::new();
+    }
+    let mut resolved = Vec::new();
+    for (index, mut mapper) in mappers {
+        // `null` has no mappings, and it turns the package's off.
+        let has_own_outputs = (list.items.iter().flatten().nth(index))
+            .is_some_and(|element| element.get(b"outputExtensions").is_some());
+        if let Err(mut problem) = resolve_content_mapper_manifest(
+            host,
+            session,
+            containing_file,
+            &mut mapper,
+            has_own_outputs,
+        ) {
+            problem.at = ConfigLocation::ContentMapper(index, b"package");
+            problems.push(*problem);
+            continue;
+        }
+        for source in &mapper.extensions {
+            let target = content_mapper::output_extension(&mapper, source, is_case_sensitive);
+            let is_identity = |target: &[u8]| {
+                target == &source[..] || !is_case_sensitive && target.eq_ignore_ascii_case(source)
+            };
+            if let Some(target) = target.filter(|target| !is_identity(target))
+                && !options.rewrite_relative_import_extensions
+            {
+                let at = ConfigLocation::ContentMapper(index, b"");
+                problems.push(Problem::new(18120, &[source, target], at));
+            }
+        }
+        resolved.push(mapper);
+    }
+    resolved
+}
+
+/// `resolveContentMapperManifest`: fills in what the `package.json` of `mapper.package` says about the mapper.
+/// `has_own_outputs`: the configuration file sets `outputExtensions`, so the package's defaults don't apply.
+fn resolve_content_mapper_manifest(
+    host: &dyn Host,
+    session: &Session,
+    containing_file: &[u8],
+    mapper: &mut Mapper,
+    has_own_outputs: bool,
+) -> Result<(), Box<Problem>> {
+    let package = mapper.package.clone();
+    let error = |code: u32| Box::new(Problem::new(code, &[&package], ConfigLocation::Nowhere));
+    let directory =
+        crate::resolve::resolve_package_directory(host, session, &package, containing_file);
+    let directory = directory.ok_or_else(|| error(18075))?;
+    let contents = host.read(&join(&directory, b"package.json"));
+    let contents = contents.ok_or_else(|| error(18075))?;
+    let fields = host.parse_json(session.arena(), &contents);
+    let fields = fields.filter(|it| it.as_object().is_some());
+    let fields = fields.ok_or_else(|| error(18076))?;
+    let text = |name: &[u8]| fields.get(name).and_then(Json::as_str).unwrap_or_default();
+    if text(b"name").is_empty() {
+        return Err(error(18077));
+    }
+    let manifest = fields
+        .get(b"typescript")
+        .and_then(|it| it.get(b"contentMapper"));
+    let manifest = manifest.filter(|it| it.as_object().is_some());
+    let manifest = manifest.ok_or_else(|| error(18078))?;
+    let exec = manifest.get(b"exec").and_then(Json::as_array);
+    let exec = exec.and_then(|list| {
+        let strings = list.iter().map(|it| it.as_str().map(<[u8]>::to_vec));
+        strings.collect::<Option<Vec<_>>>()
+    });
+    let exec = exec.filter(|it| !it.is_empty());
+    let exec = exec.ok_or_else(|| error(18079))?;
+    let outputs = match manifest.get(b"outputExtensions") {
+        Some(outputs) => string_map(outputs).ok_or_else(|| error(18122))?,
+        None => Vec::new(),
+    };
+    for ExtensionRewrite { source, target } in &outputs {
+        let mut both = [source, target].into_iter();
+        if let Some(extension) = both.find(|it| content_mapper::contains_path_separator(it)) {
+            let problem = Problem::new(18123, &[extension], ConfigLocation::Nowhere);
+            return Err(Box::new(problem));
+        }
+        if !content_mapper::is_valid_extension(source)
+            || !content_mapper::is_valid_extension(target)
+        {
+            let args: [&[u8]; 3] = [&package, source, target];
+            return Err(Box::new(Problem::new(
+                18121,
+                &args,
+                ConfigLocation::Nowhere,
+            )));
+        }
+    }
+    mapper.name = text(b"name").to_vec();
+    mapper.version = text(b"version").to_vec();
+    mapper.exec = exec;
+    mapper.dynamic_config = manifest.get(b"dynamicConfig").and_then(Json::as_bool) == Some(true);
+    mapper.package_directory = directory;
+    if !has_own_outputs {
+        mapper.output_extensions = outputs;
+    }
+    Ok(())
+}
+
+/// `json.Marshal(CompilerOptions)`: `compiler` with each enum as its number, each library as its file name, and paths as
+/// they're displayed.
+fn marshal_compiler_options(compiler: &Json, config_path: &[u8]) -> Json {
+    let number_of = |name: &[u8], value: &[u8]| -> Option<f64> {
+        let values: &[(&[u8], u8)] = match name {
+            b"target" => &[
+                (b"es5", 1),
+                (b"es6", 2),
+                (b"es2015", 2),
+                (b"es2016", 3),
+                (b"es2017", 4),
+                (b"es2018", 5),
+                (b"es2019", 6),
+                (b"es2020", 7),
+                (b"es2021", 8),
+                (b"es2022", 9),
+                (b"es2023", 10),
+                (b"es2024", 11),
+                (b"es2025", 12),
+                (b"es2026", 13),
+                (b"esnext", 99),
+            ],
+            b"module" => &[
+                (b"commonjs", 1),
+                (b"amd", 2),
+                (b"umd", 3),
+                (b"system", 4),
+                (b"es6", 5),
+                (b"es2015", 5),
+                (b"es2020", 6),
+                (b"es2022", 7),
+                (b"esnext", 99),
+                (b"node16", 100),
+                (b"node18", 101),
+                (b"node20", 102),
+                (b"nodenext", 199),
+                (b"preserve", 200),
+            ],
+            b"moduleResolution" => &[
+                (b"classic", 1),
+                (b"node", 2),
+                (b"node10", 2),
+                (b"node16", 3),
+                (b"nodenext", 99),
+                (b"bundler", 100),
+            ],
+            b"jsx" => &[
+                (b"preserve", 1),
+                (b"react", 2),
+                (b"react-native", 3),
+                (b"react-jsx", 4),
+                (b"react-jsxdev", 5),
+            ],
+            b"moduleDetection" => &[(b"auto", 1), (b"legacy", 2), (b"force", 3)],
+            b"newLine" => &[(b"crlf", 1), (b"lf", 2)],
+            _ => return None,
+        };
+        let found = values.iter().find(|it| it.0 == value)?;
+        Some(f64::from(found.1))
+    };
+    let displayed = |path: &Json| match path.as_str() {
+        Some(path) => Json::String(displayed_path(path).into_owned()),
+        None => path.clone(),
+    };
+    let options = compiler.as_object().unwrap_or_default().iter();
+    let mut marshaled: Vec<(Vec<u8>, Json)> = options
+        .map(|(name, value)| {
+            let value = match value {
+                Json::String(text) if is_enum(name) => match number_of(name, text) {
+                    Some(number) => Json::Number(number),
+                    None => value.clone(),
+                },
+                Json::Array(libs) if name == b"lib" => {
+                    let file_name = |lib: &Json| match lib.as_str() {
+                        Some(lib) => {
+                            let lib = crate::resolve::lib_map_get(lib).unwrap_or(lib);
+                            Json::String([b"lib.", lib, b".d.ts"].concat())
+                        }
+                        None => lib.clone(),
+                    };
+                    Json::Array(libs.iter().map(file_name).collect())
+                }
+                Json::String(_) if is_file_path(name) || name == b"pathsBasePath" => {
+                    displayed(value)
+                }
+                Json::Array(paths) if is_file_path(name) => {
+                    Json::Array(paths.iter().map(displayed).collect())
+                }
+                _ => value.clone(),
+            };
+            (name.clone(), value)
+        })
+        .collect();
+    if !config_path.is_empty() {
+        let config_file_path = Json::String(displayed_path(config_path).into_owned());
+        marshaled.push((b"configFilePath".to_vec(), config_file_path));
+    }
+    marshaled.push((b"runExternalCode".to_vec(), Json::Bool(true)));
+    Json::Object(marshaled)
 }
 
 /// `ChangeExtension`
@@ -1172,10 +1592,9 @@ fn file_names_from_specs(
     let mut wildcard_files: Vec<Option<Vec<u8>>> = Vec::new();
     let mut wildcard_indices = crate::util::FxHashMap::<Vec<u8>, usize>::default();
     let mut wildcard_json_files = OrderedFiles::default();
-    // The key is the entry as written. The lookups below use absolute paths, so they only find an entry that's written
-    // as one.
     for name in literal {
-        literal_files.insert(key(name), join(base, name));
+        let file = join(base, name);
+        literal_files.insert(key(&file), file);
     }
     if !include.is_empty() {
         let mut extensions: Vec<&[u8]> = supported.iter().flat_map(|g| g.iter().copied()).collect();
@@ -1527,7 +1946,7 @@ impl GlobPattern {
 
 /// `unicode.ToLower`, which doesn't turn U+0130 into two characters like `char::to_lowercase` does.
 fn to_lower(c: char) -> char {
-    to_lowercase_unicode_15(c).next().unwrap_or(c)
+    c.to_lowercase().next().unwrap_or(c)
 }
 
 /// `strings.ToLower`
@@ -1627,41 +2046,25 @@ fn include_base_path(absolute: &[u8]) -> Vec<u8> {
         }
         Some(wildcard) => {
             let end = strings::last_index_of_char(&absolute[..wildcard], b'/').unwrap_or(0);
-            absolute[..end].to_vec()
+            absolute[..end.max(root_length(absolute))].to_vec()
         }
     }
 }
 
-/// `getBasePaths`: the directories to start the search from, none nested in another. A rooted include is taken as
-/// written: nothing is reduced from its first `.` or `..` on.
+/// `getBasePaths`: the directories to start the search from, none nested in another.
 fn base_paths(path: &[u8], includes: &[Vec<u8>], case_sensitive: bool) -> Vec<Vec<u8>> {
     let mut out = vec![path.to_vec()];
     let mut include_bases: Vec<Vec<u8>> = includes
         .iter()
-        .map(|include| {
-            let names = strings::split_any(include, b"/\\");
-            let reduced = names.take_while(|name| !matches!(*name, b"." | b".."));
-            let end: usize = match is_rooted_disk_path(include) {
-                true => reduced.map(|name| name.len() + 1).sum(),
-                false => include.len(),
-            };
-            let (reduced, unreduced) = include.split_at(end.min(include.len()));
-            let unreduced = strings::split_any(unreduced, b"/\\").filter(|name| !name.is_empty());
-            let absolute = unreduced.fold(join(path, reduced), |dir, name| inside(&dir, name));
-            include_base_path(&absolute)
-        })
+        .map(|include| include_base_path(&join(path, include)))
         .collect();
     if case_sensitive {
         include_bases.shared_sort();
     } else {
         include_bases.shared_sort_by(|a, b| compare_strings_case_insensitive(a, b));
     }
-    // `ContainsPath` is relative to `path` and reduces the components.
-    let contains = |parent: &[u8], child: &[u8]| {
-        contains_path(&join(path, parent), &join(path, child), case_sensitive)
-    };
     for base in include_bases {
-        if out.iter().all(|known| !contains(known, &base)) {
+        if (out.iter()).all(|known| !contains_path(known, &base, case_sensitive)) {
             out.push(base);
         }
     }

@@ -15,6 +15,7 @@ use crate::program::FileId;
 use bun_core::lexer;
 use bun_core::strings::wtf8_byte_sequence_length;
 use std::borrow::Cow;
+use std::hint::cold_path;
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -23,7 +24,10 @@ use std::borrow::Cow;
 fn white_space_len(text: &[u8], at: usize) -> usize {
     match lexer::char_and_size(text, at) {
         (0x2028 | 0x2029, size) => size,
-        (c @ 0x80.., size) if lexer::is_white_space_single_line(c) => size,
+        (c @ 0x80.., size) if lexer::is_white_space_single_line(c) => {
+            cold_path();
+            size
+        }
         _ => 0,
     }
 }
@@ -64,6 +68,54 @@ pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
         starts.push(i as u32);
     }
     starts
+}
+
+/// `strings.TrimLeftFunc(line, stringutil.IsWhiteSpaceLike)`
+fn trim_white_space_left(mut line: &[u8]) -> &[u8] {
+    loop {
+        let len = match line.first() {
+            Some(b' ' | b'\t' | 0x0B | 0x0C | b'\n' | b'\r') => 1,
+            _ => white_space_len(line, 0),
+        };
+        match len {
+            0 => return line,
+            _ => line = &line[len..],
+        }
+    }
+}
+
+/// `stripLeadingJSDocComment`
+fn strip_leading_jsdoc_comment(line: &[u8]) -> &[u8] {
+    let line = trim_white_space_left(line);
+    trim_white_space_left(line.strip_prefix(b"*").unwrap_or(line))
+}
+
+/// `GetTextOfNode` for the node of `hir` whose text without trivia is `start..end`.
+pub(super) fn text_of_node_at<'h>(hir: &'h File, start: u32, end: u32) -> Cow<'h, [u8]> {
+    let text = hir.text.get(start as usize..end as usize);
+    match hir.is_in_jsdoc(start) {
+        true => normalize_jsdoc_type_source_text(text.unwrap_or_default()),
+        false => Cow::Borrowed(text.unwrap_or_default()),
+    }
+}
+
+/// `normalizeJSDocTypeSourceText`: the text of a node in a JSDoc type. No line keeps its indentation or its `*`.
+pub fn normalize_jsdoc_type_source_text(text: &[u8]) -> Cow<'_, [u8]> {
+    let starts = compute_ecma_line_starts(text);
+    if starts.len() == 1 {
+        return Cow::Borrowed(strip_leading_jsdoc_comment(text));
+    }
+    let mut result = Vec::with_capacity(text.len());
+    for (i, &line_start) in starts.iter().enumerate() {
+        if i > 0 {
+            result.push(b'\n');
+        }
+        let line_end = line_end(text, line_start as usize);
+        result.extend_from_slice(strip_leading_jsdoc_comment(
+            &text[line_start as usize..line_end],
+        ));
+    }
+    Cow::Owned(result)
 }
 
 /// End of the line that contains `at`, before its line break.
@@ -226,6 +278,7 @@ pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
         if text[..at].ends_with(b"*/")
             && let Some(open) = bun_core::strings::last_index_of(&text[..at - 2], b"/*")
         {
+            cold_path();
             at = open;
         }
         if at == before {
@@ -1675,7 +1728,11 @@ impl Checker<'_, '_> {
             },
             NodeData::Part(Part::Body | Part::Literal, row) => self.end_of_node(file, row),
             NodeData::Part(
-                Part::Extends | Part::Implements | Part::DeclarationList | Part::CatchClause,
+                Part::Extends
+                | Part::Implements
+                | Part::DeclarationList
+                | Part::CatchClause
+                | Part::Attributes,
                 _,
             ) => {
                 let mut last = Node::NONE;
@@ -1740,6 +1797,20 @@ impl Checker<'_, '_> {
                 self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),
             ),
+            // `NodeIsMissing(errorNode)`: an element without attributes.
+            NodeData::Part(Part::Attributes, row) if hir.start(node) == 0 => {
+                let spans = self.spans(file);
+                let pos = match hir.data(row) {
+                    NodeData::Expr(e) => match hir[e].kind {
+                        ExprKind::Jsx(j) => {
+                            spans.type_args(hir[j].type_args, spans.expr(hir[j].tag))
+                        }
+                        _ => 0,
+                    },
+                    _ => 0,
+                };
+                (pos as u32, pos as u32)
+            }
             NodeData::Stmt(s) => self.error_range_of_stmt(file, s),
             NodeData::Member(m) => self.error_range_of_member(file, m),
             NodeData::Prop(_) if hir.function_of(node).is_some() => {

@@ -60,6 +60,27 @@ impl EntityNameLookup for Checker<'_, '_> {
     }
 }
 
+/// The lookups of `resolveEntityName` for a name that starts at `pos` of `file`.
+struct EntityNameAt<'a, 'p, 's> {
+    checker: &'a mut Checker<'p, 's>,
+    file: FileId,
+    pos: u32,
+}
+
+impl EntityNameLookup for EntityNameAt<'_, '_, '_> {
+    fn get_symbol(&mut self, table_symbol: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
+        self.checker.get_symbol(table_symbol, meaning)
+    }
+
+    fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
+        EntityNameLookup::resolve_alias(self.checker, alias)
+    }
+
+    fn first_name_resolved(&mut self, found: Sym, meaning: SymFlags) {
+        (self.checker).symbol_referenced(self.file, self.pos, found, meaning);
+    }
+}
+
 #[derive(Copy, Clone)]
 enum WideningKind {
     FunctionReturn,
@@ -298,16 +319,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return known;
             }
         }
-        // `checkCallExpression` checks the descriptor of
-        // `Object.defineProperty(f, "name", descriptor)` before anything requests the type of
-        // `name`: the text `reportNonexistentProperty` prints for an access in the descriptor
-        // starts the resolution.
-        let in_report = !self.reporting_nonexistent.is_empty()
-            && matches!(value_declaration, Some((file, Decl::Expando(e)))
-                if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
-        if in_report && self.stack[self.resolution_start..].contains(&Query::Symbol(sym)) {
-            return self.type_of_circular_symbol(sym, flags, value_declaration, None);
-        }
         if let Some(raw) = self.provisional(Query::Symbol(sym)) {
             return TypeId(raw as u32);
         }
@@ -334,11 +345,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return ty;
         }
-        // `checkExpressionCached` has no guard against re-entry, so the descriptor is checked again from the start.
-        let resolution_start = self.resolution_start;
-        if in_report {
-            self.resolution_start = self.stack.len() - 1;
-        }
         // `getTypeOfSymbol` tests for an accessor, then for a property, then for a method.
         let is_property =
             flags.contains(SymFlags::PROPERTY) && !flags.intersects(SymFlags::ACCESSOR);
@@ -353,7 +359,6 @@ impl<'p, 's> Checker<'p, 's> {
             _ if members.is_empty() => self.type_of_symbol_uncached(sym),
             _ => self.type_of_members_uncached(&members),
         };
-        self.resolution_start = resolution_start;
         // For `module` and `exports`, `getTypeOfVariableOrParameterOrPropertyWorker` returns
         // without `popTypeResolution`: only a `pushTypeResolution` that fails reports.
         let is_module_exports = self.files().flags(sym).contains(SymFlags::MODULE_EXPORTS);
@@ -816,6 +821,10 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Decl::Var(pat) | Decl::Param(pat) = decl {
                     return self.type_of_pat(file, pat);
                 }
+                // `getTargetOfImportClause` for `import source x from "m"`
+                if matches!(decl, Decl::ImportDefault(_)) && !flags.contains(SymFlags::ALIAS) {
+                    return self.global_ref_checked(known::AbstractModuleSource, &[]);
+                }
             }
         }
         if let Some(ty) = self.type_of_assignment_declarations(sym) {
@@ -942,6 +951,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match target_symbol {
             AliasTarget::Symbol(target) if target == sym => TypeId::ERROR,
+            // "It only makes sense to get the type of a value symbol." Only a target that's merged with another alias
+            // needs the test here.
+            AliasTarget::Symbol(target)
+                if self.files().flags(target).contains(SymFlags::ALIAS)
+                    && !self.get_symbol_flags(target).intersects(SymFlags::VALUE) =>
+            {
+                TypeId::ERROR
+            }
             target => self.type_of_alias_target(target),
         }
     }
@@ -1206,6 +1223,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return table_flags;
         }
+        cold_path();
         let mut flags = files.flags(symbol);
         let mut seen_symbols: SmallVec<[Sym; 4]> = SmallVec::new();
         while files.flags(symbol).contains(SymFlags::ALIAS)
@@ -1294,7 +1312,23 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Sym> {
         let files = self.files();
         let texts: SmallVec<[Atom; 4]> = self.hir(file).texts(names).collect();
-        let found = files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, self);
+        let first = names.iter().next();
+        let pos = first.map_or(0, |first| self.hir(file)[first].pos());
+        let mut symbols = EntityNameAt {
+            checker: self,
+            file,
+            pos,
+        };
+        let found =
+            files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, &mut symbols);
+        // A name that doesn't resolve to a namespace is looked up again, as an alias.
+        if found.is_none()
+            && texts.len() > 1
+            && let Ok(None) = self.resolve(file, scope, texts[0], SymFlags::NAMESPACE, false)
+            && let Ok(Some(alias)) = self.resolve(file, scope, texts[0], SymFlags::ALIAS, false)
+        {
+            self.symbol_referenced(file, pos, alias, SymFlags::ALIAS);
+        }
         if found.is_none() && !ignore_errors {
             self.report_unresolved_entity_name(file, scope, names, meaning);
         }
@@ -1319,18 +1353,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// The module that `getTargetOfNamespaceImport` or `getTargetOfNamespaceExport` passes to
     /// `resolveESModuleSymbol` for `alias`: `import * as ns`, `export * as ns`.
     fn module_of_namespace_import_or_export(&self, alias: Sym) -> Option<Sym> {
-        let (file, files) = (alias.file, self.files());
-        let hir = self.hir(file);
+        let files = self.files();
         let mut declarations = files.symbol(alias).decls.iter();
-        let (spec, mode) = declarations.find_map(|&decl| match decl {
-            Decl::ImportNamespace(import) => Some((hir[import].spec, hir[import].mode)),
-            Decl::ExportStarAs(statement) => match hir[statement].kind {
-                StmtKind::ExportStar { spec, mode, .. } => Some((spec, mode)),
-                _ => None,
-            },
-            _ => None,
-        })?;
-        files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))
+        let is_namespace =
+            |it: &&Decl| matches!(it, Decl::ImportNamespace(_) | Decl::ExportStarAs(_));
+        files.module_of_alias_declaration(alias.file, *declarations.find(is_namespace)?)
     }
 
     /// `resolveESModuleSymbol` for `alias`, which refers to `module`, if the result is a symbol
@@ -1376,10 +1403,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.hir(file).is_in_jsdoc(import.namespace_pos) {
             return None;
         }
-        let mode = self.files().mode_of_import(file, import.mode);
-        let module = self
-            .files()
-            .module_of_specifier_as(file, import.spec, mode)?;
+        let module = self.files().module_of_import(file, import)?;
         let symbol = self.resolve_external_module_symbol(module);
         let ty = self.type_of_alias_target(symbol);
         let files = self.files();
@@ -1492,20 +1516,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// returns a module with an `export =` whose properties the tables don't have.
     fn module_of_default_import(&self, alias: Sym) -> Option<Sym> {
         let (file, files) = (alias.file, self.files());
-        let hir = self.hir(file);
         let mut declarations = files.symbol(alias).decls.iter();
-        let (spec, mode) = declarations.find_map(|&decl| match decl {
-            Decl::ImportDefault(import) => {
-                let mode = files.mode_of_import(file, hir[import].mode);
-                Some((hir[import].spec, mode))
-            }
-            Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
-                let (spec, mode, name) = files.external_module_member_of(file, decl)?;
-                (name == known::default).then_some((spec, mode))
-            }
-            _ => None,
-        })?;
-        let module = files.module_of_specifier_as(file, spec, mode)?;
+        let is_default = |decl: &&Decl| match **decl {
+            Decl::ImportDefault(_) => true,
+            Decl::ImportSpec(_) | Decl::ExportSpec(_) => (files
+                .external_module_member_of(file, **decl))
+            .is_some_and(|it| it.2 == known::default),
+            _ => false,
+        };
+        let module = files.module_of_alias_declaration(file, *declarations.find(is_default)?)?;
         files.export(module, known::export_equals)?;
         let needs_type_lookup = SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ALIAS;
         let value = files.module_value(module);
@@ -1708,14 +1727,14 @@ impl<'p, 's> Checker<'p, 's> {
         let file = sym.file;
         let files = self.files();
         for &decl in files.symbol(sym).decls {
-            let Some((spec, mode, name)) = files.external_module_member_of(file, decl) else {
+            let Some((.., name)) = files.external_module_member_of(file, decl) else {
                 continue;
             };
             // `{ default as d }` is the default import by another spelling, but not in a binding pattern.
             if name == known::default && !matches!(decl, Decl::Require(_)) {
                 continue;
             }
-            let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
+            let Some(module) = files.module_of_alias_declaration(file, decl) else {
                 continue;
             };
             if files.module_value(module) == module {
@@ -2176,29 +2195,22 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getUndefinedProperty`. It's created once per name, from the first property it's requested
-    /// for, and keeps that property's declarations.
+    /// `getUndefinedProperty`
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
-        if let Some(cached) = self.undefined_properties.get(&prop.name) {
-            return cached.clone_in(self.arena);
-        }
         // `undefinedOrMissingType`, which isn't widened again wherever it's copied to.
         let missing = if self.p.files.options.exact_optional_property_types {
             TypeId::MISSING
         } else {
             TypeId::UNDEFINED
         };
-        let result = Prop {
+        Prop {
             name: prop.name,
             // `createSymbolWithType`
             flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
             source: Self::copy_of(missing, &[prop], true, self.arena),
             mapper: MapperId::IDENTITY,
             name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
-        };
-        self.undefined_properties
-            .insert(prop.name, result.clone_in(self.arena));
-        result
+        }
     }
 
     /// `getWidenedTypeOfObjectLiteral`
@@ -2725,7 +2737,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)
             )
             && let Some(loop_pushed_at) = {
-                self.instantiation_count = 0;
+                self.reset_instantiation_count();
                 // The resolutions of the declaration itself are right below the frame of `e`. They
                 // don't hide any loop from here on, including from the check for whether a loop has
                 // led here again.
@@ -2745,7 +2757,12 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(pushed_at) = loop_pushed_at {
                 self.taint_from(pushed_at);
             }
-            let quick = self.quick_type_of_expr(file, e);
+            // Nothing keeps the type of the callee. The check of the call checks it again.
+            let quick = if self.flow_type_cache_depth == usize::MAX {
+                self.outside_flow_loops(|c| c.quick_type_of_expr(file, e))
+            } else {
+                self.quick_type_of_expr(file, e)
+            };
             self.quick_initializers.pop();
             let _ = self.leave(Query::Expr(file, e));
             if let Some(quick) = quick {
@@ -2758,33 +2775,66 @@ impl<'p, 's> Checker<'p, 's> {
         // When nothing is being rechecked, no mode is carried, so `is_checked_type_only` tracks it
         // down from this node.
         let outside = self.type_only_node.replace((file, e));
+        let before = self.before_check_in_flow_loop();
         let ty = if self.is_rechecking() {
             self.check_expression_ex(file, e, check_mode)
         } else {
-            self.type_of_expr(file, e)
+            self.check_expression_again(file, e)
         };
-        self.check_expression_in_flow_loop(file, e);
+        // The second visit has the mode of the first, also if a recheck has led here.
+        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, check_mode);
+        self.check_expression_in_flow_loop(file, e, before);
+        self.mode_of_recheck = mode_outside;
         self.type_only_node = outside;
         ty
+    }
+
+    /// Call before `type_of_expr(e)`. Returns the arguments for `check_expression_in_flow_loop`, which visits `e` a
+    /// second time. The two are one `checkExpression` call, so the second visit finds what the first has computed.
+    pub(super) fn before_check_in_flow_loop(&mut self) -> [Option<CheckInFlowLoop>; 2] {
+        let check = CheckInFlowLoop {
+            work: self.work,
+            height: self.stack.len(),
+            reported: self.reported.len(),
+            interruptions: self.interruptions(),
+            is_second_visit: false,
+        };
+        let check = (!self.flow_loops.is_empty()).then_some(check);
+        [
+            check,
+            std::mem::replace(&mut self.check_in_flow_loop, check),
+        ]
     }
 
     /// Call after `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is
     /// dropped. While a loop is being analyzed it reports based on the types the loop has collected so far. The walk,
     /// with the final types, doesn't report those errors: `last = last.next = node` after `last === null` assigns to
     /// `never`.
-    pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
-        if !self.is_in_flow_loop() {
-            return;
+    pub(super) fn check_expression_in_flow_loop(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        [check, outer_check]: [Option<CheckInFlowLoop>; 2],
+    ) {
+        if let Some(check) = check
+            && self.is_in_flow_loop()
+        {
+            self.check_in_flow_loop = Some(CheckInFlowLoop {
+                is_second_visit: true,
+                ..check
+            });
+            let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
+            self.check_expression(file, e);
+            self.is_checking_in_flow_loop = outer;
+            // A check that was cut short hasn't reported everything. Its diagnostics stay with the frames in progress,
+            // which drop them, and the task that completes the check becomes the owner.
+            if check.interruptions == self.interruptions() {
+                self.log_reported_in_flow_loop(check.reported, file, e);
+            }
         }
-        let reported = self.reported.len();
-        let cuts = self.interruptions();
-        let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
-        self.check_expression(file, e);
-        self.is_checking_in_flow_loop = outer;
-        // A check that was cut short hasn't reported everything. Its diagnostics stay with the frames in progress,
-        // which drop them, and the task that completes the check becomes the owner.
-        if cuts == self.interruptions() {
-            self.log_reported_in_flow_loop(reported, file, e);
+        self.check_in_flow_loop = outer_check;
+        if outer_check.is_none() && !self.checked_in_flow_loop.is_empty() {
+            self.checked_in_flow_loop.clear();
         }
     }
 
@@ -2821,12 +2871,24 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if self.is_any(ty) {
-            return ty;
+            // `TypeFlagsIncludesError`: a union doesn't keep the name of an unresolved type.
+            return if self.is_error_type(ty) {
+                TypeId::ERROR
+            } else {
+                ty
+            };
         }
         // `widenTypeInferredFromInitializer` of the union of both: a default that is one of the
         // existing literals isn't widened.
         let present = self.non_undefined_type(ty);
-        let whole = self.union_reduced(&[present, default_ty]);
+        // A pattern without a declared type gets `present` from `getTypeFromBindingElement`, which
+        // doesn't cache the type of the default. tsc creates that type again here, so it has the
+        // higher id of the two and `removeSubtypes` removes it.
+        let whole = if present == self.get_widened_type(default_ty) {
+            present
+        } else {
+            self.union_reduced(&[present, default_ty])
+        };
         self.widen_type_inferred_from_initializer(file, pat, whole)
     }
 
@@ -3434,6 +3496,10 @@ impl<'p, 's> Checker<'p, 's> {
         // Which properties go into the rest, and the names of the others.
         let (mut rest_indexes, mut excluded_keys): (Vec<usize>, Vec<TypeId>) =
             (Vec::new(), Vec::new());
+        let mut omitted_names = OrderedSet::default();
+        for &name in omitted {
+            omitted_names.insert(name);
+        }
         if let Some(members) = &members {
             for (i, prop) in members.shape().props.iter().enumerate() {
                 // `getLiteralTypeFromProperty`: a property that isn't public, or is named `#name`,
@@ -3447,7 +3513,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let Some(key) = self.key_type_of_prop(apparent, prop) else {
                     continue;
                 };
-                let is_omitted = omitted.contains(&prop.name)
+                let is_omitted = omitted_names.contains(prop.name)
                     || !omitted_keys.is_never() && self.is_assignable(key, omitted_keys);
                 if !is_omitted && self.is_spreadable_property(prop) {
                     rest_indexes.push(i);
@@ -3550,7 +3616,13 @@ impl<'p, 's> Checker<'p, 's> {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
                     // The keys of a generic type are its own keys, restricted to strings.
-                    let object = self.with_flow_loops_visible(|c| c.type_of_expr(file, expr));
+                    // `checkForInStatement` checks the expression too, before or after this.
+                    let object = self.with_flow_loops_visible(|c| match c.flow_type_cache_depth {
+                        usize::MAX => {
+                            c.outside_flow_loops(|c| c.check_expression_again(file, expr))
+                        }
+                        _ => c.check_expression_again(file, expr),
+                    });
                     let object = self.non_nullable_type_if_needed(object);
                     let keys = self.keyof(object);
                     if matches!(
@@ -3730,9 +3802,13 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((ty, true)) = known {
             return ty;
         }
-        // tsgo doesn't request it here (`sig_params_of_declaration`), or requests it after every
-        // file is checked (a baseline writer).
-        if self.is_requested_eagerly(self.stack.len()) || self.is_type_checked {
+        // tsgo doesn't request it here (`sig_params_of_declaration`). A request that it does make in the meantime has
+        // to find this one.
+        if self.is_requested_eagerly(self.stack.len()) {
+            return self.resolve_type_of_pat(file, pat, Query::ParameterSymbol(file, pat));
+        }
+        // It requests it after every file is checked (a baseline writer).
+        if self.is_type_checked {
             return self.type_of_pat(file, pat);
         }
         let resolved = (self.p.resolved_parameter_symbols).get(&self.task, &(file, p));
@@ -3948,6 +4024,33 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_immediately_invoked(file, func) {
                 ty = self.widened_for_declaration(ty, Some((file, param.pat)));
             }
+            // `assignContextualParameterTypes`: a default that isn't assignable to the contextual
+            // type decides, if the contextual type is assignable to the widened type of the
+            // default. An immediately invoked function has no contextual signature.
+            if param.default.is_some()
+                && !param.flags.contains(Flags::REST)
+                && !self.is_immediately_invoked(file, func)
+            {
+                // `assignContextualParameterTypes` checks the default with no resolution pushed, so
+                // a default that refers back to the parameter reads its contextual type. Any other
+                // request for the type is one tsgo doesn't make.
+                let is_assigning = self.is_request_of_assign_parameter_type();
+                if !is_assigning {
+                    self.eager.push(self.stack.len());
+                }
+                let actual = self.type_of_declaration_initializer(file, param.default);
+                let actual = self.padded_for_pattern(file, param.pat, actual);
+                if !self.is_assignable(actual, ty) {
+                    let widened =
+                        self.widen_type_inferred_from_initializer(file, param.pat, actual);
+                    if self.is_assignable(ty, widened) {
+                        ty = widened;
+                    }
+                }
+                if !is_assigning {
+                    self.eager.pop();
+                }
+            }
             // `assignParameterType`: if the contextual type is just `unknown`, the pattern
             // determines the type.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
@@ -3968,30 +4071,6 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     ty
                 };
-            }
-            // `assignContextualParameterTypes`: a default that isn't assignable to the contextual
-            // type decides, if the contextual type is assignable to the widened type of the
-            // default. An immediately invoked function has no contextual signature.
-            if !param.flags.contains(Flags::REST) && !self.is_immediately_invoked(file, func) {
-                // `assignContextualParameterTypes` checks the default with no resolution pushed, so
-                // a default that refers back to the parameter reads its contextual type. Any other
-                // request for the type is one tsgo doesn't make.
-                let is_assigning = self.is_request_of_assign_parameter_type();
-                if !is_assigning {
-                    self.eager.push(self.stack.len());
-                }
-                let actual = self.type_of_declaration_initializer(file, param.default);
-                let actual = self.padded_for_pattern(file, param.pat, actual);
-                if !self.is_assignable(actual, ty) {
-                    let widened =
-                        self.widen_type_inferred_from_initializer(file, param.pat, actual);
-                    if self.is_assignable(ty, widened) {
-                        ty = widened;
-                    }
-                }
-                if !is_assigning {
-                    self.eager.pop();
-                }
             }
             // The types excluded by the default are removed where the parameter is read or
             // destructured.
@@ -4123,8 +4202,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `padObjectLiteralType`, `padTupleType`: `ty`, the type of the default of a parameter or of a
-    /// part of one that `pat` destructures, is padded with the members the pattern has its own
-    /// defaults for.
+    /// part of one that `pat` destructures, is padded with the members that only the pattern has.
     pub(super) fn padded_for_pattern(&mut self, file: FileId, pat: PatId, ty: TypeId) -> TypeId {
         let hir = self.hir(file);
         match hir[pat].kind {
@@ -4132,16 +4210,14 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut missing_elements = Vec::new();
                 for p in props.iter() {
                     let prop = &hir[p];
-                    if prop.default.is_none() {
+                    if prop.is_rest {
                         continue;
                     }
-                    // `getPropertyNameFromBindingElement`: `PropertyNameOrName` of a rest element
-                    // is the name it binds.
-                    let name = match (prop.key, hir[prop.value].kind) {
-                        (PropKey::None, PatKind::Ident(name)) => Some(name),
+                    // `getPropertyNameFromBindingElement`
+                    let name = match prop.key {
                         // `getLiteralTypeFromPropertyName` is `never`.
-                        (PropKey::Private(_), _) => None,
-                        (key, _) => self.member_name(file, key),
+                        PropKey::Private(_) => None,
+                        key => self.member_name(file, key),
                     };
                     if let Some(name) = name
                         && self.get_property_of_type(ty, name).is_none()
@@ -4182,7 +4258,7 @@ impl<'p, 's> Checker<'p, 's> {
                         value,
                         default,
                         IncludePatternInType::No,
-                        ReportErrors::No,
+                        ReportErrors::Yes,
                     );
                     shape.props.push(Prop {
                         name,
@@ -4448,7 +4524,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_async = f.flags.contains(Flags::ASYNC);
         let is_generator = f.flags.contains(Flags::GENERATOR);
-        let info = self.bound(file).fns[func.idx()];
         let mut ret = match f.body {
             // `getReturnTypeOfSignature`
             FnBody::None => return TypeId::ANY,
@@ -4528,7 +4603,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `checkAndAggregateYieldOperandTypes`
         let (mut yields, mut nexts) = (Vec::new(), Vec::new());
-        for e in self.bound(file).ids(info.yields) {
+        for e in self.bound(file).ids(self.bound(file).yields_of(func)) {
             let ExprKind::Yield { value, star } = hir[e].kind else {
                 continue;
             };
@@ -4746,7 +4821,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(hir[callee].kind, ExprKind::Ident(_)) || is_parenthesized(hir, callee) {
             return false;
         }
-        let ty = self.check_expression_cached_ex(file, callee, CheckMode::empty());
+        let outer = self.suspend_recheck();
+        let ty = self.outside_flow_loops(|c| c.check_expression_again(file, callee));
+        self.end_recheck(outer);
         self.is_type_of_function_symbol(ty, file, func)
             && (!matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow) || {
                 let reference = self.reference_of(file, callee);
@@ -4781,6 +4858,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => false,
         }
+    }
+
+    /// True if `checkExpressionForMutableLocation` returns `ty` in a const context and under every contextual type:
+    /// nothing in `ty` is widened or made regular. The caller then needs neither.
+    #[inline]
+    pub(super) fn is_same_in_every_location(&self, ty: TypeId) -> bool {
+        self.has_no_fresh_literal(ty) && self.types().member_flags(ty) & tf::UNIQUE_ES_SYMBOL == 0
     }
 
     /// `getWidenedLiteralLikeTypeForContextualType`: a literal type is preserved where a literal
@@ -5095,15 +5179,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn declared_property(&mut self, ty: TypeId, name: Atom) -> Option<(TypeId, bool)> {
         let (prop, mapper) = self.get_property_of_type(ty, name)?;
         let found = self.type_of_prop(prop, mapper);
-        let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-        Some((
-            if is_optional {
-                self.optional_property(found)
-            } else {
-                found
-            },
-            is_optional,
-        ))
+        Some((found, prop.flags.contains(PropFlags::OPTIONAL)))
     }
 
     /// `getTypeOfFirstParameterOfSignature`
@@ -5401,6 +5477,11 @@ impl<'p, 's> Checker<'p, 's> {
         value: ExprId,
         star: bool,
     ) -> TypeId {
+        let yield_expression_type = if value.is_some() {
+            self.type_of_expr(file, value)
+        } else {
+            self.undefined_widening()
+        };
         let Some(func) = self.containing_generator(file, e) else {
             return TypeId::ANY;
         };
@@ -5417,11 +5498,6 @@ impl<'p, 's> Checker<'p, 's> {
         let iteration_types = match return_type {
             Some(it) => self.iteration_type_of_generator_function_return_type(it, is_async),
             None => Iter3::default(),
-        };
-        let yield_expression_type = if value.is_some() {
-            self.type_of_expr(file, value)
-        } else {
-            self.undefined_widening()
         };
         let yielded_type = self.get_yielded_type_of_yield_expression(
             file,
@@ -5507,7 +5583,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The generator function that contains the `yield` expression `e`. Without one,
-    /// `checkYieldExpression` returns `any` immediately.
+    /// `checkYieldExpression` returns `any`.
     pub(super) fn containing_generator(&self, file: FileId, e: ExprId) -> Option<FnId> {
         self.get_containing_function(file, e)
             .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))
@@ -5785,21 +5861,21 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         if let Some(error_node) = error_node {
             let mut callback = Reported::bare(error_node, type_not_iterable_code(allows_async));
-            callback.deferred = Some(super::sink::TypeNotIterable {
+            callback.deferred = Some(Deferred::TypeNotIterable(TypeNotIterable {
                 ty,
                 allows_async,
                 is_for_of_expression: for_of,
-            });
+            }));
             callback.related_information = diags;
             self.add_deferred_diagnostic(callback);
         }
     }
 
-    /// `produceDeferredDiagnostics`, for the callbacks of `report_type_not_iterable`. No query is
-    /// in progress, so the task's callbacks are in `reported` and those of queries are in
+    /// `produceDeferredDiagnostics`, for the callbacks whose message prints a type. No query is in
+    /// progress, so the task's callbacks are in `reported` and those of queries are in
     /// `task.diagnostics`. `logged` is the length of `task.diagnostics` when
     /// `save_deferred_diagnostics` was set.
-    pub(super) fn produce_type_not_iterable_errors(&mut self, logged: usize) {
+    pub(super) fn call_deferred_diagnostics(&mut self, logged: usize) {
         self.save_deferred_diagnostics = false;
         for i in 0..self.reported.len() {
             if self.reported[i].deferred.is_some() {
@@ -5807,18 +5883,26 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reported[i] = diagnostic;
             }
         }
+        self.reported.retain(|it| !it.is_placeholder());
         for i in logged..self.task.diagnostics.len() {
             if self.task.diagnostics[i].1.deferred.is_some() {
                 let diagnostic = self.call_deferred_diagnostic(self.task.diagnostics[i].1.clone());
                 self.task.diagnostics[i].1 = diagnostic;
             }
         }
+        self.non_existent_properties.clear();
     }
 
-    /// Calls `callback` and returns it as the diagnostic.
+    /// Calls `callback` and returns it as the diagnostic, or a placeholder if it reports nothing.
     fn call_deferred_diagnostic(&mut self, mut callback: Reported) -> Reported {
-        let Some(deferred) = callback.deferred.take() else {
-            return callback;
+        let deferred = match callback.deferred.take() {
+            Some(Deferred::TypeNotIterable(deferred)) => deferred,
+            Some(Deferred::NonexistentProperty(deferred)) => {
+                let at = (callback.file, callback.start);
+                let diagnostic = self.nonexistent_property_error(at, deferred);
+                return diagnostic.unwrap_or_else(Reported::placeholder);
+            }
+            None => return callback,
         };
         let diagnostic = self.type_not_iterable_error(
             (callback.file, callback.start, callback.end),

@@ -117,6 +117,11 @@ bun run <file or script>
   Type check before running. Nothing runs if there are type errors. See <a href="/runtime/check">bun check</a>
 </ParamField>
 
+<ParamField path="--runExternalCode" type="boolean">
+  With <code>--check</code>: run the programs from <code>node_modules</code> that <code>contentMappers</code> in
+  tsconfig.json lists. See <a href="/runtime/check#vue-svelte-astro-and-other-file-types">content mappers</a>
+</ParamField>
+
 <ParamField path="--watch" type="boolean">
   Automatically restart the process on file change
 </ParamField>

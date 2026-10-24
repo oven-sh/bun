@@ -2,7 +2,7 @@
 //! 2860 2861, 7057, and 2364 for `=`.
 //!
 //! Mirrors `checkAssignmentOperator` for `=`, `checkAssertion`, `checkSatisfiesExpression`, `checkTemplateExpression`,
-//! `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.0.2's
+//! `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.1's
 //! checker.go, and `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` in its grammarchecks.go.
 
 use super::*;
@@ -72,7 +72,7 @@ pub(super) fn check_grammar_rest_element(
 /// `GetEmitScriptTarget`: defaults to the latest standard.
 pub(super) fn language_version(c: &Checker<'_, '_>) -> ScriptTarget {
     match c.p.files.options.target {
-        ScriptTarget::None => ScriptTarget::ES2025,
+        ScriptTarget::None => ScriptTarget::ES2026,
         reported => reported,
     }
 }
@@ -228,7 +228,10 @@ pub(super) fn check_instance_of_expression(
     left: ExprId,
     right: ExprId,
 ) {
-    let l = c.type_of_expr(file, left);
+    let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
+    if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
+        return;
+    }
     if !c.is_any(l) && c.is_all_assignable_to_primitives(l) {
         c.error(file, c.hir(file).child(left), 2358, &[]);
     }

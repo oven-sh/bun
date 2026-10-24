@@ -1,13 +1,13 @@
 //! Aliases, module specifier resolution, and a few file-level checks:
 //! 2303; 18042 18043; 1205 1269 1288 1293 1448 1484 1485 2748 2865; 2866; 1272; 1379 1380; 2308;
-//! 1544; 6137 6142 7042 2846 5097 2876 2877 2878, 1471 1479 1541 1542; 7036; 1470 17013; 1006;
-//! 2578. `resolve_alias` reports 2303 and `check_target_of_alias_declaration` reports 1544. Both are called from here.
+//! 1544; 6137 6142 7042 2846 5097 2876 2877 2878, 1471 1479 1541 1542; 7036; 1470 17013; 2578.
+//! `resolve_alias` reports 2303 and `check_target_of_alias_declaration` reports 1544. Both are called from here.
 //!
 //! Mirrors `checkAliasSymbol`, `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`,
 //! `getExportsOfModuleWorker`, `getExternalModuleMember`, `resolveExternalModule`, `checkImportCallExpression`,
-//! `checkConstEnumAccess`, `checkNewTargetMetaProperty` and `checkImportMetaProperty` in TypeScript 7.0.2's checker.go,
-//! `getSourceFileFromReference` in its fileloader.go, `getBindAndCheckDiagnosticsWithChecker` and
-//! `GetIncludeProcessorDiagnostics` in its program.go, and `processCommentDirective` in its scanner.go.
+//! `checkConstEnumAccess`, `checkNewTargetMetaProperty` and `checkImportMetaProperty` in TypeScript 7.1's checker.go,
+//! `getBindAndCheckDiagnosticsWithChecker` and `GetIncludeProcessorDiagnostics` in its program.go, and
+//! `processCommentDirective` in its scanner.go.
 //!
 //! Comment directives: `Directives` determines which directive suppresses a diagnostic, `expected_errors` creates the
 //! TS2578 for each `@ts-expect-error`, and `Program::finish_file` drops those whose directive was used.
@@ -17,11 +17,11 @@ use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
+use crate::content_mapper::{extension_rewrite, rewrite_extension, should_rewrite_extension};
 use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
-    has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
-    try_extract_ts_extension,
+    is_declaration_file_name, path_is_relative, try_extract_ts_extension,
 };
 use crate::util::SharedSort;
 use crate::verify::relative_from_file;
@@ -48,6 +48,8 @@ pub(super) struct SpecifierSite {
     pub(super) is_for_augmentation: bool,
     /// `moduleNotFoundError == nil`: the name of an augmentation in an ambient context.
     pub(super) is_not_validated: bool,
+    /// The second argument of `import()`.
+    pub(super) import_call_options: Option<ExprId>,
 }
 
 /// `directivesByLine` of a file that has comment directives.
@@ -121,25 +123,10 @@ impl Checker<'_, '_> {
         if hir.has_errors || hir.kind == FileKind::Json || hir.text.is_empty() {
             return;
         }
-        self.aliases_self_references(file);
         self.aliases_imports_hiding_global_values(file);
         self.aliases_decorator_metadata(file);
         self.aliases_export_star_conflicts(file);
         self.aliases_expressions(file);
-    }
-
-    /// `getSourceFileFromReference`: 1006
-    fn aliases_self_references(&mut self, file: FileId) {
-        let files = self.files();
-        let path = files.module(file).file_name();
-        for &(kind, value, start, _) in &self.hir(file).references {
-            if kind == ReferenceKind::Path
-                && join(dirname::<Posix>(path), self.atoms().bytes(value)) == path
-            {
-                let end = start + self.atoms().bytes(value).len() as u32;
-                self.error_at((file, start, end), 1006, &[]);
-            }
-        }
     }
 
     // ───────────────────────────── error ranges ─────────────────────────────
@@ -215,92 +202,10 @@ impl Checker<'_, '_> {
     // ───────────────────────────── diagnostics reported during emit ─────────────────────────────
 
     /// True if `Emit` comes before the check (`Options::emits_first`). Under `noEmitOnError` it begins with the check
-    /// itself (`HandleNoEmitOnError`).
+    /// itself (`HandleNoEmitOptions`).
     pub(super) fn emits_first(&self) -> bool {
         let options = &self.p.files.options;
         options.emits_first && !options.no_emit_on_error
-    }
-
-    /// `emitJSFile`, `sourceFileMayBeEmitted`: true if `file` is TypeScript that's emitted as JavaScript. Whether
-    /// JavaScript is emitted depends on `outDir`.
-    pub(super) fn emits_js_file(&self, file: FileId) -> bool {
-        let (files, hir) = (self.files(), self.hir(file));
-        let (options, module) = (&files.options, files.module(file));
-        !options.no_emit
-            && !options.emit_declaration_only
-            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
-            && !hir.is_js
-            && !module.is_from_external_library
-    }
-
-    /// `markPropertyAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every `a.b` in the file:
-    /// `checkExpressionCached(a)`, before `ConstEnumInliningTransformer` checks any access.
-    pub(super) fn mark_property_aliases_referenced(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `importElisionEnabled`. Under `GetIsolatedModules` it returns before it requests a type.
-        if !self.emits_js_file(file) || self.p.files.options.isolated_modules {
-            return;
-        }
-        let index = self.exprs_by_kind(file);
-        let mut lefts: Vec<ExprId> = (index.of(ExprTag::Dot).iter())
-            .filter_map(|&e| match hir[e].kind {
-                ExprKind::Dot { obj, .. }
-                    if matches!(hir[obj].kind, ExprKind::Ident(_))
-                        && !is_parenthesized(hir, obj)
-                        && !bound.is_unchecked(e.idx())
-                        && !bound.is_in_type_query(e)
-                        && !hir.is_ambient(hir.node(e)) =>
-                {
-                    Some(obj)
-                }
-                _ => None,
-            })
-            .collect();
-        lefts.shared_sort_unstable_by_key(|&left| hir[left].pos);
-        for left in lefts {
-            let parameter = self.unassigned_parameter_read_by(file, left);
-            self.type_of_expr(file, left);
-            // `getTypeOfVariableOrParameterOrProperty` has pushed the parameter's resolution, and
-            // `getContextuallyTypedParameterType` resolves the call around the function, where `assignParameterType`
-            // sets the parameter's type. Then it reads the signature that the call resolved to, outside the inference.
-            // `widenTypeForVariableLikeDeclaration` reports a parameter that gets no type from there, and the result
-            // isn't stored.
-            if let Some((func, pat)) = parameter
-                && self.contextual_signature(file, func).is_none()
-                && !self.is_private_within_ambient(file, func)
-            {
-                self.report_implicit_any_of_name(file, pat, TypeId::ANY);
-            }
-        }
-    }
-
-    /// The function and the name of the parameter that the identifier `e` reads, if the parameter's
-    /// `links.resolvedType` is nil and only `assignParameterType` assigns it
-    /// (`isParameterOfContextSensitiveSignature`).
-    fn unassigned_parameter_read_by(&mut self, file: FileId, e: ExprId) -> Option<(FnId, PatId)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = bound.symbol_of_expr(e);
-        if symbol.is_none() {
-            return None;
-        }
-        let Some(&Decl::Param(pat)) = bound.symbol(symbol).decls.first() else {
-            return None;
-        };
-        let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
-            return None;
-        };
-        let func = bound.param_fn[p.idx()];
-        if func.is_none() {
-            return None;
-        }
-        let owner = self.takes_context(file, func)?;
-        let is_untyped =
-            hir[p].ty.is_none() && hir[p].default.is_none() && !hir[p].flags.contains(Flags::REST);
-        (is_untyped
-            && self.is_context_sensitive_function_or_method(file, func, owner)
-            && !self.is_immediately_invoked(file, func)
-            && (self.p.pat_types.get(&self.task, &(file, pat))).is_none())
-        .then_some((func, pat))
     }
 
     /// `ConstEnumInliningTransformer`, the last transformer of `emitJSFile`: `GetConstantValue` calls
@@ -310,7 +215,6 @@ impl Checker<'_, '_> {
     /// function, so a cycle is entered at a different point. JavaScript files are skipped, because whether one is
     /// emitted depends on `outDir`. tsgo emits all the files and then checks them. Here it's done file by file.
     pub(super) fn inline_const_enums(&mut self, file: FileId) {
-        self.cached_by_emit.clear();
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let (options, module) = (&files.options, files.module(file));
         // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
@@ -346,20 +250,6 @@ impl Checker<'_, '_> {
         // If two start at the same position, the outer one was created last.
         accesses.shared_sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
         for e in accesses {
-            let is_computed_name = matches!(
-                bound.parent_of_expr(e),
-                Parent::PropKey(..)
-                    | Parent::PatKey(_)
-                    | Parent::MemberKey(_)
-                    | Parent::MethodKey(_)
-            );
-            if is_computed_name
-                && !is_parenthesized(hir, e)
-                && !is_erased(hir, hir.node(e))
-                && self.cached_type_of_expr(file, e).is_none()
-            {
-                self.cached_by_emit.push(e);
-            }
             self.type_of_expr(file, e);
         }
     }
@@ -418,9 +308,7 @@ impl Checker<'_, '_> {
             .take(files.rank_of_file(file) as usize + 1);
         self.are_module_exports_checked(module, file)
             || checked.copied().any(|other| {
-                // A leaf's data is freed after its task.
-                (other == file || !files.module(other).is_leaf)
-                    && self.is_checked_no_later_than(other, file)
+                self.is_checked_no_later_than(other, file)
                     && self.has_alias_from_exports_of_module(other, module)
             })
     }
@@ -428,22 +316,16 @@ impl Checker<'_, '_> {
     /// True if the target of an alias in `file` is looked up in `getExportsOfModule(module)`, either by
     /// `getExternalModuleMember` or by `resolveESModuleSymbol` for `import * as ns`.
     fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
-        let (files, hir) = (self.files(), self.hir(file));
+        let files = self.files();
         let aliases = self.bound(file).symbols.with_flags(SymFlags::ALIAS);
         aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
-            let specifier = match decl {
-                Decl::ImportNamespace(import) => {
-                    let import = &hir[import];
-                    Some((import.spec, files.mode_of_import(file, import.mode)))
-                }
+            let reads_exports = match decl {
+                Decl::ImportNamespace(_) => true,
                 // `{ default as d }` is another syntax for the default import, except in a binding pattern.
                 _ => (files.external_module_member_of(file, decl))
-                    .filter(|it| it.2 != known::default || matches!(decl, Decl::Require(_)))
-                    .map(|it| (it.0, it.1)),
+                    .is_some_and(|it| it.2 != known::default || matches!(decl, Decl::Require(_))),
             };
-            specifier.is_some_and(|(spec, mode)| {
-                files.module_of_specifier_as(file, spec, mode) == Some(module)
-            })
+            reads_exports && files.module_of_alias_declaration(file, decl) == Some(module)
         })
     }
 
@@ -700,13 +582,13 @@ impl Checker<'_, '_> {
             }
         }
         let is_import_equals = matches!(decl, Decl::ImportEquals(_));
-        let is_variable_declaration = matches!(decl, Decl::Require(pat)
-            if matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)));
+        // `IsVariableDeclaration(node) || IsBindingElement(node)`
+        let is_require = matches!(decl, Decl::Require(_));
         if !is_import_equals && self.modules_emits_commonjs(file) {
             if is_verbatim && !hir.is_js {
                 let code = self.verbatim_module_syntax_error_message(file);
                 self.error_at(at, code, &[]);
-            } else if options.module == ModuleKind::Preserve && !is_variable_declaration {
+            } else if options.module == ModuleKind::Preserve && !is_require {
                 self.error_at(at, 1293, &[]);
             }
         }
@@ -792,19 +674,7 @@ impl Checker<'_, '_> {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
             };
-            // `checkExportAssignment`: a name that isn't a value isn't checked as an expression.
-            let is_checked = match bound.parent_of_expr(e) {
-                Parent::None => false,
-                Parent::Stmt(s) if s.is_some() => {
-                    is_parenthesized(hir, e)
-                        || !matches!(
-                            hir[s].kind,
-                            StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                        )
-                }
-                _ => true,
-            };
-            if !is_checked || hir.is_in_with(hir[e].pos) {
+            if matches!(bound.parent_of_expr(e), Parent::None) || hir.is_in_with(hir[e].pos) {
                 continue;
             }
             if let Some(result) = files.resolve_name(file, scope, name, SymFlags::VALUE) {
@@ -1082,6 +952,10 @@ impl Checker<'_, '_> {
         specifier_use: SpecifierUse,
         site: SpecifierSite,
     ) -> bool {
+        // `resolveExternalModuleNameWorker`
+        if specifier_use.kind.is_source_phase() {
+            return false;
+        }
         let at = self.span_of_token(file, specifier_use.pos);
         self.resolve_external_module_at(file, specifier_use, site, at, None)
     }
@@ -1119,13 +993,22 @@ impl Checker<'_, '_> {
         if let Some(without_prefix) = text.strip_prefix(b"@types/") {
             self.error_at(at, 6137, &[Arg::Bytes(without_prefix), Arg::Atom(spec)]);
         }
-        // A module that isn't a file comes from `tryFindAmbientModule`, or there's no file and it's one of
-        // `patternAmbientModules`.
-        let found = files.module_of_specifier_as(file, spec, mode);
-        if found.is_some_and(|m| !self.modules_is_a_file(m)) {
+        let attributes = match site.import_call_options {
+            Some(options) => self.attributes_of_import_call(file, options),
+            None => {
+                let attributes = self.hir(file).attributes_after_specifier(start);
+                files.import_attributes(file, attributes)
+            }
+        };
+        let found = files.module_of_specifier_with(file, spec, mode, &attributes);
+        let target = importing.imports.get(&key);
+        // A module that isn't a file comes from `tryFindAmbientModule`, or it's one of `patternAmbientModules`, which
+        // are looked at after the file.
+        if found.is_some_and(|m| !self.modules_is_a_file(m))
+            && (target.is_none() || files.try_find_ambient_module(spec).is_some())
+        {
             return true;
         }
-        let target = importing.imports.get(&key);
         // `ResolvedFileName`, looked up in a table that only has it for some specifiers.
         let resolved_file_name_in = |table: &[(Atom, ResolutionMode, Atom)]| {
             let mut table = table.iter();
@@ -1144,6 +1027,12 @@ impl Checker<'_, '_> {
                 Some(path) => self.atoms().bytes(path),
                 None => target.file_name(),
             };
+            let rewrites = &options.content_mapper_extension_rewrites[..];
+            // `checkDeclarationRewrite`: the declaration file gets the rewritten specifier, even of a type-only import.
+            let checks_declaration_rewrite = options.emits_declarations
+                && rewrite_extension(text, rewrites, files.is_case_sensitive).is_some()
+                && path_is_relative(text)
+                && importing.hir.kind != FileKind::Declaration;
             // `ResolvedUsingTsExtension`
             let using_ts_extension = importing.ts_extension_imports.contains(&key);
             let is_declaration_name = (using_ts_extension
@@ -1181,14 +1070,21 @@ impl Checker<'_, '_> {
                     self.error_at(at, 5097, &[Arg::Bytes(extension.unwrap_or(b""))]);
                 }
             } else if options.rewrite_relative_import_extensions
-                && !site.is_ambient
+                && (!site.is_ambient || checks_declaration_rewrite)
                 && !is_declaration_name
-                && kind != SpecifierKind::ImportType
-                && !site.is_type_only
+                && (kind != SpecifierKind::ImportType && !site.is_type_only
+                    || checks_declaration_rewrite)
             {
-                // `ShouldRewriteModuleSpecifier`
                 let should_rewrite =
-                    path_is_relative(text) && has_ts_implementation_extension(text);
+                    should_rewrite_extension(text, rewrites, files.is_case_sensitive);
+                let mapped_source = (target.content_mapped)
+                    .and_then(|_| {
+                        extension_rewrite(target.file_name(), rewrites, files.is_case_sensitive)
+                    })
+                    .filter(|it| it.source != it.target);
+                // `resolvedUsingRewritableExtension`
+                let using_ts_extension = using_ts_extension
+                    || mapped_source.is_some() && importing.extra_extension_imports.contains(&key);
                 if !using_ts_extension && should_rewrite {
                     let path = relative_from_file(
                         importing.file_name(),
@@ -1198,13 +1094,15 @@ impl Checker<'_, '_> {
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension
                     && !should_rewrite
-                    && source_file_may_be_emitted(options, target, files.is_case_sensitive)
+                    && (mapped_source.is_some()
+                        || source_file_may_be_emitted(options, target, files.is_case_sensitive))
                 {
                     // `GetAnyExtensionFromPath`
                     let base =
                         &text[strings::last_index_of_char(text, b'/').map_or(0, |i| i + 1)..];
                     let extension =
                         strings::last_index_of_char(base, b'.').map_or(&b""[..], |i| &base[i..]);
+                    let extension = mapped_source.map_or(extension, |it| &it.source);
                     self.error_at(at, 2877, &[Arg::Bytes(extension)]);
                 } else if using_ts_extension
                     && should_rewrite
@@ -1231,6 +1129,9 @@ impl Checker<'_, '_> {
                 }
             }
             if !target.is_module() {
+                if found.is_some() {
+                    return true;
+                }
                 if !is_side_effect && !site.is_not_validated {
                     self.error_at(at, 2306, &[Arg::Path(resolved_file_name)]);
                 }
@@ -1480,22 +1381,6 @@ impl Checker<'_, '_> {
     }
 }
 
-/// True if `TypeEraserTransformer` drops something around `node`: an ambient node, a type, an overload, an abstract
-/// member. A non-abstract accessor without a body gets a body.
-fn is_erased(hir: &hir::File, node: Node) -> bool {
-    let is_dropped = |ancestor: Node| {
-        let is_abstract = hir.flags(ancestor).contains(Flags::ABSTRACT);
-        match hir.fns.get(hir.function_of(ancestor).idx()) {
-            Some(function) => {
-                matches!(function.body, FnBody::None)
-                    && (is_abstract || !matches!(function.kind, FnKind::Getter | FnKind::Setter))
-            }
-            None => is_abstract && matches!(hir.data(ancestor), NodeData::Member(_)),
-        }
-    };
-    hir.is_in_ambient_or_type_node(node) || hir.find_ancestor(node, is_dropped).is_some()
-}
-
 /// `GetCommonSourceDirectory` without the trailing `/`, for a project that has a configuration file, which every
 /// project that references another one or is referenced does.
 fn common_source_directory(options: &Options) -> &[u8] {
@@ -1518,14 +1403,15 @@ fn eat(text: &[u8], at: usize, c: u8) -> Option<usize> {
     (text.get(at) == Some(&c)).then_some(at + 1)
 }
 
-/// The end offset of the invalid meta-property `import.<name>` at `pos`, where `<name>` is neither `meta` nor `defer`.
-/// The parser lowers it to `ExprKind::Missing`, whose `end` doesn't cover the name.
+/// The end offset of the invalid meta-property `import.<name>` at `pos`, where `<name>` is none of `meta`, `defer` and
+/// `source`. The parser lowers it to `ExprKind::Missing`, whose `end` doesn't cover the name.
 fn other_import_meta_property_end(text: &[u8], pos: u32) -> Option<u32> {
     let dot_end = eat_word(text, pos as usize, b"import").and_then(|end| eat(text, end, b'.'))?;
     let name = skip_trivia(text, dot_end);
-    eat_word(text, name, b"defer")
-        .is_none()
-        .then(|| word_end(text, name) as u32)
+    let is_phase = [&b"defer"[..], b"source"]
+        .iter()
+        .any(|word| is_word_at(text, name, word));
+    (!is_phase).then(|| word_end(text, name) as u32)
 }
 
 /// The string literal at `at`: the raw text between the quotes, and its end.

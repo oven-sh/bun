@@ -22,6 +22,7 @@ use crate::util::memory::{Cells, FixedCells, Zeroed};
 use crate::util::{AppendVec, Windowed, WindowedMap, spread_hash, spread_in_window};
 use std::alloc::{Allocator, Global};
 use std::hash::Hash;
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -148,6 +149,23 @@ impl Packed for () {
     }
     #[inline]
     fn unpack(_: u32) {}
+}
+
+/// A set of up to four flags. Flags are only ever added.
+#[derive(Copy, Clone)]
+pub struct FourFlags(u8);
+
+impl Packed for FourFlags {
+    type Cell = AtomicU32;
+    const BITS: u32 = 4;
+    #[inline]
+    fn pack(self) -> u32 {
+        u32::from(self.0)
+    }
+    #[inline]
+    fn unpack(raw: u32) -> FourFlags {
+        FourFlags(raw as u8)
+    }
 }
 
 impl Packed for u8 {
@@ -734,6 +752,39 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, Frozen, A> {
     }
 }
 
+impl<K: NodeKey, A: Alloc> ByNode<K, FourFlags, Frozen, A> {
+    #[inline]
+    pub fn flags(&self, key: K) -> u8 {
+        self.get(&key).map_or(0, |flags| flags.0)
+    }
+
+    /// The flags of every key of `file`, in order.
+    pub fn flags_in(&self, file: FileId) -> Vec<u8> {
+        let keys = self.bases.range_of(file);
+        let mut flags = vec![0; keys.len()];
+        let cells = keys.start / Self::PER_CELL..keys.end.div_ceil(Self::PER_CELL);
+        for (cell, sets) in self.cells.written_in(cells) {
+            let (first, mut sets) = (cell * Self::PER_CELL, Cell::load(sets));
+            while sets != 0 {
+                let at = first + (sets.trailing_zeros() / FourFlags::BITS) as usize;
+                if keys.contains(&at) {
+                    flags[at - keys.start] = (sets >> Self::cell_and_shift(at).1) as u8 & 15;
+                }
+                sets &= !(15 << Self::cell_and_shift(at).1);
+            }
+        }
+        flags
+    }
+
+    /// Any thread may call it at any time. As with `get`, the caller orders it before another thread's read.
+    #[inline]
+    pub fn add(&self, key: K, flags: u8) {
+        if let Some((cell, shift)) = self.field(key) {
+            cell.fetch_or(u32::from(flags) << shift, Ordering::Relaxed);
+        }
+    }
+}
+
 impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
     #[inline]
     pub fn get_ref(&self, key: &K) -> Option<&T> {
@@ -912,7 +963,10 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             return buffer.in_row(slot, file, index).unwrap_or(0);
         }
         match self.seen(task, file, index) {
-            (0, at) => buffer.node_anywhere(slot, file, index, at),
+            (0, at) => {
+                cold_path();
+                buffer.node_anywhere(slot, file, index, at)
+            }
             (raw, _) => raw,
         }
     }
@@ -1022,10 +1076,23 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         V::unpack(self.put(task, key.file().0, key.index(), value.pack(), false))
     }
 
+    #[inline]
     pub fn rewrite(&self, task: &Task, key: K, value: V, _: Stored) -> V {
-        if key.index() != u32::MAX {
-            self.put(task, key.file().0, key.index(), value.pack(), true);
+        let (file, index, slot, buffer) =
+            (key.file().0, key.index(), self.own_slot(), task.buffer());
+        if index == u32::MAX {
+            return value;
         }
+        // FOR SPEED: what `put` does for nearly every expression.
+        if W::KEEPS_VISITED_FILE_LOCAL
+            && file == buffer.file()
+            && buffer.has_whole_row(slot, file)
+            && !buffer.has_seeds(slot)
+        {
+            *buffer.cell_in_row(slot, index) = value.pack();
+            return value;
+        }
+        self.put(task, file, index, value.pack(), true);
         value
     }
 }
@@ -1134,6 +1201,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
                 }
                 return self.put_value_immediately(task, key, value);
             }
+            cold_path();
             task.hold_back();
         }
         self.insert_in_task(task, key, value)
@@ -1364,6 +1432,7 @@ where
         // If the task already has a deferred entry under the key, it keeps using that one.
         let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
         if !task.may_write_immediately(self.slot.number(), stored) || own().is_some() {
+            cold_path();
             task.hold_back();
             return Err(true);
         }

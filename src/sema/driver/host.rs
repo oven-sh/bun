@@ -13,8 +13,10 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
+use bun_sema::content_mapper::Processes;
+pub use bun_sema::content_mapper::{Call, CallError, Connection, Mapper, Transport};
 use bun_sema::hir;
-use bun_sema::json::Json;
+pub use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
     case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
@@ -279,6 +281,8 @@ pub struct Disk {
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
+    /// `Host::content_mapper_processes`
+    pub(crate) content_mapper_processes: Option<Processes>,
 }
 
 /// The text of files that the check's caller has already read, by path in the checker's format, as UTF-8, without a
@@ -306,6 +310,10 @@ pub struct Provided {
     /// that continues, like one that calls `Bun.build`, watches files, or runs a program or tests after the check. See
     /// `Session::drop_before_the_process_ends`.
     pub ends_the_process: bool,
+    /// `--runExternalCode`: starts the content mappers that configuration files list, and talks to them. `None`: no
+    /// content mapper runs. Only a flag that a person typed on the command line may set this, or the caller of
+    /// `Bun.build`.
+    pub content_mapper_transport: Option<Box<dyn Transport>>,
 }
 
 /// For one directory, the names of the `AlreadyRead` files in it and of its subdirectories that lead to such files.
@@ -522,6 +530,7 @@ impl Disk {
             script_kinds_by_extension: Vec::new(),
             before_read: None,
             scripts_of_page: None,
+            content_mapper_processes: None,
         }
     }
 
@@ -1115,7 +1124,7 @@ impl Expected {
     }
 }
 
-/// `unmarshalJSONValueV2`. Returns `None` if `strconv.ParseFloat` returns `ErrRange` for a number, or if the stack,
+/// `unmarshalJSONValueFrom`. Returns `None` if `strconv.ParseFloat` returns `ErrRange` for a number, or if the stack,
 /// which grows in Go, is exhausted.
 fn unmarshal_json_value(value: &JsonValue, has_duplicates: bool) -> Option<Json> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
@@ -1229,6 +1238,51 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     unmarshal_fields(root.get(), log.warnings > 0)
 }
 
+/// `Connection::receive` with this crate's JSON parser.
+pub fn receive_from_content_mapper(
+    connection: &Connection,
+    bytes: &[u8],
+) -> Result<Vec<u8>, CallError> {
+    connection.receive(bytes, &|text| {
+        parse_json_with(&Arena::new(), text, DuplicateNames::Rejected)
+    })
+}
+
+/// `json.AllowDuplicateNames`
+#[derive(Copy, Clone, PartialEq)]
+enum DuplicateNames {
+    Allowed,
+    Rejected,
+}
+
+/// `Host::parse_json`
+fn parse_json(arena: &Arena, text: &[u8]) -> Option<Json> {
+    parse_json_with(arena, text, DuplicateNames::Allowed)
+}
+
+fn parse_json_with(arena: &Arena, text: &[u8], duplicate_names: DuplicateNames) -> Option<Json> {
+    use bun_parsers::json::ParsedJson;
+    if !is_valid(text) {
+        return None;
+    }
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(b"value.json".as_slice(), text);
+    let mut log = bun_ast::Log::init();
+    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
+    let root = match parsed.root.data {
+        bun_ast::expr::Data::EObjectJSON(object) => JsonValue::Object(object),
+        bun_ast::expr::Data::EArrayJSON(array) => JsonValue::Array(array),
+        _ => return None,
+    };
+    // The only warning is about a duplicate key.
+    let has_duplicates = log.warnings > 0;
+    if has_duplicates && duplicate_names == DuplicateNames::Rejected {
+        return None;
+    }
+    unmarshal_json_value(&root, has_duplicates)
+}
+
 /// The disk, for a few queries across many directories. Each query is a system call, and no directory is listed or
 /// cached for it. A `Disk` lists the directory of whatever it's queried about, which pays off when most of the
 /// directory is queried.
@@ -1319,6 +1373,9 @@ impl Host for UncachedDisk<'_> {
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)
+    }
+    fn parse_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
+        parse_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         (0..count).for_each(work);
@@ -1488,6 +1545,12 @@ impl Host for Disk {
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)
+    }
+    fn parse_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
+        parse_json(arena, text)
+    }
+    fn content_mapper_processes(&self) -> Option<&Processes> {
+        self.content_mapper_processes.as_ref()
     }
     fn loaded(&self) {
         // With shares, the threads continue with the next program's files, so they keep the parser's caches.

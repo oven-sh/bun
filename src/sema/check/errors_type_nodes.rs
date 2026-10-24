@@ -3,7 +3,7 @@
 //! expressions), 2536 4105 (`T[K]`), and 2514 for `T[-1]` through `type_from_node`.
 //!
 //! Mirrors `checkTupleType`, `checkInferType`, `checkTypeAliasDeclaration`, `checkPropertySignature`,
-//! `checkMethodDeclaration`, `checkIndexedAccessIndexType` and `checkExpressionWithTypeArguments` in TypeScript 7.0.2's
+//! `checkMethodDeclaration`, `checkIndexedAccessIndexType` and `checkExpressionWithTypeArguments` in TypeScript 7.1's
 //! checker.go, and `checkGrammarIndexSignatureParameters`, `checkGrammarInterfaceDeclaration` and
 //! `checkGrammarTypeOperatorNode` in its grammarchecks.go.
 //!
@@ -573,7 +573,7 @@ impl Checker<'_, '_> {
     /// `checkIndexedAccessIndexType` for a deferred indexed access type `object[keys]`: the error code (4105 or 2536)
     /// if `keys` can't index `object`.
     pub(super) fn invalid_index_key_code(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
-        let object_keys = self.object_index_type(object);
+        let object_keys = self.keyof(object);
         let has_number_index = self.index_type_of_type(object, TypeId::NUMBER).is_some();
         let are_valid_keys = self.parts(keys).iter().all(|&key| {
             self.is_assignable(key, object_keys)
@@ -601,19 +601,5 @@ impl Checker<'_, '_> {
             }
         }
         Some(2536)
-    }
-
-    /// `objectIndexType` of `checkIndexedAccessIndexType`: "skip index type deferral on remapping mapped types"
-    fn object_index_type(&mut self, object: TypeId) -> TypeId {
-        if self.is_generic_mapped_type(object)
-            && let Some(name_type) = self.mapped_name_type(object)
-        {
-            // `MappedTypeNameTypeKindRemapping`
-            let param = self.mapped_type_param(object);
-            if !self.is_assignable(name_type, param) {
-                return self.get_index_type_for_mapped_type(object, IndexFlags::empty());
-            }
-        }
-        self.keyof(object)
     }
 }

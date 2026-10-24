@@ -261,7 +261,7 @@ impl<'p, 's> Checker<'p, 's> {
         pairs.into()
     }
 
-    /// Returns the mapper that applies `first`, then `second`. See `unresolved_members`.
+    /// Returns the mapper that applies `first`, then `second`.
     #[inline(always)]
     pub fn compose(&mut self, first: MapperId, second: MapperId) -> MapperId {
         if first == MapperId::IDENTITY {
@@ -285,11 +285,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(spread) => spread,
         };
-        let scope = self.begin_scope();
-        self.unresolved_members.push((second, scope.frames));
-        let (hits, in_place) = (self.unresolved_members_hits, self.members_in_place_hits);
-        let hit_at = self.members_in_place_hit_at;
-        let lowest_below = std::mem::replace(&mut self.lowest_unresolved_members_hit, u32::MAX);
+        let (scope, in_place) = (self.begin_scope(), self.members_in_place_hits);
         let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> = smallvec::SmallVec::new();
         for &(param, value) in self.mapping_in_declaration_order(first).iter() {
             pairs.push((param, self.instantiate(value, second)));
@@ -300,26 +296,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let composed = self.types().mapper_of(&pairs);
-        self.unresolved_members.pop();
-        let lowest = std::mem::replace(&mut self.lowest_unresolved_members_hit, lowest_below);
         // `resolveObjectTypeMembers` installs the members with the base types it has instantiated,
         // regardless of which members were installed in the meantime. See `members_in_place_hits`.
         let marks = self.members_in_place_hits - in_place;
         let is_open = self.non_cacheable_mark() != (scope.counters.0 + marks, scope.counters.1);
-        if !is_open
-            && marks != 0
-            && marks == self.unresolved_members_hits - hits
-            && lowest as usize >= self.unresolved_members.len()
-            && self.lowest_taint >= scope.frames as usize
-        {
-            // Only the members of this type reference were read unresolved. No caller has seen
-            // the marks.
-            (self.unresolved_members_hits, self.members_in_place_hits) = (hits, in_place);
-            (self.cycles, self.members_in_place_hit_at) = (scope.counters.0, hit_at);
-            self.lowest_taint = usize::MAX;
-        } else {
-            self.lowest_unresolved_members_hit = lowest_below.min(lowest);
-        }
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
                 let key = (first, second);
@@ -359,10 +339,28 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper_of(&pairs)
     }
 
-    /// Runs `worker` inside `instantiateTypeWithAlias`'s bookkeeping. `worker` instantiates with
+    /// `instantiate` with a mapper that tsgo has just created, so it isn't an active mapper.
+    pub(super) fn instantiate_with_new_mapper(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+        self.active_mappers.push(mapper);
+        let instantiated = self.instantiate(ty, mapper);
+        self.active_mappers.pop();
+        instantiated
+    }
+
+    /// `c.instantiationStack = append(c.instantiationStack, t)`
+    #[inline]
+    fn push_instantiation(&mut self, ty: TypeId) {
+        if let Some(entry) = (self.instantiation_stack).get_mut(self.instantiation_depth as usize) {
+            *entry = ty;
+        }
+        self.instantiation_depth += 1;
+    }
+
+    /// Runs `worker` inside `instantiateTypeWithAlias`'s bookkeeping for `ty`. `worker` instantiates with
     /// `mapper` and neither reads nor writes `Program::instantiations`.
     pub(super) fn in_instantiation(
         &mut self,
+        ty: TypeId,
         mapper: MapperId,
         worker: impl FnOnce(&mut Self) -> TypeId,
     ) -> TypeId {
@@ -373,7 +371,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_active = self.active_mappers.is_active(mapper);
         self.instantiation_count += 1;
-        self.instantiation_depth += 1;
+        self.push_instantiation(ty);
         if !is_active {
             self.active_mappers.push(mapper);
         }
@@ -440,6 +438,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> PropInstantiation {
         match &prop.source {
             PropSource::Type(ty) | PropSource::Copy(ty, ..) => {
+                cold_path();
                 PropInstantiation::Type(self.instantiate(*ty, mapper))
             }
             // FOR SPEED: a mapped type's property keeps its mapper if that maps only to types
@@ -506,6 +505,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached_type) = self.cached_with_fixed_mapper(fixed, t) {
             return cached_type;
         }
+        cold_path();
         let forgotten = self.links.restrictive_resets();
         let ((instantiated, _), stored) = self.derive_settled(
             |c| c.derive_instantiation_of_type_parameters(t, map),
@@ -529,7 +529,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (TypeId, MapperId) {
         let (mut pairs, mut own) = (Vec::new(), Vec::new());
         self.any_type_in(t, true, |part| {
-            if self.flags(part) & tf::TYPE_PARAMETER != 0 {
+            if matches!(self.data(part), TypeData::Marker(Marker::Distributed(_))) {
+                // A mapper maps the type parameter that it's made from, which is visited next.
+            } else if self.flags(part) & tf::TYPE_PARAMETER != 0 {
                 pairs.push((part, map(self, part)));
             } else if let TypeData::Synth(shape) = self.data(part) {
                 for &sig in shape.call.iter().chain(&shape.construct) {
@@ -653,7 +655,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let active = self.active_mappers.find(mapper);
-        if class == InstantiationClass::TypeParameter {
+        if class != InstantiationClass::Other {
             match active.map(|at| &mut self.active_mappers.activations[at].params) {
                 Some(seen) if seen.contains(&ty) => {}
                 Some(seen) => {
@@ -662,7 +664,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 None => self.instantiation_count += 1,
             }
-            return self.types().map(mapper, ty).unwrap_or(ty);
+            return match class {
+                InstantiationClass::TypeParameter => self.types().map(mapper, ty).unwrap_or(ty),
+                _ => self.types().mapped_type(mapper, ty),
+            };
         }
         let serial = active.map_or(0, |at| self.active_mappers.activations[at].serial);
         if self.index_infos_in_instantiation.is_empty()
@@ -705,7 +710,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.types().instantiation_class(ty) {
             InstantiationClass::Unchanged => Some(ty),
-            InstantiationClass::TypeParameter => Some(self.types().map(mapper, ty).unwrap_or(ty)),
+            InstantiationClass::TypeParameter | InstantiationClass::DistributedTypeParameter => {
+                Some(self.types().mapped_type(mapper, ty))
+            }
             _ if !self.index_infos_in_instantiation.is_empty() => None,
             _ => match self.recent_instantiations.get_tagged(ty.0, mapper.0) {
                 Some((known, _)) => Some(TypeId(known)),
@@ -822,6 +829,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut absent = None;
         let skips_table = self.skips_instantiations_table(ty, is_cached_by_tsgo);
         if let Some(innermost) = self.index_infos_in_instantiation.last() {
+            cold_path();
             if let Some(&(known, is_marked)) = innermost.instantiations.get(&(ty, mapper)) {
                 // A cache hit records the same marks as recomputing it would.
                 if is_marked {
@@ -844,6 +852,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiations_up_to_a_limit.get(&(ty, mapper))
             && (under == 0 || under == serial)
         {
+            cold_path();
             // A cache hit records the same marks as recomputing it would.
             self.instantiation_limit_hits += 1;
             if is_tainted {
@@ -857,7 +866,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.instantiation_depth == 0 && self.stack.is_empty() {
             self.reset_instantiation_count_if_idle();
         }
-        self.instantiation_depth += 1;
+        self.push_instantiation(ty);
         if serial == 0 {
             self.active_mappers.push(mapper);
         }
@@ -874,6 +883,7 @@ impl<'p, 's> Checker<'p, 's> {
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         if is_listed {
+            cold_path();
             self.instantiations_in_progress.pop();
         }
         if serial == 0 {
@@ -890,6 +900,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.non_cacheable_mark() == (scope.counters.0 + marks, scope.counters.1)
             && let Some(innermost) = self.index_infos_in_instantiation.last_mut()
         {
+            cold_path();
             let cache_entry = (result, marks != 0);
             innermost.instantiations.insert((ty, mapper), cache_entry);
         }
@@ -927,8 +938,13 @@ impl<'p, 's> Checker<'p, 's> {
                     || self.types().deferred(ty).is_some();
                 let is_stored =
                     has_instantiations && self.instantiation_count < 5_000_000 && !is_tainted;
-                // Otherwise `cache[key] = result`, which `popActiveMapper` clears.
-                if self.cycles == cycles_before && hit_the_limit && (is_stored || serial != 0) {
+                // Otherwise `cache[key] = result`, which `popActiveMapper` clears. When two instantiations
+                // with the same key nest, the outer one assigns last.
+                if hit_the_limit
+                    && (is_stored || serial != 0)
+                    && (self.cycles == cycles_before
+                        || (self.instantiations_up_to_a_limit).contains_key(&(ty, mapper)))
+                {
                     let under = if is_stored { 0 } else { serial };
                     self.instantiations_up_to_a_limit
                         .insert((ty, mapper), (under, result, is_tainted));

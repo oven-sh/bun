@@ -1306,6 +1306,25 @@ Type checks the entry points, and everything they import, before Bun writes any 
   </Tab>
 </Tabs>
 
+A project can list [content mappers](/runtime/check#vue-svelte-astro-and-other-file-types) in `tsconfig.json`: programs from `node_modules` that turn files such as `.vue` files into TypeScript for the check. The check runs them only if you allow it.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      check: { runExternalCode: true },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --check --runExternalCode
+    ```
+  </Tab>
+</Tabs>
+
 ### features
 
 Enable compile-time feature flags for dead code elimination: conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
@@ -1943,9 +1962,12 @@ interface BuildConfig {
    * A type error fails the build like any other build error.
    * Equivalent to `--check` in the CLI.
    *
+   * `runExternalCode` also runs the content mappers that tsconfig.json lists.
+   * Equivalent to `--check --runExternalCode` in the CLI.
+   *
    * @default false
    */
-  check?: boolean;
+  check?: boolean | { runExternalCode?: boolean };
 
   /**
    * Custom tsconfig.json file path to use for path resolution.

@@ -48,6 +48,7 @@ Options:
   --console # print console logs from browser
   --no-console # don't print console logs from browser
   --check # type check the project first, and again after each change. With errors, do not serve it
+  --runExternalCode # with --check: run the programs from node_modules that contentMappers in tsconfig.json lists
   --no-clear-screen # do not clear the terminal on a reload
 `;
 

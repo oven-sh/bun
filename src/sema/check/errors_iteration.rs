@@ -8,7 +8,7 @@
 //!
 //! Mirrors `checkForOfStatement`, `checkForInStatement`, `checkIteratedTypeOrElementType`,
 //! `checkDestructuringAssignment` with its callees, and `checkVariableLikeDeclaration` for binding patterns, in
-//! TypeScript 7.0.2's checker.go.
+//! TypeScript 7.1's checker.go.
 
 use super::errors_access::PropertyAccess;
 use super::errors_operators::{
@@ -91,7 +91,7 @@ impl Checker<'_, '_> {
         let is_object =
             self.flags(right_type) & (tf::NON_PRIMITIVE | tf::INSTANTIABLE_NON_PRIMITIVE) != 0
                 || self.is_assignable(right_type, TypeId::OBJECT);
-        if right_type.is_never() || !is_object {
+        if right_type == TypeId::NEVER || !is_object {
             self.error_at(
                 self.span_of_parenthesized_expr(file, expr),
                 2407,
@@ -382,16 +382,34 @@ impl Checker<'_, '_> {
             return;
         }
         let (key, name_kind) = (property.key, property.name_kind);
+        // Outside a class the key is `PropKey::None`.
+        if is_private_name_at(hir, property.pos) {
+            let end = self.end_of_prop_name(file, p);
+            self.grammar_error_at((file, property.pos, end), 18064, &[]);
+        }
         let Some(expr_type) =
             self.literal_type_from_property_name(file, key, name_kind, property.pos)
         else {
             return;
         };
         if let Some(text) = self.property_name_of_type(expr_type)
-            && self
-                .get_property_of_type(object_literal_type, text)
-                .is_some()
+            && let Some((prop, _)) = self.get_property_of_type(object_literal_type, text)
         {
+            if prop.flags.contains(PropFlags::PRIVATE) && self.may_mark_property(prop) {
+                // `rightIsThis`
+                let from_this = match self.bound(file).parent_of_expr(node) {
+                    Parent::Expr(assignment)
+                        if matches!(hir[assignment].kind,
+                        ExprKind::Assign { op: None, target, value } if target == node
+                            && matches!(hir[value].kind, ExprKind::This)
+                            && !is_parenthesized(hir, value)) =>
+                    {
+                        Some(assignment)
+                    }
+                    _ => None,
+                };
+                self.mark_property_as_referenced(file, object_literal_type, text, None, from_this);
+            }
             let name = (file, property.pos, self.end_of_prop_name(file, p));
             let at = Parent::Expr(node);
             self.check_property_accessibility_at_location(

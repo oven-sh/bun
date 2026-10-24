@@ -75,6 +75,13 @@ pub(super) mod ask {
     pub(crate) const LIB_NAME: u32 = 17;
     /// The [`LIB_VARIABLES`] word for the name given in the details. Empty if the libraries don't define it.
     pub(crate) const LIB_VARIABLE: u32 = 18;
+    /// See `Host::types_for`. Empty unless the file's flags say that it has types.
+    pub(crate) const TYPES: u32 = 19;
+    /// The names that the answer to [`TYPES`] refers to, each followed by a NUL.
+    pub(crate) const TYPE_NAMES: u32 = 20;
+    /// A notification, not a request. Takes the type of a node and that of its parent, in decimal with a space between:
+    /// a rule wants the type of such a node, and the answer to [`TYPES`] doesn't include those.
+    pub(crate) const WANTED_TYPE: u32 = 21;
 }
 
 /// Appends `list` to `lists`, prefixed with its length, and returns its offset. The empty list is at offset 0, so

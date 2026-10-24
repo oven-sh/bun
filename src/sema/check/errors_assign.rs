@@ -932,7 +932,7 @@ impl Checker<'_, '_> {
             }
             if is_variable
                 && let TypeNodeKind::Mapped(m) = hir[parent].kind
-                && ty == self.type_param(file, hir[m].param)
+                && self.non_distributed(ty) == self.type_param(file, hir[m].param)
                 && let Some((_, constraint)) = self.mapped_key_flow_constraint(file, parent, node)
             {
                 constraints.push(constraint);
@@ -1881,38 +1881,31 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── diagnostics ─────────────────────────────
 
-    /// `checkTypeRelatedToEx(source, target, assignableRelation, errorNode, headMessage)` with 2684 as the head message,
-    /// for two types that the caller already found to be unrelated. `error_span` is the span of `errorNode`.
-    pub(super) fn report_this_not_assignable(
+    /// `checkTypeRelatedToEx(source, target, assignableRelation, errorNode, headMessage)` with 2684 as the head message.
+    /// `error_span` is the span of `errorNode`.
+    pub(super) fn check_this_assignable(
         &mut self,
         source: TypeId,
         target: TypeId,
         error_span: FileSpan,
-    ) {
+    ) -> bool {
         let relation = Relation::Assignable;
         let (is_related, diagnostic) =
             self.relation_diagnostic(source, target, relation, error_span, Some(2684));
-        let diagnostic = match diagnostic {
-            // The caller used a different relation, so there's no elaboration to give.
-            None if is_related && self.related(source, target, relation) => {
-                self.relation_error_without_elaboration(source, target, error_span)
-            }
-            Some(diagnostic) => diagnostic,
-            None => return,
+        let Some(diagnostic) = diagnostic else {
+            return is_related;
         };
         let RelationDiagnostic {
             at,
             mut lines,
             related,
         } = diagnostic;
-        if lines.is_empty() {
-            return;
-        }
         let first = lines.remove(0);
         let mut diagnostic = Reported::new(at, first.code, first.args);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
         diagnostic.related_information = related;
         self.add_diagnostic(diagnostic);
+        false
     }
 
     /// True if `getTypeWithThisArgument` changes `ty`: a reference with a `this` type to instantiate, or an

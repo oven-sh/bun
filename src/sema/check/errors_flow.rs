@@ -2,7 +2,7 @@
 //! annotation.
 //!
 //! Mirrors `checkSourceElementUnreachable`, `checkAllCodePathsInNonVoidFunctionReturnOrThrow` and
-//! `checkGeneratorInstantiationAssignabilityToReturnType` in TypeScript 7.0.2's checker.go.
+//! `checkGeneratorInstantiationAssignabilityToReturnType` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
@@ -125,6 +125,7 @@ impl Checker<'_, '_> {
         {
             return;
         }
+        self.check_type_node(file, node);
         let ty = self.type_from_node(file, node);
         if self.contextual_call_signature(file, func, ty).is_none() {
             let start = start_of_type(hir, node);
@@ -193,10 +194,8 @@ impl Checker<'_, '_> {
             // A getter without a symbol: the setter's parameter annotation, falling back to the type inferred from the
             // body.
             Some(self.return_type_of_fn(file, func))
-        } else if self.p.files.options.no_implicit_returns {
-            None
         } else {
-            return;
+            None
         };
         if let Some(t) = declared
             && (self.maybe_void(t) || self.is_any(t) || t.is_undefined())
@@ -208,11 +207,6 @@ impl Checker<'_, '_> {
             return;
         }
         let has_explicit_return = self.has_explicit_return(file, func);
-        let start = if error_node.is_some() {
-            start_of_type(hir, error_node)
-        } else {
-            self.error_range_of_fn(file, func).0
-        };
         let code = match declared {
             Some(TypeId::NEVER) => 2534,
             Some(_) if !has_explicit_return => 2355,
@@ -235,6 +229,11 @@ impl Checker<'_, '_> {
                 7030
             }
             _ => return,
+        };
+        let start = if error_node.is_some() {
+            start_of_type(hir, error_node)
+        } else {
+            self.error_range_of_fn(file, func).0
         };
         let end = if error_node.is_some() {
             self.end_of_type_node_from(file, error_node, start)

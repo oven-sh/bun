@@ -73,10 +73,12 @@ impl Checker<'_, '_> {
                 _ => TypeId::ERROR,
             },
             VisitedKind::ThisParameter(f) => self.type_of_this_parameter(file, f),
-            // `getRegularTypeOfExpression` of the access, and of its final name
-            // (`isRightSideOfQualifiedNameOrPropertyAccess`).
+            // `isValidHeritageTypeReferenceExpression`: with a `?.` the element is still an `ExpressionWithTypeArguments`,
+            // so this is `getRegularTypeOfExpression` of the access, or of its final name.
             VisitedKind::HeritageClauseName(reference, index)
-            | VisitedKind::HeritageClausePropertyAccess(reference, index) => {
+            | VisitedKind::HeritageClauseQualifiedName(reference, index)
+                if matches!(hir[reference].kind, TypeNodeKind::Ref { name, .. } if hir.is_optional_chain(name)) =>
+            {
                 let TypeNodeKind::Ref { name, .. } = hir[reference].kind else {
                     return TypeId::ERROR;
                 };
@@ -92,9 +94,11 @@ impl Checker<'_, '_> {
             VisitedKind::BindingPropertyName(_)
             | VisitedKind::Label(_)
             | VisitedKind::TypeReferenceName(..)
+            | VisitedKind::HeritageClauseName(..)
+            | VisitedKind::HeritageClauseQualifiedName(..)
             | VisitedKind::ImportTypeQualifierName(..)
             | VisitedKind::ModuleSpecifier(_)
-            | VisitedKind::ImportDeferName(_)
+            | VisitedKind::ImportPhaseName(_)
             | VisitedKind::ImportAttributeName(_)
             | VisitedKind::JsxNamespacedNamePart
             | VisitedKind::ConstOfAsConst(_)
@@ -665,10 +669,12 @@ impl Services<'_, '_, '_> {
                     _ => t,
                 };
                 let ty = self.c.type_from_node(file, t);
-                // `tryGetClassImplementingOrExtendingExpressionWithTypeArguments`
+                // `TryGetClassImplementingOrExtendingHeritageClauseElement`
                 let clause = hir.parent(at);
-                if hir.kind(at) == Kind::ExpressionWithTypeArguments
-                    && hir.kind(clause) == Kind::HeritageClause
+                if matches!(
+                    hir.kind(at),
+                    Kind::ExpressionWithTypeArguments | Kind::TypeReference
+                ) && hir.kind(clause) == Kind::HeritageClause
                     && hir.kind(hir.parent(clause)).is_class_like()
                 {
                     let class = self.c.class_sym(file, hir.class_of(hir.parent(clause)));

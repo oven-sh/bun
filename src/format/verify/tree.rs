@@ -92,7 +92,6 @@ lists! {
     modifiers_of_props: (PropId, Span<ModifierId>),
     with_bodies: (u32, u32),
     import_attributes: (u32, ExprId),
-    deferred_import_calls: (ExprId, u32),
     import_call_type_args: (ExprId, IdList<TypeNodeId>),
     comments: Comment,
     diagnostics: Diagnostic,
@@ -987,6 +986,7 @@ impl Walk<'_, '_> {
                 let is_same = (i.flags, i.has_body, i.specifies_module)
                     == (j.flags, j.has_body, j.specifies_module);
                 self.check(is_same, "the keywords of a namespace")?;
+                self.ty(i.attributes, j.attributes)?;
                 self.stmt_list(i.body, j.body)
             }
             (
@@ -1132,8 +1132,7 @@ impl Walk<'_, '_> {
                 self.atom(i.spec, j.spec, "a module specifier")?;
                 self.atom(i.default, j.default, "the name of a default import")?;
                 self.atom(i.namespace, j.namespace, "the name of a namespace import")?;
-                let is_same =
-                    (i.type_only, i.is_deferred, i.mode) == (j.type_only, j.is_deferred, j.mode);
+                let is_same = (i.type_only, i.phase, i.mode) == (j.type_only, j.phase, j.mode);
                 self.check(is_same, "the keywords of an import")?;
                 // Allowed: `import a, {} from "a"` becomes `import a from "a"`.
                 let has_braces = |it: &bun_sema::hir::Import| {
@@ -1742,21 +1741,18 @@ impl Walk<'_, '_> {
                 self.has_stack_left()?;
                 self.jsx(x, y)
             }
-            (ImportCall { args: p }, ImportCall { args: q }) => {
+            (
+                ImportCall { args: p, phase },
+                ImportCall {
+                    args: q,
+                    phase: phase2,
+                },
+            ) => {
                 let first = |program: &Program<'_>, list: IdList<ExprId>| {
                     program.ids_of(list).first().map(|&it| ExprId(it))
                 };
                 let (specifier, specifier2) = (first(self.a, p), first(self.b, q));
-                let is_deferred = |program: &Program<'_>, e| {
-                    program
-                        .deferred_import_calls
-                        .iter()
-                        .any(|it| Some(it.0) == e)
-                };
-                self.check(
-                    is_deferred(self.a, specifier) == is_deferred(self.b, specifier2),
-                    "the phase of an import",
-                )?;
+                self.check(phase == phase2, "the phase of an import")?;
                 let type_args = |program: &Program<'_>, e| {
                     program
                         .import_call_type_args
@@ -2376,7 +2372,7 @@ fn import_as_text(program: &Program<'_>, id: u32) -> (Vec<u8>, Option<(u32, Expr
     }
     out.extend([
         u8::from(import.type_only),
-        u8::from(import.is_deferred),
+        import.phase as u8,
         import.mode as u8,
     ]);
     let mut names: Vec<Vec<u8>> = (program

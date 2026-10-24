@@ -12,6 +12,7 @@ pub mod check;
 pub mod components;
 pub mod config;
 pub mod config_options;
+pub mod content_mapper;
 pub mod ecmascript;
 pub mod hir;
 pub mod json;

@@ -86,6 +86,16 @@ pub(crate) fn has_comments_that_count<'a>(e: Expr<'a>, f: &Formatter<'a>) -> boo
         || (!comments.dangling.is_empty() && comments_inside_count(f))
 }
 
+/// True if a unary expression puts `operand` in parentheses to keep its comments inside them. oxfmt asks whether a
+/// comment is before the operand, so the one in `void /** @type {T} */ (a).b` counts, though it belongs to `(a)`.
+pub(crate) fn operand_gets_parentheses_for_comments<'a>(
+    operand: Expr<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    has_comments_that_count(operand, f)
+        || (f.options().flavor.is_oxfmt() && f.comments().is_cast_parenthesis(operand.span().start))
+}
+
 /// Prettier's `hasLeadingOwnLineComment`: true if a leading comment of `e` is the last thing on its line. A JSX element
 /// wraps its own comments in parentheses, unless it's ignored.
 pub(crate) fn has_leading_own_line_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {

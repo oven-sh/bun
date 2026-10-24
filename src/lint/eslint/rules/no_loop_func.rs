@@ -299,7 +299,9 @@ fn check_in_loop<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Di
     let mut listed_names = FxHashSet::default();
     let names = unsafe_refs.iter().map(|it| it.name());
     let mut var_names = Vec::new();
-    for name in names.filter(|name| dialect == Dialect::TypeScript || listed_names.insert(*name)) {
+    // ESLint 8 lists a name once for each reference.
+    let repeats = dialect == Dialect::TypeScript || cx.language().eslint_major < 9;
+    for name in names.filter(|name| repeats || listed_names.insert(*name)) {
         let separator: &[u8] = if var_names.is_empty() { b"'" } else { b"', '" };
         var_names.extend_from_slice(separator);
         var_names.extend_from_slice(name.bytes());

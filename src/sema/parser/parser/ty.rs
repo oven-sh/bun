@@ -23,6 +23,14 @@ fn flags_of_type_member_name(name_token: T, name_kind: NameKind, key: PropKey) -
     }
 }
 
+/// `parseEntityName`'s `allowPrivateName`
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum PrivateNames {
+    /// `typeof a.#b`
+    Allowed,
+    Rejected,
+}
+
 impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
@@ -853,7 +861,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.note_name_in_type(first.0, first.1);
         self.s.names.push(first);
         // `checkTypeReferenceNode`: `A.<T>`
-        if self.rest_of_entity_name() && !self.newline_before() {
+        if self.rest_of_entity_name(PrivateNames::Rejected) && !self.newline_before() {
             let dot = self.full_start().saturating_sub(1);
             self.flag(DiagnosticKind::Grammar, 8020, (dot, dot + 1), &[]);
         }
@@ -866,7 +874,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseEntityName`'s loop: pushes the names after the first on `s.names`. Returns true if it
     /// stopped between the dot and the `<` of `A.<T>`.
     #[inline]
-    fn rest_of_entity_name(&mut self) -> bool {
+    fn rest_of_entity_name(&mut self, private_names: PrivateNames) -> bool {
         while self.token() == T::Dot {
             self.next();
             let token = self.token();
@@ -878,7 +886,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.next_after_name();
                 continue;
             }
-            match self.name_after_dot_in_type() {
+            match self.name_after_dot_in_type(private_names) {
                 Some(name) => self.s.names.push(name),
                 None => return true,
             }
@@ -886,11 +894,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         false
     }
 
-    /// `parseRightSideOfDot(allowIdentifierNames, !allowPrivateIdentifiers)`. Returns `None` at a
+    /// `parseRightSideOfDot(allowIdentifierNames, allowPrivateIdentifiers)`. Returns `None` at a
     /// `<`, where `parseEntityName` doesn't call it.
     #[cold]
     #[inline(never)]
-    fn name_after_dot_in_type(&mut self) -> Option<(Atom, u32)> {
+    fn name_after_dot_in_type(&mut self, private_names: PrivateNames) -> Option<(Atom, u32)> {
         let token = self.token();
         // Flow's `typeof a.b` is parsed here too, and Flow has neither this rule nor the next one.
         if token == T::LessThan && !self.is_flow() {
@@ -909,6 +917,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return Some(self.identifier_name());
             }
             // `parsePrivateIdentifier`
+            if private_names == PrivateNames::Allowed && !self.is_flow() {
+                let name = (self.lx.atom, self.lx.start);
+                self.next_after_name();
+                return Some(name);
+            }
             match self.recovers() {
                 true => self.next(),
                 false => self.fail(),
@@ -1485,7 +1498,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     pub(crate) fn type_query(&mut self) -> TypeNodeId {
         let start = self.pos();
         self.next();
-        // `parseEntityName(allowReservedWords, nil)`
+        // `parseEntityName(allowReservedWords, allowPrivateName, nil)`
         let base = self.s.names.len();
         let first = match self.token().is_identifier_or_keyword() {
             true => self.identifier_name(),
@@ -1496,7 +1509,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
         };
         self.s.names.push(first);
-        self.rest_of_entity_name();
+        self.rest_of_entity_name(PrivateNames::Allowed);
         // Don't look up the atom of a missing name.
         if self.has_failed() {
             self.s.names.truncate(base);
@@ -1577,7 +1590,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
                 false => self.missing_qualifier_of_import_type(),
             }
-            self.rest_of_entity_name();
+            self.rest_of_entity_name(PrivateNames::Rejected);
             let names = self.s.names.get(base..).unwrap_or_default();
             if !names.is_empty() {
                 name = self.f.entity_name(names.iter().copied());
@@ -2011,7 +2024,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseTypeLiteral`
-    fn type_literal(&mut self) -> TypeNodeId {
+    pub(super) fn type_literal(&mut self) -> TypeNodeId {
         let start = self.pos();
         let members = self.object_type_members();
         self.finish_type(TypeNodeKind::Object(members), start)

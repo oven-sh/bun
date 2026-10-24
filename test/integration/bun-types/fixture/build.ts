@@ -22,6 +22,12 @@ Bun.build({
   compile: {},
 });
 
+Bun.build({ entrypoints: ["hey"], check: true });
+Bun.build({ entrypoints: ["hey"], check: {} });
+Bun.build({ entrypoints: ["hey"], check: { runExternalCode: true } });
+// @ts-expect-error
+Bun.build({ entrypoints: ["hey"], check: { runExternalCode: "yes" } });
+
 Bun.build({
   entrypoints: ["hey"],
   plugins: [

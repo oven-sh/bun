@@ -152,8 +152,8 @@ pub(crate) mod js_bundler {
         /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
         pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
-        /// `check`: see `BundleOptions::type_check`.
-        pub(crate) check: bool,
+        /// `check`: `BundleOptions::type_check`.
+        pub(crate) check: Option<options::TypeCheck>,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -222,7 +222,7 @@ pub(crate) mod js_bundler {
                 min_chunk_size: None,
                 fold_chunks: true,
                 module_preload: true,
-                check: false,
+                check: None,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -898,8 +898,18 @@ pub(crate) mod js_bundler {
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
             }
-            if let Some(check) = config.get_boolean_loose(global_this, "check")? {
-                this.check = check;
+            if let Some(check) = config.get(global_this, "check")? {
+                use crate::cli::check_command::{
+                    check_for_bun_build, check_for_bun_build_with_external_code,
+                };
+                let runs_external_code = check.is_object()
+                    && check.get_boolean_strict(global_this, "runExternalCode")? == Some(true);
+                this.check = match runs_external_code {
+                    true => Some(check_for_bun_build_with_external_code),
+                    false => check
+                        .to_boolean()
+                        .then_some(check_for_bun_build as options::TypeCheck),
+                };
             }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =

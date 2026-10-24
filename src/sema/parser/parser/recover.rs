@@ -70,6 +70,7 @@ const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
     b"return",
     b"satisfies",
     b"set",
+    b"source",
     b"static",
     b"string",
     b"super",
@@ -868,7 +869,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             | T::Namespace
             | T::Type
             | T::Global
-            | T::Defer => true,
+            | T::Defer
+            | T::Source => true,
             T::Accessor | T::Public | T::Private | T::Protected | T::Static | T::Readonly => {
                 self.options.dialect.oxc
                     || self.is_start_of_declaration()

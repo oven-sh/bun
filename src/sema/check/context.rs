@@ -725,6 +725,12 @@ impl<'p, 's> Checker<'p, 's> {
                     && let crate::bind::ClassOwner::Expr(class) = bound.class_owner[c.idx()]
                 {
                     let expected = self.contextual_type(file, class, context_flags)?;
+                    // The class's own type may still be in progress.
+                    let symbol = self.symbol_of_type(expected);
+                    if symbol.and_then(|it| it.as_binder_symbol()) == Some(self.class_sym(file, c))
+                    {
+                        return None;
+                    }
                     let name = self.declared_member_name(file, hir[m].key)?;
                     return self.contextual_property(expected, name);
                 }
@@ -1326,6 +1332,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getApparentType`
             let constraint = if c.is_deferred(t) {
+                cold_path();
                 let constraint = c.base_constraint(t);
                 c.with_outer_type_arguments(t, constraint, outer_mapper)
             } else {
@@ -1608,7 +1615,6 @@ impl<'p, 's> Checker<'p, 's> {
             && self.constraint_stack.is_empty()
             && self.reverse_mapped_source_stack.is_empty()
             && self.flow_loops.is_empty()
-            && self.reporting_nonexistent.is_empty()
             && self.stack.iter().all(|q| {
                 matches!(
                     q,
@@ -2239,6 +2245,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getContextualSignature`: the signature a function expression is expected to have.
     pub fn contextual_signature(&mut self, file: FileId, func: FnId) -> Option<SigId> {
+        if let Some(known) = self.contextual_signature_in_check
+            && known.function == (file, func)
+            && known.contextual_types == self.contextual.len()
+            && known.inference_contexts == self.inference_contexts.len()
+        {
+            return known.signature;
+        }
         let owner = self.takes_context(file, func)?;
         let context =
             self.apparent_type_of_contextual_type(file, owner, ContextFlags::SIGNATURE)?;
@@ -2395,7 +2408,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `IsNodeDescendantOf`
-    fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
+    pub(super) fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
         let hir = self.hir(file);
         let ancestor = hir.node(ancestor);
         hir.find_ancestor(hir.node(e), |n| n == ancestor).is_some()

@@ -98,6 +98,9 @@ const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
 const LOADED = 10;
+const TYPES = 19;
+const TYPE_NAMES = 20;
+const WANTED_TYPE = 21;
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -355,6 +358,133 @@ async function loadPlugin([location, position, firstRule]) {
   return { name, isAlias, id, file, export: path, hasNothing, rules: described };
 }
 
+// ------------- types -------------
+
+// What a rule reads from the types and isn't known here. The other side knows this text: `UNKNOWN_TYPE_INFORMATION` in `host.rs`.
+function refuse(what) {
+  throw new Error(`You have used a rule which requires type information that bun lint does not have: ${what}`);
+}
+
+// `members` under the name of one of TypeScript's classes. To read any other member is refused.
+function lookAlike(name, members) {
+  return new Proxy(members, {
+    get: (_, key) => (key in members || typeof key === "symbol" ? members[key] : refuse(`${name}.${key}`)),
+  });
+}
+
+// Of the file: `{ asked, services }`. `null` until a rule reads `parserServices`.
+let typed = null;
+
+// What typescript-eslint's parser gives with type information, as far as `types.rs` knows it. Only for a rule that has asked for
+// types before, by throwing. `null` for any other: a rule that uses types if there are any continues without them.
+function typedServices() {
+  typed ??= readTypes();
+  return typed.asked.has(currentRule?.position) ? typed.services : null;
+}
+
+// The major version of the package `name` that the parser of the file would load, or of the parser. `null` if there is none. By the
+// name and the module of the parser, `undefined` for one that only the configuration file has.
+const installedMajors = new Map();
+function installedMajor(name) {
+  const known = fileSettings.parser?.module;
+  const key = `${name} ${known}`;
+  if (!installedMajors.has(key)) {
+    const here = nodePath.join(cwd, "noop.js");
+    const attempt = get => {
+      try {
+        return get();
+      } catch {
+        return undefined;
+      }
+    };
+    const parser = known ?? attempt(() => createRequire(here).resolve("@typescript-eslint/parser/package.json"));
+    const versions = [parser ?? here, here].map(it => attempt(() => createRequire(it)(`${name}/package.json`).version));
+    installedMajors.set(key, parseInt(versions.find(it => it !== undefined)) || null);
+  }
+  return installedMajors.get(key);
+}
+
+function readTypes() {
+  const { emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations } =
+    fileSettings.languageOptions.parserOptions;
+  const words = native.askWords(TYPES, "", 0xffffffff);
+  const first = 2 + words[0];
+  // Where the row of a node begins. The rows are sorted.
+  const find = (start, end, type) => {
+    let low = 0;
+    let high = (words.length - first) / 8;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const at = first + middle * 8;
+      const order = words[at] - start || words[at + 1] - end || words[at + 2] - type;
+      if (order === 0) return at;
+      if (order < 0) low = middle + 1;
+      else high = middle;
+    }
+    return -1;
+  };
+  const signatures = count => Array.from({ length: count }, () => lookAlike("Signature", {}));
+  let names = null;
+  const symbol = number => {
+    if (number === 0) return undefined;
+    names ??= native.askText(TYPE_NAMES).split("\0");
+    const name = names[number - 1];
+    return lookAlike("Symbol", { name, getName: () => name });
+  };
+  const getTypeAtLocation = node => {
+    // The file is linted again, with types.
+    if (words[1] === 0) throw new Error("You have used a rule which requires type information.");
+    const kind = [node, node.parent ?? node].map(it => native.typeId(it.type));
+    const at = find(node.range[0], node.range[1], kind[0]);
+    if (at === -1) {
+      if (words[1] !== 1 || kind.includes(undefined)) refuse(`getTypeAtLocation(${node.type})`);
+      // The rules run again, with the types of such nodes. Until then this is a placeholder for the type.
+      native.askWords(WANTED_TYPE, kind.join(" "), 0);
+    }
+    const word = offset => (at === -1 ? 0 : words[at + offset]);
+    // TypeScript 6 has renumbered `ts.TypeFlags`.
+    const getFlags = () => word((installedMajor("typescript") ?? refuse("Type.flags without typescript")) < 6 ? 4 : 3);
+    return lookAlike("Type", {
+      get flags() {
+        return getFlags();
+      },
+      getFlags,
+      getCallSignatures: () => signatures(word(5)),
+      getConstructSignatures: () => signatures(word(6)),
+      get symbol() {
+        return symbol(word(7));
+      },
+      getSymbol: () => symbol(word(7)),
+    });
+  };
+  // A node of TypeScript's tree is only good for asking about it.
+  const nodes = new WeakMap();
+  const toTypeScript = new WeakMap();
+  const checker = lookAlike("TypeChecker", {
+    getTypeAtLocation: node => getTypeAtLocation(nodes.get(node) ?? refuse("TypeChecker.getTypeAtLocation(?)")),
+  });
+  const services = {
+    emitDecoratorMetadata: emitDecoratorMetadata === true,
+    experimentalDecorators: experimentalDecorators === true,
+    isolatedDeclarations: isolatedDeclarations === true,
+    program: lookAlike("Program", { getTypeChecker: () => checker }),
+    esTreeNodeToTSNodeMap: lookAlike("esTreeNodeToTSNodeMap", {
+      get(node) {
+        let known = toTypeScript.get(node);
+        if (known === undefined) {
+          toTypeScript.set(node, (known = lookAlike("Node", {})));
+          nodes.set(known, node);
+        }
+        return known;
+      },
+    }),
+    tsNodeToESTreeNodeMap: lookAlike("tsNodeToESTreeNodeMap", {}),
+    getSymbolAtLocation: node => refuse(`getSymbolAtLocation(${node.type})`),
+    getTypeAtLocation,
+  };
+  return { asked: new Set(words.subarray(2, first)), services };
+}
+
 // ------------- ESLint's `context` -------------
 
 // The text of the file, without the byte order mark.
@@ -364,9 +494,183 @@ const SourceCode = native.sourceCode(native.TokenStore, [
   program,
   scopeManager,
   () => fileSettings.languageOptions.parserOptions,
+  typedServices,
   oxlintScopeManager,
 ]);
 let sourceCode = new SourceCode();
+
+// `new sourceCode.constructor(text, ast)`: ESLint's `SourceCode` for code that a rule has parsed by itself, as eslint-plugin-sonarjs does
+// with the text of a comment. It knows the text, the lines, and the nodes, tokens and comments of `ast`, but no scopes.
+function parsedSourceCode(textOrConfig, astIfNoConfig) {
+  const config = typeof textOrConfig === "string" ? { text: textOrConfig, ast: astIfNoConfig } : textOrConfig;
+  const { ast } = config;
+  if (!ast) throw new TypeError(`Unexpected empty AST. (${ast})`);
+  if (!ast.tokens) throw new TypeError("AST is missing the tokens array.");
+  if (!ast.comments) throw new TypeError("AST is missing the comments array.");
+  if (!ast.loc) throw new TypeError("AST is missing location information.");
+  if (!ast.range) throw new TypeError("AST is missing range information");
+  const { tokens, comments } = ast;
+  const all = [...tokens, ...comments].sort((a, b) => a.range[0] - b.range[0]);
+  const isComment = token => token.type === "Line" || token.type === "Block" || token.type === "Shebang";
+  // -1: no limit.
+  const within = (list, start, end) => list.filter(it => it.range[0] >= start && (end === -1 || it.range[1] <= end));
+  // In the order of the search. `limit`: "skip" or "count", which is what a number means.
+  function search(start, end, options, isBackward, limit) {
+    let [includeComments, filter, number] = [false, null, undefined];
+    if (typeof options === "number") number = options;
+    else if (typeof options === "function") filter = options;
+    else if (options)
+      [includeComments, filter, number] = [!!options.includeComments, options.filter || null, options[limit]];
+    let found = within(includeComments ? all : tokens, start, end);
+    if (isBackward) found.reverse();
+    if (filter) found = found.filter(filter);
+    if (limit === "skip") return found.slice(number | 0);
+    return typeof number === "number" ? found.slice(0, number | 0) : found;
+  }
+  const one = (start, end, options, isBackward) => search(start, end, options, isBackward, "skip")[0] ?? null;
+  const first = (start, end, options) => search(start, end, options, false, "count");
+  const last = (start, end, options) => search(start, end, options, true, "count").reverse();
+  function padded(start, end, before, after) {
+    const isCount = value => value === undefined || typeof value === "number";
+    if (!isCount(before) || !isCount(after)) return first(start, end, before);
+    const from = tokens.findIndex(it => it.range[0] >= start);
+    const count = within(tokens, start, end).length;
+    return from === -1 ? [] : tokens.slice(Math.max(0, from - (before | 0)), from + count + (after | 0));
+  }
+  function adjacentComments(found) {
+    const end = found.findIndex(it => !isComment(it));
+    return end === -1 ? found : found.slice(0, end);
+  }
+  const hasBOM = config.text.charCodeAt(0) === 0xfeff;
+  const text = hasBOM ? config.text.slice(1) : config.text;
+  const lines = SourceCode.splitLines(text);
+  const lineStartIndices = [0];
+  for (const match of text.matchAll(/\r\n|[\r\n\u2028\u2029]/gu)) lineStartIndices.push(match.index + match[0].length);
+  const visitorKeys = config.visitorKeys || sourceCode.visitorKeys;
+  const isNode = value => value !== null && typeof value === "object" && typeof value.type === "string";
+  const isOwnKey = key => key !== "parent" && key !== "leadingComments" && key !== "trailingComments" && key[0] !== "_";
+  function nodeAt(node, index) {
+    if (index < node.range[0] || index >= node.range[1]) return null;
+    for (const key of visitorKeys[node.type] || Object.keys(node).filter(isOwnKey)) {
+      for (const child of [node[key]].flat()) {
+        const found = isNode(child) ? nodeAt(child, index) : null;
+        if (found) return found;
+      }
+    }
+    return node;
+  }
+  function isSpaceBetween(first, second, looksIntoJSXText) {
+    if (first.range[0] > second.range[0]) [first, second] = [second, first];
+    if (first.range[1] >= second.range[0]) return false;
+    const end = one(second.range[0], second.range[1], undefined, false) || second;
+    for (let token = one(first.range[0], first.range[1], undefined, true) || first; token !== end;) {
+      const next = one(token.range[1], -1, { includeComments: true }, false);
+      if (token.range[1] !== next.range[0]) return true;
+      if (looksIntoJSXText && next !== end && next.type === "JSXText" && /\s/u.test(next.value)) return true;
+      token = next;
+    }
+    return false;
+  }
+  const withoutScopes = name => () => {
+    throw new Error(`sourceCode.${name}() needs scopes, which bun lint does not have for code that a rule has parsed`);
+  };
+  return Object.freeze({
+    isESTree: ast.type === "Program",
+    hasBOM,
+    text,
+    ast,
+    parserServices: config.parserServices || {},
+    scopeManager: config.scopeManager || null,
+    visitorKeys,
+    tokensAndComments: all,
+    lines: Object.freeze(lines),
+    lineStartIndices,
+    getText: (node, before, after) =>
+      node ? text.slice(Math.max(node.range[0] - (before || 0), 0), node.range[1] + (after || 0)) : text,
+    getLines: () => lines,
+    getAllComments: () => comments,
+    getLoc: node => node.loc,
+    getRange: node => node.range,
+    getAncestors(node) {
+      const ancestors = [];
+      for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) ancestors.unshift(ancestor);
+      return ancestors;
+    },
+    getNodeByRangeIndex: index => nodeAt(ast, index),
+    isSpaceBetween: (first, second) => isSpaceBetween(first, second, false),
+    isSpaceBetweenTokens: (first, second) => isSpaceBetween(first, second, true),
+    getLocFromIndex(index) {
+      if (typeof index !== "number") throw new TypeError("Expected `index` to be a number.");
+      if (index < 0 || index > text.length) {
+        throw new RangeError(
+          `Index out of range (requested index ${index}, but source text has length ${text.length}).`,
+        );
+      }
+      const line = index === text.length ? lines.length : lineStartIndices.findLastIndex(start => start <= index) + 1;
+      return { line, column: index - lineStartIndices[line - 1] };
+    },
+    getIndexFromLoc(loc) {
+      if (loc === null || typeof loc !== "object" || typeof loc.line !== "number" || typeof loc.column !== "number") {
+        throw new TypeError("Expected `loc` to be an object with numeric `line` and `column` properties.");
+      }
+      const { line, column } = loc;
+      const count = lineStartIndices.length;
+      if (line <= 0) {
+        throw new RangeError(`Line number out of range (line ${line} requested). Line numbers should be 1-based.`);
+      }
+      if (line > count) {
+        throw new RangeError(`Line number out of range (line ${line} requested, but only ${count} lines present).`);
+      }
+      if (column < 0) throw new RangeError(`Invalid column number (column ${column} requested).`);
+      const [start, end] = [lineStartIndices[line - 1], line === count ? text.length + 1 : lineStartIndices[line]];
+      if (start + column >= end) {
+        const length = Math.min(end, text.length) - start;
+        throw new RangeError(
+          `Column number out of range (column ${column} requested, but the length of line ${line} is ${length}).`,
+        );
+      }
+      return start + column;
+    },
+    getScope: withoutScopes("getScope"),
+    getDeclaredVariables: withoutScopes("getDeclaredVariables"),
+    isGlobalReference: withoutScopes("isGlobalReference"),
+    markVariableAsUsed: withoutScopes("markVariableAsUsed"),
+    getTokenByRangeStart(offset, options) {
+      const token = within(options?.includeComments ? all : tokens, offset, -1)[0];
+      return token?.range[0] === offset ? token : null;
+    },
+    getFirstToken: (node, options) => one(node.range[0], node.range[1], options, false),
+    getLastToken: (node, options) => one(node.range[0], node.range[1], options, true),
+    getTokenBefore: (node, options) => one(-1, node.range[0], options, true),
+    getTokenAfter: (node, options) => one(node.range[1], -1, options, false),
+    getFirstTokenBetween: (left, right, options) => one(left.range[1], right.range[0], options, false),
+    getLastTokenBetween: (left, right, options) => one(left.range[1], right.range[0], options, true),
+    getTokenOrCommentBefore: (node, skip) => one(-1, node.range[0], { includeComments: true, skip }, true),
+    getTokenOrCommentAfter: (node, skip) => one(node.range[1], -1, { includeComments: true, skip }, false),
+    getFirstTokens: (node, options) => first(node.range[0], node.range[1], options),
+    getLastTokens: (node, options) => last(node.range[0], node.range[1], options),
+    getTokensBefore: (node, options) => last(-1, node.range[0], options),
+    getTokensAfter: (node, options) => first(node.range[1], -1, options),
+    getFirstTokensBetween: (left, right, options) => first(left.range[1], right.range[0], options),
+    getLastTokensBetween: (left, right, options) => last(left.range[1], right.range[0], options),
+    getTokens: (node, before, after) => padded(node.range[0], node.range[1], before, after),
+    getTokensBetween: (left, right, padding) => padded(left.range[1], right.range[0], padding, padding),
+    commentsExistBetween: (left, right) => within(comments, left.range[1], right.range[0]).length > 0,
+    getCommentsBefore: node => adjacentComments(within(all, -1, node.range[0]).reverse()).reverse(),
+    getCommentsAfter: node => adjacentComments(within(all, node.range[1], -1)),
+    getCommentsInside: node => within(comments, node.range[0], node.range[1]),
+  });
+}
+
+{
+  const constructor = function (textOrConfig, ast) {
+    return textOrConfig === undefined ? new SourceCode() : parsedSourceCode(textOrConfig, ast);
+  };
+  Object.defineProperties(constructor, Object.getOwnPropertyDescriptors(SourceCode));
+  Object.setPrototypeOf(constructor, native.TokenStore);
+  Object.defineProperty(SourceCode.prototype, "constructor", { value: constructor });
+}
+
 let filename = "";
 // The file on the disk, if `filename` is that of a block which a processor has found in it.
 let physicalFilename = "";
@@ -415,9 +719,11 @@ function espreePath() {
 
 // `languageOptions.parser`, with which a rule parses another file than the one that is linted. `parser`: `null`, or what
 // `describeParser` in `evaluate-eslint.js` says about it. It is loaded when one of its functions is called.
-function addParser({ languageOptions, parser: known }) {
+function addParser({ languageOptions, parser: known, freezes, isLegacy }) {
   let loaded;
   if (known === null) {
+    // ESLint's `normalizeLanguageOptions`: "Espree expects this information to be passed in".
+    if (!freezes && !isLegacy) languageOptions.parserOptions.sourceType = languageOptions.sourceType;
     const load = path => (path === undefined ? null : require(path));
     const get = () => (loaded ??= load(espreePath())) ?? undefined;
     Object.defineProperty(languageOptions, "parser", { get, enumerable: true, configurable: true });
@@ -950,7 +1256,7 @@ function reset() {
   nodes = [];
   groupByKey = new Map();
   groups = [];
-  currentRule = currentNode = null;
+  currentRule = currentNode = typed = null;
   isCreating = false;
   // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
   afterHooks = [];

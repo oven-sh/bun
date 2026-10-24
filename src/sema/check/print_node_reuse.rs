@@ -1004,7 +1004,7 @@ impl<'p> Printer<'_, 'p, '_> {
         else {
             return None;
         };
-        let target = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+        let target = files.module_of_import_type(file, node)?;
         // `tryGetResolvedSymbolFromTypeNode`
         let mut resolved = Some(files.module_value(target));
         for part in hir.texts(name) {
@@ -1188,7 +1188,13 @@ impl<'p> Printer<'_, 'p, '_> {
                             Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => b'\'',
                             _ => b'"',
                         };
-                        quoted(self.c.atoms().bytes(spec), quote, false)
+                        let written = self.c.atoms().bytes(spec);
+                        match self.rewrite_content_mapped_module_specifier(written) {
+                            // The node builder creates a new literal. The transformer copies the flags of the old one.
+                            Some(name) if !self.is_transformer => self.string_literal(&name, b'"'),
+                            Some(name) => quoted(&name, quote, false),
+                            None => quoted(written, quote, false),
+                        }
                     }
                 };
                 let mut text = cat!(query, b"import(", specifier, attributes, b")");
@@ -1396,6 +1402,23 @@ impl<'p> Printer<'_, 'p, '_> {
                         && is_dynamic_name(hir, name)
                         && !(self.c.is_late_bound(file, m) && is_entity_name_expression(hir, name))
                     {
+                        continue;
+                    }
+                    // `omitPrivateMethodType`: emitted once, regardless of its overloads.
+                    if self.is_transformer
+                        && hir[m].kind == MemberKind::Method
+                        && hir[m].flags.contains(Flags::PRIVATE)
+                    {
+                        let files = self.c.files();
+                        let symbol = self.c.bound(file).member_symbol[m.idx()];
+                        if symbol.is_none()
+                            || files.decls_of(files.sym(file, symbol)).first()
+                                == Some(&(file, Decl::Member(m)))
+                        {
+                            let comments = self.comments_before(file, hir.node(m));
+                            let name = self.property_key_text(file, hir.name(hir.node(m)));
+                            elements.push(cat!(comments, b"private ", name, b";"));
+                        }
                         continue;
                     }
                     let outer_scope = hir[m]
@@ -1968,9 +1991,9 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let names: Vec<Atom> = hir.texts(name).collect();
         let &first = names.first()?;
-        // The node builder replaces a reference whose name is missing. `transformTypeReference`
+        // The node builder replaces a reference whose whole name is missing. `transformTypeReference`
         // leaves it unchanged, and it is printed as nothing.
-        if !self.is_transformer && names.contains(&known::empty) {
+        if !self.is_transformer && names[..] == [known::empty] {
             return Some(Node::simple(b"any"));
         }
         let scope = self.c.bound(file).type_scope[node.idx()];

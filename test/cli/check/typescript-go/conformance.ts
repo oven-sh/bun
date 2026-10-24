@@ -3,16 +3,13 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 
-// TypeScript's compiler and conformance tests, run as typescript-go's own test runner runs them: in memory, every
-// configuration a test asks for. What they produce has to be what typescript-go commits, byte for byte.
+// TypeScript's compiler and conformance tests, run as TypeScript's own test runner runs them: in memory, every
+// configuration a test asks for. What they produce has to be what TypeScript commits, byte for byte.
 // See README.md.
-const reference = "/testdata/baselines/reference";
-const suites = [
-  ["compiler", "/_submodules/TypeScript/tests/cases/compiler", `${reference}/submodule/compiler`],
-  ["conformance", "/_submodules/TypeScript/tests/cases/conformance", `${reference}/submodule/conformance`],
-  ["own-compiler", "/testdata/tests/cases/compiler", `${reference}/compiler`],
-  ["own-conformance", "/testdata/tests/cases/conformance", `${reference}/conformance`],
-].map(([name, cases, baselines]) => `${name}=${cases}=${baselines}=${baselines}/names.txt`);
+const suites = ["compiler", "conformance"].map(name => {
+  const baselines = `/tsc/testdata/baselines/reference/${name}`;
+  return `${name}=/tsc/testdata/tests/cases/${name}=${baselines}=${baselines}/names.txt`;
+});
 
 const only = process.env.ONLY;
 
@@ -48,8 +45,8 @@ export function conformance(shard: number, shards: number) {
         "--run-typescript-tests",
         // The paths below are paths in it.
         `--bundle=${await bundle()}`,
-        "--lib=/internal/bundled/libs",
-        "--testlib=/_submodules/TypeScript/tests/lib",
+        "--lib=/tsc/internal/bundled/libs",
+        "--testlib=/tsc/testdata/tests/lib",
         `--threads=${availableParallelism()}`,
         `--every=${sample ?? shards}`,
         `--first=${shard}`,
@@ -75,8 +72,9 @@ export function conformance(shard: number, shards: number) {
     ["Symbols", "the symbol of every name", ".symbols"],
     ["Declarations", "the declaration files", ".js, except for the JavaScript in it"],
     ["Traces", "the log of module resolution", ".trace.json"],
+    ["ContentMappers", "the files that content mappers produce", ".contentmapper"],
   ])(
-    "%s: TypeScript's tests have %s that typescript-go has (%s)",
+    "%s: TypeScript's tests have %s that TypeScript has (%s)",
     async kind => {
       const stdout = await run();
       // The runner prints the first 50.

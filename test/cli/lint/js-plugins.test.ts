@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { endChildren, spawn } from "../children";
 import { cases as callCases } from "./oracle/jsplugins/calls/cases.mjs";
 import { cases as codePathCases, fileOf, isTypeScript } from "./oracle/jsplugins/code-paths/cases.mjs";
@@ -14,6 +14,7 @@ import {
 } from "./oracle/jsplugins/scopes/cases.mjs";
 import { cases as tokenCases, fileOf as tokenFileOf } from "./oracle/jsplugins/tokens/cases.mjs";
 import { cases as treeCases } from "./oracle/jsplugins/trees/cases.mjs";
+import { cases as typeCases, linted as typeFiles } from "./oracle/jsplugins/types/cases.mjs";
 
 afterAll(endChildren);
 
@@ -246,6 +247,303 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
 
       1 problem"
     `);
+    },
+    timeout,
+  );
+
+  // eslint-plugin-sonarjs parses the text of a comment and asks for its tokens that way. The answers are those of ESLint 9.39.5.
+  test(
+    "new sourceCode.constructor(text, ast) is about the code that the rule has parsed",
+    async () => {
+      const plugin = `
+      const token = (type, value, start) => ({ type, value, range: [start, start + value.length], loc: {} });
+      export default {
+        meta: { name: "api" },
+        rules: {
+          dump: {
+            create(context) {
+              return {
+                Program(node) {
+                  const text = "a(b); // c\\nd";
+                  const tokens = [
+                    token("Identifier", "a", 0),
+                    token("Punctuator", "(", 1),
+                    token("Identifier", "b", 2),
+                    token("Punctuator", ")", 3),
+                    token("Punctuator", ";", 4),
+                    token("Identifier", "d", 11),
+                  ];
+                  const comments = [{ type: "Line", value: " c", range: [6, 10], loc: {} }];
+                  const [first, second] = [{ type: "ExpressionStatement", range: [0, 5] }, { type: "ExpressionStatement", range: [11, 12] }];
+                  const ast = { type: "Program", body: [first, second], tokens, comments, range: [0, 12], loc: {} };
+                  const SourceCode = context.sourceCode.constructor;
+                  const parsed = new SourceCode(text, ast);
+                  const values = found => found.map(it => it.value);
+                  const isSemicolon = it => it.value === ";";
+                  const errorOf = run => {
+                    try {
+                      run();
+                    } catch (thrown) {
+                      return thrown.message;
+                    }
+                  };
+                  context.report({
+                    node,
+                    message: JSON.stringify({
+                      name: SourceCode.name,
+                      isInstance: context.sourceCode instanceof SourceCode,
+                      split: SourceCode.splitLines("a\\nb"),
+                      own: new SourceCode().text,
+                      text: parsed.text,
+                      lines: parsed.lines,
+                      isSameAst: parsed.ast === ast,
+                      semicolons: [parsed.getLastToken(first, isSemicolon)?.value, parsed.getLastToken(second, isSemicolon)],
+                      firstText: parsed.getText(first),
+                      tokens: values(parsed.getTokens(first)),
+                      lastTwo: values(parsed.getLastTokens(first, 2)),
+                      after: [parsed.getTokenAfter(first).value, parsed.getTokenAfter(first, { includeComments: true }).value],
+                      before: values(parsed.getCommentsBefore(second)),
+                      between: parsed.commentsExistBetween(first, second),
+                      all: values(parsed.tokensAndComments),
+                      nodes: [0, 4, 5, 11].map(index => parsed.getNodeByRangeIndex(index)?.range ?? null),
+                      locations: [0, 10, 11, 12].map(index => parsed.getLocFromIndex(index)),
+                      indices: [parsed.getIndexFromLoc({ line: 1, column: 4 }), parsed.getIndexFromLoc({ line: 2, column: 1 })],
+                      spaces: [parsed.isSpaceBetween(tokens[0], tokens[1]), parsed.isSpaceBetween(second, first)],
+                      ancestors: parsed.getAncestors({ parent: { type: "A", parent: { type: "B" } } }).map(it => it.type),
+                      errors: [
+                        errorOf(() => new SourceCode(text, { type: "Program" })),
+                        errorOf(() => parsed.getLocFromIndex(13)),
+                        errorOf(() => parsed.getIndexFromLoc({ line: 1, column: 11 })),
+                        errorOf(() => parsed.getScope(first)),
+                      ],
+                    }),
+                  });
+                },
+              };
+            },
+          },
+        },
+      };`;
+      const { raw } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "api/dump": "error" } }),
+          "plugin.mjs": plugin,
+          "a.js": "linted(1, 2, 3)\n",
+        },
+        ["-f", "json"],
+      );
+      const [{ message }] = JSON.parse(raw).diagnostics;
+      expect(JSON.parse(message)).toEqual({
+        name: "SourceCode",
+        isInstance: true,
+        split: ["a", "b"],
+        own: "linted(1, 2, 3)\n",
+        text: "a(b); // c\nd",
+        lines: ["a(b); // c", "d"],
+        isSameAst: true,
+        semicolons: [";", null],
+        firstText: "a(b);",
+        tokens: ["a", "(", "b", ")", ";"],
+        lastTwo: [")", ";"],
+        after: ["d", " c"],
+        before: [" c"],
+        between: true,
+        all: ["a", "(", "b", ")", ";", " c", "d"],
+        nodes: [
+          [0, 5],
+          [0, 5],
+          [0, 12],
+          [11, 12],
+        ],
+        locations: [
+          { line: 1, column: 0 },
+          { line: 1, column: 10 },
+          { line: 2, column: 0 },
+          { line: 2, column: 1 },
+        ],
+        indices: [4, 12],
+        spaces: [false, true],
+        ancestors: ["B", "A"],
+        errors: [
+          "AST is missing the tokens array.",
+          "Index out of range (requested index 13, but source text has length 12).",
+          "Column number out of range (column 11 requested, but the length of line 1 is 11).",
+          "sourceCode.getScope() needs scopes, which bun lint does not have for code that a rule has parsed",
+        ],
+      });
+    },
+    timeout,
+  );
+
+  // From ESLint 8.57.1, 9.39.5 and 10.12.0, with their own parser.
+  test.each([
+    ["8.57.1", { "a.js": [6, 8], "b.cjs": [22, 26], "c.mjs": [0, 18], "d.js": [0, 0] }],
+    ["9.39.5", { "a.js": [6, 8], "b.cjs": [22, 26], "c.mjs": [0, 18], "d.js": [0, 0] }],
+    ["10.12.0", { "a.js": [0, 15], "b.cjs": [0, 29], "c.mjs": [0, 18], "d.js": [0, 0] }],
+  ])(
+    "the Program of the default parser and its parserOptions are those of eslint %s",
+    async (version, ranges) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `
+            const dump = {
+              create: context => ({
+                Program(node) {
+                  const { parserOptions, sourceType } = context.languageOptions;
+                  const message = JSON.stringify({ range: node.range, end: node.loc.end, parserOptions, sourceType });
+                  context.report({ node, message });
+                },
+              }),
+            };
+            export default [{
+              files: ["?.*"],
+              plugins: { api: { rules: { dump } } },
+              languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+              rules: { "api/dump": "error" },
+            }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": "// c\n\na;\n// d\n\n",
+          "b.cjs": "#!/usr/bin/env node\n  a; b  \n",
+          "c.mjs": "// only a comment\n",
+          "d.js": "",
+        },
+        ["-f", "json", "a.js", "b.cjs", "c.mjs", "d.js"],
+      );
+      const found = (JSON.parse(raw) as any[]).map(file => ({
+        ...file.messages[0],
+        ...JSON.parse(file.messages[0].message),
+      }));
+      expect(found.map(it => it.range)).toEqual(Object.values(ranges));
+      expect(found.map(it => [it.endLine, it.endColumn])).toEqual(found.map(it => [it.end.line, it.end.column + 1]));
+      expect(found.map(it => it.sourceType)).toEqual(["module", "commonjs", "module", "module"]);
+      expect(found.map(it => it.parserOptions)).toEqual(
+        found.map(it => ({ ecmaFeatures: { jsx: true }, sourceType: it.sourceType })),
+      );
+    },
+    timeout,
+  );
+
+  // From ESLint 9.39.5 and 10.12.0 with @typescript-eslint/parser 8.71.1. `Promise` is only a type in the parser's libraries.
+  // ESLint's own parser has no libraries.
+  test.each([
+    ["9.39.5", "a.ts", "through Foo:4 baz:5, Promise 1 4 2"],
+    ["10.12.0", "a.ts", "through Promise:2 Foo:4 baz:5, Promise 1 4"],
+    ["9.39.5", "a.js", "through Promise:1 baz:2, Promise none"],
+    ["10.12.0", "a.js", "through Promise:1 baz:2, Promise none"],
+  ])(
+    "before ESLint 10, a value resolves to a type of TypeScript's libraries: eslint %s, %s",
+    async (version, name, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `const globals = {
+              create: context => ({
+                "Program:exit"(node) {
+                  const scope = context.sourceCode.scopeManager.globalScope;
+                  const line = it => it.identifier.loc.start.line;
+                  const through = scope.through.map(it => it.identifier.name + ":" + line(it)).join(" ");
+                  const references = scope.set.get("Promise")?.references.map(line).join(" ") ?? "none";
+                  context.report({ node, message: "through " + through + ", Promise " + references });
+                },
+              }),
+            };
+            export default [{
+              files: ["a.*"],
+              languageOptions: { ecmaVersion: 5, sourceType: "script" },
+              plugins: { demo: { rules: { globals } } },
+              rules: { "demo/globals": "error" },
+            }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.ts":
+            "function f<T>(): Promise<T> {\n  return Promise.resolve({} as T);\n}\ntype A = () => Promise<Foo>;\nbaz(f);\n",
+          "a.js": "Promise.resolve(1);\nbaz();\n",
+        },
+        ["-f", "json", name],
+      );
+      expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([expected]);
+    },
+    timeout,
+  );
+
+  // From ESLint 9.39.5 and 10.12.0 with @typescript-eslint/parser 8.71.1. `Promise` is only a type in the parser's libraries.
+  // ESLint's own parser has no libraries.
+  test.each([
+    ["9.39.5", "a.ts", "through Foo:4 baz:5, Promise 1 4 2"],
+    ["10.12.0", "a.ts", "through Promise:2 Foo:4 baz:5, Promise 1 4"],
+    ["9.39.5", "a.js", "through Promise:1 baz:2, Promise none"],
+    ["10.12.0", "a.js", "through Promise:1 baz:2, Promise none"],
+  ])(
+    "before ESLint 10, a value resolves to a type of TypeScript's libraries: eslint %s, %s",
+    async (version, name, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `const globals = {
+              create: context => ({
+                "Program:exit"(node) {
+                  const scope = context.sourceCode.scopeManager.globalScope;
+                  const line = it => it.identifier.loc.start.line;
+                  const through = scope.through.map(it => it.identifier.name + ":" + line(it)).join(" ");
+                  const references = scope.set.get("Promise")?.references.map(line).join(" ") ?? "none";
+                  context.report({ node, message: "through " + through + ", Promise " + references });
+                },
+              }),
+            };
+            export default [{
+              files: ["a.*"],
+              languageOptions: { ecmaVersion: 5, sourceType: "script" },
+              plugins: { demo: { rules: { globals } } },
+              rules: { "demo/globals": "error" },
+            }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.ts":
+            "function f<T>(): Promise<T> {\n  return Promise.resolve({} as T);\n}\ntype A = () => Promise<Foo>;\nbaz(f);\n",
+          "a.js": "Promise.resolve(1);\nbaz();\n",
+        },
+        ["-f", "json", name],
+      );
+      expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([expected]);
+    },
+    timeout,
+  );
+
+  // From ESLint 8.57.1, 9.39.5 and 10.12.0, and oxlint 1.87.0. `unicorn/prefer-string-slice` of eslint-plugin-unicorn 56 passes a
+  // number.
+  test.each([
+    ["8.57.1", "1 + 2;\n", "", 0],
+    ["9.39.5", "1 + 2;\n", "", 0],
+    ["10.12.0", "f;\n", "'text' must be a string", 2],
+    ["oxlint", "1 + 2;\n", "", 0],
+  ])(
+    "only ESLint 10 refuses a fix whose text isn't a string: %s",
+    async (version, fixed, error, code) => {
+      const number = `{
+        meta: { fixable: "code" },
+        create: context => ({
+          Identifier: node =>
+            context.report({
+              node,
+              message: "no",
+              fix: fixer => [fixer.replaceText(node, 1), fixer.insertTextAfter(node, " + "), fixer.insertTextAfter(node, 2)],
+            }),
+        }),
+      }`;
+      const rules = { "demo/number": "error" };
+      const config =
+        version === "oxlint"
+          ? {
+              ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules }),
+              "plugin.mjs": `export default { meta: { name: "demo" }, rules: { number: ${number} } };`,
+            }
+          : {
+              "eslint.config.mjs": `export default [{
+                plugins: { demo: { rules: { number: ${number} } } },
+                rules: ${JSON.stringify(rules)},
+              }];`,
+              "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+            };
+      const { files, stderr, exitCode } = await lint({ ...config, "a.js": "f;\n" }, ["--fix", "a.js"], ["a.js"]);
+      expect(files).toEqual({ "a.js": fixed });
+      expect(stderr).toContain(error);
+      expect(exitCode).toBe(code);
     },
     timeout,
   );
@@ -1853,7 +2151,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         4 problems"
       `);
       expect(stderr).toContain(
-        "2 rules did not run because rules that run in JavaScript cannot use type information: typed/at-once, typed/later",
+        "2 rules did not run because there is no type information for the files: typed/at-once, typed/later",
       );
       expect(stderr).not.toContain("You have used a rule");
       expect(exitCode).toBe(2);
@@ -1861,6 +2159,672 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     },
     timeout,
   );
+
+  describe("where the config turns on type information", () => {
+    // `reads` is what the rule does with the type of the first argument of each `it()`.
+    const typed = (reads: string, rules = "") => ({
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "es2022", "types": [] } }`,
+      "node_modules/typescript/package.json": `{ "name": "typescript", "version": "6.0.3" }`,
+      "plugin.mjs": `
+        // This is what \`getParserServices\` in @typescript-eslint/utils does.
+        function services(context) {
+          const services = context.sourceCode.parserServices;
+          if (services?.esTreeNodeToTSNodeMap == null || services.tsNodeToESTreeNodeMap == null || services.program == null) {
+            throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file. See https://tseslint.com/typed-linting for enabling linting with type information.\\nParser: (unknown)");
+          }
+          return services;
+        }
+        const reads = ${reads};
+        const create = context => ({
+          CallExpression(node) {
+            if (node.callee.name !== "it") return;
+            context.report({ node: node.arguments[0], message: String(reads(services(context), node.arguments[0])) });
+          },
+        });
+        // Many rules use types only if there are any, or look for what another parser provides.
+        const optional = context => ({
+          Program(node) {
+            const { program, svelteParseContext } = context.sourceCode.parserServices;
+            context.report({ node, message: program + " " + svelteParseContext });
+          },
+        });
+        const ask = () => services({ sourceCode: { parserServices: {} } });
+        // Asks the second time it runs on a file, and only then.
+        const runs = new Map();
+        const second = context => {
+          runs.set(context.filename, (runs.get(context.filename) ?? 0) + 1);
+          if (runs.get(context.filename) === 2) ask();
+          return {};
+        };
+        export default {
+          rules: { title: { create }, optional: { create: optional }, second: { create: second }, always: { create: ask } },
+        };`,
+      "eslint.config.mjs": `
+        import demo from "./plugin.mjs";
+        export default [{
+          files: ["**/*.ts"],
+          plugins: { demo, "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+          rules: { "demo/title": "error", ${rules} },
+        }];`,
+    });
+    const facts = `(services, node) => {
+      const type = services.getTypeAtLocation(node);
+      return [type.flags, type.getFlags(), type.getCallSignatures().length, type.getConstructSignatures().length].join(" ");
+    }`;
+    const titles = `declare function it(title: unknown): void;
+class Store {}
+function load(): void;
+function load(from: string): void;
+function load() {}
+const label: string = "a";
+const count = 1;
+enum Color {
+  Red = "red",
+}
+it("text");
+it(\`a\${count}\`);
+it(label);
+it(load);
+it(Store);
+it(count);
+it(() => {});
+it(class {});
+it(load.name);
+it(Color.Red);
+it(label as any);
+it(undefined);
+it({});
+it(count > 0);
+it(Math.random() > 0 ? label : load);
+`;
+    const messagesOf = (raw: string) => JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message);
+    // \`type.flags\` of each title, as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 reports it with these versions of
+    // TypeScript. TypeScript 6 renumbered \`ts.TypeFlags\`.
+    const flags = {
+      "5.9.3": [128, 128, 4, 524288, 524288, 256, 524288, 524288, 4, 1152, 1, 32768, 524288, 1048592, 1048576],
+      "6.0.3": [
+        1024, 1024, 32, 1048576, 1048576, 2048, 1048576, 1048576, 32, 33792, 1, 4, 1048576, 134217984, 134217728,
+      ],
+    };
+    const signatures = [
+      "0 0",
+      "0 0",
+      "0 0",
+      "2 0",
+      "0 1",
+      "0 0",
+      "1 0",
+      "0 1",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+    ];
+
+    test.concurrent.each([
+      ["5.9.3", ""],
+      ["6.0.3", ""],
+      // The file is linted with types from the start.
+      ["6.0.3", `"@typescript-eslint/no-floating-promises": "error"`],
+    ] as const)(
+      "a rule gets the flags and the signatures of an expression's type: typescript %s, %s",
+      async (version, rules) => {
+        const files = {
+          ...typed(facts, rules),
+          "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }),
+          "a.ts": titles,
+        };
+        const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)).toEqual(flags[version].map((it, i) => `${it} ${it} ${signatures[i]}`));
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3.
+    test.concurrent(
+      "a rule gets the type of what an import binds",
+      async () => {
+        const reads = `(services, node) => {
+          return node.parent.parent.parent.body.flatMap(it => it.specifiers ?? []).map(it => {
+            const type = services.getTypeAtLocation(it);
+            return [it.type, type.flags, type.getCallSignatures().length, type.getConstructSignatures().length].join(" ");
+          }).join(", ");
+        }`;
+        const files = {
+          ...typed(reads),
+          "node_modules/typescript/package.json": `{ "name": "typescript", "version": "5.9.3" }`,
+          "lib.ts": `export function fn() {}\nexport class K {}\nexport const n = 1;\nexport default function main() {}\nexport interface I {}\n`,
+          "a.ts": `import main, { K, fn, n, type I } from "./lib";\nimport * as all from "./lib";\ndeclare function it(title: unknown): void;\nit([main, K, fn, n, all, {} as I]);\n`,
+        };
+        const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)[0].split(", ")).toEqual([
+          "ImportDefaultSpecifier 524288 1 0",
+          "ImportSpecifier 524288 0 1",
+          "ImportSpecifier 524288 1 0",
+          "ImportSpecifier 256 0 0",
+          "ImportSpecifier 1 0 0",
+          "ImportNamespaceSpecifier 524288 0 0",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3.
+    test.concurrent(
+      "a rule gets the name of a type's symbol, from the type checker",
+      async () => {
+        const reads = `(services, node) => {
+          const type = services.program.getTypeChecker().getTypeAtLocation(services.esTreeNodeToTSNodeMap.get(node));
+          return type.getSymbol()?.name + " " + type.symbol?.getName();
+        }`;
+        const names = {
+          "new Map<string, number>()": "Map",
+          "new Set([1])": "Set",
+          "new Store()": "Store",
+          "Store": "Store",
+          "shape": "Shape",
+          "{ a: 1 }": "__object",
+          "[1]": "Array",
+          "load": "load",
+          "() => {}": "__function",
+          '"a"': undefined,
+          "1": undefined,
+          "Color.Red": "Red",
+          "Color": "Color",
+          "either": undefined,
+          "Promise.resolve(1)": "Promise",
+          "undefined": undefined,
+          "class {}": "__class",
+          "Math": "Math",
+        };
+        const declarations = `declare function it(title: unknown): void;
+class Store {}
+interface Shape { a: 1 }
+enum Color { Red }
+function load() {}
+declare const shape: Shape;
+declare const either: Shape | Store;
+`;
+        const calls = Object.keys(names).map(it => `it(${it});\n`);
+        const { raw, exitCode } = await lint({ ...typed(reads), "a.ts": declarations + calls.join("") }, [
+          "-f",
+          "json",
+          "a.ts",
+        ]);
+        expect(messagesOf(raw)).toEqual(Object.values(names).map(it => `${it} ${it}`));
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Recorded with ESLint 10.12.0, @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3 by record.mjs in that directory.
+    test.concurrent(
+      "a rule gets the type of every kind of node",
+      async () => {
+        const oracle = join(import.meta.dir, "oracle", "jsplugins", "types");
+        const expected = readFileSync(join(oracle, "expected.txt"), "utf8").trim().split("\n");
+        const files = {
+          ...typeCases,
+          "node_modules/typescript/package.json": `{ "name": "typescript", "version": "5.9.3" }`,
+          "ask.cjs": readFileSync(join(oracle, "ask.cjs"), "utf8"),
+          "eslint.config.cjs": `module.exports = [{
+            files: ["**/*.ts", "**/*.tsx"],
+            plugins: { ask: require("./ask.cjs") },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+            rules: { "ask/all": "error" },
+          }];`,
+        };
+        const { raw, stderr, exitCode } = await lint(files, ["-f", "json", ...typeFiles]);
+        type Message = { line: number; column: number; endLine: number; endColumn: number; message: string };
+        const results: { filePath: string; messages: Message[] }[] = JSON.parse(raw);
+        const said = results.flatMap(({ filePath, messages }) =>
+          messages.map(
+            it => `${basename(filePath)} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
+          ),
+        );
+        const isRefused = (line: string) => line.endsWith(": refused");
+        expect(said.map((line, i) => (isRefused(line) ? expected[i] : line))).toEqual(expected);
+        // In this order: the `x = 1` of `({ x = 1 } = y)`, the function of `({ set a(v) {} })`, the `A` and the `B` of
+        // `implements A.B.C`, the `import` of `import.meta`, the `a` of `<a:b />`, the `A.B` of `implements A.B.C`, the file, the
+        // `set a(v) {}` of `({ set a(v) {} })`, the `import()` of `typeof import()`, the `A.B` of the type `A.B.C`, the `symbol` of
+        // `unique symbol`, the `<T>` of `class A extends B<T>`, the `-1` of the type `-1`.
+        const kinds = said
+          .filter(isRefused)
+          .map(it => it.slice(it.indexOf(" ", it.indexOf(" ") + 1) + 1, -": refused".length));
+        expect([...new Set(kinds)].sort()).toEqual([
+          "AssignmentPattern",
+          "FunctionExpression",
+          "Identifier in MemberExpression.object",
+          "Identifier in MemberExpression.property",
+          "Identifier in MetaProperty.meta",
+          "JSXIdentifier in JSXNamespacedName.namespace",
+          "MemberExpression",
+          "Program",
+          "Property",
+          "TSImportType",
+          "TSQualifiedName",
+          "TSSymbolKeyword",
+          "TSTypeParameterInstantiation",
+          "UnaryExpression",
+        ]);
+        expect(said.filter(isRefused).length).toBe(27);
+        expect(stderr).not.toContain(" did not run because");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // `type.flags` is numbered by the `typescript` that the parser finds: with ESLint that one makes the types. Each of these is the same
+    // under ESLint 10.12.0 with @typescript-eslint/parser 8.72.0, TypeScript 5.9.3 for the parser and 6.0.3 elsewhere.
+    describe("the flags are those of the parser's typescript", () => {
+      const version = (version: string) => JSON.stringify({ name: "typescript", version });
+      const store = "node_modules/.pnpm/@typescript-eslint+parser@8.72.0_typescript@5.9.3/node_modules";
+      const parser = {
+        [`${store}/@typescript-eslint/parser/package.json`]: `{ "name": "@typescript-eslint/parser", "version": "8.72.0", "main": "index.js" }`,
+        [`${store}/@typescript-eslint/parser/index.js`]: `module.exports = { meta: { name: "typescript-eslint/parser", version: "8.72.0" } };`,
+        [`${store}/typescript/package.json`]: version("5.9.3"),
+      };
+      const withParser = (files: Record<string, string>) => ({
+        ...files,
+        ...parser,
+        "eslint.config.mjs": `import parser from "@typescript-eslint/parser";\n${files["eslint.config.mjs"].replace(`parser: { meta: { name: "typescript-eslint/parser" } }`, "parser")}`,
+        "a.ts": `declare function it(title: unknown): void;\nit("a");\n`,
+      });
+      const run = async (files: Record<string, string | undefined>) => {
+        using dir = tempDir(
+          "bun-lint-js-plugins",
+          Object.fromEntries(Object.entries(files).filter(it => it[1] !== undefined)),
+        );
+        mkdirSync(join(String(dir), "node_modules/@typescript-eslint"), { recursive: true });
+        // As pnpm links it.
+        symlinkSync(
+          join(String(dir), store, "@typescript-eslint/parser"),
+          join(String(dir), "node_modules/@typescript-eslint/parser"),
+          "junction",
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "a.ts"],
+          env,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { messages: messagesOf(stdout), stderr, exitCode };
+      };
+      const flagsOf = "(services, node) => services.getTypeAtLocation(node).flags";
+
+      test.concurrent(
+        "which only the parser finds",
+        async () => {
+          const files = { ...withParser(typed(flagsOf)), "node_modules/typescript/package.json": undefined };
+          expect(await run(files)).toMatchObject({ messages: ["128"], exitCode: 1 });
+        },
+        timeout,
+      );
+
+      test.concurrent(
+        "and not of the one in the project's node_modules",
+        async () => {
+          expect(await run(withParser(typed(flagsOf)))).toMatchObject({ messages: ["128"], exitCode: 1 });
+        },
+        timeout,
+      );
+
+      test.concurrent(
+        "and not of the one that the plugin finds",
+        async () => {
+          const {
+            "plugin.mjs": plugin,
+            "node_modules/typescript/package.json": _,
+            ...files
+          } = withParser(typed(flagsOf));
+          const moved = {
+            ...files,
+            "eslint.config.mjs": files["eslint.config.mjs"].replace("./plugin.mjs", "./plugins/plugin.mjs"),
+            "plugins/plugin.mjs": plugin,
+            "plugins/node_modules/typescript/package.json": version("6.0.3"),
+          };
+          expect(await run(moved)).toMatchObject({ messages: ["128"], exitCode: 1 });
+        },
+        timeout,
+      );
+    });
+
+    test.concurrent(
+      "without a typescript, a rule that reads the flags is skipped, and another one runs",
+      async () => {
+        const { "node_modules/typescript/package.json": _, ...files } = typed(
+          "(services, node) => services.getTypeAtLocation(node).flags",
+        );
+        const source = { "a.ts": `declare function it(title: unknown): void;\nit(it);\n` };
+        const { raw, stderr, exitCode } = await lint({ ...files, ...source }, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)).toEqual([]);
+        expect(stderr).toContain(
+          "1 rule did not run because rules that run in JavaScript cannot read this from a type: demo/title (Type.flags without typescript)",
+        );
+        expect(exitCode).toBe(2);
+        const { "node_modules/typescript/package.json": __, ...others } = typed(
+          "(services, node) => services.getTypeAtLocation(node).getCallSignatures().length",
+        );
+        const other = await lint({ ...others, ...source }, ["-f", "json", "a.ts"]);
+        expect(messagesOf(other.raw)).toEqual(["1"]);
+        expect(other.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Types are found for the kinds of node that rules have wanted the type of before. For a new kind, the rules run again.
+    test.concurrent.each([
+      ["", "services.getTypeAtLocation(node.parent).flags"],
+      [
+        " and catches what's thrown",
+        `(() => { try { return services.getTypeAtLocation(node.parent).flags; } catch { return "caught"; } })()`,
+      ],
+    ])(
+      "a rule gets a type that it only wants once it has seen another one%s",
+      async (_, then) => {
+        const reads = `(services, node) => services.getTypeAtLocation(node).getCallSignatures().length > 0 ? ${then} : "none"`;
+        const files = { ...typed(reads), "a.ts": `declare function it(title: unknown): void;\nit(it);\nit(1);\n` };
+        const { raw, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        // `void`
+        expect(messagesOf(raw)).toEqual(["16", "none"]);
+        expect(stderr).not.toContain(" did not run because");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3, whose numbers are 4 and 1048576.
+    test.concurrent(
+      "a file that a project and one that it references both include has the types of the referenced one",
+      async () => {
+        const options = { strict: true, target: "es2022", types: [] };
+        const text = `declare function it(title: unknown): void;\nconst list: string[] = [];\nit(list[0]);\nexport {};\n`;
+        const { raw, exitCode } = await lint(
+          {
+            ...typed("(services, node) => services.getTypeAtLocation(node).flags"),
+            "tsconfig.json": JSON.stringify({
+              compilerOptions: { ...options, noUncheckedIndexedAccess: true },
+              include: ["src"],
+              references: [{ path: "./tsconfig.cli.json" }],
+            }),
+            "tsconfig.cli.json": JSON.stringify({
+              compilerOptions: { ...options, composite: true },
+              include: ["src/cli"],
+            }),
+            "src/cli/a.ts": text,
+            "src/web/b.ts": text,
+          },
+          ["-f", "json", "src"],
+        );
+        const said = JSON.parse(raw).map((it: { messages: { message: string }[] }) =>
+          it.messages.map(it => it.message),
+        );
+        // `string`, and `string | undefined`.
+        expect(said).toEqual([["32"], ["134217728"]]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "a rule that hasn't asked for types gets the same as without them",
+      async () => {
+        const files = {
+          ...typed(facts, `"demo/optional": "error"`),
+          "a.ts": `declare function it(title: unknown): void;\nit(it);\n`,
+        };
+        const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)).toEqual(["null undefined", "1048576 1048576 1 0"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    const twenty = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`${i}.ts`, `declare function it(title: unknown): void;\nit(it);\n`]),
+    );
+    const withTypes = (stderr: string) => Number(/linted with types: (\d+) files/.exec(stderr)?.[1]);
+
+    test.concurrent(
+      "only the files on which a rule can use types are type checked",
+      async () => {
+        const [usable, unusable, never] = await Promise.all([
+          lint({ ...typed(facts), ...twenty }, ["-f", "unix", "--timing", "."]),
+          lint({ ...typed("services => services.program.getCompilerOptions()"), ...twenty }, [
+            "-f",
+            "unix",
+            "--timing",
+            ".",
+          ]),
+          lint({ ...typed(facts, `"demo/title": "off", "demo/optional": "warn"`), ...twenty }, [
+            "--quiet",
+            "--timing",
+            ".",
+          ]),
+        ]);
+        expect({
+          files: withTypes(usable.stderr),
+          problems: usable.stdout.split("\n").at(-1),
+          exitCode: usable.exitCode,
+        }).toEqual({
+          files: 20,
+          problems: "20 problems",
+          exitCode: 1,
+        });
+        expect(unusable.stdout).toBe("");
+        expect(unusable.stderr).toContain("demo/title (Program.getCompilerOptions)");
+        expect({ files: withTypes(unusable.stderr), exitCode: unusable.exitCode }).toEqual({ files: 0, exitCode: 2 });
+        expect({ files: withTypes(never.stderr), exitCode: never.exitCode }).toEqual({ files: 0, exitCode: 0 });
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "a file whose `parserServices` aren't typescript-eslint's isn't type checked for a rule",
+      async () => {
+        const files = typed(facts);
+        const espree = files["eslint.config.mjs"]
+          .replace(`files: ["**/*.ts"]`, `files: ["**/*.js"]`)
+          .replace(`parser: { meta: { name: "typescript-eslint/parser" } }, `, "");
+        const { stderr, exitCode } = await lint(
+          {
+            ...files,
+            "eslint.config.mjs": espree,
+            "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,
+            "a.js": "it(it);\n",
+          },
+          ["--timing", "a.js"],
+        );
+        expect(stderr).toContain("1 rule did not run because there is no type information for the files: demo/title");
+        expect({ files: withTypes(stderr), exitCode }).toEqual({ files: 0, exitCode: 2 });
+      },
+      timeout,
+    );
+
+    // Each of these is linted a fixed number of times, whatever its rules do.
+    describe.each([
+      ["in the config", "--fix-dry-run"],
+      // The first is the same as under ESLint 10.12.0 with @typescript-eslint/parser 8.72.0.
+      ["in a comment", "--stdin"],
+      ["in a `files` block", "--fix-dry-run"],
+      ["on the command line", "--stdin"],
+    ] as const)("a rule that's turned on %s", (place, flag) => {
+      const noTypes = "1 rule did not run because there is no type information for the files: ";
+      const notKnown = "1 rule did not run because rules that run in JavaScript cannot read this from a type: ";
+      test.concurrent.each([
+        ["gets types", facts, `"demo/title": "error"`, "a.ts", ["1024 1024 0 0"], ""],
+        ["gets none under espree", facts, `"demo/title": "error"`, "a.js", [], noTypes + "demo/title"],
+        [
+          "reads what isn't known",
+          "services => services.program.getCompilerOptions()",
+          `"demo/title": "error"`,
+          "a.ts",
+          [],
+          notKnown + "demo/title (Program.getCompilerOptions)",
+        ],
+        [
+          "asks on its second run",
+          facts,
+          `"demo/title": "error", "demo/second": "error"`,
+          "a.ts",
+          ["1024 1024 0 0"],
+          "",
+        ],
+        [
+          "asks on every run",
+          facts,
+          `"demo/title": "error", "demo/always": "error"`,
+          "a.ts",
+          ["1024 1024 0 0"],
+          noTypes + "demo/always",
+        ],
+      ])(
+        "and %s",
+        async (_, reads, rules, name, messages, refusal) => {
+          const files = typed(reads, `"no-var": "error"`);
+          const config = files["eslint.config.mjs"]
+            .replace(`files: ["**/*.ts"]`, `files: ["**/*.ts", "**/*.js"]`)
+            .replace(`"demo/title": "error", `, place === "in the config" ? `${rules}, ` : "")
+            .replace(/\}\];$/, place === "in a `files` block" ? `}, { files: ["a.*"], rules: { ${rules} } }];` : "}];");
+          const espree = config.replace(`parser: { meta: { name: "typescript-eslint/parser" } }, `, "");
+          const comment = place === "in a comment" ? `/* eslint ${rules} */\n` : "";
+          const text = `${comment}globalThis.it = () => {};\nit("a");\n`;
+          const all = {
+            ...files,
+            "eslint.config.mjs": name === "a.js" ? espree : config,
+            "tsconfig.json": `{ "compilerOptions": { "allowJs": true, "types": [] } }`,
+            [name]: text,
+          };
+          const onCommandLine = rules.split(", ").flatMap(it => ["--rule", it.replaceAll('"', "")]);
+          const args = ["-f", "json", ...(place === "on the command line" ? onCommandLine : [])];
+          const expectResult = ({ raw, stderr, exitCode }: { raw: string; stderr: string; exitCode: number }) => {
+            expect(messagesOf(raw)).toEqual(messages);
+            if (refusal) expect(stderr).toContain(refusal);
+            else expect(stderr).not.toContain(" did not run because");
+            expect(exitCode).toBe(refusal ? 2 : 1);
+          };
+          expectResult(await lint(all, [...args, name]));
+          if (flag === "--fix-dry-run") return expectResult(await lint(all, [...args, flag, name]));
+          using dir = tempDir("bun-lint-js-plugins", all);
+          await using proc = spawn({
+            cmd: [bunExe(), "lint", ...args, "--stdin", "--stdin-filename", name],
+            env,
+            cwd: String(dir),
+            stdin: Buffer.from(text),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [raw, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expectResult({ raw, stderr, exitCode });
+        },
+        timeout,
+      );
+    });
+
+    // ESLint 10.12.0 fails on such a block: typescript-eslint doesn't find `a.md/0_0.ts` in a project.
+    test.concurrent(
+      "a block that a processor finds has no types",
+      async () => {
+        const files = typed(facts);
+        const config = files["eslint.config.mjs"].replace(
+          /\}\];$/,
+          `}, { files: ["**/*.md"], plugins: { blocks: { processors: { all: {
+            preprocess: text => [{ text, filename: "0.ts" }],
+            postprocess: lists => lists.flat(),
+          } } } }, processor: "blocks/all" }];`,
+        );
+        const { raw, stderr, exitCode } = await lint(
+          { ...files, "eslint.config.mjs": config, "a.md": `declare function it(title: unknown): void;\nit("a");\n` },
+          ["-f", "json", "a.md"],
+        );
+        expect(messagesOf(raw)).toEqual([]);
+        expect(stderr).toContain("1 rule did not run because there is no type information for the files: demo/title");
+        expect(exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "text from standard input has types too",
+      async () => {
+        using dir = tempDir("bun-lint-js-plugins", typed(facts));
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "--stdin", "--stdin-filename", "a.ts"],
+          env,
+          cwd: String(dir),
+          stdin: Buffer.from(`declare function it(title: unknown): void;\nit(it);\n`),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(messagesOf(stdout)).toEqual(["1048576 1048576 1 0"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "the other rules' fixes are applied once",
+      async () => {
+        const files = {
+          ...typed(facts, `"no-var": "error"`),
+          "a.ts": `declare function it(title: unknown): void;\nvar a = 1;\nit(a);\n`,
+        };
+        const { raw, files: written, exitCode } = await lint(files, ["-f", "json", "--fix", "a.ts"], ["a.ts"]);
+        expect(messagesOf(raw)).toEqual(["64 64 0 0"]);
+        expect(written["a.ts"]).toBe(`declare function it(title: unknown): void;\nlet a = 1;\nit(a);\n`);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent.each([
+      ["(services, node) => services.getTypeAtLocation(node).getProperties()", "Type.getProperties"],
+      ["(services, node) => services.getTypeAtLocation(node).symbol.flags", "Symbol.flags"],
+      [
+        "(services, node) => services.getTypeAtLocation(node).getCallSignatures()[0].getReturnType()",
+        "Signature.getReturnType",
+      ],
+      ["(services, node) => services.getTypeAtLocation(node.parent.parent.parent)", "getTypeAtLocation(Program)"],
+      ["(services, node) => services.getSymbolAtLocation(node)", "getSymbolAtLocation(Identifier)"],
+      ["(services, node) => services.program.getCompilerOptions()", "Program.getCompilerOptions"],
+      [
+        "(services, node) => services.program.getTypeChecker().getSymbolAtLocation(node)",
+        "TypeChecker.getSymbolAtLocation",
+      ],
+      [
+        "(services, node) => services.program.getTypeChecker().getTypeAtLocation(node)",
+        "TypeChecker.getTypeAtLocation(?)",
+      ],
+      ["(services, node) => services.esTreeNodeToTSNodeMap.get(node).kind", "Node.kind"],
+      ["(services, node) => services.tsNodeToESTreeNodeMap.get(node)", "tsNodeToESTreeNodeMap.get"],
+    ])(
+      "a rule that reads anything else is skipped, and the error says what it read: %s",
+      async (reads, named) => {
+        const files = {
+          ...typed(reads, `"no-var": "error"`),
+          "a.ts": `declare function it(title: unknown): void;\nit(it);\nvar a = 1;\n`,
+          "b.ts": `declare function it(title: unknown): void;\nit(it);\n`,
+        };
+        const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "a.ts", "b.ts"]);
+        expect(stdout).toBe(`<dir>/a.ts:3:1: Unexpected var, use let or const instead. [Error/no-var]\n\n1 problem`);
+        expect(stderr).toContain(
+          `1 rule did not run because rules that run in JavaScript cannot read this from a type: demo/title (${named})`,
+        );
+        expect(exitCode).toBe(2);
+      },
+      timeout,
+    );
+  });
 
   // This is how `eslint-plugin-import` parses the modules that a file imports.
   test.each(["parser", "* as parser"])(
@@ -1949,6 +2913,63 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         "<dir>/a.js:1:1: two [Error/local/two]",
       ]);
       expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // From @typescript-eslint/parser 7.18.0 and 8.71.1. `no-unused-vars` of typescript-eslint 7, which eslint-plugin-unused-imports 3
+  // runs, looks for the scope of `typeParameter.name` to mark the key of a mapped type as used.
+  test.each([
+    [
+      "7.18.0",
+      [
+        "TSTypeParameter TSMappedType TSTypeAliasDeclaration Program, TSTypeOperator TSTypeParameter TSMappedType TSTypeAliasDeclaration Program, mappedType",
+        "TSEnumMember TSEnumDeclaration Program",
+        "TSImportType TSTypeAnnotation Identifier VariableDeclarator VariableDeclaration Program",
+      ],
+    ],
+    ["8.71.1", [", , global", "none", "none"]],
+  ])(
+    "the nodes of deprecated properties have a parent if the installed parser is older than version 8: %s",
+    async (version, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `
+          const up = node => {
+            const types = [];
+            for (let it = node.parent; it; it = it.parent) types.push(it.type);
+            return types.join(" ");
+          };
+          const old = {
+            create: ({ sourceCode, report }) => ({
+              TSMappedType(node) {
+                const { name, constraint } = node.typeParameter;
+                let scope = null;
+                for (let it = name; it && !scope; it = it.parent) scope = sourceCode.scopeManager.acquire(it, true);
+                scope ??= sourceCode.scopeManager.scopes[0];
+                report({ node, message: [up(name), up(constraint.typeAnnotation), scope.type].join(", ") });
+              },
+              TSEnumDeclaration: node => report({ node, message: up(node.members[0].id) || "none" }),
+              TSImportType: node => report({ node, message: up(node.argument) || "none" }),
+            }),
+          };
+          export default [
+            {
+              files: ["a.ts"],
+              plugins: { own: { rules: { old } } },
+              languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+              rules: { "own/old": "error" },
+            },
+          ];`,
+          "node_modules/@typescript-eslint/parser/package.json": JSON.stringify({
+            name: "@typescript-eslint/parser",
+            version,
+          }),
+          "a.ts": 'type A = { [K in keyof B]: 1 };\nenum E { a = 1 }\nlet c: import("d").e;\n',
+        },
+        ["-f", "json", "a.ts"],
+      );
+      expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual(expected);
     },
     timeout,
   );
@@ -4182,6 +5203,38 @@ describe.concurrent("what a JavaScript plugin sees with an oxlint config", () =>
         expect({ file, said: found.map(it => parsed(it.message)) }).toEqual({ file, said: [parsed(expected[file])] });
       }
       expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // From oxlint 1.87.0 and ESLint 10.12.0. `regexp/sort-flags` reads `regex.flags`.
+  test.each([
+    [".oxlintrc.json", ["gi /a/ig /a/gi", "dgimsuy /b/yusmigd /b/dgimsuy", "dv /c/vd /c/dv", " /d/ /d/"]],
+    ["eslint.config.mjs", ["ig /a/ig /a/gi", "yusmigd /b/yusmigd /b/dgimsuy", "vd /c/vd /c/dv", " /d/ /d/"]],
+  ])(
+    "the flags of a regular expression are sorted as in oxlint, and as written with an ESLint config: %s",
+    async (config, expected) => {
+      const configs: Record<string, string> = {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/flags": "error" } }),
+        "eslint.config.mjs": `import demo from "./plugin.mjs";
+          export default [{ files: ["a.*"], plugins: { demo }, rules: { "demo/flags": "error" } }];`,
+      };
+      const files = {
+        [config]: configs[config],
+        "plugin.mjs": `const create = context => ({
+            Literal: node => context.report({ node, message: [node.regex.flags, node.raw, node.value].join(" ") }),
+          });
+          export default { meta: { name: "demo" }, rules: { flags: { create } } };`,
+        "a.js": "a(/a/ig, /b/yusmigd, /c/vd, /d/);\n",
+        "a.ts": "a(/a/ig, /b/yusmigd, /c/vd, /d/);\n",
+      };
+      const { stdout } = await lint(files, ["-f", "unix", "a.js", "a.ts"]);
+      const said = (name: string) =>
+        stdout
+          .split("\n")
+          .filter(line => line.includes(name))
+          .map(line => line.replace(/^.*?:\d+:\d+: | \[.*$/g, ""));
+      expect({ js: said("a.js"), ts: said("a.ts") }).toEqual({ js: expected, ts: expected });
     },
     timeout,
   );

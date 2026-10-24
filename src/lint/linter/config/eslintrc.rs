@@ -26,7 +26,7 @@ use crate::linter::{schema, write_json};
 use crate::options::Json;
 use crate::paths::{self, Style};
 use bun_core::strings;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A config file, or something treated as one: `.eslintignore`, the command line.
 pub struct LegacyFile {
@@ -242,9 +242,9 @@ fn with_default(default: &Json, option: &Json) -> Json {
     }
 }
 
-/// The options that make today's rule `id` behave like ESLint 8's rule with `options`, which aren't empty. `defaults`
-/// is [`Legacy::defaults`].
-fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
+/// The options that make today's rule `id` behave like ESLint 8's rule with `options`. `defaults` is
+/// [`Legacy::defaults`].
+pub(super) fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
     let Some(defaults) = defaults.get(id).and_then(Json::as_array) else {
         return options.to_vec();
     };
@@ -260,6 +260,12 @@ fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
             (default, option) => option.or_else(|| default.cloned()),
         })
         .collect()
+}
+
+/// [`ESLINT_8_DEFAULTS`], for an `eslint.config.js` that ESLint 8 reads.
+pub(super) fn default_options_of_eslint_8() -> &'static Json {
+    static DEFAULTS: OnceLock<Json> = OnceLock::new();
+    DEFAULTS.get_or_init(eslint_8_defaults)
 }
 
 /// An environment's `parserOptions.ecmaVersion`.
@@ -1363,10 +1369,10 @@ impl<'c> Legacy<'_, '_, 'c> {
         for &NamedPlugin { ref id, at } in &named.0 {
             let answer_text = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
             if let Some(name) = answer_text(b"name").filter(|_| is_built_in_plugin(registry, id)) {
-                // The answer has the version of typescript-eslint, which isn't loaded.
+                // The answer has the version of typescript-eslint. Version 8 isn't loaded, so its name lacks it.
                 let name = match answer_text(b"version") {
-                    Some(version) => [name, b"@", version].concat(),
-                    None => name.to_vec(),
+                    Some(version) if !name.ends_with(version) => [name, b"@", version].concat(),
+                    _ => name.to_vec(),
                 };
                 self.reader.advise_about_version(id, &name);
             }
@@ -2117,7 +2123,9 @@ impl ResolvedConfig {
         let id = RuleId::Known(rule.entry.meta).to_vec();
         let eslint_8 = self.language.eslint_8.as_ref();
         let defaults = eslint_8.and_then(|it| it.defaults.get(&id)?.as_array());
-        matches!(rule.severity, Severity::Off) && defaults.is_some_and(|it| *it == *rule.options)
+        rule.is_only_implied()
+            || matches!(rule.severity, Severity::Off)
+                && defaults.is_some_and(|it| *it == *rule.options)
     }
 
     /// True if the config is an ESLint 8 config that has no definition for the rule that it or a comment calls `id`.

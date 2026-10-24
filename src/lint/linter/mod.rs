@@ -129,6 +129,8 @@ pub struct LintOptions<'o> {
     /// The length of the prefix of the file's path that is ESLint's `physicalFilename`, if that isn't the whole path.
     /// In that case this is a block that a processor extracted from that file.
     pub physical_path_len: Option<usize>,
+    /// The caller lints the file again with types if the result [needs them](LintResult::needs_types).
+    pub can_lint_with_types: bool,
     /// `false` if `options.respectEslintDisableDirectives` in an `.oxlintrc.json` is `false`. Then only comments that
     /// start with `oxlint` count.
     pub respects_eslint_comments: bool,
@@ -161,6 +163,7 @@ impl Default for LintOptions<'_> {
             parse_again: None,
             again: None,
             physical_path_len: None,
+            can_lint_with_types: false,
             respects_eslint_comments: true,
         }
     }
@@ -181,6 +184,9 @@ pub struct LintResult {
     /// The file [may be misread](may_be_misread), or a comment in a non-JavaScript file turns on a rule that isn't for
     /// its language, and the caller has another tool that can lint it. The rest of the result is empty.
     pub needs_another_linter: bool,
+    /// A JavaScript rule asks for types, or a comment turns on a rule that needs them. The file has none, and
+    /// [`LintOptions::can_lint_with_types`] is set. The rest of the result is empty.
+    pub needs_types: bool,
     /// ESLint throws this while linting the file, which ends the run with exit code 2. Either a rule rejects options
     /// that its schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a JavaScript plugin's rule throws.
     /// The rest of the result is then empty.
@@ -716,6 +722,19 @@ impl<S: RuleSet> Linter<S> {
                 ..LintResult::default()
             };
         }
+        // A comment turns on a rule that needs types. The file came without them because no rule of the config does.
+        if !is_plain
+            && file.types.is_none()
+            && options.can_lint_with_types
+            && js_plugin::Host::hands_out_types(file)
+            && (running.iter())
+                .any(|it| it.severity != Severity::Off && it.entry.meta.requires_types)
+        {
+            return LintResult {
+                needs_types: true,
+                ..LintResult::default()
+            };
+        }
         // Rules that need types are skipped when there are none.
         let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
         if skips_typed_rules && is_plain {
@@ -754,18 +773,37 @@ impl<S: RuleSet> Linter<S> {
             options.again,
         ) && !running_js.is_empty()
         {
+            let can_have_types = js_plugin::Host::hands_out_types(file)
+                && (file.types.is_some() || options.can_lint_with_types);
+            let waits_for_types = can_have_types && file.types.is_none();
+            let needs_types = || LintResult {
+                needs_types: true,
+                ..LintResult::default()
+            };
+            if waits_for_types
+                && (running_js.iter()).any(|it| host.can_use_types(&it.configured.rule))
+            {
+                return needs_types();
+            }
             // There's no telling what a rule that doesn't run would have reported.
+            let mut skip = |rule: &Arc<js_plugin::Rule>| {
+                host.skip_for_types(rule);
+                rules_to_ignore.push(RuleId::Js(Arc::clone(rule)));
+            };
             running_js.retain(|it| {
-                let has_asked = host.has_asked_for_types(&it.configured.rule);
-                if has_asked {
-                    rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
+                let can_run = host.can_run(&it.configured.rule, file);
+                if !can_run {
+                    skip(&it.configured.rule);
                 }
-                !has_asked
+                can_run
             });
             // Runs once more for each rule that asks for types.
             while !running_js.is_empty() {
                 let enabled: Vec<&js_plugin::Configured> =
                     running_js.iter().map(|it| &**it.configured).collect();
+                let had_asked: Vec<bool> = (enabled.iter())
+                    .map(|it| host.has_asked_for_types(&it.rule))
+                    .collect();
                 match host.run_on_block(
                     file,
                     settings,
@@ -783,15 +821,23 @@ impl<S: RuleSet> Linter<S> {
                         }
                     }
                     Err(failure) => {
-                        let needs_types = |it: &RunningJs| {
+                        let asks_for_types = |it: &RunningJs| {
                             host.asks_for_types(&it.configured.rule, &failure.message)
                         };
                         let at = failure.rule.map(|it| it as usize);
                         if let Some(at) =
-                            at.filter(|it| running_js.get(*it).is_some_and(needs_types))
+                            at.filter(|it| running_js.get(*it).is_some_and(asks_for_types))
                         {
-                            let removed = running_js.remove(at);
-                            rules_to_ignore.push(RuleId::Js(Arc::clone(&removed.configured.rule)));
+                            // In the next run the rule gets the types, or shows what it reads from them.
+                            if can_have_types && !had_asked[at] {
+                                continue;
+                            }
+                            let rule = &running_js[at].configured.rule;
+                            if waits_for_types && host.can_use_types(rule) {
+                                return needs_types();
+                            }
+                            skip(rule);
+                            running_js.remove(at);
                             continue;
                         }
                         let rule = at.and_then(|it| running_js.get(it));
@@ -1022,7 +1068,7 @@ impl<S: RuleSet> Linter<S> {
             if follows_oxlint {
                 change_as_oxlint(message, changes.1);
             }
-            if changes_something && file.language().eslint_8.is_some() {
+            if changes_something && file.language().eslint_major == 8 {
                 let (fixes, suggests) = config::eslint8::changes_of(rule.reported_as());
                 message.fix = message.fix.take().filter(|_| fixes);
                 if !suggests {
@@ -1588,7 +1634,13 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 self.configured.retain(|it| !it.is(rule));
             }
             // In ESLint 8 a comment fully replaces a rule's setting, and the last comment wins.
-            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
+            // A rule that runs under its old name has the options of the package's rule.
+            let old = match rule {
+                Named::Instance(_, name) => self.config.find_js_rule(name).flatten(),
+                _ => None,
+            };
+            let js = rule.js().or_else(|| old.map(|it| &**it));
+            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, js)) {
                 Some(Ok(setting)) => Json::Array(setting),
                 Some(Err(message)) => {
                     self.error(comment, Some(rule.id()), message);
@@ -1664,22 +1716,24 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             // ESLint only skips a rule that's off if that's written as `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             let has_no_foreign_config = self.file.language().has_no_foreign_config;
-            let validated = match is_validated || is_zero {
-                true => None,
+            let validated = match (is_validated || is_zero, old) {
+                (true, _) => None,
+                (false, Some(old)) => {
+                    Some(schema::validate_js(old, &inline[1..]).map(|_| Vec::new()))
+                }
                 // Options are valid for a pair if either rule accepts them.
-                false => Some(
-                    rule.validate(options, has_no_foreign_config)
-                        .or_else(|lines| {
-                            let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
-                            let mut pair = pair.iter().flatten();
-                            match pair.any(|it| {
-                                schema::validate(it.meta, options, has_no_foreign_config).is_ok()
-                            }) {
-                                true => Ok(Vec::new()),
-                                false => Err(lines),
-                            }
-                        }),
-                ),
+                (false, None) => Some(rule.validate(options, has_no_foreign_config).or_else(
+                    |lines| {
+                        let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
+                        let mut pair = pair.iter().flatten();
+                        match pair.any(|it| {
+                            schema::validate(it.meta, options, has_no_foreign_config).is_ok()
+                        }) {
+                            true => Ok(Vec::new()),
+                            false => Err(lines),
+                        }
+                    },
+                )),
             };
             if let Some(Err(lines)) = &validated {
                 let message = quoted(&[

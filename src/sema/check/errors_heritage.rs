@@ -3,7 +3,7 @@
 //!
 //! Mirrors `checkClassLikeDeclaration`, `issueMemberSpecificError`, `checkKindsOfPropertyMemberOverrides`,
 //! `checkInterfaceDeclaration`, `checkInheritedPropertiesAreIdentical` and `checkIndexConstraints` in TypeScript
-//! 7.0.2's checker.go.
+//! 7.1's checker.go.
 
 use super::relate::Relation;
 use super::sink::held;
@@ -44,8 +44,6 @@ impl IndexConstraints<'_> {
 pub(super) struct InterfaceDeclarations {
     /// `ast.GetDeclarationOfKind(t.symbol, ast.KindInterfaceDeclaration)`
     first: Option<(FileId, InterfaceId)>,
-    /// The first in program order among the files whose semantic errors are reported.
-    first_checked: Option<(FileId, InterfaceId)>,
     /// The first in program order in each file.
     first_in_file: FxHashMap<FileId, InterfaceId>,
 }
@@ -756,9 +754,6 @@ impl Checker<'_, '_> {
         let order = |&(f, id): &(FileId, InterfaceId)| {
             self.position_in_program_order(f, self.hir(f)[id].name_pos)
         };
-        let first_checked = (interfaces.clone())
-            .filter(|&(f, _)| self.reports_semantic_errors(f))
-            .min_by_key(order);
         let mut first_in_file: FxHashMap<FileId, InterfaceId> = FxHashMap::default();
         for (f, id) in interfaces.clone() {
             let first = first_in_file.entry(f).or_insert(id);
@@ -768,7 +763,6 @@ impl Checker<'_, '_> {
         }
         let declarations = Rc::new(InterfaceDeclarations {
             first: interfaces.clone().next(),
-            first_checked,
             first_in_file,
         });
         self.interface_declarations
@@ -781,13 +775,37 @@ impl Checker<'_, '_> {
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
         let declarations = self.interface_declarations(sym);
-        // `interfaceChecked`: once per interface, at the first of its declarations that's checked.
-        let is_first = declarations.first_checked == Some((file, i));
+        // `interfaceChecked`: once per interface, reported at `firstInterfaceDeclaration`.
+        let is_first = declarations.first == Some((file, i));
         let is_first_in_file = declarations.first_in_file.get(&file) == Some(&i);
         let interface_declaration = declarations.first;
         let ty = self.declared_type(sym);
         let name_pos = self.hir(file)[i].name_pos;
-        let bases = self.base_types(sym);
+        let mut bases = self.base_types(sym);
+        // The checks below are those of `getSymbolOfDeclaration(node)`: the first clone, without the base types that the
+        // later declarations name, which are the last ones. tsgo checks the second clone at one of those declarations,
+        // and reports at `firstInterfaceDeclaration` too, which is lost if the errors of that file are collected by then.
+        if let Some(count) = self.files().declarations_of_first_clone(sym)
+            && let Some((first, _)) = interface_declaration
+        {
+            let mut later = 0;
+            for &(f, declaration) in self.files().decls_of(sym).iter().skip(count) {
+                if self.position_in_program_order(f, 0) <= self.position_in_program_order(first, 0)
+                {
+                    later = 0;
+                    break;
+                }
+                let Decl::Interface(id) = declaration else {
+                    continue;
+                };
+                for node in self.hir(f).ids(self.hir(f)[id].extends) {
+                    let base = self.type_from_node(f, node);
+                    later += usize::from(bases.contains(&self.reduced(base)));
+                }
+            }
+            let count = bases.len().saturating_sub(later);
+            bases = List::Own(bases.iter().copied().take(count).collect());
+        }
         if is_first {
             let at = self.span_of_token(file, name_pos);
             if !self.check_inherited_properties_are_identical(sym, ty, &bases, Some(at)) {

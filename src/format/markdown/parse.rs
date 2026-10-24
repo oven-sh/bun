@@ -644,7 +644,8 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
             &fitting_header
         }
     };
-    let text = [first, b"\n", line, b"\n"].concat();
+    // The line above is paragraph text too, whatever it would start as a first line: `<img>` alone would start HTML.
+    let text = [b"a\n", first, b"\n", line, b"\n"].concat();
     let mut tree = Tree::default();
     let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
         return false;
@@ -1524,6 +1525,10 @@ impl Builder<'_> {
         }
         // Prettier escapes these or keeps them off the start of a line, and so does this printer.
         if !self.is_for_oxfmt {
+            // The lines behind `[ ] ` are printed four columns to the right of the item's content, where they stay text.
+            if self.starts_with_check {
+                return None;
+            }
             let word = &line_text[..line_text
                 .iter()
                 .take_while(|&&byte| !is_space(byte))

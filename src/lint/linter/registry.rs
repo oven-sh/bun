@@ -391,6 +391,27 @@ impl Registry {
         }
     }
 
+    /// The rules that [`Registry::renamed`] knows, with the plugin's usual prefix.
+    pub(crate) const RENAMED: [&'static str; 2] = [
+        "@typescript-eslint/no-throw-literal",
+        "@typescript-eslint/no-useless-template-literals",
+    ];
+
+    /// If `id` is a rule that typescript-eslint 8 renamed, returns the rule under its new name. Both of these need types,
+    /// so the one in an older package can't run.
+    pub fn renamed(&self, id: &[u8]) -> Option<&'static RuleEntry> {
+        let (prefix, name) = parse_rule_id(id);
+        let new_name: &[u8] = match name {
+            b"no-throw-literal" => b"only-throw-error",
+            b"no-useless-template-literals" => b"no-unnecessary-template-expression",
+            _ => return None,
+        };
+        match Plugin::from_prefix(prefix) {
+            Some(Plugin::TypeScript) => self.get(Plugin::TypeScript, new_name),
+            _ => None,
+        }
+    }
+
     /// A rule's index in [`Registry::all`].
     pub fn index_of(&self, entry: &RuleEntry) -> Option<usize> {
         self.index_of_meta(entry.meta)

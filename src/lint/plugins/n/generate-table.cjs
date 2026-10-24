@@ -107,14 +107,24 @@ class Table {
     return `${check(this.first[this.one[array]], 0x10000, "first")}, ${check(this.arrays[array].length, 0x100, "count")}`;
   }
 
-  /** The statics, and the type `name` that implements `Table` for them. */
-  statics(name, about) {
+  /**
+   * The statics, and the type `name` that implements `Table` for them. The caller writes `this.names` to `file`, which
+   * release builds embed compressed.
+   */
+  statics(name, about, file) {
     return `/// ${about}
 pub(crate) enum ${name} {}
 
 impl Table for ${name} {
     fn names() -> &'static str {
-        NAMES
+        static NAMES: OnceLock<&str> = OnceLock::new();
+        NAMES.get_or_init(|| {
+            let names = bun_zstd::embed_compressed!(
+                "src/lint/plugins/n/${file}",
+                include_bytes!("${file}")
+            );
+            std::str::from_utf8(names).unwrap_or_default()
+        })
     }
 
     fn members() -> &'static [Member<Self>] {
@@ -129,9 +139,6 @@ impl Table for ${name} {
 const fn m(name: u16, name_len: u8, kinds: u16, first: u16, count: u8) -> Member<${name}> {
     Member::new(Part::new(name, name_len), kinds, Part::new(first, count))
 }
-
-#[rustfmt::skip]
-static NAMES: &str = ${JSON.stringify(this.names)};
 
 /// The values for \`[READ]\`, \`[CALL]\` and \`[CONSTRUCT]\`.
 #[rustfmt::skip]

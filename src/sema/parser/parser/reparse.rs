@@ -7,6 +7,7 @@ use bun_sema::check::jsdoc::syntax::{
     ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType, TypeExpr,
     TypeShape,
 };
+use bun_sema::check::normalize_jsdoc_type_source_text;
 use bun_sema::hir::*;
 use smallvec::SmallVec;
 
@@ -409,11 +410,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             return;
         }
         let is_js = self.f.is_js;
-        // `EagerJSDoc`: in TypeScript `withJSDoc` parses the comments only if one has a link.
         if let Host::Class(class) = *host
-            && (is_js || attached.has_see_or_link)
+            && is_js
         {
-            self.check_grammar_augments_tags(class, attached);
+            self.add_augments_tags(class, attached);
         }
         for (i, doc) in attached.docs.iter().enumerate() {
             let is_last = attached.last_has_tags && i + 1 == attached.docs.len();
@@ -471,6 +471,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 } else {
                     Flags::REPARSED
                 },
+                attributes: TypeNodeId::NONE,
                 body: self.f.list(&[statement]),
                 has_body: true,
                 specifies_module: false,
@@ -620,9 +621,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             let property = match &param.kind {
                 TagKind::This(ty) => {
                     if this_param.is_none() {
-                        // `thisIdent.Loc = thisTag.Loc`
+                        // `thisIdent.Loc = thisTag.Loc`. `GetTextOfNode` normalizes it in a type, which a `@callback` is.
                         let text = source.get(param.pos as usize..param.end as usize);
-                        let name = self.atom(text.unwrap_or_default());
+                        let text = text.unwrap_or_default();
+                        let name = match like {
+                            Some(_) => self.atom(text),
+                            None => self.atom(&normalize_jsdoc_type_source_text(text)),
+                        };
                         let this = Param {
                             pat: self.f.pat(PatKind::Ident(name), param.pos, param.end),
                             ty: self.reparse_type(*ty),
@@ -781,7 +786,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                         .first()
                         .is_some_and(|first| !first.is_missing())
                 {
-                    let implemented = self.reparse_class_name(class_name);
+                    let implemented = self.reparse_class_name(class_name, Reach::Checked);
                     let mut all: Vec<TypeNodeId> = self.f.ids(self.f[class].implements).collect();
                     all.push(implemented);
                     let all = self.f.list(&all);
@@ -840,93 +845,80 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `A.B<T>` as a type.
-    fn reparse_class_name(&mut self, class_name: &ClassName<'_>) -> TypeNodeId {
+    fn reparse_class_name(&mut self, class_name: &ClassName<'_>, reach: Reach) -> TypeNodeId {
         let name: SmallVec<[(Atom, u32); 4]> = class_name
             .name
             .iter()
             .map(|name| (self.name_atom(name), name.start))
             .collect();
-        let args = self.reparse_type_arguments(class_name);
+        let args = self.reparse_type_arguments(class_name, reach);
         let name = self.f.entity_name(name.into_iter());
         let pos = class_name.name.first().map_or(0, |first| first.start);
         let kind = TypeNodeKind::Ref { name, args };
         self.f.ty(kind, pos, class_name.end)
     }
 
-    fn reparse_type_arguments(&mut self, class_name: &ClassName<'_>) -> IdList<TypeNodeId> {
+    fn reparse_type_arguments(
+        &mut self,
+        class_name: &ClassName<'_>,
+        reach: Reach,
+    ) -> IdList<TypeNodeId> {
         match class_name.type_args {
-            Some(type_args) => self.reparse_jsdoc_type_arguments(type_args),
+            Some(type_args) => self.reparse_jsdoc_type_arguments(type_args, reach),
             None => IdList::EMPTY,
         }
     }
 
-    /// `checkGrammarClassDeclarationHeritageClauses`: reports the first `@augments` tag, in any comment, whose last
-    /// name differs from the `extends` clause's. `Checker::check_grammar_augments_tags` chooses between this error and
-    /// the others.
-    fn check_grammar_augments_tags(&mut self, class: ClassId, attached: &Attached<'_>) {
-        let extends = self.f[class].extends;
-        if extends.is_none() || self.paren_of(extends).is_some() {
+    /// Records the `@augments` tags in all of the class's comments for `checkJSDocAugmentsTagMatchesExtends`.
+    fn add_augments_tags(&mut self, class: ClassId, attached: &Attached<'_>) {
+        if self.f[class].extends.is_none() {
             return;
         }
-        // `getIdentifierFromEntityNameExpression`
-        let (ExprKind::Ident(target) | ExprKind::Dot { name: target, .. }) = self.f[extends].kind
-        else {
-            return;
-        };
         for tag in attached.docs.iter().flat_map(|doc| &doc.tags) {
-            if let TagKind::Augments(class_name, tag_name) = &tag.kind
-                && let Some(source) = class_name.name.last()
-                && target != self.name_atom(source)
-            {
-                let names: [&[u8]; 3] = [tag_name, &source.text, self.lx.text_of(target)];
-                let at = (source.start, source.end);
-                let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, at, 8023, &names);
-                self.f.diagnostics.push(diagnostic);
-                self.f.unmatched_augments_tags.push((class, source.start));
-                return;
+            if let TagKind::Augments(class_name, tag_name) = &tag.kind {
+                let tag = AugmentsTag {
+                    class,
+                    class_name: self.reparse_class_name(class_name, Reach::Resolved),
+                    tag_name: self.atom(tag_name),
+                };
+                self.f.augments_tags.push(tag);
             }
         }
     }
 
-    /// `@augments`, `@extends`: moves the type arguments to the `extends` clause if it names the same class.
+    /// `@augments`, `@extends`: moves the type arguments to the `extends` clause, unless that clause is the name of another class.
     fn reparse_augments_tag(&mut self, class_name: &ClassName<'_>, class: ClassId) {
         let Class {
             extends,
             extends_args,
             ..
         } = self.f[class];
-        if extends.is_none() {
+        if extends.is_none() || !extends_args.is_empty() || class_name.type_args.is_none() {
             return;
         }
-        // From the last name to the first.
-        let mut extends_names = Vec::new();
+        // `!IsEntityNameExpression(target.Expression) || HasSamePropertyAccessName(..)`
+        let mut names = class_name.name.iter().rev();
+        let mut is_same = true;
         let mut at = extends;
-        let is_entity_name = loop {
+        let accepts = loop {
             if self.paren_of(at).is_some() {
-                break false;
+                break true;
             }
-            match self.f[at].kind {
-                ExprKind::Ident(name) => {
-                    extends_names.push(name);
-                    break true;
-                }
-                ExprKind::Dot { obj, name, .. } => {
-                    extends_names.push(name);
-                    at = obj;
-                }
-                _ => break false,
+            let (name, obj) = match self.f[at].kind {
+                ExprKind::Null if at == extends => break false,
+                ExprKind::Missing => break false,
+                ExprKind::Ident(name) => (name, ExprId::NONE),
+                ExprKind::Dot { obj, name, .. } if !self.is_private_name(name) => (name, obj),
+                _ => break true,
+            };
+            is_same &= names.next().is_some_and(|it| self.name_atom(it) == name);
+            if obj.is_none() {
+                break is_same && names.next().is_none();
             }
+            at = obj;
         };
-        // `HasSamePropertyAccessName`
-        let is_same = is_entity_name
-            && extends_names.len() == class_name.name.len()
-            && extends_names
-                .iter()
-                .rev()
-                .zip(&class_name.name)
-                .all(|(&a, b)| a == self.name_atom(b));
-        if is_same && extends_args.is_empty() && class_name.type_args.is_some() {
-            let args = self.reparse_type_arguments(class_name);
+        if accepts {
+            let args = self.reparse_type_arguments(class_name, Reach::Checked);
             self.f[class].extends_args = args;
         }
     }
@@ -1037,7 +1029,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let has_no_typed_params = function.this_ty(&self.f).is_none()
             && params.iter().all(|param| self.f[param].ty.is_none());
         if type_params.is_empty() && ret.is_none() && has_no_typed_params {
-            let ty = self.reparse_unchecked_type(ty);
+            let ty = self.reparse_type(ty);
             self.f.jsdoc_types.push((JsDocTypeOwner::Fn(func), ty));
             self.jsdoc.full_signatures.insert(func.0);
         }

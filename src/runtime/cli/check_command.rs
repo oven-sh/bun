@@ -2,14 +2,19 @@
 //! [`check_before`]. `bun build --check` and `Bun.build({ check: true })` run the check during
 //! bundling, after the bundler has read every file ([`check_for_build_command`],
 //! [`check_for_bun_build`]).
+//!
+//! A project's content mappers are programs from its `node_modules`. A check only runs them if the person who ran the
+//! command typed `--runExternalCode` ([`is_allowed_to_run_code`]), or if the caller of `Bun.build` passed
+//! `check: { runExternalCode: true }`.
 
 use bstr::BStr;
 
+use super::content_mapper_process::{KillSwitch, Programs};
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, Transport};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
     Request, ScriptKind,
@@ -29,6 +34,8 @@ struct Options {
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
+    /// `--runExternalCode`. See `is_allowed_to_run_code`.
+    runs_external_code: bool,
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -40,10 +47,15 @@ fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
 const PROJECT: &[clap::Param<clap::Help>] = &[clap::param!(
     "-p, --project/--tsconfig-override <path>  Path to a tsconfig.json or its directory"
 )];
-/// Only listed for `--help`. It's parsed as a compiler option.
-const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
-    "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
-)];
+/// Only listed for `--help`. They're parsed as compiler options.
+const LIKE_TSC: &[clap::Param<clap::Help>] = &[
+    clap::param!(
+        "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
+    ),
+    clap::param!(
+        "--runExternalCode  Run the programs from <b>node_modules<r> that <b>contentMappers<r> in tsconfig.json lists"
+    ),
+];
 const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
         "-b, --build        Check the projects in <b>references<r> too, like <b>tsc -b<r>"
@@ -67,7 +79,8 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("--no-emit"),
     clap::param!("<POS>..."),
 ];
-pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
+pub(crate) const PARAMS: &[clap::Param<clap::Help>] =
+    clap::concat_params!(PROJECT, LIKE_TSC, OTHERS);
 /// Compiler options aren't in the table. See `unknown_long_flags_are_positional`.
 static TABLE: &clap::ConvertedTable =
     clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS), cold);
@@ -166,8 +179,40 @@ fn parse(args: &[&ZStr]) -> Options {
         true => Some(false),
         false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
     };
+    options.runs_external_code = command_line.runs_external_code && is_allowed_to_run_code(args, 0);
     options.command_line = command_line;
     options
+}
+
+/// True if the person who ran the command typed `--runExternalCode` among the command's own flags. `args` is the end of
+/// the command line: what follows `check`, or for another command what follows the name of the program. The last
+/// `passed_on` arguments belong to the script that the command runs.
+/// The parsers of the command line also count what `BUN_OPTIONS` has, for `bun check` after a word that reads like the
+/// command, as in `--env-file check --runExternalCode`.
+pub(crate) fn is_allowed_to_run_code(args: &[&ZStr], passed_on: usize) -> bool {
+    // The arguments from `BUN_OPTIONS` follow the name of the program.
+    let typed = (bun_core::argv().len()).saturating_sub(1 + bun_core::bun_options_argc());
+    let typed = &args[args.len().saturating_sub(typed)..];
+    let own = &typed[..typed.len().saturating_sub(passed_on)];
+    (own.iter().map(|arg| arg.as_bytes()))
+        .take_while(|arg| *arg != b"--")
+        .any(bun_sema_driver::is_run_external_code_flag)
+}
+
+/// `is_allowed_to_run_code`, for a command that takes `--check`.
+pub(crate) fn command_runs_external_code() -> bool {
+    bun_options_types::context::try_get().is_some_and(|ctx| ctx.runs_external_code)
+}
+
+/// `Provided::content_mapper_transport`. A check starts the programs it needs, and all of them have exited when it ends.
+/// `None`: it isn't allowed to run them.
+fn content_mapper_transport(stopped_by: Option<KillSwitch>) -> Option<Box<dyn Transport>> {
+    stopped_by.map(|switch| Box::new(Programs::stopped_by(switch)) as Box<dyn Transport>)
+}
+
+/// `content_mapper_transport` for a command, which nothing stops but the end of the process.
+fn content_mapper_transport_of_command(runs_external_code: bool) -> Option<Box<dyn Transport>> {
+    content_mapper_transport(runs_external_code.then(KillSwitch::default))
 }
 
 fn reject(rejected: &RejectedFlag) -> ! {
@@ -210,13 +255,19 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     );
     let began = std::time::Instant::now();
     let mut tick = 0;
-    while !is_done.load(Ordering::Acquire) {
-        if began.elapsed() >= initial_delay {
+    loop {
+        let done = is_done.load(Ordering::Acquire);
+        // Without a delay the line is drawn once even if the check ended before this thread ran.
+        let draws = !done || (tick == 0 && initial_delay.is_zero());
+        if draws && began.elapsed() >= initial_delay {
             let mut line = Vec::new();
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);
             Output::flush();
             tick += 1;
+        }
+        if done {
+            break;
         }
         std::thread::park_timeout(BETWEEN);
     }
@@ -443,6 +494,7 @@ impl CheckCommand {
                 project: tsconfig_override().map(<[u8]>::to_vec),
                 ..Default::default()
             },
+            runs_external_code: command_runs_external_code(),
             ..Default::default()
         })
     }
@@ -456,9 +508,12 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            // Only set here, because this function never returns.
             Provided {
+                // Only set here, because this function never returns.
                 ends_the_process: true,
+                content_mapper_transport: content_mapper_transport_of_command(
+                    options.runs_external_code,
+                ),
                 ..Default::default()
             },
             |report| (print_report(&report, options, &cwd), report),
@@ -558,6 +613,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
+        content_mapper_transport: content_mapper_transport_of_command(command_runs_external_code()),
         ..Default::default()
     };
     let entries = Entries {
@@ -628,17 +684,44 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, true)
+    let build = Build {
+        shows_progress: true,
+        content_mappers: command_runs_external_code().then(KillSwitch::default),
+    };
+    check_for_build(checked, log, build)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. Prints nothing.
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, false)
+    let build = Build {
+        shows_progress: false,
+        content_mappers: None,
+    };
+    check_for_build(checked, log, build)
+}
+
+/// `check_for_bun_build` for `check: { runExternalCode: true }`. The command line of the process has no say in it.
+pub(crate) fn check_for_bun_build_with_external_code(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> bool {
+    use crate::api::js_bundle_completion_task::kill_switch_of;
+    let build = Build {
+        shows_progress: false,
+        content_mappers: Some(checked.completion.map(kill_switch_of).unwrap_or_default()),
+    };
+    check_for_build(checked, log, build)
+}
+
+struct Build {
+    shows_progress: bool,
+    /// See `content_mapper_transport`.
+    content_mappers: Option<KillSwitch>,
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
-fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, build: Build) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -646,6 +729,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         loaders,
         entry_points,
         sources,
+        completion: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows each file's loader. Files in `node_modules` always go by their extension.
@@ -659,6 +743,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
+        content_mapper_transport: content_mapper_transport(build.content_mappers),
         ..Default::default()
     };
     // Excludes files like `App.svelte`, which a plugin turns into TypeScript.
@@ -679,7 +764,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         conditions,
     });
     let then = |report| report;
-    let report = match shows_progress {
+    let report = match build.shows_progress {
         true => run(cwd, tsconfig, &paths, &[], 0, provided, then),
         false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
@@ -716,10 +801,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
 /// location.
 fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
     use std::borrow::Cow;
-    let mut text = Vec::with_capacity(reported.text.len() + 8);
-    if reported.code != 0 {
-        use std::io::Write;
-        let _ = write!(text, "TS{}: ", reported.code);
+    let mut text = reported.code_label().unwrap_or_default();
+    if !text.is_empty() {
+        text.extend_from_slice(b": ");
     }
     text.extend_from_slice(&reported.text);
     let line_text = || {
@@ -839,6 +923,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
     let provided = Provided {
         before_read,
+        content_mapper_transport: content_mapper_transport_of_command(command_runs_external_code()),
         ..Default::default()
     };
     check_and_report(&Paths::EntryPoints(Entries::default()), provided)

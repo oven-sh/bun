@@ -12,6 +12,7 @@ use crate::options::Json;
 use crate::paths::{self, package_of};
 use crate::rule::{Frameworks, Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// A JavaScript plugin that's already loaded, and what `$jsPlugins` would have for it: `{ module, export }`. These come
@@ -102,9 +103,10 @@ fn is_built_in(
 /// module. `name` and `located` are its entries in the object's `plugins` and `$jsPlugins`. eslint-plugin-import,
 /// eslint-plugin-react and eslint-plugin-import-lite, which `@antfu/eslint-config` registers as `import`, don't declare
 /// a name.
-fn plugin_display_name<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<&'j [u8]> {
+fn plugin_display_name<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<Cow<'j, [u8]>> {
     let module = || located?.get(b"module")?.as_str();
-    name.as_str().or_else(|| module().map(package_of))
+    let own = name.as_str().map(Cow::Borrowed);
+    own.or_else(|| module().map(package_of))
 }
 
 /// Adds the names of the plugins in `json` that aren't [built in](is_built_in). `json` is a config file's export or
@@ -126,7 +128,7 @@ fn add_foreign_prefixes(registry: &Registry, json: &Json, into: &mut Vec<Box<[u8
         if !is_built_in(
             registry,
             prefix,
-            plugin_display_name(name, located),
+            plugin_display_name(name, located).as_deref(),
             located.is_some(),
         ) && !into.iter().any(|it| **it == prefix[..])
         {
@@ -151,17 +153,13 @@ pub(super) fn settings_have_unknown_resolver(settings: &Json) -> bool {
         return true;
     }
     let parsers = settings.get(b"import/parsers").and_then(Json::as_object);
-    let is_known_parser = |name: &[u8]| {
-        matches!(
-            package_of(name),
-            b"espree" | b"@typescript-eslint/parser" | b"@typescript-eslint\\parser"
-        )
-    };
+    let is_known_parser =
+        |name: &[u8]| matches!(&*package_of(name), b"espree" | b"@typescript-eslint/parser");
     if (parsers.unwrap_or_default().iter()).any(|it| !is_known_parser(&it.0)) {
         return true;
     }
     let is_known = |name: &[u8]| {
-        let name = package_of(name);
+        let name = &*package_of(name);
         let name = name
             .strip_prefix(b"eslint-import-resolver-")
             .unwrap_or(name);
@@ -478,8 +476,10 @@ impl Reader<'_> {
                     ]));
                 };
                 // oxlint checks every entry's options before it lints, even if the entry is off or in an override that
-                // matches no file. ESLint only checks them for the files where the rule is on.
+                // matches no file. ESLint only checks them for the files where the rule is on. oxlint doesn't check an
+                // entry without options, even if the schema asks for some.
                 if self.prefers_typescript_rules
+                    && !setting.options.is_empty()
                     && let Err(lines) = crate::linter::schema::validate_js(rule, &setting.options)
                 {
                     let message = super::oxlint_js_options_error(rule, &setting.options, &lines);
@@ -675,7 +675,7 @@ impl Reader<'_> {
             match is_built_in(
                 self.registry,
                 prefix,
-                plugin_display_name(name, located),
+                plugin_display_name(name, located).as_deref(),
                 can_be_loaded,
             ) {
                 true => {

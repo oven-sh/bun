@@ -137,6 +137,8 @@ struct How<'h> {
     rules: Which<'h>,
     /// True if the text is the output of a fix pass.
     is_fixed: bool,
+    /// [`LintOptions::can_lint_with_types`]
+    can_lint_with_types: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -696,6 +698,7 @@ impl Context<'_, '_> {
             js_plugins: options.js_plugins.filter(|_| !is_for_help),
             parse_again: Some(parse_again),
             physical_path_len: as_what.physical_path_len,
+            can_lint_with_types: as_what.can_lint_with_types,
             rule_filter: match (as_what.rules, as_what.script) {
                 (Which::None, _) => Some(&no_rule),
                 (_, Some(script)) => Some(script.1),
@@ -737,6 +740,37 @@ impl Context<'_, '_> {
             on_circular_fixes,
             &mut |text, is_fixed| self.verify_pass(path_to_verify, text, config, is_fixed),
         )
+    }
+
+    /// Like [`Self::verify_text`], but `None` if a JavaScript rule asks for types. The caller then lints the file with
+    /// types.
+    pub(crate) fn verify_text_without_types(
+        &self,
+        path: Vec<u8>,
+        path_to_verify: &[u8],
+        text: Vec<u8>,
+        config: &Arc<ResolvedConfig>,
+        on_circular_fixes: &dyn Fn(&[u8]),
+    ) -> Option<FileResult> {
+        let mut needs_types = false;
+        let result = self.verify_text_by(
+            path,
+            path_to_verify,
+            (text, false),
+            config,
+            on_circular_fixes,
+            &mut |text, is_fixed| {
+                let how = How {
+                    is_fixed,
+                    can_lint_with_types: true,
+                    ..How::default()
+                };
+                let result = self.verify_as(path_to_verify, text, config, &how);
+                needs_types |= result.needs_types;
+                result
+            },
+        );
+        (!needs_types).then_some(result)
     }
 
     /// Like [`Self::verify_text`], but the caller supplies `verify`, which lints a text and is told whether the fixes
@@ -801,7 +835,8 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
-        if config.may_hand_back() && text.len() < bun_lint::js_plugin::HEAVY {
+        if config.may_hand_back() && text.len() < bun_lint::js_plugin::HEAVY && !result.needs_types
+        {
             (self.js_plugins).report_realm_need(text.len() as u64, result.handed_back.is_some());
         }
         if let Some(reason) = result.handed_back {
@@ -840,11 +875,14 @@ impl Context<'_, '_> {
         }
     }
 
-    /// ESLint's `lintFile`. `None` if there's nothing to report about the file.
+    /// ESLint's `lintFile`. `None` if there's nothing to report about the file. With `waiting`, a file on which a
+    /// JavaScript rule asks for types isn't linted: its path is added to that list, for the caller to lint it with
+    /// types.
     pub(crate) fn lint_file(
         &self,
         target: &Target,
         on_circular_fixes: &dyn Fn(&[u8]),
+        waiting: Option<&Guarded<Vec<Vec<u8>>>>,
     ) -> Result<Option<FileResult>, Fatal> {
         let Status::Matched(config) = &target.status else {
             // oxlint silently skips such a file.
@@ -905,13 +943,26 @@ impl Context<'_, '_> {
                 on_circular_fixes,
             ));
         }
-        Ok(Some(self.verify_text(
+        let Some(waiting) = waiting else {
+            return Ok(Some(self.verify_text(
+                display_path,
+                &target.path,
+                text,
+                config,
+                on_circular_fixes,
+            )));
+        };
+        let result = self.verify_text_without_types(
             display_path,
             &target.path,
             text,
             config,
             on_circular_fixes,
-        )))
+        );
+        if result.is_none() {
+            waiting.lock().push(target.path.clone());
+        }
+        Ok(result)
     }
 }
 

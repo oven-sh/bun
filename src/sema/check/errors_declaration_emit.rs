@@ -25,14 +25,16 @@ use crate::resolve::{
     equate_string_case_insensitive, get_base_file_name, get_declaration_file_extension,
     get_relative_path_from_directory, get_root_length, has_ts_implementation_extension, inside,
     is_declaration_file_name, is_relative, is_rooted_disk_path, join, known_extension,
-    node_module_path_parts, normalize_path, object_kind, path_is_relative, remove_file_extension,
+    node_module_path_parts, object_kind, path_is_relative, remove_file_extension,
 };
 use crate::util::SharedSort;
+use crate::verify::relative_from_file;
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
 use smallvec::SmallVec;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 
 mod commonjs;
@@ -42,6 +44,24 @@ mod commonjs;
 pub(super) enum EndOfChain {
     No,
     Yes,
+}
+
+/// The last two parameters of `IsAnySymbolAccessible`.
+#[derive(Copy, Clone)]
+struct Lookup {
+    /// `shouldComputeAliasesToMakeVisible`
+    paints: bool,
+    /// `allowModules`
+    allows_modules: bool,
+}
+
+impl Default for Lookup {
+    fn default() -> Self {
+        Lookup {
+            paints: false,
+            allows_modules: true,
+        }
+    }
 }
 
 /// The meaning a name is resolved with.
@@ -279,6 +299,14 @@ enum Visited {
     Statements(Vec<Statement>),
     /// "Don't actually transform yet; just leave as original node - will be elided/swapped by late pass"
     Late(StmtId),
+}
+
+/// What `transformExportAssignment` declares for an expression that isn't a name.
+struct ExportedExpression {
+    name: Vec<u8>,
+    declaration: Statement,
+    /// True if the export assignment comes before the declaration.
+    is_hoisted: bool,
 }
 
 /// `CreateModifiersFromModifierFlags`: the modifiers in the order it creates them.
@@ -671,6 +699,14 @@ fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
     text
 }
 
+/// `CreateModifiersFromModifierFlags`
+fn modifiers_from_flags(flags: Flags) -> Vec<u8> {
+    let created: Vec<Flags> = (MODIFIERS.iter().map(|it| it.0))
+        .filter(|&it| flags.contains(it))
+        .collect();
+    modifiers_text(&created)
+}
+
 /// The properties `ensureModifierFlags` reads from the node whose modifiers it's given.
 #[derive(Copy, Clone)]
 enum ModifiedNode {
@@ -734,6 +770,8 @@ struct DeclarationEmit<'c, 'p, 's> {
     expando_hosts: FxHashMap<StmtId, Vec<Statement>>,
     /// `expandoMembers`, keyed by the host's statement.
     expando_members: FxHashMap<StmtId, Vec<Statement>>,
+    /// `deferredExpandoAssignments`, keyed by the host's statement.
+    deferred_expando_assignments: FxHashMap<StmtId, Vec<ExprId>>,
 }
 
 impl Checker<'_, '_> {
@@ -826,9 +864,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.relation_too_complex = saved;
         // `getDeclarationDiagnostics` returns the transformer's diagnostics. The checker's are read by
         // `checkSourceFile`, which has already run.
-        if !self.emits_first() {
-            self.reported.truncate(reported);
-        }
+        self.reported.truncate(reported);
         // `emitDeclarationFile`: `emitSkipped`, if the transformer has diagnostics.
         let mut is_skipped = !found.is_empty();
         if let Some(isolated_declarations) = isolated_declarations {
@@ -840,8 +876,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not even a line break.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
-            && let Some(output) =
-                crate::resolve::output_declaration_file_name(module.file_name(), None)
+            && let Some(output) = match module.content_mapped {
+                Some(_) => Some(files.declaration_file_path(file)),
+                None => crate::resolve::output_declaration_file_name(module.file_name(), None),
+            }
         {
             let name =
                 &output[strings::last_index_of_char(&output, b'/').map_or(0, |slash| slash + 1)..];
@@ -897,6 +935,7 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             witnessed_cjs_exports: Vec::new(),
             expando_hosts: FxHashMap::default(),
             expando_members: FxHashMap::default(),
+            deferred_expando_assignments: FxHashMap::default(),
         }
     }
 
@@ -909,6 +948,13 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
     }
 }
 
+/// What `getAlternativeContainingModules` returned for a symbol and a file.
+struct ContainingModules {
+    modules: Rc<Vec<Sym>>,
+    /// The mode in which no import of the file resolved to a module that exports the symbol. `None` if one did.
+    missed_in: Option<ResolutionMode>,
+}
+
 /// The memos of `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`,
 /// `getExportsOfSymbol`, `getSymbolTableAliases` and `getSpecifierForModuleSymbol`.
 #[derive(Default)]
@@ -918,7 +964,7 @@ pub(super) struct EmitResolverLinks {
 
     // `symbolContainerLinks`, `symbolTableAliasCache`
     chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
-    containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
+    containing_modules: FxHashMap<(Sym, FileId), ContainingModules>,
     variable_matches: FxHashMap<(Sym, FileId, ScopeId), Rc<Vec<Sym>>>,
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
     global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
@@ -983,7 +1029,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
-        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false)
+        let how = Lookup::default();
+        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, how)
+            .is_some_and(|access| access.is_accessible())
+    }
+
+    /// `IsSymbolAccessibleByFlags(symbol, enclosingDeclaration, SymbolFlagsValue)`
+    pub(super) fn is_value_symbol_accessible_without_import_type(
+        &mut self,
+        symbol: Sym,
+        at: Enclosing,
+    ) -> bool {
+        let how = Lookup {
+            allows_modules: false,
+            ..Lookup::default()
+        };
+        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Value, how)
             .is_some_and(|access| access.is_accessible())
     }
 }
@@ -1519,8 +1580,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !files.module(file).is_module() {
             return false;
         }
-        let mode = files.mode_of_import(file, import.mode);
-        let Some(module) = files.module_of_specifier_as(file, import.spec, mode) else {
+        let Some(module) = files.module_of_import(file, import) else {
             return false;
         };
         // `GetExternalModuleFileFromDeclaration`
@@ -1994,7 +2054,23 @@ impl<'p, 's> Checker<'p, 's> {
         visited: &mut Vec<(Sym, Table)>,
     ) -> bool {
         let merged = self.files().canonical(from_table);
-        if symbol != merged && Some(symbol) != resolved {
+        let mut is_like = symbol == merged || Some(symbol) == resolved;
+        // An `export =` that has type exports is an alias and a namespace, so `resolveAlias` stops there.
+        let mut seen_aliases: SmallVec<[Sym; 4]> = SmallVec::new();
+        let mut alias = resolved.filter(|_| !is_like);
+        while let Some(next) = alias
+            && self.flags_of(next).contains(SymFlags::ALIAS)
+            && !seen_aliases.contains(&next)
+        {
+            seen_aliases.push(next);
+            alias = self.resolve_alias_or_unknown(next);
+            alias = alias.map(|target| self.files().canonical(target));
+            if alias == Some(symbol) {
+                is_like = true;
+                break;
+            }
+        }
+        if !is_like {
             return false;
         }
         !self.is_external_module_symbol(from_table)
@@ -2092,40 +2168,57 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getAlternativeContainingModules`
     fn alternative_containing_modules(&mut self, symbol: Sym, at: Enclosing) -> Rc<Vec<Sym>> {
+        let files = self.files();
+        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the module is resolved in the mode of the import
+        // or export that contains the location, or else in the file's default mode. An import that was resolved in
+        // another mode (`module: commonjs` with `bundler`) isn't found.
+        let mode = match self.enclosing_module_specifier {
+            Some(specifier) => specifier.mode,
+            None => files.default_resolution_mode_for_file(at.file),
+        };
         if let Some(known) = self
             .emit_resolver_links
             .containing_modules
             .get(&(symbol, at.file))
+            && known.missed_in.is_none_or(|missed_in| missed_in == mode)
         {
-            return Rc::clone(known);
+            return Rc::clone(&known.modules);
         }
-        let files = self.files();
         let mut results = Vec::new();
-        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the location isn't a specifier, so the module
-        // is resolved in the file's default mode. An import that was resolved in another mode (`module: commonjs` with
-        // `bundler`) isn't found.
-        let mode = self.files().default_resolution_mode_for_file(at.file);
+        let hir = self.hir(at.file);
         for &specifier in &self.bound(at.file).specifiers {
-            if let Some(module) = files.module_of_specifier_as(at.file, specifier, mode)
+            // `getImportAttributesTypeForModuleSpecifier`
+            let mut uses = hir.specifier_uses.iter();
+            let attributes = match hir.import_attributes.is_empty() {
+                true => None,
+                false => (uses.find(|it| it.spec == specifier))
+                    .and_then(|it| hir.attributes_after_specifier(it.pos)),
+            };
+            let attributes = files.import_attributes(at.file, attributes);
+            if let Some(module) =
+                files.module_of_specifier_with(at.file, specifier, mode, &attributes)
                 && self.alias_for_symbol_in_container(module, symbol).is_some()
             {
                 results.push(module);
             }
         }
+        let missed_in = results.is_empty().then_some(mode);
         if results.is_empty() {
             results = self.modules_that_export(symbol);
         }
         let results = Rc::new(results);
+        let known = ContainingModules {
+            modules: Rc::clone(&results),
+            missed_in,
+        };
         self.emit_resolver_links
             .containing_modules
-            .insert((symbol, at.file), Rc::clone(&results));
+            .insert((symbol, at.file), known);
         results
     }
 
-    /// Returns the modules in which `alias_for_symbol_in_container` finds `symbol`, in the order of
-    /// `c.program.SourceFiles()`. tsgo searches every module's exports for each symbol that no import of the file
-    /// exports, which is quadratic in a program whose files mention types they don't import. Here the first search
-    /// builds an index of the exports.
+    /// `getExternalModuleContainers`: the modules in which `alias_for_symbol_in_container` finds `symbol`, in the order
+    /// of `c.program.SourceFiles()`.
     fn modules_that_export(&mut self, symbol: Sym) -> Vec<Sym> {
         let files = self.files();
         let index = self.exporting_modules();
@@ -2153,25 +2246,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         positions.sort_unstable();
         positions.dedup();
-        let mut modules: Vec<Sym> = (positions.iter())
+        (positions.iter())
             .map(|&position| files.file_symbol(files.order[position as usize]))
-            .collect();
-        // The file being checked is searched even if it's a leaf.
-        if let Some(file) = self.task.file
-            && files.module(file).is_leaf
-            && files.module(file).hir.has_module_syntax
-        {
-            let module = files.file_symbol(file);
-            if self.alias_for_symbol_in_container(module, symbol).is_some() {
-                let own = files.order.iter().position(|&it| it == file);
-                let at = positions.partition_point(|&it| Some(it as usize) < own);
-                modules.insert(at, module);
-            }
-        }
-        modules
+            .collect()
     }
 
-    /// The first call builds the index.
+    /// `buildExternalModuleContainerIndex`, on the first call.
     fn exporting_modules(&mut self) -> Rc<ExportingModules> {
         if let Some(index) = &self.exporting_modules {
             return Rc::clone(index);
@@ -2180,9 +2260,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut index = ExportingModules::default();
         for (position, &file) in (0..).zip(files.order) {
             let module = files.module(file);
-            // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-            // `is_leaf`, which is immutable after loading, before reading `hir`.
-            if module.is_leaf || !module.hir.has_module_syntax {
+            if !module.hir.has_module_syntax {
                 continue;
             }
             index.positions.insert(file, position);
@@ -2418,11 +2496,12 @@ impl<'p, 's> Checker<'p, 's> {
         at: Enclosing,
         initial: Sym,
         meaning: Meaning,
-        paints: bool,
+        how: Lookup,
     ) -> Option<Access> {
         if self.is_stack_low() {
             return None;
         }
+        let paints = how.paints;
         let mut had_accessible_chain = None;
         let mut early_module_bail = false;
         for &symbol in symbols {
@@ -2434,7 +2513,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             // A module symbol, under any meaning, can be emitted as an `import` type.
-            if self.is_external_module_symbol(symbol) {
+            if how.allows_modules && self.is_external_module_symbol(symbol) {
                 if paints {
                     early_module_bail = true;
                     continue;
@@ -2447,8 +2526,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 meaning
             };
-            let parent_access =
-                self.is_any_symbol_accessible(&containers, at, initial, next, paints);
+            let parent_access = self.is_any_symbol_accessible(&containers, at, initial, next, how);
             if parent_access.is_some() {
                 return parent_access;
             }
@@ -2478,8 +2556,11 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: Meaning,
         paints: bool,
     ) -> Access {
-        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints)
-        {
+        let how = Lookup {
+            paints,
+            ..Lookup::default()
+        };
+        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, how) {
             return result;
         }
         self.inaccessible(symbol, at, meaning)
@@ -2734,7 +2815,7 @@ impl SymbolTrackerImpl {
         let location = self.error_location();
         let name = match self.error_name_node.is_some() {
             true => location,
-            false => hir.name(location),
+            false => get_name_of_declaration(hir, location),
         };
         // `DeclarationNameToString`
         match (self.text(c, name), hir.data(location)) {
@@ -2941,6 +3022,34 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 );
                 text.extend_from_slice(b"preserve=\"true\" />\n");
             }
+            if expected == ReferenceKind::Path {
+                text.extend_from_slice(&self.supplemental_references());
+            }
+        }
+        text
+    }
+
+    /// `SupplementalReferencesTransformer`: the declaration file of a file that a content mapper produced refers to
+    /// those of its supplemental files.
+    fn supplemental_references(&self) -> Vec<u8> {
+        let files = self.c.files();
+        let mapped = files.module(self.file()).content_mapped;
+        let names = mapped.map_or(&[][..], |it| &it.supplemental_file_names);
+        let output_file_path = files.declaration_file_path(self.file());
+        let mut text = Vec::new();
+        for supplemental in names.iter().filter_map(|name| files.by_path.get(name)) {
+            let module = files.module(supplemental);
+            if !source_file_may_be_emitted(files.options, module, files.is_case_sensitive)
+                || module.hir.kind == FileKind::Json
+            {
+                continue;
+            }
+            let name = relative_from_file(
+                &output_file_path,
+                &files.declaration_file_path(supplemental),
+                files.is_case_sensitive,
+            );
+            text.extend_from_slice(&[b"/// <reference path=\"", &name[..], b"\" />\n"].concat());
         }
         text
     }
@@ -3139,6 +3248,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let mut uses = hir.specifier_uses.iter();
         let specifier_use = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
         let text = &hir.text[..];
+        let options = &self.c.files().options;
+        if let Some(rewritten) = options.rewritten_module_specifier(self.name(spec)) {
+            let quote = specifier_use.and_then(|it| text.get(it.pos as usize));
+            let quote = quote.copied().filter(|&it| it == b'\'').unwrap_or(b'"');
+            return super::print::quoted(&rewritten, quote, false);
+        }
         if let Some(start) = specifier_use.map(|it| it.pos as usize)
             && let Some(&quote) = text.get(start)
             && matches!(quote, b'"' | b'\'')
@@ -3254,222 +3369,231 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `visitNestedExpression`, `transformExpandoAssignment` for each `f.name = value` that declares a property. They
     /// come before all statements.
     fn transform_expando_assignments(&mut self) {
+        for &e in self.c.bound(self.file()).expando_declarations.iter() {
+            self.transform_expando_assignment(e);
+        }
+    }
+
+    /// `transformExpandoAssignment`
+    fn transform_expando_assignment(&mut self, e: ExprId) {
         let file = self.file();
         let files = self.c.files();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        for &e in bound.expando_declarations.iter() {
-            let ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } = hir[e].kind
-            else {
-                continue;
-            };
-            // `GetLeftmostAccessExpression`
-            let mut root = target;
-            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
-                if is_parenthesized(hir, root) {
-                    break;
-                }
-                root = obj;
-            }
-            let ExprKind::Ident(name) = hir[root].kind else {
-                continue;
-            };
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[e].kind
+        else {
+            return;
+        };
+        // `GetLeftmostAccessExpression`
+        let mut root = target;
+        while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
             if is_parenthesized(hir, root) {
-                continue;
+                break;
             }
-            // `GetReferencedValueDeclaration`
-            let Some(host) = self.c.symbol_of_identifier(file, root, name) else {
-                continue;
-            };
-            let host = files.export_symbol_of_value_symbol_if_exported(host);
-            let declaration = files.decls_of(host).iter().copied().find(|&(_, decl)| {
-                !matches!(
-                    decl,
-                    Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
-                )
-            });
-            let Some((of, declaration)) = declaration else {
-                continue;
-            };
-            if of != file {
-                continue;
-            }
-            let loc = files.loc_of_declaration(file, declaration);
-            if loc.is_some_and(|loc| self.c.should_strip_internal(file, loc.pos)) {
-                continue;
-            }
-            // The function that's emitted for a variable.
-            let mut variable: Option<(VarDeclId, FnId)> = None;
-            match declaration {
-                Decl::Var(pat) => {
-                    let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
-                        continue;
-                    };
-                    let decl = &hir[d];
-                    if decl.ty.is_some() || decl.init.is_none() || is_parenthesized(hir, decl.init)
-                    {
-                        continue;
-                    }
-                    let ExprKind::Fn(f) = hir[decl.init].kind else {
-                        continue;
-                    };
-                    variable = Some((d, f));
-                }
-                Decl::Fn(f) => {
-                    if hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_some() {
-                        continue;
-                    }
-                }
-                Decl::Class(_) | Decl::Enum(_) | Decl::Module(_) => {}
-                _ => continue,
-            }
-            // `tryGetPropertyName`
-            let property = match hir[target].kind {
-                ExprKind::Dot { name, .. } => Some(name),
-                ExprKind::Index { index, .. } => match hir[index].kind {
-                    ExprKind::String(name) => Some(name),
-                    // `tryGetNameFromEntityNameExpression`
-                    _ if is_entity_name_expression(hir, index)
-                        && self
-                            .c
-                            .resolve_entity_name_expression(file, index, SymFlags::VALUE)
-                            .is_some_and(|sym| {
-                                files
-                                    .flags(sym)
-                                    .intersects(SymFlags::CONST | SymFlags::ENUM_MEMBER)
-                            }) =>
-                    {
-                        self.c.member_name(file, PropKey::Computed(index))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
-            let Some(property) =
-                property.filter(|&name| bun_core::lexer::is_identifier(self.c.atoms().bytes(name)))
-            else {
-                continue;
-            };
-            // `isDeclarationAndNotVisible`
-            let is_visible = match declaration {
-                Decl::Var(pat) => self.is_binding_name_visible(pat),
-                _ => self.c.is_declaration_visible(file, declaration),
-            };
-            if !is_visible {
-                continue;
-            }
-            // `shouldEmitFunctionProperties`
-            if let Decl::Fn(f) = declaration
-                && matches!(hir[f].body, FnBody::None)
-                && !files.decls_of(host).iter().any(|&(file, decl)| {
-                    matches!(decl, Decl::Fn(f) if !matches!(self.c.hir(file)[f].body, FnBody::None))
-                })
-            {
-                continue;
-            }
-            // `transformExpandoHost`: it's emitted as a function, replacing the whole statement. A function declaration
-            // emits the same when it's visited. `getExpandoHostId`
-            let root = match variable {
-                Some((d, _)) => bound.var_stmt[d.idx()].some(),
-                None => self.c.files().statement_of_declaration(file, declaration),
-            };
-            if let Some((d, function)) = variable {
-                let statement = bound.var_stmt[d.idx()];
-                if statement.is_some() && !self.expando_hosts.contains_key(&statement) {
-                    let saved = self.tracker.get_symbol_accessibility_diagnostic;
-                    self.tracker.get_symbol_accessibility_diagnostic =
-                        Context::ForNode(hir.node(d));
-                    let outer = self.indent;
-                    self.set_indent(self.indent_of_statements(bound.parent_of_stmt(statement)));
-                    let signature = self.transform_signature(function);
-                    self.set_indent(outer);
-                    self.tracker.get_symbol_accessibility_diagnostic = saved;
-                    let host = self.expando_host(statement, name, &signature);
-                    self.expando_hosts.insert(statement, host);
-                    if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
-                        self.c
-                            .iso_report_expandos(isolated_declarations, hir.node(d));
-                    }
-                }
-            }
-            let saved = (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            );
-            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(e));
-            let export_of = |names: Vec<u8>| {
-                let text = [b"export { ", &names[..], b" };"].concat();
-                Statement::new(StatementKind::ExportDeclaration, text)
-            };
-            let export_name = self.name(property);
-            let mut added = Vec::new();
-            if let ExprKind::Ident(right) = hir[value].kind
-                && !is_parenthesized(hir, value)
-            {
-                // `transformBinaryExpressionToExportDeclaration`: it's emitted as `export { right as name }`.
-                self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
-                added.push(export_of(if right == property {
-                    export_name.to_vec()
-                } else {
-                    [self.name(right), b" as ", export_name].concat()
-                }));
-            } else {
-                let holder = self.c.type_of_symbol(host);
-                if let Some(ty) = self.c.type_of_property(holder, property) {
-                    self.tracker.error_name_node = Node::NONE;
-                    // It's emitted in its host's namespace.
-                    let host_parent = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
-                    let outer = self.indent;
-                    self.set_indent(self.indent_of_statements(host_parent) + 1);
-                    let ty = self.create_type_of_declaration(
-                        Some(hir.node(e)),
-                        ty,
-                        DECLARATION_EMIT_NODE_BUILDER_FLAGS,
-                    );
-                    self.set_indent(outer);
-                    // "use exportName as localName if there won't be any conflicts or keyword issues"
-                    let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-                    let scope = self.enclosing.scope;
-                    let local_name = if files.resolve_name(file, scope, property, any).is_some()
-                        || is_non_contextual_keyword(export_name)
-                    {
-                        // `NewGeneratedNameForNode` for the assignment
-                        self.temp_variable_name()
-                    } else {
-                        export_name.to_vec()
-                    };
-                    added.push(Statement::new(
-                        StatementKind::Other,
-                        [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
-                    ));
-                    if local_name != export_name {
-                        added.push(export_of([&local_name[..], b" as ", export_name].concat()));
-                    }
-                }
-            }
-            if let Some(root) = root {
-                let members = self.expando_members.entry(root).or_default();
-                let is_export = |it: &Statement| it.kind == StatementKind::ExportDeclaration;
-                let had_export = members.iter().any(is_export);
-                // "so they remain exported after the `export {}` is added"
-                if added.len() > 1 && !had_export {
-                    for member in members.iter_mut().filter(|it| !it.is_exported()) {
-                        member.modifiers.insert(0, Flags::EXPORT);
-                    }
-                }
-                if had_export && let Some(first) = added.first_mut().filter(|it| !is_export(it)) {
-                    first.modifiers.push(Flags::EXPORT);
-                }
-                members.append(&mut added);
-            }
-            (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            ) = saved;
+            root = obj;
         }
+        let ExprKind::Ident(name) = hir[root].kind else {
+            return;
+        };
+        if is_parenthesized(hir, root) {
+            return;
+        }
+        // `GetReferencedValueDeclaration`
+        let Some(host) = self.c.symbol_of_identifier(file, root, name) else {
+            return;
+        };
+        let host = files.export_symbol_of_value_symbol_if_exported(host);
+        let declaration = files.decls_of(host).iter().copied().find(|&(_, decl)| {
+            !matches!(
+                decl,
+                Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
+            )
+        });
+        let Some((of, declaration)) = declaration else {
+            return;
+        };
+        if of != file {
+            return;
+        }
+        let loc = files.loc_of_declaration(file, declaration);
+        if loc.is_some_and(|loc| self.c.should_strip_internal(file, loc.pos)) {
+            return;
+        }
+        // The function that's emitted for a variable.
+        let mut variable: Option<(VarDeclId, FnId)> = None;
+        match declaration {
+            Decl::Var(pat) => {
+                let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
+                    return;
+                };
+                let decl = &hir[d];
+                if decl.ty.is_some() || decl.init.is_none() || is_parenthesized(hir, decl.init) {
+                    return;
+                }
+                let ExprKind::Fn(f) = hir[decl.init].kind else {
+                    return;
+                };
+                variable = Some((d, f));
+            }
+            Decl::Fn(f) => {
+                if hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_some() {
+                    return;
+                }
+            }
+            Decl::Class(_) | Decl::Enum(_) | Decl::Module(_) => {}
+            _ => return,
+        }
+        // `tryGetPropertyName`
+        let property = match hir[target].kind {
+            ExprKind::Dot { name, .. } => Some(name),
+            ExprKind::Index { index, .. } => match hir[index].kind {
+                ExprKind::String(name) => Some(name),
+                // `tryGetNameFromEntityNameExpression`
+                _ if is_entity_name_expression(hir, index)
+                    && self
+                        .c
+                        .resolve_entity_name_expression(file, index, SymFlags::VALUE)
+                        .is_some_and(|sym| {
+                            files
+                                .flags(sym)
+                                .intersects(SymFlags::CONST | SymFlags::ENUM_MEMBER)
+                        }) =>
+                {
+                    self.c.member_name(file, PropKey::Computed(index))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(property) =
+            property.filter(|&name| bun_core::lexer::is_identifier(self.c.atoms().bytes(name)))
+        else {
+            return;
+        };
+        // `isDeclarationAndNotVisible`
+        let is_visible = match declaration {
+            Decl::Var(pat) => self.is_binding_name_visible(pat),
+            _ => self.c.is_declaration_visible(file, declaration),
+        };
+        // `getExpandoHostId`
+        let root = match variable {
+            Some((d, _)) => bound.var_stmt[d.idx()].some(),
+            None => self.c.files().statement_of_declaration(file, declaration),
+        };
+        if !is_visible {
+            // "printing the type of a visible declaration may still late-mark it as visible"
+            if let Some(root) = root {
+                let deferred = self.deferred_expando_assignments.entry(root).or_default();
+                deferred.push(e);
+            }
+            return;
+        }
+        // `shouldEmitFunctionProperties`
+        if let Decl::Fn(f) = declaration
+            && matches!(hir[f].body, FnBody::None)
+            && !files.decls_of(host).iter().any(|&(file, decl)| {
+                matches!(decl, Decl::Fn(f) if !matches!(self.c.hir(file)[f].body, FnBody::None))
+            })
+        {
+            return;
+        }
+        // `transformExpandoHost`: it's emitted as a function, replacing the whole statement. A function declaration
+        // emits the same when it's visited.
+        if let Some((d, function)) = variable {
+            let statement = bound.var_stmt[d.idx()];
+            if statement.is_some() && !self.expando_hosts.contains_key(&statement) {
+                let saved = self.tracker.get_symbol_accessibility_diagnostic;
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(d));
+                let outer = self.indent;
+                self.set_indent(self.indent_of_statements(bound.parent_of_stmt(statement)));
+                let signature = self.transform_signature(function);
+                self.set_indent(outer);
+                self.tracker.get_symbol_accessibility_diagnostic = saved;
+                let host = self.expando_host(statement, name, &signature);
+                self.expando_hosts.insert(statement, host);
+                if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                    self.c
+                        .iso_report_expandos(isolated_declarations, hir.node(d));
+                }
+            }
+        }
+        let saved = (
+            self.tracker.error_name_node,
+            self.tracker.get_symbol_accessibility_diagnostic,
+        );
+        self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(e));
+        let export_of = |names: Vec<u8>| {
+            let text = [b"export { ", &names[..], b" };"].concat();
+            Statement::new(StatementKind::ExportDeclaration, text)
+        };
+        let export_name = self.name(property);
+        let mut added = Vec::new();
+        if let ExprKind::Ident(right) = hir[value].kind
+            && !is_parenthesized(hir, value)
+        {
+            // `transformBinaryExpressionToExportDeclaration`: it's emitted as `export { right as name }`.
+            self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
+            added.push(export_of(if right == property {
+                export_name.to_vec()
+            } else {
+                [self.name(right), b" as ", export_name].concat()
+            }));
+        } else {
+            let holder = self.c.type_of_symbol(host);
+            if let Some(ty) = self.c.type_of_property(holder, property) {
+                self.tracker.error_name_node = Node::NONE;
+                // It's emitted in its host's namespace.
+                let host_parent = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
+                let outer = self.indent;
+                self.set_indent(self.indent_of_statements(host_parent) + 1);
+                let ty = self.create_type_of_declaration(
+                    Some(hir.node(e)),
+                    ty,
+                    DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                );
+                self.set_indent(outer);
+                // "use exportName as localName if there won't be any conflicts or keyword issues"
+                let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+                let scope = self.enclosing.scope;
+                let local_name = if files.resolve_name(file, scope, property, any).is_some()
+                    || is_non_contextual_keyword(export_name)
+                {
+                    // `NewGeneratedNameForNode` for the assignment
+                    self.temp_variable_name()
+                } else {
+                    export_name.to_vec()
+                };
+                added.push(Statement::new(
+                    StatementKind::Other,
+                    [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
+                ));
+                if local_name != export_name {
+                    added.push(export_of([&local_name[..], b" as ", export_name].concat()));
+                }
+            }
+        }
+        if let Some(root) = root {
+            let members = self.expando_members.entry(root).or_default();
+            let is_export = |it: &Statement| it.kind == StatementKind::ExportDeclaration;
+            let had_export = members.iter().any(is_export);
+            // "so they remain exported after the `export {}` is added"
+            if added.iter().any(is_export) && !had_export {
+                for member in members.iter_mut().filter(|it| !it.is_exported()) {
+                    member.modifiers.insert(0, Flags::EXPORT);
+                }
+            }
+            if had_export && let Some(first) = added.first_mut().filter(|it| !is_export(it)) {
+                first.modifiers.push(Flags::EXPORT);
+            }
+            members.append(&mut added);
+        }
+        (
+            self.tracker.error_name_node,
+            self.tracker.get_symbol_accessibility_diagnostic,
+        ) = saved;
     }
 
     /// `PrecalculateDeclarationEmitVisibility`
@@ -3656,7 +3780,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let hir = self.c.hir(self.file());
         let mut text = b"export ".to_vec();
         let from_expression = hir.exports_from_expressions.iter().find(|it| it.0 == s);
-        let (spec, mode) = match hir[s].kind {
+        let spec = match hir[s].kind {
             StmtKind::ExportNamed(export) => {
                 let export = &hir[export];
                 if export.type_only {
@@ -3690,13 +3814,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     let items = self.list_text(items, format);
                     text.extend_from_slice(&[b"{ ", &items[..], b" }"].concat());
                 }
-                (export.spec, export.mode)
+                export.spec
             }
             StmtKind::ExportStar {
                 spec,
                 alias,
                 type_only,
-                mode,
                 alias_pos,
                 ..
             } => {
@@ -3714,9 +3837,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     };
                     text.extend_from_slice(&[b" as ", &name[..]].concat());
                 }
-                (spec, mode)
+                spec
             }
-            _ => (Atom::NONE, ResolutionMode::None),
+            _ => Atom::NONE,
         };
         if spec.is_some() || from_expression.is_some() {
             // `rewriteModuleSpecifier`
@@ -3741,30 +3864,44 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 Some(_) => {}
                 None => text.extend_from_slice(&self.module_specifier_text(s, spec)),
             }
-            text.extend_from_slice(&self.resolution_mode_override_text(s, mode));
+            text.extend_from_slice(&self.import_attributes_text(s));
         }
         text.push(b';');
         Statement::new(StatementKind::ExportDeclaration, text)
     }
 
-    /// `tryGetResolutionModeOverride`: the import attributes of the statement `s`, if they specify a resolution mode.
-    fn resolution_mode_override_text(&self, s: StmtId, mode: ResolutionMode) -> Vec<u8> {
+    /// `emitImportAttributes` for the attributes of the statement `s`, after a space. Empty if it has none.
+    fn import_attributes_text(&self, s: StmtId) -> Vec<u8> {
         let hir = self.c.hir(self.file());
-        let statement = &hir.text[hir[s].start as usize..hir[s].loc.end as usize];
-        // `GetResolutionModeOverride`
-        let reported = strings::index_of(statement, b"resolution-mode").map(|at| &statement[at..]);
-        let word: &[u8] = match mode {
-            ResolutionMode::Import => b"import",
-            ResolutionMode::Require => b"require",
-            ResolutionMode::None => {
-                match reported.and_then(|it| bun_core::strings::split_any(it, b"\"'").nth(2)) {
-                    Some(b"import") => b"import",
-                    Some(b"require") => b"require",
-                    _ => return Vec::new(),
-                }
-            }
+        let within = hir[s].start..hir[s].loc.end;
+        let mut all = hir.import_attributes.iter();
+        let Some(&(keyword, object)) = all.find(|it| within.contains(&it.0)) else {
+            return Vec::new();
         };
-        [b" with { \"resolution-mode\": \"", word, b"\" }"].concat()
+        let ExprKind::Object(attributes) = hir[object].kind else {
+            return Vec::new();
+        };
+        let source = |start: u32, end: u32| hir.text.get(start as usize..end as usize);
+        let keyword: &[u8] = match source(keyword, keyword + 6) {
+            Some(b"assert") => b" assert {",
+            _ => b" with {",
+        };
+        let mut text = keyword.to_vec();
+        for (at, attribute) in attributes.iter().map(|it| hir[it]).enumerate() {
+            text.extend_from_slice(if at == 0 { b" " } else { b", " });
+            let name = self.name(attribute.key.name().unwrap_or(Atom::NONE));
+            match hir.text.get(attribute.pos as usize) {
+                Some(&quote @ (b'"' | b'\'')) => {
+                    text.extend_from_slice(&super::print::quoted(name, quote, false));
+                }
+                _ => text.extend_from_slice(name),
+            }
+            text.extend_from_slice(b": ");
+            let value = (self.c).start_of(self.file(), attribute.value);
+            text.extend_from_slice(source(value, attribute.end).unwrap_or_default());
+        }
+        text.extend_from_slice(if attributes.is_empty() { b"}" } else { b" }" });
+        text
     }
 
     /// `UpdateImportDeclaration`, `UpdateImportEqualsDeclaration`: `text` after `decl.Modifiers()` of the statement
@@ -3792,12 +3929,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // `rewriteModuleSpecifier`
             emit.result_has_external_module_indicator = true;
             let specifier = emit.module_specifier_text(s, import.spec);
-            [
-                &specifier[..],
-                &emit.resolution_mode_override_text(s, import.mode)[..],
-                b";",
-            ]
-            .concat()
+            [&specifier[..], &emit.import_attributes_text(s)[..], b";"].concat()
         };
         // `import "mod"`: "possibly needed for side effects? (global interface patches, module augmentations, etc)"
         if import.clause_start == import.clause_end {
@@ -3828,7 +3960,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         if bindings.is_empty() {
             // "Augmentation of export depends on import", for `NamedImports`.
-            if import.namespace.is_some()
+            if !import.has_named_imports
                 || import.named.is_empty() && import.default.is_some()
                 || !self.c.is_import_required_by_augmentation(file, i)
             {
@@ -3840,11 +3972,16 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let text = [b"import ", &tail(self)[..]].concat();
             return Some(self.update_import(StatementKind::Import, s, text));
         }
-        let type_only: &[u8] = if import.type_only { b"type " } else { b"" };
+        // `defer` is dropped.
+        let phase_modifier: &[u8] = match import.phase {
+            _ if import.type_only => b"type ",
+            ImportPhase::Source => b"source ",
+            _ => b"",
+        };
         let bindings = bindings.join(&b", "[..]);
         let text = [
             b"import ",
-            type_only,
+            phase_modifier,
             &bindings[..],
             b" from ",
             &tail(self)[..],
@@ -3901,6 +4038,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         {
             return None;
         }
+        // `createFullExpandoBlock`
+        for e in self
+            .deferred_expando_assignments
+            .remove(&s)
+            .unwrap_or_default()
+        {
+            self.transform_expando_assignment(e);
+        }
         if let Some(host) = self.expando_hosts.get(&s) {
             let host = host.clone();
             return Some(self.create_full_expando_block(s, host));
@@ -3934,8 +4079,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     modified,
                 );
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
-                self.visit_type(hir[a].ty, true);
-                let ty = self.text_of(ReusedNode::Type(hir[a].ty));
+                // "stripInternal can elide an @internal type RHS"
+                let pos = (self.c).end_of_token_before(self.file(), hir[hir[a].ty].pos);
+                let ty = if self.c.should_strip_internal(self.file(), pos) {
+                    b"any".to_vec()
+                } else {
+                    self.visit_type(hir[a].ty, true);
+                    self.text_of(ReusedNode::Type(hir[a].ty))
+                };
                 let name = self.name(hir[a].name);
                 Some(vec![Statement {
                     kind: match hir[a].flags.contains(Flags::REPARSED) {
@@ -4027,7 +4178,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.needs_declare,
         ) = saved;
         let mut emitted = emitted?;
-        let comments = self.leading_comments(hir[s].loc.pos);
+        let mut comments = self.leading_comments(hir[s].loc.pos);
+        // The modifiers of a function made from an `@overload` tag are clones of its host's and have their positions.
+        // Where `ensureModifiers` returns them, the first is emitted with the comments before the host.
+        if let StmtKind::Fn(f) = kind
+            && hir[f].flags.contains(Flags::REPARSED)
+            && let Some(Statement { modifiers, .. }) = emitted.first()
+            && !modifiers.is_empty()
+            && modifiers.iter().all(|&it| hir[f].flags.contains(it))
+            && let Some(host) = self.host_of_overload(f)
+        {
+            comments = self.leading_comments(hir[host].loc.pos);
+        }
         let preserves_comments = match kind {
             StmtKind::Class(_) => emitted.last_mut(),
             _ => emitted.first_mut(),
@@ -4037,6 +4199,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             statement.text = self.with_comments((None, hir[s].loc.end), &statement.text);
         }
         Some(self.create_full_expando_block(s, emitted))
+    }
+
+    /// Returns the function declaration whose `@overload` tag the function `f` is made from.
+    fn host_of_overload(&self, f: FnId) -> Option<StmtId> {
+        let (file, files) = (self.file(), self.c.files());
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let symbol = bound.fn_symbol[f.idx()].some()?;
+        let declarations = files.decls_of(files.sym(file, symbol));
+        let host = declarations.iter().find(|&&(of, decl)| {
+            matches!(decl, Decl::Fn(host) if of == file
+                && !hir[host].flags.contains(Flags::REPARSED)
+                && hir[host].start > hir[f].start)
+        })?;
+        files.statement_of_declaration(file, host.1)
     }
 
     /// `transformExpandoHost` for a function: the function `name` with `signature`, replacing the statement `s`.
@@ -4181,10 +4357,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 let source_quote = hir.text.get(module.name_pos as usize).copied();
                 let quote = source_quote.filter(|&it| it == b'\'').unwrap_or(b'"');
                 let name = super::print::quoted(self.name(name), quote, false);
-                (
-                    StatementKind::AmbientModule,
-                    [b"module ", &name[..]].concat(),
-                )
+                let mut head = [b"module ", &name[..]].concat();
+                if module.attributes.is_some() {
+                    self.visit_type(module.attributes, false);
+                    head.extend_from_slice(b" with ");
+                    head.extend_from_slice(&self.text_of(ReusedNode::Type(module.attributes)));
+                }
+                (StatementKind::AmbientModule, head)
             }
             // `emitNestedModuleName`: it follows its parent's name.
             ModuleName::Ident(name) if is_nested => {
@@ -4246,7 +4425,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         (self.needs_scope_fix_marker, self.result_has_scope_marker) = saved;
         // `rangeEndIsOnSameLineAsRangeStart` for the block, which starts after the name and ends the declaration.
         let is_on_one_line = || {
-            let after_name = self.c.end_of_name_at(self.file(), module.name_pos);
+            let after_name = match module.attributes.is_some() {
+                true => hir[module.attributes].end,
+                false => self.c.end_of_name_at(self.file(), module.name_pos),
+            };
             let open = self.c.skip_trivia_from(self.file(), after_name) as usize;
             positions_are_on_same_line(&hir.text[..], hir[s].loc.end as usize, open)
         };
@@ -4373,17 +4555,19 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if !self.suppresses_new_contexts {
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(d));
             }
-            if let PatKind::Ident(name) = hir[pat].kind {
+            if has_any_binding_initializers(hir, pat) {
+                let names = self.recreate_binding_pattern(pat, true);
+                declarations.extend(names.into_iter().map(|text| Element { range: None, text }));
+            } else {
                 self.suppresses_new_contexts = true;
+                self.visit_binding_name(pat);
+                let name = self.text_of(ReusedNode::BindingName(pat));
                 let ensured = self.ensure_type(hir.node(d), false);
                 let loc = hir[d].loc;
                 declarations.push(Element {
                     range: (loc.end != 0).then_some((loc.pos as usize, loc.end as usize)),
-                    text: [self.name(name), &ensured.text()[..]].concat(),
+                    text: [&name[..], &ensured.text()[..]].concat(),
                 });
-            } else {
-                let names = self.recreate_binding_pattern(pat, true);
-                declarations.extend(names.into_iter().map(|text| Element { range: None, text }));
             }
             (
                 self.enclosing,
@@ -4804,6 +4988,31 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             emitted.comments = comments(self);
             return vec![emitted];
         }
+        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
+        self.tracker.fallback_stack.push(assignment);
+        let emitted = self.transform_exported_expression(assignment, e, is_export_equals);
+        self.tracker.fallback_stack.pop();
+        let ExportedExpression {
+            name,
+            mut declaration,
+            is_hoisted,
+        } = emitted;
+        declaration.comments = comments(self);
+        if is_hoisted {
+            vec![export_of(&name), declaration]
+        } else {
+            vec![declaration, export_of(&name)]
+        }
+    }
+
+    /// The part of `transformExportAssignment` that declares the expression `e` under a name.
+    fn transform_exported_expression(
+        &mut self,
+        assignment: Node,
+        e: ExprId,
+        is_export_equals: bool,
+    ) -> ExportedExpression {
+        let hir = self.c.hir(self.file());
         // `SkipOuterExpressions(expression, OEKExpressionTypePassthrough)`
         let mut unwrapped = e;
         loop {
@@ -4849,42 +5058,55 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         } else {
             Vec::new()
         };
-        match hir[unwrapped].kind {
-            ExprKind::Class(c) => {
-                let mut class = self.transform_class_expression(c, &name, declare);
-                class.comments = comments(self);
-                return vec![export_of(&name), class];
-            }
-            ExprKind::Fn(f) => {
-                let signature = self.transform_signature(f);
-                let function = Statement {
-                    kind: StatementKind::Other,
-                    comments: comments(self),
-                    modifiers: declare,
-                    text: [b"function ", &name[..], &signature[..], b";"].concat(),
-                };
-                return vec![export_of(&name), function];
-            }
-            _ => {}
-        }
-        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
-        // `IsPrimitiveLiteralValue`: it's emitted verbatim.
-        let ensured = if self.c.iso_is_primitive_literal(self.file(), e, true) {
-            let literal = self.c.type_of_expr(self.file(), e);
-            Ensured::Initializer(self.create_literal_const_value(literal))
-        } else {
-            self.tracker.fallback_stack.push(assignment);
-            let ensured = self.ensure_type(assignment, false);
-            self.tracker.fallback_stack.pop();
-            ensured
-        };
-        let variable = Statement {
+        let constant = |ensured: &Ensured, declare: Vec<Flags>| Statement {
             kind: StatementKind::Other,
-            comments: comments(self),
+            comments: Vec::new(),
             modifiers: declare,
             text: [b"const ", &name[..], &ensured.text()[..], b";"].concat(),
         };
-        vec![variable, export_of(&name)]
+        let (declaration, is_hoisted) = match hir[unwrapped].kind {
+            ExprKind::Class(c) => (self.transform_class_expression(c, &name, declare), true),
+            // `transformFunctionLikeToDeclaration`
+            ExprKind::Fn(f) => {
+                let mut full_signature = hir.jsdoc_type(JsDocTypeOwner::Fn(f));
+                if full_signature.is_none() {
+                    full_signature = match hir.data(assignment) {
+                        NodeData::Expr(e) => hir.jsdoc_type(JsDocTypeOwner::Assign(e)),
+                        NodeData::Stmt(s) => hir.jsdoc_type(JsDocTypeOwner::Export(s)),
+                        _ => TypeNodeId::NONE,
+                    };
+                }
+                if full_signature.is_some() {
+                    self.visit_type(full_signature, false);
+                    let ty = self.text_of(ReusedNode::Type(full_signature));
+                    (constant(&Ensured::Type(ty), declare), true)
+                } else {
+                    let signature = self.transform_signature(f);
+                    let function = Statement {
+                        kind: StatementKind::Other,
+                        comments: Vec::new(),
+                        modifiers: declare,
+                        text: [b"function ", &name[..], &signature[..], b";"].concat(),
+                    };
+                    (function, true)
+                }
+            }
+            // `IsPrimitiveLiteralValue`: it's emitted verbatim.
+            _ if self.c.iso_is_primitive_literal(self.file(), e, true) => {
+                let literal = self.c.type_of_expr(self.file(), e);
+                let value = Ensured::Initializer(self.create_literal_const_value(literal));
+                (constant(&value, declare), false)
+            }
+            _ => {
+                let ensured = self.ensure_type(assignment, false);
+                (constant(&ensured, declare), false)
+            }
+        };
+        ExportedExpression {
+            name,
+            declaration,
+            is_hoisted,
+        }
     }
 
     // ───────────────────────────── members and signatures ─────────────────────────────
@@ -5320,6 +5542,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 {
                     self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
                 }
+                // `visitDeclarationSubtree` of each `QualifiedName`
+                let mut qualified = expr;
+                while qualified.is_some()
+                    && let ExprKind::Dot { obj, name, .. } = hir[qualified].kind
+                {
+                    if self.c.atoms().is_private_name(name) {
+                        let range = (hir[qualified].pos, hir[qualified].end);
+                        let name = self.c.written_name(name).to_vec();
+                        self.tracker.add_diagnostic(range, 7080, vec![name]);
+                    }
+                    qualified = obj;
+                }
                 for argument in hir.ids(args) {
                     self.visit_type(argument, false);
                 }
@@ -5522,6 +5756,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             NodeData::Expr(e) if hir.is_js && !self.c.bound(file).is_expando_declaration(e) => {
                 let ty = self.type_of_commonjs_declaration(e);
                 ty.map(|ty| self.c.widen_literal(ty))
+            }
+            // `getTypeForVariableLikeDeclaration`: a declaration whose name is a pattern has no symbol.
+            NodeData::VarDecl(d) if !matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
+                Some(self.c.type_of_pat(file, hir[d].pat))
             }
             _ if self.c.iso_has_inferred_type(file, node) => {
                 self.c.iso_type_of_declared(file, node)
@@ -5976,8 +6214,8 @@ impl<'p, 's> Checker<'p, 's> {
         if mode != ResolutionMode::None {
             return mode;
         }
-        if let Some(mode) = self.enclosing_module_specifier_mode {
-            return mode;
+        if let Some(specifier) = self.enclosing_module_specifier {
+            return specifier.mode;
         }
         // `TryGetModuleSpecifierFromDeclaration` for a variable declaration.
         let (hir, files) = (self.hir(at.file), self.files());
@@ -5989,6 +6227,14 @@ impl<'p, 's> Checker<'p, 's> {
                 && matches!(hir[argument].kind, ExprKind::String(_))
             {
                 return files.mode_of_require(at.file);
+            }
+            if initializer.is_some()
+                && !is_parenthesized(hir, initializer)
+                && let ExprKind::ImportCall { args, .. } = hir[initializer].kind
+                && let Some(specifier) = hir.ids(args).next()
+                && matches!(hir[specifier].kind, ExprKind::String(_))
+            {
+                return files.mode_of_import_call(at.file);
             }
         }
         files.default_resolution_mode_for_file(at.file)
@@ -6061,7 +6307,12 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let allows_ts = files.options.allow_importing_ts_extensions
             || is_declaration_file_name(files.module(importing).file_name());
-        if mode == ResolutionMode::Import && files.options.resolves_like_node {
+        let effective_mode = if mode == ResolutionMode::None {
+            files.default_resolution_mode_for_file(importing)
+        } else {
+            mode
+        };
+        if effective_mode == ResolutionMode::Import && files.options.resolves_like_node {
             return if allows_ts {
                 vec![Ending::Ts, Ending::Js]
             } else {
@@ -6082,8 +6333,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `processEnding`
-    fn process_ending(&self, file_name: &[u8], allowed: &[Ending]) -> Vec<u8> {
+    /// `processEnding`. `file_name` is the specifier, a path to the file at `source_file_name`.
+    fn process_ending(
+        &self,
+        file_name: &[u8],
+        source_file_name: &[u8],
+        allowed: &[Ending],
+    ) -> Vec<u8> {
         let files = self.files();
         let extension = known_extension(file_name);
         if matches!(extension, b"" | b".json" | b".mjs" | b".cjs") {
@@ -6115,7 +6371,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(Ending::Minimal) | None => match no_extension.strip_suffix(b"/index") {
                 // `index` is preserved if a file has the same name as the directory. Only the program's files are
                 // known.
-                Some(directory)
+                Some(without_index)
                     if ![
                         b".ts".as_slice(),
                         b".tsx",
@@ -6131,9 +6387,12 @@ impl<'p, 's> Checker<'p, 's> {
                         b".json",
                     ]
                     .iter()
-                    .any(|extension| files.by_path.contains(&[directory, *extension].concat())) =>
+                    .any(|extension| {
+                        let directory = dirname::<Posix>(source_file_name);
+                        files.by_path.contains(&[directory, *extension].concat())
+                    }) =>
                 {
-                    directory.to_vec()
+                    without_index.to_vec()
                 }
                 _ => no_extension.to_vec(),
             },
@@ -6293,6 +6552,80 @@ impl<'p, 's> Checker<'p, 's> {
         Vec::new()
     }
 
+    /// `tryDirectoryWithPackageJson`, for a `directory` in the package at `package_directory`, which contains the file
+    /// at `path`. `package_name` is the path of `directory` from `node_modules`. If the `package.json` there has
+    /// `exports`, breaks with the file's specifier, which is empty if `exports` doesn't expose the file. Otherwise
+    /// continues with true if `package_name` resolves to the file.
+    fn try_directory_with_package_json(
+        &self,
+        path: &[u8],
+        directory: &[u8],
+        package_directory: &[u8],
+        package_name: &[u8],
+        importing: FileId,
+        mode: ResolutionMode,
+    ) -> ControlFlow<Vec<u8>, bool> {
+        let files = self.files();
+        let Some(json) = files.package_jsons.get(directory) else {
+            // An `index` file resolves from the package name anyway.
+            return ControlFlow::Continue(matches!(
+                path.get(package_directory.len() + 1..),
+                Some(b"index.d.ts" | b"index.js" | b"index.ts" | b"index.tsx")
+            ));
+        };
+        if files.options.resolve_package_json_exports
+            && let Some(exports) = json.get(b"exports")
+        {
+            let mode = match known_extension(path) {
+                b".cjs" | b".cts" | b".d.cts" => ResolutionMode::Require,
+                b".mjs" | b".mts" | b".d.mts" => ResolutionMode::Import,
+                _ if mode == ResolutionMode::None => {
+                    files.default_resolution_mode_for_file(importing)
+                }
+                _ => mode,
+            };
+            return ControlFlow::Break(try_get_module_name_from_exports(
+                &self.target_file(
+                    path,
+                    TargetFileOptions {
+                        is_imports: false,
+                        prefers_ts_extension: false,
+                    },
+                ),
+                directory,
+                &package_name_from_types_package_name(package_name),
+                exports,
+                &self.get_conditions(mode),
+            ));
+        }
+        // The main file's specifier is the package name.
+        let main = [b"typings".as_slice(), b"types", b"main"]
+            .iter()
+            .find_map(|field| json.get(field).and_then(Json::as_str))
+            .unwrap_or(b"index.js");
+        if main.is_empty() {
+            return ControlFlow::Continue(false);
+        }
+        // `isPackageMainFile`
+        let is_same_path =
+            |a: &[u8], b: &[u8]| compare_paths(a, b, files.is_case_sensitive).is_eq();
+        let main_export = join(directory, main);
+        ControlFlow::Continue(
+            !main.ends_with(b"/")
+                && is_same_path(
+                    remove_file_extension(&main_export),
+                    remove_file_extension(path),
+                )
+                || json.get(b"type").and_then(Json::as_str) != Some(b"module")
+                    && !matches!(
+                        known_extension(path),
+                        b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
+                    )
+                    && is_same_path(dirname::<Posix>(path), &main_export)
+                    && remove_file_extension(get_base_file_name(path)) == b"index",
+        )
+    }
+
     /// `tryGetModuleNameAsNodeModule`: the specifier `importing` uses for the file at `path`, which is in
     /// `node_modules`. Empty if it has no specifier through `node_modules`.
     fn try_get_module_name_as_node_module(
@@ -6303,77 +6636,54 @@ impl<'p, 's> Checker<'p, 's> {
         prefers_js: bool,
     ) -> Vec<u8> {
         let files = self.files();
-        let options = &files.options;
         let Some((top_level_node_modules, top_level_package_name, package_root)) =
             node_module_path_parts(path)
         else {
             return Vec::new();
         };
-        let package_directory = &path[..package_root];
-        // `tryDirectoryWithPackageJson`
-        let is_package_root = match files.package_jsons.get(package_directory) {
-            // An `index` file resolves from the package name anyway.
-            None => matches!(
-                path.get(package_root + 1..),
-                Some(b"index.d.ts" | b"index.js" | b"index.ts" | b"index.tsx")
-            ),
-            Some(json) => {
-                if options.resolve_package_json_exports
-                    && let Some(exports) = json.get(b"exports")
-                {
-                    let mode = match known_extension(path) {
-                        b".cjs" | b".cts" | b".d.cts" => ResolutionMode::Require,
-                        b".mjs" | b".mts" | b".d.mts" => ResolutionMode::Import,
-                        _ if mode == ResolutionMode::None => {
-                            self.files().default_resolution_mode_for_file(importing)
-                        }
-                        _ => mode,
-                    };
-                    // A file that `exports` doesn't expose has no specifier through `node_modules`.
-                    return try_get_module_name_from_exports(
-                        &self.target_file(
-                            path,
-                            TargetFileOptions {
-                                is_imports: false,
-                                prefers_ts_extension: false,
-                            },
-                        ),
-                        package_directory,
-                        &package_name_from_types_package_name(
-                            &package_directory[top_level_package_name + 1..],
-                        ),
-                        exports,
-                        &self.get_conditions(mode),
-                    );
-                }
-                // The main file's specifier is the package name.
-                let main = [b"typings".as_slice(), b"types", b"main"]
-                    .iter()
-                    .find_map(|field| json.get(field).and_then(Json::as_str))
-                    .unwrap_or(b"index.js");
-                let main = join(package_directory, main);
-                remove_file_extension(&main) == remove_file_extension(path)
-                    || json.get(b"type").and_then(Json::as_str) != Some(b"module")
-                        && !matches!(
-                            known_extension(path),
-                            b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
-                        )
-                        && dirname::<Posix>(path) == main
-                        && remove_file_extension(&path[main.len()..]) == b"/index"
-            }
-        };
-        let module_specifier = if is_package_root {
-            package_directory.to_vec()
-        } else {
-            let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
-            self.process_ending(path, &allowed)
-        };
-        if !dirname::<Posix>(files.module(importing).file_name())
-            .starts_with(&path[..top_level_node_modules])
-        {
+        // `exports` only helps an importing file that finds the package in a `node_modules` above it.
+        if !contains_path(
+            &path[..top_level_node_modules.max(get_root_length(path))],
+            dirname::<Posix>(files.module(importing).file_name()),
+            files.is_case_sensitive,
+        ) {
             return Vec::new();
         }
-        package_name_from_types_package_name(&module_specifier[top_level_package_name + 1..])
+        // The package's directory, then each directory from there down to the file's. A file right in `node_modules`
+        // has no package.
+        let mut directory_end = if package_root > top_level_package_name {
+            package_root
+        } else {
+            path.len()
+        };
+        while let Some(rest) = path.get(directory_end + 1..) {
+            let directory = &path[..directory_end];
+            let package_name = &directory[top_level_package_name + 1..];
+            match self.try_directory_with_package_json(
+                path,
+                directory,
+                &path[..package_root],
+                package_name,
+                importing,
+                mode,
+            ) {
+                ControlFlow::Break(from_exports) => return from_exports,
+                ControlFlow::Continue(true) => {
+                    return package_name_from_types_package_name(package_name);
+                }
+                ControlFlow::Continue(false) => {}
+            }
+            let Some(next) = strings::index_of_char_usize(rest, b'/') else {
+                break;
+            };
+            directory_end += 1 + next;
+        }
+        let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
+        let module_specifier = self.process_ending(path, path, &allowed);
+        match module_specifier.get(top_level_package_name + 1..) {
+            Some(name) => package_name_from_types_package_name(name),
+            None => Vec::new(),
+        }
     }
 
     /// `GetEachFileNameOfModule`: the paths that reach one of `targets` through a symlink to a directory that contains
@@ -6560,8 +6870,11 @@ impl<'p, 's> Checker<'p, 's> {
                 module_file_name,
                 files.is_case_sensitive,
             );
-            relative_path =
-                self.process_ending(&ensure_path_is_non_module_name(relative), allowed_endings);
+            relative_path = self.process_ending(
+                &ensure_path_is_non_module_name(relative),
+                module_file_name,
+                allowed_endings,
+            );
         }
         if options.paths.is_empty() && !options.resolve_package_json_imports {
             return relative_path;
@@ -6596,6 +6909,7 @@ impl<'p, 's> Checker<'p, 's> {
         if maybe_non_relative.is_empty() {
             maybe_non_relative = self.try_get_module_name_from_paths(
                 &relative_to_base_url,
+                module_file_name,
                 allowed_endings,
                 base_directory,
             );
@@ -6706,7 +7020,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         match shortest {
-            Some(shortest) => self.process_ending(&shortest, allowed_endings),
+            Some(shortest) => self.process_ending(&shortest, module_file_name, allowed_endings),
             None => Vec::new(),
         }
     }
@@ -6716,6 +7030,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn try_get_module_name_from_paths(
         &self,
         relative_to_base_url: &[u8],
+        file_name: &[u8],
         allowed_endings: &[Ending],
         base_directory: &[u8],
     ) -> Vec<u8> {
@@ -6726,7 +7041,7 @@ impl<'p, 's> Checker<'p, 's> {
                     relative_normalized::<Posix, true>(base_directory, &normalized).to_vec();
                 let mut candidates: Vec<Vec<u8>> = allowed_endings
                     .iter()
-                    .map(|&ending| self.process_ending(relative_to_base_url, &[ending]))
+                    .map(|&ending| self.process_ending(relative_to_base_url, file_name, &[ending]))
                     .collect();
                 // The extension is in the mapping, so the mapping resolves to the file itself.
                 if !known_extension(&pattern).is_empty() {
@@ -6760,7 +7075,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(output_dts.to_vec())
     }
 
-    /// `ResolvedFileName` of an import of `importing`, normalized.
+    /// `ResolvedFileName` of an import of `importing`.
     fn resolved_file_name_of_import(
         &self,
         importing: FileId,
@@ -6771,7 +7086,7 @@ impl<'p, 's> Checker<'p, 's> {
         let importer = files.module(importing);
         let mut redirected = importer.redirected_imports.iter();
         if let Some(&(_, _, name)) = redirected.find(|it| it.0 == specifier && it.1 == mode) {
-            return normalize_path(self.atoms().bytes(name).to_vec());
+            return self.atoms().bytes(name).to_vec();
         }
         let path = files
             .module(importer.imports[&(specifier, mode)])
@@ -6849,13 +7164,18 @@ impl<'p, 's> Checker<'p, 's> {
             return known.clone();
         }
         let decls = self.decls_of(symbol);
-        // `isAmbientModuleSymbolName(symbol.Name)`
-        let ambient_name = match decls.first() {
-            Some(&(file, Decl::Module(m))) => match self.hir(file)[m].name {
+        let name_of_module = |&(file, decl): &(FileId, Decl)| match decl {
+            Decl::Module(m) => match self.hir(file)[m].name {
                 ModuleName::String(name) => Some(name),
                 _ => None,
             },
             _ => None,
+        };
+        // `core.Find(symbol.Declarations(), ast.IsModuleWithStringLiteralName)`. What `export =` refers to has the file
+        // (`getFileSymbolIfFileSymbolExportEqualsContainer`), unless it's a clone.
+        let ambient_name = match self.target_of_module_clone(symbol) == symbol {
+            true => decls.first().and_then(name_of_module),
+            false => decls.iter().find_map(name_of_module),
         };
         let mut target = None;
         let mut specifier = None;
@@ -6875,7 +7195,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let specifier = match (ambient_name, specifier, target) {
-            // Without a file, `StripQuotes(symbol.Name)`.
+            // Without a file, `declaration.Name().Text()`.
             (Some(name), _, None) => self.atoms().bytes(name).to_vec(),
             (_, Some(name), _) => name,
             (_, None, target) => match target.or_else(|| self.source_file_of_module(symbol)) {
@@ -7032,6 +7352,19 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         (specifier, mode)
+    }
+}
+
+/// `hasAnyBindingInitializers`
+fn has_any_binding_initializers(hir: &hir::File, pat: PatId) -> bool {
+    match hir[pat].kind {
+        PatKind::Object(props) => props
+            .iter()
+            .any(|p| hir[p].default.is_some() || has_any_binding_initializers(hir, hir[p].value)),
+        PatKind::Array(elems) => elems
+            .iter()
+            .any(|e| hir[e].default.is_some() || has_any_binding_initializers(hir, hir[e].pat)),
+        PatKind::Ident(_) | PatKind::Missing => false,
     }
 }
 

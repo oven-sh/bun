@@ -237,8 +237,8 @@ pub struct LanguageOptions {
     /// environment's variables, and espree only accepts syntax up to the configured `ecmaVersion`.
     pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
     /// The ESLint major version whose rule defaults, report positions and messages are used: 8 with ESLint 8 config
-    /// files, 9 with an `eslint.config.js` if the installed `eslint` is older than 10, and 10 otherwise. It's also 10
-    /// with an oxlint config, where [`is_oxlint`](Self::is_oxlint) decides instead.
+    /// files, 8 or 9 with an `eslint.config.js` if that's the installed `eslint`, and 10 otherwise. It's also 10 with an
+    /// oxlint config, where [`is_oxlint`](Self::is_oxlint) decides instead.
     pub eslint_major: u8,
     /// Don't read any file other than the one being linted. oxlint only does that with its `import` plugin.
     pub without_modules: bool,
@@ -506,6 +506,32 @@ impl LanguageOptions {
         };
         options.set_source_type(source_type);
         options
+    }
+
+    /// What `@typescript-eslint/parser` does for a file that has a program: without `parserOptions.lib`, the libraries are
+    /// the program's. `libs` has the `N` of each `lib.N.d.ts`. `None` if these options stay as they are.
+    pub fn with_libs_of_program(&self, libs: &[Vec<u8>]) -> Option<LanguageOptions> {
+        if self.parser != Parser::TypeScript || self.is_oxlint || self.lib.is_some() {
+            return None;
+        }
+        let name_in_table = |lib: &Vec<u8>| -> Box<[u8]> {
+            match lib.is_empty() {
+                true => b"lib"[..].into(),
+                false => lib[..].into(),
+            }
+        };
+        let mut other = self.clone();
+        let commonjs = other.without_module_syntax.take().map(|mut it| {
+            it.lib = Some(libs.iter().map(name_in_table).collect());
+            it.config_globals = OnceLock::new();
+            it
+        });
+        Some(LanguageOptions {
+            lib: Some(libs.iter().map(name_in_table).collect()),
+            config_globals: OnceLock::new(),
+            without_module_syntax: commonjs,
+            ..other
+        })
     }
 
     fn set_source_type(&mut self, source_type: SourceType) {

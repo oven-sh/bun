@@ -1193,6 +1193,8 @@ pub struct TypeChecked<'a, 'i> {
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+    /// The `Bun.build` that this is for, which its VM may cancel during the check.
+    pub completion: Option<core::ptr::NonNull<crate::bundle_v2::JSBundleCompletionTask>>,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

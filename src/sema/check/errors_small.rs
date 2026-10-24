@@ -1,7 +1,7 @@
 //! Small independent checks: 2481, 2774 2801 2845, 2698, 2432 2473.
 //!
 //! Mirrors `checkVarDeclaredNamesNotShadowed`, `checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType`,
-//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.0.2's checker.go.
+//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{
@@ -204,9 +204,17 @@ impl<'p> Checker<'p, '_> {
         } else if self.is_rechecking() {
             self.check_expression_ex(file, location, CheckMode::empty())
         } else {
-            let outside = self.type_only_node.take();
-            let ty = self.type_of_expr(file, location);
-            self.type_only_node = outside;
+            let outside = (self.type_only_node.take(), self.check_in_flow_loop);
+            if let Some(check) = &mut self.check_in_flow_loop {
+                check.is_second_visit = false;
+            }
+            // What's kept while a loop is analyzed was computed in `CheckModeTypeOnly`.
+            let ty = if self.is_in_flow_loop() {
+                self.check_expression_anew(file, location)
+            } else {
+                self.check_expression_again(file, location)
+            };
+            (self.type_only_node, self.check_in_flow_loop) = outside;
             ty
         };
         let start = self.start_inside_parentheses(file, location);
@@ -516,7 +524,7 @@ impl<'p> Checker<'p, '_> {
     /// `t.symbol`
     pub(super) fn symbol_of_type(&self, ty: TypeId) -> Option<SymbolAtLocation<'p>> {
         let files = self.files();
-        Some(match *self.data(ty) {
+        Some(match *self.data(self.non_distributed(ty)) {
             TypeData::ThisParam(symbol) | TypeData::Enum { symbol, .. } => {
                 SymbolAtLocation::Symbol(symbol)
             }
@@ -776,7 +784,9 @@ impl<'p> Checker<'p, '_> {
         if enums.iter().any(is_checked_before) {
             return;
         }
-        let enum_is_const = self.hir(file)[e].flags.contains(Flags::CONST);
+        // `GetDeclarationOfKind(enumSymbol, KindEnumDeclaration)`
+        let (first_file, first) = enums[0];
+        let enum_is_const = self.hir(first_file)[first].flags.contains(Flags::CONST);
         for &(f, e) in &enums {
             if self.hir(f)[e].flags.contains(Flags::CONST) != enum_is_const {
                 self.error(f, self.hir(f).name(self.hir(f).node(e)), 2473, &[]);

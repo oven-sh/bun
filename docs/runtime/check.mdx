@@ -3,7 +3,7 @@ title: "Type checking"
 description: "Type check your TypeScript project with bun check"
 ---
 
-`bun check` type checks your TypeScript project. It reads your `tsconfig.json`, reports the same errors as `tsc` from TypeScript 7, and uses every CPU core.
+`bun check` type checks your TypeScript project. It reads your `tsconfig.json`, reports the same errors as `tsc` from TypeScript 7.1, and uses every CPU core.
 
 ```bash terminal icon="terminal"
 bun check
@@ -89,7 +89,7 @@ Keep `tsc` to generate `.d.ts` files. `bun check` only checks.
 
 ### Coming from TypeScript 5
 
-`bun check` behaves like TypeScript 7, whichever version of `typescript` you have installed. TypeScript 6 and 7 changed some defaults and removed some compiler options.
+`bun check` behaves like TypeScript 7.1, whichever version of `typescript` you have installed. TypeScript 6 and 7 changed some defaults and removed some compiler options.
 
 Three defaults changed:
 
@@ -620,7 +620,7 @@ Then tell your editor to use the version in your project. In VS Code, run **Type
 
 Run the command again after you upgrade Bun, because a new version of Bun can match a newer TypeScript.
 
-If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+If `bun check` and `tsc` from TypeScript 7.1 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
 
 ## Compiler options as flags
 
@@ -640,9 +640,75 @@ A flag applies to the projects that `bun check` reports. With [`-b`](#every-proj
 bun check -b --strict
 ```
 
+## Vue, Svelte, Astro, and other file types
+
+TypeScript 7.1 adds content mappers. A content mapper is a program from a package in `node_modules` that turns a file TypeScript cannot read, such as a `.vue` file, into TypeScript. `bun check` checks the result and reports each error at the matching line and column of your file.
+
+List the mappers in `tsconfig.json`:
+
+```json tsconfig.json icon="file-json"
+{
+  "contentMappers": [{ "package": "my-vue-mapper", "extensions": [".vue"] }],
+  "include": ["src/**/*.ts", "src/**/*.vue"]
+}
+```
+
+Then pass `--runExternalCode`:
+
+```bash terminal icon="terminal"
+bun check --runExternalCode
+```
+
+```txt
+src/App.vue(12,7): error TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+<Warning>
+  `--runExternalCode` lets the project choose programs that run on your computer with your permissions. The
+  `tsconfig.json` says which packages, and each package's `package.json` says which command. Use the flag only in
+  projects whose `tsconfig.json` and `node_modules` you trust.
+</Warning>
+
+The flag counts only if you type it on the command line, after `check`. It has no effect in `tsconfig.json`, `bunfig.toml`, `BUN_OPTIONS`, or a response file (`@file`). Without the flag, `bun check` starts nothing and reports TS18068:
+
+```txt
+tsconfig.json(2,3): error TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.
+```
+
+Each mapper runs once per check, in its package's directory, and stops when the check ends. A mapper whose command is `node` runs with Bun if `node` is not installed. What it prints to standard error appears in your terminal. `bun check` does not trust what a mapper answers: an answer that is malformed or points outside of the file is an error on that file, and after five such files the mapper is not used again.
+
+### With `--check`
+
+[`--check`](#check-before-you-run-build-or-test) runs the content mappers if you also allow it:
+
+| You run                          | You allow it with                                               |
+| -------------------------------- | --------------------------------------------------------------- |
+| `bun --check`, `bun run --check` | `bun --check --runExternalCode src/index.ts`                    |
+| `bun test --check`               | `bun test --check --runExternalCode`                            |
+| `bun build --check`              | `bun build --check --runExternalCode src/index.ts --outdir out` |
+| `Bun.build`                      | `check: { runExternalCode: true }`                              |
+
+The same rule applies as for `bun check`: the flag counts only if you type it on the command line. Put it before the file or script that Bun runs. What follows the file or script belongs to your program, which reads it from `process.argv`. Without `--check`, the flag has no effect.
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./out",
+  check: { runExternalCode: true },
+});
+```
+
+`Bun.build` reads `runExternalCode` from the object you pass, and from nowhere else. With `check: true`, it starts nothing and reports TS18068. The mappers have stopped when the promise settles. If the worker or the process that called `Bun.build` ends during the check, Bun stops the mappers and the check ends.
+
+With [`--watch`](#watch-mode), every check starts the mappers again.
+
+A content mapper only serves the type check. To run or bundle a `.vue` file, Bun needs a [plugin](/runtime/plugins) that loads it.
+
+`bun lint` never runs a content mapper.
+
 ## Differences from `tsc`
 
-`bun check` aims to report exactly what `tsc` from TypeScript 7 reports. `process.versions.typescript` is the exact version.
+`bun check` aims to report exactly what `tsc` from TypeScript 7.1 reports. `process.versions.typescript` is the exact version.
 
 ```bash terminal icon="terminal"
 bun -p process.versions.typescript
@@ -650,7 +716,7 @@ bun -p process.versions.typescript
 
 These differences are intentional:
 
-- **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files.
+- **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files. As with `tsc --noEmit`, errors about declaration files, such as TS4025 or the TS90xx errors of `isolatedDeclarations`, are reported once there are no other errors. `bun check -b` reports them next to other errors, like `tsc -b`, unless the project has `noEmit`.
 - **Referenced projects don't have to be built.** `tsc` without `-b` reads the `.d.ts` files that an earlier build wrote, and reports TS6305 if there are none. `bun check` reads the source files.
 - **Compiler options work with `-b`.** `tsc -b --strict` reports TS5094. `bun check -b --strict` applies the option to every project.
 - **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.
@@ -659,6 +725,7 @@ These differences are intentional:
 - **An error that one file raises in another file is reported.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
 - **A file that is too long affects no other file.** After TS2563 for the top-level code of one file, `tsc` stops following the types of variables and parameters in the files it checks next, so it drops errors there and reports false ones. `bun check` starts every file afresh.
 - **The order of projects does not change their options.** If configuration files extend each other in a circle, both tools report TS18000. `tsc` prints `{0}` where the files belong, and `bun check` lists them. What `tsc -b` then makes of those files for one project depends on which project it loaded first, and it can hang. `bun check -b` gives each project the options it has when you check it alone.
+- **A project on a network share is checked.** `tsc` reports TS5116 for every network path, so it refuses each file of a project in `\\server\share`. `bun check` checks that project. It may only name paths on `\\server`, and a path on any other server is still TS5116.
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
 - **A note tells you when dependencies are missing.** If an import fails because a package in `package.json` is not installed, `bun check` adds a line that names the `package.json` and says how to run `bun install` for it.
 - **A note tells you when type checking did not run.** If a syntax error or an invalid option stops the check, `bun check` adds a line that says [how many files it did not check](#stopped-before-type-checking).
@@ -681,6 +748,7 @@ bun check [flags] [...files or directories]
 | `--no-pretty`            | One line per error, like `tsc --pretty false`. Default when piped   |
 | `--all`                  | Show every error. Without it, identical errors are grouped above 50 |
 | `--threads <n>`          | Number of threads. Default: one per CPU core                        |
+| `--runExternalCode`      | Run the programs that `contentMappers` in `tsconfig.json` lists     |
 | `--timing`               | Print how long loading and checking took                            |
 | `--cwd <path>`           | Set the working directory                                           |
 | `--no-script`            | Run the type checker even if the project has a `check` script       |

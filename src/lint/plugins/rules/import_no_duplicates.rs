@@ -175,10 +175,11 @@ impl NoDuplicates {
         let Some(resolvers) = Resolvers::of(file.settings()) else {
             return;
         };
+        // `import source a from "a"` can't be merged with another import.
         let imports = || {
             file.stmts_of_kind(StmtTag::Import)
                 .filter_map(|it| match it.kind() {
-                    StmtKind::Import(import) => Some(import),
+                    StmtKind::Import(import) if !import.is_source_phase() => Some(import),
                     _ => None,
                 })
         };

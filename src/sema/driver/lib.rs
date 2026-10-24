@@ -20,12 +20,13 @@ use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
+use bun_sema::content_mapper::{Fidelity, OptionDiagnostic, Processes};
 use bun_sema::hir::FileKind;
-use bun_sema::json::Json;
+use bun_sema::json::{Json, TsConfigSourceFile};
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, GlobalName, Run,
-    declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
+    ContentMapped, FileId, Files, GlobalName, Run, declaration_emit_output_file_path,
+    has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
@@ -37,7 +38,7 @@ use bun_sema::resolve::{
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
-use bun_sema::verify::verify_project_references;
+use bun_sema::verify::{content_mapper_option_span, verify_project_references};
 use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -613,6 +614,9 @@ pub struct CommandLine {
     pub project: Option<Vec<u8>>,
     /// `--build`, which need not be the first argument.
     pub build: bool,
+    /// `--runExternalCode`, if it's among the arguments themselves. In a response file it has no effect, because only
+    /// the person who runs the command may allow a project to run programs.
+    pub runs_external_code: bool,
     /// The other `options`.
     pub compiler_options: Vec<CompilerOption>,
     /// The `errors` about response files. See `Request::errors`.
@@ -639,6 +643,12 @@ fn get_input_option_name(flag: &[u8]) -> &[u8] {
     let mut short_option_names = SHORT_OPTION_NAMES.iter();
     let long = short_option_names.find(|(short, _)| short[1..].eq_ignore_ascii_case(name));
     long.map_or(name, |(_, long)| &long[2..])
+}
+
+/// True if the argument `s` is `--runExternalCode`, with or without a value after `=`.
+pub fn is_run_external_code_flag(s: &[u8]) -> bool {
+    let flag = strings::split_once_char(s, b'=').map_or(s, |it| it.0);
+    flag.starts_with(b"-") && get_input_option_name(flag).eq_ignore_ascii_case(b"runExternalCode")
 }
 
 /// `commandLineParser`
@@ -679,15 +689,14 @@ impl CommandLineParser<'_> {
 
     /// `parseResponseFile`
     fn parse_response_file(&mut self, file_name: &[u8]) {
-        const MAX_NESTED: usize = 64;
         let file_name = join(self.cwd, file_name);
-        // `tryReadFile`. The original keeps reading a file that includes itself, or a long chain of files, until it
-        // overflows its stack.
-        let is_rejected =
-            self.response_files.len() >= MAX_NESTED || self.response_files.contains(&file_name);
-        let text = match is_rejected {
-            true => None,
-            false => host::read_at(&file_name, false),
+        if self.response_files.contains(&file_name) {
+            return;
+        }
+        // `tryReadFile`. The original's stack grows with a long chain of files.
+        let text = match bun_core::StackCheck::init().is_safe_to_recurse() {
+            true => host::read_at(&file_name, false),
+            false => None,
         };
         let Some(text) = text else {
             let cannot_read = global(5083, &[displayed_path(&file_name)]);
@@ -738,6 +747,16 @@ impl CommandLineParser<'_> {
             self.parsed.build = true;
             return i;
         }
+        if is_run_external_code_flag(s) {
+            let is_value = |next: &&[u8]| matches!(*next, b"true" | b"false" | b"null");
+            let next = args.get(i).copied().filter(is_value);
+            let next = next.filter(|_| inline_value.is_none());
+            if self.response_files.is_empty() {
+                self.parsed.runs_external_code =
+                    matches!(inline_value.or(next), None | Some(b"true"));
+            }
+            return i + usize::from(next.is_some());
+        }
         // A boolean only consumes the next argument if that's one of its values.
         let is_value = |next: &&[u8]| {
             !is_boolean_compiler_option(name) || matches!(*next, b"true" | b"false" | b"null")
@@ -747,6 +766,15 @@ impl CommandLineParser<'_> {
             None => args.get(i).copied().filter(is_value),
         };
         let consumes_next = match compiler_option_from_flag(name, inline_value.or(next)) {
+            Ok(CompilerOption(name, value))
+                if bun_sema::config_options::is_file_path(&name)
+                    && (value.as_str())
+                        .is_some_and(|path| config::is_network_path_value(path, self.cwd)) =>
+            {
+                let path = value.as_str().unwrap_or_default();
+                self.parsed.errors.push(global(5116, &[path]));
+                true
+            }
             Ok(CompilerOption(name, value)) => {
                 // An empty list means `ParseListTypeOption` saw a flag, which isn't consumed and stays the next
                 // argument.
@@ -939,6 +967,36 @@ pub struct Diagnostic {
     /// The project of a build that reported it, in build order. A file that two projects include counts as a file of
     /// each, just as it's a `SourceFile` of each program.
     pub project: u32,
+    /// `Source()`: what precedes the code instead of `TS`, for an error that a content mapper wrote. Empty otherwise.
+    pub external_source: Box<[u8]>,
+    /// Set for an error in a file that a content mapper produced, if it's displayed somewhere else than where the
+    /// checker found it.
+    pub found_at: Option<Box<FoundAt>>,
+}
+
+/// `File().FileName()` and `Loc()` of a diagnostic, which `CompareDiagnostics` orders by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundAt {
+    pub path: Vec<u8>,
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Diagnostic {
+    /// Returns the code as it's printed: `TS2322`. `None` for one of Bun's own diagnostics, which have no code.
+    pub fn code_label(&self) -> Option<Vec<u8>> {
+        let source: &[u8] = match (&self.external_source[..], self.code) {
+            (b"", 0) => return None,
+            (b"", _) => b"TS",
+            (source, _) => source,
+        };
+        Some([source, (self.code as i32).to_string().as_bytes()].concat())
+    }
+
+    /// `getDiagnosticPath`
+    pub fn found_in(&self) -> &[u8] {
+        self.found_at.as_ref().map_or(&self.path, |it| &it.path)
+    }
 }
 
 /// `taskResult.builder`: how much of a `Report` one task of a build printed.
@@ -1162,6 +1220,8 @@ fn new_compiler_diagnostic(code: u32, args: Box<[Box<[u8]>]>) -> Diagnostic {
         source_line: 0,
         related: Vec::new(),
         project: 0,
+        external_source: Box::default(),
+        found_at: None,
     }
 }
 
@@ -1247,6 +1307,118 @@ fn located_after(
     }
 }
 
+/// A file that a content mapper produced, and what's needed to display an error in it.
+struct MappedFile<'a> {
+    mapped: &'a ContentMapped,
+    /// `FileName()`
+    path: &'a [u8],
+    /// `OriginalFileName()`: the file on disk.
+    original_path: &'a [u8],
+    original: &'a [u8],
+    original_starts: Vec<u32>,
+    generated: &'a [u8],
+    generated_starts: Vec<u32>,
+    /// `ContentMapper()`
+    identity: Vec<u8>,
+    uses_bun_commands: bool,
+}
+
+impl<'a> MappedFile<'a> {
+    /// Returns `None` unless a content mapper produced `file`.
+    fn new(files: &'a Files<'a>, file: FileId, uses_bun_commands: bool) -> Option<MappedFile<'a>> {
+        let module = files.module(file);
+        let mapped = module.content_mapped?;
+        let canonical = mapped.canonical_file_name.as_ref();
+        let canonical = canonical.and_then(|name| files.by_path.get(name));
+        let canonical = canonical.map_or(module, |file| files.module(file));
+        let original = &canonical.content_mapped?.original_text[..];
+        let generated = &module.hir.text[..];
+        Some(MappedFile {
+            mapped,
+            path: module.file_name(),
+            original_path: canonical.file_name(),
+            original,
+            original_starts: compute_ecma_line_starts(original),
+            generated,
+            generated_starts: compute_ecma_line_starts(generated),
+            identity: files.options.content_mappers[mapped.mapper].identity(),
+            uses_bun_commands,
+        })
+    }
+
+    /// `ASTDiagnostic`: returns `reported`, which the checker found at `start..end`, located where it's displayed.
+    fn located(&self, start: u32, end: u32, mut reported: Diagnostic) -> Diagnostic {
+        let in_original = |start: u32, end: u32, reported: Diagnostic| {
+            let (text, starts) = (self.original, &self.original_starts);
+            located(self.original_path, text, starts, start, end, reported)
+        };
+        reported.found_at = Some(Box::new(FoundAt {
+            path: self.path.to_vec(),
+            start,
+            end,
+        }));
+        // A mapper's own errors are already in the original text.
+        if !reported.external_source.is_empty() {
+            return in_original(start, end, reported);
+        }
+        let span = (self.mapped.span_map.as_ref())
+            .map(|span_map| span_map.virtual_to_original_span(start, end));
+        match span {
+            Some(span) if span.fidelity != Fidelity::None => {
+                self.show_original_name(start, end, &mut reported);
+                return in_original(span.start, span.end, reported);
+            }
+            Some(_) => {
+                let note = MessageChain {
+                    code: 18074,
+                    args: Box::new([self.identity.as_slice().into()]),
+                    message_chain: Vec::new(),
+                };
+                note.flatten(&mut reported.text, 1);
+                reported.message_chain.push(note);
+            }
+            None => {}
+        }
+        let (text, starts) = (self.generated, &self.generated_starts);
+        located(self.original_path, text, starts, start, end, reported)
+    }
+
+    /// `displayMessageArgs`: if `start..end` is exactly an alias segment, the message shows the original name wherever
+    /// an argument is the generated name.
+    fn show_original_name(&self, start: u32, end: u32, reported: &mut Diagnostic) {
+        let span_map = self.mapped.span_map.as_ref();
+        let Some(alias) = span_map.and_then(|it| it.alias_for_virtual_span(start, end)) else {
+            return;
+        };
+        let generated_name = self.generated.get(start as usize..end as usize);
+        let original_name =
+            (self.original).get(alias.original_start as usize..alias.original_end as usize);
+        let (Some(generated_name), Some(original_name)) = (generated_name, original_name) else {
+            return;
+        };
+        let Some((_, template)) = messages::message(reported.code) else {
+            return;
+        };
+        let args = reported
+            .args
+            .iter()
+            .map(|arg| match **arg == *generated_name {
+                true => original_name,
+                false => &arg[..],
+            });
+        let args: Vec<&[u8]> = args.collect();
+        let mut text = Vec::new();
+        messages::format(&mut text, template, &args);
+        for chain in &reported.message_chain {
+            chain.flatten(&mut text, 1);
+        }
+        reported.text = match self.uses_bun_commands {
+            true => with_bun_commands(text),
+            false => text,
+        };
+    }
+}
+
 /// `GetECMALineAndUTF16CharacterOfPosition`: returns the 0-based line that contains `offset`, and the number of UTF-16
 /// code units before it on that line. If one of the offsets in `counted` precedes it on the same line, counting starts
 /// there instead of at the start of the line.
@@ -1317,6 +1489,7 @@ pub fn check_provided_then<R>(
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     disk.ends_the_process = provided.ends_the_process;
+    disk.content_mapper_processes = provided.content_mapper_transport.map(Processes::new);
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -1329,6 +1502,10 @@ pub fn check_provided_then<R>(
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let report = check_request(&disk, request);
+    // The disk isn't always dropped.
+    if let Some(processes) = &disk.content_mapper_processes {
+        processes.close();
+    }
     let then = |mut report: Report| {
         report.is_case_sensitive = disk.is_case_sensitive();
         report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
@@ -1516,8 +1693,9 @@ impl Projects {
         })
     }
 
-    /// Returns `config`, or else the first of the projects it references, directly or indirectly, that has `file` among
-    /// its files.
+    /// Returns the first of `config` and the projects it references, directly or indirectly, that has `file` among its
+    /// files. If a project that this one references has it too, the file is checked there: in the one that refers to it
+    /// it's the source of a project reference (`IsSourceFromProjectReference`).
     fn find_project_with(
         &mut self,
         disk: &host::Disk,
@@ -1531,6 +1709,7 @@ impl Projects {
         // The configuration files still to visit, next one last. It's a loop because a chain of references can be
         // arbitrarily long.
         let mut pending = vec![config.to_vec()];
+        let mut owner = None;
         while let Some(config) = pending.pop() {
             let is_seen = |it: &Vec<u8>| is_same_path(it, &config, is_case_sensitive);
             if seen.iter().any(is_seen) || !disk.is_file(&config) {
@@ -1543,11 +1722,10 @@ impl Projects {
                 continue;
             };
             let references = project.references.iter().rev();
-            pending.extend(
-                references
-                    .filter(|_| follows_references)
-                    .map(|it| config::resolve_config_file_name_of_project_reference(&it.path)),
-            );
+            let references: Vec<Vec<u8>> = references
+                .filter(|_| follows_references)
+                .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+                .collect();
             if is_new {
                 let files = match includes_javascript {
                     false => project.files.clone(),
@@ -1567,10 +1745,12 @@ impl Projects {
                 (self.files).insert(config.clone(), paths);
             }
             if self.files[&config].contains(&*to_path(file, is_case_sensitive)) {
-                return Some(config);
+                pending.clear();
+                owner = Some(config);
             }
+            pending.extend(references);
         }
-        None
+        owner
     }
 
     /// Adds the configuration file and the files of `config` and of the projects it references, directly or indirectly.
@@ -2822,6 +3002,12 @@ impl Host for WithOutputs<'_> {
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         self.disk.parse_package_json(arena, text)
     }
+    fn parse_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
+        self.disk.parse_json(arena, text)
+    }
+    fn content_mapper_processes(&self) -> Option<&Processes> {
+        self.disk.content_mapper_processes()
+    }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         match self.built_now {
             Some(built_now) => (self.disk).with_helpers(self.helpers(built_now), count, work),
@@ -3262,7 +3448,7 @@ fn check_with_references(
             awaited.dedup();
             return Err(awaited);
         }
-        // `HandleNoEmitOnError`
+        // `HandleNoEmitOptions`
         if !(no_emit_on_error && !checked.diagnostics.is_empty()) && !reads_sources {
             let mut files = Vec::new();
             for (source, emitted_text) in std::mem::take(&mut checked.declaration_files) {
@@ -3439,9 +3625,10 @@ fn sort_as_one_project(report: &mut Report) {
 
 /// `Loc`
 fn loc(d: &Diagnostic) -> (i64, i64) {
-    match d.has_undefined_range {
-        true => (-1, -1),
-        false => (i64::from(d.start), i64::from(d.end)),
+    match (&d.found_at, d.has_undefined_range) {
+        (Some(found_at), _) => (i64::from(found_at.start), i64::from(found_at.end)),
+        (None, true) => (-1, -1),
+        (None, false) => (i64::from(d.start), i64::from(d.end)),
     }
 }
 
@@ -3454,7 +3641,8 @@ fn equal_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> bool {
 
 /// `EqualDiagnosticsNoRelatedInfo`
 fn equal_diagnostics_no_related_info(d1: &Diagnostic, d2: &Diagnostic) -> bool {
-    (&d1.path, loc(d1), d1.code, &d1.args) == (&d2.path, loc(d2), d2.code, &d2.args)
+    (d1.found_in(), loc(d1), d1.code, &d1.args) == (d2.found_in(), loc(d2), d2.code, &d2.args)
+        && d1.external_source == d2.external_source
         && d1.message_chain == d2.message_chain
 }
 
@@ -3485,9 +3673,12 @@ fn compare_related_info(r1: &[Diagnostic], r2: &[Diagnostic]) -> std::cmp::Order
 
 /// `CompareDiagnostics`
 fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
-    let (path1, path2) = (typescript_path(&d1.path), typescript_path(&d2.path));
-    (path1, loc(d1), d1.code, &d1.args)
-        .cmp(&(path2, loc(d2), d2.code, &d2.args))
+    let (path1, path2) = (
+        typescript_path(d1.found_in()),
+        typescript_path(d2.found_in()),
+    );
+    (path1, loc(d1), d1.code, &d1.external_source, &d1.args)
+        .cmp(&(path2, loc(d2), d2.code, &d2.external_source, &d2.args))
         .then_with(|| compare_message_chain_size(&d1.message_chain, &d2.message_chain))
         .then_with(|| compare_message_chain_content(&d1.message_chain, &d2.message_chain))
         .then_with(|| compare_related_info(&d1.related, &d2.related))
@@ -3507,8 +3698,8 @@ fn sort_and_deduplicate_with(
     // The path is compared first. So each file's diagnostics are sorted separately, and the files by path. With tens of
     // thousands of diagnostics, most comparisons would otherwise be between two long paths with a common prefix.
     let mut files: FxHashMap<&[u8], usize> = FxHashMap::default();
-    let paths = diagnostics.iter().map(|d| &d.path);
-    let paths = paths.chain(per_file_lists.iter().map(|list| &list[0].path));
+    let paths = diagnostics.iter().map(Diagnostic::found_in);
+    let paths = paths.chain(per_file_lists.iter().map(|list| list[0].found_in()));
     let file_of = paths.map(|path| {
         let next = files.len();
         *files.entry(typescript_path(path)).or_insert(next)
@@ -3532,7 +3723,9 @@ fn sort_and_deduplicate_with(
             }
         }
     }
-    by_file.shared_sort_by(|a, b| typescript_path(&a.0[0].path).cmp(typescript_path(&b.0[0].path)));
+    by_file.shared_sort_by(|a, b| {
+        typescript_path(a.0[0].found_in()).cmp(typescript_path(b.0[0].found_in()))
+    });
     diagnostics.reserve_exact(by_file.iter().map(|it| it.0.len()).sum());
     for (mut file_diagnostics, is_in_order) in by_file {
         if !is_in_order {
@@ -3593,6 +3786,38 @@ fn diagnostic_from_config_error(
         Some((_, from, to)) => located(path, text, starts, from, to, reported),
         None => reported,
     }
+}
+
+/// `collectContentMapperOptionDiagnostics`: converts the errors that content mappers report about their `options` in the
+/// configuration file at `config_path`.
+fn content_mapper_option_diagnostics(
+    host: &dyn Host,
+    session: &Session,
+    config_path: &[u8],
+    reported: &[OptionDiagnostic],
+) -> Vec<Diagnostic> {
+    if reported.is_empty() {
+        return Vec::new();
+    }
+    let text = host.read(config_path).unwrap_or_default();
+    let starts = compute_ecma_line_starts(&text);
+    let file = TsConfigSourceFile::parse(host, session, text.clone());
+    let converted = reported.iter().map(|it| {
+        let diagnostic = Diagnostic {
+            code: it.code as u32,
+            text: it.text.clone(),
+            external_source: it.source.as_slice().into(),
+            ..global(0, &[""; 0])
+        };
+        let span = file
+            .as_ref()
+            .and_then(|file| content_mapper_option_span(file, it.mapper, &it.path));
+        match span {
+            Some((from, to)) => located(config_path, &text, &starts, from, to, diagnostic),
+            None => diagnostic,
+        }
+    });
+    converted.collect()
 }
 
 /// Checks `project`, which is read through `host`. `report` holds the errors found so far, since `started`.
@@ -3884,7 +4109,7 @@ fn check_named_files(
     let explain_files = |has_made_diagnostics: bool| {
         let cwd = host::from_native(request.cwd);
         let to_relative_file_name = |file_name: &[u8]| {
-            get_relative_path_from_directory(&cwd, file_name, COMPARE_PATHS_CASE_SENSITIVE)
+            get_relative_path_from_directory(&cwd, file_name, host.is_case_sensitive())
         };
         program
             .files
@@ -3902,6 +4127,21 @@ fn check_named_files(
     let problems = program.files.program_problems();
     let problems = ConfigError::from_problems(host, session, &config_path, problems.iter());
     about_options.extend(problems.iter().map(config_diagnostic));
+    // `contentMapperDiagnostics`
+    let about_content_mappers = &program.files.content_mapper_errors.diagnostics;
+    let about_content_mappers =
+        ConfigError::from_problems(host, session, &config_path, about_content_mappers);
+    let about_content_mappers: Vec<Diagnostic> = about_content_mappers
+        .iter()
+        .map(config_diagnostic)
+        .collect();
+    about_options.extend(about_content_mappers.iter().cloned());
+    about_options.extend(content_mapper_option_diagnostics(
+        host,
+        session,
+        &config_path,
+        &program.files.content_mapper_errors.option_diagnostics,
+    ));
 
     let checking = Instant::now();
     let mut to_check: Vec<FileId> = (0..program.files.modules.len())
@@ -3983,8 +4223,7 @@ fn check_named_files(
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax errors, such a file only has what `Emit` reports, which is called after
     // the semantic and global diagnostics of the whole program are collected. So these files come after the
-    // type-checked ones, or before them under `Options::emits_first`. If there are no others, they go through the queue
-    // themselves.
+    // type-checked ones. If there are no others, they go through the queue themselves.
     // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
     let boxed_checker = |spare| Box::new(program.checker_reusing(spare));
     let checker = boxed_checker(None);
@@ -4029,6 +4268,9 @@ fn check_named_files(
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
         let counted = Counted::default();
+        let mapped_file =
+            |file: FileId| MappedFile::new(program.files, file, !request.uses_typescript_wording);
+        let mapped = mapped_file(file);
         let mut rendered: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
@@ -4047,6 +4289,11 @@ fn check_named_files(
                         let Some((related_file, start, end)) = related.at else {
                             return reported;
                         };
+                        if let Some(mapped) = &mapped
+                            && related_file == file
+                        {
+                            return mapped.located(start, end, reported);
+                        }
                         if related_file == file {
                             return located_after(
                                 &counted,
@@ -4066,6 +4313,9 @@ fn check_named_files(
                                 }
                                 None => reported,
                             };
+                        }
+                        if let Some(mapped) = mapped_file(related_file) {
+                            return mapped.located(start, end, reported);
                         }
                         let other = &program.files.modules[related_file.idx()];
                         let text = &text_of(related_file)[..];
@@ -4090,8 +4340,12 @@ fn check_named_files(
                     },
                     args: e.args,
                     message_chain: e.message_chain,
+                    external_source: e.external_source,
                     ..global(0, &[""; 0])
                 };
+                if let Some(mapped) = &mapped {
+                    return mapped.located(e.start, e.end, reported);
+                }
                 let path = module.file_name();
                 located_after(&counted, path, text, &starts, e.start, e.end, reported)
             })
@@ -4122,12 +4376,6 @@ fn check_named_files(
         /// The files in which the native stack ran out.
         incomplete: Vec<FileId>,
     }
-    let free_trees = |files: Vec<FileId>| {
-        for file in files {
-            // SAFETY: the only task that reads the HIR has ended, and its files won't be rechecked.
-            unsafe { program.files.free_tree(file) };
-        }
-    };
     // Checks files outside the queue. Whatever the checker stores is dropped with it.
     let check_chunk = |files: &[FileId], expected: Requested| {
         let mut checker = new_checker(expected, None);
@@ -4381,7 +4629,6 @@ fn check_named_files(
             };
             checker.begin_task(round as u32, first as u32);
             checker.see_commits(is_last_round);
-            let mut trees_to_free = Vec::new();
             let (mut spent, mut index) = (0, first);
             let upcoming = loop {
                 let file = to_check[index];
@@ -4453,9 +4700,6 @@ fn check_named_files(
                     }
                 }
                 files_done.fetch_add(1, Ordering::Release);
-                if program.files.modules[file.idx()].is_leaf {
-                    trees_to_free.push(file);
-                }
                 accept(Outcome {
                     checked: vec![(file, checked)],
                     incomplete: incomplete.into_iter().collect(),
@@ -4469,9 +4713,7 @@ fn check_named_files(
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
             tasks_run.fetch_add(1, Ordering::Relaxed);
             checker.end_task_after_commits();
-            // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
-            free_trees(trees_to_free);
             upcoming
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);
@@ -4653,17 +4895,11 @@ fn check_named_files(
         }
         finish_files();
     };
-    // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors, and the
-    // declaration transformer reports under `noEmit` too (`emitDeclarationFile`). `HandleNoEmitOnError` skips `Emit`,
-    // and so does `noEmit` on an incremental program. Every `tsc -b` program is incremental. Otherwise this models `tsc
-    // -p --noEmit`.
+    // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors.
+    // `HandleNoEmitOptions` skips it.
     let options = &program.files.options;
-    let emits_despite_errors = options.emits_declarations
-        && !options.no_emit_on_error
-        && !match options.is_build {
-            true => options.no_emit,
-            false => options.is_incremental,
-        };
+    let emits_despite_errors =
+        options.emits_declarations && !options.no_emit_on_error && !options.no_emit;
     let emit_on_early_exit = || -> Vec<Diagnostic> {
         if emits_despite_errors {
             check_files(Requested::Declaration, true);
@@ -4704,6 +4940,8 @@ fn check_named_files(
                     let is_incremental = options.is_incremental || options.is_build;
                     report.listed_files = explain_files(is_incremental && !lists_files_only);
                 }
+                // `GetContentMapperDiagnostics` are reported together with the syntax errors.
+                report.diagnostics.extend(about_content_mappers);
                 report.diagnostics.extend(syntactic.into_iter().flatten());
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
@@ -4727,8 +4965,7 @@ fn check_named_files(
                 break 'stages;
             }
         }
-        let emits_first = options.emits_first && !options.no_emit_on_error;
-        for type_checked in [!emits_first, emits_first] {
+        for type_checked in [true, false] {
             check_files(wanted, type_checked);
             per_file_lists.append(&mut found.lock());
             // Errors without a file that a checker reports after this point are never collected.

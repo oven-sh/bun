@@ -117,9 +117,8 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 // `getTargetOfModuleDefault`: a synthesized default is
                 // `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`, which stops at the
                 // module's `export =`.
-                if let Some((specifier, mode, known::default)) =
-                    files.external_module_member_of(file, decl)
-                    && let Some(module) = files.module_of_specifier_as(file, specifier, mode)
+                if let Some((.., known::default)) = files.external_module_member_of(file, decl)
+                    && let Some(module) = files.module_of_alias_declaration(file, decl)
                     && let Some(equals) = files.export(module, known::export_equals)
                     && files.alias_target(symbol) == Some(files.module_value(module))
                 {
@@ -250,7 +249,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
-            | VisitedKind::HeritageClausePropertyAccess(node, index) => {
+            | VisitedKind::HeritageClauseQualifiedName(node, index) => {
                 let scope = bound.type_scope[node.idx()];
                 let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
                     return None;
@@ -278,11 +277,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             // `getTypeFromImportTypeNode`: the identifiers of the qualifier.
             VisitedKind::ImportTypeQualifierName(node, index) => {
                 let TypeNodeKind::Import {
-                    spec,
-                    name,
-                    is_typeof,
-                    mode,
-                    ..
+                    name, is_typeof, ..
                 } = hir[node].kind
                 else {
                     return None;
@@ -290,8 +285,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 if bound.type_scope[node.idx()].is_none() {
                     return None;
                 }
-                let module =
-                    files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+                let module = files.module_of_import_type(file, node)?;
                 let mut found = files.module_value(module);
                 // `getTypeFromImportTypeNode`, `isTypeOf`: each name is a property of the type of
                 // the preceding part.
@@ -342,13 +336,21 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     SymFlags::NAMESPACE
                 };
                 let scope = bound.import_equals_scope[import.idx()];
-                files
-                    .resolve_entity(file, scope, &names, meaning)
-                    .map(Found::Symbol)
+                let found = files.resolve_entity(file, scope, &names, meaning);
+                // `resolveEntityName`: `else if namespace == c.unknownSymbol { return namespace }`
+                if found.is_none()
+                    && names.len() > 1
+                    && let Some(first) =
+                        files.resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
+                    && files.resolve_alias(first).is_none()
+                {
+                    return Some(Found::Symbol(files.unknown_symbol));
+                }
+                found.map(Found::Symbol)
             }
             VisitedKind::Parenthesized(..)
             | VisitedKind::ModuleSpecifier(_)
-            | VisitedKind::ImportDeferName(_)
+            | VisitedKind::ImportPhaseName(_)
             | VisitedKind::JsxNamespacedNamePart
             | VisitedKind::ImportAttributeName(_)
             | VisitedKind::LiteralType(_)
@@ -372,7 +374,10 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                let (access, _) = self.c.left_type_of_property_access(file, e, obj, chain);
+                let target = self.c.target_kind(file, e);
+                let (access, _) = self
+                    .c
+                    .left_type_of_property_access(file, e, obj, chain, target);
                 if access.any_like.is_some() {
                     return None;
                 }
@@ -462,9 +467,9 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
     }
 
-    /// `isInNameOfExpressionWithTypeArguments`, in the extends clause of a class: `e` is either the
-    /// whole entity name expression, resolved with the value meaning, or the part before a dot in
-    /// it, resolved with the namespace meaning. An alias matches regardless of its target.
+    /// `isInNameOfExpressionWithTypeArgumentsOrHeritageTypeReference`, in the extends clause of a class: `e` is either
+    /// the whole entity name expression, resolved with the value meaning, or the part before a dot in it, resolved with
+    /// the namespace meaning. An alias matches regardless of its target.
     fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found<'p>> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
         // Checked first, because the walk below from each link of `a.b.b ..` is as long as the rest
@@ -571,8 +576,21 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 self.get_property_of_type(ty, name)
             }
             // `resolveExternalModuleName`
-            ExprKind::ImportCall { args, .. } if hir.id_at(args, 0) == e => {
-                specifier(files.mode_of_import_call(file))
+            ExprKind::ImportCall { args, phase } if hir.id_at(args, 0) == e => {
+                let ExprKind::String(text) = hir[e].kind else {
+                    return None;
+                };
+                if phase == ImportPhase::Source {
+                    return None;
+                }
+                let attributes = match hir.ids(args).nth(1) {
+                    Some(options) => self.c.attributes_of_import_call(file, options),
+                    None => Default::default(),
+                };
+                let mode = files.mode_of_import_call(file);
+                files
+                    .module_of_specifier_with(file, text, mode, &attributes)
+                    .map(Found::Symbol)
             }
             // `IsVariableDeclarationInitializedToRequire`
             ExprKind::Call(_)
@@ -772,9 +790,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                         let declarations = &files.symbol(*originating_import).decls;
                         declarations.iter().find_map(|decl| match *decl {
                             Decl::ImportNamespace(import) => {
-                                let import = &self.c.hir(at)[import];
-                                let mode = files.mode_of_import(at, import.mode);
-                                files.module_of_specifier_as(at, import.spec, mode)
+                                files.module_of_import(at, &self.c.hir(at)[import])
                             }
                             _ => None,
                         })
@@ -990,6 +1006,26 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         {
             return Some(self.symbol(symbol));
         }
+        // `emptyTypeLiteralSymbol`
+        if ty == TypeId::EMPTY_TYPE_LITERAL {
+            let name = known::type_literal;
+            return Some(self.named_symbol(Key::Undeclared(name), name));
+        }
+        if let TypeData::Synth(shape) = self.c.data(ty) {
+            // `getInstantiationExpressionType`
+            if shape.instantiation_expression.is_some() {
+                let name = self.c.atoms().intern(b"__instantiationExpression");
+                return Some(self.named_symbol(Key::Undeclared(name), name));
+            }
+            // `getRestType`: the symbol of the `...rest` that declares it.
+            if shape.symbol.is_none()
+                && let Some((file, start, ExprId::NONE)) = shape.symbol_declared_at
+                && file == self.file
+            {
+                let node = self.name_at(start);
+                return self.symbol_at_location(NodeRef { file, node });
+            }
+        }
         if let TypeData::UniqueSymbol { symbol, name } = *self.c.data(ty) {
             return match symbol {
                 UniqueSymbolDeclaration::Variable(symbol) => Some(self.symbol(symbol)),
@@ -999,17 +1035,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 // `Symbol.iterator`: the property of the global `SymbolConstructor`.
                 UniqueSymbolDeclaration::SymbolConstructor => {
-                    let atoms = self.c.atoms();
-                    let property_name = atoms
-                        .bytes(name)
-                        .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
-                    let (property_name, constructor) = (
-                        atoms.lookup(property_name)?,
-                        atoms.lookup(b"SymbolConstructor")?,
-                    );
-                    let constructor = self.c.global_type_symbol(constructor)?;
+                    let constructor = self.c.global_type_symbol(known::SymbolConstructor)?;
                     let constructor = self.c.declared_type(constructor);
-                    let (prop, mapper) = self.c.get_property_of_type(constructor, property_name)?;
+                    let (prop, mapper) = self.c.get_property_of_type(constructor, name)?;
                     Some(self.symbol_of_prop(prop, mapper))
                 }
             };
@@ -1066,7 +1094,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         // An import or export specifier resolves to the module.
         if at.part() == Some(Part::Specifier) {
             let specifier = Some(hir.text(at)).filter(|text| text.is_some())?;
-            let module = files.module_of_specifier(file, specifier)?;
+            let module = match hir.data(at.row()) {
+                NodeData::Stmt(s) => match hir[s].kind {
+                    StmtKind::Import(import) => files.module_of_import(file, &hir[import]),
+                    StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
+                        files.module_of_export(file, s)
+                    }
+                    _ => files.module_of_specifier(file, specifier),
+                },
+                _ => files.module_of_specifier(file, specifier),
+            }?;
             return Some(self.symbol(module));
         }
         // The literal in `T["name"]` resolves to the property.

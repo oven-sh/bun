@@ -304,6 +304,8 @@ pub(crate) struct Timing {
     pub(crate) rules: AtomicU64,
     /// Files in which `File::mentions` returns true for every name, so no rule that looks for a name can be skipped.
     pub(crate) without_filter: AtomicU64,
+    /// Files that were linted with types. A file counts again for each pass of `--fix`.
+    pub(crate) with_types: AtomicU64,
 }
 
 impl Timing {
@@ -615,6 +617,29 @@ impl Run<'_> {
                     listed: None,
                 });
             }
+        } else if name.is_some() && loader.wants_types(&loaded, config) {
+            let without_types = context.verify_text_without_types(
+                display_path.clone(),
+                &path,
+                text.clone(),
+                config,
+                &on_circular_fixes,
+            );
+            let file = Typed {
+                path: &path,
+                config,
+                text: Some(text.clone()),
+            };
+            let result = without_types.or_else(|| {
+                typed::lint(context, self.environment, &[file], &on_circular_fixes).pop()?
+            });
+            if let Some(result) = result {
+                return Ok(Linted {
+                    results: vec![result],
+                    files: 1,
+                    listed: None,
+                });
+            }
         }
         Ok(Linted {
             results: vec![context.verify_text(
@@ -836,11 +861,20 @@ impl Run<'_> {
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
         let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
-        let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
-            Ok(Some(result)) => results.lock().push(result),
-            Ok(None) => {}
-            Err(error) => {
-                failure.lock().get_or_insert(error);
+        // The files on which a JavaScript rule asks for types, if their config turns types on.
+        let waiting_for_types = Guarded::new(Vec::new());
+        let can_get_types = |target: &Target| match &target.status {
+            Status::Matched(config) => loader.wants_types(&target.loaded, config),
+            _ => false,
+        };
+        let lint = |target: &Target| {
+            let waiting = can_get_types(target).then_some(&waiting_for_types);
+            match context.lint_file(target, &on_circular_fixes, waiting) {
+                Ok(Some(result)) => results.lock().push(result),
+                Ok(None) => {}
+                Err(error) => {
+                    failure.lock().get_or_insert(error);
+                }
             }
         };
         let files = Files {
@@ -878,6 +912,37 @@ impl Run<'_> {
             false => {}
         }
         phases.linting = started.elapsed().as_secs_f64();
+        // Nothing below puts a file aside again: a file that has types doesn't wait for them, and the last resort has no
+        // list to add to.
+        let waiting = std::mem::take(&mut *waiting_for_types.lock());
+        if !waiting.is_empty() {
+            let started = Instant::now();
+            loader.advise_about_typescript();
+            let waiting: FxHashSet<Vec<u8>> = waiting.into_iter().collect();
+            let waiting = (without_types.iter()).filter(|it| waiting.contains(&it.path));
+            let waiting = waiting.filter_map(|target| match &target.status {
+                Status::Matched(config) => Some((*target, config)),
+                _ => None,
+            });
+            let waiting: Vec<(&Target, &Arc<ResolvedConfig>)> = waiting.collect();
+            let files = waiting.iter().map(|&(target, config)| Typed {
+                path: &target.path,
+                config,
+                text: None,
+            });
+            let files: Vec<Typed> = files.collect();
+            let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
+            for (&(target, _), result) in waiting.iter().zip(linted) {
+                // A file that's in no program is linted without the rule.
+                let result = result.map_or_else(
+                    || context.lint_file(target, &on_circular_fixes, None),
+                    |it| Ok(Some(it)),
+                )?;
+                results.get_mut().extend(result);
+            }
+            (results.get_mut()).append(&mut context.invalid_tsconfigs.lock().results);
+            phases.checking += started.elapsed().as_secs_f64();
+        }
         if let Some(error) = failure.get_mut().take() {
             return Err(error);
         }
@@ -1158,9 +1223,24 @@ impl Run<'_> {
         for (eslint_path, oxlint_path) in ignored_eslint_config.iter().filter(|_| !options.silent) {
             self.note_ignored_config(eslint_path, oxlint_path);
         }
-        let without_types = js_plugins.rules_that_asked_for_types();
-        if !without_types.is_empty() {
-            let ids: Vec<&[u8]> = without_types.iter().map(|it| &it.id[..]).collect();
+        let (without_types, beyond_types): (Vec<_>, Vec<_>) = (js_plugins
+            .rules_skipped_for_types())
+        .into_iter()
+        .partition(|it| it.unknown.is_none());
+        let reasons: [&[u8]; 2] = [
+            b" did not run because there is no type information for the files: ",
+            b" did not run because rules that run in JavaScript cannot read this from a type: ",
+        ];
+        for (rules, reason) in [without_types, beyond_types].iter().zip(reasons) {
+            if rules.is_empty() {
+                continue;
+            }
+            let ids: Vec<Vec<u8>> = (rules.iter())
+                .map(|rule| match &rule.unknown {
+                    Some(unknown) => [&rule.id[..], b" (", unknown, b")"].concat(),
+                    None => rule.id.to_vec(),
+                })
+                .collect();
             let noun: &[u8] = match ids.len() {
                 1 => b" rule",
                 _ => b" rules",
@@ -1168,7 +1248,7 @@ impl Run<'_> {
             loader.add_unsupported(&[
                 ids.len().to_string().as_bytes(),
                 noun,
-                b" did not run because rules that run in JavaScript cannot use type information: ",
+                reason,
                 &ids.join(&b", "[..]),
                 match linter.registry().replaces_plugin(b"@typescript-eslint") {
                     true => &b""[..],
@@ -1632,8 +1712,9 @@ impl Run<'_> {
                 self.began.elapsed().as_secs_f64() * 1000.0,
             );
         }
-        // In a run that passes, advice is noise. `--doctor` always prints it.
-        if fails_on_problems && format.is_human_readable() && !options.quiet && !options.silent {
+        // In a run that passes, advice is noise. `--verbose` and `--doctor` always print it.
+        let prints_advice = fails_on_problems && format.is_human_readable() && !options.quiet;
+        if (prints_advice || options.verbose) && !options.silent {
             for line in std::mem::take(&mut *loader.advice.lock()) {
                 pretty!(
                     &mut self.out.stderr,
@@ -1643,7 +1724,7 @@ impl Run<'_> {
                 );
             }
         }
-        if !fails_on_problems && format.is_human_readable() {
+        if !options.verbose {
             not_built_in.about_layout.clear();
         }
         for note in not_built_in.notes().filter(|_| !options.silent) {
@@ -1836,9 +1917,10 @@ impl Run<'_> {
             }
         }
         let without_filter = timing.without_filter.load(Ordering::Relaxed);
+        let with_types = timing.with_types.load(Ordering::Relaxed);
         let _ = writeln!(
             self.out.stderr,
-            "\n  linted without the name filter: {without_filter} files"
+            "\n  linted without the name filter: {without_filter} files\n  linted with types: {with_types} files"
         );
     }
 }

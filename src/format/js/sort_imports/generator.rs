@@ -699,8 +699,11 @@ impl<'m, 'a> Printer<'m, 'a> {
         out.extend_from_slice(b"import ");
         if declaration.is_type {
             out.extend_from_slice(b"type ");
-        } else if declaration.import.is_deferred() && declaration.span.is_some() {
-            out.extend_from_slice(b"defer ");
+        } else if let Some(phase) = declaration.import.phase()
+            && declaration.span.is_some()
+        {
+            out.extend_from_slice(phase.as_bytes());
+            out.push(b' ');
         }
         let specifiers = model.specifiers_of(&declaration);
         let mut is_in_braces = false;
@@ -788,9 +791,11 @@ impl<'m, 'a> Printer<'m, 'a> {
             self.no_indent_inner_comments_here();
             self.word(b"type");
             self.space();
-        } else if declaration.import.is_deferred() && declaration.span.is_some() {
+        } else if let Some(phase) = declaration.import.phase()
+            && declaration.span.is_some()
+        {
             self.no_indent_inner_comments_here();
-            self.word(b"defer");
+            self.word(phase.as_bytes());
             self.space();
         }
 

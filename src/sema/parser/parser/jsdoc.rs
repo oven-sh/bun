@@ -23,18 +23,6 @@ use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
-/// What's known about a JSDoc comment before it's read.
-mod flags {
-    /// `isJSDocLikeText`
-    pub(super) const JSDOC_LIKE: u8 = 1 << 0;
-    /// `TokenFlagsPrecedingJSDocWithSeeOrLink`
-    pub(super) const SEE_OR_LINK: u8 = 1 << 1;
-    /// A comment without this flag has no `@augments` or `@extends` tag.
-    pub(super) const AUGMENTS: u8 = 1 << 2;
-    /// A comment without this flag has no `@param`, `@arg` or `@argument` tag.
-    pub(super) const PARAM: u8 = 1 << 3;
-}
-
 /// `GetJSDocCommentRanges`: the JSDoc comments before a token.
 pub(super) struct Attached<'a> {
     /// The comments that were read, with or without tags, in order.
@@ -44,8 +32,6 @@ pub(super) struct Attached<'a> {
     /// From the start of the first JSDoc comment to the end of the last, whether they were read or not. `None` if there
     /// are none.
     pub(super) range: Option<TextRange>,
-    /// `jsdocScannerInfoHasSeeOrLink`
-    pub(super) has_see_or_link: bool,
 }
 
 /// How much of a reparsed node the checker visits, which determines which errors about it are reported.
@@ -62,8 +48,8 @@ pub(super) enum Reach {
 /// The parser's state for a file's JSDoc comments (`Parser::jsdoc`).
 #[derive(Default)]
 pub(crate) struct State {
-    /// `flags`: a comment that has one of these is read. If 0, no comment is read and `Parser::reads_jsdoc` is false.
-    pub(super) wanted: u8,
+    /// True if the JSDoc comments are read. Same as `Parser::reads_jsdoc`.
+    pub(super) reads: bool,
     /// True while the lexer is inside a comment, where nodes don't have comments.
     pub(super) is_in_comment: bool,
     /// `reparseList` for all open statement lists. Each list owns the entries past the length it saw when it began.
@@ -79,18 +65,13 @@ pub(crate) struct State {
 }
 
 impl State {
-    /// `typescript_flags` is the result of `read_by_checker` for a file that's being parsed a second time.
-    pub(crate) fn new(options: &Options, has_interner: bool, typescript_flags: u8) -> State {
+    /// `reads_typescript` is the result of `is_read_by_checker` for a file that's being parsed a second time.
+    pub(crate) fn new(options: &Options, has_interner: bool, reads_typescript: bool) -> State {
         let is_script = options.is_javascript && !options.is_json;
         let is_other_dialect = is_script && (options.dialect.ecmascript || options.dialect.flow);
         let reads = options.reads_jsdoc && has_interner && !options.is_json && !is_other_dialect;
-        let wanted = match reads {
-            false => 0,
-            true if is_script => flags::JSDOC_LIKE,
-            true => typescript_flags,
-        };
         State {
-            wanted,
+            reads: reads && (is_script || reads_typescript),
             ..State::default()
         }
     }
@@ -110,7 +91,7 @@ pub(crate) struct Lens {
     member_comments: u32,
     param_errors: u32,
     functions_with_param_tags: u32,
-    unmatched_augments_tags: u32,
+    augments_tags: u32,
 }
 
 impl Lens {
@@ -129,7 +110,7 @@ impl Lens {
             member_comments: file.jsdoc_member_comments.len() as u32,
             param_errors: file.jsdoc_param_errors.len() as u32,
             functions_with_param_tags: file.functions_with_param_tags.len() as u32,
-            unmatched_augments_tags: file.unmatched_augments_tags.len() as u32,
+            augments_tags: file.augments_tags.len() as u32,
         }
     }
 
@@ -156,8 +137,7 @@ impl Lens {
         file.jsdoc_param_errors.truncate(lens.param_errors as usize);
         file.functions_with_param_tags
             .truncate(lens.functions_with_param_tags as usize);
-        file.unmatched_augments_tags
-            .truncate(lens.unmatched_augments_tags as usize);
+        file.augments_tags.truncate(lens.augments_tags as usize);
     }
 }
 
@@ -193,6 +173,7 @@ fn finish_jsdoc_lists(file: &mut FileBuilder, src: &[u8], comments: &[Comment]) 
         file.jsdoc_hosts.clear();
     }
     file.jsdoc_types.shared_sort_unstable_by_key(|it| it.0);
+    file.augments_tags.shared_sort_by_key(|tag| tag.class);
     file.jsdoc_modifiers.shared_sort_unstable_by_key(|it| it.0);
     file.jsdoc_member_comments
         .shared_sort_unstable_by_key(|it| it.0);
@@ -245,59 +226,35 @@ fn can_have_tags(comment: &[u8]) -> bool {
     comment.ends_with(b"*/") && strings::contains_char(comment, b'@')
 }
 
-/// `scanJSDocCommentForTags`, which looks for `@see` and `@link`. This also looks for the tags the checker reads in a
-/// TypeScript file.
-fn scan_jsdoc_comment_for_tags(mut comment: &[u8]) -> u8 {
-    let mut found = 0;
+/// False if the comment has no `@param`, `@arg` or `@argument` tag.
+fn can_have_param_tag(mut comment: &[u8]) -> bool {
     while let Some(at) = strings::index_of_char_usize(comment, b'@') {
         comment = comment.get(at + 1..).unwrap_or_default();
         let len = comment
             .iter()
             .take_while(|c| c.is_ascii_alphabetic())
             .count();
-        found |= match (comment.get(..len).unwrap_or_default(), comment.get(len)) {
+        match (comment.get(..len).unwrap_or_default(), comment.get(len)) {
             // `ScanJSDocToken` decodes an escape in a name.
-            (_, Some(b'\\')) => flags::AUGMENTS | flags::PARAM,
-            // `hasJSDocTag`
-            (
-                b"see" | b"link" | b"linkcode" | b"linkplain",
-                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'}' | b'*'),
-            ) => flags::SEE_OR_LINK,
-            (b"augments" | b"extends", _) => flags::AUGMENTS,
-            (b"param" | b"arg" | b"argument", _) => flags::PARAM,
-            _ => 0,
-        };
-    }
-    found
-}
-
-/// Returns the `flags` that select which JSDoc comments of a TypeScript file have to be read. Only the checker reads
-/// their tags, in two functions. `comments` is every comment in `text`.
-pub(crate) fn read_by_checker(text: &[u8], comments: &[Comment], is_declaration_file: bool) -> u8 {
-    let mut found = 0;
-    for &Comment {
-        pos: start, end, ..
-    } in comments
-    {
-        let comment = text.get(start as usize..end as usize).unwrap_or_default();
-        if is_jsdoc_like(comment) {
-            found |= scan_jsdoc_comment_for_tags(comment);
+            (_, Some(b'\\')) | (b"param" | b"arg" | b"argument", _) => return true,
+            _ => {}
         }
     }
-    // `checkUnmatchedJSDocParameters` reports nothing in TypeScript, but for a function with a `@param` tag
-    // `containsArgumentsReference` resolves the identifiers named `arguments` in the body. `getAllJSDocTags` needs to
-    // know whether each comment has tags.
-    if found & flags::PARAM != 0
-        && !is_declaration_file
-        && (strings::contains(text, b"arguments") || strings::contains(text, b"\\u"))
-    {
-        return flags::JSDOC_LIKE;
-    }
-    // `checkGrammarClassDeclarationHeritageClauses`, which reads `EagerJSDoc`.
-    if found & flags::AUGMENTS != 0 && found & flags::SEE_OR_LINK != 0 {
-        return flags::AUGMENTS;
-    }
-    0
+    false
+}
+
+/// True if the JSDoc comments of a TypeScript file have to be read. `comments` is every comment in `text`.
+///
+/// `checkUnmatchedJSDocParameters` reports nothing in TypeScript, but for a function with a `@param` tag
+/// `containsArgumentsReference` resolves the identifiers named `arguments` in the body. `getAllJSDocTags` needs to know
+/// whether each comment has tags.
+pub(crate) fn is_read_by_checker(text: &[u8], comments: &[Comment]) -> bool {
+    (strings::contains(text, b"arguments") || strings::contains(text, b"\\u"))
+        && comments.iter().any(|comment| {
+            let comment = text.get(comment.pos as usize..comment.end as usize);
+            let comment = comment.unwrap_or_default();
+            is_jsdoc_like(comment) && can_have_param_tag(comment)
+        })
 }
 
 /// Maps a `Scan` token to the token kinds the JSDoc parser distinguishes.
@@ -746,7 +703,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             named: take_span!(self, import_specs, specs),
             has_named_imports,
             type_only: true,
-            is_deferred: false,
+            phase: ImportPhase::Evaluation,
             mode,
             stmt: StmtId::NONE,
         };
@@ -946,12 +903,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     pub(super) fn reparse_jsdoc_type_arguments(
         &mut self,
         args: TypeArguments,
+        reach: Reach,
     ) -> IdList<TypeNodeId> {
         let Some(outer) = self.enter_comment_containing(args.entry.start) else {
             return IdList::EMPTY;
         };
         let list = self.jsdoc_type_arguments(args.entry);
-        self.keep_checker_errors(outer.diagnostics, Reach::Checked);
+        self.keep_checker_errors(outer.diagnostics, reach);
         self.leave_comment(outer);
         list
     }
@@ -989,7 +947,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             docs: SmallVec::new(),
             last_has_tags: false,
             range: None,
-            has_see_or_link: false,
         };
         // `GetLeadingCommentRanges`: the comments after the first line break, or after the start of the file.
         let mut is_collecting = with_trailing || full_start == 0;
@@ -1009,14 +966,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 src.get(before..start as usize).unwrap_or_default(),
             );
             before = end as usize;
-            let is_jsdoc = is_jsdoc_like(comment);
-            // In JavaScript every comment is read, and nothing needs `SEE_OR_LINK`.
-            let found = match is_jsdoc && !self.f.is_js {
-                true => flags::JSDOC_LIKE | scan_jsdoc_comment_for_tags(comment),
-                false => flags::JSDOC_LIKE,
-            };
-            attached.has_see_or_link |= found & flags::SEE_OR_LINK != 0;
-            if !is_collecting || !is_jsdoc {
+            if !is_collecting || !is_jsdoc_like(comment) {
                 // A line comment ends with its line.
                 is_collecting |= comment.starts_with(b"//");
                 continue;
@@ -1026,7 +976,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 end,
             });
             attached.last_has_tags = false;
-            if found & self.jsdoc.wanted != 0 && can_have_tags(comment) {
+            if self.jsdoc.reads && can_have_tags(comment) {
                 let doc = self.read_comment(start, end);
                 attached.last_has_tags = !doc.tags.is_empty();
                 attached.docs.push(doc);

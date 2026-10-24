@@ -436,7 +436,7 @@ impl<'p, 's> Checker<'p, 's> {
         let pair = match *types {
             [] => return (TypeId::NEVER, true),
             [one] => return (one, true),
-            // `addTypeToUnion` sets `TypeFlagsIncludesError`, so the error type is returned unchanged only from a list
+            // `addTypesToUnion` sets `TypeFlagsIncludesError`, so the error type is returned unchanged only from a list
             // of one.
             [a, b]
                 if a == b
@@ -532,7 +532,7 @@ impl<'p, 's> Checker<'p, 's> {
         if members.first() == Some(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
         }
-        // `addTypeToUnion`: without strictNullChecks, null and undefined are never members. If there are no other
+        // `addTypesToUnion`: without strictNullChecks, null and undefined are never members. If there are no other
         // members, the result is never.
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
@@ -603,7 +603,7 @@ impl<'p, 's> Checker<'p, 's> {
             [only] => return (only, Inspected::Members),
             _ => {}
         }
-        // `addTypeToUnion`: without strictNullChecks, every type includes null and undefined, and they are never
+        // `addTypesToUnion`: without strictNullChecks, every type includes null and undefined, and they are never
         // members. If there are no other members, the result is null in preference to undefined, in its non-widening
         // form if any input was non-widening (`TypeFlagsIncludesNonWideningType`).
         if !self.p.files.options.strict_null_checks {
@@ -1118,6 +1118,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // At this rate the total would exceed a million comparisons. That's too complex to represent, so the
                 // result is the error type.
                 if count == 100_000 && (count / (len - i)) * len > 1_000_000 {
+                    cold_path();
                     self.error_at_current_node(2590);
                     return TypeId::ERROR;
                 }
@@ -1172,6 +1173,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.
     /// Resolves the types of the preceding properties on the way, like `removeSubtypes`.
     fn first_unit_property(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
+        if let Some(&known) = self.first_unit_properties.get(&ty) {
+            return known;
+        }
+        let before = self.non_cacheable_mark();
+        let found = self.first_unit_property_uncached(ty);
+        if before == self.non_cacheable_mark() {
+            self.first_unit_properties.insert(ty, found);
+        }
+        found
+    }
+
+    fn first_unit_property_uncached(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
         // `getPropertiesOfType`
         let apparent = self.reduced_apparent_type(ty);
         let apparent = match self.is_union(apparent) {
@@ -1396,27 +1409,30 @@ impl<'p, 's> Checker<'p, 's> {
     /// removes duplicates. Returns `found` plus what the types add.
     fn add_types_to_intersection(
         &mut self,
-        set: &mut Flat,
+        set: &mut OrderedSet<TypeId>,
         mut found: MembersByFlags,
         types: &[TypeId],
     ) -> MembersByFlags {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
+                cold_path();
                 found = self.add_types_to_intersection(set, found, inner);
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
             if self.is_empty_anonymous_object_type(ty) {
+                cold_path();
                 if found.includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
                     found.includes |= tf::INCLUDES_EMPTY_OBJECT;
-                    set.push(ty);
+                    set.insert(ty);
                 }
                 continue;
             }
             let flags = self.flags(ty);
             let one = MembersByFlags::of(ty, flags);
             if flags & (tf::ANY | tf::UNKNOWN) != 0 {
+                cold_path();
                 if ty == TypeId::UNRESOLVED {
                     found.includes |= tf::INCLUDES_UNRESOLVED;
                 }
@@ -1429,11 +1445,10 @@ impl<'p, 's> Checker<'p, 's> {
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {
                 let member = one.unit.unwrap_or(ty);
                 if member != ty {
+                    cold_path();
                     found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
-                if !set.contains(&member) {
-                    set.push(member);
-                }
+                set.insert(member);
                 found.add(one);
                 continue;
             }
@@ -1513,8 +1528,9 @@ impl<'p, 's> Checker<'p, 's> {
         no_constraint_reduction: bool,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let mut set = Flat::with_capacity(types.len());
+        let mut set = OrderedSet::default();
         let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
+        let mut set: Flat = set.into_keys();
         let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {
@@ -1807,6 +1823,7 @@ impl<'p, 's> Checker<'p, 's> {
             if combined.is_some_and(|it| Self::has_disjoint_domains(it.includes, strict)) {
                 continue;
             }
+            cold_path();
             let one = self.intersection_ex(&constituents, no_constraint_reduction, None);
             if !one.is_never() {
                 intersections.push(one);
@@ -1893,7 +1910,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `ObjectFlagsPrimitiveUnion`: a union with no member that has `TypeFlagsNotPrimitiveUnion`. `object` is allowed.
     /// `void`, template literal types and `keyof T` aren't. `filterType` forwards the flag, so a union that it's the
     /// first to create from a union without the flag lacks it too.
-    fn is_primitive_union(&self, ty: TypeId) -> bool {
+    pub(super) fn is_primitive_union(&self, ty: TypeId) -> bool {
         let TypeData::Union(parts) = self.data(ty) else {
             return false;
         };
@@ -1949,7 +1966,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `eachUnionContains`. A union that has `string` contains `"a"`.
-    fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
+    pub(super) fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
         for &union in unions {
             let has = |expected: TypeId| self.contains_type(self.parts(union), expected);
             if has(t) {
@@ -1984,11 +2001,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown)
     }
 
-    /// Returns `ty` without `undefined` and the missing type.
-    pub fn without_undefined(&mut self, ty: TypeId) -> TypeId {
-        self.filter(ty, |_, m| !m.is_undefined())
-    }
-
     pub fn contains_undefined(&self, ty: TypeId) -> bool {
         self.is_some_type_of_kind(ty, tf::UNDEFINED)
     }
@@ -2007,8 +2019,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// The name of the symbol that `getTypeNameSymbol` returns. `alias`: `t.alias.symbol`.
     fn type_name(&self, ty: TypeId, alias: Option<Sym>) -> Option<&'p [u8]> {
         let files = self.files();
-        let name = match (alias, self.data(ty)) {
-            (Some(alias), _) => files.symbol(alias).name,
+        let name = match (alias, self.data(self.non_distributed(ty))) {
+            (Some(alias), _) => {
+                cold_path();
+                files.symbol(alias).name
+            }
             // The `this` type has its class's symbol.
             (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
                 files.symbol(sym).name
@@ -2021,6 +2036,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `InternalSymbolNameClass`, for a class expression without a name.
         Some(if name.is_none() {
+            cold_path();
             &b"\xFEclass"[..]
         } else if name == known::missing {
             &b"\xFEmissing"[..]
@@ -2046,7 +2062,7 @@ impl<'p, 's> Checker<'p, 's> {
         let at = |file: FileId, pos: u32| -> Option<DeclarationPosition> {
             Some((!self.files().module(file).is_lib, file, pos))
         };
-        match *self.data(ty) {
+        match *self.data(self.non_distributed(ty)) {
             TypeData::Ref { target: sym, .. }
             | TypeData::ThisParam(sym)
             | TypeData::Enum { symbol: sym, .. }
@@ -2070,10 +2086,12 @@ impl<'p, 's> Checker<'p, 's> {
                 .and_then(|&(file, func)| at(file, self.hir(file)[func].start)),
             TypeData::Synth(ref shape) => match shape.symbol_declared_at {
                 Some((file, pos, _)) => at(file, pos),
-                // `getOrCreateTypeFromSignature`: the symbol has the signature's declaration. The symbol of
-                // `getInstantiatedTypePart` has none, and sorts after those that have one.
+                // `getInstantiatedTypePart`: the symbol has the declarations of the instantiated type's symbol.
+                None if shape.instantiation_expression.is_some() => {
+                    self.sort_position(shape.created_from?.0)
+                }
+                // `getOrCreateTypeFromSignature`: the symbol has the signature's declaration.
                 None if shape.literal == Literalness::No
-                    && shape.instantiation_expression.is_none()
                     && shape.props.is_empty()
                     && shape.index.is_empty() =>
                 {
@@ -2100,8 +2118,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `t.symbol.Name` of an object type whose symbol has no declarations. `compareSymbols` puts
-    /// such a symbol after those that have one and before nil.
+    /// `t.symbol.Name` of an object type whose symbol has no declarations, or those of another symbol. `compareSymbols`
+    /// puts a symbol without declarations after those that have one and before nil.
     fn name_of_symbol_without_declarations(&self, ty: TypeId) -> Option<&'static [u8]> {
         match self.data(ty) {
             TypeData::Synth(shape) if shape.instantiation_expression.is_some() => {
@@ -2307,11 +2325,15 @@ impl<'p, 's> Checker<'p, 's> {
                         // nil comes last.
                         .then_with(|| has_symbol(b).cmp(&has_symbol(a))),
                 })
-                .then_with(|| originating_import(a).cmp(&originating_import(b)))
+                .then_with(|| {
+                    cold_path();
+                    originating_import(a).cmp(&originating_import(b))
+                })
                 .then_with(|| is_not_reference(a).cmp(&is_not_reference(b)));
             if by_symbol.is_ne() {
                 return by_symbol;
             }
+            cold_path();
         }
         // References that aren't deferred are ordered by their type arguments. Deferred ones with the same target are
         // ordered by the reference's source position, and instantiations of the same reference by their mappers, never
@@ -2352,6 +2374,8 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => 2,
             TypeData::Synth(ref shape) => u8::from(shape.is_regular),
+            // `getDistributedTypeFromTypeParameter`
+            TypeData::Marker(Marker::Distributed(_)) => 1,
             // `createArrayLiteralType`, `getTypeFromArrayBindingPattern`
             TypeData::Ref { .. } | TypeData::Tuple { .. } => {
                 u8::from(self.types().is_array_literal(t))
@@ -2447,7 +2471,13 @@ impl<'p, 's> Checker<'p, 's> {
             (
                 TypeData::Marker(Marker::Restrictive(x)),
                 TypeData::Marker(Marker::Restrictive(y)),
+            )
+            | (
+                TypeData::Marker(Marker::Distributed(x)),
+                TypeData::Marker(Marker::Distributed(y)),
             ) => types(*x, *y),
+            (TypeData::Marker(Marker::Distributed(x)), TypeData::TypeParam(..)) => types(*x, b),
+            (TypeData::TypeParam(..), TypeData::Marker(Marker::Distributed(y))) => types(a, *y),
             (TypeData::Marker(x), TypeData::Marker(y)) => {
                 let rank = |marker: &Marker| match *marker {
                     Marker::Super => (0, 0),
@@ -2458,6 +2488,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Marker::Restrictive(_) => (5, 0),
                     Marker::TupleElement(index) => (6, index),
                     Marker::TupleThis => (7, 0),
+                    Marker::Distributed(_) => (8, 0),
                 };
                 rank(x).cmp(&rank(y))
             }
@@ -2597,7 +2628,10 @@ impl<'p, 's> Checker<'p, 's> {
             _ => (1, 0),
         };
         by_structure
-            .then_with(|| check_of_literal(a).cmp(&check_of_literal(b)))
+            .then_with(|| {
+                cold_path();
+                check_of_literal(a).cmp(&check_of_literal(b))
+            })
             .then_with(|| creation_step(a).cmp(&creation_step(b)))
     }
 
@@ -2631,8 +2665,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `CompareTypes` for `s` and `t`, which decide the order of two types. See `members_that_order_intersections`.
     fn compare_types_ordered_by(&self, s: TypeId, t: TypeId) -> std::cmp::Ordering {
-        self.compare_types_without_ids(s, t)
-            .then_with(|| self.content_order(s, t))
+        self.compare_types_without_ids(s, t).then_with(|| {
+            cold_path();
+            self.content_order(s, t)
+        })
     }
 
     /// See `Types::content_order`.

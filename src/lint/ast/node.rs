@@ -811,6 +811,9 @@ impl Parents {
             params(alias.type_params, parent);
             one(alias.ty, parent);
         }
+        for module in hir.modules {
+            one(module.attributes, packed(Tag::Stmt, module.stmt.idx()));
+        }
         // Few expressions contain a type and this loops over all of them, so the check that only needs the expression's
         // tag comes first.
         const fn kind(tag: hir::ExprTag) -> u64 {

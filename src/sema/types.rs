@@ -526,6 +526,9 @@ pub enum Marker {
     SubForCheck,
     /// `getRestrictiveTypeParameter`: the type parameter without a constraint.
     Restrictive(TypeId),
+    /// `getDistributedTypeFromTypeParameter`: what the type parameter's name refers to inside a conditional type that
+    /// distributes over it. Its constraint is the type parameter.
+    Distributed(TypeId),
     /// `createTupleTargetType`: `typeParameters` and `thisType`. All targets share them, because only
     /// a mapper ever observes them.
     TupleElement(u32),
@@ -1076,6 +1079,13 @@ impl<'s> Shape<'s> {
         }
     }
 
+    /// True for a type with the symbol of an object literal that has no outer type parameters.
+    /// `getObjectTypeInstantiation` returns such a type as it is, whatever its members mention.
+    fn is_literal_without_outer_type_params(&self) -> bool {
+        self.mapper == MapperId::IDENTITY
+            && self.symbol_declared_at.is_some_and(|it| it.2.is_some())
+    }
+
     /// True if every field except the four lists still has its `new_in` value. The destructuring lists every field, so
     /// adding a field without updating this function is a compile error.
     fn is_plain(&self) -> bool {
@@ -1304,12 +1314,12 @@ pub mod tf {
 }
 
 bitflags::bitflags! {
-    /// The `ObjectFlags` that are derived from a type's constituents, plus five that are specific
+    /// The `ObjectFlags` that are derived from a type's constituents, plus six that are specific
     /// to this checker.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u16 {
         /// It references a type parameter, so instantiation may change it. Exact, except for
-        /// `Shape::has_no_instantiable_symbol`.
+        /// `Shape::has_no_instantiable_symbol` and `Shape::is_literal_without_outer_type_params`.
         const COULD_CONTAIN_TYPE_VARIABLES = 1;
         /// Is or contains `Unresolved`.
         const HAS_UNRESOLVED = 2;
@@ -1351,6 +1361,8 @@ bitflags::bitflags! {
         /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace. They don't all
         /// have the same apparent type (`can_become_one_reference`).
         const HAS_ONLY_OWN_APPARENT_TYPES = 1024;
+        /// The type of an enum used as a value.
+        const IS_ENUM_OBJECT = 2048;
     }
 }
 
@@ -1904,6 +1916,8 @@ pub enum InstantiationClass {
     /// Looked up in the mapper.
     TypeParameter,
     Other,
+    /// `Marker::Distributed`: the type parameter that it's made from is looked up in the mapper.
+    DistributedTypeParameter,
 }
 
 impl InstantiationClass {
@@ -1913,6 +1927,7 @@ impl InstantiationClass {
         match number {
             0 => InstantiationClass::Unchanged,
             1 => InstantiationClass::TypeParameter,
+            3 => InstantiationClass::DistributedTypeParameter,
             _ => InstantiationClass::Other,
         }
     }
@@ -1975,6 +1990,9 @@ impl TypeRecord<'_> {
             return InstantiationClass::Unchanged;
         }
         match self.created.0 {
+            TypeData::Marker(Marker::Distributed(_)) => {
+                InstantiationClass::DistributedTypeParameter
+            }
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
                 InstantiationClass::TypeParameter
             }
@@ -2157,6 +2175,7 @@ impl Bits {
     #[inline]
     fn set(&mut self, index: usize) {
         if index / 64 >= self.0.len() {
+            cold_path();
             self.0.resize(index / 64 + 1, 0);
         }
         self.0[index / 64] |= 1 << (index % 64);
@@ -2831,8 +2850,14 @@ impl TypeId {
     #[inline]
     pub fn plain(self) -> TypeId {
         match self {
-            TypeId::MISSING | TypeId::UNDEFINED_WIDENING => TypeId::UNDEFINED,
-            TypeId::NULL_WIDENING => TypeId::NULL,
+            TypeId::MISSING | TypeId::UNDEFINED_WIDENING => {
+                cold_path();
+                TypeId::UNDEFINED
+            }
+            TypeId::NULL_WIDENING => {
+                cold_path();
+                TypeId::NULL
+            }
             ty => ty,
         }
     }
@@ -3452,7 +3477,10 @@ impl<'p, 's> Types<'p, 's> {
             }
             TypeData::ThisParam(_)
             | TypeData::Marker(
-                Marker::Restrictive(_) | Marker::TupleElement(_) | Marker::TupleThis,
+                Marker::Restrictive(_)
+                | Marker::Distributed(_)
+                | Marker::TupleElement(_)
+                | Marker::TupleThis,
             ) => ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
             TypeData::Marker(_) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_MARKER
@@ -3567,6 +3595,12 @@ impl<'p, 's> Types<'p, 's> {
                 }
                 if shape.has_no_instantiable_symbol {
                     flags.remove(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES);
+                }
+                if shape.is_literal_without_outer_type_params() {
+                    flags.remove(
+                        ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+                            | ObjectFlags::HAS_OTHER_INSTANTIATION,
+                    );
                 }
                 flags
             }
@@ -3756,7 +3790,15 @@ impl<'p, 's> Types<'p, 's> {
                 flags |= ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
             }
         }
-        // Unlike the other flags, these two aren't propagated from the type's constituents.
+        // Unlike the other flags, these three aren't propagated from the type's constituents.
+        let is_enum_object = matches!(
+            data,
+            TypeData::Anon {
+                origin: Origin::EnumObject(_),
+                ..
+            }
+        );
+        flags.set(ObjectFlags::IS_ENUM_OBJECT, is_enum_object);
         flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
         flags.set(
             ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES,
@@ -3949,6 +3991,7 @@ impl<'p, 's> Types<'p, 's> {
         if let Some((value, known)) = literal
             && !id.is_local()
         {
+            cold_path();
             known.insert(value, id);
         }
         id
@@ -3982,6 +4025,7 @@ impl<'p, 's> Types<'p, 's> {
                 TypeData::StringLit { .. } | TypeData::BigIntLit { .. }
             )
         {
+            cold_path();
             return self.intern(data.clone_in(self.own.arena));
         }
         let spread = spread_in_window(&key);
@@ -4120,7 +4164,10 @@ impl<'p, 's> Types<'p, 's> {
         loop {
             match self.sig(sig) {
                 SigData::WithReturn { sig: inner, .. } => sig = *inner,
-                SigData::Synth { of, .. } if !of.is_empty() => sig = of[0],
+                SigData::Synth { of, .. } if !of.is_empty() => {
+                    cold_path();
+                    sig = of[0];
+                }
                 _ => return sig,
             }
         }
@@ -4131,6 +4178,7 @@ impl<'p, 's> Types<'p, 's> {
         if let SigData::WithReturn { sig, .. } = &mut data
             && let SigData::WithReturn { sig: inner, .. } = self.sig(*sig)
         {
+            cold_path();
             *sig = *inner;
         }
         SigId(intern_record(
@@ -4241,6 +4289,28 @@ impl<'p, 's> Types<'p, 's> {
             .binary_search_by_key(&param.arrival_order(), |p| p.0.arrival_order())
             .ok()
             .map(|i| mapping[i].1)
+    }
+
+    /// `getNonDistributedTypeParameter`
+    #[inline]
+    pub fn non_distributed(&self, ty: TypeId) -> TypeId {
+        match *self.get(ty) {
+            TypeData::Marker(Marker::Distributed(of)) => of,
+            _ => ty,
+        }
+    }
+
+    /// `getMappedType`. A declared type has a mapper here that maps each of its outer type parameters to itself, where
+    /// tsgo has none and `instantiateType` returns the type unchanged.
+    pub fn mapped_type(&self, id: MapperId, param: TypeId) -> TypeId {
+        let TypeData::Marker(Marker::Distributed(of)) = *self.get(param) else {
+            return self.map(id, param).unwrap_or(param);
+        };
+        match self.map(id, of) {
+            Some(mapped) if mapped != of => mapped,
+            _ if self.mapping(id).iter().all(|pair| pair.0 == pair.1) => param,
+            _ => of,
+        }
     }
 
     /// Returns `keyType` of `prop` if `prop` is a mapped type's property that stores the key in `Prop::name_type`
@@ -4565,6 +4635,7 @@ follow_enum!(Marker {
     Marker::SuperForCheck => (),
     Marker::SubForCheck => (),
     Marker::Restrictive(a) => (a),
+    Marker::Distributed(a) => (a),
     Marker::TupleElement(a) => (a),
     Marker::TupleThis => (),
 });

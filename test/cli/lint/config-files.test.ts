@@ -1031,6 +1031,40 @@ test.concurrent(
   },
 );
 
+// Recorded from eslint-plugin-import 2.32.0 with eslint-import-resolver-node 0.3.10 under ESLint 8.57.1.
+test.concurrent(
+  "eslint-import-resolver-node finds the file behind webpack's loader syntax from three levels up",
+  async () => {
+    const names = [
+      "../../../../other/Readme.md",
+      "../../../../other/code.js",
+      "../../../../other/missing.md",
+      "../../Readme.md",
+    ];
+    const { problems } = await lint(
+      {
+        "eslint.config.mjs": `export default [{
+        settings: { "import/resolver": { node: { extensions: [".js", ".json"] } } },
+        plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+        rules: { "import/extensions": ["error", "never"], "import/no-unresolved": "error" },
+      }];`,
+        "package.json": "{}",
+        "packages/other/Readme.md": "",
+        "packages/other/code.js": "",
+        "packages/demo/src/pages/docs/a.js": names.map(it => `import "!!raw-loader!${it}";\n`).join(""),
+      },
+      ["packages/demo"],
+    );
+    expect(problems).toEqual([
+      "packages/demo/src/pages/docs/a.js:2:8 import/extensions",
+      "packages/demo/src/pages/docs/a.js:3:8 import/extensions",
+      "packages/demo/src/pages/docs/a.js:3:8 import/no-unresolved",
+      "packages/demo/src/pages/docs/a.js:4:8 import/extensions",
+      "packages/demo/src/pages/docs/a.js:4:8 import/no-unresolved",
+    ]);
+  },
+);
+
 // Recorded from eslint-import-resolver-typescript 4.4.5 with eslint-plugin-import 2.32.0 under ESLint 10.12. Node.js
 // and TypeScript treat the `exports` target as the file itself.
 test.concurrent(
@@ -1170,6 +1204,14 @@ describe.concurrent("the note about an older installed version of a built-in plu
     };
     expect(await notes(files)).toEqual([
       "note: @typescript-eslint/eslint-plugin 5.62.0 is installed, but bun lint's built-in rules match 8.71.1",
+    ]);
+    // Since version 6 the plugin says its name and version itself.
+    const six = {
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": `{ "name": "@typescript-eslint/eslint-plugin", "version": "6.21.0", "main": "index.js" }`,
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": `module.exports = { meta: { name: "@typescript-eslint/eslint-plugin", version: "6.21.0" }, rules: {} };`,
+    };
+    expect(await notes({ ...files, ...six })).toEqual([
+      "note: @typescript-eslint/eslint-plugin 6.21.0 is installed, but bun lint's built-in rules match 8.71.1",
     ]);
   });
 });
@@ -3330,6 +3372,38 @@ describe.concurrent("an .oxlintrc.json", () => {
     ]);
   });
 
+  // What oxlint 1.87 reports. ESLint 10.12 refuses the first two: "Value [] should NOT have fewer than 1 items."
+  // `perfectionist/sort-constructor-parameters` has such a schema.
+  test("an entry without options for a JS plugin's rule isn't validated in an .oxlintrc.json", async () => {
+    const plugin = `const create = context => ({
+        Program: node => context.report({ node, message: context.id + " " + JSON.stringify(context.options) }),
+      });
+      const object = { type: "object", properties: { a: { type: "number", default: 1 } }, additionalProperties: false };
+      export default {
+        meta: { name: "pl" },
+        rules: {
+          one: { meta: { schema: { type: "array", minItems: 1 } }, create },
+          list: { meta: { schema: { type: "array", minItems: 1 } }, create },
+          schema: { meta: { schema: [object] }, create },
+          both: { meta: { schema: [object], defaultOptions: [{}] }, create },
+        },
+      };\n`;
+    const config = {
+      categories: { correctness: "off" },
+      jsPlugins: ["./plugin.js"],
+      rules: { "pl/one": "error", "pl/list": ["error"], "pl/schema": "error", "pl/both": "error" },
+    };
+    const files = { ".oxlintrc.json": JSON.stringify(config), "plugin.js": plugin, "a.js": "a;\n" };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+    expect(stdout.split("\n").flatMap(line => line.match(/pl\/\w+ \[.*?\](?= \[)/) ?? [])).toEqual([
+      "pl/one []",
+      "pl/list []",
+      "pl/schema []",
+      'pl/both [{"a":1}]',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   // oxlint 1.87 prints this for each of the first five, before it lints anything.
   test("options for a JS plugin's rule that doesn't accept any are rejected, even if the rule is off", async () => {
     const plugin = `const create = () => ({});
@@ -4531,6 +4605,35 @@ describe.concurrent("ESLint 8 config files", () => {
     expect(after.problems).toEqual(["a.js:2:10 no-inner-declarations", "a.js:3:1 no-constant-binary-expression"]);
   });
 
+  // Same as ESLint 8.57.1. ESLint 10.12.0 finds 11, 4, 3, 3, 4 and 3, and reports the head of a function.
+  test("complexity doesn't count optional chaining and default values, and reports the whole function", async () => {
+    const { raw } = await lint(
+      {
+        ".eslintrc.json": rc({
+          parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+          rules: { complexity: ["error", 0] },
+        }),
+        "a.js": `function a(x, y = 1, { z = 2 } = {}, [w = 3] = []) {
+  return x?.y?.z ?? (x ? y : z) ?? w;
+}
+class B {
+  method(x) { return x?.a || x?.b; }
+  static { if (a) a(); else if (B) a(1); }
+  field = a ? 1 : a?.b;
+}
+const c = x => { ({ x = 1 } = x); [x = 2] = x; x ||= 1; return x; };
+const d = { e(x) { return x && x.y && x.z; } };
+console.log(a, B, c, d);
+`,
+      },
+      ["a.js"],
+    );
+    const found = (JSON.parse(raw).results[0].messages as any[]).map(
+      it => `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${/complexity of (\d+)/.exec(it.message)?.[1]}`,
+    );
+    expect(found).toEqual(["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]);
+  });
+
   test("with @rushstack/eslint-patch/modern-module-resolution, a plugin is resolved from the config that lists it", async () => {
     const { problems } = await lint({
       ".eslintrc.json": rc({ extends: "patched" }),
@@ -4542,6 +4645,41 @@ describe.concurrent("ESLint 8 config files", () => {
       "a.js": code,
     });
     expect(problems).toEqual(["a.js:1:5 inner/no-x", "a.js:2:5 inner/no-x"]);
+  });
+
+  test("a plugin that asks the installed ESLint's Linter for its rules gets them", async () => {
+    const eslint = {
+      "node_modules/eslint/package.json": `{ "name": "eslint", "version": "8.57.1", "main": "lib/api.js" }`,
+      "node_modules/eslint/lib/api.js": `module.exports = { Linter: require("./linter/linter.js").Linter };`,
+      "node_modules/eslint/lib/linter/linter.js": `class Linter {
+          verify() {}
+          getRules() { return new Map([["no-x", { ${noX} }.rules["no-x"]]]); }
+        }
+        module.exports = { Linter };`,
+    };
+    // This is what eslint-plugin-vue 8 does.
+    const { problems } = await lint({
+      ...eslint,
+      ".eslintrc.json": rc({ plugins: ["wraps"], rules: { "wraps/no-x": "error" } }),
+      "node_modules/eslint-plugin-wraps/index.js": `const rules = new (require("eslint").Linter)().getRules();
+        module.exports = { rules: { "no-x": rules.get("no-x") } };`,
+      "a.js": code,
+    });
+    expect(problems).toEqual(["a.js:1:5 wraps/no-x", "a.js:2:5 wraps/no-x"]);
+    // This is what eslint-plugin-html does. ESLint isn't loaded when it looks.
+    const html = await lint({
+      ...eslint,
+      ".eslintrc.json": rc({ plugins: ["html"], rules: { "no-debugger": "error" } }),
+      "node_modules/eslint-plugin-html/index.js": `const isLinter = it => /[\\\\/]lib[\\\\/]linter[\\\\/]linter\\.js$/.test(it);
+        const found = Object.keys(require.cache).filter(isLinter);
+        if (found.length === 0) throw new Error("eslint-plugin-html error: It seems that eslint is not loaded.");
+        for (const it of found) require.cache[it].exports.Linter.prototype.verify = () => [];
+        module.exports = {};`,
+      "a.js": "debugger;\n",
+    });
+    expect(html.stderr).not.toContain("It seems that eslint is not loaded");
+    expect(html.problems).toEqual(["a.js:1:1 no-debugger"]);
+    expect(html.exitCode).toBe(1);
   });
 
   test("a package that isn't installed is never requested from a registry", async () => {
@@ -4561,6 +4699,216 @@ describe.concurrent("ESLint 8 config files", () => {
     expect(stderr).toContain('ESLint couldn\'t find the config "nowhere" to extend from.');
     expect(requested).toEqual([]);
     expect(exitCode).toBe(2);
+  });
+
+  // typescript-eslint 8 calls them only-throw-error and no-unnecessary-template-expression. The reports are those of
+  // typescript-eslint 5.62.0, 6.21.0 and 7.18.0 under ESLint 8.57.1, which agree. 5.62.0 only has no-throw-literal.
+  describe("rules that typescript-eslint 8 renamed run under their old names", () => {
+    const old = (schema: string) =>
+      `{ meta: { schema: ${schema} }, create() { throw new Error("ran in JavaScript"); } }`;
+    const options = `[{ type: "object", properties: { allowThrowingAny: { type: "boolean" }, allowThrowingUnknown: { type: "boolean" } }, additionalProperties: false }]`;
+    const project = (version: string, rules: object) => ({
+      ".eslintrc.json": rc({
+        parser: "@typescript-eslint/parser",
+        parserOptions: { project: "./tsconfig.json" },
+        plugins: ["@typescript-eslint"],
+        reportUnusedDisableDirectives: true,
+        rules,
+      }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "es2022", types: [] } }),
+      "node_modules/@typescript-eslint/parser/index.js": `throw new Error("loaded");`,
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({ version, main: "index.js" }),
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": version.startsWith("8")
+        ? `module.exports = { rules: {} };`
+        : `module.exports = { rules: { "no-throw-literal": ${old(options)}, "no-useless-template-literals": ${old("[]")} } };`,
+      "a.ts": `declare const anyValue: any;
+declare const unknownValue: unknown;
+class MyError extends Error {}
+export function a() { throw 'x'; }
+export function b() { throw undefined; }
+export function c() { throw new MyError(); }
+export function d() { throw anyValue; }
+export function e() { throw unknownValue; }
+export function f() { try { a(); } catch (err) { throw err; } }
+export function g(p: Promise<void>) { return p.catch(err => { throw err; }); }
+export function h(x: Error | string) { throw x; }
+// eslint-disable-next-line @typescript-eslint/no-throw-literal
+export function i() { throw 'disabled'; }
+export const j = \`\${'x'}\`;
+// eslint-disable-next-line @typescript-eslint/no-useless-template-literals
+export const k = \`\${'x'}\`;
+export async function l(p: Promise<string>) { throw await p; }
+export function* m(): Generator<string, void, string> { throw yield 'a'; }
+export function n<T extends Error>(t: T) { throw t; }
+export type O = \`\${'a'}\`;
+export const p = \`a\${/* c */ 'x'}\`;
+`,
+    });
+    const both = (...setting: unknown[]) => ({
+      "@typescript-eslint/no-throw-literal": ["error", ...setting],
+      "@typescript-eslint/no-useless-template-literals": "error",
+    });
+    const thrown = (...lines: string[]) => lines.map(it => `a.ts:${it} @typescript-eslint/no-throw-literal`);
+    const templates = ["14:21", "21:30"].map(it => `a.ts:${it} @typescript-eslint/no-useless-template-literals`);
+    const flat = (rules: object) => ({
+      ".eslintrc.json": "",
+      "eslint.config.js": `const plugin = require("@typescript-eslint/eslint-plugin");
+        module.exports = [{
+          files: ["**/*.ts"],
+          plugins: { "@typescript-eslint": plugin },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { project: "./tsconfig.json" } },
+          linterOptions: { reportUnusedDisableDirectives: "off" },
+          rules: ${JSON.stringify(rules)},
+        }];`,
+    });
+
+    test.each([
+      [[], ["4:29", "5:29", "11:46", "19:50"]],
+      [[{ allowThrowingAny: false }], ["4:29", "5:29", "7:29", "10:69", "11:46", "19:50"]],
+      [[{ allowThrowingUnknown: false }], ["4:29", "5:29", "8:29", "9:56", "11:46", "19:50"]],
+    ])("with the options %j", async (setting, lines) => {
+      for (const version of ["5.62.0", "6.21.0", "7.18.0"]) {
+        const { problems, stderr, exitCode } = await lint(project(version, both(...setting)), ["a.ts"]);
+        expect(problems).toEqual([...thrown(...lines), ...templates].sort());
+        expect(stderr).not.toContain("did not run");
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("an option that the old rule doesn't have is an error", async () => {
+      const { stderr, exitCode } = await lint(project("6.21.0", both({ allowRethrowing: true })), ["a.ts"]);
+      expect(stderr).toContain(`Configuration for rule "@typescript-eslint/no-throw-literal" is invalid`);
+      expect(exitCode).toBe(2);
+    });
+
+    test("--rule takes the old name", async () => {
+      const { problems } = await lint(project("6.21.0", {}), [
+        "--rule",
+        "@typescript-eslint/no-throw-literal: error",
+        "a.ts",
+      ]);
+      // The comment about the other rule is unused.
+      expect(problems).toEqual([...thrown("4:29", "5:29", "11:46", "19:50"), "a.ts:15:1 -"].sort());
+    });
+
+    test.each(["an .eslintrc.json", "an eslint.config.js"])(
+      "a comment in a file takes the old names, with %s",
+      async kind => {
+        const files = { ...project("7.18.0", {}), ...(kind === "an eslint.config.js" && flat({})) };
+        const on = `/* eslint @typescript-eslint/no-useless-template-literals: "error", @typescript-eslint/no-throw-literal: `;
+        const [plain, strict, invalid] = await Promise.all(
+          [`"error"`, `["error", { "allowThrowingUnknown": false }]`, `["error", { "allowRethrowing": true }]`].map(
+            it =>
+              // The comment is added at the end of the first line, so that the positions stay.
+              lint({ ...files, "a.ts": files["a.ts"].replace("\n", ` ${on}${it} */\n`) }, ["a.ts"]),
+          ),
+        );
+        expect(plain.problems).toEqual([...thrown("4:29", "5:29", "11:46", "19:50"), ...templates].sort());
+        expect(strict.problems).toEqual(
+          [...thrown("4:29", "5:29", "8:29", "9:56", "11:46", "19:50"), ...templates].sort(),
+        );
+        // With the .eslintrc.json, the comment that turns the rule off for one line is reported as unused.
+        expect(invalid.problems.filter(it => !it.endsWith(" -"))).toEqual(
+          ["a.ts:1:30 @typescript-eslint/no-throw-literal", ...templates].sort(),
+        );
+        expect(invalid.raw).toContain(`Value {\\"allowRethrowing\\":true} should NOT have additional properties.`);
+        for (const it of [plain, strict, invalid]) expect(it.stderr).not.toContain("did not run");
+      },
+    );
+
+    test("bunfig.toml takes the old name", async () => {
+      const { problems } = await lint(
+        {
+          ...project("6.21.0", {}),
+          "bunfig.toml": `[lint.rules]\n"@typescript-eslint/no-throw-literal" = ["error", { allowThrowingAny = false }]\n`,
+        },
+        ["a.ts"],
+      );
+      expect(problems).toEqual([...thrown("4:29", "5:29", "7:29", "10:69", "11:46", "19:50"), "a.ts:15:1 -"].sort());
+    });
+
+    // From ESLint 8.57.1 with typescript-eslint 7.18.0.
+    test.each([
+      [[{ allowRethrowing: true }], `Value {"allowRethrowing":true} should NOT have additional properties.`],
+      [[{ allow: [] }], `Value {"allow":[]} should NOT have additional properties.`],
+      [["x"], `Value "x" should be object.`],
+      [[{}, { hasOldName: false }], `should NOT have more than 1 items.`],
+    ])(
+      "with an eslint.config.js, the options %j are refused as the old rule's schema says",
+      async (setting, message) => {
+        const rules = { "@typescript-eslint/no-throw-literal": ["error", ...setting] };
+        const { stderr, exitCode } = await lint({ ...project("7.18.0", {}), ...flat(rules) }, ["a.ts"]);
+        expect(stderr).toContain(`Key "rules": Key "@typescript-eslint/no-throw-literal":\n\t`);
+        expect(stderr).toContain(message);
+        expect(exitCode).toBe(2);
+      },
+    );
+
+    test("with an eslint.config.js, the reports are the same", async () => {
+      const { problems, exitCode } = await lint({ ...project("7.18.0", {}), ...flat(both()) }, ["a.ts"]);
+      expect(problems).toEqual([...thrown("4:29", "5:29", "11:46", "19:50"), ...templates].sort());
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([["--no-native-plugin-rules"], ["--native-plugin-rules", "import"]])(
+      "with %s %s, the package's rule runs",
+      async (...flags) => {
+        const rules = { "@typescript-eslint/no-throw-literal": "error" };
+        for (const files of [project("7.18.0", rules), { ...project("7.18.0", {}), ...flat(rules) }]) {
+          const { problems, stdout, stderr } = await lint(files, [...flags.filter(Boolean), "a.ts"]);
+          expect(stdout + stderr).toContain("ran in JavaScript");
+          expect(problems.filter(it => it.includes("4:29"))).toEqual([]);
+        }
+      },
+    );
+
+    test("another plugin with that prefix keeps its own rule", async () => {
+      const own = `{ create: context => ({ ThrowStatement(node) { context.report({ node, message: "mine" }); } }) }`;
+      const { raw, problems } = await lint(
+        {
+          "eslint.config.js": `module.exports = [{
+            plugins: { "@typescript-eslint": { meta: { name: "mine" }, rules: { "no-throw-literal": ${own} } } },
+            rules: { "@typescript-eslint/no-throw-literal": "error" },
+          }];`,
+          "a.js": "throw new Error();\n",
+        },
+        ["a.js"],
+      );
+      expect(problems).toEqual(["a.js:1:1 @typescript-eslint/no-throw-literal"]);
+      expect(raw).toContain(`"message":"mine"`);
+    });
+
+    test("--print-config shows what the config says", async () => {
+      const rules = async (files: Record<string, string>) =>
+        JSON.parse((await lint(files, ["--print-config", "a.ts"])).raw).rules;
+      const name = "@typescript-eslint/no-throw-literal";
+      expect(await rules(project("7.18.0", {}))).toEqual({});
+      expect(await rules(project("7.18.0", { [name]: "error" }))).toEqual({ [name]: [2] });
+      const strict = { allowThrowingAny: false };
+      expect(await rules(project("7.18.0", { [name]: ["warn", strict] }))).toEqual({ [name]: [1, strict] });
+      expect(await rules(project("7.18.0", { [name]: "off" }))).toEqual({ [name]: [0] });
+      // The old names aren't this run's.
+      const withPackage = await lint(project("7.18.0", {}), ["--no-native-plugin-rules", "--print-config", "a.ts"]);
+      expect(JSON.parse(withPackage.raw).rules).toEqual({});
+      const own = `{ meta: { name: "mine" }, rules: { "no-throw-literal": { create: () => ({}) }, other: { create: () => ({}) } } }`;
+      const another = await lint(
+        {
+          "eslint.config.js": `module.exports = [{ plugins: { "@typescript-eslint": ${own} }, rules: { "@typescript-eslint/other": "error" } }];`,
+          "a.js": "",
+        },
+        ["--print-config", "a.js"],
+      );
+      expect(JSON.parse(another.raw).rules).toEqual({ "@typescript-eslint/other": [2] });
+    });
+
+    test("typescript-eslint 8 doesn't have them", async () => {
+      const { problems, stderr, exitCode } = await lint(project("8.71.1", both()), ["a.ts"]);
+      expect(problems).toEqual([]);
+      expect(stderr).toContain(
+        "2 rules in your .eslintrc config are not supported: @typescript-eslint/no-throw-literal, @typescript-eslint/no-useless-template-literals",
+      );
+      expect(exitCode).toBe(2);
+    });
   });
 
   test("typescript-eslint's configs come from the installed version", async () => {
@@ -5853,25 +6201,29 @@ describe.concurrent("deprecated formatting rules", () => {
     [".eslintrc.json", rules => rc({ rules })],
   ];
   const stylishArgs = ["-f", "stylish", "."];
+  const verboseArgs = ["--verbose", ...stylishArgs];
   const notes = (stderr: string) => stderr.split("\n").filter(it => it.startsWith("note: "));
   const note = (count: number, names: string) => `note: ${count} deprecated formatting rules did not run: ${names}`;
 
-  test.each(flavors)("%s: they don't run, and only a run that fails prints a note", async (name, config) => {
+  test.each(flavors)("%s: they don't run, and only --verbose prints a note", async (name, config) => {
     const files = { [name]: config(rules), "a.js": untidy };
-    const [found, stylish, clean, warned] = await Promise.all([
+    const passes = { ...files, "a.js": "   x = 'y'\n" };
+    const [found, stylish, clean, verbose, verboseClean] = await Promise.all([
       lint(files),
       lint(files, stylishArgs),
-      lint({ ...files, "a.js": "   x = 'y'\n" }, stylishArgs),
-      lint({ ...files, [name]: config({ ...rules, "no-debugger": "warn" }) }, stylishArgs),
+      lint(passes, stylishArgs),
+      lint(files, verboseArgs),
+      lint(passes, verboseArgs),
     ]);
     expect(found.problems).toEqual(["a.js:1:1 no-debugger"]);
     expect(found.exitCode).toBe(1);
-    expect(notes(stylish.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(notes(stylish.stderr)).toEqual([]);
     expect(notes(clean.stderr)).toEqual([]);
     expect(clean.exitCode).toBe(0);
-    expect(warned.raw).toContain("1 problem (0 errors, 1 warning)");
-    expect(notes(warned.stderr)).toEqual([]);
-    expect(warned.exitCode).toBe(0);
+    expect(notes(verbose.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(verbose.exitCode).toBe(1);
+    expect(notes(verboseClean.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(verboseClean.exitCode).toBe(0);
   });
 
   test("prints one note for all files and config files, with the first three rule names", async () => {
@@ -5884,7 +6236,7 @@ describe.concurrent("deprecated formatting rules", () => {
         "b/eslint.config.mjs": on("semi", "comma-dangle", "arrow-parens"),
         "b/c.js": "/* eslint yield-star-spacing: 2 */ c",
       },
-      ["-f", "stylish", "a", "b"],
+      ["--verbose", "-f", "stylish", "a", "b"],
     );
     expect(notes(stderr)).toEqual([note(5, "arrow-parens, comma-dangle, eol-last, ..")]);
     expect(exitCode).toBe(1);
@@ -5892,7 +6244,7 @@ describe.concurrent("deprecated formatting rules", () => {
 
   test("the note uses the singular for one rule", async () => {
     const config = flavors[0][1]({ semi: 2, "no-debugger": 2 });
-    const { stderr } = await lint({ "eslint.config.mjs": config, "a.js": "debugger" }, stylishArgs);
+    const { stderr } = await lint({ "eslint.config.mjs": config, "a.js": "debugger" }, verboseArgs);
     expect(notes(stderr)).toEqual(["note: 1 deprecated formatting rule did not run: semi"]);
   });
 
@@ -5919,7 +6271,7 @@ describe.concurrent("deprecated formatting rules", () => {
   test("rules turned on by --rule or an inline config comment don't run either, and are in the note", async () => {
     const files = { "a.js": `/* eslint quotes: ["error", "sideways"], no-debugger: "error" */ ${untidy}` };
     const flags = ["--no-config-lookup", "--rule", "semi: error", "--rule", "indent: [warn, sideways]"];
-    const [found, stylish] = await Promise.all([lint(files, [...flags, "."]), lint(files, [...flags, ...stylishArgs])]);
+    const [found, stylish] = await Promise.all([lint(files, [...flags, "."]), lint(files, [...flags, ...verboseArgs])]);
     expect(found.problems).toEqual(["a.js:1:66 no-debugger"]);
     expect(found.exitCode).toBe(1);
     expect(notes(stylish.stderr)).toEqual([note(3, "indent, quotes, semi")]);
@@ -5927,13 +6279,13 @@ describe.concurrent("deprecated formatting rules", () => {
 
   // It's on stderr, so a tool that reads the report doesn't see it.
   test.each(["--quiet", "--format=json", "--format=unix", "--format=github", "--format=agent"])(
-    "the note is printed with %s",
+    "--verbose prints the note with %s too",
     async flag => {
       const files = { "a.js": untidy };
       const without = { "eslint.config.mjs": flavors[0][1]({ "no-debugger": "error" }) };
       const [noted, plain] = await Promise.all([
-        lint({ ...files, "eslint.config.mjs": flavors[0][1](rules) }, [...stylishArgs, flag]),
-        lint({ ...files, ...without }, [...stylishArgs, flag]),
+        lint({ ...files, "eslint.config.mjs": flavors[0][1](rules) }, [...verboseArgs, flag]),
+        lint({ ...files, ...without }, [...verboseArgs, flag]),
       ]);
       expect(notes(noted.stderr)).toEqual([note(3, "indent, quotes, semi")]);
       // The two reports are identical except for `usedDeprecatedRules` and the temporary directory names. A Windows
@@ -6100,7 +6452,7 @@ describe.concurrent("deprecated formatting rules", () => {
     };
     const [builtIn, stylish, withPackageRules] = await Promise.all([
       lint(files, ["a.js"]),
-      lint({ ...files, "a.js": "debugger\n" }, ["-f", "stylish", "--rule", "no-debugger: error", "a.js"]),
+      lint({ ...files, "a.js": "debugger\n" }, ["--verbose", "-f", "stylish", "--rule", "no-debugger: error", "a.js"]),
       lint(files, ["--no-native-plugin-rules", "a.js"]),
     ]);
     expect(builtIn.problems).toEqual([]);

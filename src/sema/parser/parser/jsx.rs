@@ -761,7 +761,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         };
                         self.expect(T::CloseBrace);
                     }
-                    T::LessThan if self.recovers() => value = self.jsx_elements_after_equals(),
+                    T::LessThan if self.recovers() => value = self.jsx_element_after_equals(),
                     T::LessThan => (value, _) = self.jsx_element(true, ExprId::NONE),
                     _ => self.missing_jsx_attribute_value(),
                 }
@@ -798,9 +798,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseJsxAttributeValue`, at the `<` of an element.
     #[cold]
     #[inline(never)]
-    fn jsx_elements_after_equals(&mut self) -> ExprId {
+    fn jsx_element_after_equals(&mut self) -> ExprId {
         self.skip_whitespace_after_equals();
-        self.jsx_elements(false)
+        self.jsx_elements(true)
     }
 
     /// `parseJsxAttributeValue`, at a token that can't start a value.

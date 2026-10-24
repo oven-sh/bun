@@ -2,7 +2,7 @@
 //! 2871 5076, 2703 2704 2790 18011, 2378, and 2678 through `check_type_comparable_to`.
 //!
 //! Mirrors `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`
-//! and `checkSwitchStatement` in TypeScript 7.0.2's checker.go.
+//! and `checkSwitchStatement` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
@@ -287,15 +287,31 @@ impl Checker<'_, '_> {
             } => SOMETIMES,
             // The right operand decides.
             ExprKind::Binary {
-                op: BinOp::Comma | BinOp::Nullish,
+                op: BinOp::Comma,
                 right,
                 ..
             } => self.syntactic_nullishness(file, right),
             ExprKind::Assign {
-                op: None | Some(BinOp::Nullish),
-                value,
-                ..
+                op: None, value, ..
             } => self.syntactic_nullishness(file, value),
+            // The left operand when it isn't nullish, otherwise the right one.
+            ExprKind::Binary {
+                op: BinOp::Nullish,
+                left,
+                right,
+            }
+            | ExprKind::Assign {
+                op: Some(BinOp::Nullish),
+                target: left,
+                value: right,
+            } => {
+                let left = self.syntactic_nullishness(file, left);
+                let mut result = left & NEVER;
+                if left & ALWAYS != 0 {
+                    result |= self.syntactic_nullishness(file, right);
+                }
+                result
+            }
             ExprKind::Cond { branches, .. } => {
                 let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_nullishness(file, yes) | self.syntactic_nullishness(file, no)

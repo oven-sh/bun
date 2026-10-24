@@ -789,7 +789,7 @@ it("process.versions", async () => {
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
 
   // The version of TypeScript that `bun check` behaves like.
-  expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+(-[a-z]+(\.\d+)?)?$/);
 });
 
 it("process.config", () => {

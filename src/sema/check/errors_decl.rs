@@ -1,12 +1,13 @@
 //! Misplaced or conflicting declarations: 2372 2373, 2428, 2374, 2717 2403 2687.
 //!
 //! Mirrors the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`,
-//! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, and
+//! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.1's checker.go, and
 //! `Resolve` in its nameresolver.go.
 
 use super::*;
 use crate::bind::{Decl, PatParent, SymbolId};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 impl Checker<'_, '_> {
     pub(super) fn check_declarations(&mut self, file: FileId) {
@@ -250,13 +251,13 @@ impl Checker<'_, '_> {
             Decl::Var(pat) | Decl::Param(pat) => (hir[pat].pos, self.end_of_pat(file, pat)),
             _ => return,
         };
-        let start = super::spans::start_of_error_range(hir, start, end);
         // `DeclarationNameToString`
-        let name: &[u8] = match start == end {
-            true => b"(Missing)",
-            false => &hir.text[start as usize..end as usize],
+        let name = match start == end {
+            true => Cow::Borrowed(&b"(Missing)"[..]),
+            false => super::spans::text_of_node_at(hir, start, end),
         };
-        let (at, name) = ((file, start, end), Arg::Bytes(name));
+        let start = super::spans::start_of_error_range(hir, start, end);
+        let (at, name) = ((file, start, end), Arg::Bytes(&name));
         let differs = if value_declaration == own {
             declarations.iter().any(|&d| {
                 d != own

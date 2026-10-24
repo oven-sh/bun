@@ -213,6 +213,21 @@ pub struct RecentlyVisitedTSNamespace {
     pub(crate) map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
+/// While an enum is pre-visited: the statements before it in its list, and the number `const`s read from them.
+#[derive(Default)]
+pub(crate) struct TsEnumSiblings {
+    pub(crate) earlier: Option<bun_ptr::BackRef<[Stmt]>>,
+    /// Made by the first enum initializer that names a `const` of `earlier`. See `P::ts_enum_sibling_number`.
+    pub(crate) numbers: Option<Box<TsEnumSiblingNumbers>>,
+}
+
+#[derive(Default)]
+pub(crate) struct TsEnumSiblingNumbers {
+    /// How many statements of `TsEnumSiblings::earlier` are read into `values`.
+    pub(crate) read: usize,
+    pub(crate) values: HashMap<Ref, f64>,
+}
+
 /// Keyed by where the node is: an async arrow's `async` -> its parameters; an arrow's `=>` -> its expression body; a
 /// class element's name or static block -> the element (its `static`, its `[`).
 #[derive(Default)]
@@ -705,6 +720,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// node has metadata) and "tsNamespaceMemberData" will be set to the metadata.
     pub(crate) ts_namespace: RecentlyVisitedTSNamespace,
     pub(crate) top_level_enums: List<'a, Ref>,
+    pub(crate) ts_enum_siblings: TsEnumSiblings,
 
     // Value is a shared `&'a [ScopeOrder<'a>]`. The visit pass never writes
     // through these slices — it only reads
@@ -9814,6 +9830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 map: None,
             },
             top_level_enums: BumpVec::new_in(arena),
+            ts_enum_siblings: Default::default(),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,

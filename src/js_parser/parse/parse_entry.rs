@@ -1119,8 +1119,9 @@ impl<'a> Parser<'a> {
             let arena = p.arena;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> = BumpVec::new_in(arena);
             let mut preprocessed_enum_i: usize = 0;
-            if p.scopes_in_order_for_enum.count() > 0 {
-                for stmt in stmts.iter_mut() {
+            if TS && p.scopes_in_order_for_enum.count() > 0 {
+                let mut siblings = crate::p::TsEnumSiblings::default();
+                for (i, stmt) in stmts.iter().enumerate() {
                     if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
                         let old_scopes_in_order = p.scope_order_to_visit;
                         let idx = p
@@ -1135,7 +1136,9 @@ impl<'a> Parser<'a> {
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut enum_parts, sliced)?;
+                        p.with_ts_enum_siblings(&mut siblings, &stmts[..i], |p| {
+                            p.append_part(&mut enum_parts, sliced)
+                        })?;
                         preprocessed_enums.push(enum_parts);
 
                         p.scope_order_to_visit = old_scopes_in_order;

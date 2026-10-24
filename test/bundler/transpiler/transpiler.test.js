@@ -1270,6 +1270,353 @@ function foo() {}
       `);
     });
 
+    // Since TypeScript 5.0, an enum initializer can name a `const`. Bun folds the name when the const is
+    // declared with a number literal. The enum then compiles as if the number was written in the initializer.
+    describe("enum initializers that name a number const", () => {
+      const exp = ts.expectPrinted_;
+      // Runs the transpiled code. It gets what the code passes to `report`.
+      const evaluate = (code, options = {}) => {
+        let reported;
+        new Function("report", new Bun.Transpiler({ loader: "ts", ...options }).transformSync(code))(
+          value => (reported = value),
+        );
+        return reported;
+      };
+
+      it("continues the numbering after the const", () => {
+        exp(
+          "const base = 100;\nenum Status { Ok = base, Created, Gone = base * 2, After }",
+          'const base = 100;\nvar Status;\n((Status) => {\n  Status[Status["Ok"] = 100] = "Ok";\n  Status[Status["Created"] = 101] = "Created";\n  Status[Status["Gone"] = 200] = "Gone";\n  Status[Status["After"] = 201] = "After";\n})(Status ||= {})',
+        );
+      });
+
+      it("folds the numeric operators over the const", () => {
+        exp(
+          "const n = 10, neg = -5;\nenum E { A = -n, B, C = ~n, D = +n, E = neg, F, G = n % 3, H = n ** 2, I = n << 2 | 1 }",
+          'const n = 10, neg = -5;\nvar E;\n((_E) => {\n  _E[_E["A"] = -10] = "A";\n  _E[_E["B"] = -9] = "B";\n  _E[_E["C"] = -11] = "C";\n  _E[_E["D"] = 10] = "D";\n  _E[_E["E"] = -5] = "E";\n  _E[_E["F"] = -4] = "F";\n  _E[_E["G"] = 1] = "G";\n  _E[_E["H"] = 100] = "H";\n  _E[_E["I"] = 41] = "I";\n})(E ||= {})',
+        );
+      });
+
+      it("folds next to enum members, in merged enums, and into enums that read the member", () => {
+        exp(
+          "enum First { A = 1, B = 2 }\nconst multiplier = 5;\nenum Second { D = First.A * multiplier, E = First.B * multiplier + First.A, F }",
+          'var First;\n((First) => {\n  First[First["A"] = 1] = "A";\n  First[First["B"] = 2] = "B";\n})(First ||= {});\nconst multiplier = 5;\nvar Second;\n((Second) => {\n  Second[Second["D"] = 5] = "D";\n  Second[Second["E"] = 11] = "E";\n  Second[Second["F"] = 12] = "F";\n})(Second ||= {})',
+        );
+        exp(
+          "const base = 1;\nenum A { X = base, Y }\nenum A { Z = base + 5, W }\nenum B { P = A.Y * 2, Q = A.W, R }",
+          'const base = 1;\nvar A;\n((A) => {\n  A[A["X"] = 1] = "X";\n  A[A["Y"] = 2] = "Y";\n})(A ||= {});\n((A) => {\n  A[A["Z"] = 6] = "Z";\n  A[A["W"] = 7] = "W";\n})(A ||= {});\nvar B;\n((B) => {\n  B[B["P"] = 4] = "P";\n  B[B["Q"] = 7] = "Q";\n  B[B["R"] = 8] = "R";\n})(B ||= {})',
+        );
+      });
+
+      it("gives every member the value of its expression, and the text of the same enum with the numbers written in", () => {
+        const consts = { a: 7, b: -3, c: 0.5, d: 2 ** 31, e: 0 };
+        const atoms = [...Object.keys(consts), "2", "31", "0.1", "1e3"];
+        const binary = ["+", "-", "*", "/", "%", "**", "<<", ">>", ">>>", "&", "|", "^"];
+        const expressions = [];
+        for (const x of atoms) {
+          for (const op of ["+", "-", "~"]) expressions.push(`${op}${x}`);
+          for (const y of atoms) {
+            for (const op of binary) expressions.push(`${x} ${op} ${y}`);
+            expressions.push(`(${x} - ${y}) * a + ~${y}`, `${x} | (b >>> ${y}) % 5`);
+          }
+        }
+        const declaration =
+          "const " +
+          Object.entries(consts)
+            .map(([name, value]) => `${name} = ${value}`)
+            .join(", ") +
+          ";\n";
+        // Every third member has no initializer. It continues from the member before it.
+        const enumOf = initializers =>
+          "enum T { " + initializers.map((init, i) => `M${i} = ${init}, N${i}`).join(", ") + " }";
+        const expected = new Function(declaration + "return [" + expressions.join(", ") + "];")();
+        const members = evaluate(declaration + enumOf(expressions) + "\nreport(T);");
+        expect(expressions.length).toBeGreaterThan(1000);
+        expect(expressions.map((_, i) => [members[`M${i}`], members[`N${i}`]])).toEqual(
+          expected.map(value => [value, value + 1]),
+        );
+
+        // The literal written in the place of each name. A negative one needs parentheses before `**`.
+        const written = expressions.map(init => init.replace(/\b[a-e]\b/g, name => `(${consts[name]})`));
+        const transpiler = new Bun.Transpiler({ loader: "ts" });
+        expect(transpiler.transformSync(declaration + enumOf(expressions))).toBe(
+          transpiler.transformSync(declaration + enumOf(written)),
+        );
+      });
+
+      it("gives the same members with every transpiler option", () => {
+        // `Inner` reads a const of an enclosing scope. Without the fold that gave 101 only with `inline`.
+        const code =
+          "const base = 100;\nenum Status { Ok = base, Created, Gone = base * 2, After }\nfunction f() {\n  enum Inner { A = base, B }\n  return Inner;\n}\nreport([Status, f(), Status.Created]);";
+        const expected = [
+          { 100: "Ok", 101: "Created", 200: "Gone", 201: "After", Ok: 100, Created: 101, Gone: 200, After: 201 },
+          { 100: "A", 101: "B", A: 100, B: 101 },
+          101,
+        ];
+        for (const options of [
+          {},
+          { inline: true },
+          { treeShaking: true },
+          { inline: true, treeShaking: true },
+          { minify: { syntax: true } },
+          { target: "bun" },
+        ]) {
+          expect(evaluate(code, options)).toEqual(expected);
+        }
+      });
+
+      it("reads a const of the enum's own statement list in a function, a block and a namespace", () => {
+        exp(
+          "export function f() {\n  const inner = 3;\n  enum E { A = inner, B }\n  return E;\n}",
+          'export function f() {\n  const inner = 3;\n  let E;\n  ((E) => {\n    E[E["A"] = 3] = "A";\n    E[E["B"] = 4] = "B";\n  })(E ||= {});\n  return E;\n}',
+        );
+        exp(
+          "{\n  const a = 1;\n  enum E { A = a, B }\n  console.log(E.B);\n}",
+          '{\n  const a = 1;\n  let E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n    E[E["B"] = 2] = "B";\n  })(E ||= {});\n  console.log(2 /* B */);\n}',
+        );
+        exp(
+          "namespace N {\n  const b = 2;\n  export enum E { Z = b, W }\n}",
+          'var N;\n((N) => {\n  const b = 2;\n  let E;\n  ((E) => {\n    E[E["Z"] = 2] = "Z";\n    E[E["W"] = 3] = "W";\n  })(E = N.E ||= {});\n})(N ||= {})',
+        );
+      });
+
+      it("keeps the consts of each statement list apart", () => {
+        const cases = [
+          // A later enum of the list also reads the consts between the two enums.
+          [
+            "const a = 1;\nenum P { A = a, B }\nconst b = 20;\nenum Q { B = b, C = a, D }\nreport([P.B, Q.B, Q.C, Q.D]);",
+            [2, 20, 1, 2],
+          ],
+          // Two lists that each declare their own const.
+          [
+            "function f() {\n  const a = 1;\n  enum E { A = a, B }\n  return E.B;\n}\nfunction g() {\n  const a = 5;\n  enum E { A = a, B }\n  return E.B;\n}\nreport([f(), g()]);",
+            [2, 6],
+          ],
+          // An enum of another list is visited between two members.
+          [
+            "const a = 1, b = 10;\nenum Outer {\n  A = a,\n  B = (() => {\n    const q = 5;\n    enum Inner { X = q, Y }\n    return Inner.Y;\n  })(),\n  C = b,\n  D,\n}\nreport([Outer.A, Outer.B, Outer.C, Outer.D]);",
+            [1, 6, 10, 11],
+          ],
+          // That enum does not read the consts of the outer list, first in its own list or not. tsc gives 2.
+          [
+            "const a = 1;\nenum Outer {\n  A = a,\n  B = (() => {\n    enum Inner { X = a, Y }\n    return Inner.Y;\n  })(),\n}\nreport([Outer.A, Outer.B]);",
+            [1, undefined],
+          ],
+          [
+            "const a = 1;\nenum Outer {\n  A = a,\n  B = (() => {\n    let pad;\n    enum Inner { X = a, Y }\n    return Inner.Y;\n  })(),\n}\nreport([Outer.A, Outer.B]);",
+            [1, undefined],
+          ],
+        ];
+        for (const options of [{}, { treeShaking: true }]) {
+          for (const [code, expected] of cases) expect(evaluate(code, options)).toEqual(expected);
+        }
+      });
+
+      it("leaves the name alone when the const comes after the enum", () => {
+        // In these orders the output of tsc throws a ReferenceError.
+        exp(
+          "enum E { A = later, B }\nconst later = 5;",
+          'var E;\n((E) => {\n  E[E["A"] = later] = "A";\n  E[E["B"] = undefined] = "B";\n})(E ||= {});\nconst later = 5',
+        );
+        exp(
+          "{ enum E { A = x, B } }\nconst x = 5;",
+          '{\n  let E;\n  ((E) => {\n    E[E["A"] = x] = "A";\n    E[E["B"] = undefined] = "B";\n  })(E ||= {});\n}\nconst x = 5',
+        );
+        exp(
+          "const v = 1;\nfunction g() {\n  enum E { A = v, B }\n  const v = 2;\n  return E;\n}",
+          'const v = 1;\nfunction g() {\n  let E;\n  ((E) => {\n    E[E["A"] = v] = "A";\n    E[E["B"] = undefined] = "B";\n  })(E ||= {});\n  const v = 2;\n  return E;\n}',
+        );
+      });
+
+      it("leaves the name alone when it is not a const declared with a number", () => {
+        exp(
+          "let x = 1;\nvar y = 2;\nenum E { A = x, B, C = y, D }",
+          'let x = 1;\nvar y = 2;\nvar E;\n((E) => {\n  E[E["A"] = x] = "A";\n  E[E["B"] = undefined] = "B";\n  E[E["C"] = y] = "C";\n  E[E["D"] = undefined] = "D";\n})(E ||= {})',
+        );
+        exp(
+          "const { d } = { d: 1 }, [e] = [2];\nenum E { A = d, B, C = e, D }",
+          'const { d } = { d: 1 }, [e] = [2];\nvar E;\n((E) => {\n  E[E["A"] = d] = "A";\n  E[E["B"] = undefined] = "B";\n  E[E["C"] = e] = "C";\n  E[E["D"] = undefined] = "D";\n})(E ||= {})',
+        );
+        exp(
+          "const c = Math.min(4, 2), n = 10n;\nenum E { A = c, B, C = n as any, D }",
+          'const c = Math.min(4, 2), n = 10n;\nvar E;\n((E) => {\n  E[E["A"] = c] = "A";\n  E[E["B"] = undefined] = "B";\n  E[E["C"] = n] = "C";\n  E[E["D"] = undefined] = "D";\n})(E ||= {})',
+        );
+        // shadowed by a hoisted variable in the scope of the enum
+        exp(
+          "const v = 1;\nfunction g() {\n  enum E { A = v, B }\n  var v = 2;\n  return E;\n}",
+          'const v = 1;\nfunction g() {\n  let E;\n  ((E) => {\n    E[E["A"] = v] = "A";\n    E[E["B"] = undefined] = "B";\n  })(E ||= {});\n  var v = 2;\n  return E;\n}',
+        );
+      });
+
+      it("leaves the whole initializer alone when a part of it is not a number", () => {
+        exp(
+          'const a = 1;\nenum E { A = a ? 1 : 2, B, C = a || 2, D, F = a + other, G, H = a + f(), I, J = a + "x" }',
+          'const a = 1;\nvar E;\n((E) => {\n  E[E["A"] = a ? 1 : 2] = "A";\n  E[E["B"] = undefined] = "B";\n  E[E["C"] = a || 2] = "C";\n  E[E["D"] = undefined] = "D";\n  E[E["F"] = a + other] = "F";\n  E[E["G"] = undefined] = "G";\n  E[E["H"] = a + f()] = "H";\n  E[E["I"] = undefined] = "I";\n  E["J"] = a + "x";\n})(E ||= {})',
+        );
+      });
+
+      it("folds a const that has a type annotation or a type assertion", () => {
+        // tsc does not: it leaves `A = a` and gives `A1` no value (TS1061). The parser drops the types
+        // before the enum is visited, and `bun run` already inlines such a const of an enclosing scope.
+        exp(
+          "const a: number = 5, b = 6 as const, c = 7 satisfies number, d = <const>8, e = 9!;\nenum E { A = a, A1, B = b, C = c, D = d, F = e, F1 }",
+          'const a = 5, b = 6, c = 7, d = 8, e = 9;\nvar E;\n((E) => {\n  E[E["A"] = 5] = "A";\n  E[E["A1"] = 6] = "A1";\n  E[E["B"] = 6] = "B";\n  E[E["C"] = 7] = "C";\n  E[E["D"] = 8] = "D";\n  E[E["F"] = 9] = "F";\n  E[E["F1"] = 10] = "F1";\n})(E ||= {})',
+        );
+        exp(
+          "const a: number = 5;\nfunction f() {\n  enum E { A = a, A1 }\n  return E;\n}",
+          'const a = 5;\nfunction f() {\n  let E;\n  ((E) => {\n    E[E["A"] = 5] = "A";\n    E[E["A1"] = 6] = "A1";\n  })(E ||= {});\n  return E;\n}',
+        );
+      });
+
+      it("folds a const at the start of an enclosing scope, also when a call reads it too early", () => {
+        // `f()` runs before `base` has a value. tsc folds this too, unless the const has a type annotation:
+        // then its output throws a ReferenceError. `bun run` has always inlined such a const.
+        expect(
+          evaluate(
+            "function run() {\n  const early = f();\n  const base = 100;\n  function f() {\n    enum E { A = base, B }\n    return [E.A, E.B];\n  }\n  return early;\n}\nreport(run());",
+          ),
+        ).toEqual([100, 101]);
+      });
+
+      it("reads the value that `exports.replace` gives an exported const", () => {
+        const code =
+          "export const base = 100;\nenum E { A = base, B }\nexport function f() {\n  enum Nested { A = base, B }\n  return Nested;\n}";
+        const members = (exports, a, b) =>
+          expect(new Bun.Transpiler({ loader: "ts", exports }).transformSync(code)).toContain(
+            `  E[E["A"] = ${a}] = "A";\n  E[E["B"] = ${b}] = "B";\n})(E ||= {});\nexport function f() {\n  let Nested;\n  ((Nested) => {\n    Nested[Nested["A"] = ${a}] = "A";\n    Nested[Nested["B"] = ${b}] = "B";\n`,
+          );
+        // An entry for another name changes nothing.
+        members({ replace: { other: 7 } }, 100, 101);
+        members({ eliminate: ["other"] }, 100, 101);
+        members({ replace: { base: 7 } }, 7, 8);
+        // The export is removed. The name stays, as before.
+        members({ eliminate: ["base"] }, "base", "undefined");
+      });
+
+      it("drops the use of the const that it folds, and no other", () => {
+        const min = ts.expectPrintedMin_;
+        min(
+          "export function f() {\n  const a = 1;\n  enum E { A = a, B }\n  return E.B;\n}",
+          'export function f() {\n  let E;\n  ((E) => {\n    E[E.A = 1] = "A";\n    E[E.B = 2] = "B";\n  })(E ||= {});\n  return 2 /* B */;\n}',
+        );
+        min(
+          "export function f() {\n  const a = 1;\n  enum E { A = a, B }\n  return [E.B, a];\n}",
+          'export function f() {\n  const a = 1;\n  let E;\n  ((E) => {\n    E[E.A = 1] = "A";\n    E[E.B = 2] = "B";\n  })(E ||= {});\n  return [2 /* B */, a];\n}',
+        );
+        min(
+          "export function f() {\n  const a = 1;\n  enum E { A = a + other, B }\n  return E.B;\n}",
+          'export function f() {\n  const a = 1;\n  let E;\n  ((E) => {\n    E[E.A = a + other] = "A";\n    E[E.B = void 0] = "B";\n  })(E ||= {});\n  return E.B;\n}',
+        );
+      });
+
+      it("a member feeds later code as the same member with the number written in does", () => {
+        const uses = [
+          "if (E.M) { a(); } else { b(); }",
+          "export const r = E.M ?? fallback(), s = E.M === 7 ? yes() : no();",
+          "switch (x) { case E.M: a(); break; case 8: b(); break; }",
+          "export const o = { [E.M]: 1 }, v = [obj[E.M], typeof E.M, `${E.M}-x`, E[E.M]];\nexport class C { [E.M]() {} }",
+          "enum F { X = E.M << 1, Y }\nexport const v = [F.Y, E.M ** x, -E.M];",
+        ];
+        for (const options of [{}, { minify: { syntax: true } }, { trimUnusedImports: true }, { inline: true }]) {
+          const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
+          for (const use of uses) {
+            for (const literal of ["7", "-7"]) {
+              expect(
+                transpiler
+                  .transformSync(`const c = ${literal};\nenum E { M = c }\n${use}`)
+                  .replace(`const c = ${literal};\n`, ""),
+              ).toBe(transpiler.transformSync(`enum E { M = ${literal} }\n${use}`));
+            }
+          }
+        }
+      });
+
+      it("a negative member on the left of ** gets parentheses", () => {
+        // `-5 ** x` is a SyntaxError.
+        exp(
+          "const neg = -5;\nenum E { A = neg }\nexport const y = E.A ** x, z = x ** E.A;",
+          'const neg = -5;\nvar E;\n((E) => {\n  E[E["A"] = -5] = "A";\n})(E ||= {});\nexport const y = (-5) /* A */ ** x, z = x ** -5 /* A */',
+        );
+        expect(
+          evaluate(
+            "const neg = -5, pos = 5;\nenum E { A = neg, B = pos }\nlet x = 2;\nreport([E.A ** x, E['A'] ** x, E.B ** x, x ** E.A]);",
+          ),
+        ).toEqual([25, 25, 25, 0.03125]);
+      });
+
+      it("stops at the stack limit and leaves the initializer as it is", async () => {
+        // 1,000 terms fold. A chain that is too deep to walk stays as written, with no crash.
+        const script = `
+          const transpiler = new Bun.Transpiler({ loader: "ts" });
+          const chain = terms => "const a = 1;\\nenum E { A = " + Buffer.alloc((terms - 1) * 4, "a + ").toString() + "a }";
+          const short = transpiler.transformSync(chain(1000));
+          const long = transpiler.transformSync(chain(${isDebug ? 100_000 : 500_000}));
+          console.log(short.includes('E[E["A"] = 1000]'), long.includes('E[E["A"] = a + a + a'));
+        `;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: "true true\n",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+
+      it("bun run and bun build --no-bundle", async () => {
+        using dir = tempDir("enum-const-initializer", {
+          "a.ts":
+            'const base = 100;\nenum Status { Ok = base, Created, Gone = base * 2, After }\nconsole.log(JSON.stringify([Status.Ok, Status.Created ?? "undefined", Status.Gone, Status.After ?? "undefined"]));',
+        });
+        const spawn = args => Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+        await using run = spawn(["a.ts"]);
+        await using build = spawn(["build", "--no-bundle", "a.ts"]);
+        const [runOut, runErr, runCode, buildOut, buildErr, buildCode] = await Promise.all([
+          run.stdout.text(),
+          run.stderr.text(),
+          run.exited,
+          build.stdout.text(),
+          build.stderr.text(),
+          build.exited,
+        ]);
+        expect({ runOut, runErr, runCode }).toEqual({ runOut: "[100,101,200,201]\n", runErr: "", runCode: 0 });
+        expect({ buildOut, buildErr, buildCode }).toEqual({
+          buildOut:
+            'const base = 100;\nvar Status;\n((Status) => {\n  Status[Status["Ok"] = 100] = "Ok";\n  Status[Status["Created"] = 101] = "Created";\n  Status[Status["Gone"] = 200] = "Gone";\n  Status[Status["After"] = 201] = "After";\n})(Status ||= {});\nconsole.log(JSON.stringify([100 /* Ok */, 101 /* Created */, 200 /* Gone */, 201 /* After */]));\n',
+          buildErr: "",
+          buildCode: 0,
+        });
+      });
+
+      // tsc folds each of these too. Bun leaves the name, so the next member has no value. The output is what tsc gives.
+      describe("not folded yet", () => {
+        it.todo("a const that is declared with a string", () => {
+          exp(
+            'const prefix = "app";\nenum Tag { Home = prefix, About = `${prefix}/about` }',
+            'const prefix = "app";\nvar Tag;\n((Tag) => {\n  Tag["Home"] = "app";\n  Tag["About"] = "app/about";\n})(Tag ||= {})',
+          );
+        });
+        it.todo("a const that is declared with an expression or with another const", () => {
+          exp(
+            "const KB = 1 << 10, a = 1, b = a;\nenum Size { Small = KB, Medium, X = b, Y }",
+            'const KB = 1 << 10, a = 1, b = a;\nvar Size;\n((Size) => {\n  Size[Size["Small"] = 1024] = "Small";\n  Size[Size["Medium"] = 1025] = "Medium";\n  Size[Size["X"] = 1] = "X";\n  Size[Size["Y"] = 2] = "Y";\n})(Size ||= {})',
+          );
+        });
+        it.todo("an enum in a function that comes before the const", () => {
+          exp(
+            "function f() {\n  enum E { A = outer, B }\n  return E;\n}\nconst outer = 7;",
+            'function f() {\n  let E;\n  ((E) => {\n    E[E["A"] = 7] = "A";\n    E[E["B"] = 8] = "B";\n  })(E ||= {});\n  return E;\n}\nconst outer = 7',
+          );
+        });
+        it.todo("an exported const of a namespace, and a dotted name", () => {
+          exp(
+            "namespace N {\n  export const a = 1;\n  export enum E { X = a, Y }\n}\nenum F { X = N.a, Y }",
+            'var N;\n((N) => {\n  N.a = 1;\n  let E;\n  ((E) => {\n    E[E["X"] = 1] = "X";\n    E[E["Y"] = 2] = "Y";\n  })(E = N.E ||= {});\n})(N ||= {});\nvar F;\n((F) => {\n  F[F["X"] = 1] = "X";\n  F[F["Y"] = 2] = "Y";\n})(F ||= {})',
+          );
+        });
+      });
+    });
+
     // TODO: fix all the cases that report generic "Parse error"
     it("types", () => {
       const exp = ts.expectPrinted_;

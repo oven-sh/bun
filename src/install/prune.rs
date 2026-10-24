@@ -22,7 +22,7 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
-use crate::package_install::{StagingLock, StagingPath};
+use crate::package_install::{Staging, StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
@@ -68,7 +68,6 @@ struct Removal {
     version: Option<Box<[u8]>>,
 }
 
-#[derive(Default)]
 struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
@@ -84,6 +83,23 @@ struct Plan {
     left_linked_folder: bool,
     /// The store that an isolated install with this run's options would create.
     store: Option<Store>,
+    /// Names the sibling a store entry is renamed to before it is deleted. `Off` deletes in place.
+    staging: Staging,
+}
+
+impl Default for Plan {
+    fn default() -> Self {
+        Plan {
+            folders: Vec::new(),
+            removals: Vec::new(),
+            checked: 0,
+            leftovers: false,
+            linked_folders: Vec::new(),
+            left_linked_folder: false,
+            store: None,
+            staging: Staging::Off,
+        }
+    }
 }
 
 impl Plan {
@@ -337,6 +353,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let staging_lock = StagingLock::acquire();
     let mut plan = Plan {
         leftovers: !staging_lock.is_busy,
+        staging: staging_lock.mode,
         ..Default::default()
     };
     // The root `node_modules` is checked even if `--filter` excludes the root package, because the
@@ -789,6 +806,12 @@ fn install_features(manager: &PackageManager) -> InstallFeatures {
         manager.options.local_package_features,
         manager.options.remote_package_features,
     )
+}
+
+/// Returns true if `--production` / `--omit` leave no dependency type out of this run.
+pub(crate) fn lays_out_every_dependency(manager: &PackageManager) -> bool {
+    let own = install_features(manager);
+    own == full_install_features(own)
 }
 
 /// Every dependency type an install can lay out, whatever `--production` / `--omit` say for this run.
@@ -1933,6 +1956,100 @@ fn links_package(
     link.st_ino == target.st_ino && link.st_dev == target.st_dev
 }
 
+/// Removes the store entries that no install of the saved lockfile names, and the links into them.
+/// The entries of `installed` stay: a tarball's integrity, part of the name, is recorded mid-install.
+pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, installed: &Store) {
+    let mut plan = Plan::default();
+    // Nothing is removed from behind a symlinked `node_modules`. `bun prune` says why.
+    if open_workspace_folder(ROOT_DIR, &mut plan.linked_folders).is_none() {
+        return;
+    }
+    // The entries of another platform stay: an install for this platform does not re-create them.
+    let mut names = with_all_platforms(manager, |manager| {
+        let wanted = with_install_features(
+            manager,
+            full_install_features(install_features(manager)),
+            |manager| wanted_packages(manager, None),
+        );
+        store_entry_names(manager, &wanted).0
+    });
+    let manager: &PackageManager = manager;
+    push_store_entry_names(&manager.lockfile, installed, None, &mut names);
+    sort_names(&mut names);
+    names.dedup();
+    // Another install may be writing entries this lockfile does not name.
+    let staging_lock = StagingLock::acquire();
+    if staging_lock.is_busy {
+        return;
+    }
+    plan.staging = staging_lock.mode;
+    let removed_store = plan_store(&names, &mut plan);
+    if removed_store.is_empty() {
+        return;
+    }
+    // The links into a removed entry are unlinked afterwards, so every importer must be reachable.
+    let Some(importers) = open_importer_folders(manager) else {
+        return;
+    };
+    remove_planned(plan, Layout::Isolated, manager);
+    for dir in &importers {
+        unlink_links(dir, &|dir, _, name| {
+            store_link_target(dir, name).is_some_and(|target| contains(&removed_store, &target))
+        });
+        prune_bins(dir);
+    }
+}
+
+/// `None` if a workspace is outside the project or its `node_modules` is a symlink.
+fn open_importer_folders(manager: &PackageManager) -> Option<Vec<Dir>> {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let mut linked_folders = Vec::new();
+    let mut dirs = Vec::new();
+    for (pkg_id, res) in pkg_res.iter().enumerate() {
+        let folder_path: Box<[u8]> = match res.tag {
+            ResolutionTag::Root if pkg_id == 0 => ROOT_DIR.into(),
+            ResolutionTag::Workspace if !is_pruned_workspace(manager, pkg_id) => {
+                if lockfile.is_member_outside(pkg_id as PackageID) {
+                    return None;
+                }
+                join(
+                    strings::without_trailing_slash(res.workspace().slice(buf)),
+                    b"node_modules",
+                )
+            }
+            _ => continue,
+        };
+        match open_workspace_folder(&folder_path, &mut linked_folders) {
+            Some(dir) => dirs.push(dir),
+            None if linked_folders.is_empty() => {}
+            None => return None,
+        }
+    }
+    Some(dirs)
+}
+
+/// Runs `f` with every CPU, OS and libc enabled.
+fn with_all_platforms<T>(
+    manager: &mut PackageManager,
+    f: impl FnOnce(&mut PackageManager) -> T,
+) -> T {
+    use bun_install_types::{Architecture, Libc, NegatableEnum, OperatingSystem};
+    let options = &mut manager.options;
+    let saved = (options.cpu, options.os, options.libc);
+    options.cpu = <Architecture as NegatableEnum>::ALL;
+    options.os = <OperatingSystem as NegatableEnum>::ALL;
+    options.libc = <Libc as NegatableEnum>::ALL;
+    let result = f(manager);
+    (
+        manager.options.cpu,
+        manager.options.os,
+        manager.options.libc,
+    ) = saved;
+    result
+}
+
 /// The isolated linker only visits the names in the new lockfile, so this removes the symlink of
 /// each dependency that was dropped from a `package.json` or from `packageExtensions`.
 pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: &Lockfile) {
@@ -2388,10 +2505,11 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
     })
 }
 
+/// `None` for `wanted` means every package.
 fn push_store_entry_names(
     lockfile: &Lockfile,
     store: &Store,
-    wanted: &DynamicBitSet,
+    wanted: Option<&DynamicBitSet>,
     names: &mut Vec<Box<[u8]>>,
 ) {
     let pkg_res = lockfile.packages.items_resolution();
@@ -2405,7 +2523,7 @@ fn push_store_entry_names(
             pkg_res[pkg_id].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) || entry_nested_folder[entry_idx]
-            || !wanted.is_set(pkg_id)
+            || wanted.is_some_and(|wanted| !wanted.is_set(pkg_id))
         {
             continue;
         }
@@ -2438,7 +2556,7 @@ fn store_entry_names(
         .flatten()
     {
         let store = build_store_with(manager, features);
-        push_store_entry_names(&manager.lockfile, &store, wanted, &mut names);
+        push_store_entry_names(&manager.lockfile, &store, Some(wanted), &mut names);
         own_store = Some(store);
     }
     sort_names(&mut names);
@@ -2509,6 +2627,33 @@ fn public_hoist_matches(manager: &PackageManager, alias: &[u8]) -> bool {
         .is_some_and(|pattern| pattern.is_match(alias))
 }
 
+/// Plans the removal of every store entry not in the sorted `names`. Returns them, sorted.
+fn plan_store(names: &[Box<[u8]>], plan: &mut Plan) -> Vec<Box<[u8]>> {
+    let mut removed_store: Vec<Box<[u8]>> = Vec::new();
+    if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
+        let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
+        for (name, kind) in read_entries_and_leftovers(&store, plan.leftovers) {
+            if &*name == b"node_modules" {
+                continue;
+            }
+            if is_leftover(&name) {
+                plan.remove(store_idx, &name, kind);
+                continue;
+            }
+            plan.checked += 1;
+            if contains(names, &name) {
+                plan_store_entry_leftovers(&store, &name, plan);
+                continue;
+            }
+            plan.remove(store_idx, &name, kind);
+            removed_store.push(name);
+        }
+        plan.retain(store_idx, store);
+    }
+    sort_names(&mut removed_store);
+    removed_store
+}
+
 fn plan_isolated(
     manager: &mut PackageManager,
     workspace_names: &[Box<[u8]>],
@@ -2520,24 +2665,7 @@ fn plan_isolated(
     plan.store = store;
     let manager: &PackageManager = manager;
 
-    let mut removed_store: Vec<Box<[u8]>> = Vec::new();
-    if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
-        let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
-        for (name, kind) in read_entries(&store) {
-            if &*name == b"node_modules" {
-                continue;
-            }
-            plan.checked += 1;
-            if contains(&names, &name) {
-                plan_store_entry_leftovers(&store, &name, plan);
-                continue;
-            }
-            plan.remove(store_idx, &name, kind);
-            removed_store.push(name);
-        }
-        plan.retain(store_idx, store);
-    }
-    sort_names(&mut removed_store);
+    let removed_store = plan_store(&names, plan);
     let store_touched = !removed_store.is_empty();
 
     let lockfile: &Lockfile = &manager.lockfile;
@@ -2699,8 +2827,12 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
 
     for removal in &plan.removals {
         let dir = plan.dir(removal.folder);
+        let is_store_entry = plan.folders[removal.folder].kind == FolderKind::Store;
         let result = match removal.kind {
             EntryKind::SymLink => remove_link(dir, &removal.name),
+            _ if is_store_entry && plan.staging != Staging::Off => {
+                remove_store_entry(dir, &removal.name, plan.staging)
+            }
             _ => dir.delete_tree(&removal.name),
         };
         match result {
@@ -2736,6 +2868,56 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
     }
 
     failed
+}
+
+/// Renamed aside first, so that a delete that stops midway leaves no marker for the next install.
+fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()> {
+    let staged = StagingPath(name, staging).to_string();
+    let (from, to) = (zname(name), zname(staged.as_bytes()));
+    let (from, to) = (
+        ZStr::from_slice_with_nul(&from),
+        ZStr::from_slice_with_nul(&to),
+    );
+    let mut moved = sys::renameat(dir.fd(), from, dir.fd(), to);
+    if moved
+        .as_ref()
+        .is_err_and(|err| err.get_errno() != E::ENOENT)
+    {
+        dir.delete_tree(staged.as_bytes())?;
+        moved = sys::renameat(dir.fd(), from, dir.fd(), to);
+    }
+    match moved {
+        Ok(()) => dir.delete_tree(staged.as_bytes()),
+        Err(err) if err.get_errno() == E::ENOENT => Ok(()),
+        // A directory in a lower overlayfs layer cannot be renamed.
+        Err(_) => {
+            unlink_install_markers(dir, name);
+            dir.delete_tree(name)
+        }
+    }
+}
+
+/// Unlinks the files the next install checks to reuse the package of a store entry.
+fn unlink_install_markers(store: &Dir, entry: &[u8]) {
+    let (alias, _) = split_store_key(entry);
+    let Some(package) = store
+        .open_at(&join(entry, b"node_modules"))
+        .ok()
+        .and_then(|node_modules| descend(&node_modules, &alias))
+    else {
+        return;
+    };
+    let mut iter = sys::iterate_dir(package.fd());
+    let mut markers: Vec<Vec<u8>> = Vec::new();
+    while let Ok(Some(found)) = iter.next() {
+        let name = found.name.slice_u8();
+        if name == b"package.json" || name.starts_with(crate::package_install::BUN_TAG) {
+            markers.push(zname(name));
+        }
+    }
+    for marker in &markers {
+        let _ = sys::unlinkat(package.fd(), ZStr::from_slice_with_nul(marker));
+    }
 }
 
 fn rmdir(dir: &Dir, name: &[u8]) {

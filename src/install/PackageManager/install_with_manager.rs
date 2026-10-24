@@ -1086,6 +1086,21 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
+    // Only a full install re-points every link, so only it knows which entries lost theirs.
+    if isolated
+        && install_summary.fail == 0
+        && !install_summary.fresh_store
+        && (install_summary.success > 0
+            || manager.summary.remove > 0
+            || !manager.summary.removed_extension_rows.is_empty())
+        && workspace_filters.is_empty()
+        && crate::prune::lays_out_every_dependency(manager)
+        // `--no-save` leaves bun.lock with entries this install did not lay out.
+        && (manager.options.do_.save_lockfile() || manager.options.enable.frozen_lockfile())
+        && let Some(store) = install_summary.store.take()
+    {
+        crate::prune::remove_unreferenced_store_entries(manager, &store);
+    }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
     // `skipped > 0` means part of an earlier install is still on disk.

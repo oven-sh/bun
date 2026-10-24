@@ -271,10 +271,10 @@ function lazyBlockList() {
   return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList"));
 }
 const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
-const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const doConnect = $bindgen("node_net_binding.bind.ts", "doConnect");
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
-const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const upgradeDuplexToTLS = $bindgen("socket_body.bind.ts", "upgradeDuplexToTLS");
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred");
 const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkServerIdentityInHandshake");

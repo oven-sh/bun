@@ -2698,17 +2698,6 @@ impl BufferedStdin {
         }
     }
 
-    /// How many bytes were read from the fd and not handed out yet.
-    pub fn buffered_len(&self) -> usize {
-        self.end - self.start
-    }
-
-    /// Forgets those bytes. For a caller that moved the fd back over them.
-    pub fn discard_buffered(&mut self) {
-        self.start = 0;
-        self.end = 0;
-    }
-
     /// Read one byte — `Err` on I/O error *or* EOF (`EndOfStream`).
     pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
         if self.start < self.end {

@@ -59,14 +59,14 @@ const streamText = async (stream: ReadableStream<Uint8Array>) => {
 
 // stdin is one open file description that this process shares with the process that
 // started it. The parent here reads the first line before it starts the child, and reads
-// again after the child exits. A stream of stdin starts at the position and leaves it
-// after the bytes it took, and `left` is what the next reader gets.
+// again after the child exits. A stream of stdin that starts at byte 0 starts at the
+// position and leaves it after the bytes it took, and `left` is what the next reader gets.
 describe("a stream of stdin when stdin is a regular file inherited at an offset", () => {
   const consumed = "SECRET-HEADER\n";
   const rest = "body1\nbody2\n";
 
-  async function runAfterParentRead(js: string) {
-    using dir = tempDir("bun-stdin-file-offset", { "in.txt": consumed + rest });
+  async function runAfterParentRead(js: string, unread = rest) {
+    using dir = tempDir("bun-stdin-file-offset", { "in.txt": consumed + unread });
     const fd = openSync(join(String(dir), "in.txt"), "r");
     try {
       readSync(fd, Buffer.alloc(consumed.length));
@@ -78,7 +78,7 @@ describe("a stream of stdin when stdin is a regular file inherited at an offset"
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const buf = Buffer.alloc(consumed.length + rest.length);
+      const buf = Buffer.alloc(consumed.length + unread.length);
       return { stdout, stderr, exitCode, left: buf.toString("utf8", 0, readSync(fd, buf)) };
     } finally {
       closeSync(fd);
@@ -134,17 +134,29 @@ describe("a stream of stdin when stdin is a regular file inherited at an offset"
     });
   });
 
-  // prompt() reads stdin through a 4096-byte buffer. It gives back what it read past its line.
-  test("prompt() takes one line and a stream gets the lines after it", async () => {
-    expect(
-      await runAfterParentRead(
-        `const answer = prompt("name?"); const lines = []; for await (const line of console) lines.push(line); process.stdout.write(JSON.stringify([answer, lines]));`,
+  test("an S3 upload, WebAssembly.compileStreaming and Response.textStream() of Bun.stdin", async () => {
+    const upload = `
+      const puts = [];
+      const server = Bun.serve({ port: 0, async fetch(req) { puts.push(await req.text()); return new Response("", { headers: { etag: '"etag"' } }); } });
+      const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "key", region: "us-east-1", bucket: "bucket", endpoint: server.url.href });
+      const s = [await s3.file("key").write(Bun.stdin), puts];
+      server.stop(true);
+      ${print};`;
+    const emptyModule = "\0asm\x01\0\0\0";
+    const [s3, wasm, textStream] = await Promise.all([
+      runAfterParentRead(upload),
+      runAfterParentRead(
+        `const s = (await WebAssembly.compileStreaming(new Response(Bun.stdin, { headers: { "content-type": "application/wasm" } }))) instanceof WebAssembly.Module; ${print};`,
+        emptyModule,
       ),
-    ).toEqual({
-      stdout: `name? ${JSON.stringify(["body1", ["body2", ""]])}`,
-      stderr: "",
-      exitCode: 0,
-      left: "",
+      runAfterParentRead(
+        `let s = ""; for await (const text of new Response(Bun.stdin).textStream()) s += text; ${print};`,
+      ),
+    ]);
+    expect({ s3, wasm, textStream }).toEqual({
+      s3: { stdout: JSON.stringify([rest.length, [rest]]), stderr: "", exitCode: 0, left: "" },
+      wasm: { stdout: "true", stderr: "", exitCode: 0, left: "" },
+      textStream: readsTheRest,
     });
   });
 
@@ -168,11 +180,21 @@ describe("a stream of stdin when stdin is a regular file inherited at an offset"
       "streams that nothing reads": { stdout: "", stderr: "", exitCode: 0, left: rest },
     });
   });
+
+  // A slice of stdin that starts past byte 0 is read at that offset of the file, as for any other descriptor.
+  test("Bun.stdin.slice(k, n).stream() past byte 0 does not use or move the position", async () => {
+    expect(
+      await runAfterParentRead(
+        `const s = [await new Response(Bun.stdin.slice(2, 6).stream()).text(), await new Response(Bun.stdin.slice(0, 6).stream()).text()]; ${print};`,
+      ),
+    ).toEqual({ stdout: JSON.stringify(["CRET", "body1\n"]), stderr: "", exitCode: 0, left: "body2\n" });
+  });
 });
 
-// Only stdin follows its position. A stream of any other descriptor starts at the offset
-// of the Blob and does not move the position. `next` is what `readSync` gets afterwards.
-test("a stream of a Bun.file(fd) that is not stdin does not depend on the position of the descriptor", async () => {
+// Since #15740 a stream of `Bun.file(fd)` reads with `pread` from the offset of the Blob and
+// does not move the position. `text()` reads from the position. `next` is what `readSync`
+// gets afterwards.
+test("a stream of a descriptor other than stdin is not changed: it reads from the offset of the Blob", async () => {
   const content = "0123456789abcdefghij";
   using dir = tempDir("bun-file-fd-position", { "in.txt": content });
   const path = join(String(dir), "in.txt");
@@ -222,6 +244,18 @@ test("a stream of a Bun.file(fd) that is not stdin does not depend on the positi
     return streamText(Bun.file(fd).stream());
   });
 
+  // The Windows one-shot reader starts at byte 0, so these rows are for POSIX.
+  if (!isWindows) {
+    result["at byte 5: stream(), then text()"] = await withFd("in.txt", "r", async fd => {
+      readSync(fd, Buffer.alloc(5));
+      return [await streamText(Bun.file(fd).stream()), await Bun.file(fd).text()];
+    });
+    result["at byte 5: text(), then stream()"] = await withFd("in.txt", "r", async fd => {
+      readSync(fd, Buffer.alloc(5));
+      return [await Bun.file(fd).text(), await streamText(Bun.file(fd).stream())];
+    });
+  }
+
   const atByte5 = content.slice(5);
   expect(result).toEqual({
     "stream()": { bytes: content, next: atByte5 },
@@ -231,5 +265,11 @@ test("a stream of a Bun.file(fd) that is not stdin does not depend on the positi
     "stream(), then text()": [content, content],
     "text(), then stream()": [content, content],
     "a written fd, then stream()": "just written",
+    ...(isWindows
+      ? {}
+      : {
+          "at byte 5: stream(), then text()": [content, atByte5],
+          "at byte 5: text(), then stream()": [atByte5, content],
+        }),
   });
 });

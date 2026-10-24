@@ -208,6 +208,8 @@ pub enum ContainerCondition {
     },
     /// A style query.
     Style(StyleQuery),
+    /// `<general-enclosed>`, as its source text.
+    Unknown(&'static [u8]),
 }
 
 impl ToCss for ContainerCondition {
@@ -240,6 +242,14 @@ impl QueryCondition for ContainerCondition {
         } = self
         {
             Some((*operator, conditions))
+        } else {
+            None
+        }
+    }
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = Some(ContainerCondition::Unknown);
+    fn as_general_enclosed(&self) -> Option<&'static [u8]> {
+        if let Self::Unknown(raw) = self {
+            Some(raw)
         } else {
             None
         }
@@ -288,7 +298,7 @@ impl QueryCondition for ContainerCondition {
             ContainerCondition::Not(_) => true,
             ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
-            ContainerCondition::Style(_) => false,
+            ContainerCondition::Style(_) | ContainerCondition::Unknown(_) => false,
         }
     }
 }
@@ -308,6 +318,7 @@ impl ContainerCondition {
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
             Self::Style(q) => Self::Style(q.deep_clone(bump)),
+            Self::Unknown(raw) => Self::Unknown(raw),
         }
     }
 }

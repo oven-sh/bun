@@ -79,10 +79,16 @@ pub trait QueryCondition: Sized + ToCss {
         targets: &css::targets::Targets,
     ) -> bool;
 
+    /// Makes a `<general-enclosed>` condition from its source text. `None`: no such variant.
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = None;
+
     // ─── variant-walk accessors (drive `condition_to_css`) ───
     fn as_feature(&self) -> Option<&Self::Feature>;
     fn as_not(&self) -> Option<&Self>;
     fn as_operation(&self) -> Option<(Operator, &[Self])>;
+    fn as_general_enclosed(&self) -> Option<&'static [u8]> {
+        None
+    }
 
     /// Serialize the leaf feature. Not defaulted: `Property::to_css` takes an
     /// extra `is_custom_property` flag, and `QueryFeature::to_css` is inherent
@@ -110,6 +116,10 @@ pub trait QueryCondition: Sized + ToCss {
         }
         if let Some((op, conds)) = self.as_operation() {
             return operation_to_css(op, conds, dest);
+        }
+        if let Some(raw) = self.as_general_enclosed() {
+            // Source text: it has its own parentheses and can span lines.
+            return dest.write_bytes(raw);
         }
         self.extra_to_css(dest)
     }
@@ -225,6 +235,8 @@ pub enum MediaCondition {
         operator: Operator,
         conditions: Vec<MediaCondition, ArenaPtr>,
     },
+    /// `<general-enclosed>`, as its source text.
+    Unknown(&'static [u8]),
 }
 
 // ───────────────────────── QueryFeature / MediaFeature ─────────────────────────
@@ -814,6 +826,14 @@ impl QueryCondition for MediaCondition {
             None
         }
     }
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = Some(MediaCondition::Unknown);
+    fn as_general_enclosed(&self) -> Option<&'static [u8]> {
+        if let Self::Unknown(raw) = self {
+            Some(raw)
+        } else {
+            None
+        }
+    }
     fn feature_to_css(f: &MediaFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
@@ -856,6 +876,7 @@ impl QueryCondition for MediaCondition {
             MediaCondition::Not(_) => true,
             MediaCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             MediaCondition::Feature(f) => f.needs_parens(parent_operator, targets),
+            MediaCondition::Unknown(_) => false,
         }
     }
 }
@@ -1299,6 +1320,7 @@ impl MediaCondition {
                     out
                 },
             },
+            MediaCondition::Unknown(raw) => MediaCondition::Unknown(raw),
         }
     }
 }
@@ -1435,6 +1457,7 @@ impl MediaList {
 
 impl MediaQuery {
     pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaQuery> {
+        let unknown_blocks = input.general_enclosed_blocks();
         let (qualifier, explicit_media_type) = input
             .try_parse(|i| -> Result<(Option<Qualifier>, Option<MediaType>)> {
                 let qualifier = i.try_parse(Qualifier::parse).ok();
@@ -1458,6 +1481,12 @@ impl MediaQuery {
         } else {
             None
         };
+
+        if input.general_enclosed_blocks() != unknown_blocks
+            && let Some(condition) = &condition
+        {
+            warn_general_enclosed(input, options, condition);
+        }
 
         let media_type = explicit_media_type.unwrap_or(MediaType::All);
 
@@ -1501,41 +1530,23 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
 ) -> Result<C> {
     use bun_core::strings;
     let location = input.current_source_location();
-    let (is_negation, is_style) = 'brk: {
-        let tok = *input.next()?;
-        match &tok {
-            css::Token::OpenParen => break 'brk (false, false),
-            css::Token::Ident(ident) => {
-                if strings::eql_case_insensitive_ascii_check_length(ident, b"not") {
-                    break 'brk (true, false);
-                }
-            }
-            css::Token::Function(f) => {
-                if flags.allow_style()
-                    && strings::eql_case_insensitive_ascii_check_length(f, b"style")
-                {
-                    break 'brk (false, true);
-                }
-            }
-            _ => {}
-        }
-        return Err(location.new_unexpected_token_error(tok));
-    };
+    input.skip_whitespace();
+    let start = input.position();
+    let tok = *input.next_including_whitespace_and_comments()?;
 
-    let alloc = ArenaPtr::new(input.arena());
-
-    // (is_negation, is_style)
-    let first_condition: C = match (is_negation, is_style) {
-        (true, false) => {
+    let first_condition: C = match &tok {
+        css::Token::Ident(ident)
+            if strings::eql_case_insensitive_ascii_check_length(ident, b"not") =>
+        {
             let inner_condition = parse_parens_or_function::<C>(input, flags, options)?;
+            let alloc = ArenaPtr::new(input.arena());
             return Ok(C::create_negation_in(inner_condition, alloc));
         }
-        (true, true) => {
-            let inner_condition = C::parse_style_query_with_options(input, options)?;
-            return Ok(C::create_negation_in(inner_condition, alloc));
+        css::Token::OpenParen => parse_paren_block::<C>(input, flags, options)?,
+        css::Token::Function(_) => {
+            parse_function::<C>(input, location, start, tok, flags, options)?
         }
-        (false, false) => parse_paren_block::<C>(input, flags, options)?,
-        (false, true) => C::parse_style_query_with_options(input, options)?,
+        _ => return Err(location.new_unexpected_token_error(tok)),
     };
 
     let operator: Operator = match input.try_parse(Operator::parse) {
@@ -1547,9 +1558,8 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
         return Err(location.new_unexpected_token_error(css::Token::Ident(b"or")));
     }
 
-    let mut conditions: Vec<C, ArenaPtr> = Vec::new_in(alloc);
+    let mut conditions: Vec<C, ArenaPtr> = Vec::new_in(ArenaPtr::new(input.arena()));
     conditions.push(first_condition);
-    conditions.push(parse_parens_or_function::<C>(input, flags, options)?);
 
     let delim: &[u8] = match operator {
         Operator::And => b"and",
@@ -1557,11 +1567,76 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     };
 
     loop {
+        match parse_parens_or_function::<C>(input, flags, options) {
+            Ok(operand) => conditions.push(operand),
+            Err(error) => return Err(operand_error(input, &conditions, error)),
+        }
         if input.try_parse(|i| i.expect_ident_matching(delim)).is_err() {
             return Ok(C::create_operation_in(operator, conditions));
         }
-        conditions.push(parse_parens_or_function::<C>(input, flags, options)?);
     }
+}
+
+/// The error for a missing operand. `kept` holds the operands before it.
+#[cold]
+fn operand_error<C: QueryCondition>(
+    input: &Parser,
+    kept: &[C],
+    error: css::error::ParseError<css::ParserError>,
+) -> css::error::ParseError<css::ParserError> {
+    // `MediaList::parse` drops a query that fails with `end_of_input`.
+    if matches!(
+        error.kind,
+        css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
+    ) && kept
+        .iter()
+        .any(|operand| first_general_enclosed(operand).is_some())
+    {
+        return input.new_custom_error(css::ParserError::invalid_media_query);
+    }
+    error
+}
+
+/// Whether the text of `condition` starts with a function name, not with `(`.
+fn starts_with_function<C: QueryCondition>(condition: &C) -> bool {
+    if let Some((_, operands)) = condition.as_operation() {
+        return operands.first().is_some_and(starts_with_function);
+    }
+    condition
+        .as_general_enclosed()
+        .is_some_and(|raw| !raw.starts_with(b"("))
+}
+
+/// The source text of the first `<general-enclosed>` in `condition`.
+fn first_general_enclosed<C: QueryCondition>(condition: &C) -> Option<&'static [u8]> {
+    if let Some(inner) = condition.as_not() {
+        return first_general_enclosed(inner);
+    }
+    if let Some((_, operands)) = condition.as_operation() {
+        return operands.iter().find_map(first_general_enclosed);
+    }
+    condition.as_general_enclosed()
+}
+
+/// Reports the first `<general-enclosed>` that `condition` holds, if any.
+#[cold]
+pub(crate) fn warn_general_enclosed<C: QueryCondition>(
+    input: &Parser,
+    options: &css::ParserOptions,
+    condition: &C,
+) {
+    let Some(raw) = first_general_enclosed(condition) else {
+        return;
+    };
+    let location = input.current_source_location();
+    options.warn_fmt(
+        format_args!(
+            "Unknown condition is kept as written: {}",
+            bstr::BStr::new(raw)
+        ),
+        location.line,
+        location.column,
+    );
 }
 
 /// Parse a media condition in parentheses, or a style() function.
@@ -1570,20 +1645,41 @@ pub(crate) fn parse_parens_or_function<C: QueryCondition>(
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
-    use bun_core::strings;
     let location = input.current_source_location();
-    let t = *input.next()?;
+    input.skip_whitespace();
+    let start = input.position();
+    let t = *input.next_including_whitespace_and_comments()?;
     match &t {
-        css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
-        css::Token::Function(f) => {
-            if flags.allow_style() && strings::eql_case_insensitive_ascii_check_length(f, b"style")
-            {
-                return C::parse_style_query_with_options(input, options);
+        css::Token::OpenParen => parse_paren_block::<C>(input, flags, options),
+        css::Token::Function(_) => parse_function::<C>(input, location, start, t, flags, options),
+        _ => Err(location.new_unexpected_token_error(t)),
+    }
+}
+
+/// Parse the block of the function `token`, which starts at `start`.
+fn parse_function<C: QueryCondition>(
+    input: &mut Parser,
+    location: css::SourceLocation,
+    start: usize,
+    token: css::Token,
+    flags: QueryConditionFlags,
+    options: &css::ParserOptions,
+) -> Result<C> {
+    use bun_core::strings;
+    let block = input.state();
+    let error = match token {
+        css::Token::Function(f)
+            if flags.allow_style()
+                && strings::eql_case_insensitive_ascii_check_length(f, b"style") =>
+        {
+            match C::parse_style_query_with_options(input, options) {
+                Ok(condition) => return Ok(condition),
+                Err(error) => error,
             }
         }
-        _ => {}
-    }
-    Err(location.new_unexpected_token_error(t))
+        _ => location.new_unexpected_token_error(token),
+    };
+    parse_general_enclosed(input, &block, start, error)
 }
 
 fn parse_paren_block<C: QueryCondition>(
@@ -1591,14 +1687,57 @@ fn parse_paren_block<C: QueryCondition>(
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
-    input.parse_nested_block(|i| {
-        if let Ok(inner) =
-            i.try_parse(|i2| parse_query_condition_with_options::<C>(i2, flags, options))
+    let block = input.state();
+    // One capture for the closure, not one for each field.
+    let block_start = &block;
+    let result = input.parse_nested_block(|i| {
+        // `(calc(1px) < width)` is a range. A bare `layer(x)` is an `@import` layer.
+        if let Ok(inner) = parse_query_condition_with_options::<C>(i, flags, options)
+            && !starts_with_function(&inner)
         {
             return Ok(inner);
         }
+        // The nested input starts where `block` is, with no block pending.
+        i.reset(&css::ParserState {
+            at_start_of: None,
+            ..*block_start
+        });
         C::parse_feature_with_options(i, options)
-    })
+    });
+    match result {
+        Ok(condition) => Ok(condition),
+        // The `(` is the byte before the block.
+        Err(error) => parse_general_enclosed(input, &block, block.position - 1, error),
+    }
+}
+
+/// Keeps the block at `block`, which starts at `start`, as `<general-enclosed>`, or returns `error`.
+#[cold]
+fn parse_general_enclosed<C: QueryCondition>(
+    input: &mut Parser,
+    block: &css::ParserState,
+    start: usize,
+    error: css::error::ParseError<css::ParserError>,
+) -> Result<C> {
+    let Some(general_enclosed) = C::GENERAL_ENCLOSED else {
+        return Err(error);
+    };
+    input.reset(block);
+    let is_closed = input
+        .parse_nested_block(|i| {
+            i.expect_no_error_token()?;
+            // The scan also stops at the end of the input.
+            if i.input.tokenizer.is_eof() {
+                return Err(i.new_error(css::BasicParseErrorKind::end_of_input));
+            }
+            Ok(())
+        })
+        .is_ok();
+    if !is_closed {
+        return Err(error);
+    }
+    input.note_general_enclosed_block();
+    Ok(general_enclosed(input.slice_from_cloned(start)))
 }
 
 impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {

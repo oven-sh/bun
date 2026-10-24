@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -6012,9 +6012,11 @@ describe("css tests", () => {
       "@media (not (color)) or (hover) { .foo { color: chartreuse }}",
       "@media (not (color)) or (hover){.foo{color:#7fff00}}",
     );
-    error_test(
+    // The example of Media Queries 4, section 3.2. `(example, all,)` is
+    // `<general-enclosed>`, so the list keeps both queries.
+    minify_test(
       "@media (example, all,), speech { .foo { color: chartreuse }}",
-      "ParserError::UnexpectedToken(Token::Comma)",
+      "@media (example, all,),speech{.foo{color:#7fff00}}",
     );
     error_test("@media &test, speech { .foo { color: chartreuse }}", "ParserError::UnexpectedToken(Token::Delim('&'))");
     error_test("@media &test { .foo { color: chartreuse }}", "ParserError::UnexpectedToken(Token::Delim('&'))");
@@ -6535,20 +6537,167 @@ describe("css tests", () => {
       true,
     );
 
-    error_test("@media (min-width: hi) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (width >= hi) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test(
-      "@media (width >= 2/1) { .foo { color: chartreuse }}",
-      "ParserError::UnexpectedToken(Token::Delim('/'))",
+    // A `( .. )` or `name( .. )` block that is no feature this parser knows is
+    // `<general-enclosed>` (Media Queries 4, section 3). It evaluates to
+    // unknown and is not a parse error, so it is kept as written. lightningcss
+    // rejects these eleven in its strict mode. Browsers keep them.
+    minify_test("@media (min-width: hi) { .foo { color: chartreuse }}", "@media (min-width: hi){.foo{color:#7fff00}}");
+    minify_test("@media (width >= hi) { .foo { color: chartreuse }}", "@media (width >= hi){.foo{color:#7fff00}}");
+    minify_test("@media (width >= 2/1) { .foo { color: chartreuse }}", "@media (width >= 2/1){.foo{color:#7fff00}}");
+    minify_test(
+      "@media (600px <= min-height) { .foo { color: chartreuse }}",
+      "@media (600px <= min-height){.foo{color:#7fff00}}",
     );
-    error_test("@media (600px <= min-height) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (scan >= 1) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (min-scan: interlace) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (1px <= width <= bar) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (1px <= min-width <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (1px <= scan <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (grid: 10) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
-    error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    minify_test("@media (scan >= 1) { .foo { color: chartreuse }}", "@media (scan >= 1){.foo{color:#7fff00}}");
+    minify_test(
+      "@media (min-scan: interlace) { .foo { color: chartreuse }}",
+      "@media (min-scan: interlace){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (1px <= width <= bar) { .foo { color: chartreuse }}",
+      "@media (1px <= width <= bar){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (1px <= min-width <= 2px) { .foo { color: chartreuse }}",
+      "@media (1px <= min-width <= 2px){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (1px <= scan <= 2px) { .foo { color: chartreuse }}",
+      "@media (1px <= scan <= 2px){.foo{color:#7fff00}}",
+    );
+    minify_test("@media (grid: 10) { .foo { color: chartreuse }}", "@media (grid: 10){.foo{color:#7fff00}}");
+    minify_test(
+      "@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}",
+      "@media (prefers-color-scheme = dark){.foo{color:#7fff00}}",
+    );
+
+    // `(min-width: 0\0)` is the IE 9 and 10 hack.
+    minify_test("@media screen and (min-width:0\\0){.a{top:1px}}", "@media screen and (min-width:0\\0){.a{top:1px}}");
+    minify_test(
+      "@media screen and (min-width: 0\\0 ) { .a { top: 1px } }",
+      "@media screen and (min-width: 0\\0 ){.a{top:1px}}",
+    );
+    cssTest(
+      "@media screen and (min-width: 0\\0 ) { .a { top: 1px } }",
+      "@media screen and (min-width: 0\\0 ) {\n  .a {\n    top: 1px;\n  }\n}\n",
+    );
+    minify_test(
+      "@media screen and (min-width:0\\0) and (min-resolution: +72dpi){.a{top:1px}}",
+      "@media screen and (min-width:0\\0) and (resolution>=72dpi){.a{top:1px}}",
+    );
+    minify_test(
+      "@media screen and (min-width:0\\0), print{.a{top:1px}}",
+      "@media screen and (min-width:0\\0),print{.a{top:1px}}",
+    );
+    minify_test("@media not (min-width:0\\0){.a{top:1px}}", "@media not (min-width:0\\0){.a{top:1px}}");
+    minify_test("@media (min-width:0\\0) or (hover){.a{top:1px}}", "@media (min-width:0\\0) or (hover){.a{top:1px}}");
+    minify_test("@media (hover) and (max-width:){.a{top:1px}}", "@media (hover) and (max-width:){.a{top:1px}}");
+    minify_test("@media (){.a{top:1px}}", "@media (){.a{top:1px}}");
+    minify_test("@media (foo: bar baz){.a{top:1px}}", "@media (foo: bar baz){.a{top:1px}}");
+    minify_test("@media foo(bar){.a{top:1px}}", "@media foo(bar){.a{top:1px}}");
+    minify_test("@media (a (b) [c] {d} e){.a{top:1px}}", "@media (a (b) [c] {d} e){.a{top:1px}}");
+    minify_test("@media (min-width:\n0\\0){.a{top:1px}}", "@media (min-width:\n0\\0){.a{top:1px}}");
+    minify_test("@custom-media --ie (min-width:0\\0);", "@custom-media --ie (min-width:0\\0);");
+    minify_test('@import "b.css" screen and (min-width:0\\0);', '@import "b.css" screen and (min-width:0\\0);');
+
+    // Two rules merge when the text of their queries is the same.
+    minify_test(
+      "@media (min-width:0\\0){.a{top:1px}}@media (min-width:0\\0){.b{top:2px}}",
+      "@media (min-width:0\\0){.a{top:1px}.b{top:2px}}",
+    );
+    minify_test(
+      "@media (min-width:0\\0){.a{top:1px}}@media (min-width:1\\0){.b{top:2px}}",
+      "@media (min-width:0\\0){.a{top:1px}}@media (min-width:1\\0){.b{top:2px}}",
+    );
+
+    // A range that starts with a function is still a range.
+    minify_test("@media (calc(1px + 2px) <= width){.a{top:1px}}", "@media (width>=3px){.a{top:1px}}");
+
+    // Any other group that starts with a function keeps its parentheses.
+    // Without them `(layer(x))` would name a layer after an `@import` URL.
+    minify_test("@media (foo(bar)){.a{top:1px}}", "@media (foo(bar)){.a{top:1px}}");
+    minify_test("@media (calc(1px) and (color)){.a{top:1px}}", "@media (calc(1px) and (color)){.a{top:1px}}");
+    minify_test("@media ((color) or foo(bar)){.a{top:1px}}", "@media (color) or foo(bar){.a{top:1px}}");
+    minify_test('@import "b.css" (layer(x));', '@import "b.css" (layer(x));');
+    minify_test('@import "b.css" ((LAYER(x)));', '@import "b.css" (LAYER(x));');
+    minify_test('@import "b.css" (supports(display:grid));', '@import "b.css" (supports(display:grid));');
+    minify_test('@import "b.css" (layer(x) or (color)), print;', '@import "b.css" (layer(x) or (color)),print;');
+    minify_test('@import "b.css" layer(x) (min-width:0\\0);', '@import "b.css" layer(x) (min-width:0\\0);');
+
+    // A group with something after its condition is the block as written.
+    minify_test("@media ((color) and (hover) x){.a{top:1px}}", "@media ((color) and (hover) x){.a{top:1px}}");
+    minify_test("@media ((x y) z){.a{top:1px}}", "@media ((x y) z){.a{top:1px}}");
+    minify_test("@media ((color) and (hover)){.a{top:1px}}", "@media (color) and (hover){.a{top:1px}}");
+
+    // A feature with no value is the block as written. The rule is not one
+    // that applies to everything.
+    minify_test("@media screen and (width >= ){.a{top:1px}}", "@media screen and (width >= ){.a{top:1px}}");
+    minify_test("@media (width >=), print{.a{top:1px}}", "@media (width >=),print{.a{top:1px}}");
+
+    // `@supports` reads an unknown condition with the same scan, which goes
+    // on after a nested block. The text is kept up to the closing parenthesis.
+    minify_test(
+      "@supports (a: b(c) d) and foo(bar(1) baz){.a{top:1px}}",
+      "@supports (a: b(c) d) and foo(bar(1) baz){.a{top:1px}}",
+    );
+    minify_test("@supports selector(a:has(b) c){.a{top:1px}}", "@supports selector(a:has(b) c){.a{top:1px}}");
+    minify_test("@supports selector(:is(a) ){.a{top:1px}}", "@supports selector(:is(a) ){.a{top:1px}}");
+    minify_test(
+      "@import url(x.css) supports(transform:translate(1px) rotate(1deg));",
+      '@import "x.css" supports(transform:translate(1px) rotate(1deg));',
+    );
+
+    // The bundler reports each query that holds such a block. A range that
+    // starts with a function is known, so it is not reported.
+    test("a kept condition is a warning", async () => {
+      using dir = tempDir("css-general-enclosed-warning", {
+        "entry.css": `
+          @import "./dep.css" screen and (min-width:0\\0);
+          @media (max-width: $tablet) and (color), print { .a { color: red } }
+          @container scroll-state(stuck: top) { .b { color: red } }
+          @media (calc(1px + 2px) <= width) { .c { color: red } }
+        `,
+        "dep.css": ".dep { color: red }",
+      });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")], minify: true });
+      expect(result.logs.map(log => [log.level, log.message])).toEqual([
+        ["warn", "Unknown condition is kept as written: (min-width:0\\0)"],
+        ["warn", "Unknown condition is kept as written: (max-width: $tablet)"],
+        ["warn", "Unknown condition is kept as written: scroll-state(stuck: top)"],
+      ]);
+      expect(await result.outputs[0].text()).toBe(
+        "@media screen and (min-width:0\\0){.dep{color:red}}" +
+          "@media (max-width: $tablet) and (color),print{.a{color:red}}" +
+          "@container scroll-state(stuck: top){.b{color:red}}" +
+          "@media (min-width:3px){.c{color:red}}\n",
+      );
+    });
+
+    for (const [source, error] of [
+      // The block is not closed.
+      ["@media (min-width:0\\0 {.a{top:1px}}", "Invalid media query"],
+      ["@media foo(bar {.a{top:1px}}", "Unexpected token: foo("],
+      // The block holds an error token.
+      ["@media (a ] b){.a{top:1px}}", "Unexpected token: ]"],
+      ['@media (a "x\n b){.a{top:1px}}', 'Unexpected token: "x'],
+      ["@media (a url(x y) b){.a{top:1px}}", "Unexpected token: url(x y)"],
+      ["@import url(x.css) supports(transform:translate(1px) ]);", "Unexpected token: ]"],
+      ["@supports (a: b(c) ] d){.a{top:1px}}", "Unexpected token: ]"],
+      // The query ends after `and` or `or`.
+      ["@media (min-width:0\\0) and {.a{top:1px}}", "Invalid media query"],
+      ["@media (not (min-width:0\\0)) and {.a{top:1px}}", "Invalid media query"],
+      ["@media (min-width:0\\0) or {.a{top:1px}}", "Invalid media query"],
+      ['@import "b.css" (min-width:0\\0) and;', "Invalid media query"],
+      // Something follows the block.
+      ["@media (min-width:0\\0) foo{.a{top:1px}}", "Unexpected token: foo"],
+      ["@media (width <) foo{.a{top:1px}}", "Unexpected token: foo"],
+      // An error token follows the condition of a group.
+      ["@media ((color) ] x){.a{top:1px}}", "Unexpected token: ]"],
+    ]) {
+      test(`ERROR: ${source}`, () => {
+        expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${error}`);
+      });
+    }
   });
 
   describe("transition", () => {
@@ -7866,6 +8015,37 @@ describe("css tests", () => {
   describe("container", () => {
     minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
     minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");
+
+    // A block or a function this parser does not know is `<general-enclosed>`
+    // and is kept as written.
+    minify_test("@container (min-width:0\\0){a{color:red}}", "@container (min-width:0\\0){a{color:red}}");
+    minify_test(
+      "@container scroll-state(stuck: top){a{color:red}}",
+      "@container scroll-state(stuck: top){a{color:red}}",
+    );
+    minify_test(
+      "@container (scroll-state(stuck: top)){a{color:red}}",
+      "@container (scroll-state(stuck: top)){a{color:red}}",
+    );
+    // A style query has no `<general-enclosed>`: the `style( .. )` is kept.
+    minify_test(
+      "@container style((x y) and (--a: 1)){a{color:red}}",
+      "@container style((x y) and (--a: 1)){a{color:red}}",
+    );
+    minify_test(
+      "@container foo (width > 100px) and bar(baz){a{color:red}}",
+      "@container foo (width>100px) and bar(baz){a{color:red}}",
+    );
+    minify_test("@container not foo(bar){a{color:red}}", "@container not foo(bar){a{color:red}}");
+    for (const [source, error] of [
+      ["@container foo(bar {a{color:red}}", "Unexpected token: foo("],
+      ['@container (a "x\n b){a{color:red}}', 'Unexpected token: "x'],
+      ["@container (min-width:0\\0) and {a{color:red}}", "Invalid media query"],
+    ]) {
+      test(`ERROR: ${source}`, () => {
+        expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${error}`);
+      });
+    }
 
     // `not` takes a single parenthesized query, so the grouping parens around
     // a nested and/or group must survive minification for the output to parse.

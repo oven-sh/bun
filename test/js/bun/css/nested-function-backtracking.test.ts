@@ -85,3 +85,75 @@ test("stylesheets truncated inside an otherwise-valid value still parse", async 
   expect(output).toContain("calc(100% - 5px)");
   expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
 });
+
+// A `( .. )` block in a media or container condition that is no known
+// condition is read a second time, as raw tokens (`<general-enclosed>`).
+
+const open50 = Buffer.alloc(50, "(").toString();
+const close50 = Buffer.alloc(50, ")").toString();
+
+test("an unknown media condition block at every nesting level is kept as written", async () => {
+  // The token after each inner block makes the block around it unknown too.
+  let condition = "x y";
+  for (let i = 0; i < 50; i++) condition = `(${condition}) z`;
+  const { stderr, exitCode, output } = await buildCSS(
+    "unknown-media-every-level.css",
+    `@media (${condition}){a{color:red}}`,
+  );
+  expect(output).toContain(`@media (${condition}) {`);
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+});
+
+test("an unknown media condition block inside nested parentheses is kept", async () => {
+  const { stderr, exitCode, output } = await buildCSS(
+    "unknown-media-innermost.css",
+    `@media ${open50}x y${close50}{a{color:red}}`,
+  );
+  expect(output).toContain("@media (x y) {");
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+});
+
+test("nested media condition blocks around an error token error out", async () => {
+  const { stderr, exitCode } = await buildCSS("error-token-media.css", `@media ${open50}x ] y${close50}{a{color:red}}`);
+  expect(stderr).toContain("Invalid media query");
+  expect(exitCode).toBe(1);
+});
+
+test("unclosed nested media condition blocks error out", async () => {
+  const { stderr, exitCode } = await buildCSS("unclosed-media.css", `@media ${open50}x y{a{color:red}}`);
+  expect(stderr).toContain("Invalid media query");
+  expect(exitCode).toBe(1);
+});
+
+// Blocks nest up to `MAX_NESTING_DEPTH` (512). The second read of a block
+// must fit the same stack as the first.
+const open512 = Buffer.alloc(512, "(").toString();
+const close512 = Buffer.alloc(512, ")").toString();
+
+test.concurrent.each([
+  ["@media", "color", "(color)"],
+  ["@media", "x y", "(x y)"],
+  ["@container", "width > 1px", "(width > 1px)"],
+  ["@container", "x y", "(x y)"],
+])("%s with 512 nested blocks around `%s` builds", async (rule, inner, printed) => {
+  const { stderr, exitCode, output } = await buildCSS(
+    "nested-512.css",
+    `${rule} ${open512}${inner}${close512}{a{color:red}}`,
+  );
+  expect(output).toContain(`${rule} ${printed} {`);
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+});
+
+test.concurrent.each([
+  ["@media", "color"],
+  ["@media", "x y"],
+  ["@container", "width > 1px"],
+  ["@container", "x y"],
+])("%s with 513 nested blocks around `%s` is an error", async (rule, inner) => {
+  const { stderr, exitCode } = await buildCSS(
+    "nested-513.css",
+    `${rule} (${open512}${inner}${close512}){a{color:red}}`,
+  );
+  expect(stderr).toContain("error: Invalid media query");
+  expect(exitCode).toBe(1);
+});

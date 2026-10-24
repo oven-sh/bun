@@ -1595,8 +1595,12 @@ mod rule_parsers {
                     b"container" => {
                         let container_name: Option<ContainerName> =
                             input.try_parse(css_rules::container::ContainerName::parse).ok();
+                        let unknown_blocks = input.general_enclosed_blocks();
                         let condition: ContainerCondition =
                             css_rules::container::ContainerCondition::parse(input)?;
+                        if input.general_enclosed_blocks() != unknown_blocks {
+                            media_query::warn_general_enclosed(input, this.options, &condition);
+                        }
                         break 'brk AtRulePrelude::Container { name: container_name, condition };
                     },
                     b"starting-style" => break 'brk AtRulePrelude::StartingStyle,
@@ -3293,6 +3297,17 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
+    /// See `ParserInput::general_enclosed_blocks`.
+    #[inline]
+    pub(crate) fn general_enclosed_blocks(&self) -> u64 {
+        self.input.general_enclosed_blocks
+    }
+
+    #[inline]
+    pub(crate) fn note_general_enclosed_block(&mut self) {
+        self.input.general_enclosed_blocks += 1;
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3308,7 +3323,6 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     self.parse_nested_block(|i| i.expect_no_error_token())?;
-                    return Ok(());
                 }
                 _ => {
                     if tok.is_parse_error() {
@@ -3833,6 +3847,8 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// Count of the blocks that became `<general-enclosed>` conditions.
+    general_enclosed_blocks: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3861,6 +3877,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            general_enclosed_blocks: 0,
         }
     }
 }

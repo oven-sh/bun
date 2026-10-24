@@ -374,66 +374,22 @@ extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
 
 /// Returns a pointer that needs to be freed with `delete[]`.
-static char* toFileURI(std::string_view path)
+static char* toFileURI(const WTF::String& path)
 {
-    auto needs_escape = [](char ch) {
-        return !(('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || ('0' <= ch && ch <= '9')
-            || ch == '_' || ch == '-' || ch == '.' || ch == '!' || ch == '~' || ch == '*' || ch == '\'' || ch == '(' || ch == ')' || ch == '/' || ch == ':');
-    };
-
-    auto to_hex = [](uint8_t nybble) -> char {
-        if (nybble < 0xa) {
-            return '0' + nybble;
-        }
-
-        return 'a' + (nybble - 0xa);
-    };
-
-    size_t escape_count = 0;
-    for (char ch : path) {
-#if OS(WINDOWS)
-        if (needs_escape(ch) && ch != '\\') {
-#else
-        if (needs_escape(ch)) {
-#endif
-            ++escape_count;
-        }
+    WTF::String uri = emptyString();
+    if (!path.isNull()) {
+        // Node serializes module.filename as a URL path, including UNC server names.
+        // https://github.com/nodejs/node/blob/v24.21.0/src/node_api.cc#L770-L785
+        WTF::URL url("file:///"_s);
+        url.setPath(makeStringByReplacingAll(path, '%', "%25"_s));
+        uri = url.string();
     }
-
-#if OS(WINDOWS)
-#define FILE_URI_START "file:///"
-#else
-#define FILE_URI_START "file://"
-#endif
-
-    const size_t string_size = sizeof(FILE_URI_START) + path.size() + 2 * escape_count; // null byte is included in the sizeof expression
-    char* characters = new char[string_size];
-    strncpy(characters, FILE_URI_START, sizeof(FILE_URI_START));
-    size_t i = sizeof(FILE_URI_START) - 1;
-    for (char ch : path) {
-#if OS(WINDOWS)
-        if (ch == '\\') {
-            characters[i++] = '/';
-            continue;
-        }
-#endif
-        if (needs_escape(ch)) {
-            characters[i++] = '%';
-            characters[i++] = to_hex(static_cast<uint8_t>(ch) >> 4);
-            characters[i++] = to_hex(ch & 0xf);
-        } else {
-            characters[i++] = ch;
-        }
-    }
-
-    characters[i] = '\0';
-    ASSERT(i + 1 == string_size);
+    auto utf8 = uri.utf8();
+    char* characters = new char[utf8.length() + 1];
+    if (utf8.length())
+        memcpy(characters, utf8.span().data(), utf8.length());
+    characters[utf8.length()] = '\0';
     return characters;
-}
-
-static char* toFileURI(std::span<const char> span)
-{
-    return toFileURI(std::string_view(span.data(), span.size()));
 }
 
 extern "C" size_t Bun__process_dlopen_count;
@@ -756,7 +712,19 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
-    char* filename_cstr = toFileURI(byteCast<char>(utf8.span()));
+    WTF::String moduleFilename;
+    if (fromEmbedded) {
+        // Compiled addons expose their extracted file, not the virtual module key.
+        moduleFilename = filename;
+    } else {
+        auto moduleFilenameValue = moduleObject->get(globalObject, builtinNames(vm).filenamePublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (moduleFilenameValue.isString()) {
+            moduleFilename = moduleFilenameValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    char* filename_cstr = toFileURI(moduleFilename);
 
     napi_module nmodule {
         .nm_version = module_version,

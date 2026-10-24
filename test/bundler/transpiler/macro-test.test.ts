@@ -1,6 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -584,6 +585,7 @@ describe.concurrent("a file-backed Blob returned from a macro", () => {
     `export const emptyText = () => Bun.file(here + "empty.txt");`,
     `export const emptyJson = () => Bun.file(here + "empty.json");`,
     `export const emptyBinary = () => Bun.file(here + "empty.bin");`,
+    `export const sliceOfEmpty = () => Bun.file(here + "empty.txt").slice(3, 9);`,
     ``,
   ].join("\n");
   const names = [...macros.matchAll(/export const (\w+)/g)].map(match => match[1]);
@@ -616,6 +618,7 @@ describe.concurrent("a file-backed Blob returned from a macro", () => {
     emptyText: "",
     emptyJson: {},
     emptyBinary: "data:application/octet-stream;base64,",
+    sliceOfEmpty: "",
   };
 
   test("is inlined by its type, as an in-memory Blob of the same bytes is", async () => {
@@ -669,7 +672,11 @@ describe.concurrent("a file-backed Blob returned from a macro", () => {
         ].join("\n"),
       },
       ["run", "index.ts"],
-      { UV_THREADPOOL_SIZE: "2" },
+      {
+        UV_THREADPOOL_SIZE: "2",
+        // detect_leaks=0: nothing collects the macro VM of a pool thread before exit, so LeakSanitizer reports each `Bun.file()` made there.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
     );
     expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
       value: modules.map(() => text),
@@ -697,7 +704,11 @@ describe.concurrent("a file-backed Blob returned from a macro", () => {
         "index.ts:2:24",
       ],
     ],
-    ["a directory", `Bun.file(import.meta.dir)`, ["failed to read the file returned by this macro: ", "index.ts:2:24"]],
+    [
+      "a directory",
+      `Bun.file(import.meta.dir)`,
+      ["failed to read the file returned by this macro: EISDIR: illegal operation on a directory", "index.ts:2:24"],
+    ],
     [
       "a JSON file that does not parse",
       `Bun.file(import.meta.dir + "/bad.json")`,
@@ -774,6 +785,111 @@ describe.concurrent("a file-backed Blob returned from a macro", () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
+  });
+
+  // With a limit, the file reader stops at the size that the file reports. For this read it goes on to the
+  // end of the window.
+  test.skipIf(!isLinux)("keeps its window when it reports no size", async () => {
+    const version = readFileSync("/proc/version", "utf8");
+    const symbols = readFileSync("/proc/kallsyms");
+    // More than the 256 KB that the first read asks for.
+    const [start, end] = [16, 300_016];
+    expect(symbols.length).toBeGreaterThan(end);
+    const sha256 = (bytes: string | Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    const { lastLine, stderr, exitCode } = await run({
+      "m.ts": [
+        `import fs from "node:fs";`,
+        `const text = { type: "text/plain" };`,
+        `export const long = () => Bun.file("/proc/kallsyms", text).slice(${start}, ${end});`,
+        `export const pastTheEnd = () => Bun.file("/proc/version", text).slice(100_000, 100_010);`,
+        `export const twoOfOneDescriptor = () => {`,
+        `  const file = Bun.file(fs.openSync("/proc/version", "r"), text);`,
+        `  return [file.slice(0, 5), file.slice(6, 13)];`,
+        `};`,
+        ``,
+      ].join("\n"),
+      "index.ts": [
+        `import { long, pastTheEnd, twoOfOneDescriptor } from "./m.ts" with { type: "macro" };`,
+        `const symbols = long();`,
+        `const sha256 = new Bun.CryptoHasher("sha256").update(symbols).digest("hex");`,
+        `console.log(JSON.stringify({ long: [symbols.length, sha256], pastTheEnd: pastTheEnd(), twoOfOneDescriptor: twoOfOneDescriptor() }));`,
+        ``,
+      ].join("\n"),
+    });
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
+      value: {
+        long: [end - start, sha256(symbols.subarray(start, end))],
+        pastTheEnd: "",
+        twoOfOneDescriptor: [version.slice(0, 5), version.slice(6, 13)],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // On Linux, an open without O_NOCTTY makes a terminal the controlling terminal of a session leader that has none.
+  test.skipIf(!isLinux)("does not take a terminal as the controlling terminal", async () => {
+    const decls = {
+      openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      ptsname: { args: [FFIType.i32], returns: FFIType.cstring },
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    } as const;
+    const libc = isMusl
+      ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", decls).symbols
+      : {
+          ...dlopen("libutil.so.1", { openpty: decls.openpty }).symbols,
+          ...dlopen("libc.so.6", { ptsname: decls.ptsname, close: decls.close }).symbols,
+        };
+    const master = new Int32Array(1);
+    const slave = new Int32Array(1);
+    expect(libc.openpty(master, slave, null, null, null)).toBe(0);
+    try {
+      const terminal = String(libc.ptsname(master[0]));
+      using dir = tempDir("macro-file-blob-terminal", {
+        "m.ts": `export const terminal = () => Bun.file(${JSON.stringify(terminal)});\n`,
+        "uses.ts": `import { terminal } from "./m.ts" with { type: "macro" };\nconsole.log("inlined", terminal());\n`,
+        // Field 7 of /proc/self/stat is the controlling terminal. `require` transpiles on the main thread.
+        "index.ts": [
+          `import { readFileSync } from "node:fs";`,
+          `function controllingTerminal() {`,
+          `  const stat = readFileSync("/proc/self/stat", "utf8");`,
+          `  return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[4];`,
+          `}`,
+          `const before = controllingTerminal();`,
+          `let error = "";`,
+          `try {`,
+          `  require("./uses.ts");`,
+          `} catch (e) {`,
+          `  error = String(e.message).split("\\n")[0];`,
+          `}`,
+          `console.log(JSON.stringify({ before, after: controllingTerminal(), error }));`,
+          ``,
+        ].join("\n"),
+      });
+      // `detached` makes the child a session leader, and none of its stdio is a terminal.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        detached: true,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ value: JSON.parse(stdout.trim().split("\n").pop() || "null"), stderr }).toEqual({
+        value: {
+          before: "0",
+          after: "0",
+          error: `failed to read the file returned by this macro: ENODEV: no such device, read '${terminal}'`,
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      libc.close(master[0]);
+      libc.close(slave[0]);
+    }
   });
 });
 

@@ -2308,7 +2308,10 @@ impl BlobExt for Blob {
             PathOrFileDescriptor::Path(path) => {
                 // A FIFO with no writer blocks a plain open. It is rejected below.
                 #[cfg(unix)]
-                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+                let flags = bun_sys::O::RDONLY
+                    | bun_sys::O::CLOEXEC
+                    | bun_sys::O::NONBLOCK
+                    | bun_sys::O::NOCTTY;
                 #[cfg(not(unix))]
                 let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -2349,23 +2352,38 @@ impl BlobExt for Blob {
         args.path = PathOrFileDescriptor::Fd(fd);
         args.max_size = (size != MAX_SIZE).then_some(size);
         args.limit_size_for_javascript = true;
-        match node_fs
-            .read_file_with_options(
-                &args,
-                node::fs::Flavor::Sync,
-                node::fs::ReadFileStringType::NullTerminated,
-            )
-            .map_err(with_target)?
-        {
-            node::fs::ret::ReadFileWithOptions::NullTerminated(bytes) => {
-                let mut bytes = bytes.into_vec_with_nul();
-                bytes.pop();
-                Ok(bytes)
+        let mut read = |args: &node::fs::args::ReadFile<'_>| -> bun_sys::Result<Vec<u8>> {
+            match node_fs
+                .read_file_with_options(
+                    args,
+                    node::fs::Flavor::Sync,
+                    node::fs::ReadFileStringType::NullTerminated,
+                )
+                .map_err(with_target)?
+            {
+                node::fs::ret::ReadFileWithOptions::NullTerminated(bytes) => {
+                    let mut bytes = bytes.into_vec_with_nul();
+                    bytes.pop();
+                    Ok(bytes)
+                }
+                _ => unreachable!(
+                    "ReadFileStringType::NullTerminated always yields the NullTerminated variant"
+                ),
             }
-            _ => unreachable!(
-                "ReadFileStringType::NullTerminated always yields the NullTerminated variant"
-            ),
+        };
+        let mut bytes = read(&args)?;
+        // With a `max_size` the reader stops at the size that `fstat` reports, and procfs reports 0: ask again until the window is full or the file ends.
+        if file_size == 0 && size != MAX_SIZE && !bytes.is_empty() {
+            while (bytes.len() as u64) < size {
+                args.max_size = Some(size - bytes.len() as u64);
+                let more = read(&args)?;
+                if more.is_empty() {
+                    break;
+                }
+                bytes.extend_from_slice(&more);
+            }
         }
+        Ok(bytes)
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {

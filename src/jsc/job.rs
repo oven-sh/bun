@@ -72,7 +72,7 @@ impl JSGlobalObject {
         }
     }
 
-    /// What a host function starts with: this global, and the context of the script that called it.
+    /// This global, and the context of the script that called the host function.
     #[inline]
     pub fn js_thread_of_caller<'a>(&'a self, frame: &crate::CallFrame) -> JsThread<'a> {
         self.js_thread(self.bun_vm().context_of_caller(frame))

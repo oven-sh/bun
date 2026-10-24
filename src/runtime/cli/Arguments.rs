@@ -2655,10 +2655,9 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // Same rule as `Bun.build({ sourcemap: true })`.
-            let writes_to_disk = ctx.bundler_options.compile
-                || !ctx.bundler_options.outdir.is_empty()
-                || !ctx.bundler_options.outfile.is_empty();
-            opts.source_map = Some(if writes_to_disk {
+            let has_output_location =
+                !ctx.bundler_options.outdir.is_empty() || !ctx.bundler_options.outfile.is_empty();
+            opts.source_map = Some(if has_output_location {
                 api::SourceMapMode::Linked
             } else {
                 api::SourceMapMode::Inline

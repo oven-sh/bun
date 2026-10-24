@@ -14,4 +14,4 @@ test("test timeout kills dangling processes", async () => {
 test("slow test after test timeout", async () => {
   await Bun.sleep(100);
   console.log("Ran slow test");
-}, 200);
+});

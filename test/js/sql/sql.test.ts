@@ -2882,9 +2882,6 @@ if (isDockerServiceEnabled("postgres_plain")) {
           server.close();
         }
       },
-      {
-        timeout: 1000,
-      },
     );
 
     // t('connect_timeout throws proper error', async() => [

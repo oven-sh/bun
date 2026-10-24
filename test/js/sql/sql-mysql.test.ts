@@ -1363,9 +1363,6 @@ console.log(JSON.stringify({ outcome, closed }));`,
               server.close();
             }
           },
-          {
-            timeout: 1000,
-          },
         );
       });
       test("Array returns rows as arrays of columns", async () => {

@@ -443,7 +443,6 @@ pub(crate) fn process_ipc_listeners() -> Listeners {
     }
 }
 
-/// `process` got a listener, or its channel a ref: what waits in the channel is offered again.
 // HOST_EXPORT(Bun__requestProcessIPCDrain, c)
 pub(crate) fn request_process_ipc_drain() {
     if let Some(inst) = CHANNEL.get() {
@@ -524,8 +523,7 @@ impl IPCInstance {
         }
     }
 
-    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    /// `internal`: a `Data` message is for 'internalMessage'.
+    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners. `internal`: a `Data` message is for 'internalMessage'.
     pub(crate) fn handle_ipc_message(
         &self,
         message: &DecodedIPCMessage,

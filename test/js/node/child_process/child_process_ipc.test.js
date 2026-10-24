@@ -69,8 +69,7 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
   const onStdin = child => question => child.stdin.write(question + "\n");
   const onLine = `const onLine = answer => process.stdin.on("data", data => String(data).trim().split("\\n").forEach(answer));`;
 
-  // Sends 64 KiB messages, each one once the one before it is written, so `onSent` counts what the channel took.
-  // 64 of them are 4 MiB: far more than a channel holds for a receiver that does not listen. Returns how to stop.
+  // Sends 64 KiB messages (64 are 4 MiB, far more than a channel holds), each once the one before it is written, so `onSent` counts what the channel took. Returns how to stop.
   function flood(target, onSent, count = 64) {
     const chunk = Buffer.alloc(64 * 1024, "x").toString();
     let i = 0;
@@ -111,8 +110,7 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
       });
     });
 
-    // Each next listener is added before the channel reads the close that came with the burst.
-    // node v26.3.0 emits all its held messages at once, so it loses the ones behind the first once() listener.
+    // Each next listener is added before the channel reads the close that came with the burst. node v26.3.0 emits its held messages all at once, and loses the ones behind the first once() listener.
     test("parent: once() in a loop gets every message of a child that exits", async () => {
       const child = ipcChild(`for (let i = 0; i < 5; i++) process.send(i);`, { serialization });
       const got = [];

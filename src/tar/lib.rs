@@ -16,6 +16,7 @@ pub mod error;
 pub mod gzip;
 mod header;
 mod num;
+pub mod output;
 pub mod reader;
 pub mod writer;
 

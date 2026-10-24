@@ -16,6 +16,18 @@ export async function loadCases<T>(path: string): Promise<T[]> {
 }
 
 /** A ustar header with mode 644 and everything else zero. */
+/** The arguments of a record.ts, which has to be told that it may replace what libarchive did. */
+export function recordArguments() {
+  const args = process.argv.slice(2);
+  if (!process.versions.libarchive && !args.includes("--accept")) {
+    throw new Error(
+      `Bun ${Bun.version} does not use libarchive, so this would record the code under test. ` +
+        "Run it with Bun 1.4.4, or pass --accept after a change that is meant.",
+    );
+  }
+  return args.filter(arg => arg !== "--accept");
+}
+
 export function tarHeader(name: Buffer | string, size: number, type = "0") {
   const h = Buffer.alloc(512);
   Buffer.from(name).copy(h, 0, 0, 100);

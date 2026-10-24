@@ -1,6 +1,7 @@
 //! The gzip container (RFC 1952). DEFLATE itself is zlib's.
 
 use crate::error::{Error, Result};
+use crate::output::Output;
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_zlib::{InflateDecoder, ReturnCode, crc32_bytes};
@@ -15,7 +16,7 @@ mod flag {
 
 const RAW_DEFLATE: core::ffi::c_int = -15;
 /// The two identification bytes, and the compression method, which is always DEFLATE.
-const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
+pub const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
 const FLAGS: usize = MAGIC.len();
 const FIXED_HEADER_SIZE: usize = 10;
 /// The length of the extra field, and the CRC-16 of the header.
@@ -317,8 +318,22 @@ impl Decoder {
     }
 }
 
+/// All of `input` decompressed, if it is gzip, nothing is wrong with it, and its trailer gives a size below `limit`.
+pub fn decompress_small(input: &[u8], limit: usize) -> Option<Vec<u8>> {
+    let size = u32::from_le_bytes(*input.last_chunk()?) as usize;
+    if size >= limit {
+        return None;
+    }
+    let mut out = Vec::new();
+    // Room for one byte more, so that the decoder goes on to see that nothing follows.
+    let decoded = Decoder::new()
+        .ok()?
+        .decode(input, true, &mut out, size.saturating_add(1));
+    (matches!(decoded, Ok((_, Progress::Done))) && !out.is_empty()).then_some(out)
+}
+
 /// One gzip member with no name and no time, so the same input always gives the same bytes.
-pub struct Encoder<O: crate::writer::Output> {
+pub struct Encoder<O: Output> {
     out: O,
     deflate: bun_zlib::DeflateEncoder,
     buffer: Vec<u8>,
@@ -331,7 +346,7 @@ pub struct Encoder<O: crate::writer::Output> {
 const ENCODER_BUFFER: usize = 61440;
 const OS_UNKNOWN: u8 = 255;
 
-impl<O: crate::writer::Output> Encoder<O> {
+impl<O: Output> Encoder<O> {
     /// `level` is 0 to 9.
     pub fn new(out: O, level: u8) -> Result<Self> {
         let mut buffer = Vec::new();
@@ -394,7 +409,7 @@ impl<O: crate::writer::Output> Encoder<O> {
     }
 }
 
-impl<O: crate::writer::Output> crate::writer::Output for Encoder<O> {
+impl<O: Output> Output for Encoder<O> {
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.crc = crc32_bytes(self.crc, bytes);
         self.size = self.size.wrapping_add(bytes.len() as u32);

@@ -57,9 +57,9 @@ pub fn open_memory(bytes: &[u8], dialect: Dialect) -> bun_tar::Result<MemoryDeco
 pub fn read_data_into_fd(
     reader: &mut MemoryDecoder<'_>,
     fd: Fd,
-    strategy: &mut lib::WriteStrategy,
+    strategy: &mut WriteStrategy,
 ) -> Result<(), ReadDataError> {
-    let mut writer = lib::EntryWriter::new(fd);
+    let mut writer = EntryWriter::new(fd);
     loop {
         match reader.next()? {
             Event::Data { offset, bytes } => writer.write(strategy, offset, bytes)?,
@@ -77,113 +77,109 @@ fn log_archive_error(path: &[OSPathChar], err: impl core::fmt::Display) {
     );
 }
 
-pub mod lib {
-    use super::*;
+/// One per extraction. Once `pwrite` fails, later entries don't try it again.
+pub struct WriteStrategy {
+    pub pwrite: bool,
+}
 
-    /// One per extraction. Once `pwrite` fails, later entries don't try it again.
-    pub struct WriteStrategy {
-        pub pwrite: bool,
+impl Default for WriteStrategy {
+    fn default() -> Self {
+        Self { pwrite: cfg!(unix) }
     }
+}
 
-    impl Default for WriteStrategy {
-        fn default() -> Self {
-            Self { pwrite: cfg!(unix) }
-        }
-    }
+/// Never sizes a write or an allocation from the entry header or the sparse map, because
+/// nothing verifies them.
+pub struct EntryWriter {
+    fd: Fd,
+    /// One past the last byte written.
+    end: i64,
+    /// The file position, which only `write` and `lseek` move.
+    cursor: i64,
+    #[cfg(windows)]
+    marked_sparse: bool,
+}
 
-    /// Never sizes a write or an allocation from the entry header or the sparse map, because
-    /// nothing verifies them.
-    pub struct EntryWriter {
-        fd: Fd,
-        /// One past the last byte written.
-        end: i64,
-        /// The file position, which only `write` and `lseek` move.
-        cursor: i64,
-        #[cfg(windows)]
-        marked_sparse: bool,
-    }
-
-    impl EntryWriter {
-        pub fn new(fd: Fd) -> Self {
-            Self {
-                fd,
-                end: 0,
-                cursor: 0,
-                #[cfg(windows)]
-                marked_sparse: false,
-            }
-        }
-
-        #[inline]
-        pub fn fd(&self) -> Fd {
-            self.fd
-        }
-
-        /// NTFS gives a range that nothing writes real clusters unless the file is marked sparse.
-        #[inline]
-        fn before_hole(&mut self) {
+impl EntryWriter {
+    pub fn new(fd: Fd) -> Self {
+        Self {
+            fd,
+            end: 0,
+            cursor: 0,
             #[cfg(windows)]
-            if !self.marked_sparse {
-                self.marked_sparse = true;
-                // A volume without sparse file support refuses the mark. The hole then takes up
-                // disk space.
-                let _ = bun_sys::set_sparse(self.fd);
-            }
+            marked_sparse: false,
         }
+    }
 
-        pub fn write(
-            &mut self,
-            strategy: &mut WriteStrategy,
-            offset: i64,
-            data: &[u8],
-        ) -> bun_sys::Maybe<()> {
-            if data.is_empty() {
-                return Ok(());
-            }
-            let fd = self.fd;
-            let file = bun_sys::File::borrow(&fd);
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        self.fd
+    }
 
-            #[cfg(unix)]
-            if strategy.pwrite {
-                match file.pwrite_all(data, offset) {
-                    Ok(()) => {
-                        self.end = self.end.max(offset + data.len() as i64);
-                        return Ok(());
-                    }
-                    Err(_) => {
-                        strategy.pwrite = false;
-                        bun_core::debug_warn!(
-                            "archive: falling back to write() after pwrite() failure",
-                        );
-                    }
+    /// NTFS gives a range that nothing writes real clusters unless the file is marked sparse.
+    #[inline]
+    fn before_hole(&mut self) {
+        #[cfg(windows)]
+        if !self.marked_sparse {
+            self.marked_sparse = true;
+            // A volume without sparse file support refuses the mark. The hole then takes up
+            // disk space.
+            let _ = bun_sys::set_sparse(self.fd);
+        }
+    }
+
+    pub fn write(
+        &mut self,
+        strategy: &mut WriteStrategy,
+        offset: i64,
+        data: &[u8],
+    ) -> bun_sys::Maybe<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let fd = self.fd;
+        let file = bun_sys::File::borrow(&fd);
+
+        #[cfg(unix)]
+        if strategy.pwrite {
+            match file.pwrite_all(data, offset) {
+                Ok(()) => {
+                    self.end = self.end.max(offset + data.len() as i64);
+                    return Ok(());
+                }
+                Err(_) => {
+                    strategy.pwrite = false;
+                    bun_core::debug_warn!(
+                        "archive: falling back to write() after pwrite() failure",
+                    );
                 }
             }
-            #[cfg(not(unix))]
-            let _ = strategy;
-
-            if offset != self.cursor {
-                if offset > self.end {
-                    self.before_hole();
-                }
-                bun_sys::set_file_offset(self.fd, offset as u64)?;
-                self.cursor = offset;
-            }
-
-            file.write_all(data)?;
-            self.cursor += data.len() as i64;
-            self.end = self.end.max(self.cursor);
-            Ok(())
         }
+        #[cfg(not(unix))]
+        let _ = strategy;
 
-        /// `end` is the length of the file, which the last write need not have reached.
-        pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
-            if end > self.end {
+        if offset != self.cursor {
+            if offset > self.end {
                 self.before_hole();
-                bun_sys::ftruncate(self.fd, end)?;
-                self.end = end;
             }
-            Ok(())
+            bun_sys::set_file_offset(self.fd, offset as u64)?;
+            self.cursor = offset;
         }
+
+        file.write_all(data)?;
+        self.cursor += data.len() as i64;
+        self.end = self.end.max(self.cursor);
+        Ok(())
+    }
+
+    /// `end` is the length of the file, which the last write need not have reached.
+    pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
+        if end > self.end {
+            self.before_hole();
+            bun_sys::ftruncate(self.fd, end)?;
+            self.end = end;
+        }
+        Ok(())
     }
 }
 
@@ -662,7 +658,7 @@ impl Archiver {
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
-        let mut write_strategy = lib::WriteStrategy::default();
+        let mut write_strategy = WriteStrategy::default();
 
         'loop_: while let Some(entry) = reader.next_entry()? {
             let pathname_z = os_path(entry, &mut os_path_buf)?;

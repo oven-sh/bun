@@ -7,6 +7,11 @@ use core::ops::Range;
 pub(crate) const BLOCK_SIZE: usize = 512;
 pub(crate) type Block = [u8; BLOCK_SIZE];
 
+/// How many bytes fill the last block up behind `size` bytes.
+pub(crate) fn padding_for(size: u64) -> u64 {
+    size.wrapping_neg() % BLOCK_SIZE as u64
+}
+
 pub(crate) const NAME: Range<usize> = 0..100;
 pub(crate) const MODE: Range<usize> = 100..108;
 pub(crate) const UID: Range<usize> = 108..116;

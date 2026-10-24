@@ -1,14 +1,15 @@
 // Fills in the expected results of cases.json.gz from the Bun that runs this script:
 //
-//   bun record.ts [new-cases.json]
+//   bun record.ts [--accept] [new-cases.json]
 //
 // The results in the repository come from the last Bun that read tarballs with libarchive (1.4.4).
 import { join } from "node:path";
-import { loadCases } from "../../../js/bun/archive-golden/observe";
+import { loadCases, recordArguments } from "../../../js/bun/archive-golden/observe";
 import { install, type Case } from "./install";
 
 const fixture = join(import.meta.dir, "cases.json.gz");
-const cases: Case[] = process.argv[2] ? await Bun.file(process.argv[2]).json() : await loadCases<Case>(fixture);
+const [newCases] = recordArguments();
+const cases: Case[] = newCases ? await Bun.file(newCases).json() : await loadCases<Case>(fixture);
 const numbered = cases.map((c, id) => ({ ...c, id }));
 
 // Nothing is installed when one tarball is refused, so those are found first.

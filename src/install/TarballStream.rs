@@ -17,7 +17,6 @@
 use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_archive::lib;
 use bun_archive::tar::{self, Event};
 use bun_collections::VecExt;
 #[cfg(windows)]
@@ -116,8 +115,8 @@ struct Extraction {
 
     /// Output file for the entry currently being written. `None` while
     /// between entries or when the current entry is being skipped.
-    out: Option<lib::EntryWriter>,
-    write_strategy: lib::WriteStrategy,
+    out: Option<bun_archive::EntryWriter>,
+    write_strategy: bun_archive::WriteStrategy,
 
     /// Temp directory files are written into before being renamed into the
     /// cache. Lazily opened on the first drain so the HTTP thread never
@@ -240,7 +239,7 @@ impl TarballStream {
             extraction: Extraction {
                 done: false,
                 out: None,
-                write_strategy: lib::WriteStrategy::default(),
+                write_strategy: bun_archive::WriteStrategy::default(),
                 dest: None,
                 tmpname: ZBox::from_bytes(b""),
                 resolved_github_dirname,
@@ -748,7 +747,7 @@ impl Extraction {
                 let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
-                self.out = Some(lib::EntryWriter::new(fd));
+                self.out = Some(bun_archive::EntryWriter::new(fd));
             }
             _ => {}
         }

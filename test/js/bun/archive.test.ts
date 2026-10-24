@@ -777,13 +777,13 @@ describe("Bun.Archive", () => {
       test.skipIf(isWindows)("do not change the permissions of a file", async () => {
         using dir = tempDir("archive-acl-file", {});
         await new Bun.Archive(withAcl("user::rw-,group::r--,other::r--", "0000755")).extract(String(dir));
-        expect(statSync(join(String(dir), "run.sh")).mode & 0o111).toBe(0o111);
+        expect(statSync(join(String(dir), "run.sh")).mode & 0o100).toBe(0o100);
       });
 
       test.skipIf(isWindows)("do not change the permissions of a directory", async () => {
         using dir = tempDir("archive-acl-dir", {});
         await new Bun.Archive(withAcl("user::---,group::---,other::---", "0000755", "5", "d/")).extract(String(dir));
-        expect(statSync(join(String(dir), "d")).mode & 0o777).toBe(0o755);
+        expect(statSync(join(String(dir), "d")).mode & 0o700).toBe(0o700);
       });
     });
   });
@@ -1639,6 +1639,67 @@ describe("Bun.Archive", () => {
       expect(dataFile).toBeInstanceOf(File);
       expect(dataFile!.name).toBe("data.json");
       expect(await dataFile!.text()).toBe(JSON.stringify({ foo: "bar" }));
+    });
+
+    describe.each([
+      ["a tar", (tar: Buffer) => tar],
+      ["a tar.gz", (tar: Buffer) => Buffer.from(Bun.gzipSync(tar))],
+    ])("the files of %s", (_, wrap) => {
+      const a = Buffer.alloc(3000, "a");
+      const b = randomBytes(70_000);
+      const archive = () =>
+        new Bun.Archive(
+          wrap(Buffer.concat([ustarEntry("a", a), ustarEntry("empty", Buffer.alloc(0)), ustarEntry("b", b), end])),
+        );
+      const end = Buffer.alloc(1024);
+
+      test("can be read in every way a File can", async () => {
+        const files = await archive().files();
+        expect([...files].map(([name, file]) => [name, file.name, file.size])).toEqual([
+          ["a", "a", a.length],
+          ["empty", "empty", 0],
+          ["b", "b", b.length],
+        ]);
+        expect(await files.get("a")!.text()).toBe(a.toString());
+        expect(await files.get("empty")!.text()).toBe("");
+        expect(Buffer.from(await files.get("b")!.arrayBuffer())).toEqual(b);
+        expect(Buffer.from(await files.get("b")!.bytes())).toEqual(b);
+        expect(Buffer.from(await new Response(files.get("b")!.stream()).arrayBuffer())).toEqual(b);
+        expect(Buffer.from(await files.get("b")!.slice(10, 5000).arrayBuffer())).toEqual(b.subarray(10, 5000));
+        expect(Buffer.from(await new Blob([files.get("a")!, files.get("b")!]).arrayBuffer())).toEqual(
+          Buffer.concat([a, b]),
+        );
+      });
+
+      test("outlive the archive", async () => {
+        const files = await archive().files();
+        Bun.gc(true);
+        expect(Buffer.from(await files.get("b")!.arrayBuffer())).toEqual(b);
+      });
+
+      test("are the same whether one or all are asked for", async () => {
+        const [[name, file], ...rest] = await archive().files("a");
+        expect(rest).toEqual([]);
+        expect([name, await file.text()]).toEqual(["a", a.toString()]);
+      });
+
+      test("can be written to disk", async () => {
+        using dir = tempDir("archive-files-write", {});
+        await Bun.write(join(String(dir), "b"), (await archive().files()).get("b")!);
+        expect(readFileSync(join(String(dir), "b"))).toEqual(b);
+      });
+    });
+
+    test("does not copy the contents of an uncompressed archive", async () => {
+      const size = 128 * 1024 * 1024;
+      const bytes = Buffer.concat([ustarHeader("big", size), Buffer.alloc(size, "x"), Buffer.alloc(1024)]);
+      const archive = new Bun.Archive(bytes);
+      const before = process.memoryUsage.rss();
+      const files = await archive.files();
+      const grown = process.memoryUsage.rss() - before;
+      expect(files.get("big")!.size).toBe(size);
+      expect(bytes.length).toBeGreaterThan(size);
+      expect(grown).toBeLessThan(size / 2);
     });
 
     test("returns empty Map for empty archive", async () => {

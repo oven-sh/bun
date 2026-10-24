@@ -3,30 +3,11 @@
 use crate::error::Result;
 use crate::header::{
     BLOCK_SIZE, Block, CHECKSUM, DEVMAJOR, DEVMINOR, GID, MAGIC, MODE, MTIME, NAME, PREFIX, SIZE,
-    TYPEFLAG, UID, USTAR_MAGIC,
+    TYPEFLAG, UID, USTAR_MAGIC, padding_for,
 };
+use crate::output::Output;
 use bun_core::{slice_to_nul, strings};
 use core::ops::Range;
-
-/// The size of each write matters: behind a compressor it decides what the compressed bytes are.
-pub trait Output {
-    fn write(&mut self, bytes: &[u8]) -> Result<()>;
-}
-
-impl Output for Vec<u8> {
-    fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.try_reserve(bytes.len())?;
-        self.extend_from_slice(bytes);
-        Ok(())
-    }
-}
-
-impl<F: FnMut(&[u8])> Output for F {
-    fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self(bytes);
-        Ok(())
-    }
-}
 
 /// How a name that is not ASCII is recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,10 +189,6 @@ impl<O: Output> Writer<O> {
         }
         Ok(self.out)
     }
-}
-
-fn padding_for(size: u64) -> u64 {
-    size.wrapping_neg() % BLOCK_SIZE as u64
 }
 
 /// `<length> <key>=<value>\n`, where the length counts its own digits too.

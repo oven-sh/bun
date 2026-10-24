@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::header::{self, BLOCK_SIZE, Block, gnu};
 use crate::num::{parse_decimal, parse_field, parse_pax_time};
-use crate::writer::Output as _;
+use crate::output::Output as _;
 use bun_core::{FileKind, S, kind_from_mode, slice_to_nul, strings};
 use std::borrow::Cow;
 
@@ -176,7 +176,7 @@ const SCHILY_XATTR: &[u8] = b"SCHILY.xattr.";
 const KEY_CAPACITY: usize = 32;
 
 fn padding_for(size: i64) -> i64 {
-    size.wrapping_neg() & (BLOCK_SIZE as i64 - 1)
+    header::padding_for(size.cast_unsigned()).cast_signed()
 }
 
 fn assign(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
@@ -480,6 +480,19 @@ impl Reader {
         if matches!(self.state, State::Data) {
             self.state = State::NextEntry;
         }
+    }
+
+    /// How long the current entry's contents are, if none were read yet and the archive stores them all.
+    pub(crate) fn unread_plain_data(&self) -> Option<usize> {
+        let [block] = self.sparse.as_slice() else {
+            return None;
+        };
+        let plain = matches!(self.state, State::Data)
+            && !block.hole
+            && block.offset == 0
+            && block.remaining == self.bytes_remaining
+            && self.bytes_remaining == self.entry.size;
+        usize::try_from(self.bytes_remaining).ok().filter(|_| plain)
     }
 
     /// `None` when `input` ran out first.

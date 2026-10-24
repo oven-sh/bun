@@ -1,14 +1,15 @@
 // Fills in the expected results of cases.json.gz from the Bun that runs this script:
 //
-//   bun record.ts [new-cases.json]
+//   bun record.ts [--accept] [new-cases.json]
 //
 // The results in the repository come from the last Bun that read archives with libarchive (1.4.4).
 import { tempDir } from "harness";
 import { join } from "node:path";
-import { loadCases, observeExtract, observeFiles, type Case } from "./observe";
+import { loadCases, observeExtract, observeFiles, recordArguments, type Case } from "./observe";
 
 const fixture = join(import.meta.dir, "cases.json.gz");
-const cases: Case[] = process.argv[2] ? await Bun.file(process.argv[2]).json() : await loadCases<Case>(fixture);
+const [newCases] = recordArguments();
+const cases: Case[] = newCases ? await Bun.file(newCases).json() : await loadCases<Case>(fixture);
 
 process.umask(0o022);
 using dir = tempDir("archive-golden", {});

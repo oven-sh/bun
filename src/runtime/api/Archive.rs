@@ -2,7 +2,7 @@
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::Store;
+use crate::webcore::blob::{SizeType, Store};
 use bun_archive::tar;
 use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
@@ -11,6 +11,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JS
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+use core::ops::Range;
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
@@ -858,13 +859,26 @@ fn start_write_task(
     ))
 }
 
+/// Nothing vouches for the size a gzip trailer gives, and most of a larger archive may not be files.
+const GUNZIP_AT_ONCE_LIMIT: usize = 64 * 1024 * 1024;
+
+enum FileData {
+    Owned(Vec<u8>),
+    /// A part of the tar bytes, which the `File` shares instead of copying.
+    Shared(Range<usize>),
+}
+
 struct FileEntry {
     path: Box<[u8]>,
-    data: Vec<u8>,
+    data: FileData,
     mtime: i64,
 }
 
-type FileEntryList = Vec<FileEntry>;
+struct FileEntryList {
+    entries: Vec<FileEntry>,
+    /// What `FileData::Shared` is a part of, unless that is the archive's own store.
+    gunzipped: Option<Vec<u8>>,
+}
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum FilesError {
@@ -894,13 +908,18 @@ impl FilesContext {
             tar::Error::Alloc(err) => Err(err),
             err => Ok(FilesResult::ArchiveErr(err)),
         };
-        let mut reader =
-            match bun_archive::open_memory(self.store.shared_view(), tar::Dialect::General) {
-                Ok(reader) => reader,
-                Err(err) => return read_error(err),
-            };
+        let archive = self.store.shared_view();
+        // In one piece, so that the files can share it. The reader counts the layers of gzip inside gzip.
+        let gunzipped = tar::gzip::decompress_small(archive, GUNZIP_AT_ONCE_LIMIT)
+            .filter(|bytes| !bytes.starts_with(&tar::gzip::MAGIC));
+        let tar_bytes = gunzipped.as_deref().unwrap_or(archive);
+        let mut reader = match bun_archive::open_memory(tar_bytes, tar::Dialect::General) {
+            Ok(reader) => reader,
+            Err(err) => return read_error(err),
+        };
 
-        let mut entries: FileEntryList = Vec::new();
+        let mut entries: Vec<FileEntry> = Vec::new();
+        let mut shared_len = 0usize;
 
         loop {
             let entry_ref = match reader.next_entry() {
@@ -926,10 +945,19 @@ impl FilesContext {
 
             let path_copy: Box<[u8]> = Box::from(pathname);
 
-            let mut data: Vec<u8> = Vec::new();
-            if let Err(err) = reader.read_data(size, &mut data) {
-                return read_error(err);
-            }
+            let data = match reader.data_range().filter(|range| !range.is_empty()) {
+                Some(range) => {
+                    shared_len += range.len();
+                    FileData::Shared(range)
+                }
+                None => {
+                    let mut data: Vec<u8> = Vec::new();
+                    if let Err(err) = reader.read_data(size, &mut data) {
+                        return read_error(err);
+                    }
+                    FileData::Owned(data)
+                }
+            };
 
             entries.push(FileEntry {
                 path: path_copy,
@@ -938,7 +966,25 @@ impl FilesContext {
             });
         }
 
-        Ok(FilesResult::Success(entries))
+        // A `File` keeps what it shares alive, so a few files out of many get copies of their own.
+        let share = shared_len >= tar_bytes.len() / 2;
+        if !share {
+            for entry in &mut entries {
+                if let FileData::Shared(range) = &entry.data {
+                    let bytes = &tar_bytes[range.clone()];
+                    let mut copy = Vec::new();
+                    copy.try_reserve_exact(bytes.len())
+                        .map_err(|_| bun_alloc::AllocError)?;
+                    copy.extend_from_slice(bytes);
+                    entry.data = FileData::Owned(copy);
+                }
+            }
+        }
+
+        Ok(FilesResult::Success(FileEntryList {
+            entries,
+            gunzipped: gunzipped.filter(|_| share),
+        }))
     }
 }
 
@@ -952,7 +998,11 @@ impl TaskContext for FilesContext {
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         match &mut self.result {
-            FilesResult::Success(entries) => {
+            FilesResult::Success(FileEntryList { entries, gunzipped }) => {
+                let shared_store = match gunzipped.take() {
+                    Some(bytes) => Store::init(bytes),
+                    None => self.store.clone(),
+                };
                 let map = JSMap::create(global);
                 let Some(mut map_ptr) = JSMap::from_js(map) else {
                     return Ok(PromiseResult::Reject(
@@ -961,9 +1011,19 @@ impl TaskContext for FilesContext {
                 };
 
                 for entry in entries.iter_mut() {
-                    let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr =
-                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
+                    let blob_ptr = Blob::new(match &mut entry.data {
+                        FileData::Owned(data) => Blob::create_with_bytes_and_allocator(
+                            core::mem::take(data), // Ownership transferred
+                            global,
+                            false,
+                        ),
+                        FileData::Shared(range) => {
+                            let blob = Blob::init_with_store(shared_store.clone(), global);
+                            blob.offset.set(range.start as SizeType);
+                            blob.size.set(range.len() as SizeType);
+                            blob
+                        }
+                    });
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);
@@ -1136,7 +1196,6 @@ fn extract_to_disk_filtered(
     root: &[u8],
     glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
-    use bun_archive::lib;
     let mut reader =
         bun_archive::open_memory(file_buffer, tar::Dialect::General).map_err(|err| match err {
             tar::Error::Alloc(err) => crate::Error::Alloc(err),
@@ -1167,7 +1226,7 @@ fn extract_to_disk_filtered(
     let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
     let mut count: u32 = 0;
-    let mut write_strategy = lib::WriteStrategy::default();
+    let mut write_strategy = bun_archive::WriteStrategy::default();
 
     loop {
         let entry_ref = match reader.next_entry() {

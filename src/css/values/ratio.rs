@@ -36,18 +36,19 @@ impl Ratio {
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSNumberFns::to_css(self.numerator, dest)?;
         if self.denominator != 1.0 {
-            dest.delim(b'/', true)?;
-            CSSNumberFns::to_css(self.denominator, dest)?;
+            return self.to_css_both_terms(dest);
         }
-        Ok(())
+        CSSNumberFns::to_css(self.numerator, dest)
     }
 
-    pub(crate) fn add_f32(self, other: f32) -> Ratio {
-        Ratio {
-            numerator: self.numerator + other,
-            denominator: self.denominator,
-        }
+    /// Writes `numerator / denominator`, also when the denominator is 1.
+    pub(crate) fn to_css_both_terms(
+        self,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        CSSNumberFns::to_css(self.numerator, dest)?;
+        dest.delim(b'/', true)?;
+        CSSNumberFns::to_css(self.denominator, dest)
     }
 }

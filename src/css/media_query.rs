@@ -676,6 +676,24 @@ impl MediaList {
         if self.media_queries.is_empty() {
             return dest.write_str("not all");
         }
+        dest.write_comma_separated(&self.media_queries, |d, q| {
+            if let Some(range) = q.lone_range()
+                && range.to_css_without_range_syntax(d)?
+            {
+                return Ok(());
+            }
+            q.to_css(d)
+        })
+    }
+
+    /// `to_css` without `LoneRange::to_css_without_range_syntax`.
+    pub(crate) fn to_css_as_written(
+        &self,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        if self.media_queries.is_empty() {
+            return dest.write_str("not all");
+        }
         dest.write_comma_separated(&self.media_queries, |d, q| q.to_css(d))
     }
 }
@@ -1052,6 +1070,31 @@ impl MediaFeatureComparison {
             MediaFeatureComparison::Equal => MediaFeatureComparison::Equal,
         }
     }
+
+    /// How `name <self> value` is stated with `min-`/`max-` features, which are inclusive.
+    fn to_legacy(self, value: &MediaFeatureValue) -> LegacyComparison {
+        // An integer bound has an exact inclusive neighbour: `(color > 2)` is
+        // `(min-color: 3)`. At the end of the integer range it has none.
+        let step = |by: CSSInteger| match value {
+            MediaFeatureValue::Integer(int) => int.checked_add(by),
+            _ => None,
+        };
+        match self {
+            MediaFeatureComparison::Equal => LegacyComparison::Is(LegacyBound::Exact, None),
+            MediaFeatureComparison::GreaterThanEqual => {
+                LegacyComparison::Is(LegacyBound::Min, None)
+            }
+            MediaFeatureComparison::LessThanEqual => LegacyComparison::Is(LegacyBound::Max, None),
+            MediaFeatureComparison::GreaterThan => match step(1) {
+                Some(int) => LegacyComparison::Is(LegacyBound::Min, Some(int)),
+                None => LegacyComparison::IsNot(LegacyBound::Max),
+            },
+            MediaFeatureComparison::LessThan => match step(-1) {
+                Some(int) => LegacyComparison::Is(LegacyBound::Max, Some(int)),
+                None => LegacyComparison::IsNot(LegacyBound::Min),
+            },
+        }
+    }
 }
 
 impl MediaFeatureValue {
@@ -1071,27 +1114,6 @@ impl MediaFeatureValue {
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
             MediaFeatureValue::Env(env) => env.to_css(dest, false),
-        }
-    }
-
-    /// Adjust by `other` for strict-inequality → min/max
-    /// boundary lowering. Consumes `self`.
-    fn add_f32(self, other: f32) -> MediaFeatureValue {
-        match self {
-            MediaFeatureValue::Length(len) => MediaFeatureValue::Length(len.add(Length::px(other))),
-            MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
-            MediaFeatureValue::Integer(num) => {
-                MediaFeatureValue::Integer(num + if other.is_sign_positive() { 1 } else { -1 })
-            }
-            MediaFeatureValue::Boolean(v) => MediaFeatureValue::Boolean(v),
-            MediaFeatureValue::Resolution(res) => MediaFeatureValue::Resolution(res.add_f32(other)),
-            MediaFeatureValue::Ratio(ratio) => MediaFeatureValue::Ratio(ratio.add_f32(other)),
-            MediaFeatureValue::Ident(id) => MediaFeatureValue::Ident(id),
-            // env() values pass through unchanged — the calc-lattice add
-            // (wrapping the env() reference in a calc() to apply the
-            // strict-inequality boundary adjustment) is not implemented, so
-            // range bounds on env() values lose the +/-0.001 nudge.
-            MediaFeatureValue::Env(env) => MediaFeatureValue::Env(env),
         }
     }
 
@@ -1195,44 +1217,177 @@ impl MediaFeatureValue {
     }
 }
 
-/// Lower a range/interval comparator to legacy
-/// `min-`/`max-` prefixed plain feature.
+/// The inclusive bound that a `min-`/`max-` prefixed or bare feature states.
+#[derive(Clone, Copy)]
+enum LegacyBound {
+    /// `(min-name: value)`: `name >= value`.
+    Min,
+    /// `(max-name: value)`: `name <= value`.
+    Max,
+    /// `(name: value)`: `name = value`.
+    Exact,
+}
+
+/// A range comparison stated with a `min-`/`max-` feature.
+enum LegacyComparison {
+    /// The feature holds. The integer, when present, replaces the value.
+    Is(LegacyBound, Option<CSSInteger>),
+    /// The feature does not hold: `(width < V)` is "not `(min-width: V)`".
+    IsNot(LegacyBound),
+}
+
+/// Writes `min-name:`, `max-name:` or `name:`.
+fn write_min_max_name<FeatureId: FeatureIdTrait>(
+    bound: LegacyBound,
+    name: &MediaFeatureName<FeatureId>,
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    match bound {
+        LegacyBound::Min => name.to_css_with_prefix("min-", dest)?,
+        LegacyBound::Max => name.to_css_with_prefix("max-", dest)?,
+        LegacyBound::Exact => name.to_css(dest)?,
+    }
+    dest.delim(b':', false)
+}
+
+/// Lower a range/interval comparator to legacy `min-`/`max-` prefixed plain feature.
+/// Writes what follows the `(`. No such feature states a strict bound, so that one
+/// stays a range here: `LoneRange::to_css_without_range_syntax` negates it where it is
+/// the whole query.
 fn write_min_max<FeatureId: FeatureIdTrait>(
     operator: MediaFeatureComparison,
     name: &MediaFeatureName<FeatureId>,
     value: &MediaFeatureValue,
     dest: &mut Printer,
 ) -> core::result::Result<(), PrintErr> {
-    let prefix = match operator {
-        MediaFeatureComparison::GreaterThan | MediaFeatureComparison::GreaterThanEqual => {
-            Some("min-")
+    match operator.to_legacy(value) {
+        LegacyComparison::Is(bound, int) => {
+            write_min_max_name(bound, name, dest)?;
+            match int {
+                Some(int) => css::to_css::integer(int, dest)?,
+                None => value.to_css(dest)?,
+            }
         }
-        MediaFeatureComparison::LessThan | MediaFeatureComparison::LessThanEqual => Some("max-"),
-        MediaFeatureComparison::Equal => None,
-    };
-
-    if let Some(p) = prefix {
-        name.to_css_with_prefix(p, dest)?;
-    } else {
-        name.to_css(dest)?;
+        LegacyComparison::IsNot(_) => {
+            name.to_css(dest)?;
+            operator.to_css(dest)?;
+            value.to_css(dest)?;
+        }
     }
-
-    dest.delim(b':', false)?;
-
-    // `MediaFeatureValue: Clone`, so clone-by-value before adjusting.
-    let adjusted: Option<MediaFeatureValue> = match operator {
-        MediaFeatureComparison::GreaterThan => Some(value.clone().add_f32(0.001)),
-        MediaFeatureComparison::LessThan => Some(value.clone().add_f32(-0.001)),
-        _ => None,
-    };
-
-    if let Some(val) = adjusted {
-        val.to_css(dest)?;
-    } else {
-        value.to_css(dest)?;
-    }
-
     dest.write_char(b')')
+}
+
+/// A query that is one range comparison, with or without a `not`: the whole of
+/// `(width < V)`, `not (width < V)` or `not all and (width < V)`.
+struct LoneRange<'a> {
+    name: &'a MediaFeatureName<MediaFeatureId>,
+    operator: MediaFeatureComparison,
+    value: &'a MediaFeatureValue,
+    /// The query says that the comparison does not hold.
+    negated: bool,
+    /// With `not (..)`, which needs the same browsers as range syntax.
+    /// `not all and (..)` does not.
+    written_not: bool,
+}
+
+impl MediaQuery {
+    /// `None` for a query that `LoneRange::to_css_without_range_syntax` leaves as it is.
+    #[inline]
+    fn lone_range(&self) -> Option<LoneRange<'_>> {
+        if !matches!(self.media_type, MediaType::All) {
+            return None;
+        }
+        let (negated, written_not, feature) = match (self.qualifier, &self.condition) {
+            (None, Some(MediaCondition::Feature(feature))) => (false, false, feature),
+            (Some(Qualifier::Not), Some(MediaCondition::Feature(feature))) => {
+                (true, false, feature)
+            }
+            (None, Some(MediaCondition::Not(inner))) => match &**inner {
+                MediaCondition::Feature(feature) => (true, true, feature),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let QueryFeature::Range {
+            name,
+            operator,
+            value,
+        } = &**feature
+        else {
+            return None;
+        };
+        // `(min-width: V)` parses as `width >= V`, so most queries stop here.
+        if !written_not
+            && !matches!(
+                operator,
+                MediaFeatureComparison::LessThan | MediaFeatureComparison::GreaterThan
+            )
+        {
+            return None;
+        }
+        Some(LoneRange {
+            name,
+            operator: *operator,
+            value,
+            negated,
+            written_not,
+        })
+    }
+}
+
+impl LoneRange<'_> {
+    /// For targets without range syntax, writes a query that is one strict range bound,
+    /// or `not (..)` of one range comparison. A `min-`/`max-` feature is inclusive, so
+    /// `(width < V)` is "not `(min-width: V)`", with nothing added to V.
+    ///
+    /// lightningcss prints that as `not (min-width: V)`. Browsers without range syntax
+    /// also reject `not (..)` inside a condition (both came in Chrome 104 and Safari
+    /// 16.4) and negate only a whole query, `not all and (min-width: V)`:
+    /// https://github.com/parcel-bundler/lightningcss/issues/1361. So a strict bound
+    /// beside a media type or another condition has no such form, and stays a range.
+    ///
+    /// Returns whether it wrote the query.
+    #[cold]
+    fn to_css_without_range_syntax(
+        &self,
+        dest: &mut Printer,
+    ) -> core::result::Result<bool, PrintErr> {
+        let (not, bound, int) = match self.operator.to_legacy(self.value) {
+            // `(width < V)` is "not `(min-width: V)`", and `not (width < V)` is
+            // `(min-width: V)`.
+            LegacyComparison::IsNot(bound) => (!self.negated, bound, None),
+            // `not (width >= V)` is `not all and (min-width: V)`.
+            LegacyComparison::Is(bound, int) if self.written_not => (true, bound, int),
+            LegacyComparison::Is(..) => return Ok(false),
+        };
+        // Safari before 16 never matches a `resolution` feature, so `not all and` one
+        // would always match there.
+        let resolution = matches!(
+            self.name,
+            MediaFeatureName::Standard(MediaFeatureId::Resolution)
+        );
+        if (not && resolution)
+            || !dest
+                .targets
+                .should_compile_same(css::compat::Feature::MediaRangeSyntax)
+        {
+            return Ok(false);
+        }
+        if not {
+            dest.write_str("not all and ")?;
+        }
+        dest.write_char(b'(')?;
+        write_min_max_name(bound, self.name, dest)?;
+        match (int, self.value) {
+            (Some(int), _) => css::to_css::integer(int, dest)?,
+            // Chrome before 110 rejects a ratio that is a single number, and a query
+            // with a rejected feature is `not all`, negated or not.
+            (None, MediaFeatureValue::Ratio(ratio)) => ratio.to_css_both_terms(dest)?,
+            (None, _) => self.value.to_css(dest)?,
+        }
+        dest.write_char(b')')?;
+        Ok(true)
+    }
 }
 
 // ───────────────────────── deep_clone ─────────────────────────

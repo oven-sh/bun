@@ -644,15 +644,15 @@ Media query range syntax expresses breakpoints with comparison operators (`<`, `
   }
 }
 
-/* Exclusive range using < and > */
-@media (width > 320px) and (width < 768px) {
+/* Exclusive bound using < */
+@media (width < 768px) {
   .mobile-only {
     display: block;
   }
 }
 ```
 
-Bun's CSS bundler converts range queries to traditional media query syntax for compatibility with all browsers:
+When a target browser has no range syntax (Chrome before 104, Safari before 16.4), Bun's CSS bundler converts range queries to traditional media query syntax:
 
 ```css title="styles.css" icon="file-code"
 /* Converted to traditional min/max syntax */
@@ -668,12 +668,17 @@ Bun's CSS bundler converts range queries to traditional media query syntax for c
   }
 }
 
-@media (min-width: 321px) and (max-width: 767px) {
+/* Exclusive bound: "not at least 768px" */
+@media not all and (min-width: 768px) {
   .mobile-only {
     display: block;
   }
 }
 ```
+
+The `min-` and `max-` prefixes are inclusive. Bun writes an exclusive bound (`<` or `>`) as the negation of the opposite inclusive bound. The bound stays exclusive, and Bun adds nothing to its value.
+
+Browsers without range syntax negate only a whole query. When a query combines an exclusive bound with a media type or another condition, for example `screen and (width < 768px)`, Bun keeps the bound as written. Browsers without range syntax skip that query.
 
 ### Shorthands
 

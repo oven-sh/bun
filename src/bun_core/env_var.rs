@@ -194,6 +194,8 @@ new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
 // What a Bun that has `bun check` and not the other two sets in its place. Only read.
 new!(pub BUN_INTERNAL_CHECK_SCRIPTS: string, "BUN_INTERNAL_CHECK_SCRIPTS", {});
+// Set by `run()` of `node:test` for the `bun test` that it starts for a file: that file and the `argv` option.
+new!(pub BUN_INTERNAL_NODE_TEST_ARGV: string, "BUN_INTERNAL_NODE_TEST_ARGV", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.

@@ -60,6 +60,12 @@ pub(crate) fn run_as_coordinator(
         return Ok(false);
     }
 
+    // A worker takes `BUN_INTERNAL_NODE_TEST_ARGV` with no file to check it against, so it only gets the value that this process took.
+    // SAFETY: see vm_ptr note above.
+    if unsafe { (*vm_ptr).argv.is_empty() } {
+        env.map.remove(b"BUN_INTERNAL_NODE_TEST_ARGV");
+    }
+
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {

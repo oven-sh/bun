@@ -49,6 +49,7 @@ const kJoinSeparator = " > ";
 // spawned child, so use node's variable and value rather than a bun-specific one.
 const kRunChildEnv = "NODE_TEST_CONTEXT";
 const kRunChildEnvValue = "child-v8";
+const kRunChildArgvEnv = "BUN_INTERNAL_NODE_TEST_ARGV";
 const kRunEventPrefix = "\0bun:test:run\0";
 
 // Created lazily on the first run() call so the common test()/describe()
@@ -442,6 +443,25 @@ function reportCancelledFile(
   counts.topLevel++;
 }
 
+// Bun.spawn checks the environment before the command line, so a NUL is reported here, as the argument that Node.js has it in.
+function validateRunChildArg(arg: string, index: number) {
+  if (arg.includes("\0")) throw $ERR_INVALID_ARG_VALUE(`args[${index}]`, arg, "must be a string without null bytes");
+}
+
+// undefined for an empty argv, which also keeps a value that this process inherited out of the child.
+function encodeRunChildArgv(args: string[], argv: string[]) {
+  if (argv.length === 0) return undefined;
+  for (let i = 0; i < args.length; i++) validateRunChildArg(`${args[i]}`, i);
+  const file = args[args.length - 1];
+  let encoded = `${Buffer.byteLength(file)}:${file}`;
+  for (let i = 0; i < argv.length; i++) {
+    const value = `${argv[i]}`;
+    validateRunChildArg(value, args.length + i);
+    encoded += `${Buffer.byteLength(value)}:${value}`;
+  }
+  return encoded;
+}
+
 async function runOneFile(
   file: string,
   opts: ReturnType<typeof validateRunOptions>,
@@ -450,10 +470,8 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
-  // in the child's process.execArgv; bun's CLI likewise takes runtime flags
-  // before the `test` keyword and user args after the path.
-  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
+  // Node's getRunArgs has argv after the path. `bun test` takes every token there for its own, so argv goes in kRunChildArgvEnv.
+  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute];
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 
@@ -476,7 +494,12 @@ async function runOneFile(
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+    env: {
+      ...(opts.env ?? process.env),
+      BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      [kRunChildEnv]: kRunChildEnvValue,
+      [kRunChildArgvEnv]: encodeRunChildArgv(args, opts.argv as string[]),
+    },
     stdout: "pipe",
     stderr: "pipe",
     signal: opts.signal,

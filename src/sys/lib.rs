@@ -2163,6 +2163,7 @@ mod posix_impl {
 
             #[repr(C)]
             #[derive(Copy, Clone)]
+            #[cfg(not(target_os = "android"))]
             pub(crate) struct statx_timestamp {
                 pub tv_sec: i64,
                 pub tv_nsec: u32,
@@ -2174,6 +2175,7 @@ mod posix_impl {
             // rest is reserved padding.
             #[repr(C)]
             #[derive(Copy, Clone)]
+            #[cfg(not(target_os = "android"))]
             pub(crate) struct statx {
                 pub stx_mask: u32,
                 pub stx_blksize: u32,
@@ -2197,6 +2199,7 @@ mod posix_impl {
                 pub stx_dev_minor: u32,
                 __pad1: [u64; 14],
             }
+            #[cfg(not(target_os = "android"))]
             const _: () = assert!(core::mem::size_of::<statx>() == 256);
 
             /// Raw `statx(2)` via syscall — returns `0` on success or `-1` with

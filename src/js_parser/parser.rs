@@ -381,7 +381,8 @@ pub mod Runtime {
                 self.code_coverage,
                 self.commonjs_at_runtime,
                 self.emit_decorator_metadata,
-                self.strict_null_checks,
+                // Only the metadata depends on it.
+                self.emit_decorator_metadata && self.strict_null_checks,
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,

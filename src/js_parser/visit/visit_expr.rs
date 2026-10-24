@@ -6,6 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
+use crate::lower::lower_class::is_in_constructor_parameters;
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
@@ -1970,7 +1971,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Data::ESuper(_) if p.super_shim.is_symbol() => {
-                if p.is_in_constructor_parameters() {
+                if is_in_constructor_parameters(p.current_scope_ref()) {
                     p.super_shim = Ref::NONE;
                 } else {
                     e_.target = p.use_ref(p.super_shim, e_.target.loc);

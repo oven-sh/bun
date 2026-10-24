@@ -110,6 +110,19 @@ pub(crate) fn class_or_constructor_parameter_is_decorated(class: &G::Class) -> b
             .any(has_decorated_parameter)
 }
 
+/// For the scope of a `super()` call. `var __super` is in the body of the constructor, which the parameters don't see.
+pub(crate) fn is_in_constructor_parameters(mut scope: js_ast::StoreRef<js_ast::Scope>) -> bool {
+    let mut came_from = scope.kind;
+    while scope
+        .parent
+        .is_some_and(|parent| parent.kind != js_ast::scope::Kind::ClassBody)
+    {
+        came_from = scope.kind;
+        scope = scope.parent.unwrap();
+    }
+    came_from != js_ast::scope::Kind::FunctionBody
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// `target.key` or `target[key]`
     fn member_access(&mut self, target: Expr, key: Expr) -> Expr {
@@ -158,20 +171,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ref::NONE;
         }
         self.generate_temp_var(b"__super")
-    }
-
-    /// For a `super()` call. `var __super` is in the body of the constructor, which the parameters don't see.
-    pub(crate) fn is_in_constructor_parameters(&self) -> bool {
-        let mut scope = self.current_scope_ref();
-        let mut came_from = scope.kind;
-        while scope
-            .parent
-            .is_some_and(|parent| parent.kind != js_ast::scope::Kind::ClassBody)
-        {
-            came_from = scope.kind;
-            scope = scope.parent.unwrap();
-        }
-        came_from != js_ast::scope::Kind::FunctionBody
     }
 
     /// `var __super = (...args) => { super(...args); effects; return this; };`

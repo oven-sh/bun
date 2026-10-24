@@ -3005,3 +3005,93 @@ describe("the thread pool links the same files as the main thread", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// On a case-insensitive volume, the default on macOS and Windows, `React` and `react` are one
+// folder. The package linked last would replace the other, while bun.lock still lists both. The
+// layout is the same on every platform, so that bun.lock does not depend on the volume.
+describe.concurrent("two names that differ only in case never share a node_modules folder", () => {
+  const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;
+
+  test("the alias of a dependency nests below it, as npm places it", async () => {
+    using server = await serveGraph({
+      react: { "1.0.0": {} },
+      preact: { "1.0.0": {} },
+      helper: { "1.0.0": { dependencies: { React: "npm:preact@1.0.0" } } },
+    });
+    using dir = tempDir("hoist-case-alias", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", helper: "1.0.0" } }),
+    });
+    await run(String(dir), "install");
+    expect(layout(String(dir))).toEqual(["helper@1.0.0", "helper/React@1.0.0", "react@1.0.0"]);
+    expect(await lockfileTree(String(dir))).toMatchObject({ "helper/React": "preact@1.0.0", react: "react@1.0.0" });
+    expect(await run(String(dir), "install", "--frozen-lockfile")).toContain("no changes");
+    expect(layout(String(dir))).toEqual(["helper@1.0.0", "helper/React@1.0.0", "react@1.0.0"]);
+  });
+
+  test("even when both names resolve to the same package", async () => {
+    using server = await serveGraph({
+      react: { "1.0.0": {} },
+      helper: { "1.0.0": { dependencies: { React: "npm:react@1.0.0" } } },
+    });
+    using dir = tempDir("hoist-case-same-package", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", helper: "1.0.0" } }),
+    });
+    await run(String(dir), "install");
+    expect(layout(String(dir))).toEqual(["helper@1.0.0", "helper/React@1.0.0", "react@1.0.0"]);
+  });
+
+  test("the name that hoists first takes the root, the other one stays below its dependent", async () => {
+    using server = await serveGraph({
+      react: { "1.0.0": {} },
+      preact: { "1.0.0": {} },
+      p: { "1.0.0": { dependencies: { React: "npm:preact@1.0.0", react: "1.0.0" } } },
+    });
+    using dir = tempDir("hoist-case-both-below", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({ name: "app", dependencies: { p: "1.0.0" } }),
+    });
+    await run(String(dir), "install");
+    expect(layout(String(dir))).toEqual(["React@1.0.0", "p@1.0.0", "p/react@1.0.0"]);
+    expect(await run(String(dir), "install", "--frozen-lockfile")).toContain("no changes");
+    expect(layout(String(dir))).toEqual(["React@1.0.0", "p@1.0.0", "p/react@1.0.0"]);
+  });
+
+  test("a package that lists both names is refused", async () => {
+    using server = await serveGraph({ react: { "1.0.0": {} }, preact: { "1.0.0": {} } });
+    using dir = tempDir("hoist-case-own-folder", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { React: "npm:preact@1.0.0" },
+        devDependencies: { react: "1.0.0" },
+      }),
+    });
+    const { stderr, exitCode } = await spawnBun(String(dir), "install");
+    expect(stderr).toContain(
+      'error: dependency names "React" and "react" of app differ only in case and cannot share a node_modules folder',
+    );
+    expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // `--production` walks the tree again to find the rows it keeps, by the same key.
+  test("an install that skips a dependency keeps a name with an uppercase letter", async () => {
+    using server = await serveGraph({
+      JSONStream: { "1.0.0": { dependencies: { "no-deps": "1.0.0" } } },
+      "no-deps": { "1.0.0": {} },
+      "dev-only": { "1.0.0": {} },
+    });
+    using dir = tempDir("hoist-case-production", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { JSONStream: "1.0.0" },
+        devDependencies: { "dev-only": "1.0.0" },
+      }),
+    });
+    await run(String(dir), "install", "--production");
+    expect(layout(String(dir))).toEqual(["JSONStream@1.0.0", "no-deps@1.0.0"]);
+  });
+});

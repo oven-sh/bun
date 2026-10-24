@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -20,6 +20,7 @@ use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, Unfi
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
 // which are the same types re-exported through `crate::lockfile`.
+use crate::dependency::may_fold;
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::package::{
     self as Package, PackageColumns, scripts::Scripts as PackageScripts,
@@ -107,7 +108,7 @@ pub struct PackageInstaller<'a> {
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
 
-    pub(crate) seen_bin_links: StringHashMap<()>,
+    pub(crate) seen_bin_links: bin::SeenBins,
 }
 
 use bun_core::UnwrapOrOom;
@@ -147,12 +148,6 @@ pub(crate) enum DeferredEvent {
         dependency_id: DependencyID,
         needs_verify: bool,
     },
-}
-
-/// Returns true if `name` could collide with another entry's name on a case-insensitive volume.
-fn may_fold(name: &[u8]) -> bool {
-    name.iter()
-        .any(|byte| byte.is_ascii_uppercase() || !byte.is_ascii())
 }
 
 impl DeferredLinks {

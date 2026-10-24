@@ -66,8 +66,7 @@ impl<'a, 's> Pages<'a, 's> {
         // Without a `type` that names the HTML loader somewhere in the file, only the extension makes a page.
         let mut clauses = hir.import_attributes.iter();
         let mut uses = hir.specifier_uses.iter();
-        let names_html =
-            |clause| self.loader_named_in(hir, clause, usize::MAX) == Some(Loader::Html);
+        let names_html = |clause| self.loader_named_in(hir, clause) == Some(Loader::Html);
         let can_name_html = clauses.any(|it| names_html(it.1))
             || (uses.any(|it| it.kind == SpecifierKind::ImportCall)
                 && !attributes.options(hir).is_empty());
@@ -139,54 +138,55 @@ impl<'a, 's> Pages<'a, 's> {
         attributes: &mut Attributes,
         specifier_use: &SpecifierUse,
     ) -> Option<Loader> {
-        let (clause, types_read) = match specifier_use.kind {
-            // Bun's parser takes the last `type` that names a loader.
-            SpecifierKind::Import | SpecifierKind::SideEffect => (
-                attributes.of_declaration(hir, specifier_use.pos),
-                usize::MAX,
-            ),
-            // The runtime evaluates the options, which leaves the last `type`.
-            SpecifierKind::ImportCall => {
-                let options = attributes.of_import_call(hir, specifier_use.pos);
-                (options.and_then(|it| self.with_in(hir, it)), 1)
+        match specifier_use.kind {
+            SpecifierKind::Import | SpecifierKind::SideEffect => {
+                let clause = attributes.of_declaration(hir, specifier_use.pos)?;
+                self.loader_named_in(hir, clause)
             }
-            _ => (None, 0),
-        };
-        clause.and_then(|it| self.loader_named_in(hir, it, types_read))
+            // The runtime evaluates the options, which leaves the last `with` and the last `type` in it.
+            SpecifierKind::ImportCall => {
+                let options = attributes.of_import_call(hir, specifier_use.pos)?;
+                let with = self.last_in(hir, options, b"with")?;
+                self.loader_of(hir, self.last_in(hir, with, b"type")?)
+            }
+            _ => None,
+        }
     }
 
-    /// The value of `with` in the options of an `import()`, if the call has them written.
-    fn with_in(&self, hir: &hir::File<'s>, options: ExprId) -> Option<ExprId> {
-        let ExprKind::Object(options) = hir[skip_assertions(hir, options)].kind else {
+    /// What an object literal gives `name`: the value of the last property that can set it, if that is written.
+    fn last_in(&self, hir: &hir::File<'s>, object: ExprId, name: &[u8]) -> Option<ExprId> {
+        let ExprKind::Object(props) = hir[skip_assertions(hir, object)].kind else {
             return None;
         };
-        let mut options = options.iter().rev().map(|it| hir[it]);
-        let with = options.find(|it| self.is_named(it.key, b"with"))?;
-        Some(with.value)
+        // A spread and a computed key can set any name.
+        let sets_any = |it: &hir::Prop| {
+            it.kind == hir::PropKind::Spread || matches!(it.key, hir::PropKey::Computed(_))
+        };
+        let mut props = props.iter().rev().map(|it| hir[it]);
+        let last = props.find(|it| sets_any(it) || self.is_named(it.key, name))?;
+        (!sets_any(&last)).then_some(last.value)
     }
 
-    /// The loader that one of the last `types_read` `type`s of `clause` names. `clause` is the object after `with`.
-    fn loader_named_in(
-        &self,
-        hir: &hir::File<'s>,
-        clause: ExprId,
-        types_read: usize,
-    ) -> Option<Loader> {
+    /// The loader that the `with` clause of a declaration names. Bun's parser takes the last `type` that names one.
+    fn loader_named_in(&self, hir: &hir::File<'s>, clause: ExprId) -> Option<Loader> {
         let ExprKind::Object(attributes) = hir[skip_assertions(hir, clause)].kind else {
             return None;
         };
         let attributes = attributes.iter().rev().map(|it| hir[it]);
-        let types = attributes.filter(|it| self.is_named(it.key, b"type"));
-        types.take(types_read).find_map(|it| {
-            let name = match hir[skip_assertions(hir, it.value)].kind {
-                ExprKind::String(name) => name,
-                ExprKind::Template { exprs } if exprs.is_empty() => {
-                    hir.id_at(hir.template_texts(exprs), 0)
-                }
-                _ => return None,
-            };
-            Loader::from_string(self.files.atoms.bytes(name))
-        })
+        let mut types = attributes.filter(|it| self.is_named(it.key, b"type"));
+        types.find_map(|it| self.loader_of(hir, it.value))
+    }
+
+    /// The loader whose name `value` spells out.
+    fn loader_of(&self, hir: &hir::File<'s>, value: ExprId) -> Option<Loader> {
+        let name = match hir[skip_assertions(hir, value)].kind {
+            ExprKind::String(name) => name,
+            ExprKind::Template { exprs } if exprs.is_empty() => {
+                hir.id_at(hir.template_texts(exprs), 0)
+            }
+            _ => return None,
+        };
+        Loader::from_string(self.files.atoms.bytes(name))
     }
 
     fn is_named(&self, key: hir::PropKey, name: &[u8]) -> bool {

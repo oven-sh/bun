@@ -24307,6 +24307,9 @@ describe.concurrent("--check", () => {
         `{ with: { type: "html", type: name } }`,
         `{ with: { type: "html", type: "text" } }`,
         `{ with: { type: "html" }, with: { type: "text" } }`,
+        // A spread can give `type` or `with` another value than the one that is written before it.
+        `{ with: { type: "html", ...{ type: "text" } } }`,
+        `{ with: { type: "html" }, ...{ with: { type: "text" } } }`,
       ];
       const imports = options.map(
         (it, at) => `// @ts-ignore\nconst it${at} = (await import("./template.tmpl", ${it})).default;\n`,
@@ -24322,7 +24325,7 @@ describe.concurrent("--check", () => {
         check(dir, ["server.ts"]),
         run(String(dir), ["--check", "server.ts"]),
       ]);
-      const printed = "ran string string string";
+      const printed = ["ran", ...options.map(() => "string")].join(" ");
       expect(ran.stdout).toBe(printed);
       expect([errorsOf(alone.stdout), alone.exitCode]).toEqual([[], 0]);
       expect([errorsOf(before.stderr), before.stdout, before.exitCode]).toEqual([[], printed, 0]);

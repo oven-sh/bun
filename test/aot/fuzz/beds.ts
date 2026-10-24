@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { limitsLowered } from "../harness/limits";
+import { company, memberNames } from "./company";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
 
 export interface Program {
@@ -162,6 +163,10 @@ function unusable(bed: Bed, plain: Run): Verdict | undefined {
 
 /** In front of a flag that is no flag of the build: a variable for the run of the executable. */
 const inTheRun = "--in-the-run=";
+/** The same: so many shapes that hold the names of the programs are built beside them (company.ts). */
+const inTheCompanyOf = "--in-the-company-of=";
+export const staysAScript = "// stays a script\n";
+const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf);
 
 export class ProductBed implements Bed {
   readonly name = "product";
@@ -192,6 +197,8 @@ export class ProductBed implements Bed {
       /** One time in n, n drawn from these, compiled code takes the general road behind a test though the value would have passed. */
       failPredictions?: number[];
       lowersLimits?: boolean;
+      /** Each batch is built beside so many unrelated shapes that hold its names, drawn from these. */
+      company?: number[];
       /** So many workers run the program at once, each for itself, in place of the main thread. */
       workers?: number;
     },
@@ -243,7 +250,9 @@ export class ProductBed implements Bed {
   modes(program: Program): Mode[] {
     const stress = this.#drawnStress();
     const limit = this.#drawnLimit();
-    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress, ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
+    const sizes = this.options.company ?? [];
+    const size = sizes[Math.floor(Math.random() * sizes.length)];
+    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
   }
 
   #modes(program: Program): Mode[] {
@@ -313,14 +322,14 @@ export class ProductBed implements Bed {
   }
 
   #build(folder: string, entry: string, flags: string[]) {
-    const all = this.#merged([...this.options.baseFlags, ...flags]).filter(flag => !flag.startsWith(inTheRun));
+    const all = this.#merged([...this.options.baseFlags, ...flags]).filter(isOfTheBuild);
     return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds);
   }
 
   async judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
     const executable = join(folder, process.platform === "win32" ? "executable.exe" : "executable");
     try {
-      if (programs.length !== 1 || this.options.workers) return await this.#judgeTogether(folder, programs, flags);
+      if (programs.length !== 1 || this.options.workers || flags.some(flag => flag.startsWith(inTheCompanyOf))) return await this.#judgeTogether(folder, programs, flags);
       const [program] = programs;
       const file = "program." + program.extension;
       this.#write(folder, file, program);
@@ -338,11 +347,14 @@ export class ProductBed implements Bed {
 
   #writeModules(folder: string, programs: Program[]) {
     // A file without `import` or `export` is a script to the checker, and two scripts share their top-level names.
-    programs.forEach((program, index) => this.#write(folder, `p${index}.${program.extension}`, /^(import|export)\b/m.test(program.text) ? program : { ...program, text: program.text + "\nexport {};\n" }));
+    // A program of ../programs in JavaScript stays what it is: as a module it would be strict, with another `this`. Its first line says so.
+    programs.forEach((program, index) => this.#write(folder, `p${index}.${program.extension}`, /^(import|export)\b/m.test(program.text) || program.text.startsWith(staysAScript) ? program : { ...program, text: program.text + "\nexport {};\n" }));
   }
 
-  #writeEntryPoint(folder: string, programs: Program[], members: number[]) {
-    const table = `const programs = {\n${members.map(index => `  ${index}: () => import("./p${index}.${programs[index].extension}"),\n`).join("")}};\n`;
+  #writeEntryPoint(folder: string, programs: Program[], members: number[], flags: string[]) {
+    const size = Number(flags.find(flag => flag.startsWith(inTheCompanyOf))?.slice(inTheCompanyOf.length) ?? 0);
+    if (size) writeFileSync(join(folder, "company.js"), company(size, memberNames(programs.map(program => program.text))));
+    const table = `${size ? `import "./company.js";\n` : ""}const programs = {\n${members.map(index => `  ${index}: () => import("./p${index}.${programs[index].extension}"),\n`).join("")}};\n`;
     if (!this.options.workers) return writeFileSync(join(folder, "main.js"), `${table}await programs[process.argv[2]]();\n`);
     writeFileSync(
       join(folder, "main.js"),
@@ -366,8 +378,9 @@ ${table}if (isMainThread) {
 
   store(folder: string, programs: Program[], flags: string[]) {
     this.#writeModules(folder, programs);
-    this.#writeEntryPoint(folder, programs, programs.map((_, index) => index)); // prettier-ignore
-    const [inRun, inBuild] = [true, false].map(wanted => this.#merged([...this.options.baseFlags, ...flags]).filter(flag => flag.startsWith(inTheRun) === wanted));
+    this.#writeEntryPoint(folder, programs, programs.map((_, index) => index), flags); // prettier-ignore
+    const merged = this.#merged([...this.options.baseFlags, ...flags]);
+    const [inRun, inBuild] = [merged.filter(flag => flag.startsWith(inTheRun)), merged.filter(isOfTheBuild)];
     return `bun run main.js 0\nbun ${["build", "--compile", "--aot", ...inBuild, "main.js", "--outfile", "executable"].join(" ")} && ${inRun.map(flag => flag.slice(inTheRun.length) + " ").join("")}./executable 0\n`;
   }
 
@@ -376,7 +389,7 @@ ${table}if (isMainThread) {
   async #judgeTogether(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
     const executable = join(folder, process.platform === "win32" ? "executable.exe" : "executable");
     const results = new Array<Judged>(programs.length);
-    const entry = (members: number[]) => this.#writeEntryPoint(folder, programs, members);
+    const entry = (members: number[]) => this.#writeEntryPoint(folder, programs, members, flags);
     const all = programs.map((_, index) => index);
     this.#writeModules(folder, programs);
     entry(all);
@@ -418,6 +431,7 @@ ${table}if (isMainThread) {
     };
     await together(all.filter(index => !results[index]));
     for (const index of all) rmSync(join(folder, `p${index}.${programs[index].extension}`), { force: true });
+    rmSync(join(folder, "company.js"), { force: true });
     return results;
   }
 }

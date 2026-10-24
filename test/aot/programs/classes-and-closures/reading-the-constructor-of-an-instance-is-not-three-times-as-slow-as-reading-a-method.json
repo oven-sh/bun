@@ -1,0 +1,1 @@
+{ "skipWithASAN": "two loops against a clock", "skipInVariants": "two loops against a clock, which no flag of the build brings nearer" }

@@ -103,9 +103,10 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             return question;
         }
         let manifest = typed_source_path.and_then(|it| self.host.typed_version_manifest(it));
-        let governing = match manifest {
-            Some(manifest) => Some(self.projects.of_typed_version(self, &manifest)),
-            None => self.projects.governing(self, text_path),
+        let governing = match (manifest, code) {
+            (Some(manifest), _) => Some(self.projects.of_typed_version(self, &manifest)),
+            (None, Some(_)) => self.projects.governing_code(self, text_path),
+            (None, None) => self.projects.governing(self, text_path),
         };
         match governing {
             Some(options) => TypesQuestion {

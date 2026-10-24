@@ -668,6 +668,9 @@ pub struct PlanOptions {
     /// copies the lines around it, which in a one-line bundle is a copy of the file. And the files aren't checked:
     /// `Request::after_file` requests the types it needs. See `Requested::Types`.
     pub skips_file_diagnostics: bool,
+    /// The configuration file of a path is looked for no further up than the directory that has its `package.json`
+    /// (`config::find_config_of_package`), and not from the working directory.
+    pub stays_inside_package: bool,
     /// A file of `Request::paths` is only checked in a project that includes it: the project of the nearest
     /// configuration file or one that it references, or else the same for the configuration files further up
     /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that no project includes isn't checked.
@@ -2030,7 +2033,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         if let Some(known) = nearest_to.borrow().get(dir) {
             return known.clone();
         }
-        let nearest = config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
+        let nearest = match request.plan_options.stays_inside_package {
+            true => config::find_config_of_package(disk, dir),
+            false => config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd)),
+        };
         nearest_to
             .borrow_mut()
             .insert(dir.to_vec(), nearest.clone());

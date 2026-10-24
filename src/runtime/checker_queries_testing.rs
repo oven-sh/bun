@@ -131,6 +131,7 @@ pub(crate) fn describe_checker_queries(
     let named_values = unlinked_named_values(files, &request.atoms);
     let inputs = QueryInputs {
         roles: &roles.roles,
+        checked_elsewhere: &[],
         builtin_types: &builtin_types,
         named_values: &*named_values,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),

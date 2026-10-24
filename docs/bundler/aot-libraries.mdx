@@ -93,7 +93,7 @@ function greet(options: Options): string {
 export { greet };
 ```
 
-`bun compile` type checks the typed files under the `tsconfig.json` beside them, so the `tsconfig.json` of the program that installs your package doesn't count. It states how strict your sources are, such as `strictNullChecks` and `noUncheckedIndexedAccess`, and your `lib`.
+`bun compile` type checks the typed files as a project of their own, under the `tsconfig.json` beside them. The `tsconfig.json` of the program that installs your package doesn't count, and neither do its `lib`, its `@types` packages or what it declares globally. The file states how strict your sources are, such as `strictNullChecks` and `noUncheckedIndexedAccess`, and your `lib`.
 
 ```json title="dist/tsconfig.json" icon="file-json"
 {
@@ -108,6 +108,10 @@ export { greet };
   "files": ["./index.aot.ts"]
 }
 ```
+
+With `--library` and `--dts`, a `const` at the top level of a module stays a `const` in the bundle, where `bun build` otherwise writes `var`. A `const` keeps its literal type, can be a `unique symbol`, and keeps what a test has narrowed, so the typed file means what your sources mean.
+
+Bun looks for your `tsconfig.json` from the entry point's folder up to the folder that has your `package.json`, and no further: one above that belongs to another project. Pass `--tsconfig-override` to use it anyway. Without a `tsconfig.json`, your sources are checked as `strict`, with `"lib": ["esnext", "dom", "dom.iterable", "dom.asynciterable"]`.
 
 ### 3. Try the tarball
 
@@ -183,12 +187,12 @@ Only `bun compile` knows the `"bun-aot"` condition. Everything else skips it and
 
 The typed file never fails your user's build. Bun warns, and compiles `index.js` without types.
 
-| What happened                                               | What the build prints                                                                              |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `index.js` was patched, by hand or with `bun patch`         | `index.aot.ts without its types doesn't match index.js. Was the package patched?`                  |
-| `index.aot.ts` belongs to another version, or doesn't parse | The same                                                                                           |
-| `index.aot.ts` isn't in the package                         | `index.aot.ts is missing`                                                                          |
-| `index.aot.ts` has a type error in your user's project      | [`TS100009`](/bundler/aot-troubleshooting#a-package-has-type-errors-so-its-compiled-without-types) |
+| What happened                                                 | What the build prints                                                                              |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `index.js` was patched, by hand or with `bun patch`           | `index.aot.ts without its types doesn't match index.js. Was the package patched?`                  |
+| `index.aot.ts` belongs to another version, or doesn't parse   | The same                                                                                           |
+| `index.aot.ts` isn't in the package                           | `index.aot.ts is missing`                                                                          |
+| `index.aot.ts` has a type error under its own `tsconfig.json` | [`TS100009`](/bundler/aot-troubleshooting#a-package-has-type-errors-so-its-compiled-without-types) |
 
 ```txt
 warn: "greeter" is compiled without types, because its typed version in node_modules/greeter can't be used: index.aot.ts is missing
@@ -236,7 +240,7 @@ With `--minify`, `--splitting`, `--no-bundle`, `--format=cjs` or `--sourcemap=in
 warn: the typed JavaScript that bun compile compiles a package from is left out: it does not support --minify yet
 ```
 
-Bun also type checks the typed file before it writes it. If the file has a type error, the build warns you and leaves it out in the same way.
+Bun also type checks the typed file before it writes it, and compares it with the JavaScript the way `bun compile` does in a program that installs your package. If the file has a type error, or doesn't match, the build warns you and leaves it out in the same way.
 
 ### The package.json that Bun writes
 

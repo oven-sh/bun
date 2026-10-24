@@ -88,7 +88,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         define: _, drop: _, bundler_feature_flags: _, asset_naming: _,
         auto_import_jsx: _, allow_runtime: _,
         trim_unused_imports: _, ignore_dce_annotations: _, public_path: _, chunk_naming: _,
-        source_map: _, minify_whitespace: _, minify_syntax: _, minify_identifiers: _,
+        source_map: _, minify_whitespace: _, minify_syntax: _, keeps_top_level_const: _, minify_identifiers: _,
         keep_names: _, css_chunking: _, code_splitting: _, split_require: _, min_chunk_size: _,
         fold_chunks: _, module_preload: _, react_fast_refresh: _, emit_dce_annotations: _,
         tree_shaking: _, tree_shaking_override: _, dead_code_elimination: _, inlining: _,

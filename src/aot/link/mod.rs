@@ -34,7 +34,7 @@ pub use body_remap::BodyRemap;
 pub use names::{ModuleOrigin, ProgramKeys, ProgramNames};
 pub use program_keys::{
     InProject, KeyContext, ProgramFunctionKey, ProgramKey, ProgramLayoutKey, ProgramModule,
-    ProgramVariableKey, compare_program_modules,
+    ProgramVariableKey, Rehoming, compare_program_modules,
 };
 pub use state::UnitIds;
 pub use unit::LinkUnit;
@@ -145,6 +145,7 @@ fn key_context<'a>(
         project,
         graph: projects.get(project).graph,
         runtime_sources: projects.runtime.sources,
+        rehoming: None,
     }
 }
 

@@ -29,6 +29,7 @@ const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ elem
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
+    afterwards: "TouchesOnlyWhatRowNames",
     times: "Repeatedly",
     args: [element, b.length, ...others],
     result: "Stored",
@@ -306,7 +307,10 @@ export default b.declarations(
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateParameter: {
         index: kept,
-        decorator: [b.retained, b.called({ times: "Later", spreadArgs: b.any, result: "Escapes" })],
+        decorator: [
+          b.retained,
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", spreadArgs: b.any, result: "Escapes" }),
+        ],
       },
       defineMetadata: { key: kept, value: kept },
       createDecoratorMetadata: { base: calledOrChanged },

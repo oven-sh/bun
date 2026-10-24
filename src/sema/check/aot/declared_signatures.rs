@@ -55,14 +55,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn declared_signatures(&mut self) -> Rc<DeclaredSignatures> {
         if let Some(known) = &self.memo.declared_signatures {
-            return known.clone();
+            return Rc::clone(known);
         }
         let mut signatures = DeclaredSignatures::default();
         if let Some(declaration) = self.find_own_declaration() {
             self.pair_exports(declaration, &mut signatures);
         }
         let signatures = Rc::new(signatures);
-        self.memo.declared_signatures = Some(signatures.clone());
+        self.memo.declared_signatures = Some(Rc::clone(&signatures));
         signatures
     }
 

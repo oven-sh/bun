@@ -193,7 +193,10 @@ const keptHandler = (path: b.BuiltinPath, cell: string, call: HandlerCall) =>
       capability: "js",
       uses: {
         this: handedOver,
-        value: [b.storedIn(b.nativeCell(cell)), b.called({ times: "PerEvent", ...call, result: "Ignored" })],
+        value: [
+          b.storedIn(b.nativeCell(cell)),
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerEvent", ...call, result: "Ignored" }),
+        ],
       },
       implementation: b.hostCall,
     },
@@ -307,7 +310,10 @@ export default b.declarations(
     returns: b.callbackResult("callback"),
     capability: "js",
     throws: true,
-    uses: { this: handedOver, callback: [b.called({ times: "Once", args: [], result: "Returned" })] },
+    uses: {
+      this: handedOver,
+      callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [], result: "Returned" })],
+    },
     implementation: b.hostCall,
   }),
 

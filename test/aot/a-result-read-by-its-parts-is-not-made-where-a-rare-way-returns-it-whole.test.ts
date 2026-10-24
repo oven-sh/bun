@@ -29,28 +29,58 @@ for (let i = 0; i < 20_000_000; i++) {
 console.log(total);
 `;
 
-// TODO: the pair is still made on every call: in the loop of the module it meets the result of the call that a way which seldom runs makes.
-const sourceWithPair = `function bounds(list: number[]): [number, number] {
+const boundsOfPair = `function bounds(list: number[]): [number, number] {
   let low = 1000;
   for (let i = 0; i < list.length; i++) if (list[i] < low) low = list[i];
   let high = -1000;
   for (let i = 0; i < list.length; i++) if (list[i] > high) high = list[i];
   return [low, high];
 }
-const data: number[] = [3, 1, 2];
+`;
+const turns = (body: string) => `const data: number[] = [3, 1, 2];
 let total = 0;
 for (let i = 0; i < 20_000_000; i++) {
   data[i % 3] = i & 7;
-  const [low, high] = bounds(data);
-  total += high - low;
+  ${body}
 }
 console.log(total);
 `;
 
+// An element of the pair may be undefined (an element that is missing from the list), and its readers expect storage for numbers alone.
+// In the loop of the module the pair also meets the result of the call that a way which seldom runs makes.
+const sourceWithPair = boundsOfPair + turns("const [low, high] = bounds(data);\n  total += high - low;");
+const sourceWithPairInFunction =
+  boundsOfPair +
+  "function spread(list: number[]): number {\n  const [low, high] = bounds(list);\n  return high - low;\n}\n" +
+  turns("total += spread(data);");
+const sourceWithAssignedPair =
+  boundsOfPair +
+  "function spread(list: number[]): number {\n  let low = 0, high = 0;\n  [low, high] = bounds(list);\n  return high - low;\n}\n" +
+  turns("total += spread(data);");
+const sourceWithIndexes =
+  boundsOfPair +
+  "function spread(list: number[]): number {\n  const both = bounds(list);\n  return both[1] - both[0] + bounds(list)[1];\n}\n" +
+  turns("total += spread(data);");
+const sourceWithSmallFunction =
+  "function divide(a: number, b: number): [number, number] {\n  return [Math.floor(a / b), a % b];\n}\n" +
+  turns("const [quotient, rest] = divide(i, 7);\n  total += quotient - rest;");
+const sourceWithLocalList = turns("const pair = [i * 0.5, i + 1];\n  total += pair[0] - pair[1];");
+
+// Behind the block where the parts and the whole object of the call meet, a second block takes in the result of the call that seldom runs.
+const sourceInLoopOfModule =
+  source.slice(0, source.indexOf("function spread")) +
+  turns("const { low, high } = bounds(data);\n  total += high - low;");
+
 describe("compile/aot/results read by their parts", () => {
   for (const [title, text, run] of [
     ["the object is made on no way that runs often", source, test],
-    ["the pair is made on no way that runs often", sourceWithPair, test.todo],
+    ["the pair is made on no way that runs often", sourceWithPair, test],
+    ["the pair that a function takes apart", sourceWithPairInFunction, test],
+    ["the pair that is assigned to variables", sourceWithAssignedPair, test],
+    ["the pair that is read by index", sourceWithIndexes, test],
+    ["the pair of a small function", sourceWithSmallFunction, test],
+    ["a list of numbers that is only read", sourceWithLocalList, test],
+    ["the object that the loop of the module takes apart", sourceInLoopOfModule, test],
   ] as const)
     run(title, () =>
       slot(async () => {

@@ -22,6 +22,7 @@ declare module "express" {
       listen(port: number, hostname: string, callback?: () => void): Server;
     }
     function json(): Handler;
+    function text(options: { type: string }): Handler;
   }
 
   function express(): express.Application;

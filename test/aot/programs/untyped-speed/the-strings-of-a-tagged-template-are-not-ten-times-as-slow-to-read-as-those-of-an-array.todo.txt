@@ -1,0 +1,1 @@
+object-model-cliffs: a frozen array keeps its elements in a sparse map, which no stub reads: each strings[k] is a call of the run time, about 360 instructions

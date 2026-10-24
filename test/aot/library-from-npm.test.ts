@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, spawned } from "./run-programs";
@@ -98,20 +98,21 @@ const unused = (why: string, where = "node_modules/shapes") =>
 const differs = (stem: string) => `${stem}.aot.ts without its types doesn't match ${stem}.js. Was the package patched?`;
 const compiled = (said: string[], stdout = "7 1.2.3\n") => ({ said, exitCode: 0, signal: null, stdout, plain: stdout });
 
-const sceneOf =
-  (declare: typeof test | typeof test.todo) =>
-  (name: string, body: (root: string) => Promise<void>, files: Record<string, string> = project) =>
-    declare(
-      name,
-      () =>
-        slot(async () => {
-          using dir = tempDir("aot-library-from-npm", files);
-          await body(String(dir));
-        }),
-      600_000,
-    );
-const scene = sceneOf(test);
-const sceneNotMetYet = sceneOf(test.todo);
+const scene = (
+  name: string,
+  body: (root: string) => Promise<void>,
+  files: Record<string, string> = project,
+  folder = tempDir,
+) =>
+  test(
+    name,
+    () =>
+      slot(async () => {
+        using dir = folder("aot-library-from-npm", files);
+        await body(String(dir));
+      }),
+    600_000,
+  );
 
 describe.concurrent(
   "bun compile, with no flag and no setup, uses the typed files of a package from bun compile --library",
@@ -313,7 +314,7 @@ describe.concurrent(
       edit(join(await installed(root), "version.aot.ts"), "version: string", "version: number");
       expect(await compile(root)).toEqual(
         compiled([
-          `warn: TS100009: 'shapes' has 1 type error (the first at <root>/app/node_modules/shapes/version.aot.ts:2:5), so 1 of its 2 files are compiled without their types. They still work, but run slower.`,
+          `warn: TS100009: 'shapes' has 1 type error (the first at <root>/app/node_modules/shapes/version.aot.ts:2:7), so 1 of its 2 files are compiled without their types. They still work, but run slower.`,
         ]),
       );
     });
@@ -335,15 +336,15 @@ describe.concurrent(
 );
 
 describe.concurrent("the tsconfig.json of the application does not count against the typed files of a package", () => {
+  const withOptions = (compilerOptions: object) =>
+    JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...compilerOptions } });
   const applicationWith = (compilerOptions: object, program: string) => ({
     "app/package.json": application["package.json"],
-    "app/tsconfig.json": JSON.stringify({
-      compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...compilerOptions },
-    }),
+    "app/tsconfig.json": withOptions(compilerOptions),
     "app/app.ts": program,
   });
-  const libraryOf = (name: string, source: string) => ({
-    "library/tsconfig.json": tsconfig,
+  const libraryOf = (name: string, source: string, compilerOptions: object = {}) => ({
+    "library/tsconfig.json": withOptions(compilerOptions),
     "library/package.json": JSON.stringify({ name, version: "1.0.0" }),
     "library/src/index.ts": source,
   });
@@ -397,7 +398,7 @@ export function read(options: { [key: string]: string }): string {
     },
   );
 
-  sceneNotMetYet(
+  scene(
     "exactOptionalPropertyTypes, where the package has a conditional type over Partial",
     async root => {
       await install(root);
@@ -422,6 +423,653 @@ export function store(form: Record<string, string>, key: string, value: Value<Pa
       ...applicationWith(
         { exactOptionalPropertyTypes: true },
         `import { store } from "forms";\nconst form: Record<string, string> = {};\nstore(form, "a", "b");\nconsole.log(form["a"]);\n`,
+      ),
+    },
+  );
+
+  scene(
+    "a lib without what the package uses",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("answers")], "201 /mine 3 6\n"));
+    },
+    {
+      ...libraryOf(
+        "answers",
+        `export interface Answer {
+  body: Response;
+  url: URL;
+  bytes: Uint8Array;
+}
+export function read(answer: Answer): string {
+  return answer.body.status + " " + answer.url.pathname + " " + answer.bytes.length;
+}
+export function last(list: Answer[]): number {
+  return list.at(-1)!.bytes.length * 2;
+}
+`,
+      ),
+      ...applicationWith(
+        { target: "es2015", lib: ["es2015"] },
+        `import { last, read, type Answer } from "answers";
+declare const Response: new (body: string, options: { status: number }) => Answer["body"];
+declare const URL: new (url: string) => Answer["url"];
+declare const console: { log(...values: unknown[]): void };
+const answer: Answer = { body: new Response("x", { status: 201 }), url: new URL("http://a/mine"), bytes: new Uint8Array(3) };
+console.log(read(answer), last([answer]));
+`,
+      ),
+    },
+  );
+
+  scene(
+    "the globals of @types/bun, where the package has those of the DOM",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("boxes")], "200 /one 3 201 /mine 3 16 31 201 a\n"));
+    },
+    {
+      ...libraryOf(
+        "boxes",
+        `export interface Box {
+  body: Response | null;
+  url: URL;
+  bytes: Uint8Array;
+}
+export function make(text: string): Box {
+  return { body: new Response(text), url: new URL("http://a/" + text), bytes: new TextEncoder().encode(text) };
+}
+export function read(box: Box): string {
+  return (box.body ? box.body.status : 0) + " " + box.url.pathname + " " + box.bytes.length;
+}
+export function keep(list: Box[], box: Box): number {
+  list.push(box);
+  let n = 0;
+  for (const kept of list) n += kept.bytes.length + kept.url.href.length;
+  return n;
+}
+`,
+      ),
+      ...applicationWith(
+        { lib: ["esnext"], types: ["bun"] },
+        `import { keep, make, read, type Box } from "boxes";
+const list: Box[] = [];
+const mine: Box = { body: new Response("x", { status: 201 }), url: new URL("http://b/mine"), bytes: Buffer.from("abc") };
+console.log(read(make("one")), read(mine), keep(list, mine), keep(list, make("two")), list[0]!.body!.status, list[1]!.url.host);
+`,
+      ),
+    },
+    tempDirWithBunTypes,
+  );
+
+  scene(
+    "no null checks, where the program stores null and undefined in the package's fields",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("chains")], "3 1 threw 2 undefined 3\n"));
+    },
+    {
+      ...libraryOf(
+        "chains",
+        `export interface Item {
+  name: string;
+  next: Item | null;
+  count?: number;
+}
+export function chain(names: string[]): Item | null {
+  let head: Item | null = null;
+  for (const name of names) head = { name, next: head };
+  return head;
+}
+export function length(item: Item | null): number {
+  let n = 0;
+  while (item) {
+    n += item.name.length + (item.count ?? 0);
+    item = item.next;
+  }
+  return n;
+}
+export function first(list: Item[]): Item {
+  return list[0]!;
+}
+`,
+      ),
+      ...applicationWith(
+        { strict: false },
+        `import { chain, first, length, type Item } from "chains";
+const a: Item = { name: "a", next: null, count: undefined };
+const b: Item = { name: "b", next: undefined, count: 2 };
+const c: Item = { name: null, next: a };
+let threw = "no";
+try {
+  length(c);
+} catch {
+  threw = "threw";
+}
+console.log(length(chain(["x", "yy"])), length(a), threw, first([b]).count, first([]), length(b));
+`,
+      ),
+    },
+  );
+
+  scene(
+    "an interface of the package that the program adds a member to",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("totals")], "7 3 undefined\n"));
+    },
+    {
+      ...libraryOf(
+        "totals",
+        `export interface Options {
+  name: string;
+  times: number;
+}
+export function total(list: Options[]): number {
+  let n = 0;
+  for (const options of list) n += options.times + options.name.length;
+  return n;
+}
+export function make(name: string, times: number): Options {
+  return { name, times };
+}
+`,
+      ),
+      ...applicationWith(
+        {},
+        `import { make, total, type Options } from "totals";
+declare module "totals" {
+  interface Options {
+    extra?: { deep: number };
+  }
+}
+const list: Options[] = [make("a", 1), { name: "b", times: 4, extra: { deep: 3 } }];
+console.log(total(list), list[1]!.extra!.deep, list[0]!.extra);
+`,
+      ),
+    },
+  );
+
+  scene(
+    "exactOptionalPropertyTypes in the package alone, where the program stores undefined in an optional field",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("counts")], "5 2 true false undefined NaN\n"));
+    },
+    {
+      ...libraryOf(
+        "counts",
+        `export interface Item {
+  name: string;
+  count?: number;
+}
+export function total(list: Item[]): number {
+  let n = 0;
+  for (const item of list) n += "count" in item ? item.count! + 1 : item.name.length;
+  return n;
+}
+export function has(item: Item): boolean {
+  return "count" in item;
+}
+`,
+        { exactOptionalPropertyTypes: true },
+      ),
+      ...applicationWith(
+        {},
+        `import { has, total, type Item } from "counts";
+const empty: Item = { name: "ab", count: undefined };
+const list: Item[] = [{ name: "abc", count: 1 }, { name: "abc" }];
+console.log(total(list), list.length, has(empty), has(list[1]!), empty.count, total([empty]));
+`,
+      ),
+    },
+  );
+
+  const entries = `export interface Entry {
+  name: string;
+  size: number;
+}
+`;
+
+  scene(
+    "noUncheckedIndexedAccess in the package alone",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("lists")], "2 first undefined 4 a none 1\n"));
+    },
+    {
+      ...libraryOf(
+        "lists",
+        `${entries}export function pick(list: Entry[], at: number): Entry | undefined {
+  return list[at];
+}
+export function sizes(list: Entry[]): number {
+  let n = 0;
+  for (let i = 0; i <= list.length; i++) n += list[i]?.size ?? -1;
+  return n;
+}
+export function named(table: { [key: string]: Entry }, key: string): string {
+  const entry = table[key];
+  return entry ? entry.name : "none";
+}
+export const table: { [key: string]: Entry } = { a: { name: "a", size: 1 } };
+export const list: Entry[] = [{ name: "first", size: 2 }];
+`,
+        { noUncheckedIndexedAccess: true },
+      ),
+      ...applicationWith(
+        {},
+        `import { list, named, pick, sizes, table, type Entry } from "lists";
+const missing: Entry = list[5];
+const absent: Entry = table["nope"];
+let threw = 0;
+try {
+  console.log(missing.name);
+} catch {
+  threw++;
+}
+try {
+  console.log(absent.size);
+} catch {
+  threw++;
+}
+const holes: Entry[] = [];
+holes[2] = { name: "late", size: 7 };
+console.log(threw, pick(list, 0)!.name, pick(list, 9), sizes(holes), named(table, "a"), named(table, "b"), sizes(list));
+`,
+      ),
+    },
+  );
+
+  scene(
+    "noUncheckedIndexedAccess in the program alone, where the package returns what is not in the list",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(
+        compiled([note("lists")], "3 undefined undefined 1 undefined undefined 0 b\n"),
+      );
+    },
+    {
+      ...libraryOf(
+        "lists",
+        `${entries}export function first(list: Entry[]): Entry {
+  return list[0];
+}
+export function at(table: { [key: string]: Entry }, key: string): Entry {
+  return table[key];
+}
+export function nameOf(list: Entry[], index: number): string {
+  return list[index].name;
+}
+export function keep(list: Entry[], index: number): Entry[] {
+  const kept: Entry[] = [list[index]];
+  return kept;
+}
+export function total(list: Entry[]): number {
+  let n = 0;
+  for (const entry of list) n += entry ? entry.size : 0;
+  return n;
+}
+`,
+      ),
+      ...applicationWith(
+        { noUncheckedIndexedAccess: true },
+        `import { at, first, keep, nameOf, total, type Entry } from "lists";
+const none: Entry[] = [];
+const got: Entry = first(none);
+const other: Entry = at({}, "x");
+let threw = 0;
+try {
+  got.name;
+} catch {
+  threw++;
+}
+try {
+  console.log(other.size + 1);
+} catch {
+  threw++;
+}
+try {
+  console.log(nameOf(none, 3));
+} catch {
+  threw++;
+}
+const kept = keep(none, 1);
+console.log(threw, got, other, kept.length, kept[0], typeof kept[0], total(kept), nameOf([{ name: "b", size: 1 }], 0));
+`,
+      ),
+    },
+  );
+
+  scene(
+    "a const enum and an enum of the package, and a number that is no member",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(
+        compiled([note("levels")], "8 low high undefined threw 2 3 true blue blue,red,red,blue High\n"),
+      );
+    },
+    {
+      ...libraryOf(
+        "levels",
+        `export const enum Level {
+  Low = 1,
+  High = 2,
+}
+export enum Color {
+  Red = "red",
+  Blue = "blue",
+}
+export enum Rank {
+  Low,
+  High,
+}
+export interface Entry {
+  level: Level;
+  color: Color;
+}
+export function name(level: Level): string {
+  switch (level) {
+    case Level.Low:
+      return "low";
+    case Level.High:
+      return "high";
+  }
+}
+export function make(high: boolean): Entry {
+  return { level: high ? Level.High : Level.Low, color: high ? Color.Blue : Color.Red };
+}
+export function sum(list: Entry[]): number {
+  let n = 0;
+  for (const entry of list) n += entry.level;
+  return n;
+}
+`,
+      ),
+      ...applicationWith(
+        {},
+        `import { Color, Level, Rank, make, name, sum, type Entry } from "levels";
+const three: number = [1, 2, 3].length;
+const odd: Entry = { level: three, color: Color.Red };
+const list: Entry[] = [make(true), make(false), odd, { level: Level.High, color: Color.Blue }];
+const unnamed: string = name(three);
+let threw = "no";
+try {
+  unnamed.length;
+} catch {
+  threw = "threw";
+}
+console.log(
+  sum(list),
+  name(Level.Low),
+  name(list[0]!.level),
+  unnamed,
+  threw,
+  Level.High,
+  Level.Low + Level.High,
+  list[0]!.level === Level.High,
+  Color.Blue,
+  list.map(entry => entry.color).join(),
+  Rank[Rank.High],
+);
+`,
+      ),
+    },
+  );
+
+  scene(
+    "a conditional type over a global that only one of the two has",
+    async root => {
+      await install(root);
+      const { said, ...rest } = await compile(root);
+      expect(rest).toEqual((({ said, ...rest }) => rest)(compiled([], "string:2:2 number:7:1 string number\n")));
+      expect(said).toEqual([
+        expect.stringMatching(/^(note: "stamps" 1\.0\.0 is compiled from|warn: TS100009: 'stamps' has)/),
+      ]);
+    },
+    {
+      ...libraryOf(
+        "stamps",
+        `type Stamp = typeof globalThis extends { Bun: infer B } ? number : string;
+export interface Row {
+  stamp: Stamp;
+  id: number;
+}
+export function row(id: number): Row {
+  return { stamp: String(id) as Stamp, id };
+}
+export function show(row: Row): string {
+  return typeof row.stamp + ":" + row.stamp + ":" + row.id;
+}
+`,
+      ),
+      ...applicationWith(
+        {},
+        `import { row, show, type Row } from "stamps";
+declare global {
+  var Bun: object;
+}
+const mine: Row = { stamp: 7 as any, id: 1 };
+const rows: Row[] = [row(2), mine];
+console.log(rows.map(show).join(" "), typeof rows[0]!.stamp, typeof rows[1]!.stamp);
+`,
+      ),
+    },
+  );
+
+  scene(
+    "a field that is a string to the package and a number to the program",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("widths")], "undefined 2 8.5 s31 9.5s4 NaN\n"));
+    },
+    {
+      ...libraryOf(
+        "widths",
+        `type Stamp = typeof globalThis extends { onlyInTheProgram: infer _ } ? number : string;
+export interface Row {
+  stamp: Stamp;
+  id: number;
+}
+export function row(id: number): Row {
+  return { stamp: "s" + id, id };
+}
+export function width(row: Row): number {
+  return row.stamp.length;
+}
+export function joined(rows: Row[]): string {
+  let text = "";
+  for (const row of rows) text += row.stamp;
+  return text;
+}
+`,
+      ),
+      ...applicationWith(
+        {},
+        `import { joined, row, width, type Row } from "widths";
+declare global {
+  var onlyInTheProgram: number;
+}
+const mine: Row = { stamp: 7.5, id: 1 };
+const rows: Row[] = [{ stamp: 9.5, id: 2 }, row(4)];
+let product = 1;
+for (const each of rows) product *= each.stamp;
+console.log(width(mine), width(row(2)), mine.stamp + 1, row(3).stamp + 1, joined(rows), product);
+`,
+      ),
+    },
+  );
+
+  scene(
+    "no null checks in the program, whose callbacks return null where the package expects a number or an object",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("folds")], "3 0 threw 2 null\n"));
+    },
+    {
+      ...libraryOf(
+        "folds",
+        `export interface Item {
+  name: string;
+}
+export function fold(list: Item[], size: (item: Item) => number): number {
+  let n = 0;
+  for (const item of list) n += size(item);
+  return n;
+}
+export function names(count: number, make: (index: number) => Item): number {
+  let n = 0;
+  for (let i = 0; i < count; i++) n += make(i).name.length;
+  return n;
+}
+export function last(count: number, make: (index: number) => Item): Item {
+  let item: Item = { name: "" };
+  for (let i = 0; i < count; i++) item = make(i);
+  return item;
+}
+`,
+      ),
+      ...applicationWith(
+        { strict: false },
+        `import { fold, last, names, type Item } from "folds";
+const list: Item[] = [{ name: "a" }, { name: "bc" }];
+const nothing = (item: Item): number => null;
+const none = (index: number): Item => (index ? null : { name: "ab" });
+let threw = "no";
+try {
+  names(2, none);
+} catch {
+  threw = "threw";
+}
+console.log(fold(list, item => item.name.length), fold(list, nothing), threw, names(1, none), last(2, none));
+`,
+      ),
+    },
+  );
+
+  scene(
+    "no null checks in the package, which returns and stores null where the program expects a string",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(compiled([note("finds")], "2 b null null 1\n"));
+    },
+    {
+      ...libraryOf(
+        "finds",
+        `export interface Found {
+  text: string;
+  next: Found;
+}
+export function find(list: string[], text: string): string {
+  for (const each of list) if (each === text) return each;
+  return null;
+}
+export function found(text: string): Found {
+  return { text: text === "" ? null : text, next: null };
+}
+`,
+        { strict: false },
+      ),
+      ...applicationWith(
+        {},
+        `import { find, found, type Found } from "finds";
+let threw = 0;
+try {
+  console.log(find([], "a").length);
+} catch {
+  threw++;
+}
+const empty: Found = found("");
+try {
+  console.log(empty.text.length + empty.next.text.length);
+} catch {
+  threw++;
+}
+console.log(threw, find(["b"], "b"), empty.text, found("c").next, found("c").text.length);
+`,
+      ),
+    },
+  );
+
+  scene(
+    "two versions whose interfaces of one name differ, one of them under another typed package",
+    async root => {
+      await install(root);
+      await bun(root, "newer", "compile", "--library");
+      cpSync(join(root, "newer/dist"), join(root, "between/node_modules/shapes"), { recursive: true });
+      await bun(root, "between", "compile", "--library");
+      cpSync(join(root, "between/dist"), join(root, "app/node_modules/between"), { recursive: true });
+      cpSync(join(root, "newer/dist"), join(root, "app/node_modules/between/node_modules/shapes"), { recursive: true });
+      expect(await compile(root)).toEqual(
+        compiled(
+          [
+            note("between"),
+            note("shapes"),
+            `note: "shapes" 2.0.0 is compiled from its typed version in node_modules/between/node_modules/shapes`,
+          ],
+          "6 16 7 seven no 0sevenundefined\n",
+        ),
+      );
+    },
+    {
+      ...libraryOf(
+        "shapes",
+        `export interface Options {
+  name: string;
+  times: number;
+}
+export function total(list: Options[]): number {
+  let n = 0;
+  for (const options of list) n += options.times + options.name.length;
+  return n;
+}
+export function make(name: string, times: number): Options {
+  return { name, times };
+}
+`,
+      ),
+      "newer/tsconfig.json": tsconfig,
+      "newer/package.json": JSON.stringify({ name: "shapes", version: "2.0.0" }),
+      "newer/src/index.ts": `export interface Options {
+  times: string;
+  name: number;
+  more: boolean;
+}
+export function total(list: Options[]): number {
+  let n = 0;
+  for (const options of list) n += options.times.length + options.name + (options.more ? 1 : 0);
+  return n;
+}
+export function make(name: number, times: string): Options {
+  return { times, name, more: true };
+}
+`,
+      "between/tsconfig.json": withOptions({ noUncheckedIndexedAccess: true }),
+      "between/package.json": JSON.stringify({ name: "between", version: "1.0.0", dependencies: { shapes: "2.0.0" } }),
+      "between/src/index.ts": `import { make, total, type Options } from "shapes";
+export function sum(count: number): number {
+  const list: Options[] = [];
+  for (let i = 0; i < count; i++) list.push(make(i, "x".repeat(i)));
+  return total(list);
+}
+export function pass(): Options {
+  return make(7, "seven");
+}
+`,
+      ...applicationWith(
+        {},
+        `import { pass, sum } from "between";
+import { make, total, type Options } from "shapes";
+const list: Options[] = [make("a", 1), { name: "bb", times: 2 }];
+const other = pass();
+let threw = "no";
+try {
+  total([other as any as Options]);
+} catch {
+  threw = "threw";
+}
+console.log(total(list), sum(4), other.name, other.times, threw, total([other as any as Options]));
+`,
       ),
     },
   );

@@ -10,12 +10,12 @@ use bun_sema::session::Session;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::sound_files::{
     ModuleTypes, Output, annotate_implicit_any, emitted_declarations_of, module_types, sound_files,
-    tsconfig_of_sources, typed_path_beside,
+    tsconfig_of_sources, typed_path_beside, why_programs_refuse,
 };
-use bun_sema_driver::{Diagnostic, Report, Request};
+use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
 
-use super::declarations::bundler_path;
+use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
 use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
 
 const SKIPPED_TYPED_FILES: &str =
@@ -98,7 +98,7 @@ type Texts = Vec<(Vec<u8>, Vec<u8>)>;
 fn strictness_of(cwd: &[u8], tsconfig: Option<&[u8]>) -> String {
     let session = Session::new();
     let options = tsconfig.and_then(|tsconfig| {
-        let path = from_native(&join_abs_string::<Auto>(cwd, &[tsconfig]));
+        let path = from_native(join_abs_string::<Auto>(cwd, &[tsconfig]));
         let disk = Disk::with_already_read(1, Default::default(), &path);
         Some(load_options_for_build(&disk, &session, &path).ok()?.options)
     });
@@ -265,9 +265,19 @@ pub(crate) fn typed_files_for_build(
             script_kinds_by_extension: &by_extension,
             conditions,
         });
+        let libs = match sources_tsconfig {
+            Some(_) => &[][..],
+            None => &LIBS_WITHOUT_CONFIGURATION,
+        };
+        let command_line = bun_sema_driver::parse_command_line(libs, cwd);
+        let options = &command_line.compiler_options;
         let request = Request {
+            plan_options: PlanOptions {
+                stays_inside_package: true,
+                ..Default::default()
+            },
             after_file: Some(&note),
-            ..request(cwd, sources_tsconfig, &entries, &[], 0, None)
+            ..request(cwd, sources_tsconfig, &entries, options, 0, None)
         };
         let mut texts = emitted.iter().map(|file| (&file.0[..], &file.1[..]));
         let provided = Provided {
@@ -331,6 +341,12 @@ pub(crate) fn typed_files_for_build(
         return warn(format_args!(
             "with its types put back it could not be type checked"
         ));
+    }
+    let refusal = (found.typed.iter().zip(&outputs)).find_map(|((path, text), output)| {
+        why_programs_refuse((path, text), (output.path, output.javascript))
+    });
+    if let Some(why) = refusal {
+        return warn(format_args!("{why}"));
     }
     let typed_files = found.typed.into_iter().chain(without_sources);
     let typed_files = typed_files.map(|(path, text)| TypedFile {

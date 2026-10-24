@@ -14,6 +14,24 @@ pub struct LeftOutDeclarations {
 }
 
 impl LeftOutDeclarations {
+    /// The same declarations under the numbers that another program gives the files.
+    pub fn in_other_program(
+        &self,
+        file_of: &dyn Fn(FileId) -> Option<FileId>,
+    ) -> LeftOutDeclarations {
+        LeftOutDeclarations {
+            declarators: (self.declarators.iter())
+                .filter_map(|&(file, id)| Some((file_of(file)?, id)))
+                .collect(),
+            classes: (self.classes.iter())
+                .filter_map(|&(file, id)| Some((file_of(file)?, id)))
+                .collect(),
+            statements: (self.statements.iter())
+                .filter_map(|&(file, id)| Some((file_of(file)?, id)))
+                .collect(),
+        }
+    }
+
     pub fn leave_out_declarator(&mut self, file: FileId, declarator: VarDeclId) {
         self.declarators.insert((file, declarator));
     }

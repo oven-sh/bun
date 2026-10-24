@@ -364,10 +364,24 @@ pub fn find_config_file(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 /// `computeConfigFileName`, for a file in `dir`. Returns the `tsconfig.json`, or else the `jsconfig.json`, in `dir` or
 /// in its nearest ancestor directory that has either.
 pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, |_| false)
+}
+
+/// `find_config`, no further up than the directory that has the `package.json`. What's above it configures another
+/// project, which the package is published without.
+pub fn find_config_of_package(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, |dir| host.is_file(&join(dir, b"package.json")))
+}
+
+fn find_config_below(
+    host: &dyn Host,
+    dir: &[u8],
+    is_highest: impl Fn(&[u8]) -> bool,
+) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
         let candidates = [b"tsconfig.json", b"jsconfig.json"].map(|name| join(dir, name));
         let found = candidates.into_iter().find(|it| host.is_file(it));
-        if found.is_some() || dir.ends_with(b"/node_modules") {
+        if found.is_some() || dir.ends_with(b"/node_modules") || is_highest(dir) {
             return found;
         }
     }

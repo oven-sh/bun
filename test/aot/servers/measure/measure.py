@@ -12,7 +12,8 @@ Two builds of Bun on the small routes of one server, in about four minutes:
 A column is a name, the Bun that builds the executable with `bun build --compile`, and extra flags for that build.
 `--run-env aot:NAME=value` sets an environment variable for the servers of one column.
 `name=/path/to/bun:--aot@effect-plain` makes a column serve another server's program, so that two programs with the same routes
-are measured seconds apart. `name=/path/to/node:run` runs the entry point with that executable instead of compiling it.
+are measured seconds apart; `*` in that name stands for the server of the job. `name=/path/to/bun:--aot@bun-validated#parsed` makes it serve another route as well: one with the same request and the same answer.
+`name=/path/to/node:run` runs the entry point with that executable instead of compiling it.
 
 The three servers under ../effect have routes of their own (`effectRoutes` in ../answers.ts): `effect` is an API written with
 Effect, `effect-sources` is the same program with the Effect packages resolved to the TypeScript sources that they ship, and
@@ -20,6 +21,12 @@ Effect, `effect-sources` is the same program with the Effect packages resolved t
 
     python3 measure.py --servers effect --column aot=/path/to/bun:--aot --column sources=/path/to/bun:--aot@effect-sources \
         --column released=/path/to/released/bun --column node=/usr/local/bin/node:run --column plain=/path/to/bun:--aot@effect-plain --out rows.jsonl
+
+`bun-validated`, `hono-validated` and `express-validated` take the same order with the checks that an --aot build generates from its type: `validate<Order>(await request.json())` (the route
+`validated`) and `JSON.parse<Order>(await request.text())` (`parsed`). zod is not in those programs. One order, validated in four ways and by two JITs, a valid one and one that is refused (`<route>-refused`, only when named):
+
+    python3 measure.py --servers bun,hono,express --routes post,post-refused --column zod=/path/to/bun:--aot --column hand=/path/to/bun:--aot#hand --column validate=/path/to/bun:--aot@*-validated#validated \
+        --column parse=/path/to/bun:--aot@*-validated#parsed --column own=/path/to/bun --column released=/path/to/released/bun --out rows.jsonl
 
 A job is one server and one route. Jobs are distributed over lanes. A lane is four consecutive cores: the server is pinned to
 the first one and the client (load.c) to the other three. Servers are told they have one core (WTF_numberOfProcessorCores=1).
@@ -113,13 +120,14 @@ import argparse, fcntl, functools, glob, json, multiprocessing, os, re, resource
 import layers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack", "tanstack-typed", "koa-typed", "express-typed", "fastify-typed"]
+SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack", "tanstack-typed", "koa-typed", "express-typed", "fastify-typed", "bun-validated", "hono-validated", "express-validated"]
+VALIDATED = ("bun-validated", "hono-validated", "express-validated")
 TANSTACK = ("tanstack", "tanstack-typed")
 TYPED_APP = {"koa-typed": "koa", "express-typed": "express", "fastify-typed": "fastify"}
 API_SERVERS = ["api-bun", "api-thin", "api-hono"]
 EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
-VALIDATING = ("post", "hand")
+VALIDATING = ("post", "hand", "validated", "parsed")
 NATIVE = {"go": ["go", "build", "-o"], "rust": ["cargo", "build", "--release"]}
 NATIVE_ROUTES = ("text", "json", "params", "post", "hand", "typed", "async", "stream")
 NATIVE_COLUMN = {"name": "native", "run_env": {}}
@@ -221,12 +229,18 @@ def proc_status_mb(pid, name):
     return int(re.search(r"^%s:\s+(\d+)" % name, open("/proc/%d/status" % pid).read(), re.M).group(1)) / 1024
 
 
+def program_of(column, server):
+    return (column.get("server") or server).replace("*", server)
+
+
 class Server:
     def __init__(self, options, lane, spec, server, route, column):
+        self.name = "%s/%s/%s" % (server, route["name"], column["name"])
+        if column.get("route"):
+            route = next(other for other in spec["routes"] + spec["validatedRoutes"] + spec["refusedRoutes"] if other["name"] == column["route"] + ("-refused" if route["name"].endswith("-refused") else ""))
         self.options, self.lane, self.spec, self.route, self.column = options, lane, spec, route, column
         self.at_rate = {}
-        self.name = "%s/%s/%s" % (server, route["name"], column["name"])
-        self.executable = os.path.join(options.work, "bin", "%s-%s" % (column.get("server") or server, column["name"]))
+        self.executable = os.path.join(options.work, "bin", "%s-%s" % (program_of(column, server), column["name"]))
         self.folder = os.path.join(options.work, "lane-%d" % lane["server"], column["name"])
         self.copy = os.path.join("/dev/shm" if os.access("/dev/shm", os.W_OK) else options.work, "aot-servers-lane-%03d-column-%02d" % (lane["server"], options.columns.index(column) if column in options.columns else 99))
         os.makedirs(self.folder, exist_ok=True)
@@ -583,8 +597,8 @@ def measure_job(options, lane, spec, server, route):
             line["events"] = options.events
             line["guests"] = round(max(each["guests"] for each in starts.values()), 4)
             line["invalid_order_statuses"] = next(iter(starts.values()))["invalid_order_statuses"]
-            line["executable_mb"] = os.path.getsize(os.path.join(options.work, "bin", "%s-%s" % (column.get("server") or server, column["name"]))) / 1e6
-            line["build_seconds"] = column.get("build_seconds", {}).get(column.get("server") or server)
+            line["executable_mb"] = os.path.getsize(os.path.join(options.work, "bin", "%s-%s" % (program_of(column, server), column["name"]))) / 1e6
+            line["build_seconds"] = column.get("build_seconds", {}).get(program_of(column, server))
             print("%-32s %8.0f/s | %9.0f instructions %9.0f cycles %7.2f us CPU | peak RSS %6.1f private %6.1f alive %s ready %5.1f MB | first %6.1f ms | %d starts" % (
                 "%s/%s/%s" % (server, route["name"], column["name"]), line["requests_per_second"], line["instructions"], line["cycles"], line["cpu_us"],
                 line["peak_rss_mb"], line["private_mb"], "%5.2f" % line["alive_mb"] if line["alive_mb"] is not None else "    -", line["ready_rss_mb"], line["first_response_ms"], len(starts)) + (" VOID: guests on its cores" if line["void"] else ""), flush=True)
@@ -704,7 +718,7 @@ def main():
     parser.add_argument("--run-env", action="append", default=[], metavar="COLUMN:NAME=VALUE")
     parser.add_argument("--build-env", action="append", default=[], metavar="COLUMN:NAME=VALUE")
     parser.add_argument("--out", required=True, help="output file; lines are appended")
-    parser.add_argument("--servers", default=",".join(SERVERS))
+    parser.add_argument("--servers", default=",".join(server for server in SERVERS if server not in VALIDATED))
     parser.add_argument("--routes", default="", help="names from ../answers.ts, static, list; all by default")
     parser.add_argument("--cores", default="0-3", help="a range of consecutive cores, a multiple of four; every four cores form a lane")
     parser.add_argument("--modules", help="a node_modules folder with the packages from ../app/package.json and ../tanstack/package.json; skips `bun install`")
@@ -731,10 +745,11 @@ def main():
     options.columns = []
     for text in options.column:
         name, _, rest = text.partition("=")
+        rest, _, route = rest.partition("#")
         before, _, server = rest.rpartition("@")
-        rest, server = (before, server) if server in SERVERS or server in EFFECT or server in API_SERVERS else (rest, "")
+        rest, server = (before, server) if server in SERVERS or server in EFFECT or server in API_SERVERS or "*" in server else (rest, "")
         bun, _, flags = rest.partition(":")
-        options.columns.append({"name": name, "bun": os.path.abspath(bun), "flags": flags.split(), "server": server, "run_env": {}, "build_env": {}, "build_seconds": {}})
+        options.columns.append({"name": name, "bun": os.path.abspath(bun), "flags": flags.split(), "server": server, "route": route, "run_env": {}, "build_env": {}, "build_seconds": {}})
     for kind, values in (("run_env", options.run_env), ("build_env", options.build_env)):
         for text in values:
             name, _, pair = text.partition(":")
@@ -791,7 +806,7 @@ def main():
         shutil.copytree(folders["tanstack"], folders["tanstack-typed"], ignore=shutil.ignore_patterns("node_modules"))
         os.symlink(os.path.realpath(os.path.join(folders["tanstack"], "node_modules")), os.path.join(folders["tanstack-typed"], "node_modules"))
         add_typed_versions(folders["tanstack-typed"])
-    if any((column["server"] or server) in TYPED_APP for server in servers for column in options.columns):
+    if any(program_of(column, server) in TYPED_APP for server in servers for column in options.columns):
         folders["app-typed"] = os.path.join(options.work, "app-typed")
         shutil.rmtree(folders["app-typed"], ignore_errors=True)
         shutil.copytree(folders["app"], folders["app-typed"], ignore=shutil.ignore_patterns("node_modules"))
@@ -816,7 +831,7 @@ def main():
             continue
         # The bundler inlines process.env.NODE_ENV and defaults it to "development".
         for column in options.columns:
-            program = column["server"] or server
+            program = program_of(column, server)
             folder = folders[program if program in TANSTACK else "effect-sources" if program == "effect-sources" else "effect" if program in EFFECT else "app-typed" if program in TYPED_APP else "app"]
             entry = "./serve.ts" if program in TANSTACK else EFFECT.get(program, "./%s.ts" % TYPED_APP.get(program, program))
             executable = os.path.join(options.work, "bin", "%s-%s" % (program, column["name"]))
@@ -860,7 +875,7 @@ def main():
     for server in servers:
         routes = [
             route
-            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server in TANSTACK and not options.soak else [])
+            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["validatedRoutes"] if server in VALIDATED else spec["routes"]) + (PAGES if server in TANSTACK and not options.soak else []) + [refused for refused in spec["refusedRoutes"] if refused["name"] in options.routes.split(",") and server not in EFFECT and server not in API_SERVERS]
             if (not options.routes or route["name"] in options.routes.split(",")) and (server not in NATIVE or route["name"] in NATIVE_ROUTES)
         ]
         for job in [routes] if options.soak else routes:

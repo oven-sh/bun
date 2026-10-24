@@ -91,6 +91,7 @@ struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
 struct SharedLoadInputs<'c, 's> {
     disk: &'c Disk,
     sessions: PerProject<&'s Session>,
+    world_sessions: &'s [Session],
     atoms: Interner<'s>,
     application_fold: &'c FoldInputs<'s>,
     application_defines: &'s [Define<'s>],
@@ -129,14 +130,17 @@ impl<'a> Build<'a> {
             application: Session::new(),
             runtime: Session::new(),
         };
-        let result = self.load_in_sessions(sessions.as_ref(), asset_reads, then);
+        let world_sessions: Vec<Session> = (0..64).map(|_| Session::new()).collect();
+        let result = self.load_in_sessions(sessions.as_ref(), &world_sessions, asset_reads, then);
         self.retire_sessions(sessions);
+        self.retire_world_sessions(world_sessions);
         result
     }
 
     fn load_in_sessions<R>(
         &mut self,
         sessions: PerProject<&Session>,
+        world_sessions: &[Session],
         asset_reads: AssetReads,
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
@@ -167,6 +171,7 @@ impl<'a> Build<'a> {
         let shared = SharedLoadInputs {
             disk: &disk,
             sessions,
+            world_sessions,
             atoms,
             application_fold: &application_fold,
             application_defines: provided.defines,
@@ -340,6 +345,7 @@ impl<'a> Build<'a> {
         };
         let loaded = LoadedBuild {
             projects,
+            world_sessions: shared.world_sessions,
             session: shared.sessions.application,
             atoms: shared.atoms,
             messages: shared.messages,
@@ -422,6 +428,7 @@ impl<'a> Build<'a> {
                 options: self.options,
                 manifest: shared.manifest,
                 host_loaded_modules,
+                is_world: false,
             };
             self.freeze_project(loaded, &input, shared)
         };
@@ -436,6 +443,25 @@ impl<'a> Build<'a> {
             return Err(Stage::Load);
         }
         Ok(sources)
+    }
+
+    /// The sources of a program that checks a typed package by itself. The application reports what is wrong with them.
+    pub(crate) fn freeze_world(&mut self, loaded: &LoadedProgram<'_>) -> Result<Sources, Stage> {
+        let input = FreezeInput {
+            project: ProjectId::Application,
+            files: loaded.files(),
+            options: self.options,
+            manifest: Archive::embedded().manifest(),
+            host_loaded_modules: &[],
+            is_world: true,
+        };
+        match freeze_sources(&input, &self.parallel_runner()) {
+            Ok(frozen) => Ok(frozen.sources),
+            Err(error) => {
+                self.diagnostics.add_internal_error(error);
+                Err(Stage::Load)
+            }
+        }
     }
 
     fn freeze_project(

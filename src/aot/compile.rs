@@ -134,6 +134,10 @@ pub(crate) struct Build<'a> {
     // Each with `QueryStatistics::closed_cycles`, which is not 0.
     circular_runtime_files: Vec<(FileId, u32)>,
     import_graph: Option<ImportGraph>,
+    /// While the modules of a typed package's own program are bound: what the application leaves out of its files.
+    pub(crate) left_out_of_world: Option<LeftOutCode>,
+    /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
+    pub(crate) checked_elsewhere: Vec<FileId>,
 }
 
 pub(crate) struct LoadedProject<'b, 's> {
@@ -145,6 +149,8 @@ pub(crate) struct LoadedProject<'b, 's> {
 
 pub(crate) struct LoadedBuild<'b, 's> {
     pub projects: PerProject<LoadedProject<'b, 's>>,
+    /// One for each program that checks a typed package by itself.
+    pub world_sessions: &'s [Session],
     pub session: &'s Session,
     pub atoms: Interner<'s>,
     pub messages: &'b LoadMessages,
@@ -395,6 +401,8 @@ impl<'a> Build<'a> {
             unreached_runtime_files: Vec::new(),
             circular_runtime_files: Vec::new(),
             import_graph: None,
+            left_out_of_world: None,
+            checked_elsewhere: Vec::new(),
         }
     }
 
@@ -439,6 +447,11 @@ impl<'a> Build<'a> {
             runtime,
         } = sessions;
         self.retired_sessions.extend([application, runtime]);
+    }
+
+    pub(crate) fn retire_world_sessions(&mut self, sessions: Vec<Session>) {
+        let used = sessions.into_iter().filter(|session| !session.is_unused());
+        self.retired_sessions.extend(used);
     }
 
     // Nothing waits for the memory of what a stage has read for the last time, and one thread takes a while to free it.

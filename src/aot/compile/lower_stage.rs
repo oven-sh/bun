@@ -1,9 +1,10 @@
+use super::program_reach::LeftOutCode;
 use super::runtime_reach::{ReachInput, find_reached_runtime_code};
 use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
 use crate::diagnostics::{DiagnosticBuffer, InternalError};
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id};
-use crate::link::{KeyContext, LinkUnit};
+use crate::link::{KeyContext, LinkUnit, Rehoming};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
@@ -14,18 +15,22 @@ use crate::modules::{Library, LinkedProject, ModuleGraph};
 use crate::package_diagnostics::{PackageView, report_package_errors, report_used_versions};
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
+use bun_core::strings;
 use bun_sema::atom::known;
 use bun_sema::check::aot::{
     DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
 };
+use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
 use bun_sema::program::{FileId, FileRole, Files};
+use bun_sema::session::Session;
 use bun_sema_driver::{
-    self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Incomplete, RoleDecision,
-    decide_roles, keep_verified_roles, run_on_one_thread_while,
+    self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
+    Incomplete, RoleDecision, decide_roles, keep_verified_roles, run_on_one_thread_while,
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
@@ -41,6 +46,46 @@ struct DecidedProject {
     roles: RoleDecision,
     files_to_lower: Vec<FileId>,
     left_out_bodies: LeftOutBodies,
+}
+
+struct WorldToLower<'a, 's> {
+    session: &'s Session,
+    index: usize,
+    // Of the application.
+    files: &'a [FileId],
+}
+
+/// What the programs of the typed packages have done. The files are the application's.
+#[derive(Default)]
+struct Worlds {
+    // In order.
+    lowered: Vec<FileId>,
+    units: Vec<LinkUnit>,
+    demoted: Vec<Demotion>,
+    demoted_directories: Vec<Vec<u8>>,
+}
+
+// Two configuration files with the same text but for `files` make the same program, unless they name paths, which count from where the file is.
+fn world_key(text: &[u8], config_path: &[u8]) -> Vec<u8> {
+    const NAMES_OF_PATHS: [&[u8]; 9] = [
+        b"\"extends\"",
+        b"\"paths\"",
+        b"\"baseUrl\"",
+        b"\"typeRoots\"",
+        b"\"types\"",
+        b"\"rootDirs\"",
+        b"\"include\"",
+        b"\"references\"",
+        b"${configDir}",
+    ];
+    if NAMES_OF_PATHS
+        .into_iter()
+        .any(|name| strings::contains(text, name))
+    {
+        return config_path.to_vec();
+    }
+    let end = strings::last_index_of(text, b"\"files\"");
+    text[..end.unwrap_or(text.len())].to_vec()
 }
 
 struct ProjectToLower<'a, 'b, 's> {
@@ -67,6 +112,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 project,
                 graph: &bound.projects.get(project).graph,
                 runtime_sources: &loaded.project(ProjectId::Runtime).sources,
+                rehoming: None,
             },
             inputs,
             threads,
@@ -116,9 +162,21 @@ impl Build<'_> {
         loaded: &LoadedBuild<'_, '_>,
         bound: &BoundBuild<'_>,
     ) -> Vec<LinkUnit> {
+        let left_out_of_application = &bound.projects.application.left_out;
+        let worlds = self.lower_worlds(loaded, left_out_of_application);
+        self.checked_elsewhere.clone_from(&worlds.lowered);
         self.clock.start(Stage::Check);
         let decided = loaded.projects.as_ref().map(|id, project| {
-            let compiled_files = project.loaded.files().compiled_files();
+            let all_compiled_files = project.loaded.files().compiled_files();
+            let is_decided = |file: &FileId| {
+                id == ProjectId::Application
+                    && (worlds.lowered.binary_search(file).is_ok()
+                        || worlds.demoted.iter().any(|demotion| demotion.file == *file))
+            };
+            let undecided_files: Vec<FileId> = (all_compiled_files.iter().copied())
+                .filter(|file| !is_decided(file))
+                .collect();
+            let compiled_files = &undecided_files[..];
             let left_out = &bound.projects.get(id).left_out;
             let left_out_bodies = LeftOutBodies::new(left_out.functions.iter().copied())
                 .with_files(left_out.files.iter().copied());
@@ -133,7 +191,18 @@ impl Build<'_> {
                 // The test `every_module_of_bun_keeps_its_types` checks Bun's own modules when Bun is built.
                 ProjectId::Runtime => keep_verified_roles(project.loaded, compiled_files),
             };
-            let mut files_to_lower = find_files_to_lower(compiled_files, &roles);
+            let mut roles = roles;
+            if id == ProjectId::Application {
+                for &demotion in &worlds.demoted {
+                    roles.roles[demotion.file.idx()] = FileRole::Inferred;
+                    roles.demoted.push(demotion);
+                }
+                roles.demoted.sort_by_key(|demotion| demotion.file);
+            }
+            let mut files_to_lower = find_files_to_lower(all_compiled_files, &roles);
+            files_to_lower.retain(|file| {
+                id != ProjectId::Application || worlds.lowered.binary_search(file).is_err()
+            });
             let left_out_files = &bound.projects.get(id).left_out.files;
             files_to_lower.retain(|file| left_out_files.binary_search(file).is_err());
             DecidedProject {
@@ -184,6 +253,7 @@ impl Build<'_> {
             &decided,
             checked.application,
             &mut units,
+            &worlds.demoted_directories,
         );
         self.report_project(
             loaded,
@@ -191,8 +261,212 @@ impl Build<'_> {
             &decided,
             checked.runtime,
             &mut units,
+            &[],
         );
+        units.extend(worlds.units);
         units
+    }
+
+    /// A typed package is checked and lowered by a program of its own: the `tsconfig.json` beside its typed files, its
+    /// `lib`, its globals. Nothing of the application's configuration reaches it. Packages that say the same share one.
+    fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, left_out: &LeftOutCode) -> Worlds {
+        let application = loaded.project(ProjectId::Application);
+        let (files, host) = (application.loaded.files(), application.host);
+        let mut groups: BTreeMap<Vec<u8>, Vec<FileId>> = BTreeMap::new();
+        for &file in files.compiled_files() {
+            let is_typed =
+                (files.compiled(file)).is_some_and(|compiled| compiled.typed_source_path.is_some());
+            if !is_typed
+                || files.role(file) != FileRole::Checked
+                || files.hir(file).check_directive == Some(false)
+                || left_out.files.binary_search(&file).is_ok()
+            {
+                continue;
+            }
+            let directory = host.directory_of(files.module(file).file_name());
+            if let Some(config_path) = config::find_config(host, &directory) {
+                let key = world_key(&host.read_source(&config_path), &config_path);
+                groups.entry(key).or_default().push(file);
+            }
+        }
+        let mut worlds = Worlds::default();
+        for (index, group) in groups.into_values().enumerate() {
+            let Some(session) = loaded.world_sessions.get(index) else {
+                break;
+            };
+            let world = WorldToLower {
+                session,
+                index,
+                files: &group,
+            };
+            self.lower_world(loaded, left_out, &world, &mut worlds);
+        }
+        worlds.lowered.sort_unstable();
+        worlds
+    }
+
+    fn lower_world<'s>(
+        &mut self,
+        loaded: &LoadedBuild<'_, 's>,
+        left_out: &LeftOutCode,
+        world: &WorldToLower<'_, 's>,
+        worlds: &mut Worlds,
+    ) {
+        let application = loaded.project(ProjectId::Application);
+        let runtime = loaded.project(ProjectId::Runtime);
+        let files = application.loaded.files();
+        let paths: Vec<Vec<u8>> = (world.files.iter())
+            .map(|&file| files.module(file).file_name().to_vec())
+            .collect();
+        let request = CompileRequest {
+            entry_points: EntryPoints::Resolved(&paths),
+            project_origin: FileOrigin::DependencySource,
+            left_out_bodies: None,
+            ..*application.request
+        };
+        // The application's program goes on with the files of a program that does not load.
+        let Ok(program) = driver::load_program(world.session, application.host, &request) else {
+            return;
+        };
+        let world_files = program.files();
+        let to_application: Vec<Option<FileId>> = (0..world_files.modules.len())
+            .map(|index| {
+                files
+                    .by_path
+                    .get(world_files.module(FileId(index as u32)).file_name())
+            })
+            .collect();
+        let mut to_world: FxHashMap<FileId, FileId> = FxHashMap::default();
+        for (index, &file) in to_application.iter().enumerate() {
+            if let Some(file) = file {
+                to_world.insert(file, FileId(index as u32));
+            }
+        }
+        let Ok(sources) = self.freeze_world(&program) else {
+            return;
+        };
+        let world_build = LoadedBuild {
+            projects: PerProject {
+                application: LoadedProject {
+                    loaded: &program,
+                    host: application.host,
+                    request: &request,
+                    sources,
+                },
+                runtime: LoadedProject {
+                    loaded: runtime.loaded,
+                    host: runtime.host,
+                    request: runtime.request,
+                    sources: runtime.sources.clone(),
+                },
+            },
+            world_sessions: &[],
+            session: world.session,
+            atoms: loaded.atoms,
+            messages: loaded.messages,
+            builtin_names: loaded.builtin_names,
+            typed_packages: loaded.typed_packages,
+            can_load_code_at_run_time: loaded.can_load_code_at_run_time,
+            finish_asset_reads: loaded.finish_asset_reads,
+        };
+        self.left_out_of_world =
+            Some(left_out.in_other_program(&|file| to_world.get(&file).copied()));
+        let Ok(bound) = self.bind_modules(&world_build) else {
+            return;
+        };
+        let own: Vec<FileId> = (world.files.iter())
+            .filter_map(|file| to_world.get(file).copied())
+            .collect();
+        let left_out = &bound.projects.application.left_out;
+        let left_out_bodies = LeftOutBodies::new(left_out.functions.iter().copied())
+            .with_files(left_out.files.iter().copied());
+        let roles = {
+            let request = &CompileRequest {
+                left_out_bodies: Some(&left_out_bodies),
+                ..request
+            };
+            decide_roles(&program, application.host, request, &own)
+        };
+        let files_to_lower: Vec<FileId> = (own.iter().copied())
+            .filter(|&file| roles.role(file) == FileRole::Checked && !roles.has_early_error(file))
+            .collect();
+        let id = ProjectId::Application;
+        let demoted_directories = self.report_check_diagnostics(
+            world_build.packages(id),
+            &roles,
+            roles.diagnostics.clone(),
+            &roles.incomplete,
+        );
+        let demoted_directories = demoted_directories.into_iter().map(<[u8]>::to_vec);
+        worlds.demoted_directories.extend(demoted_directories);
+        for demotion in &roles.demoted {
+            if let Some(file) = to_application[demotion.file.idx()] {
+                worlds.demoted.push(Demotion { file, ..*demotion });
+            }
+        }
+        let is_typed = |file: &FileId| {
+            (world_files.compiled(*file)).is_some_and(|it| it.typed_source_path.is_some())
+        };
+        self.checked_elsewhere = (world_files.compiled_files().iter().copied())
+            .filter(|file| is_typed(file) && !own.contains(file))
+            .collect();
+        self.checked_elsewhere.sort_unstable();
+        let source_bytes: usize = (files_to_lower.iter())
+            .map(|&file| world_files.module(file).hir.text.len())
+            .sum();
+        let threads = self.threads_to_lower(source_bytes);
+        let decided = PerProject {
+            application: DecidedProject {
+                roles,
+                files_to_lower,
+                left_out_bodies,
+            },
+            runtime: DecidedProject {
+                roles: keep_verified_roles(runtime.loaded, &[]),
+                files_to_lower: Vec::new(),
+                left_out_bodies: LeftOutBodies::new(core::iter::empty()),
+            },
+        };
+        let rehoming = Rehoming {
+            files: &to_application,
+            first_fresh_file: files.modules.len() as u32 + ((world.index as u32 + 1) << 20),
+            stable_symbol: &|symbol| {
+                let whole = world_files.canonical(symbol);
+                world_files.parts(whole).first().copied().unwrap_or(whole)
+            },
+            canonical_symbol: &|symbol| files.canonical(symbol),
+        };
+        let left_out_functions = left_out.functions.clone();
+        let roles = &decided.application.roles;
+        let checked = self.with_inputs_for_reached_code(
+            &world_build,
+            &bound,
+            id,
+            roles,
+            left_out_functions,
+            |inputs| {
+                let mut project =
+                    ProjectToLower::new(&world_build, &bound, &decided, id, inputs, threads);
+                project.keys.rehoming = Some(&rehoming);
+                project.lower()
+            },
+        );
+        let view = world_build.project(id).view();
+        for (file, lowered) in checked.lowered {
+            let (Some(lowered), Some(file)) = (lowered, to_application[file.idx()]) else {
+                self.diagnostics.add_internal_error(InternalError {
+                    stage: Stage::Lower,
+                    message: b"a file of a typed package was not lowered by its own program"
+                        .to_vec(),
+                });
+                continue;
+            };
+            self.diagnostics.add_buffer(view, lowered.diagnostics);
+            self.statistics.add_counters(view, lowered.counters);
+            self.statistics.add_queries(lowered.queries);
+            worlds.units.push(*lowered.unit);
+            worlds.lowered.push(file);
+        }
     }
 
     /// Bun's own modules are lowered beside the application, from one thread of the pool, which the idle ones help.
@@ -271,6 +545,7 @@ impl Build<'_> {
         decided: &PerProject<DecidedProject>,
         checked: CheckedProgram<Option<LoweredUnit>>,
         units: &mut Vec<LinkUnit>,
+        directories_demoted_by_worlds: &[Vec<u8>],
     ) {
         let roles = &decided.get(project).roles;
         let packages = loaded.packages(project);
@@ -289,6 +564,7 @@ impl Build<'_> {
             checked.diagnostics,
             &checked.incomplete,
         ));
+        demoted_directories.extend(directories_demoted_by_worlds.iter().map(|it| &it[..]));
         self.diagnostics.add_load_messages(loaded.messages);
         if self.reports_typed_versions(project) {
             report_used_versions(&mut self.diagnostics, packages, &demoted_directories);
@@ -429,6 +705,10 @@ impl Build<'_> {
         files_of_dependencies.sort_unstable();
         then(&LoweringInputs {
             roles: &lowering_roles,
+            checked_elsewhere: match project {
+                ProjectId::Application => &self.checked_elsewhere,
+                ProjectId::Runtime => &[],
+            },
             builtin_types: &bound_project.builtin_types,
             named_values: &linked_project,
             builtin_names: loaded.builtin_names,

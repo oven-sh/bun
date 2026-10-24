@@ -125,7 +125,7 @@ fn parse_options_of(
     path: &[u8],
     settings: &TranspileSettings,
 ) -> ParseOptions {
-    let project = context.projects.governing(context, path);
+    let project = context.projects.governing_code(context, path);
     let is_javascript = is_javascript_file(context.host, path);
     let options = project.unwrap_or(context.options).for_parsing();
     ParseOptions {

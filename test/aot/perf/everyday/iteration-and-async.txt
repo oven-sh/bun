@@ -1,0 +1,443 @@
+//// generator-range
+function* range(from: number, to: number) {
+  for (let k = from; k < to; k++) yield k;
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of range(i & 3, 12)) sum += value;
+  return sum;
+}
+//// generator-stepped-by-hand
+function* naturals() {
+  for (let k = 0; ; k++) yield k;
+}
+function turn(i: number): number {
+  const numbers = naturals();
+  numbers.next();
+  numbers.next();
+  return numbers.next().value! + (i & 1);
+}
+//// generator-left-early
+function* naturals() {
+  for (let k = 0; ; k++) yield k;
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of naturals()) {
+    if (value > (i & 7)) break;
+    sum += value;
+  }
+  return sum;
+}
+//// generator-spread
+function* three(i: number) {
+  yield i;
+  yield i + 1;
+  yield i + 2;
+}
+function turn(i: number): number {
+  return [...three(i)][2]!;
+}
+//// generator-delegation
+function* inner(i: number) {
+  yield i;
+  yield i + 1;
+}
+function* outer(i: number) {
+  yield* inner(i);
+  yield* inner(i + 10);
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of outer(i & 255)) sum += value;
+  return sum;
+}
+//// generator-pipeline
+function* numbers(n: number) {
+  for (let k = 0; k < n; k++) yield k;
+}
+function* mapped(source: Iterable<number>, f: (n: number) => number) {
+  for (const value of source) yield f(value);
+}
+function* filtered(source: Iterable<number>, keep: (n: number) => boolean) {
+  for (const value of source) if (keep(value)) yield value;
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of filtered(mapped(numbers(8), n => n + i), n => (n & 1) === 0)) sum += value;
+  return sum | 0;
+}
+//// generator-given-values
+function* accumulator(): Generator<number, void, number> {
+  let total = 0;
+  for (;;) total += yield total;
+}
+const running = accumulator();
+running.next();
+function turn(i: number): number {
+  return running.next(i & 3).value! & 0xffff;
+}
+//// generator-over-a-tree
+type Tree = { value: number; children: Tree[] };
+const tree: Tree = { value: 1, children: [{ value: 2, children: [{ value: 3, children: [] }] }, { value: 4, children: [] }] };
+function* walk(node: Tree): Generator<number> {
+  yield node.value;
+  for (const child of node.children) yield* walk(child);
+}
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const value of walk(tree)) sum += value;
+  return sum;
+}
+//// iterator-object-by-hand
+function countdown(from: number): Iterable<number> {
+  return {
+    [Symbol.iterator]() {
+      let k = from;
+      return { next: () => (k > 0 ? { done: false, value: k-- } : { done: true, value: undefined }) };
+    },
+  };
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of countdown(4 + (i & 3))) sum += value;
+  return sum;
+}
+//// iterator-helpers
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return numbers
+    .values()
+    .filter(n => n & 1)
+    .map(n => n + i)
+    .take(2)
+    .toArray()[1]!;
+}
+//// array-iterator-by-hand
+const letters = ["a", "bb", "ccc"];
+function turn(i: number): number {
+  const iterator = letters[Symbol.iterator]();
+  let sum = i & 1;
+  for (let step = iterator.next(); !step.done; step = iterator.next()) sum += step.value.length;
+  return sum;
+}
+//// destructuring-from-a-generator
+function* pair(i: number) {
+  yield i;
+  yield i * 2;
+}
+function turn(i: number): number {
+  const [a, b] = pair(i & 255);
+  return a! + b!;
+}
+//// for-of-over-a-string
+const word = "iteration";
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const letter of word) sum += letter.charCodeAt(0);
+  return sum;
+}
+//// for-of-over-arguments-of-a-map
+const scores = new Map([["a", 1], ["b", 2], ["c", 3]]);
+function turn(i: number): number {
+  let best = i & 1;
+  for (const [, score] of scores) if (score > best) best = score;
+  return best;
+}
+//// await-a-value
+async function turn(i: number): Promise<number> {
+  return (await i) + 1;
+}
+//// await-a-resolved-promise
+async function turn(i: number): Promise<number> {
+  return (await Promise.resolve(i)) + 1;
+}
+//// await-an-async-function
+async function load(i: number) {
+  return i * 2;
+}
+async function turn(i: number): Promise<number> {
+  return (await load(i)) + 1;
+}
+//// await-three-deep
+async function a(i: number) {
+  return i + 1;
+}
+async function b(i: number) {
+  return (await a(i)) + 1;
+}
+async function c(i: number) {
+  return (await b(i)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await c(i);
+}
+//// await-in-a-loop
+async function step(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  let value = i & 255;
+  for (let k = 0; k < 4; k++) value = await step(value);
+  return value;
+}
+//// await-an-object-result
+async function fetchUser(id: number) {
+  return { id, name: "user", active: true };
+}
+async function turn(i: number): Promise<number> {
+  const user = await fetchUser(i);
+  return user.id + user.name.length;
+}
+//// async-function-that-never-awaits
+async function plain(i: number) {
+  return i & 255;
+}
+async function turn(i: number): Promise<number> {
+  return plain(i);
+}
+//// promise-all
+async function load(n: number) {
+  return n * 2;
+}
+async function turn(i: number): Promise<number> {
+  const [a, b, c] = await Promise.all([load(i), load(1), load(2)]);
+  return a + b + c;
+}
+//// promise-all-over-a-map
+const ids = [1, 2, 3, 4];
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const loaded = await Promise.all(ids.map(id => load(id + i)));
+  return loaded[3]!;
+}
+//// promise-all-settled
+async function maybe(n: number) {
+  if (n & 1) throw new RangeError("odd");
+  return n;
+}
+async function turn(i: number): Promise<number> {
+  const results = await Promise.allSettled([maybe(2), maybe(i | 1)]);
+  return results.filter(result => result.status === "fulfilled").length;
+}
+//// promise-race
+async function turn(i: number): Promise<number> {
+  return await Promise.race([Promise.resolve(i), Promise.resolve(0)]);
+}
+//// promise-then-chain
+async function turn(i: number): Promise<number> {
+  return Promise.resolve(i)
+    .then(n => n + 1)
+    .then(n => n * 2);
+}
+//// new-promise-resolved-at-once
+async function turn(i: number): Promise<number> {
+  return new Promise<number>(resolve => resolve(i + 1));
+}
+//// promise-with-resolvers
+async function turn(i: number): Promise<number> {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  resolve(i);
+  return promise;
+}
+//// await-then-catch-a-rejection
+async function fail(i: number): Promise<number> {
+  throw new Error("no " + (i & 3));
+}
+async function turn(i: number): Promise<number> {
+  try {
+    return await fail(i);
+  } catch (error) {
+    return (error as Error).message.length;
+  }
+}
+//// try-finally-around-an-await
+let open = 0;
+async function work(i: number) {
+  return i & 255;
+}
+async function turn(i: number): Promise<number> {
+  open++;
+  try {
+    return await work(i);
+  } finally {
+    open--;
+  }
+}
+//// promise-catch-method
+async function turn(i: number): Promise<number> {
+  return Promise.reject<number>(new Error("x")).catch(() => i & 255);
+}
+//// queue-microtask
+async function turn(i: number): Promise<number> {
+  let value = 0;
+  queueMicrotask(() => {
+    value = i & 255;
+  });
+  await null;
+  return value;
+}
+//// async-generator
+async function* pages(n: number) {
+  for (let k = 0; k < n; k++) yield k;
+}
+async function turn(i: number): Promise<number> {
+  let sum = i & 1;
+  for await (const page of pages(4)) sum += page;
+  return sum;
+}
+//// for-await-over-an-array-of-promises
+async function turn(i: number): Promise<number> {
+  let sum = 0;
+  for await (const value of [Promise.resolve(i & 255), Promise.resolve(1), 2]) sum += value;
+  return sum;
+}
+//// async-method-of-a-class
+class Repository {
+  private rows = new Map([[1, "one"], [2, "two"]]);
+  async find(id: number) {
+    return this.rows.get(id) ?? null;
+  }
+}
+const repository = new Repository();
+async function turn(i: number): Promise<number> {
+  return (await repository.find(1 + (i & 1)))!.length;
+}
+//// async-arrow-callbacks
+const steps = [async (n: number) => n + 1, async (n: number) => n * 2];
+async function turn(i: number): Promise<number> {
+  let value = i & 255;
+  for (const step of steps) value = await step(value);
+  return value;
+}
+//// thenable
+async function turn(i: number): Promise<number> {
+  return await { then: (resolve: (n: number) => void) => resolve(i & 255) };
+}
+//// async-local-storage
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<{ id: number }>();
+async function inner() {
+  await null;
+  return storage.getStore()!.id;
+}
+async function turn(i: number): Promise<number> {
+  return storage.run({ id: i & 255 }, inner);
+}
+//// try-without-a-throw
+function risky(n: number): number {
+  if (n < 0) throw new Error("negative");
+  return n * 2;
+}
+function turn(i: number): number {
+  try {
+    return risky(i & 255);
+  } catch {
+    return -1;
+  }
+}
+//// try-finally
+let depth = 0;
+function turn(i: number): number {
+  depth++;
+  try {
+    return (i & 255) + depth;
+  } finally {
+    depth--;
+  }
+}
+//// throw-and-catch-an-error
+function turn(i: number): number {
+  try {
+    throw new Error("failed");
+  } catch (error) {
+    return (error as Error).message.length + (i & 1);
+  }
+}
+//// throw-and-catch-one-time-in-sixteen
+function check(n: number): number {
+  if ((n & 15) === 0) throw new RangeError("multiple of sixteen");
+  return n & 255;
+}
+function turn(i: number): number {
+  try {
+    return check(i);
+  } catch {
+    return 0;
+  }
+}
+//// throw-and-catch-a-plain-value
+function turn(i: number): number {
+  try {
+    throw i & 255;
+  } catch (value) {
+    return value as number;
+  }
+}
+//// throw-through-three-frames
+function deep(n: number): number {
+  if (n === 0) throw new Error("bottom");
+  return deep(n - 1) + 1;
+}
+function turn(i: number): number {
+  try {
+    return deep(3);
+  } catch (error) {
+    return (error as Error).message.length + (i & 1);
+  }
+}
+//// catch-and-rethrow
+function inner(): never {
+  throw new TypeError("inner");
+}
+function middle(): never {
+  try {
+    inner();
+  } catch (error) {
+    throw new Error("outer", { cause: error });
+  }
+}
+function turn(i: number): number {
+  try {
+    middle();
+  } catch (error) {
+    return ((error as Error).cause as Error).message.length + (i & 1);
+  }
+}
+//// error-made-not-thrown
+function turn(i: number): number {
+  return new Error("message " + (i & 3)).message.length;
+}
+//// error-stack-read
+function turn(i: number): number {
+  return new Error("x").stack!.length > 0 ? 1 + (i & 1) : 0;
+}
+//// error-told-apart-by-instanceof
+class NotFound extends Error {}
+class Forbidden extends Error {}
+function fail(i: number): never {
+  throw i & 1 ? new NotFound("nf") : new Forbidden("fb");
+}
+function turn(i: number): number {
+  try {
+    fail(i);
+  } catch (error) {
+    return error instanceof NotFound ? 404 : error instanceof Forbidden ? 403 : 500;
+  }
+}
+//// using-declaration
+let released = 0;
+function resource(id: number) {
+  return {
+    id,
+    [Symbol.dispose]() {
+      released = (released + 1) & 0xffff;
+    },
+  };
+}
+function turn(i: number): number {
+  using handle = resource(i & 255);
+  return handle.id + released;
+}

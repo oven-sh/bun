@@ -6,13 +6,16 @@ use bun_sema::check::services::{
     TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
+use bun_sema::config::find_config_of_package;
+use bun_sema::erasure::{Erasure, ErasureMismatchKind, check_erasure};
 use bun_sema::hir::*;
 use bun_sema::json::Json;
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, byte_range_of_node};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 pub struct Source<'a> {
     pub path: &'a [u8],
@@ -3437,13 +3440,6 @@ impl<'a> Transfer<'_, 'a, '_> {
             else {
                 continue;
             };
-            // A bundle declares with `var` what the source declares with `const`, which would widen the type that the checker inferred.
-            if slot.place == Place::Binding
-                && let Some(constant) = module.types.and_then(|types| types.constant_type(key))
-            {
-                insertions.add(slot.start, Order::Slot, [&b": "[..], constant].concat());
-                continue;
-            }
             let Some(found) = source_slots.get(&(slot.place, source, key)) else {
                 if slot.place == Place::ReturnType
                     && module
@@ -3501,6 +3497,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                         Order::Slot,
                         [text, if has_more { &b", "[..] } else { b"" }].concat(),
                     )
+                }
+                // `new Map` is printed without parentheses, so a cast of the whole expression ends where its type
+                // arguments do: behind what ends inside the callee, before what starts at `new` or earlier.
+                Place::TypeArguments
+                    if slot.key < slot.start && output.word(slot.key) == b"new" =>
+                {
+                    (Order::Close(slot.start - slot.key - 1), text)
                 }
                 _ => (Order::Slot, text),
             };
@@ -5070,13 +5073,14 @@ pub fn tsconfig_of_sources(outputs: &[Output<'_>], modules: &[ModuleTypes]) -> O
         .iter()
         .find_map(|output| output.entry_point)
         .or_else(|| modules.first().map(|module| &module.path[..]))?;
-    let candidates = ancestors(source).skip(1).flat_map(|directory| {
-        [&b"tsconfig.json"[..], b"jsconfig.json"].map(|name| [directory, name].join(&b'/'))
-    });
-    candidates
-        .into_iter()
-        .map(|candidate| crate::host::to_native(&candidate).to_vec())
-        .find(|candidate| crate::host::is_regular_file(candidate))
+    tsconfig_of_package(source)
+}
+
+/// The configuration file that `PlanOptions::stays_inside_package` finds for `source`, as a path of the host.
+pub fn tsconfig_of_package(source: &[u8]) -> Option<Vec<u8>> {
+    let disk = crate::host::Disk::with_already_read(1, Default::default(), source);
+    let found = find_config_of_package(&disk, ancestors(source).nth(1)?)?;
+    Some(crate::host::to_native(&found).to_vec())
 }
 
 pub fn emitted_declarations_of(
@@ -5125,11 +5129,6 @@ pub fn typed_outputs(
         .map_err(|why| format!("{shown}: {why}"))?;
         let typed_path = typed_path_beside(output.path)
             .ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
-        let typed = TypedText {
-            text: name_unique_symbols(&typed_path, &typed.text)
-                .map_err(|why| format!("{shown}: {why}"))?,
-            ..typed
-        };
         let erased =
             erase_types(&typed_path, &typed.text).map_err(|why| format!("{shown}: {why}"))?;
         if erased != output.javascript && !is_for_declarations {
@@ -5147,66 +5146,54 @@ pub fn typed_outputs(
     Ok(found)
 }
 
-/// A bundle declares with `var` what its sources declare with `const`, and only a `const` can be a `unique symbol`. So the type gets a name of its own:
-/// `declare const key_unique: unique symbol; var key: typeof key_unique = Symbol() as any;`
-fn name_unique_symbols(path: &[u8], typescript: &[u8]) -> Result<Vec<u8>, String> {
-    if !bun_core::strings::contains(typescript, b"unique symbol") {
-        return Ok(typescript.to_vec());
-    }
+/// Why a program that installs the package would compile the JavaScript and leave the typed file unused. It is the
+/// program's own question, asked of the same two trees.
+pub fn why_programs_refuse(
+    (typed_path, typed): (&[u8], &[u8]),
+    (javascript_path, javascript): (&[u8], &[u8]),
+) -> Option<String> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let file = parse(&session, &atoms, path, typescript)?;
-    let syntax = Syntax {
-        file: &file,
-        text: typescript,
-    };
-    let mut edits: Vec<(u32, u32, Vec<u8>)> = Vec::new();
-    for statement in file.ids(file.body).map(|id| &file[id]) {
-        let StmtKind::Var(declarations) = statement.kind else {
-            continue;
+    let parse = |path: &[u8], text: &[u8]| {
+        let options = CompileParseOptions {
+            path,
+            script_kind: None,
+            experimental_decorators: false,
+            every_file_is_a_module: false,
+            reads_jsdoc: false,
+            keeps_function_directives: false,
         };
-        for declaration in declarations
-            .iter()
-            .map(|declaration: VarDeclId| &file[declaration])
-        {
-            let is_variable = declaration.kind == VarKind::Var
-                && matches!(file[declaration.pat].kind, PatKind::Ident(_));
-            let (Some(ty), Some(initializer)) = (declaration.ty.some(), declaration.init.some())
-            else {
-                continue;
-            };
-            let (start, end) = syntax.type_span(ty);
-            let words: Vec<&[u8]> = typescript[start as usize..end as usize]
-                .split(|byte| byte.is_ascii_whitespace())
-                .filter(|word| !word.is_empty())
-                .collect();
-            if !is_variable || words != [&b"unique"[..], b"symbol"] {
-                continue;
-            }
-            let mut name = [syntax.word(file[declaration.pat].pos), b"_unique"].concat();
-            while bun_core::strings::contains(typescript, &name) {
-                name.push(b'_');
-            }
-            let line = line_start(typescript, statement.start as usize) as u32;
-            edits.push((
-                line,
-                line,
-                [&b"declare const "[..], &name, b": unique symbol;\n"].concat(),
-            ));
-            edits.push((start, end, [&b"typeof "[..], &name].concat()));
-            let after = syntax.outer_span(initializer).1;
-            edits.push((after, after, b" as any".to_vec()));
-        }
+        parse_for_compile(session.arena(), &options, text, &atoms)
+    };
+    let name_of = |path: &[u8]| {
+        let slash = bun_core::strings::last_index_of_char(path, b'/');
+        BStr::new(&path[slash.map_or(0, |slash| slash + 1)..]).to_string()
+    };
+    let (mut typed_file, installed) =
+        (parse(typed_path, typed), parse(javascript_path, javascript));
+    typed_file.is_typed_version = true;
+    let place = |name: String, file: &File<'_>, text: &[u8], node: NodeData| {
+        let at = byte_range_of_node(file, node).0;
+        let starts = compute_ecma_line_starts(text);
+        let line = starts.partition_point(|&start| start <= at).max(1);
+        format!("{name}:{line}:{}", at - starts[line - 1] + 1)
+    };
+    let (typed_name, javascript_name) = (name_of(typed_path), name_of(javascript_path));
+    match check_erasure(&typed_file, &installed) {
+        Erasure::Exact => None,
+        Erasure::Unknown => Some(format!(
+            "{typed_name} or {javascript_name} has syntax errors"
+        )),
+        Erasure::Mismatch(found) if found.kind == ErasureMismatchKind::EmitsCode => Some(format!(
+            "at {}, TypeScript syntax that emits code can't be erased",
+            place(typed_name, &typed_file, typed, found.typed),
+        )),
+        Erasure::Mismatch(found) => Some(format!(
+            "without its types, {} doesn't match {}",
+            place(typed_name, &typed_file, typed, found.typed),
+            place(javascript_name, &installed, javascript, found.untyped),
+        )),
     }
-    edits.sort_by_key(|edit| edit.0);
-    let (mut text, mut at) = (Vec::with_capacity(typescript.len()), 0);
-    for (start, end, new) in edits {
-        text.extend_from_slice(&typescript[at..start as usize]);
-        text.extend_from_slice(&new);
-        at = end as usize;
-    }
-    text.extend_from_slice(&typescript[at..]);
-    Ok(text)
 }
 
 pub fn annotate_implicit_any(

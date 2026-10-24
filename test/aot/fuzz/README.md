@@ -34,6 +34,8 @@ stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 6
 .. --as-a-user --no-attribution --sources patterns-that-go-back-for-millions-of-turns --batch 1 --modes default --run-seconds 30 --compiled-run-seconds 200   # patterns out of run-time text on both sides of the hundred million turns at which plain Bun gives a match up: an executable finds every match that plain Bun finds, and ends where it ends
 .. --as-a-user --sources errors-of-values-nobody-uses --batch 8 --modes default,every-function-hot,cold-and-very-large,erased   # operations that throw where nobody uses their value: the error comes all the same, at its place
 .. --as-a-user --sources two-names-where-ways-meet --batch 8 --modes default,every-function-hot,erased   # two names for one object, one of them given another object on a way that is seldom taken: where the ways have met, each names its own
+.. --as-a-user --sources objects-with-very-many-fields --batch 4 --modes default,every-function-hot,erased   # where a member lies goes by its number: objects past thirty-two, sixty-four, a hundred and twenty-eight members
+.. --as-a-user --no-attribution --sources programs-as-they-are --batch 8 --modes default,every-function-hot --company 33,65,130,300   # the programs of ../programs unchanged, beside so many unrelated shapes that hold their names: what is expected of `o.x` goes by every shape of the whole program with an `x`
 .. --workers 4 --modes default,every-function-hot        # four workers run each program at once: compiled code and its tables are shared by all threads
 .. --bun <a build with AddressSanitizer> --as-a-user --no-attribution --sources changing-buffers --modes default,every-function-hot,erased-and-hot --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"
 .. --bun <a build with AddressSanitizer> --as-a-user --no-attribution --modes every-function-hot,erased-and-hot --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"
@@ -57,6 +59,8 @@ stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 6
 | `patterns-that-go-back-for-millions-of-turns.ts` | one more: patterns made at run time whose first alternative fails only behind millions of turns of its groups and whose last matches at once, at lengths around the place where plain Bun gives up |
 | `errors-of-values-nobody-uses.ts` | one more: operations that throw, as a statement, under void, in a constant nobody reads, as an element, member, argument or default nobody looks at, in loops that run three times or never, in front of a second one that throws |
 | `two-names-where-ways-meet.ts` | one more: two names for one object, one of which is given another object in a handler, a `finally`, an arm or a turn that is seldom taken; behind a call or a stop both are compared, stored into each other, handed on and written through |
+| `objects-with-very-many-fields.ts` | one more: literals, classes, prototypes and static sides with thirty to three hundred members, some under symbols, read by name, by key and from below through a chain, then changed and read again |
+| `company.ts` | no source: the module of unrelated shapes that `--company` builds beside a batch; they hold the names its programs use |
 | `type-check.ts` | TypeScript's own checker, for the source whose programs it has to accept |
 | `beds.ts`, `engine-probes.ts` | where a program runs: `bun build --compile --aot`, or the engine's test binaries, which are asked first which built-ins they lack |
 | `reduce.ts` | makes a failing program small |

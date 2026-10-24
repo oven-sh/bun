@@ -316,7 +316,7 @@ fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bun
 }
 
 impl JSBundleCompletionTask {
-    fn add_declarations(&mut self, declarations: DeclarationOutputs) {
+    fn add_declarations(&mut self, declarations: &DeclarationOutputs) {
         bun_removable_features::removable_body!(Check, Abort, {
             use crate::cli::{check_command, compile_command};
             let emitted = check_command::take_declaration_files();
@@ -1201,6 +1201,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
         transpiler.options.minify_syntax = config.minify.syntax;
+        transpiler.options.keeps_top_level_const = config.dts;
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;
         transpiler.options.keep_names = config.minify.keep_names;
@@ -1370,7 +1371,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
     fn complete_on_bundle_thread(&mut self) {
         if let Some(declarations) = self.declarations.take() {
-            self.add_declarations(declarations);
+            self.add_declarations(&declarations);
         }
         // The bundle thread's last touch of this task and of the VM's memory:
         // move the ticket out (the JS thread may free `self` once queued),

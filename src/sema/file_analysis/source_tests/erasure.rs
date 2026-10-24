@@ -61,6 +61,18 @@ const EXACT_PAIRS: &[Row] = &[
     ),
     (r#"a?.b!.c; (a?.b as T).c;"#, r#"a?.b.c; (a?.b).c;"#),
     (
+        r#"(a?.b as T) ?? c; (a?.b as T)?.c; (a?.b as T)?.();"#,
+        r#"a?.b ?? c; a?.b?.c; a?.b?.();"#,
+    ),
+    (
+        r#"({ a }); ({ a: a as T }); ({ a: a });"#,
+        r#"({ a: a }); ({ a }); ({ a });"#,
+    ),
+    (
+        r#"namespace N { export interface I {} export namespace M { type T = I; } } namespace O {} a();"#,
+        r#"a();"#,
+    ),
+    (
         r#"import { a } from "m"; a();"#,
         r#"import { a } from "m"; a();"#,
     ),
@@ -106,7 +118,8 @@ const NODE_KIND_ROWS: &[Row] = &[
     (r#"if (a) b();"#, r#"while (a) b();"#),
     (r#"("use strict"); f();"#, r#""use strict"; f();"#),
     (r#"() => ({});"#, r#"() => {};"#),
-    (r#"({ a });"#, r#"({ a: a });"#),
+    (r#"({ __proto__ });"#, r#"({ __proto__: __proto__ });"#),
+    (r#"({ __proto__: __proto__ as T });"#, r#"({ __proto__ });"#),
     (r#"a! = function () {};"#, r#"a = function () {};"#),
     (r#"a! = function () {};"#, r#"(a) = function () {};"#),
     (r#"[a! = class {}] = [];"#, r#"[a = class {}] = [];"#),
@@ -188,7 +201,11 @@ const EMITS_CODE_ROWS: &[Row] = &[
     (r#"enum E { A }"#, r#"var E;"#),
     (r#"const enum E { A }"#, r#"var E;"#),
     (r#"namespace N { export const v = 1; }"#, r#"var N;"#),
-    (r#"namespace N { export interface I {} }"#, r#";"#),
+    (r#"namespace N { export declare const v: number; }"#, r#";"#),
+    (
+        r#"namespace N { declare namespace M { interface I {} } }"#,
+        r#";"#,
+    ),
     (r#"import r = require("m");"#, r#"const r = require("m");"#),
     (r#"export = a;"#, r#"module.exports = a;"#),
     (

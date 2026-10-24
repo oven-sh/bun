@@ -80,6 +80,7 @@ pub(super) fn write_access_sites(
         json.string("level", level_label(record.level).as_bytes());
         json.string("cost", &lower_camel_case(record.cost.name()));
         json.optional_number("function", functions.get(record.function_id()));
+        json.number("distance", u64::from(record.distance));
         let is_free = record.cost == AccessCost::Free && record.level == KnowledgeLevel::Proven;
         let cause = (!is_free).then(|| cause_code(record.cause).as_bytes());
         json.optional_string("cause", cause);

@@ -24,10 +24,12 @@
 //   unsound-types a hole of TypeScript's type system that needs no cast, a type, a value that arrives, a place, a time and uses, drawn at random (unsound-types.ts)
 //   typed-instances-changed-through-built-ins an instance of a typed class, and one way in which a built-in, a protocol or a callback changes it or makes another object that passes for one (typed-instances-changed-through-built-ins.ts)
 //   several-changes-one-behind-the-other two to four points of object-mutations on one object, in a drawn order, and two looks at what is left (several-changes-one-behind-the-other.ts)
+//   objects-with-very-many-fields objects with thirty to three hundred members, read by name, key and symbol, directly and from below through a chain of prototypes, around a change (objects-with-very-many-fields.ts)
+//   programs-as-they-are the programs of ../programs unchanged, one after the other: for lanes that change what is built beside a program (--company) or how it is built (--lowered-limits)
 //   several-changes-behind-a-declared-type the same out of typed-object-mutations, looked at through the typed reference (several-changes-behind-a-declared-type.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
-import type { Bed, Program } from "./beds";
+import { staysAScript, type Bed, type Program } from "./beds";
 import { erased, mutate, reprinted } from "./mutate";
 import { Random } from "./random";
 
@@ -109,6 +111,18 @@ function mutation(root: string, rejected: Set<string>): Source | undefined {
   };
 }
 
+function asTheyAre(root: string): Source | undefined {
+  const files = singleFilePrograms(root);
+  if (!files.length) return;
+  return (seed, bed) => {
+    if (bed.name !== "product") return;
+    const path = files[seed % files.length];
+    const text = readFileSync(path, "utf8");
+    if (text.length > 60_000 || cannotStandAlone.test(text)) return;
+    return { source: "programs-as-they-are", seed, text: path.endsWith(".js") && !/^(import|export)\b/m.test(text) ? staysAScript + text : text, extension: path.endsWith(".ts") ? "ts" : "js", notes: relative(root, path) };
+  };
+}
+
 type Generator = (random: Random, typed: boolean, profile: { library: boolean }) => string;
 
 const generated =
@@ -136,6 +150,8 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
   const sources: Record<string, Source> = {};
   const mutants = mutation(programsRoot, rejected);
   if (mutants) sources.mutation = mutants;
+  const unchanged = asTheyAre(programsRoot);
+  if (unchanged) sources["programs-as-they-are"] = unchanged;
   if (existsSync(join(import.meta.dir, "unsound-types.ts"))) {
     const { draw } = await import("./unsound-types.ts");
     sources["unsound-types"] = (seed, bed) => {
@@ -145,6 +161,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     };
   }
   for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values", "a-throw-at-every-call", "values-across-joins", "operators-at-the-edges", "objects-across-awaits", "every-kind-of-job", "work-on-the-way-up", "text-beside-compiled-code", "several-changes-one-behind-the-other"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
-  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

@@ -1,11 +1,11 @@
 use super::ErasureMismatchKind as Kind;
 use super::{Erasure, ErasureMismatch, check_erasure};
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
 use crate::hir::{
-    Call, Chain, Class, ClassId, DecoratorOwner, DiagnosticKind, ExprFlags, ExprId, ExprKind,
-    FileBuilder, Flags, FnId, IdList, Import, ListAt, Member, MemberId, MemberKind, NameKind,
-    NodeData, PatKind, PatProp, Prop, PropKey, PropKind, ResolutionMode, Span, StmtId, StmtKind,
-    TextRange, TypeNodeId, UnOp, VarDecl, VarKind,
+    BinOp, Call, Chain, Class, ClassId, DecoratorOwner, DiagnosticKind, ExprFlags, ExprId,
+    ExprKind, FileBuilder, Flags, FnId, IdList, Import, ListAt, Member, MemberId, MemberKind,
+    Module, ModuleName, NameKind, NodeData, PatKind, PatProp, Prop, PropKey, PropKind,
+    ResolutionMode, Span, StmtId, StmtKind, TextRange, TypeNodeId, UnOp, VarDecl, VarKind,
 };
 use crate::session::Session;
 use NameSpelling::{BigInt, Number};
@@ -94,6 +94,20 @@ impl Tree {
         let name = self.expr(ExprKind::Ident(A));
         let array = self.array(&[name]);
         self.write(array, written)
+    }
+
+    fn namespace_statement(&mut self, flags: Flags, body: &[StmtId]) -> StmtId {
+        let body = self.file.list(body);
+        let module = self.file.add_module(Module {
+            name: ModuleName::Ident(A),
+            name_pos: 0,
+            flags,
+            body,
+            has_body: true,
+            specifies_module: false,
+            stmt: StmtId::NONE,
+        });
+        self.file.stmt(StmtKind::Module(module), 0)
     }
 
     fn with_stmt(mut self, kind: StmtKind) -> Tree {
@@ -222,6 +236,36 @@ fn member_of_chain(is_parenthesized: bool, is_asserted: bool) -> Tree {
     }
     let member = tree.dot(link, Chain::No);
     tree.with_stmt(StmtKind::Expr(member))
+}
+
+fn chain_with_fallback(written: Written) -> Tree {
+    let mut tree = Tree::default();
+    let object = tree.expr(ExprKind::Ident(A));
+    let link = tree.dot(object, Chain::Start);
+    let left = tree.write(link, written);
+    let right = tree.expr(ExprKind::Ident(B));
+    tree.with_expr_stmt(ExprKind::Binary {
+        op: BinOp::Nullish,
+        left,
+        right,
+    })
+}
+
+fn second_link_of_chain(written: Written) -> Tree {
+    let mut tree = Tree::default();
+    let object = tree.expr(ExprKind::Ident(A));
+    let link = tree.dot(object, Chain::Start);
+    let link = tree.write(link, written);
+    let member = tree.dot(link, Chain::Start);
+    tree.with_stmt(StmtKind::Expr(member))
+}
+
+fn namespace(flags: Flags, create_body: impl FnOnce(&mut Tree) -> Vec<StmtId>) -> Tree {
+    let mut tree = Tree::default();
+    let body = create_body(&mut tree);
+    let statement = tree.namespace_statement(flags, &body);
+    tree.body.push(statement);
+    tree
 }
 
 fn default_export(mut tree: Tree) -> Tree {
@@ -539,6 +583,60 @@ fn parentheses_inside_assertion_end_chain() {
     assert_eq!(
         mismatch_kind(member_of_chain(false, true), installed()),
         Some(Kind::Flags)
+    );
+}
+
+#[test]
+fn parentheses_count_only_where_the_chain_could_go_on() {
+    for written in [Bare, Parenthesized, Asserted, ParenthesizedAssertion] {
+        let kind = mismatch_kind(chain_with_fallback(written), chain_with_fallback(Bare));
+        assert_eq!(kind, None, "{written:?}");
+        let kind = mismatch_kind(second_link_of_chain(written), second_link_of_chain(Bare));
+        assert_eq!(kind, None, "{written:?}");
+    }
+}
+
+#[test]
+fn shorthand_is_a_property_named_like_its_value() {
+    let property = |kind, name| object_statement(kind, (PropKey::Name(name), NameKind::Identifier));
+    let kind = |typed, untyped, name| mismatch_kind(property(typed, name), property(untyped, name));
+    assert_eq!(kind(PropKind::Init, PropKind::Shorthand, A), None);
+    assert_eq!(kind(PropKind::Shorthand, PropKind::Init, A), None);
+    let proto = known::__proto__;
+    assert_eq!(kind(PropKind::Shorthand, PropKind::Shorthand, proto), None);
+    assert_eq!(
+        kind(PropKind::Init, PropKind::Shorthand, proto),
+        Some(Kind::NodeKind)
+    );
+    let quoted = object_statement(PropKind::Init, (PropKey::Name(A), NameKind::StringLiteral));
+    assert_eq!(
+        mismatch_kind(quoted, property(PropKind::Shorthand, A)),
+        Some(Kind::Flags)
+    );
+}
+
+#[test]
+fn namespace_of_types_is_erased() {
+    let empty = || namespace(Flags::empty(), |_| Vec::new());
+    assert_eq!(mismatch_kind(empty(), Tree::default()), None);
+    let nested = namespace(Flags::empty(), |tree| {
+        vec![tree.namespace_statement(Flags::empty(), &[])]
+    });
+    assert_eq!(mismatch_kind(nested, Tree::default()), None);
+    let with_code = namespace(Flags::empty(), |tree| {
+        let value = tree.expr(ExprKind::Ident(A));
+        vec![tree.file.stmt(StmtKind::Expr(value), 0)]
+    });
+    assert_eq!(
+        mismatch_kind(with_code, Tree::default()),
+        Some(Kind::EmitsCode)
+    );
+    let with_declared_namespace = namespace(Flags::empty(), |tree| {
+        vec![tree.namespace_statement(Flags::AMBIENT, &[])]
+    });
+    assert_eq!(
+        mismatch_kind(with_declared_namespace, Tree::default()),
+        Some(Kind::EmitsCode)
     );
 }
 

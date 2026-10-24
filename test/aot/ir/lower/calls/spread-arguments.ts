@@ -8,7 +8,7 @@
 // CHECK-NEXT: = ConstructList [[convertedC]], -, [[constructList]] calleeName="C"
 // CHECK-LABEL: function {{*}}name="member"
 // CHECK: b0([[o]]: anything, [[passed]]: anything):
-// CHECK: [[convertedO]] = Convert [[o]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
+// CHECK: [[convertedO]] = Convert [[o]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[methodRead]] = PropGet [[convertedO]] key="m"
 // CHECK-NEXT: [[method]] = Convert [[methodRead]] declared={type=undefined|null|function flags=[IsExpected]}
 // CHECK-NEXT: [[memberList]] = NewArray contents=anything

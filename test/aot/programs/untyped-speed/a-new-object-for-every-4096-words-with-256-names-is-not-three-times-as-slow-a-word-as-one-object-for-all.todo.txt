@@ -1,0 +1,1 @@
+Past 128 names each new object is a dictionary with a Structure of its own, so every pair of Structure and name is met for the first time in every round. The stubs answer from the object's own table, about 95 instructions for 20, and every name that is added goes through an operation.

@@ -4,7 +4,7 @@
 // The table is about executables, and an executable describes a value that a native function rejects without running code of the
 // program (docs/bundler/aot-compatibility.mdx). So do the processes that make the calls here: executableEnv.
 //
-//   AOT_BUILTINS_UPDATE=1   checks every hand-written overload and writes differential/not-checked.txt: those that do not pass, each with the reason
+//   AOT_BUILTINS_UPDATE=1   checks every declared overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
 //   AOT_BUILTINS_SECONDS_A_CALL=<n>  how long a call may take before its process is ended (45)
@@ -12,9 +12,9 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";
@@ -38,7 +38,7 @@ const secondsPerAttempt = 600;
 // CI ends a test file after five minutes, so a call that does not come back has to be found well before that.
 const secondsPerCall = Number(process.env.AOT_BUILTINS_SECONDS_A_CALL) || 45;
 const executableEnv = { ...bunEnv, BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT: "1" };
-const maxAttemptsPerWorker = 40;
+const maxAttemptsPerWorker = 400;
 
 const dump: TableDump = tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8"));
 const table = new Table(dump);
@@ -46,7 +46,7 @@ const origins: Origin[] = ["Engine", "Host"];
 // The list says what the calls do where it is written.
 const callsOverloads = isGlibc && !isASAN && !isDebug;
 const notCheckedHeader =
-  "# The hand-written overloads that test/aot/builtins/differential-cases.ts does not call or that do not pass: `<overload>: <why>`.\n" +
+  "# The declared overloads that test/aot/builtins/differential-cases.ts does not call or that do not pass: `<overload>: <why>`.\n" +
   "# Written by: AOT_BUILTINS_UPDATE=1 TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts\n";
 
 const notChecked = new Map(
@@ -62,7 +62,7 @@ type CheckedCall = { entry: DumpedEntry; mode: CallMode; overloads: DumpedOverlo
 
 const keyOf = (entry: string, mode: CallMode) => `${entry} ${mode}`;
 
-const handWrittenOverloads = dump.entries.flatMap(entry =>
+const declaredOverloads = dump.entries.flatMap(entry =>
   entry.overloads.filter(needsDifferentialTest).map(overload => ({ entry, overload })),
 );
 
@@ -346,9 +346,16 @@ export function differential(part: number, parts: number): void {
   async function runWorker(folder: string, index: number, calls: WorkerRequest["calls"]): Promise<void> {
     const requestPath = join(folder, `request.${index}.json`);
     const reportsPath = join(folder, `reports.${index}.jsonl`);
+    const notePath = `${reportsPath}.current`;
+    // A call may take away the rights to the folder it runs in, or the folder itself.
+    const workingFolder = join(folder, `folder.${index}`, "inner");
     let remaining = calls;
     for (let attempt = 0; attempt < maxAttemptsPerWorker && remaining.length > 0; attempt++) {
       writeFileSync(requestPath, JSON.stringify({ tablePath, calls: remaining } satisfies WorkerRequest));
+      restoreRights(dirname(workingFolder));
+      mkdirSync(workingFolder, { recursive: true });
+      // The first call of this attempt may be the one that the last attempt noted.
+      writeFileSync(notePath, "null");
       await using worker = Bun.spawn({
         // Without --no-install `require("a")` fetches the package of that name from the registry and runs it.
         cmd: [
@@ -359,14 +366,13 @@ export function differential(part: number, parts: number): void {
           requestPath,
           reportsPath,
         ],
-        cwd: folder,
+        cwd: workingFolder,
         env: executableEnv,
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
         timeout: secondsPerAttempt * 1000,
       });
-      const notePath = `${reportsPath}.current`;
       const noteOfCall = () => (existsSync(notePath) ? readFileSync(notePath, "utf8") : "");
       const noteAtStart = noteOfCall();
       let note = noteAtStart;
@@ -377,21 +383,32 @@ export function differential(part: number, parts: number): void {
       }, 1000);
       await worker.exited;
       clearInterval(watch);
-      const current: [string, CallMode] | null = JSON.parse(readFileSync(`${reportsPath}.current`, "utf8"));
+      const current: [string, CallMode] | null = JSON.parse(readFileSync(notePath, "utf8"));
       if (current === null) break;
-      endedProcess.add(keyOf(...current));
       const position = remaining.findIndex(([entry, mode]) => entry === current[0] && mode === current[1]);
-      remaining = remaining.slice(position + 1);
+      // What an earlier call left behind in the process may have ended this one, so it is the first of a new process once.
+      if (position > 0) {
+        remaining = remaining.slice(position);
+        continue;
+      }
+      endedProcess.add(keyOf(...current));
+      remaining = remaining.slice(1);
     }
     readReports(reportsPath);
   }
 
+  function restoreRights(path: string): void {
+    if (!existsSync(path) || lstatSync(path).isSymbolicLink()) return;
+    chmodSync(path, 0o700);
+    if (lstatSync(path).isDirectory()) for (const name of readdirSync(path)) restoreRights(join(path, name));
+  }
   async function runWorkers(): Promise<void> {
     using folder = tempDir("aot-builtins-differential", {});
     const workerCount = Math.min(availableParallelism(), 32, checkedCalls.length);
     const slices = Array.from({ length: workerCount }, (): WorkerRequest["calls"] => []);
     checkedCalls.forEach(({ entry, mode }, index) => slices[index % workerCount].push([entry.token, mode]));
     await Promise.all(slices.map((calls, index) => runWorker(String(folder), index, calls)));
+    restoreRights(String(folder));
   }
 
   function findProblems({ entry, mode }: CheckedCall, overload: DumpedOverload): string[] {
@@ -419,7 +436,7 @@ export function differential(part: number, parts: number): void {
   }
 
   function writeList(): void {
-    const lines = handWrittenOverloads.flatMap(({ entry, overload }) => {
+    const lines = declaredOverloads.flatMap(({ entry, overload }) => {
       // A filter leaves entries out of the run: nothing was learned about them, so their lines stay.
       const call = checkedCalls.find(other => other.entry === entry && other.mode === overload.mode);
       const reason = call ? findReason(call, overload) : (notChecked.get(overload.token) ?? null);
@@ -458,8 +475,8 @@ export function differential(part: number, parts: number): void {
     expect(new Set(overloads.map(({ token }) => token)).size).toBe(overloads.length);
   });
 
-  test("the list of what is not checked names only hand-written overloads of this table", () => {
-    const tokens = new Set(handWrittenOverloads.map(({ overload }) => overload.token));
+  test("the list of what is not checked names only declared overloads of this table", () => {
+    const tokens = new Set(declaredOverloads.map(({ overload }) => overload.token));
     expect([...notChecked.keys()].filter(token => !tokens.has(token))).toEqual([]);
   });
 

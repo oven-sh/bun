@@ -1,7 +1,7 @@
 use super::{
     ClassId, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList, MemberId,
-    MemberKind, ModifierId, ModifierKind, NameKind, PatPropId, Prop, PropId, PropKey, PropKind,
-    Span, StmtId, StmtKind, Storage, VarDeclId, has_body, rare,
+    MemberKind, ModifierId, ModifierKind, Module, ModuleId, ModuleName, NameKind, PatPropId, Prop,
+    PropId, PropKey, PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body, rare,
 };
 use crate::atom::{Atom, known};
 use crate::node::Node;
@@ -98,11 +98,39 @@ impl<S: Storage> FileIn<S> {
             }
             StmtKind::Class(class) => self[class].flags.contains(Flags::AMBIENT),
             StmtKind::Enum(enumeration) => self[enumeration].flags.contains(Flags::AMBIENT),
-            StmtKind::Module(module) => self[module]
-                .flags
-                .intersects(Flags::AMBIENT | Flags::REPARSED),
+            StmtKind::Module(module) => {
+                let flags = self[module].flags;
+                flags.intersects(Flags::AMBIENT | Flags::REPARSED)
+                    || self.declares_only_types(module)
+            }
             _ => false,
         }
+    }
+
+    /// `namespace N { interface I {} }`: interfaces, type aliases and namespaces of those, at any depth.
+    fn declares_only_types(&self, namespace: ModuleId) -> bool {
+        let mut namespaces = vec![namespace];
+        while let Some(namespace) = namespaces.pop() {
+            let Module {
+                name: ModuleName::Ident(_),
+                has_body: true,
+                body,
+                ..
+            } = self[namespace]
+            else {
+                return false;
+            };
+            for statement in self.ids(body) {
+                match self[statement].kind {
+                    StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {}
+                    StmtKind::Module(inner) if !self[inner].flags.contains(Flags::AMBIENT) => {
+                        namespaces.push(inner);
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        true
     }
 
     /// A TypeScript file of which `bun run` drops every statement: what it declares, it declares for the checker alone.

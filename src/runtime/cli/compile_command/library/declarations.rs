@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use bun_ast::Loader;
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
 use bun_paths::platform::Auto;
@@ -65,8 +63,9 @@ pub(crate) fn add_declaration_files(
         };
         placed.push((path, declaration.text));
     }
-    let written: HashSet<&[u8]> = placed.iter().map(|(path, _)| &path[..]).collect();
-    let is_written = |path: &[u8]| written.contains(path);
+    let mut written: Vec<&[u8]> = placed.iter().map(|(path, _)| &path[..]).collect();
+    written.sort_unstable();
+    let is_written = |path: &[u8]| written.binary_search(&path).is_ok();
     let mut added: Vec<OutputFile> = (placed.iter())
         .map(|(path, text)| {
             declaration_output_file(path.clone(), name_imported_files(path, text, &is_written))

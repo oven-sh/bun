@@ -258,6 +258,10 @@ export const rows: Row[] = [
     "joined",
     ["predictions-fail", ["--aot-testing=FailPredictions:2:1"]],
   ],
+  ["aot/joined-programs-limits-lowered", 3, "./joined-programs", "joinedWithLimitsLowered"],
+  // A group of 250 programs costs about one build, so these take fifty times the programs of variant-validate and variant-proofs-checked-at-run-time.
+  ["aot/joined-programs-proofs-checked", 3, "./joined-programs", "joined", ["proofs-checked", ["--aot-testing=CheckProofsAtRunTime"]]],
+  ["aot/joined-programs-validated", 4, "./joined-programs", "joined", ["validated", ["--aot-validate"]]],
   ["aot/modules-three-ways", 4, "./three-ways/run-three-ways", "threeWays"],
   ["aot/one-line-changes-little", 8, "./one-line-changes-little-cases", "oneLineChangesLittle"],
   ["aot/process-platform-folds", 4, "./process-platform-folds-cases", "processPlatformFolds"],

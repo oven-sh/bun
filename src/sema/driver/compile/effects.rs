@@ -42,7 +42,9 @@ fn origin_of(
         compiled.typed_source_path.is_some()
             && compiled.typed_version_origin == Some(TypedVersionOrigin::Host)
     });
-    let is_dependency = files.module(file).is_from_external_library;
+    // The program of a typed package starts from the package's files.
+    let is_dependency = files.module(file).is_from_external_library
+        || project_origin == FileOrigin::DependencySource;
     match (files.role(file), is_dependency) {
         (FileRole::TypesOnly, _) => FileOrigin::Declarations,
         (FileRole::Checked, _) if is_project_typed_version => FileOrigin::ProjectTypedVersion,

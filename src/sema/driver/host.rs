@@ -487,10 +487,6 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
     }
 }
 
-pub(crate) fn is_regular_file(native_path: &[u8]) -> bool {
-    is_directory(Fd::cwd(), native_path) == Some(false)
-}
-
 impl Disk {
     /// The paths of `Provided::already_read`, each a `tspath.Path`.
     pub fn provided_paths(&self) -> impl Iterator<Item = &Vec<u8>> {

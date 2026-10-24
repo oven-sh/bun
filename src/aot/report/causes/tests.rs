@@ -41,6 +41,7 @@ fn access(
         limit: LimitId::None,
         layout: ABSENT_WORD,
         copies: 1,
+        distance: 0,
         witness: Witness {
             function: ABSENT_WORD,
             value: ABSENT_WORD,

@@ -29,6 +29,7 @@ pub(crate) struct FreezeInput<'a, 's> {
     pub options: &'a Options<'a>,
     pub manifest: &'static Manifest,
     pub host_loaded_modules: &'a [RuntimeModule],
+    pub is_world: bool,
 }
 
 pub(crate) struct FrozenSources {
@@ -46,7 +47,10 @@ pub(crate) fn freeze_sources(
     let files = input.files;
     let file_count = files.modules.len();
     let (runs_in_place, paths) = (input.options.aot.runs_in_place, &input.options.paths);
-    let maps = FileMaps::collect(files, collect_entry_point_paths(runs_in_place, paths));
+    let mut maps = FileMaps::collect(files, collect_entry_point_paths(runs_in_place, paths));
+    if input.is_world {
+        maps.forget_entry_points();
+    }
     let context = PathContext {
         runs_in_place,
         paths,

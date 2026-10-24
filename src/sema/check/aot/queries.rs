@@ -34,6 +34,9 @@ const MAX_RELATION_ENTRIES: i32 = 20_000;
 #[derive(Copy, Clone)]
 pub struct QueryInputs<'c> {
     pub roles: &'c [FileRole],
+    /// The typed files that another program checks and lowers, in order. That program may see other globals and other
+    /// options, so what this one believes of their declarations is expected and never known.
+    pub checked_elsewhere: &'c [FileId],
     pub builtin_types: &'c BuiltinTypeSymbols,
     pub named_values: &'c dyn NamedValues,
     /// How many expressions the inference of one type from the uses of a value visits.

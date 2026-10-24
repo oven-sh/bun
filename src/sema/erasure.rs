@@ -80,6 +80,8 @@ enum Subtree {
     Statements(IdList<StmtId>),
     Stmt(StmtId),
     Expr(ExprId),
+    /// The object of `a.b` and `a[b]`, what `a()` and `new a()` call, the tag of a template: parentheses round `a` end an optional chain.
+    Accessed(ExprId),
     AssignmentTarget(ExprId),
     Pattern(PatId),
     Function(FnId),

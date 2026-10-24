@@ -2090,6 +2090,47 @@ pub(crate) struct LeftOutCode {
 }
 
 impl LeftOutCode {
+    /// The same code under the numbers that another program gives the files.
+    pub(crate) fn in_other_program(
+        &self,
+        file_of: &dyn Fn(FileId) -> Option<FileId>,
+    ) -> LeftOutCode {
+        let mut files: Vec<FileId> = self
+            .files
+            .iter()
+            .filter_map(|&file| file_of(file))
+            .collect();
+        files.sort_unstable();
+        let mut files_read_by_name: Vec<FileId> = (self.files_read_by_name.iter())
+            .filter_map(|&file| file_of(file))
+            .collect();
+        files_read_by_name.sort_unstable();
+        LeftOutCode {
+            functions: (self.functions.iter())
+                .filter_map(|&function| {
+                    Some(FunctionRef {
+                        file: file_of(function.file)?,
+                        ..function
+                    })
+                })
+                .collect(),
+            declarations: self.declarations.in_other_program(file_of),
+            files,
+            files_read_by_name,
+            names_read_from_objects: (self.names_read_from_objects.iter())
+                .filter_map(|&(file, name)| Some((file_of(file)?, name)))
+                .collect(),
+            bound_variables: (self.bound_variables.iter())
+                .filter_map(|&symbol| {
+                    Some(Sym {
+                        file: file_of(symbol.file)?,
+                        ..symbol
+                    })
+                })
+                .collect(),
+        }
+    }
+
     // An import by a name is bound to the variable and asks nothing of the object of the module.
     pub(crate) fn find_export_use(&self, file: FileId, export: &ModuleExport) -> ExportUse {
         if self.files_read_by_name.binary_search(&file).is_err()

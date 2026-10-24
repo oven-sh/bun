@@ -3,7 +3,7 @@
 # The numbers are no integers: a field that is seen to hold small integers gets a type of its own before the analysis runs
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Point" fields=[{key="x" declared={type=fractional} flags=[IsRequired{{*}}] flow={location={writers=AllKnown {{*}}initialization=SetAtCreation{{*}}} occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="label" declared={type="a"}
-# CHECK: layout L1 name="Partial" fields=[{key="x" declared={type=fractional} {{*}}flow={location={writers=AllKnown{{*}}} stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}
+# CHECK: layout L1 name="Partial" fields=[{key="x" declared={type=fractional} {{*}}flow={location={writers=AllKnown{{*}}} prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}
 # CHECK: layout L2 name="Handed" fields=[{key="x" declared={type=anything} flags=[IsRequired{{*}}]}]
 
 module m0 path="main.js" displayPath="main.js" body=f0

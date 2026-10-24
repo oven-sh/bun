@@ -282,10 +282,15 @@ export async function slot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+// AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned() takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
+const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
+
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+  const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
+  if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
   // A build that verifies the IR after every pass takes sixteen times as long as one that does not.
-  const timeout = cmd.includes("--aot-check=verify-each-pass") || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
+  const timeout = cmd.includes("--aot-check=verify-each-pass") || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
   const start = performance.now();
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

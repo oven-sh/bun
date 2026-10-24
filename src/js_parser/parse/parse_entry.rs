@@ -280,6 +280,7 @@ impl<'a> Options<'a> {
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
+                keeps_top_level_const: f.keeps_top_level_const,
                 minify_identifiers: f.minify_identifiers,
                 minify_keep_names: f.minify_keep_names,
                 minify_whitespace: f.minify_whitespace,

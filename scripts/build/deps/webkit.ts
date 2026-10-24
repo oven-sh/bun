@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-0e1db585";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-46394291";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1825,7 +1825,13 @@ function jscGroup(
         const prefix = aotPrefixOf(path);
         const bundled = bundledAotSources.get(path);
         if (prefix !== undefined) {
-          return { path, cflags: extra, pch: join(JSC, prefix.header), ...(bundled !== undefined && { bundled }) };
+          // A switch of aot/ that has no default names every enumerator (aot/AOT.cmake has the same flag).
+          return {
+            path,
+            cflags: [...extra, "-Werror=switch"],
+            pch: join(JSC, prefix.header),
+            ...(bundled !== undefined && { bundled }),
+          };
         }
         return extra.length > 0 ? { path, cflags: extra } : path;
       }),

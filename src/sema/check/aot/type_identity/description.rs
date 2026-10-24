@@ -91,12 +91,22 @@ impl Description {
         }
     }
 
+    // By its path, so that two programs that have the file say the same of it.
     pub(super) fn file(&mut self, queries: &Queries<'_, '_, '_>, file: FileId) {
-        self.word(u64::from(queries.files().rank_of_file(file)));
+        use std::hash::Hasher;
+        let mut hasher = crate::util::FxHasher::default();
+        hasher.write(queries.files().module(file).file_name());
+        self.word(hasher.finish());
     }
 
     pub(super) fn symbol(&mut self, queries: &Queries<'_, '_, '_>, symbol: Sym) {
         let symbol = queries.files().canonical(symbol);
+        let symbol = queries
+            .files()
+            .parts(symbol)
+            .first()
+            .copied()
+            .unwrap_or(symbol);
         self.file(queries, symbol.file);
         self.word(u64::from(symbol.id.0));
     }

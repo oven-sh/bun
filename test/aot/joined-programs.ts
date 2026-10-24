@@ -8,10 +8,11 @@
 // Left out: a program of several files; one with a file beside it (it needs flags, or differs from plain Bun on purpose); and whatever cannot share a process with others
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { inPrograms, isGroup, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
+import { limitsLowered } from "./harness/limits";
+import { inPrograms, inShare, isGroup, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 // Of which about 250 can be joined.
@@ -109,11 +110,11 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 
 type Ran = { printed: Map<string, string>; stopped: string[] };
 
-async function run(executable: string, cwd: string): Promise<Ran> {
+async function run(executable: string | string[], cwd: string, env: Record<string, string> = {}, seconds = isASAN ? 300 : 60): Promise<Ran> {
   let output = "";
   const stopped: string[] = [];
   for (let from = 0, starts = 0; starts < 12; starts++) {
-    const ran = await spawned(withoutCoreDump([executable]), cwd, { ...bunEnv, FROM: String(from) }, isASAN ? 300 : 60);
+    const ran = await spawned(withoutCoreDump([executable].flat()), cwd, { ...bunEnv, ...env, FROM: String(from) }, seconds);
     output += ran.stdout;
     if (/^== end$/m.test(ran.stdout)) break;
     const [, index, name] = [...ran.stdout.matchAll(/^== (\d+) (\S+)$/gm)].at(-1) ?? [];
@@ -125,18 +126,15 @@ async function run(executable: string, cwd: string): Promise<Ran> {
   return { printed: byProgram(output), stopped };
 }
 
-async function compare(folder: string, carrier: string[], group: number | string, listed: string[], flags: string[]) {
-  const cwd = join(folder, String(group));
-  const paths = taken(listed, () => true).filter(path => isOneFile(inPrograms(path).replaceAll("\\", "/")) && !filesBeside.some(suffix => existsSync(path.replace(/\.[a-z]+$/, suffix))));
-  // What was listed under one name may have come to many programs.
-  if (paths.length > 2 * namesInGroup) {
-    for (let from = 0; from < paths.length; from += namesInGroup) await compare(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), flags);
-    return;
-  }
+const joinable = (listed: string[]) =>
+  taken(listed, () => true).filter(path => isOneFile(inPrograms(path).replaceAll("\\", "/")) && !filesBeside.some(suffix => existsSync(path.replace(/\.[a-z]+$/, suffix))));
+
+/** Writes a group below `cwd` and builds it with `flags` as `name`. What the compiler refuses beside the others has left `names`. Nothing where nothing of the group can be joined. */
+async function written(cwd: string, carrier: string[], group: number | string, paths: string[], name: string, flags: string[]) {
   const pathOf = new Map(paths.map(path => [inPrograms(path).replaceAll("\\", "/"), path]));
   let names = [...pathOf.keys()].filter(name => !cannotBeJoined.test(readFileSync(pathOf.get(name)!, "utf8")));
   // Nothing of the group can be joined, or the rows it was listed for came to no program.
-  if (names.length === 0) return;
+  if (names.length === 0) return undefined;
   for (const name of names) {
     const text = readFileSync(pathOf.get(name)!, "utf8");
     mkdirSync(dirname(join(cwd, "programs", name)), { recursive: true });
@@ -145,31 +143,47 @@ async function compare(folder: string, carrier: string[], group: number | string
   }
   writeFileSync(join(cwd, "tsconfig.json"), readFileSync(join(root, "tsconfig.json"), "utf8").replace(`"../../../packages"`, JSON.stringify(join(import.meta.dir, "..", "..", "packages"))));
 
-  const build = async (name: string, flags: string[]) => {
+  const build = async (name: string, flags: string[], env: Record<string, string | undefined> = bunEnv) => {
     const executable = join(cwd, name);
-    return { ...(await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, "group.ts", "--outfile", executable], cwd, bunEnv, 240)), executable };
+    return { ...(await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, "group.ts", "--outfile", executable], cwd, env, flags.includes("--aot-validate") ? 600 : 240)), executable };
   };
   // A program that the compiler refuses beside the others, for a name that two of them declare, leaves the group.
-  let first = { stderr: "", exitCode: 1, executable: "" };
+  let first = { stdout: "", stderr: "", exitCode: 1, executable: "" };
   for (let attempt = 0; attempt < 6 && first.exitCode; attempt++) {
     writeFileSync(join(cwd, "group.ts"), textOfGroup(names));
-    first = await build("measure", measure);
+    first = await build(name, flags);
     const refused = new Set([...first.stderr.matchAll(/[\\/]programs[\\/](\S+?\.(?:tsx|ts|js))/g)].map(match => match[1].replaceAll("\\", "/")));
     if (first.exitCode && !refused.size) break;
     if (first.exitCode) console.error(`LEFT OUT of group ${group}: ${[...refused].join(", ")}`);
     if (first.exitCode) names = names.filter(name => !refused.has(name));
   }
-  expect({ build: "measure", stderr: first.exitCode ? first.stderr.slice(-2000) : "", exitCode: first.exitCode }).toEqual({ build: "measure", stderr: "", exitCode: 0 });
+  expect({ build: name, stderr: first.exitCode ? first.stderr.slice(-2000) : "", exitCode: first.exitCode }).toEqual({ build: name, stderr: "", exitCode: 0 });
+  return { names, build, first };
+}
+
+async function compare(folder: string, carrier: string[], group: number | string, listed: string[], flags: string[]) {
+  const cwd = join(folder, String(group));
+  const paths = joinable(listed);
+  // What was listed under one name may have come to many programs.
+  if (paths.length > 2 * namesInGroup) {
+    for (let from = 0; from < paths.length; from += namesInGroup) await compare(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), flags);
+    return;
+  }
+  const made = await written(cwd, carrier, group, paths, "measure", measure);
+  if (!made) return;
+  const { names, build, first } = made;
   const second = await build("tested", [...flags, "--explain=statistics"]);
   expect({ build: "tested", stderr: second.exitCode ? second.stderr.slice(-2000) : "", exitCode: second.exitCode }).toEqual({ build: "tested", stderr: "", exitCode: 0 });
   // The flags did what they are here for.
   if (flags.includes("--aot-testing=GenerateAllCodeDirectly")) expect(Number(/FunctionsGeneratedDirectly (\d+)/.exec(second.stderr + second.stdout)?.[1] ?? 0)).toBeGreaterThan(names.length / 2);
   if (flags.some(flag => flag.startsWith("--aot-testing=FailPredictions"))) expect(Number(/PlacesWherePredictionsFailUnasked (\d+)/.exec(second.stderr + second.stdout)?.[1] ?? 0)).toBeGreaterThan(names.length / 2);
 
-  const [expected, actual] = [await run(first.executable, cwd), await run(second.executable, cwd)];
+  // A validating build takes ten times as long.
+  const isSlow = isASAN || flags.includes("--aot-validate");
+  const [expected, actual] = [await run(first.executable, cwd), await run(second.executable, cwd, {}, isSlow ? 300 : 60)];
   rmSync(cwd, { recursive: true, force: true });
-  // With AddressSanitizer the clock ends slow programs, other ones in each build: that says nothing.
-  const endedByClock = new Set(isASAN ? [...expected.stopped, ...actual.stopped].filter(stop => stop.endsWith(": SIGKILL")).map(stop => stop.slice(0, stop.lastIndexOf(": "))) : []);
+  // In a slow build the clock ends slow programs, other ones in each build: that says nothing.
+  const endedByClock = new Set(isSlow ? [...expected.stopped, ...actual.stopped].filter(stop => stop.endsWith(": SIGKILL")).map(stop => stop.slice(0, stop.lastIndexOf(": "))) : []);
   for (const ran of [expected, actual]) ran.stopped = ran.stopped.filter(stop => !endedByClock.has(stop.slice(0, stop.lastIndexOf(": "))));
   const differing = names.filter(name => !endedByClock.has(name) && actual.printed.get(name) !== expected.printed.get(name));
   const firstLines = (name: string) => {
@@ -199,6 +213,97 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
       const listed = groups[group];
       const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");
       test(`group ${group}: ${nameOf(listed[0])} to ${nameOf(listed.at(-1)!)}`, () => slot(() => compare(folder, carrier, group, listed, flags)), 900_000);
+    }
+    if (first > groups.length) test.skip("no group selected", () => {});
+  });
+}
+
+type Way = { name: string; flags: string[]; env?: Record<string, string> };
+
+async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string) => Way[]) {
+  const cwd = join(folder, String(group));
+  const paths = joinable(listed);
+  if (paths.length > 2 * namesInGroup) {
+    for (let from = 0; from < paths.length; from += namesInGroup) await compareWays(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), waysOf);
+    return;
+  }
+  const ways = waysOf(String(group));
+  if (ways.length === 0) return;
+  const made = await slot(() => written(cwd, carrier, group, paths, "usual", ["--explain=statistics"]));
+  if (!made) return;
+  const [plain, usual] = await Promise.all([slot(() => run([bunExe(), "run", "--no-install", "group.ts"], cwd)), slot(() => run(made.first.executable, cwd))]);
+  rmSync(made.first.executable, { force: true });
+
+  const reds: string[] = [];
+  const says = (way: string, what: string) => {
+    const line = `${way} group ${group}: ${what}`;
+    if (process.env.AOT_WAYS_REPORT) appendFileSync(process.env.AOT_WAYS_REPORT, line + "\n");
+    return line;
+  };
+  const differing = (ran: Ran, names: string[]) =>
+    names
+      .filter(name => ran.printed.get(name) !== plain.printed.get(name))
+      .map(name => {
+        const [a, b] = [ran.printed.get(name)?.split("\n") ?? ["<not reached>"], plain.printed.get(name)?.split("\n") ?? ["<not reached>"]];
+        const line = a.findIndex((text, index) => text !== b[index]);
+        if (process.env.AOT_WAYS_KEEP) copyFileSync(join(cwd, "programs", name), join(process.env.AOT_WAYS_KEEP, name.replaceAll("/", "--")));
+        return `${name}, line ${line + 1}: ${(a[line] ?? "<end>").slice(0, 160)} | expected: ${(b[line] ?? "<end>").slice(0, 160)}`;
+      });
+  says("met", [...(made.first.stderr + made.first.stdout).matchAll(/^(\w+)Hits ([1-9]\d*)$/gm)].map(match => `${match[1]} ${match[2]}`).join(", "));
+  // What a program does otherwise than in plain Bun with no flag at all is not what the flags did. Other tests are there for it.
+  const otherwiseAnyway = new Set([...differing(usual, made.names).map(line => line.slice(0, line.indexOf(","))), ...[...plain.stopped, ...usual.stopped].map(stop => stop.slice(0, stop.lastIndexOf(": ")))]);
+  for (const name of otherwiseAnyway) console.error(says("usual", `${name}: not as in plain Bun`));
+  const names = made.names.filter(name => !otherwiseAnyway.has(name));
+
+  await Promise.all(
+    ways.map(way =>
+      slot(async () => {
+        const name = `built-${way.name.replace(/[^A-Za-z0-9]+/g, "-")}`;
+        let built = await made.build(name, [...way.flags, "--explain=statistics"], { ...bunEnv, ...way.env });
+        // A limit that no program of the group has met was not tried.
+        const met = new RegExp(`^${way.name.split(":")[0]}Hits (\\d+)$`, "m").exec(built.stderr + built.stdout)?.[1];
+        if (built.exitCode !== 0) {
+          reds.push(says(way.name, `the build ended with ${built.signal ?? `exit code ${built.exitCode}`}: ${(/^error: .*$/m.exec(built.stderr)?.[0] ?? built.stderr.trim().split("\n").slice(-3).join(" | ")).slice(0, 300)}`));
+          // The compiler checks its own work only where it is tested. What somebody else would have got is run as well.
+          if (!/internal compiler error/.test(built.stderr)) return;
+          built = await made.build(name, way.flags, { ...bunEnv, ...way.env, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefined });
+          if (built.exitCode !== 0) return void reds.push(says(way.name, `unchecked, the build ended with ${built.signal ?? `exit code ${built.exitCode}`}: ${(/^error: .*$/m.exec(built.stderr)?.[0] ?? "").slice(0, 300)}`));
+        }
+        const ran = await run(built.executable, cwd, way.env);
+        rmSync(built.executable, { force: true });
+        const found = [...ran.stopped.filter(stop => !(isASAN && stop.endsWith(": SIGKILL"))).map(stop => `stopped in ${stop}`), ...differing(ran, isASAN ? names.filter(name => !ran.stopped.some(stop => stop.startsWith(name + ": "))) : names)];
+        for (const what of found) reds.push(says(way.name, what));
+        if (found.length === 0) says(way.name, `same, ${names.length} programs${met === undefined ? "" : `, met ${met} times`}`);
+      }),
+    ),
+  );
+  rmSync(cwd, { recursive: true, force: true });
+  expect(reds).toEqual([]);
+}
+
+/**
+ * A limit decides how fast and how large the code is, never what a program prints. Most limits are so high that only a large program meets them, and no small program runs
+ * what lies beyond. Here each is lowered to 0, 1 and 2, one in a build, so that every program is beyond it. Each program prints what it prints in plain Bun.
+ *
+ * A run that is told nothing takes one group of its part and one in `oneIn` of the limits, which ones follows from the revision. AOT_SHARE=all takes all.
+ * AOT_WAYS=<regular expression> takes the limits whose <name>:<value> it matches, AOT_GROUPS=<i>/<n> every n-th group from the i-th, AOT_BUILD_FLAGS=<flags> go to
+ * every build. AOT_WAYS_REPORT=<file> gets a line for each build, AOT_WAYS_KEEP=<folder> the programs that print something else. AOT_WAYS_FILE=<file> holds other ways to build and run in place of the limits: [{ name, flags, env }].
+ */
+export function joinedWithLimitsLowered(part = 1, parts = 1, oneIn = isASAN ? 96 : 24) {
+  const folder = String(tempDir("aot-joined-programs", {}));
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  describe.concurrent("compile/aot/joined/limits-lowered", () => {
+    if (unsupported) return void test.skip(unsupported, () => {});
+    const groups = groupsOf(programsOfOneFile());
+    const carrier = [...withoutDebugInformation(), ...(process.env.AOT_BUILD_FLAGS?.split(" ") ?? [])];
+    const wanted = process.env.AOT_WAYS ? new RegExp(process.env.AOT_WAYS) : undefined;
+    const ways = (process.env.AOT_WAYS_FILE ? (JSON.parse(readFileSync(process.env.AOT_WAYS_FILE, "utf8")) as Way[]) : limitsLowered(bunExe(), bunEnv, !!wanted)).filter(way => !wanted || wanted.test(way.name));
+    const [first, step] = (process.env.AOT_GROUPS || partInShare(part, parts, Math.max(1, Math.ceil(groups.length / parts)), true)).split("/").map(Number);
+    for (let group = first - 1; group < groups.length; group += step) {
+      const listed = groups[group];
+      const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");
+      const waysOf = (group: string) => ways.filter(way => wanted || inShare(`${group} ${way.name}`, oneIn, true));
+      test(`group ${group}: ${nameOf(listed[0])} to ${nameOf(listed.at(-1)!)}`, () => compareWays(folder, carrier, group, listed, waysOf), 900_000 + (process.env.AOT_SHARE === "all" ? 86_400_000 : 0));
     }
     if (first > groups.length) test.skip("no group selected", () => {});
   });

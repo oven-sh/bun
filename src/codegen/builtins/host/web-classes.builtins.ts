@@ -65,7 +65,7 @@ const bodyOfAnyKind = [
   b.reachableValuesStoredIn(b.nativeMemory),
   b.readsContents(),
   b.writesContents(),
-  b.called({ times: "Once", result: "Escapes" }),
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", result: "Escapes" }),
   b.runsTransitively(
     "OwnValues",
     "PrototypeChain",

@@ -62,12 +62,27 @@ impl<'s> Projects<'s> {
         }
     }
 
-    // The projects found so far that govern a file and list `types`, in the order of their configuration files.
+    // The projects that govern a file with code and list `types`, in the order of their configuration files.
     pub(super) fn naming_types(&self) -> Vec<&'s Options> {
         let mut projects = self.naming_types.lock().clone();
         projects.shared_sort_unstable_by(|a, b| a.config_path.cmp(&b.config_path));
         projects.dedup_by(|a, b| a.config_path == b.config_path);
         projects
+    }
+
+    pub(super) fn governing_code(
+        &self,
+        context: &CodeLoadContext<'_, 's, '_>,
+        path: &[u8],
+    ) -> Option<&'s Options> {
+        let project = self.governing(context, path)?;
+        if project.types.as_ref().is_some_and(|it| !it.is_empty()) {
+            let mut naming_types = self.naming_types.lock();
+            if !naming_types.iter().any(|&it| std::ptr::eq(it, project)) {
+                naming_types.push(project);
+            }
+        }
+        Some(project)
     }
 
     pub(super) fn governing(
@@ -130,22 +145,7 @@ impl<'s> Projects<'s> {
             return known;
         }
         let answer = self.read_options(context, config_path);
-        let answer = *self.by_config_path.insert_ref(config_path.to_vec(), answer);
-        let governing: Vec<&'s Options> = match answer {
-            ConfigAnswer::Project(options) => vec![options],
-            ConfigAnswer::Solution(solution) => solution
-                .projects
-                .iter()
-                .filter_map(|project| project.options.as_ref())
-                .collect(),
-            ConfigAnswer::Program | ConfigAnswer::Unreadable => Vec::new(),
-        };
-        let names_types =
-            |options: &&Options| options.types.as_ref().is_some_and(|it| !it.is_empty());
-        self.naming_types
-            .lock()
-            .extend(governing.into_iter().filter(names_types));
-        answer
+        *self.by_config_path.insert_ref(config_path.to_vec(), answer)
     }
 
     fn read_options(

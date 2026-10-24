@@ -31,7 +31,13 @@ const widestString = 2 ** 32;
 const scheduled = (times: b.CallbackTimes) => ({
   callback: [
     b.storedIn(b.nativeCell(timerCallbackCell)),
-    b.called({ times, this: b.result, spreadArgs: b.operand("passed"), result: "Ignored" }),
+    b.called({
+      afterwards: "TouchesOnlyWhatRowNames",
+      times,
+      this: b.result,
+      spreadArgs: b.operand("passed"),
+      result: "Ignored",
+    }),
   ],
   passed: [b.storedIn(b.nativeCell(timerArgumentsCell))],
 });
@@ -153,7 +159,13 @@ const listenerRegistration = (eventTarget: b.TableType) =>
       listener: [
         b.retained,
         // dispatchEvent hands the listener the event that it was handed.
-        b.called({ times: "PerEvent", this: eventTarget, args: [b.object], result: "Escapes" }),
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: eventTarget,
+          args: [b.object],
+          result: "Escapes",
+        }),
         b.runs(b.calls("handleEvent")),
       ],
       options: [b.runs(b.named("capture", "once", "passive", "signal")), b.contentsStoredIn(b.nativeMemory)],
@@ -186,7 +198,16 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
       capability: "heap",
       uses: {
         this: [b.retained],
-        value: [b.retained, b.called({ times: "PerEvent", this: eventTarget, spreadArgs: b.any, result: "Escapes" })],
+        value: [
+          b.retained,
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "PerEvent",
+            this: eventTarget,
+            spreadArgs: b.any,
+            result: "Escapes",
+          }),
+        ],
       },
       writes: externalState,
       implementation: b.generic,
@@ -1011,7 +1032,9 @@ const cron: b.FunctionField[] = [
     returns: b.instance("CronJob").fresh,
     throws: true,
     uses: {
-      handler: [b.called({ times: "PerEvent", this: b.result, result: "Escapes" })],
+      handler: [
+        b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerEvent", this: b.result, result: "Escapes" }),
+      ],
       options: membersInspected("tz"),
     },
     reads: externalState,
@@ -1505,7 +1528,13 @@ export default b.declarations(
         uses: {
           value: [
             b.retained,
-            b.called({ times: "Later", this: b.builtin("Error"), args: [b.any, b.any], result: "Escapes" }),
+            b.called({
+              afterwards: "TouchesOnlyWhatRowNames",
+              times: "Later",
+              this: b.builtin("Error"),
+              args: [b.any, b.any],
+              result: "Escapes",
+            }),
           ],
         },
         implementation: b.generic,
@@ -1636,6 +1665,7 @@ export default b.declarations(
         value: [
           b.storedIn(b.nativeCell(timerCallbackCell)),
           b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
             times: "PerEvent",
             this: b.operand("this"),
             spreadArgs: b.nativeCell(timerArgumentsCell),
@@ -1678,7 +1708,7 @@ export default b.declarations(
   b.fn("queueMicrotask", {
     args: { callback: b.callable },
     capability: "heap",
-    uses: { callback: [b.called({ times: "Later", result: "Ignored" })] },
+    uses: { callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", result: "Ignored" })] },
     reads: externalState,
     writes: externalState,
     implementation: b.hostCall,

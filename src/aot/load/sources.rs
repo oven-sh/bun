@@ -148,6 +148,7 @@ fn find_compiler_function(path: &[u8], export_name: &[u8]) -> Option<RuntimeFunc
     Some(found.function)
 }
 
+#[derive(Clone)]
 struct SourceEntry {
     kind: SourceKind,
     loader: Loader,
@@ -158,6 +159,7 @@ struct SourceEntry {
     diagnostic_path: Box<[u8]>,
 }
 
+#[derive(Clone)]
 pub struct Sources {
     project: ProjectId,
     entries: Vec<SourceEntry>,

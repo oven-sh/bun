@@ -1,11 +1,11 @@
 use super::{Form, Label, Literal, MAX_NAMES, Marks, NodeShape, NodeTag, Operator, Subtree};
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
 use crate::hir::{
     Branches, Call, CallId, Case, CaseId, Chain, Class, ClassId, Export, ExportId, ExportSpec,
     ExportSpecId, Expr, ExprFlags, ExprId, ExprKind, ExprTag, File, Flags, FnBody, FnId, Func,
     IdList, Import, ImportId, ImportSpec, ImportSpecId, Member, MemberId, Param, ParamId, Pat,
-    PatElem, PatElemId, PatId, PatKind, PatProp, PatPropId, Prop, PropId, PropKey, Stmt, StmtId,
-    StmtKind, VarDecl, VarDeclId, has_runtime_member,
+    PatElem, PatElemId, PatId, PatKind, PatProp, PatPropId, Prop, PropId, PropKey, PropKind, Stmt,
+    StmtId, StmtKind, VarDecl, VarDeclId, has_runtime_member,
 };
 use std::mem::discriminant;
 
@@ -27,22 +27,31 @@ const MEMBER_FLAGS: Flags = Flags::STATIC
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Position {
     Value,
+    Accessed,
     AssignmentTarget,
 }
 
 impl Position {
     fn expr(self, e: ExprId) -> Subtree {
         match self {
-            Position::Value => Subtree::Expr(e),
+            Position::Value | Position::Accessed => Subtree::Expr(e),
             Position::AssignmentTarget => Subtree::AssignmentTarget(e),
         }
     }
 
     fn prop(self, prop: PropId) -> Subtree {
         match self {
-            Position::Value => Subtree::Prop(prop),
+            Position::Value | Position::Accessed => Subtree::Prop(prop),
             Position::AssignmentTarget => Subtree::AssignmentProperty(prop),
         }
+    }
+}
+
+/// `(a?.b).c` is not `a?.b.c`, while `(a?.b)?.c` is `a?.b?.c`.
+fn accessed(e: ExprId, chain: Chain) -> Subtree {
+    match chain {
+        Chain::No => Subtree::Accessed(e),
+        Chain::Start | Chain::Continue => Subtree::Expr(e),
     }
 }
 
@@ -105,7 +114,7 @@ impl<'a> Draft<'a, '_> {
         };
         self.with_chain(chain)
             .with_mark(Marks::PURE, is_pure)
-            .with_exprs([callee, template])
+            .with_children([accessed(callee, chain), Subtree::Expr(template)])
             .with_exprs(file.ids(args))
     }
 
@@ -220,6 +229,7 @@ impl<'a, 's> Side<'a, 's> {
             Subtree::Statements(statements) => self.describe_statements(statements),
             Subtree::Stmt(stmt) => self.describe_stmt(stmt),
             Subtree::Expr(e) => self.describe_expr(e, Position::Value),
+            Subtree::Accessed(e) => self.describe_expr(e, Position::Accessed),
             Subtree::AssignmentTarget(e) => self.describe_expr(e, Position::AssignmentTarget),
             Subtree::Pattern(pattern) => self.describe_pattern(pattern),
             Subtree::Function(function) => self.describe_function(function),
@@ -355,7 +365,8 @@ impl<'a, 's> Side<'a, 's> {
             if is_read_as_written && e != written && !is_parenthesized {
                 return NodeShape::NotComparable;
             }
-            label.expr_flags = if is_read_as_written || label.chain != Chain::No {
+            let ends_chain = position == Position::Accessed && label.chain != Chain::No;
+            label.expr_flags = if is_read_as_written || ends_chain {
                 self.file.expr_flags(e) | parentheses
             } else {
                 self.file.expr_flags(e) - ExprFlags::PARENTHESIZED
@@ -401,10 +412,13 @@ impl<'a, 's> Side<'a, 's> {
                 name,
                 chain,
                 name_before_end: _,
-            } => draft.with_names([name]).with_chain(chain).with_exprs([obj]),
-            ExprKind::Index { obj, index, chain } => {
-                draft.with_chain(chain).with_exprs([obj, index])
-            }
+            } => draft
+                .with_names([name])
+                .with_chain(chain)
+                .with_children([accessed(obj, chain)]),
+            ExprKind::Index { obj, index, chain } => draft
+                .with_chain(chain)
+                .with_children([accessed(obj, chain), Subtree::Expr(index)]),
             ExprKind::Unary { op, operand } => draft
                 .with_operator(Operator::Unary(op))
                 .with_exprs([operand]),
@@ -571,9 +585,19 @@ impl<'a, 's> Side<'a, 's> {
             end: _,
             postfix_token: _,
         } = file[prop];
+        let key = file.runtime_property_key(prop);
+        // `{ a }` is `{ a: a }`, while `{ __proto__ }` has a property of that name and `{ __proto__: __proto__ }` a prototype.
+        let kind = match kind {
+            PropKind::Shorthand
+                if position == Position::Value && key != PropKey::Name(known::__proto__) =>
+            {
+                PropKind::Init
+            }
+            kind => kind,
+        };
         self.draft(NodeTag::Prop(kind))
             .with_form(Form::Name(name_kind))
-            .with_key(file.runtime_property_key(prop))
+            .with_key(key)
             .with_children([position.expr(value)])
             .finish()
     }

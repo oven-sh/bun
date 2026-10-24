@@ -128,6 +128,7 @@ fn ask(families: &str, main: &str) -> Asked {
             .collect();
         let inputs = QueryInputs {
             roles: &roles,
+            checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], &[]),
             named_values: &NoNamedValues,
             max_inference_nodes: 0,

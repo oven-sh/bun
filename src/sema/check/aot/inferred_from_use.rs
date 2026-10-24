@@ -1940,7 +1940,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn object_type_of(&mut self, members: &[Member]) -> TypeId {
         let mut props = Vec::with_capacity(members.len());
         for member in members {
-            let flags = match member.usage.facts.contains(Facts::REQUIRED) {
+            // What is called may lie in a prototype: the object itself need not have it.
+            let flags = match member.usage.facts.contains(Facts::REQUIRED) && !member.is_called() {
                 true => PropFlags::empty(),
                 false => PropFlags::OPTIONAL,
             };

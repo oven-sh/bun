@@ -302,7 +302,7 @@ impl LinkUnit {
         LinkUnit {
             file: ProgramFile {
                 project: context.project,
-                file: fragment.file,
+                file: context.file(fragment.file),
             },
             is_checked: fragment.is_checked,
             strings,

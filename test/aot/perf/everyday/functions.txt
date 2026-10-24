@@ -1,0 +1,364 @@
+//// call-of-a-small-function
+function add(a: number, b: number): number {
+  return a + b;
+}
+function turn(i: number): number {
+  return add(i, 1);
+}
+//// default-parameter
+function scale(value: number, by = 2): number {
+  return value * by;
+}
+function turn(i: number): number {
+  return scale(i & 255) + scale(i & 15, 3);
+}
+//// optional-parameter
+function label(id: number, suffix?: string): number {
+  return id + (suffix ? suffix.length : 0);
+}
+function turn(i: number): number {
+  return label(i & 255) + label(1, "abc");
+}
+//// a-count-kept-by-a-closure
+function makeCounter() {
+  let count = 0;
+  return () => (count = (count + 1) & 0xffff);
+}
+const next = makeCounter();
+function turn(i: number): number {
+  return next() + (i & 1);
+}
+//// closure-sum-without-a-mask
+function makeTotal() {
+  let total = 0;
+  return (n: number) => (total += n);
+}
+const addTo = makeTotal();
+function turn(i: number): number {
+  return addTo(i) & 255;
+}
+//// module-variable-sum
+let total = 0;
+function turn(i: number): number {
+  total += i & 255;
+  return total & 1023;
+}
+//// closure-made-and-called
+function turn(i: number): number {
+  const addI = (n: number) => n + i;
+  return addI(1) + addI(2);
+}
+//// closure-returned
+function adder(a: number) {
+  return (b: number) => a + b;
+}
+function turn(i: number): number {
+  return adder(i)(2);
+}
+//// currying
+const curry = (a: number) => (b: number) => (c: number) => a * b + c;
+function turn(i: number): number {
+  return curry(i & 15)(3)(1);
+}
+//// partial-application-by-bind
+function multiply(a: number, b: number): number {
+  return a * b;
+}
+const triple = multiply.bind(null, 3);
+function turn(i: number): number {
+  return triple(i & 255);
+}
+//// bind-every-turn
+function plus(this: { base: number }, n: number): number {
+  return this.base + n;
+}
+const context = { base: 10 };
+function turn(i: number): number {
+  return plus.bind(context)(i & 255);
+}
+//// call-method
+function read(this: { value: number }, extra: number): number {
+  return this.value + extra;
+}
+const holder = { value: 5 };
+function turn(i: number): number {
+  return read.call(holder, i & 255);
+}
+//// apply-with-an-array
+function sum3(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+const triple = [1, 2, 3] as [number, number, number];
+function turn(i: number): number {
+  triple[0] = i & 255;
+  return sum3.apply(null, triple);
+}
+//// spread-call
+function sum3(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+const triple: [number, number, number] = [1, 2, 3];
+function turn(i: number): number {
+  triple[0] = i & 255;
+  return sum3(...triple);
+}
+//// rest-parameter
+function sum(...values: number[]): number {
+  let total = 0;
+  for (const value of values) total += value;
+  return total;
+}
+function turn(i: number): number {
+  return sum(i & 255, 1, 2, 3);
+}
+//// rest-handed-on-by-spread
+function inner(a: number, b: number, c: number): number {
+  return a + b * c;
+}
+function outer(...args: [number, number, number]): number {
+  return inner(...args);
+}
+function turn(i: number): number {
+  return outer(i & 255, 2, 3);
+}
+//// rest-length
+function count(...values: unknown[]): number {
+  return values.length;
+}
+function turn(i: number): number {
+  return i & 1 ? count(1, 2, 3) : count("a");
+}
+//// arguments-length
+function count(): number {
+  return arguments.length;
+}
+function turn(i: number): number {
+  return i & 1 ? (count as any)(1, 2, 3) : (count as any)("a");
+}
+//// arguments-summed
+function sum(): number {
+  let total = 0;
+  for (let k = 0; k < arguments.length; k++) total += arguments[k];
+  return total;
+}
+function turn(i: number): number {
+  return (sum as any)(i & 255, 1, 2);
+}
+//// arguments-to-an-array
+function last(): number {
+  const list = Array.prototype.slice.call(arguments);
+  return list[list.length - 1];
+}
+function turn(i: number): number {
+  return (last as any)(1, 2, i & 255);
+}
+//// callback-parameter
+function twice(f: (n: number) => number, n: number): number {
+  return f(f(n));
+}
+function turn(i: number): number {
+  return twice(n => n + 3, i & 255);
+}
+//// callback-one-of-four
+const handlers = [(n: number) => n + 1, (n: number) => n * 2, (n: number) => n - 3, (n: number) => n ^ 5];
+function turn(i: number): number {
+  return handlers[i & 3]!(i & 255);
+}
+//// callbacks-by-name
+const commands: Record<string, (n: number) => number> = {
+  up: n => n + 1,
+  down: n => n - 1,
+  reset: () => 0,
+  double: n => n * 2,
+};
+const script = ["up", "double", "down", "reset"];
+function turn(i: number): number {
+  return commands[script[i & 3]!]!(i & 255);
+}
+//// compose
+const compose =
+  (...fns: ((n: number) => number)[]) =>
+  (n: number) =>
+    fns.reduceRight((value, fn) => fn(value), n);
+const pipeline = compose(
+  n => n + 1,
+  n => n * 2,
+  n => n - 3,
+);
+function turn(i: number): number {
+  return pipeline(i & 255);
+}
+//// middleware-chain
+type Next = () => number;
+const middleware: ((n: number, next: Next) => number)[] = [(n, next) => next() + 1, (n, next) => next() * 2, n => n];
+function dispatch(index: number, n: number): number {
+  return middleware[index]!(n, () => dispatch(index + 1, n));
+}
+function turn(i: number): number {
+  return dispatch(0, i & 255);
+}
+//// memoize-wrapper
+function memoize(f: (n: number) => number) {
+  const cache = new Map<number, number>();
+  return (n: number) => {
+    let value = cache.get(n);
+    if (value === undefined) cache.set(n, (value = f(n)));
+    return value;
+  };
+}
+const square = memoize(n => n * n);
+function turn(i: number): number {
+  return square(i & 63);
+}
+//// once-wrapper
+function once(f: () => number) {
+  let done = false;
+  let value = 0;
+  return () => (done ? value : ((done = true), (value = f())));
+}
+const load = once(() => 42);
+function turn(i: number): number {
+  return load() + (i & 1);
+}
+//// immediately-invoked
+function turn(i: number): number {
+  return (() => {
+    const local = i & 255;
+    return local * 2;
+  })();
+}
+//// recursion-factorial
+function factorial(n: number): number {
+  return n <= 1 ? 1 : n * factorial(n - 1);
+}
+function turn(i: number): number {
+  return factorial(5 + (i & 3));
+}
+//// mutual-recursion
+function isEven(n: number): boolean {
+  return n === 0 ? true : isOdd(n - 1);
+}
+function isOdd(n: number): boolean {
+  return n === 0 ? false : isEven(n - 1);
+}
+function turn(i: number): number {
+  return isEven(i & 15) ? 1 : 0;
+}
+//// function-with-members
+function tick(n: number): number {
+  tick.calls = (tick.calls + 1) & 0xffff;
+  return n + tick.calls;
+}
+tick.calls = 0;
+function turn(i: number): number {
+  return tick(i & 255);
+}
+//// function-length-and-name
+function three(a: number, b: number, c: number) {
+  return a + b + c;
+}
+function turn(i: number): number {
+  return three.length + three.name.length + (i & 1);
+}
+//// function-length-and-name-of-a-function-that-is-called
+function three(a: number, b: number, c: number) {
+  return a + b + c;
+}
+three(1, 2, 3);
+function turn(i: number): number {
+  return three.length + three.name.length + (i & 1);
+}
+//// generic-identity
+function identity<T>(value: T): T {
+  return value;
+}
+function turn(i: number): number {
+  return identity(i) + identity("abc").length;
+}
+//// function-taking-number-or-string
+function size(value: number | string): number {
+  return typeof value === "number" ? value : value.length;
+}
+function turn(i: number): number {
+  return size(i & 1 ? i & 255 : "four");
+}
+//// function-taking-one-or-many
+function total(values: number | number[]): number {
+  if (!Array.isArray(values)) return values;
+  let sum = 0;
+  for (const value of values) sum += value;
+  return sum;
+}
+const many = [1, 2, 3];
+function turn(i: number): number {
+  return total(i & 1 ? many : i & 255);
+}
+//// options-bag
+function request(url: string, options: { method?: string; retries?: number; body?: string } = {}): number {
+  const { method = "GET", retries = 3 } = options;
+  return url.length + method.length + retries + (options.body?.length ?? 0);
+}
+function turn(i: number): number {
+  return request("/a") + request("/b", { method: "POST", body: "x" }) + request("/c", { retries: i & 3 });
+}
+//// early-returns
+function classify(n: number): number {
+  if (n < 0) return -1;
+  if (n === 0) return 0;
+  if (n < 10) return 1;
+  if (n < 100) return 2;
+  return 3;
+}
+function turn(i: number): number {
+  return classify((i & 255) - 20);
+}
+//// new-function-object-kept
+const kept: (() => number)[] = [];
+function turn(i: number): number {
+  kept[i & 15] = () => i;
+  return kept[(i >> 1) & 15]?.() ?? 0;
+}
+//// closure-over-a-loop-variable
+function turn(i: number): number {
+  const getters: (() => number)[] = [];
+  for (let k = 0; k < 4; k++) getters.push(() => k + i);
+  return getters[3]!();
+}
+//// getter-function-table
+const table = { a: () => 1, b: () => 2, c: () => 3 };
+function turn(i: number): number {
+  return i & 1 ? table.a() + table.c() : table.b();
+}
+//// debounce-like-state
+function makeLimiter(every: number) {
+  let last = -every;
+  return (now: number) => (now - last >= every ? ((last = now), 1) : 0);
+}
+const allow = makeLimiter(4);
+function turn(i: number): number {
+  return allow(i);
+}
+//// this-in-a-nested-arrow
+const group = {
+  factor: 3,
+  values: [1, 2, 3, 4],
+  scaled() {
+    return this.values.map(value => value * this.factor);
+  },
+};
+function turn(i: number): number {
+  group.factor = i & 7;
+  return group.scaled()[3]!;
+}
+//// void-callback-for-a-side-effect
+let seen = 0;
+function visit(values: number[], visitor: (n: number) => void) {
+  for (const value of values) visitor(value);
+}
+const values = [1, 2, 3, 4];
+function turn(i: number): number {
+  visit(values, n => {
+    seen = (seen + n + i) & 0xffff;
+  });
+  return seen;
+}

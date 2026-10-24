@@ -1,0 +1,1 @@
+A piece of a text is no atom. The stubs find its name by its characters at every use, about 40 instructions, and never make the piece itself an atom; the table that goes by the key's cell has 512 places, and here are 4,096 cells.

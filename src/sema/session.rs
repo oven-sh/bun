@@ -74,6 +74,11 @@ impl Session {
         }
     }
 
+    /// No thread has asked for an arena.
+    pub fn is_unused(&self) -> bool {
+        self.first.get().is_none()
+    }
+
     /// Returns the calling thread's arena, creating it on the thread's first call.
     ///
     /// The lookup is linear in the number of threads, so a task calls this once and stores the result.

@@ -33,9 +33,9 @@ for (const seed of seeds)
       using folder = tempDir("aot-fuzzer-fixed-seeds", {});
       const out = join(String(folder), "out");
       const programsRoot = join(import.meta.dir, "programs");
-      // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here.
+      // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here. The programs as they are have tests of their own.
       const sources = Object.keys(await allSources(programsRoot, new Set())).filter(
-        name => !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
+        name => name !== "programs-as-they-are" && !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
       );
       const bed = new ProductBed(bunExe(), {
         baseFlags: [],

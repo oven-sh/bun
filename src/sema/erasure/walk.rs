@@ -61,7 +61,9 @@ fn check_labels(typed: &Label<'_>, untyped: &Label<'_>, nodes: Owners) -> Step {
 fn node_data(node: Subtree, owner: NodeData) -> NodeData {
     match node {
         Subtree::Stmt(id) => NodeData::Stmt(id),
-        Subtree::Expr(id) | Subtree::AssignmentTarget(id) => NodeData::Expr(id),
+        Subtree::Expr(id) | Subtree::Accessed(id) | Subtree::AssignmentTarget(id) => {
+            NodeData::Expr(id)
+        }
         Subtree::Pattern(id) => NodeData::Pat(id),
         Subtree::Prop(id) | Subtree::AssignmentProperty(id) => NodeData::Prop(id),
         Subtree::PatProp(id) => NodeData::PatProp(id),
@@ -94,7 +96,9 @@ fn last_byte(end: u32) -> u32 {
 
 fn token_offsets(file: &File<'_>, node: Subtree) -> [u32; MAX_TOKEN_OFFSETS] {
     match node {
-        Subtree::Expr(written) | Subtree::AssignmentTarget(written) => {
+        Subtree::Expr(written)
+        | Subtree::Accessed(written)
+        | Subtree::AssignmentTarget(written) => {
             let e = file.skip_type_assertions(written);
             let token_inside = match file[e].kind {
                 ExprKind::Dot { .. } => file.name_pos(e),

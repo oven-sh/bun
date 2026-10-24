@@ -40,7 +40,7 @@
 // CHECK: [[methodCall]]([[method]]):
 // CHECK-NEXT: = Call [[method]], [[methodObject]], [[x]] calleeKey="m" calleeName="o.m"
 // CHECK-LABEL: function {{*}}name="optionalReceiver"
-// CHECK: [[convertedReceiver]] = Convert [[o]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
+// CHECK: [[convertedReceiver]] = Convert [[o]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[receiverTest]] = TypeTest [[convertedReceiver]] testedType=undefined|null
 // CHECK-NEXT: Branch [[receiverTest]] -> taken {{*}}, notTaken [[receiverRead]](| 0)
 // CHECK: [[receiverRead]]([[receiver]]):

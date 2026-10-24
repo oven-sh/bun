@@ -42,7 +42,10 @@ type VisitedTypes = SmallVec<[TypeId; 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn file_trust(&self, file: FileId) -> Trust {
-        Trust::of_role(self.role(file))
+        match self.inputs.checked_elsewhere.binary_search(&file) {
+            Ok(_) => Trust::Untrusted,
+            Err(_) => Trust::of_role(self.role(file)),
+        }
     }
 
     pub fn symbol_trust(&self, symbol: Sym) -> Trust {

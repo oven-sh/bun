@@ -28,6 +28,8 @@ export interface AccessSite extends SourcePosition {
   level: Level;
   cost: AccessCost;
   function: number | null;
+  /** Where the copy lies that decides the class. 0 to 2: in the function itself, in a block that is normal, unlikely, rare. 3 to 5: pasted into a caller. From 6 on: in a generic version. 255: nowhere. */
+  distance: number;
   /** Why the access is not free, where that begins, and the type the compiler takes the receiver for. */
   cause: string | null;
   limit: string | null;

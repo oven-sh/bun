@@ -116,7 +116,18 @@ impl Build<'_> {
         });
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);
+        let left_out_of_world = match project {
+            ProjectId::Application => self.left_out_of_world.take(),
+            ProjectId::Runtime => None,
+        };
+        let is_world = left_out_of_world.is_some();
         let left_out = match project {
+            ProjectId::Application if is_world => {
+                let left_out = left_out_of_world.unwrap_or_default();
+                graph.leave_out_files(&left_out.files, &in_parallel);
+                graph.limit_exports(|file, export| left_out.find_export_use(file, export));
+                left_out
+            }
             ProjectId::Application if graph.errors().is_empty() => {
                 let input = ProgramReachInput {
                     files: view.files(),
@@ -134,6 +145,7 @@ impl Build<'_> {
         };
         graph.finish_plan(&in_parallel);
         let deferred_data = match project {
+            ProjectId::Application if is_world => DeferredData::default(),
             ProjectId::Application => self.bundle_pages(loaded, &graph),
             ProjectId::Runtime => DeferredData::default(),
         };

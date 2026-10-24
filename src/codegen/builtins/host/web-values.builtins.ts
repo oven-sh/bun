@@ -80,6 +80,7 @@ const forEachPair = {
     this: readsState,
     callback: [
       b.called({
+        afterwards: "TouchesOnlyWhatRowNames",
         times: "PerElement",
         this: b.operand("thisArg"),
         args: [b.string, b.string, b.operand("this")],
@@ -523,7 +524,15 @@ export default b.declarations(
       throws: true,
       uses: {
         this: writesToSubscribers,
-        callback: [b.called({ times: "Once", this: b.operand("this"), args: [b.operand("this")], result: "Returned" })],
+        callback: [
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "Once",
+            this: b.operand("this"),
+            args: [b.operand("this")],
+            result: "Returned",
+          }),
+        ],
       },
       implementation: b.hostCall,
     },

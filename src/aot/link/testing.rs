@@ -136,6 +136,7 @@ pub(crate) fn application_keys<'a>(
         project: ProjectId::Application,
         graph,
         runtime_sources,
+        rehoming: None,
     }
 }
 

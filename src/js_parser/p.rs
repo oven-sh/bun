@@ -6523,6 +6523,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             && self.current_scope().parent.is_none()
             && !kind.is_using()
+            && !(kind == js_ast::s::Kind::KConst
+                && self.options.features.keeps_top_level_const
+                && !self.will_wrap_module_in_try_catch_for_using)
         {
             return js_ast::s::Kind::KVar;
         }

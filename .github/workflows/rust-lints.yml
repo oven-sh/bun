@@ -159,6 +159,12 @@ jobs:
       - name: The engine's generator writes what the build declares
         run: bun test ./test/internal/aot-schema-generator.test.ts
 
+      - name: The text of the engine's compiler keeps its rules
+        # Each of them skips itself where it finds no sources. Here that has to fail the job.
+        run: |
+          test -d "$AOT_ENGINE_DIRECTORY/valueflow"
+          bun test ./test/aot/a-switch-of-the-compiler-names-every-enumerator.test.ts ./test/aot/lists-of-operations-in-the-compiler-only-shrink.test.ts ./test/aot/every-field-of-flows-results-is-written-and-read.test.ts ./test/aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts
+
       - name: cargo test
         # ir_tests.rs skips the engine's half of every test when TESTAOT is
         # unset. Here a build without testaot has to fail the job.

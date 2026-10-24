@@ -136,9 +136,8 @@ fn drop_source_maps(outdir: &[u8], output_files: &mut Vec<OutputFile>) {
         let path = path_of(file);
         let length = match &mut file.value {
             OutputFileValue::Buffer { bytes } => {
-                without_debug_id(bytes).map(<[u8]>::len).map(|length| {
+                without_debug_id(bytes).map(<[u8]>::len).inspect(|&length| {
                     *bytes = Box::from(&bytes[..length]);
-                    length
                 })
             }
             OutputFileValue::Saved(_) => bun_sys::File::read_from(bun_core::Fd::cwd(), &path)

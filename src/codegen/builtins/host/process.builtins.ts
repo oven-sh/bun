@@ -13,16 +13,39 @@ import { handedOver } from "./native-code.ts";
 
 const self = b.operand("this");
 
-const calledWithEvents = b.called({ times: "PerEvent", this: self, spreadArgs: b.any, result: "Ignored" });
-const calledWithExitCode = b.called({ times: "Later", this: self, args: [b.f64], result: "Ignored" });
+const calledWithEvents = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
+  times: "PerEvent",
+  this: self,
+  spreadArgs: b.any,
+  result: "Ignored",
+});
+const calledWithExitCode = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
+  times: "Later",
+  this: self,
+  args: [b.f64],
+  result: "Ignored",
+});
 const calledWithSignal = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
   times: "Later",
   this: b.builtin("globalThis"),
   args: [b.f64, b.f64],
   result: "Escapes",
 });
-const calledWithUncaughtException = b.called({ times: "PerEvent", args: [b.any, b.string], result: "Ignored" });
-const calledOnNextTick = b.called({ times: "Later", spreadArgs: b.operand("passed"), result: "Ignored" });
+const calledWithUncaughtException = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
+  times: "PerEvent",
+  args: [b.any, b.string],
+  result: "Ignored",
+});
+const calledOnNextTick = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
+  times: "Later",
+  spreadArgs: b.operand("passed"),
+  result: "Ignored",
+});
 
 const listenerLists = ["ExternalState"];
 const externalState = ["ExternalState"];

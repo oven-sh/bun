@@ -78,6 +78,8 @@ pub struct LoweringOptions {
 
 pub struct LoweringInputs<'a> {
     pub roles: &'a [FileRole],
+    // `QueryInputs::checked_elsewhere`
+    pub checked_elsewhere: &'a [FileId],
     pub builtin_types: &'a BuiltinTypeSymbols,
     pub named_values: &'a dyn NamedValues,
     pub builtin_names: &'a BuiltinNames,
@@ -107,6 +109,7 @@ impl<'a> LoweringInputs<'a> {
     pub fn query_inputs(&self) -> QueryInputs<'a> {
         QueryInputs {
             roles: self.roles,
+            checked_elsewhere: self.checked_elsewhere,
             builtin_types: self.builtin_types,
             named_values: self.named_values,
             max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),

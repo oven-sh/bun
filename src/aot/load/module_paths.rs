@@ -56,6 +56,11 @@ impl<'s> FileMaps<'s> {
         maps
     }
 
+    /// The files that a typed package's own program starts from are no entry points of the build.
+    pub(super) fn forget_entry_points(&mut self) {
+        self.entry_point_indexes.clear();
+    }
+
     fn add_linkable_file(&mut self, path: &'s [u8], file: FileId, loader: HostLoader) {
         let candidate = (file, loader);
         self.primary_files

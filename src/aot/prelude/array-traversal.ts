@@ -91,7 +91,7 @@ export function traverseArray(
   const endThis = operands[endCallbackIndex + 1];
 
   const length = array.length;
-  const first = clampToLength(start, length);
+  const first = start === 0 ? 0 : clampToLength(start, length);
   const last = end === undefined ? length : clampToLength(end, length);
   const count = last > first ? last - first : 0;
 
@@ -132,7 +132,8 @@ export function traverseArray(
     }
 
     if (endKind === endArray) {
-      storeInNewArray(out!, index, value);
+      const isStored: boolean = $tryPutByValDirect(out!, index, value);
+      if (!isStored) out![index] = value;
       reached = index + 1;
     } else if (endKind === endLength) reached = index + 1;
     else if (endKind === endForEach) $call<unknown>(endCallback, endThis, value, index);
@@ -153,7 +154,7 @@ export function traverseArray(
     } else reached = appendParts(out!, reached, $call<unknown>(endCallback, endThis, value, index));
   }
 
-  if (out !== undefined) return $truncateNewArray<unknown>(out, isDense || endKind === endFlatMap ? reached : count);
+  if (out !== undefined) return isDense || endKind === endFlatMap ? $truncateNewArray<unknown>(out, reached) : out;
   if (endKind === endLength) return isDense ? reached : count;
   if (endKind === endReduce) return finishReduce(hasAccumulator, accumulator);
   if (endKind === endJoin) return finishJoin(text, operand as string, reached, isDense ? reached + 1 : count);

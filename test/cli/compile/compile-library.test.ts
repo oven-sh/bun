@@ -511,7 +511,7 @@ describe.concurrent("bun compile --library", () => {
     const built = await bun(String(dir), "compile", "--library");
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
-    expect(readFileSync(join(String(dir), `dist/${stem}.js`), "utf8")).toContain("var from = ");
+    expect(readFileSync(join(String(dir), `dist/${stem}.js`), "utf8")).toContain("const from = ");
     expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
       ".": conditions(stem),
       "./package.json": "./package.json",
@@ -624,6 +624,24 @@ describe.concurrent("the typed file that bun compile --library writes", () => {
     });
   });
 
+  test("a tsconfig.json above the package is another project's", async () => {
+    using dir = tempDir("library-typed-file-config-above", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: false, lib: ["es5"], types: ["not-installed"] } }),
+      "packages/links/package.json": JSON.stringify({ name: "links", version: "1.0.0" }),
+      "packages/links/src/index.ts": `export function host(link: string, fallback?: string): string {
+  const text: string = fallback ?? atob(btoa(link));
+  return new URL(text).host;
+}
+`,
+    });
+    const built = await bun(join(String(dir), "packages/links"), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const written = json(join(String(dir), "packages/links/dist/tsconfig.json"));
+    expect(written.compilerOptions).toMatchObject({ strict: true });
+    expect(written.compilerOptions.lib).toBeUndefined();
+    expect(filesIn(join(String(dir), "packages/links/dist"))).toContain("index.aot.ts");
+  });
+
   test("keeps the source maps that the build asks for", async () => {
     using dir = tempDir("library-typed-file-maps", library(sources));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--sourcemap=external");
@@ -650,9 +668,8 @@ export function read(keyed: Keyed): string {
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(typedFile(dir)).toContain("declare const written_unique: unique symbol;");
-    expect(typedFile(dir)).toContain("var written: typeof written_unique = Symbol() as any;");
-    expect(typedFile(dir)).toContain('var inferred: typeof inferred_unique = Symbol("inferred") as any;');
+    expect(typedFile(dir)).toContain("const written: unique symbol = Symbol();");
+    expect(typedFile(dir)).toContain('const inferred = Symbol("inferred");');
   });
 
   test("a constant keeps the literal type that was inferred for it", async () => {
@@ -669,8 +686,49 @@ export function same(value: typeof kind): "circle" {
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(typedFile(dir)).toContain('var kind: "circle" = "circle";');
-    expect(typedFile(dir)).toContain("var sides: 0 = 0;");
+    expect(typedFile(dir)).toContain('const kind = "circle";');
+    expect(typedFile(dir)).toContain("const sides = 0;");
+  });
+
+  test("a variable that starts as a constant keeps the wider type that was inferred for it", async () => {
+    using dir = tempDir(
+      "library-typed-file-widened",
+      library({
+        "src/index.ts": `const none = "none";
+const few = 3;
+export function pick(names: string[], most = few): string {
+  let found = none;
+  for (const name of names.slice(0, Math.max(most, names.length - 1))) found = name;
+  most = names.length;
+  return found + most;
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain('const none = "none";');
+    expect(typedFile(dir)).toContain("let found = none;");
+  });
+
+  test("a cast of a call of new that is printed without parentheses", async () => {
+    using dir = tempDir(
+      "library-typed-file-bare-new",
+      library({
+        "src/index.ts": `export interface Counts extends Map<string, number[]> {
+  total?: number;
+}
+export function counts(): Counts {
+  const made = new Map<string, number[]>() as Counts;
+  made.total = 0;
+  return made;
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("new Map<string, number[]> as Counts");
   });
 
   test("an entry point that is a script is not met twice when the typed files are judged", async () => {

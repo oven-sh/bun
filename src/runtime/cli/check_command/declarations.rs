@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 
 use bstr::BStr;
 use bun_bundler::options::TypeChecked;
+use bun_paths::platform::Auto;
+use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
-use bun_sema_driver::host::{Provided, to_native};
-use bun_sema_driver::sound_files::ModuleTypes;
+use bun_sema_driver::host::{Provided, from_native, to_native};
+use bun_sema_driver::sound_files::{ModuleTypes, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
 
@@ -14,6 +16,10 @@ use super::{
     Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
     script_kinds_by_extension, with_pages,
 };
+
+/// A package without a configuration file is written for every runtime: it gets the globals that all of them have.
+pub(super) const LIBS_WITHOUT_CONFIGURATION: [&[u8]; 2] =
+    [b"--lib", b"esnext,dom,dom.iterable,dom.asynciterable"];
 
 pub(crate) struct DeclarationFile {
     pub(crate) source: Vec<u8>,
@@ -64,8 +70,9 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     if paths.is_empty() {
         return true;
     }
+    let entry_paths = paths;
     let paths = Paths::EntryPoints(Entries {
-        paths: &paths,
+        paths: &entry_paths,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
@@ -84,11 +91,22 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
             None => emitted.remove(source),
         };
     };
+    let has_configuration = tsconfig.is_some()
+        || entry_paths.iter().any(|path| {
+            let path = join_abs_string::<Auto>(cwd, &[path]);
+            tsconfig_of_package(&from_native(path)).is_some()
+        });
     let flags = [&b"--declaration"[..], b"--declarationMap", b"false"];
-    let command_line = bun_sema_driver::parse_command_line(&flags, cwd);
+    let libs = if has_configuration {
+        &[][..]
+    } else {
+        &LIBS_WITHOUT_CONFIGURATION
+    };
+    let command_line = bun_sema_driver::parse_command_line(&[&flags, libs].concat(), cwd);
     let request = Request {
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
+            stays_inside_package: true,
             ..Default::default()
         },
         after_file: Some(&emit),

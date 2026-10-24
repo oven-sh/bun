@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, jest, mock, test } from "bun:test";
 
 class Number2 extends Number {
   constructor(value: number) {
@@ -154,9 +154,8 @@ test("async and generator functions print their own name", () => {
   expect(element).toMatchInlineSnapshot(`<load />`);
 });
 
-test("functions without a name of their own print the way existing snapshots have them", () => {
-  // A name inferred from the variable is not printed, and an anonymous async or generator
-  // function is still labelled with its kind, so existing .snap files keep matching.
+test("an unbound function with only an inferred name keeps the text that existing snapshots have", () => {
+  // To print an inferred name here is a separate snapshot format change. This pins the text until then.
   const arrow = () => {};
   const asyncArrow = async () => {};
   const generator = function* () {};
@@ -170,6 +169,79 @@ test("functions without a name of their own print the way existing snapshots hav
       "generator": [Function: GeneratorFunction],
     }
   `);
+});
+
+test("a bound function prints the name of its target, or the kind when the target has no name", () => {
+  async function load() {}
+  const asyncArrow = async () => {};
+  const generator = function* () {};
+
+  expect({
+    boundAsyncArrow: asyncArrow.bind(null),
+    boundGenerator: generator.bind(null),
+    boundMock: jest.fn().bind(null),
+    boundTwice: load.bind(null).bind(null),
+  }).toMatchInlineSnapshot(`
+    {
+      "boundAsyncArrow": [Function: asyncArrow],
+      "boundGenerator": [Function: generator],
+      "boundMock": [Function: mockConstructor],
+      "boundTwice": [Function: bound load],
+    }
+  `);
+
+  expect([(() => {}).bind(null), (async () => {}).bind(null), function* () {}.bind(null)]).toMatchInlineSnapshot(`
+    [
+      [Function],
+      [Function: AsyncFunction],
+      [Function: GeneratorFunction],
+    ]
+  `);
+});
+
+test("a function made by the AsyncFunction constructor prints the name anonymous", () => {
+  const AsyncFunction = (async () => {}).constructor as new (body: string) => Function;
+
+  expect([new Function("return 1"), new AsyncFunction("return 1")]).toMatchInlineSnapshot(`
+    [
+      [Function: anonymous],
+      [Function: anonymous],
+    ]
+  `);
+});
+
+test("a class with a static Symbol.toStringTag keeps its own name in matcher messages", () => {
+  class Tagged {
+    static get [Symbol.toStringTag]() {
+      return "NotTheClassName";
+    }
+  }
+  const messageOf = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return Bun.stripANSI(e.message);
+    }
+    return "";
+  };
+
+  expect(messageOf(() => expect({ a: 1 }).toEqual({ a: expect.any(Tagged) }))).toContain('"a": Any<Tagged>,');
+  expect(
+    messageOf(() =>
+      expect(() => {
+        throw new Error("x");
+      }).toThrow(Tagged),
+    ),
+  ).toContain("Expected constructor: Tagged");
+});
+
+test("a JSX element whose type is a mock prints the name of the mock", () => {
+  const element = (type: unknown) => ({ $$typeof: Symbol.for("react.element"), type, props: {} });
+
+  expect(element(jest.fn())).toMatchInlineSnapshot(`<mockConstructor />`);
+  expect(element(mock(function Child() {}))).toMatchInlineSnapshot(`<Child />`);
+  expect(element(mock(() => null))).toMatchInlineSnapshot(`<Mock />`);
+  expect(Bun.inspect(element(jest.fn()))).toBe("<mockConstructor />");
 });
 
 test("toEqual diff prints the own name of async and generator functions", () => {

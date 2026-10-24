@@ -353,6 +353,12 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it.each(["react.element", "react.transitional.element"])("jsx with a named async component (%s)", symbol => {
+  async function Page() {}
+
+  expect(Bun.inspect({ $$typeof: Symbol.for(symbol), type: Page, props: {} })).toBe("<Page />");
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

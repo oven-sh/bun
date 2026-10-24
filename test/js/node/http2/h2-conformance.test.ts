@@ -2928,7 +2928,7 @@ describe("HPACK (RFC 7541)", () => {
     const answered = new Set<number>();
     const status200 = Buffer.from([0x88]);
     try {
-      await once(client, "connect");
+      await raw.waitFor(isSettings);
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
       expect(
         await request(id => {

@@ -3404,8 +3404,10 @@ impl H2FrameParser {
         };
         stream.reading_paused.set(!reading);
         if reading {
-            // Skip self inside a batch, which replenishes at its end. Per frame it would hide a peer that overruns the window.
-            if !self.engine.streams.is_reading() {
+            // A batch replenishes at its end. Per frame it would hide a peer that overruns the window.
+            if self.engine.streams.is_reading() {
+                self.engine.queue_replenish(&stream);
+            } else {
                 self.engine.replenish_stream(self, &stream);
             }
             let _ = self.flush();

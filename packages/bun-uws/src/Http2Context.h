@@ -713,8 +713,7 @@ struct Http2Context {
 
     void onHttp(std::string_view method, std::string_view pattern,
                 MoveOnlyFunction<void(Http2Response *, Http2Request *)> &&handler) {
-        std::vector<std::string_view> methods =
-            method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
+        std::span<const std::string_view> methods = method == "*" ? std::span<const std::string_view>(router.ANY_METHOD_TREES) : std::span<const std::string_view>(&method, 1);
         router.add(methods, pattern, [handler = std::move(handler)](auto *r) mutable {
             /* Copy out: the handler may reload routes, replacing `router`
              * (and its user data) while we're inside it. */

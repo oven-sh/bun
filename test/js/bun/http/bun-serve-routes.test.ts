@@ -1421,3 +1421,78 @@ describe.concurrent("an HTTP/1.1 request that no route handles", () => {
     );
   });
 });
+
+describe("the same routes over HTTP/1.1, HTTP/2 and HTTP/3", () => {
+  const named = (name: string) => () => new Response(name);
+  const paths = [
+    "/a/static",
+    "/a/fn",
+    "/a/own",
+    "/a/other",
+    "/b/fn",
+    "/b/7",
+    "/c/x/y",
+    "/c/x/z",
+    "/c/q",
+    "/d/fn",
+    "/none",
+  ];
+  const methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "PROPFIND"];
+
+  test("pick the same handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http2: true,
+      http3: true,
+      routes: {
+        "/a/*": { GET: named("/a/* GET") },
+        "/a/static": new Response("/a/static"),
+        "/a/fn": named("/a/fn"),
+        "/a/own": { GET: named("/a/own GET") },
+        "/b/:id": { GET: named("/b/:id GET"), POST: named("/b/:id POST") },
+        "/b/fn": named("/b/fn"),
+        "/c/*": named("/c/*"),
+        "/c/x/*": { GET: named("/c/x/* GET") },
+        "/c/x/y": named("/c/x/y"),
+        "/d/*": { POST: named("/d/* POST") },
+        "/d/fn": named("/d/fn"),
+      },
+      fetch: () => new Response("fetch"),
+    });
+    const over = async (protocol: string) => {
+      const answers: Record<string, string> = {};
+      for (const path of paths) {
+        for (const method of methods) {
+          const response = await fetch(`https://127.0.0.1:${server.port}${path}`, {
+            method,
+            protocol,
+            tls: { rejectUnauthorized: false },
+          } as RequestInit);
+          const body = await response.text();
+          answers[`${method} ${path}`] = method === "HEAD" ? `${response.headers.get("content-length")} bytes` : body;
+        }
+      }
+      return answers;
+    };
+    const http1 = await over("http1.1");
+    expect(http1).toMatchObject({
+      "GET /a/static": "/a/static",
+      "GET /a/fn": "/a/fn",
+      "GET /a/own": "/a/own GET",
+      "GET /a/other": "/a/* GET",
+      "POST /a/other": "fetch",
+      "GET /b/fn": "/b/fn",
+      "POST /b/fn": "/b/fn",
+      "POST /b/7": "/b/:id POST",
+      "GET /c/x/y": "/c/x/y",
+      "GET /c/x/z": "/c/x/* GET",
+      "PUT /c/x/z": "/c/*",
+      "POST /d/fn": "/d/fn",
+      "PROPFIND /a/fn": "/a/fn",
+      "PROPFIND /none": "fetch",
+    });
+    expect({ http2: await over("http2"), http3: await over("http3") }).toEqual({ http2: http1, http3: http1 });
+  });
+});

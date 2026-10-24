@@ -117,8 +117,7 @@ struct Http3Context {
     void onHttp(std::string_view method, std::string_view pattern,
                 MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
         Http3ContextData *cd = getContextData();
-        std::vector<std::string_view> methods =
-            method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
+        std::span<const std::string_view> methods = method == "*" ? std::span<const std::string_view>(cd->router.ANY_METHOD_TREES) : std::span<const std::string_view>(&method, 1);
         cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
             /* Copy out: the handler may reload routes, replacing `router`
              * (and its user data) while we're inside it. */

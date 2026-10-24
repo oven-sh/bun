@@ -18,6 +18,7 @@
 #ifndef UWS_HTTPROUTER_HPP
 #define UWS_HTTPROUTER_HPP
 
+#include <array>
 #include <map>
 #include <vector>
 #include <cstring>
@@ -35,6 +36,8 @@ namespace uWS {
 template <typename UserDataType>
 struct HttpRouter {
     static constexpr std::string_view ANY_METHOD_TOKEN = "*";
+    /* Where HTTP/2 and HTTP/3 add an any-method route: the tree of each method that can have routes of its own, so the more specific pattern wins as over HTTP/1.1, and the any-method tree for the other methods. */
+    static constexpr std::array<std::string_view, 10> ANY_METHOD_TREES = {"get", "post", "put", "delete", "patch", "head", "options", "connect", "trace", ANY_METHOD_TOKEN};
     static constexpr uint32_t HIGH_PRIORITY = 0xd0000000, MEDIUM_PRIORITY = 0xe0000000, LOW_PRIORITY = 0xf0000000;
 
 private:

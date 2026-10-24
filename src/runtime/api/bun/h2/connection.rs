@@ -607,8 +607,8 @@ impl Connection {
         });
     }
 
-    /// Call it after anything that uses up or shrinks the receive window of `s`.
-    fn queue_replenish(&self, s: &Stream) {
+    /// Call it after anything that uses up or shrinks the receive window of `s`, and when its reader resumes inside a batch.
+    pub(crate) fn queue_replenish(&self, s: &Stream) {
         if s.recv_window.get().needs_update() && !s.replenish_queued.replace(true) {
             self.half_used_windows.with_mut(|queued| queued.push(s.id));
         }

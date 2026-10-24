@@ -2126,6 +2126,270 @@ c {
     },
   });
 
+  // The first declaration of a layer name fixes the place of that layer in the
+  // cascade order. The empty blocks put `foo` before `bar`, so `bar` wins.
+  const emptyLayerBlocks = {
+    "/entry.css": /* css */ `
+      @layer foo {}
+      @layer bar {}
+      @layer bar { .box { background-color: green; } }
+      @layer foo { .box { background-color: red; } }
+    `,
+  };
+  itBundled("css/CSSAtLayerEmptyBlockKeepsLayerOrder", {
+    files: emptyLayerBlocks,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        @layer foo {}
+        @layer bar {}
+        @layer bar {
+          .box {
+            background-color: green;
+          }
+        }
+        @layer foo {
+          .box {
+            background-color: red;
+          }
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtLayerEmptyBlockKeepsLayerOrderMinified", {
+    files: emptyLayerBlocks,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(
+          "@layer foo{}@layer bar{}@layer bar{.box{background-color:green}}@layer foo{.box{background-color:red}}\n",
+        );
+    },
+  });
+
+  // A file that only declares the layer order keeps its content when it is
+  // imported plain, with `layer()`, with `supports()`, and two times.
+  itBundled("css/CSSAtLayerEmptyBlockInImportedFile", {
+    files: {
+      "/plain.css": /* css */ `
+        @import "./order.css";
+        @layer b { .x { color: red } }
+        @layer a { .x { color: blue } }
+      `,
+      "/in-layer.css": /* css */ `
+        @import "./order.css" layer(foo);
+        @layer foo.b { .x { color: red } }
+        @layer foo.a { .x { color: blue } }
+      `,
+      "/in-supports.css": /* css */ `
+        @import "./order.css" supports(display: grid);
+        @layer b { .x { color: red } }
+        @layer a { .x { color: blue } }
+      `,
+      "/twice.css": /* css */ `
+        @import "./order.css";
+        @import "./other.css";
+        @import "./order.css";
+        @layer b { .x { color: red } }
+        @layer a { .x { color: blue } }
+      `,
+      "/order.css": /* css */ `
+        @layer a {}
+        @layer b {}
+      `,
+      "/other.css": /* css */ `
+        @layer c { .y { color: green } }
+      `,
+    },
+    entryPoints: ["/plain.css", "/in-layer.css", "/in-supports.css", "/twice.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/plain.css").toEqualIgnoringWhitespace(/* css */ `
+        /* order.css */
+        @layer a {}
+        @layer b {}
+
+        /* plain.css */
+        @layer b {
+          .x {
+            color: red;
+          }
+        }
+        @layer a {
+          .x {
+            color: #00f;
+          }
+        }
+      `);
+      api.expectFile("/out/in-layer.css").toEqualIgnoringWhitespace(/* css */ `
+        /* order.css */
+        @layer foo {
+          @layer a {}
+          @layer b {}
+        }
+
+        /* in-layer.css */
+        @layer foo.b {
+          .x {
+            color: red;
+          }
+        }
+        @layer foo.a {
+          .x {
+            color: #00f;
+          }
+        }
+      `);
+      api.expectFile("/out/in-supports.css").toEqualIgnoringWhitespace(/* css */ `
+        /* order.css */
+        @supports (display: grid) {
+          @layer a {}
+          @layer b {}
+        }
+
+        /* in-supports.css */
+        @layer b {
+          .x {
+            color: red;
+          }
+        }
+        @layer a {
+          .x {
+            color: #00f;
+          }
+        }
+      `);
+      api.expectFile("/out/twice.css").toEqualIgnoringWhitespace(/* css */ `
+        @layer a, b;
+
+        /* other.css */
+        @layer c {
+          .y {
+            color: green;
+          }
+        }
+
+        /* order.css */
+        @layer a {}
+        @layer b {}
+
+        /* twice.css */
+        @layer b {
+          .x {
+            color: red;
+          }
+        }
+        @layer a {
+          .x {
+            color: #00f;
+          }
+        }
+      `);
+    },
+  });
+
+  // Adjacent `@supports` rules with one condition all stay, and no declaration
+  // is lost. With the default targets, nesting is compiled away.
+  const sameConditionSupports = {
+    // https://github.com/oven-sh/bun/issues/24770
+    "/issue-24770.css": /* css */ `
+      .test {
+        border-top: 1px solid red;
+        border-left: 1px solid red;
+        border-bottom: 1px solid red;
+        border-right: 1px solid red;
+        box-shadow: none;
+
+        @supports (color: blue) {
+          border-top: 1px solid blue;
+        }
+        @supports (color: blue) {
+          border-left: 1px solid blue;
+        }
+        @supports (color: blue) {
+          border-bottom: 1px solid blue;
+        }
+        @supports (color: blue) {
+          border-right: 1px solid blue;
+        }
+        @supports (color: blue) {
+          box-shadow: 0 0 10px blue;
+        }
+      }
+    `,
+    // https://github.com/oven-sh/bun/issues/45258
+    "/issue-45258.css": /* css */ `
+      .a { --x: 1; @supports (color: red) { --x: 2; } --y: 1; @supports (color: red) { --y: 2; } }
+    `,
+    // A later normal declaration does not replace an earlier `!important` one.
+    "/important.css": /* css */ `
+      .a { @supports (color: red) { color: red !important } @supports (color: red) { color: blue } }
+    `,
+    // The same rule in an `@media` rule that merges with the `@media` rule after it.
+    "/in-merged-media.css": /* css */ `
+      @media (min-width: 640px) {
+        .a { @supports (color: red) { color: red !important } @supports (color: red) { color: blue } }
+      }
+      @media (min-width: 640px) { .b { color: green } }
+    `,
+  };
+  const sameConditionSupportsEntryPoints = Object.keys(sameConditionSupports);
+  itBundled("css/CSSAtSupportsSameConditionKeepsAllRules", {
+    files: sameConditionSupports,
+    entryPoints: sameConditionSupportsEntryPoints,
+    outdir: "/out",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/issue-24770.css")
+        .toBe(
+          ".test{box-shadow:none;border:1px solid red}@supports (color: blue){.test{border-top:1px solid #00f}}@supports (color: blue){.test{border-left:1px solid #00f}}@supports (color: blue){.test{border-bottom:1px solid #00f}}@supports (color: blue){.test{border-right:1px solid #00f}}@supports (color: blue){.test{box-shadow:0 0 10px #00f}}\n",
+        );
+      api
+        .expectFile("/out/issue-45258.css")
+        .toBe(".a{--x:1;--y:1}@supports (color: red){.a{--x:2}}@supports (color: red){.a{--y:2}}\n");
+      api
+        .expectFile("/out/important.css")
+        .toBe("@supports (color: red){.a{color:red!important}}@supports (color: red){.a{color:#00f}}\n");
+      api
+        .expectFile("/out/in-merged-media.css")
+        .toBe(
+          "@media (min-width:640px){@supports (color: red){.a{color:red!important}}@supports (color: red){.a{color:#00f}}.b{color:green}}\n",
+        );
+    },
+  });
+  itBundled("css/CSSAtSupportsSameConditionKeepsAllRulesTargetBun", {
+    files: sameConditionSupports,
+    entryPoints: sameConditionSupportsEntryPoints,
+    outdir: "/out",
+    target: "bun",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/issue-24770.css")
+        .toBe(
+          ".test{box-shadow:none;border:1px solid red;@supports (color: blue){&{border-top:1px solid #00f}}@supports (color: blue){&{border-left:1px solid #00f}}@supports (color: blue){&{border-bottom:1px solid #00f}}@supports (color: blue){&{border-right:1px solid #00f}}@supports (color: blue){&{box-shadow:0 0 10px #00f}}}\n",
+        );
+      api
+        .expectFile("/out/issue-45258.css")
+        .toBe(".a{--x:1;--y:1;@supports (color: red){&{--x:2}}@supports (color: red){&{--y:2}}}\n");
+      api
+        .expectFile("/out/important.css")
+        .toBe(".a{@supports (color: red){&{color:red!important}}@supports (color: red){&{color:#00f}}}\n");
+      api
+        .expectFile("/out/in-merged-media.css")
+        .toBe(
+          "@media (width>=640px){.a{@supports (color: red){&{color:red!important}}@supports (color: red){&{color:#00f}}}.b{color:green}}\n",
+        );
+    },
+  });
+
   itBundled("css/CSSAtImportConditionsChainExternal", {
     files: {
       "/entry.css": /* css */ `

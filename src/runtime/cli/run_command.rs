@@ -778,9 +778,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(root_dir_info)
     }
 
-    /// Warns when the package.json that encloses the working directory declares a bun version
-    /// (`packageManager` or `engines.bun`) that the running bun does not satisfy. Every form of
-    /// `bun run <script>` calls this once. `bun install` prints the same line.
+    /// Every form of `bun run <script>` calls this once. `bun install` prints the same line.
     pub(crate) fn check_bun_version(package_json: Option<&PackageJSON>, silent: bool) {
         if !silent
             && let Some(package_json) = package_json

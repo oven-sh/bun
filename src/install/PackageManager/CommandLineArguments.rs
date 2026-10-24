@@ -428,8 +428,7 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--fund=false", Satisfied),
     (b"--no-update-notifier", Satisfied),
     (b"--update-notifier=false", Satisfied),
-    // Bun only warns about conflicting peer dependencies, checks `engines` only for bun itself, runs
-    // scripts as the current user, and never prompts.
+    // Bun only warns about conflicting peers, runs scripts as the current user, and never prompts.
     (b"--legacy-peer-deps", Satisfied),
     (b"--unsafe-perm", Satisfied),
     (b"--non-interactive", Satisfied),

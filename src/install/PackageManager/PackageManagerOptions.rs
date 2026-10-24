@@ -79,8 +79,7 @@ pub struct Options {
 
     pub(crate) lockfile_only: bool,
 
-    /// `--ignore-engines`: no warning when the running bun does not satisfy the version that
-    /// package.json declares.
+    /// `--ignore-engines`: skips the warning for a bun version that package.json declares.
     pub(crate) ignore_engines: bool,
 
     /// Set by `init_with_runtime`: no install phase, so only a resolve downloads a package.

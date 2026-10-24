@@ -1,8 +1,4 @@
-//! The bun version a package.json declares, checked against the running bun.
-//!
-//! `packageManager: "bun@<range>"` wins over `engines.bun`, as in setup-bun. Another package
-//! manager in `packageManager` falls through to `engines.bun`. The check only warns, so a range
-//! that is not semver (`latest`, `canary`) is skipped instead of reported.
+//! The bun version a package.json declares, checked against the running bun, as setup-bun reads it.
 
 use core::fmt;
 
@@ -10,12 +6,10 @@ use bun_core::strings;
 
 use crate::{SlicedString, Version, query};
 
-/// The running version without the `-debug` or `-canary` suffix: a pin of a canary's base version
-/// must match that canary.
+/// Without `-debug` or `-canary`, so a pin of a canary's base version matches that canary.
 const RUNNING: &str = bun_core::env::VERSION_STRING;
 
-/// The range after `bun@`, without corepack's `+<hash>` suffix. `None` when `value` names another
-/// package manager or has no version.
+/// The range after `bun@`, without corepack's `+<hash>`. `None` for another package manager.
 pub fn package_manager_bun_range(value: &[u8]) -> Option<&[u8]> {
     let range = value.strip_prefix(b"bun@")?;
     let end = strings::index_of_char_usize(range, b'+').unwrap_or(range.len());
@@ -32,8 +26,7 @@ pub fn declared_bun_range<'a>(
         .or(engines_bun)
 }
 
-/// `Some(false)` when `range` is a semver range that excludes `version`. `None` when `range` is
-/// not a semver range, so that the caller prints nothing.
+/// `None` when `range` is not a semver range (`latest`, `canary`), so that nothing is printed.
 fn satisfies(version: &[u8], range: &[u8]) -> Option<bool> {
     if !strings::is_all_ascii(range) {
         return None;
@@ -49,9 +42,7 @@ fn satisfies(version: &[u8], range: &[u8]) -> Option<bool> {
     Some(group.satisfies(version_parsed, range, version))
 }
 
-/// `Some` when the running bun does not satisfy the `range` that the package.json at `path`
-/// declares. This is the one gate for `BUN_CONFIG_IGNORE_ENGINES`, so a command only adds its own
-/// `--silent` check.
+/// The one gate for `BUN_CONFIG_IGNORE_ENGINES`: a command only adds its own `--silent` check.
 pub fn mismatch<'a>(path: &'a [u8], range: &'a [u8]) -> Option<Mismatch<'a>> {
     if bun_core::env_var::BUN_CONFIG_IGNORE_ENGINES
         .get()

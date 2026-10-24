@@ -99,8 +99,7 @@ pub struct PackageJSON {
     /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
     pub(crate) installed_dependency_rows:
         [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
-    /// The rows in `json_tape` of `packageManager` and `engines.bun`, which `bun run` reads at
-    /// use. Empty when the property is missing, or scripts were not included.
+    /// Where `packageManager` and `engines.bun` are in `json_tape`. Empty: missing, or no scripts.
     pub(crate) package_manager_row: core::ops::Range<u32>,
     pub(crate) engines_bun_row: core::ops::Range<u32>,
 
@@ -216,8 +215,7 @@ impl PackageJSON {
         })
     }
 
-    /// The range that `packageManager` or `engines.bun` declares for bun. Recorded by a parse with
-    /// `IncludeScripts`.
+    /// The range `packageManager` or `engines.bun` declares for bun. Set by an `IncludeScripts` parse.
     pub fn declared_bun_range(&self) -> Option<&[u8]> {
         let tape = self.json_tape.as_deref()?;
         let string_at = |rows: &core::ops::Range<u32>| {
@@ -1087,8 +1085,7 @@ impl PackageJSON {
     }
 }
 
-/// The tape row of `object[name]`, for a read at use. Empty when `object` is not a tape object or
-/// has no such property.
+/// The tape row of `object[name]`. Empty when there is none.
 fn property_row(object: &js_ast::Expr, name: &[u8]) -> core::ops::Range<u32> {
     let js_ast::ExprData::EObjectJSON(obj) = &object.data else {
         return 0..0;

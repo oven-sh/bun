@@ -1671,10 +1671,7 @@ fn overrides_field(
     Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
 }
 
-/// Warns when the root package.json declares a bun version (`packageManager` or `engines.bun`)
-/// that the running bun does not satisfy. Runs before the lockfile loads, so the line also shows
-/// when this bun is too old to read the lockfile. The parse fills the cache for the root parse
-/// that follows, and a parse error is left to that parse to report.
+/// Runs before the lockfile loads, so the line also shows when this bun cannot read the lockfile.
 #[cold]
 #[inline(never)]
 fn warn_bun_version(manager: &mut PackageManager, root_package_json_path: &ZStr) {

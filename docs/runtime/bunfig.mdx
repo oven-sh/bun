@@ -36,7 +36,7 @@ An array of scripts/plugins to execute before running a file or script.
 preload = ["./preload.ts"]
 ```
 
-Preload entries accept file URLs. Bun decodes escaped path characters, including spaces, before loading the file.
+Preload entries accept file URLs. Bun decodes escaped path characters, including spaces, and preserves query strings and fragments as part of the module identity.
 
 ### `jsx`
 

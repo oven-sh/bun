@@ -513,6 +513,50 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
+// The number of bytes of `data` that decode to the first `units` UTF-16 code units, where each
+// ill-formed subsequence decodes to one U+FFFD (as the WHATWG decoder does). A U+FFFD stands for
+// 1-3 bytes of input, so the count cannot be derived from the decoded string alone.
+static size_t utf8BytesForUTF16Units(const uint8_t* data, size_t length, size_t units)
+{
+    size_t pos = 0;
+    while (units > 0 && pos < length) {
+        uint8_t lead = data[pos];
+        size_t needed = 0;
+        uint8_t lower = 0x80, upper = 0xBF;
+        if (lead < 0x80) {
+            // ASCII
+        } else if (lead >= 0xC2 && lead <= 0xDF) {
+            needed = 1;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            needed = 2;
+            if (lead == 0xE0)
+                lower = 0xA0;
+            else if (lead == 0xED)
+                upper = 0x9F;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            needed = 3;
+            if (lead == 0xF0)
+                lower = 0x90;
+            else if (lead == 0xF4)
+                upper = 0x8F;
+        }
+        pos++;
+        bool valid = true;
+        for (size_t i = 0; i < needed; i++) {
+            if (pos >= length || data[pos] < lower || data[pos] > upper) {
+                valid = false;
+                break;
+            }
+            pos++;
+            lower = 0x80;
+            upper = 0xBF;
+        }
+        size_t consumed = valid && needed == 3 ? 2 : 1;
+        units = units > consumed ? units - consumed : 0;
+    }
+    return pos;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -594,7 +638,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
             }
             result = JSC::streamingJSONParse(globalObject, str, values);
             // Convert character offset back to UTF-8 byte offset
-            if (str.is8Bit()) {
+            if (!simdutf::validate_utf8(reinterpret_cast<const char*>(sliceData), sliceLen)) {
+                // Each invalid sequence became one U+FFFD, so the offset has to be found by decoding.
+                readBytes = start + bomOffset + utf8BytesForUTF16Units(sliceData, sliceLen, result.charactersConsumed);
+            } else if (str.is8Bit()) {
                 readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
             } else {
                 readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);

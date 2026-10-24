@@ -18,6 +18,7 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
+use crate::webcore::s3::credentials_jsc::S3Defaults;
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
 use bun_ptr::RefPtr;
@@ -62,6 +63,8 @@ pub(crate) trait StoreExt {
 }
 
 pub(crate) trait S3Ext {
+    /// The settings of this file that a per-call options object overrides.
+    fn defaults(&self) -> S3Defaults<'_>;
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
@@ -248,6 +251,16 @@ impl FileExt for File {
 }
 
 impl S3Ext for S3 {
+    fn defaults(&self) -> S3Defaults<'_> {
+        S3Defaults {
+            options: self.options,
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+            tagging: self.tagging.as_deref(),
+        }
+    }
+
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
@@ -260,13 +273,7 @@ impl S3Ext for S3 {
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
             self.get_credentials(),
-            crate::webcore::s3::credentials_jsc::S3Defaults {
-                options: self.options,
-                acl: self.acl,
-                storage_class: self.storage_class,
-                request_payer: self.request_payer,
-                tagging: self.tagging.as_deref(),
-            },
+            self.defaults(),
             options,
             global_object,
         )

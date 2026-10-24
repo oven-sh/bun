@@ -1546,6 +1546,22 @@ impl CanonicalRequest {
         macro_rules! w {
             ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
         }
+        // A header line: the name, then the value as SigV4 CanonicalHeaders
+        // has it, with outer whitespace removed and inner runs as one space.
+        macro_rules! header {
+            ($name:literal, $value:expr) => {{
+                w!(concat!($name, ":"));
+                let value: &[u8] = $value;
+                let mut rest = strings::trim(value, b" \t");
+                while let Some(at) = strings::index_of_any(rest, b" \t") {
+                    write_bytes(&mut c, &rest[..at])?;
+                    write_bytes(&mut c, b" ")?;
+                    rest = strings::trim_left(&rest[at..], b" \t");
+                }
+                write_bytes(&mut c, rest)?;
+                w!("\n");
+            }};
+        }
         // method, path, query
         w!(
             "{}\n{}\n{}\n",
@@ -1554,48 +1570,33 @@ impl CanonicalRequest {
             BStr::new(query)
         );
         if key.content_disposition {
-            w!(
-                "content-disposition:{}\n",
-                BStr::new(values.content_disposition.unwrap())
-            );
+            header!("content-disposition", values.content_disposition.unwrap());
         }
         if key.content_encoding {
-            w!(
-                "content-encoding:{}\n",
-                BStr::new(values.content_encoding.unwrap())
-            );
+            header!("content-encoding", values.content_encoding.unwrap());
         }
         if key.content_md5 {
-            w!("content-md5:{}\n", BStr::new(values.content_md5.unwrap()));
+            header!("content-md5", values.content_md5.unwrap());
         }
-        w!("host:{}\n", BStr::new(host));
+        header!("host", host);
         if key.acl {
-            w!("x-amz-acl:{}\n", BStr::new(values.acl.unwrap()));
+            header!("x-amz-acl", values.acl.unwrap());
         }
         if key.content_sha256_date {
-            w!(
-                "x-amz-content-sha256:{}\nx-amz-date:{}\n",
-                BStr::new(hash),
-                BStr::new(date)
-            );
+            header!("x-amz-content-sha256", hash);
+            header!("x-amz-date", date);
         }
         if key.request_payer {
-            w!("x-amz-request-payer:requester\n");
+            header!("x-amz-request-payer", b"requester");
         }
         if key.session_token {
-            w!(
-                "x-amz-security-token:{}\n",
-                BStr::new(values.session_token.unwrap())
-            );
+            header!("x-amz-security-token", values.session_token.unwrap());
         }
         if key.storage_class {
-            w!(
-                "x-amz-storage-class:{}\n",
-                BStr::new(values.storage_class.unwrap())
-            );
+            header!("x-amz-storage-class", values.storage_class.unwrap());
         }
         if key.tagging {
-            w!("x-amz-tagging:{}\n", BStr::new(values.tagging.unwrap()));
+            header!("x-amz-tagging", values.tagging.unwrap());
         }
         // signed_headers, hash
         w!("\n{}\n{}", BStr::new(signed_headers), BStr::new(hash));
@@ -1603,6 +1604,14 @@ impl CanonicalRequest {
         let len = c.at;
         Ok(&c.buf[..len])
     }
+}
+
+/// Writes `bytes` as they are: a header value is signed over its bytes, not over a UTF-8 view.
+fn write_bytes(
+    c: &mut bun_core::fmt::SliceCursor<'_>,
+    bytes: &[u8],
+) -> Result<(), core::fmt::Error> {
+    bun_core::io::Write::write_all(c, bytes).map_err(|_| core::fmt::Error)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

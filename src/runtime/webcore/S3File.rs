@@ -487,7 +487,17 @@ pub(crate) fn get_presign_url_from(
                 expires = expires_ as usize;
             }
         }
-        credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
+        // A tagging default stays out of a presign: it would oblige whoever
+        // uses the URL to send the header. The presign call passes it itself.
+        credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
+            s3.get_credentials(),
+            S3Defaults {
+                tagging: None,
+                ..s3.defaults()
+            },
+            Some(options),
+            global,
+        )?;
     }
     let path = s3.path();
 

@@ -216,22 +216,26 @@ describe("s3 tagging", () => {
     expect((await fetch(del, { method: "DELETE" })).status).toBe(204);
   });
 
-  test("a client default tagging is signed into a presigned PUT and an empty record opts out", async () => {
+  test("a presigned PUT signs tagging only when the presign call passes it", async () => {
     const key = randomUUIDv7();
     const client = new S3Client({ ...options, tagging: { owner: "app" } });
 
-    const url = client.presign(key, { method: "PUT" });
-    expect(new URL(url).searchParams.get("X-Amz-SignedHeaders")).toBe("host;x-amz-tagging");
-    expect((await fetch(url, { method: "PUT", body: "hello" })).status).toBe(403);
-    expect((await fetch(url, { method: "PUT", body: "hello", headers: { "x-amz-tagging": "owner=app" } })).status).toBe(
-      200,
-    );
-    expect(storedTags(key)).toEqual({ owner: "app" });
+    // The client and file defaults tag what the client writes, not what a
+    // third party uploads with a URL it cannot read the tags from.
+    for (const url of [
+      client.presign(key, { method: "PUT" }),
+      client.file(key, { tagging: { owner: "file" } }).presign({ method: "PUT" }),
+    ]) {
+      expect(new URL(url).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+      expect((await fetch(url, { method: "PUT", body: "hello" })).status).toBe(200);
+      expect(storedTags(key)).toEqual({});
+    }
 
-    const untagged = client.presign(key, { method: "PUT", tagging: {} });
-    expect(new URL(untagged).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
-    expect((await fetch(untagged, { method: "PUT", body: "hello" })).status).toBe(200);
-    expect(storedTags(key)).toEqual({});
+    const tagged = client.presign(key, { method: "PUT", tagging: { state: "staged" } });
+    expect(new URL(tagged).searchParams.get("X-Amz-SignedHeaders")).toBe("host;x-amz-tagging");
+    const res = await fetch(tagged, { method: "PUT", body: "hello", headers: { "x-amz-tagging": "state=staged" } });
+    expect(res.status).toBe(200);
+    expect(storedTags(key)).toEqual({ state: "staged" });
   });
 
   test("a tagging value larger than the signer's stack buffer signs", async () => {
@@ -254,7 +258,9 @@ describe("s3 tagging", () => {
     // @ts-expect-error
     expect(() => client.file("k", { tagging: { state: 1 } })).toThrow('tagging["state"] must be a string');
     expect(() => client.file("k", { tagging: "state=a b" })).toThrow("tagging must be a URL-encoded query string");
-    expect(() => client.file("k", { tagging: "state=a\r\nx-amz-acl: public-read" })).toThrow();
+    expect(() => client.file("k", { tagging: "state=a\r\nx-amz-acl: public-read" })).toThrow(
+      "tagging must be a URL-encoded query string",
+    );
   });
 });
 
@@ -276,6 +282,26 @@ describe("s3 write headers carried by the shared path", () => {
     expect(request.headers.get("x-amz-storage-class")).toBe("STANDARD_IA");
     expect(request.headers.get("x-amz-request-payer")).toBe("requester");
     expect(request.headers.get("content-disposition")).toBe("attachment");
+  });
+
+  test("a header value signs as S3 reads it: outer whitespace trimmed, inner runs as one space", async () => {
+    const client = new S3Client(options);
+    const disposition = '  attachment;   filename="a \t b.txt"  ';
+    const a = randomUUIDv7();
+    await client.write(a, "hello", { contentDisposition: disposition });
+    const b = randomUUIDv7();
+    const res = await fetch(`s3://${b}`, {
+      method: "PUT",
+      body: "hello",
+      headers: { "content-disposition": disposition },
+      s3: options,
+    });
+    expect(res.status).toBe(200);
+    for (const key of [a, b]) {
+      const [request] = server.requests.filter(r => r.key === key);
+      expect(request.status).toBe(200);
+      expect(request.headers.get("content-disposition")).toBe(disposition.trim());
+    }
   });
 
   test("fetch() with a GET sends requestPayer and no write header", async () => {

@@ -410,12 +410,14 @@ declare module "bun" {
      * multipart upload). Pass a record, which Bun URL-encodes as
      * `key=value&key2=value2`, or that string already encoded.
      *
-     * A client or file default applies to every write and to every presigned
-     * `PUT`. Pass `{}` or `""` to write or presign without tags.
+     * A client or file default applies to every write. Pass `{}` or `""` to
+     * write without tags.
      *
-     * A presigned `PUT` URL signs the header. The client that uploads with
-     * the URL must send the same `x-amz-tagging` header value. A presigned
-     * `GET`, `HEAD` or `DELETE` URL ignores the option.
+     * A presigned `PUT` URL signs the header when the `presign()` call passes
+     * `tagging`. A client or file default does not apply to a presigned URL.
+     * The client that uploads with the URL must send the same `x-amz-tagging`
+     * header value. A presigned `GET`, `HEAD` or `DELETE` URL ignores the
+     * option.
      *
      * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-tagging.html
      *

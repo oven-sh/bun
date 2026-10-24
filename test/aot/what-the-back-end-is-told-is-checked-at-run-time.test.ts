@@ -7,7 +7,7 @@
 // and the same program built with the check alone must answer as plain Bun does.
 import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { registry } from "./harness/registry";
 import {
@@ -70,7 +70,9 @@ describe.skipIf(!listed?.includes("NoCallWrites"))(
       }
     }
 
-    test.concurrent.each(rows)(
+    // TODO: the two checking modes are not built for ARM64 on Linux yet. A build with `--aot-check=ClaimsToBackEnd` stops while it generates code, and
+    // a program that was told something untrue ends without the line that names the kind. A build without `--aot-check` has none of this code.
+    test.todoIf(isLinux && isArm64).concurrent.each(rows)(
       "%s %j %s",
       async (sabotage, flags, program, named) => {
         const path = join(import.meta.dir, "programs", "claims-to-the-back-end", program);

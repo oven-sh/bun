@@ -180,6 +180,9 @@ impl Gradient {
     ///
     /// Returns an error in case the conversion is not possible.
     pub(crate) fn get_legacy_webkit(&self, bump: &Arena) -> Option<Gradient> {
+        if matches!(self, Gradient::WebkitGradient(_)) {
+            return Some(self.deep_clone(bump));
+        }
         Some(Gradient::WebkitGradient(WebKitGradient::from_standard(
             self, bump,
         )?))

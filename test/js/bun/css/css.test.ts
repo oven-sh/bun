@@ -3419,6 +3419,294 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // A fallback declaration for a vendor prefix leaves an unprefixed layer alone when that layer
+    // does not need the prefix.
+    describe("vendor prefixes of an image layer list", () => {
+      // The targets of `bun build` for the browser.
+      const defaults = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+
+      // These targets need `-webkit-image-set()` and no gradient prefix. A prefixed gradient
+      // function takes the 2011 grammar only, so `-webkit-radial-gradient(circle at 0 0, ...)` is invalid.
+      prefix_test(
+        `.foo { background-image: radial-gradient(circle at top left, red, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: radial-gradient(circle at 0 0, red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: radial-gradient(circle at 0 0, red, #00f), image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `.foo { background: radial-gradient(circle at top left, red, blue) no-repeat, image-set("a.png" 1x) center / cover gray }`,
+        indoc`
+          .foo {
+            background: radial-gradient(circle at 0 0, red, #00f) no-repeat, gray -webkit-image-set(url("a.png") 1x) center / cover;
+            background: radial-gradient(circle at 0 0, red, #00f) no-repeat, gray image-set("a.png" 1x) center / cover;
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `.foo { background-image: linear-gradient(to right, red, blue), image-set("a.png" 1x), repeating-radial-gradient(red, blue 10px) }`,
+        indoc`
+          .foo {
+            background-image: linear-gradient(to right, red, #00f), -webkit-image-set(url("a.png") 1x), repeating-radial-gradient(red, #00f 10px);
+            background-image: linear-gradient(to right, red, #00f), image-set("a.png" 1x), repeating-radial-gradient(red, #00f 10px);
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `
+          @media (min-width: 100px) {
+            .foo { background-image: repeating-linear-gradient(45deg, red, blue 10px), image-set("a.png" 1x) !important }
+          }
+        `,
+        indoc`
+          @media (min-width: 100px) {
+            .foo {
+              background-image: repeating-linear-gradient(45deg, red, #00f 10px), -webkit-image-set(url("a.png") 1x) !important;
+              background-image: repeating-linear-gradient(45deg, red, #00f 10px), image-set("a.png" 1x) !important;
+            }
+          }
+        `,
+        defaults,
+      );
+      // A layer that is not rewritten still takes the RGB color in the prefixed declaration.
+      prefix_test(
+        `.foo { background-image: linear-gradient(lab(50% 20 30), blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: linear-gradient(#a16945, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: linear-gradient(#a16945, #00f), image-set("a.png" 1x);
+            background-image: linear-gradient(color(display-p3 .598686 .422118 .293048), #00f), image-set("a.png" 1x);
+            background-image: linear-gradient(lab(50% 20 30), #00f), image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `.foo { background-image: conic-gradient(red, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: conic-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: conic-gradient(red, #00f), image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `.foo { background-image: image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-image-set(url("a.png") 1x);
+            background-image: image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+
+      // A second rule with the same selector sends the first block through the handler again.
+      // No layer of the generated `-webkit-image-set()` declaration needs a prefix, so it is printed once.
+      prefix_test(
+        `
+          .foo { background-image: url(b.png), image-set("a.png" 1x) }
+          .foo { color: red }
+        `,
+        indoc`
+          .foo {
+            background-image: url("b.png"), -webkit-image-set(url("a.png") 1x);
+            color: red;
+            background-image: url("b.png"), image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `
+          .foo {
+            background-image: -webkit-image-set(url(a.png) 1x), linear-gradient(to right, red, blue);
+            background-image: image-set("a.png" 1x), linear-gradient(to right, red, blue);
+          }
+        `,
+        indoc`
+          .foo {
+            background-image: -webkit-image-set(url("a.png") 1x), linear-gradient(to right, red, #00f);
+            background-image: image-set("a.png" 1x), linear-gradient(to right, red, #00f);
+          }
+        `,
+        defaults,
+      );
+      // With these targets the handler drops the author's first declaration and generates it again.
+      prefix_test(
+        `
+          .foo {
+            background-image: -webkit-image-set(url(a.png) 1x), radial-gradient(circle at top left, red, blue);
+            background-image: image-set("a.png" 1x), radial-gradient(circle at top left, red, blue);
+          }
+        `,
+        indoc`
+          .foo {
+            background-image: -webkit-image-set(url("a.png") 1x), radial-gradient(circle at 0 0, red, #00f);
+            background-image: image-set("a.png" 1x), radial-gradient(circle at 0 0, red, #00f);
+          }
+        `,
+        {
+          chrome: 111 << 16,
+          edge: 111 << 16,
+          firefox: 114 << 16,
+          safari: (16 << 16) | (4 << 8),
+          ios_saf: (16 << 16) | (4 << 8),
+        },
+      );
+
+      // A gradient that the author prefixed takes the prefix of a generated declaration, so that
+      // the declaration has one syntax. It does not give its own prefix to the other layers.
+      prefix_test(
+        `.foo { background-image: -moz-linear-gradient(left, red, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: -moz-linear-gradient(left, red, #00f), image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+      // With no layer to rewrite, the list stays as written and is printed once.
+      prefix_test(
+        `.foo { background: -webkit-linear-gradient(left, red, blue), url(a.png) gray }`,
+        indoc`
+          .foo {
+            background: -webkit-linear-gradient(left, red, #00f), gray url("a.png");
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `.foo { background-image: -webkit-linear-gradient(left, red, blue), -moz-linear-gradient(left, red, blue) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-linear-gradient(left, red, #00f), -moz-linear-gradient(left, red, #00f);
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        `.foo { background-image: -webkit-linear-gradient(left, lab(50% 20 30), blue), -moz-linear-gradient(left, red, blue) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-linear-gradient(left, #a16945, #00f), -moz-linear-gradient(left, red, #00f);
+          }
+        `,
+        defaults,
+      );
+      // No targets, as in `bun build --target=bun`.
+      cssTest(
+        `.foo { background-image: -moz-linear-gradient(left, red, blue), -webkit-image-set(url(a.png) 1x) }`,
+        indoc`
+          .foo {
+            background-image: -moz-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
+          }
+        `,
+      );
+
+      // The gradient needs all three prefixes. `image-set()` only has a `-webkit-` form.
+      prefix_test(
+        `.foo { background-image: radial-gradient(red, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-radial-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: -moz-radial-gradient(red, #00f), image-set("a.png" 1x);
+            background-image: -o-radial-gradient(red, #00f), image-set("a.png" 1x);
+            background-image: radial-gradient(red, #00f), image-set("a.png" 1x);
+          }
+        `,
+        { firefox: 15 << 16, chrome: 25 << 16, opera: 12 << 16 },
+      );
+      prefix_test(
+        `.foo { background-image: radial-gradient(red, blue), -webkit-image-set(url(a.png) 1x) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-radial-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: -moz-radial-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: -o-radial-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: radial-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+          }
+        `,
+        { firefox: 15 << 16, chrome: 25 << 16, opera: 12 << 16 },
+      );
+      prefix_test(
+        `.foo { background-image: radial-gradient(red, blue), repeating-radial-gradient(red, blue 10px), url(a.png) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-radial-gradient(red, #00f), -webkit-repeating-radial-gradient(red, #00f 10px), url("a.png");
+            background-image: radial-gradient(red, #00f), repeating-radial-gradient(red, #00f 10px), url("a.png");
+          }
+        `,
+        { chrome: 25 << 16 },
+      );
+
+      // Chrome 8 reads the `-webkit-gradient()` declaration. That declaration keeps a `-webkit-gradient()`
+      // that the author wrote, and leaves out a gradient that has no such form.
+      prefix_test(
+        `.foo { background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)), radial-gradient(20px, red, blue) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)), -webkit-gradient(radial, center center, 0, center center, 20, from(red), to(#00f));
+            background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)), -webkit-radial-gradient(20px, red, #00f);
+            background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)), radial-gradient(20px, red, #00f);
+          }
+        `,
+        { chrome: 8 << 16 },
+      );
+      prefix_test(
+        `.foo { background-image: -moz-radial-gradient(20px, red, blue), radial-gradient(20px, yellow, red) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-gradient(radial, center center, 0, center center, 20, from(red), to(#00f)), -webkit-gradient(radial, center center, 0, center center, 20, from(#ff0), to(red));
+            background-image: -webkit-radial-gradient(20px, red, #00f), -webkit-radial-gradient(20px, #ff0, red);
+            background-image: -moz-radial-gradient(20px, red, #00f), radial-gradient(20px, #ff0, red);
+          }
+        `,
+        { chrome: 8 << 16 },
+      );
+      prefix_test(
+        `.foo { background-image: conic-gradient(red, blue), radial-gradient(20px, red, blue) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-gradient(radial, center center, 0, center center, 20, from(red), to(#00f));
+            background-image: conic-gradient(red, #00f), -webkit-radial-gradient(20px, red, #00f);
+            background-image: conic-gradient(red, #00f), radial-gradient(20px, red, #00f);
+          }
+        `,
+        { chrome: 8 << 16 },
+      );
+      prefix_test(
+        `.foo { background-image: -webkit-radial-gradient(20px, lab(50% 20 30), blue) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-gradient(radial, center center, 0, center center, 20, from(#a16945), to(#00f));
+            background-image: -webkit-radial-gradient(20px, #a16945, #00f);
+          }
+        `,
+        { chrome: 8 << 16 },
+      );
+      prefix_test(
+        `.foo { background: radial-gradient(red, blue), radial-gradient(20px, yellow, red), url(bg.jpg) }`,
+        indoc`
+          .foo {
+            background: -webkit-gradient(radial, center center, 0, center center, 20, from(#ff0), to(red)), url("bg.jpg");
+            background: -webkit-radial-gradient(red, #00f), -webkit-radial-gradient(20px, #ff0, red), url("bg.jpg");
+            background: -moz-radial-gradient(red, #00f), -moz-radial-gradient(20px, #ff0, red), url("bg.jpg");
+            background: -o-radial-gradient(red, #00f), -o-radial-gradient(20px, #ff0, red), url("bg.jpg");
+            background: radial-gradient(red, #00f), radial-gradient(20px, #ff0, red), url("bg.jpg");
+          }
+        `,
+        { chrome: 8 << 16, firefox: 4 << 16, opera: (11 << 16) | (5 << 8) },
+      );
+    });
   });
 
   describe("flex", () => {
@@ -4923,17 +5211,17 @@ describe("css tests", () => {
         { chrome: 8 << 16 },
       );
     }
-    // Under the default targets of `bun build`, a layer that needs a prefix puts that prefix
-    // on every layer of its list. These rows pin the direction of such a copy. They do not
-    // say that the copy should exist.
-    const defaultTargets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    // A layer list gets a prefixed copy when one of its unprefixed layers needs the prefix.
+    // Chrome 25 needs `-webkit-` for the gradient and for `image-set()`. These rows pin the
+    // direction of each layer of such a copy.
+    const chrome25 = { chrome: 25 << 16 };
     prefix_test(
       `.foo { background-image: linear-gradient(red, blue), image-set("a.png" 1x) }`,
       `.foo {
         background-image: -webkit-linear-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
         background-image: linear-gradient(red, #00f), image-set("a.png" 1x);
       }`,
-      defaultTargets,
+      chrome25,
     );
     prefix_test(
       `.foo { background-image: linear-gradient(to right, red, blue), image-set("a.png" 1x) }`,
@@ -4941,15 +5229,15 @@ describe("css tests", () => {
         background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
         background-image: linear-gradient(to right, red, #00f), image-set("a.png" 1x);
       }`,
-      defaultTargets,
+      chrome25,
     );
     prefix_test(
-      `.foo { background-image: -moz-linear-gradient(bottom, red, blue), -webkit-linear-gradient(left, yellow, green) }`,
+      `.foo { background-image: -moz-linear-gradient(bottom, red, blue), linear-gradient(to right, yellow, green) }`,
       `.foo {
         background-image: -webkit-linear-gradient(bottom, red, #00f), -webkit-linear-gradient(left, #ff0, green);
-        background-image: -moz-linear-gradient(bottom, red, #00f), -moz-linear-gradient(left, #ff0, green);
+        background-image: -moz-linear-gradient(bottom, red, #00f), linear-gradient(to right, #ff0, green);
       }`,
-      defaultTargets,
+      chrome25,
     );
     prefix_test(
       `.foo { background: -webkit-linear-gradient(left, red, blue), linear-gradient(to right, yellow, green) }`,
@@ -4957,7 +5245,7 @@ describe("css tests", () => {
         background: -webkit-linear-gradient(left, red, #00f), -webkit-linear-gradient(left, #ff0, green);
         background: -webkit-linear-gradient(left, red, #00f), linear-gradient(to right, #ff0, green);
       }`,
-      defaultTargets,
+      chrome25,
     );
 
     test("bun build keeps the direction of a prefixed linear gradient", async () => {
@@ -4997,7 +5285,7 @@ describe("css tests", () => {
           top: "a { background: -webkit-linear-gradient(red, #00f); }",
           bottom: "a { background: -webkit-linear-gradient(bottom, red, #00f); }",
           left: "a { background: -moz-linear-gradient(left, red, #00f); }",
-          layers: `a { background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url(${image}) 1x); background-image: linear-gradient(to right, red, #00f), image-set(${image} 1x); }`,
+          layers: `a { background-image: linear-gradient(to right, red, #00f), -webkit-image-set(url(${image}) 1x); background-image: linear-gradient(to right, red, #00f), image-set(${image} 1x); }`,
         },
         stderr: "",
         exitCode: 0,
@@ -5008,7 +5296,7 @@ describe("css tests", () => {
           top: "a{background:-webkit-linear-gradient(red,#00f)}",
           bottom: "a{background:-webkit-linear-gradient(bottom,red,#00f)}",
           left: "a{background:-moz-linear-gradient(left,red,#00f)}",
-          layers: `a{background-image:-webkit-linear-gradient(left,red,#00f),-webkit-image-set(url(${image.slice(1, -1)}) 1x);background-image:linear-gradient(90deg,red,#00f),image-set(${image} 1x)}`,
+          layers: `a{background-image:linear-gradient(90deg,red,#00f),-webkit-image-set(url(${image.slice(1, -1)}) 1x);background-image:linear-gradient(90deg,red,#00f),image-set(${image} 1x)}`,
         },
         stderr: "",
         exitCode: 0,

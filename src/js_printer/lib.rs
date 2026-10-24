@@ -2700,8 +2700,7 @@ pub(crate) mod __gated_printer {
             self.print(b");})()");
         }
 
-        /// Whether `record` points at a stylesheet that the dev server gives no module, and whose
-        /// module is always empty. A CSS module exports its class names, so it is not one.
+        /// A CSS module exports its class names, so its module is not empty.
         #[inline]
         fn is_empty_stylesheet_module(record: &ImportRecord) -> bool {
             record
@@ -2710,8 +2709,7 @@ pub(crate) mod __gated_printer {
                 && !record.path.is_css_module()
         }
 
-        /// `require()` / `import()` of that stylesheet: the empty CommonJS module that `bun build`
-        /// gives it. Each evaluation makes a new object. The caller prints the promise of `import()`.
+        /// The empty module that `bun build` gives it. The caller prints the promise of `import()`.
         #[cold]
         #[inline(never)]
         fn print_empty_stylesheet_module(&mut self, kind: ImportKind) {

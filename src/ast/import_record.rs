@@ -108,9 +108,7 @@ bitflags::bitflags! {
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
 
-        /// The target is a stylesheet under the dev server, which serves it apart from
-        /// the module registry: `require()` / `import()` of it have no module to load.
-        /// Not set for `--format=internal_bake_dev` alone: there the stub is a registry entry.
+        /// The dev server gives this target, a stylesheet, no module in its registry.
         const IS_DEV_SERVER_STYLESHEET = 1 << 19;
     }
 }

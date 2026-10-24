@@ -1581,6 +1581,13 @@ pub fn become_watcher_manager() -> ! {
         ));
     }
 
+    // Each run of the watched script reads a regular-file stdin from where the first run did.
+    let stdin_offset = if GetFileType(Fd::stdin().native()) == FILE_TYPE_DISK {
+        bun_sys::lseek(Fd::stdin(), 0, libc::SEEK_CUR).ok()
+    } else {
+        None
+    };
+
     loop {
         if let Err(code) = spawn_watcher_child(&mut procinfo, job) {
             // The executable can be renamed or replaced while `--watch` runs.
@@ -1617,6 +1624,11 @@ pub fn become_watcher_manager() -> ! {
 
         // magic exit code to indicate that the child process should be re-spawned
         if exit_code == WATCHER_RELOAD_EXIT {
+            if let Some(offset) = stdin_offset
+                && let Err(err) = bun_sys::lseek(Fd::stdin(), offset, libc::SEEK_SET)
+            {
+                bun_core::warn!("--watch could not restore the position of stdin: {}", err);
+            }
             continue;
         } else {
             bun_core::Global::exit(exit_code);

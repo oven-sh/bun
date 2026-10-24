@@ -295,6 +295,34 @@ unsafe impl Sync for WatchChangedPaths {}
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
 
+/// Gives each run of a watched script the stdin position that the first run started at.
+#[cfg(unix)]
+fn restore_stdin_position_for_watch() {
+    const RECORDED: &ZStr = ZStr::from_static(b"BUN_INTERNAL_WATCH_STDIN\0");
+    let stdin = Fd::stdin();
+    if !bun_sys::fstat(stdin).is_ok_and(|stat| bun_sys::S::ISREG(stat.st_mode as u32)) {
+        return;
+    }
+    let pid = std::process::id();
+    // The re-exec keeps the process id, so a value with this id is from the first run.
+    let recorded = bun_core::getenv_z(RECORDED)
+        .and_then(|value| strings::split_once_char(value, b':'))
+        .filter(|(first_run, _)| bun_core::fmt::parse_decimal::<u32>(first_run) == Some(pid))
+        .and_then(|(_, offset)| bun_core::fmt::parse_decimal::<i64>(offset));
+    if let Some(offset) = recorded {
+        if let Err(err) = bun_sys::lseek(stdin, offset, libc::SEEK_SET) {
+            bun_core::warn!("--watch could not restore the position of stdin: {}", err);
+        }
+        return;
+    }
+    let Ok(offset) = bun_sys::lseek(stdin, 0, libc::SEEK_CUR) else {
+        return;
+    };
+    let value = bun_core::ZBox::from_vec(format!("{pid}:{offset}").into_bytes());
+    // SAFETY: both strings end in NUL, and `setenv` copies them.
+    unsafe { libc::setenv(RECORDED.as_ptr(), value.as_ptr(), 1) };
+}
+
 fn record_changed_path(path: &[u8]) {
     let Some(set) = WATCH_CHANGED_PATHS.get() else {
         return;
@@ -704,6 +732,11 @@ where
         // the reloader allocated below. Borrows are scoped per access.
         if unsafe { (*this).is_watcher_enabled() } {
             return;
+        }
+
+        #[cfg(unix)]
+        if RELOAD_IMMEDIATELY {
+            restore_stdin_position_for_watch();
         }
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {

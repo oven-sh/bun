@@ -213,6 +213,22 @@ fn read_until_delimiter_array_list_infinity<R: ReadByte>(
     }
 }
 
+/// Moves a regular-file stdin back over the bytes that `prompt()` buffered past its line.
+fn give_back_unread_stdin() {
+    // SAFETY: process-global static on the JS thread, after `prompt()`'s own borrow ended.
+    let reader = unsafe { &mut *Output::buffered_stdin_reader() };
+    let unread = reader.buffered_len();
+    if unread == 0 {
+        return;
+    }
+    let fd = bun_sys::Fd::stdin();
+    let is_regular_file =
+        bun_sys::fstat(fd).is_ok_and(|stat| bun_sys::S::ISREG(stat.st_mode as u32));
+    if is_regular_file && bun_sys::lseek(fd, -(unread as i64), libc::SEEK_CUR).is_ok() {
+        reader.discard_buffered();
+    }
+}
+
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
 pub(crate) fn prompt<'a>(
     cx: &mut JsScope<'a>,
@@ -289,6 +305,7 @@ pub(crate) fn prompt<'a>(
     // main thread, so the exclusive borrow is sound for this scope.
     let reader: &mut bun_core::output::BufferedStdin =
         unsafe { &mut *Output::buffered_stdin_reader() };
+    let _give_back = scopeguard::guard((), |()| give_back_unread_stdin());
     let mut second_byte: Option<u8> = None;
     let Ok(first_byte) = reader.read_byte() else {
         // 8. Let result be null if the user aborts, or otherwise the string

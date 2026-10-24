@@ -481,22 +481,6 @@ pub mod vec {
         unsafe { spare_bytes_mut(v) }
     }
 
-    /// View the **entire** allocation `v[0..capacity]` as `&mut [u8]`.
-    /// For the spare-only `[len..capacity]` view use [`spare_bytes_mut`].
-    ///
-    /// # Safety
-    /// Bytes in `[len, capacity)` are uninitialized; treat that tail as
-    /// write-only (same contract as [`spare_bytes_mut`]). The caller must not
-    /// rely on the tail's prior contents.
-    #[inline]
-    pub unsafe fn allocated_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
-        let cap = v.capacity();
-        // SAFETY: `as_mut_ptr()` returns a pointer valid for `cap` bytes of
-        // the backing allocation; caller upholds the write-only contract on
-        // the uninitialized tail.
-        unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
-    }
-
     /// Advance `v.len()` by `n` after a producer has initialized the first
     /// `n` bytes of [`spare_bytes_mut`]`(v)`.
     ///

@@ -24,8 +24,7 @@ Bun statically links these libraries:
 | [`brotli`](https://github.com/google/brotli) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
-| [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
-| [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
+| [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT (bundled xxhash is BSD 2-Clause) |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
 | [`picohttp`](https://github.com/h2o/picohttpparser) | dual-licensed under the Perl License or the MIT License |
@@ -110,4 +109,5 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 ## Additional credits
 
 - Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
+- Bun's HPACK encoder decides what to add to the dynamic table the way LiteSpeed's [ls-hpack](https://github.com/litespeedtech/ls-hpack) (MIT) does.
 - Credit to [@kipply](https://github.com/kipply) for the name "Bun"!

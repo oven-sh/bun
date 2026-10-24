@@ -18,7 +18,6 @@ use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
-use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
@@ -208,9 +207,6 @@ const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 // the JS caller (Http2Stream._write/_writev) completes it asynchronously. Mirrored in
 // src/js/node/http2.ts (kWriteFlushedWithoutCallback).
 const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
-// RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
-// for the HPACK dynamic table entry structure
-const HPACK_ENTRY_OVERHEAD: usize = 32;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
@@ -1115,7 +1111,10 @@ pub(crate) struct H2FrameParser {
 
     streams: JsCell<BunHashMap<u32, *mut Stream>>,
 
-    hpack: JsCell<Option<lshpack::HpackHandle>>,
+    /// `None` once detached.
+    hpack_encoder: JsCell<Option<bun_hpack::Encoder>>,
+    /// Mirrors the engine's HPACK decoder, which is out of reach during a dispatch.
+    inflate_table_size: Cell<usize>,
 
     has_nonnative_backpressure: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
@@ -1941,63 +1940,73 @@ impl Stream {
     }
 }
 
+/// A header block from its first encoded field until it is written.
+struct HeaderBlock<'a> {
+    parser: &'a H2FrameParser,
+    bytes: Vec<u8>,
+    will_be_sent: bool,
+}
+
+impl<'a> HeaderBlock<'a> {
+    fn new(parser: &'a H2FrameParser) -> Self {
+        Self {
+            parser,
+            bytes: Vec::new(),
+            will_be_sent: false,
+        }
+    }
+}
+
+impl core::ops::Deref for HeaderBlock<'_> {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> {
+        &self.bytes
+    }
+}
+
+impl core::ops::DerefMut for HeaderBlock<'_> {
+    fn deref_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
+    }
+}
+
+impl Drop for HeaderBlock<'_> {
+    fn drop(&mut self) {
+        if self.will_be_sent || self.bytes.is_empty() {
+            return;
+        }
+        self.parser.hpack_encoder.with_mut(|encoder| {
+            if let Some(encoder) = encoder {
+                encoder.discard_block();
+            }
+        });
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    /// Encodes a single header into the ArrayList, growing if needed.
-    /// Returns the number of bytes written, or error on failure.
-    ///
-    /// Capacity estimation: name.len + value.len + HPACK_ENTRY_OVERHEAD
+    /// Appends a single header to the header block in `encoded_headers`.
     fn encode_header_into_list(
         &self,
         encoded_headers: &mut Vec<u8>,
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> crate::Result<usize> {
-        let old_len = encoded_headers.len();
-        let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
-        // hpack.encode() needs `&mut [u8]` (not `&mut [MaybeUninit<u8>]`), so zero-extend to
-        // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
-        // bytes.
-        encoded_headers.resize(required, 0);
-        match self.encode(
-            encoded_headers.as_mut_slice(),
-            old_len,
-            name,
-            value,
-            never_index,
-        ) {
-            Ok(bytes_written) => {
-                encoded_headers.truncate(old_len + bytes_written);
-                Ok(bytes_written)
-            }
-            Err(e) => {
-                encoded_headers.truncate(old_len);
-                Err(e)
-            }
-        }
-    }
-
-    pub(crate) fn encode(
-        &self,
-        dst_buffer: &mut [u8],
-        dst_offset: usize,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-    ) -> crate::Result<usize> {
-        self.hpack.with_mut(|hpack| {
-            if let Some(hpack) = hpack.as_mut() {
-                // lets make sure the name is lowercase
-                return hpack
-                    .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(crate::Error::from);
-            }
-            Err(crate::Error::UnableToEncode)
+    ) -> crate::Result<()> {
+        let indexing = if never_index {
+            bun_hpack::Indexing::Never
+        } else {
+            bun_hpack::Indexing::Add
+        };
+        self.hpack_encoder.with_mut(|encoder| {
+            encoder
+                .as_mut()
+                .ok_or(crate::Error::UnableToEncode)?
+                .encode(encoded_headers, name, value, indexing)
+                .map_err(|_| crate::Error::UnableToEncode)
         })
     }
 
@@ -3776,6 +3785,18 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.engine_frames_sent.set(sent);
     }
 
+    fn on_remote_header_table_size(&self, value: u32) {
+        self.hpack_encoder.with_mut(|encoder| {
+            if let Some(encoder) = encoder {
+                encoder.set_max_capacity(value);
+            }
+        });
+    }
+
+    fn on_inflate_table_size(&self, size: usize) {
+        self.inflate_table_size.set(size);
+    }
+
     fn write(&self, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
         if self.write(bytes) {
             crate::api::h2::connection::WriteResult::Sent
@@ -4702,7 +4723,6 @@ impl H2FrameParser {
         let settings = self.remote_settings.get().unwrap_or_default();
         let remote_iws = settings.initial_window_size;
         let local_iws = self.local_settings.get().initial_window_size;
-        let local_hts = self.local_settings.get().header_table_size;
         result.put(
             global_object,
             b"remoteWindowSize",
@@ -4716,12 +4736,17 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"deflateDynamicTableSize",
-            JSValue::js_number(local_hts as f64),
+            JSValue::js_number(
+                self.hpack_encoder
+                    .get()
+                    .as_ref()
+                    .map_or(0, bun_hpack::Encoder::table_size) as f64,
+            ),
         );
         result.put(
             global_object,
             b"inflateDynamicTableSize",
-            JSValue::js_number(local_hts as f64),
+            JSValue::js_number(self.inflate_table_size.get() as f64),
         );
         result.put(
             global_object,
@@ -5560,11 +5585,10 @@ impl H2FrameParser {
             );
         }
 
-        let mut encoded_headers: Vec<u8> = Vec::new();
+        let mut encoded_headers = HeaderBlock::new(self);
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
         let iter = bun_jsc::JSPropertyIterator::init(
@@ -5641,7 +5665,7 @@ impl H2FrameParser {
                     value,
                     never_index,
                 ) {
-                    Ok(_) => Ok(true),
+                    Ok(()) => Ok(true),
                     Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
@@ -5761,6 +5785,7 @@ impl H2FrameParser {
                 }
             }
         }
+        encoded_headers.will_be_sent = true;
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();
 
@@ -6025,7 +6050,7 @@ impl H2FrameParser {
         };
 
         let mut name_buffer = [0u8; 4096];
-        let mut encoded_headers: Vec<u8> = Vec::new();
+        let mut encoded_headers = HeaderBlock::new(self);
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
@@ -6186,6 +6211,7 @@ impl H2FrameParser {
                 .get()
                 .map(|s| s.max_frame_size)
                 .unwrap_or_else(|| self.local_settings.get().max_frame_size) as usize;
+        encoded_headers.will_be_sent = true;
         let payload_size = 4 + encoded_headers.len();
         if payload_size <= max_frame {
             // PUSH_PROMISE frame: 9-byte header + 4-byte promised stream id + the header block.
@@ -6427,11 +6453,10 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        let mut encoded_headers: Vec<u8> = Vec::new();
+        let mut encoded_headers = HeaderBlock::new(self);
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 = if stream_id.is_number() {
             stream_id.to_u32()
@@ -7090,16 +7115,15 @@ impl H2FrameParser {
                 // Grow before any frame byte is written: failing after the header went out
                 // would abandon the frame mid-serialization (the JS-transport tracker would
                 // hold the stream mid-frame and the wire would owe a payload).
-                if encoded_headers
-                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
-                    .is_err()
-                {
+                let additional = encoded_size + padding_overhead - encoded_headers.len();
+                if encoded_headers.try_reserve(additional).is_err() {
                     return Err(
                         global_object.throw(format_args!("Failed to allocate padding buffer"))
                     );
                 }
             }
 
+            encoded_headers.will_be_sent = true;
             let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
@@ -7141,6 +7165,7 @@ impl H2FrameParser {
                 actual_max_frame_size
             );
 
+            encoded_headers.will_be_sent = true;
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
@@ -7396,7 +7421,8 @@ impl H2FrameParser {
             write_buffer_offset: Cell::new(0),
             outbound_queue_size: Cell::new(0),
             streams: JsCell::new(BunHashMap::default()),
-            hpack: JsCell::new(None),
+            hpack_encoder: JsCell::new(Some(bun_hpack::Encoder::new())),
+            inflate_table_size: Cell::new(0),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
@@ -7596,13 +7622,6 @@ impl H2FrameParser {
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         }
 
-        // Note: `HPACK::init` returns a C-allocated wrapper that must be
-        // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
-        // before freeing). Wrapping it in `heap::take` and letting `Box` drop
-        // would `mi_free` the struct but leak the encoder/decoder internals.
-        this_ref.hpack.set(Some(lshpack::HpackHandle::new(
-            this_ref.local_settings.get().header_table_size,
-        )));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());
         } else {
@@ -7654,8 +7673,7 @@ impl H2FrameParser {
         self.sctx.with_mut(|m| m.clear());
         self.write_buffer_offset.set(0);
 
-        // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).
-        self.hpack.set(None);
+        self.hpack_encoder.set(None);
     }
 
     /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so

@@ -2740,11 +2740,11 @@ impl JSValue {
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
     /// Number. Returns [`ComparisonResult::InvalidComparison`] if `self` is
     /// not a BigInt or `other` is neither BigInt nor Number.
-    pub fn as_big_int_compare(self, global: &JSGlobalObject, other: JSValue) -> ComparisonResult {
+    pub fn as_big_int_compare(self, other: JSValue) -> ComparisonResult {
         if !self.is_big_int() || (!other.is_big_int() && !other.is_number()) {
             return ComparisonResult::InvalidComparison;
         }
-        JSC__JSValue__asBigIntCompare(self, global, other)
+        JSC__JSValue__asBigIntCompare(self, other)
     }
 
     // ── Object.keys / Object.values. ────────────────
@@ -2846,11 +2846,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         replace_props: bool,
     ) -> bool;
-    safe fn JSC__JSValue__asBigIntCompare(
-        this: JSValue,
-        global: &JSGlobalObject,
-        other: JSValue,
-    ) -> ComparisonResult;
+    safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__isInstanceOf(

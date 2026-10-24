@@ -3015,6 +3015,52 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 
     return hrtime;
 }
+
+// Node's kBindStreamsLazy: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L207-L236
+JSValue Process::consoleStream(JSGlobalObject* globalObject, ConsoleStream stream)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& slot = m_consoleStream[static_cast<unsigned>(stream)];
+    // `stdout ||= object.stdout`: a falsy value reads process.stdout again.
+    if (JSValue bound = slot.get(); bound && bound.toBoolean(globalObject))
+        return bound;
+    JSValue value = get(globalObject, Identifier::fromString(vm, stream == ConsoleStream::Stdout ? "stdout"_s : "stderr"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    slot.set(vm, this, value);
+    return value;
+}
+
+// The accessor functions do not use `this`, as in Node: they belong to the realm of the console they were made for.
+static EncodedJSValue consoleStreamGetter(JSGlobalObject* globalObject, Process::ConsoleStream stream)
+{
+    return JSValue::encode(defaultGlobalObject(globalObject)->processObject()->consoleStream(globalObject, stream));
+}
+
+static EncodedJSValue consoleStreamSetter(JSGlobalObject* globalObject, CallFrame* callFrame, Process::ConsoleStream stream)
+{
+    defaultGlobalObject(globalObject)->processObject()->setConsoleStream(JSC::getVM(globalObject), stream, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsConsoleStdoutGetter, (JSGlobalObject * globalObject, CallFrame*)) { return consoleStreamGetter(globalObject, Process::ConsoleStream::Stdout); }
+JSC_DEFINE_HOST_FUNCTION(jsConsoleStdoutSetter, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return consoleStreamSetter(globalObject, callFrame, Process::ConsoleStream::Stdout); }
+JSC_DEFINE_HOST_FUNCTION(jsConsoleStderrGetter, (JSGlobalObject * globalObject, CallFrame*)) { return consoleStreamGetter(globalObject, Process::ConsoleStream::Stderr); }
+JSC_DEFINE_HOST_FUNCTION(jsConsoleStderrSetter, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return consoleStreamSetter(globalObject, callFrame, Process::ConsoleStream::Stderr); }
+
+void bindConsoleStreamsLazy(VM& vm, Zig::GlobalObject* globalObject, JSObject* console)
+{
+    auto bind = [&](ASCIILiteral name, NativeFunction getter, NativeFunction setter) {
+        // Not a CustomAccessor: Bun's formatter and its CommonJS export walk call every custom slot.
+        auto* accessor = GetterSetter::create(vm, globalObject,
+            JSFunction::create(vm, globalObject, 0, "get"_s, getter, ImplementationVisibility::Public),
+            JSFunction::create(vm, globalObject, 1, "set"_s, setter, ImplementationVisibility::Public));
+        console->putDirectNonIndexAccessor(vm, Identifier::fromString(vm, name), accessor, PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
+    };
+    bind("_stdout"_s, jsConsoleStdoutGetter, jsConsoleStdoutSetter);
+    bind("_stderr"_s, jsConsoleStderrGetter, jsConsoleStderrSetter);
+}
+
 enum class BunProcessStdinFdType : int32_t {
     file = 0,
     pipe = 1,
@@ -3844,6 +3890,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
+    for (auto& stream : thisObject->m_consoleStream)
+        visitor.append(stream);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

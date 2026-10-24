@@ -1051,6 +1051,17 @@ pub trait DeclarationParser {
         name: &[u8],
         input: &mut Parser,
     ) -> CssResult<Self::Declaration>;
+
+    /// Parse the value of a `*property: value` declaration (the IE 6/7 star
+    /// hack). `name` is the source text of the name and starts with the `*`.
+    /// The default rejects it.
+    fn parse_star_hack(
+        _this: &mut Self,
+        _name: &'static [u8],
+        input: &mut Parser,
+    ) -> CssResult<Self::Declaration> {
+        Err(input.new_custom_error(ParserError::invalid_declaration))
+    }
 }
 
 pub trait RuleBodyItemParser: AtRuleParser + QualifiedRuleParser + DeclarationParser {
@@ -2108,6 +2119,20 @@ mod rule_parsers {
                 &mut ctx,
             )
         }
+
+        fn parse_star_hack(
+            this: &mut Self,
+            name: &'static [u8],
+            input: &mut Parser,
+        ) -> CssResult<()> {
+            declaration::parse_star_hack(
+                name,
+                input,
+                &mut this.declarations,
+                &mut this.important_declarations,
+                this.options,
+            )
+        }
     }
 
     #[inline]
@@ -2874,6 +2899,15 @@ where
                 _ => {}
             }
 
+            let token = *tok;
+            if matches!(token, Token::Delim(delim) if delim == u32::from(b'*'))
+                && P::parse_declarations(self.parser)
+                && let Some(declaration) =
+                    parse_star_hack_declaration(start.position, self.input, self.parser)
+            {
+                return Some(Ok(declaration));
+            }
+
             let result: CssResult<I<P>> = if P::parse_qualified(self.parser) {
                 self.input.reset(&start);
                 let delimiters = if P::parse_declarations(self.parser) {
@@ -2883,7 +2917,6 @@ where
                 };
                 parse_qualified_rule(&start, self.input, self.parser, delimiters)
             } else {
-                let token = *tok;
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
                         Err(start.source_location().new_unexpected_token_error(token))
@@ -2893,6 +2926,40 @@ where
             return Some(result);
         }
     }
+}
+
+/// Reads `*property: value;`, a declaration whose name is a `*` directly
+/// followed by an identifier. The `*` is at `name_start` and the input is
+/// right after it. Returns `None` with the input back at that position when
+/// the item is anything else.
+#[cold]
+fn parse_star_hack_declaration<P: RuleBodyItemParser>(
+    name_start: usize,
+    input: &mut Parser,
+    parser: &mut P,
+) -> Option<P::Declaration> {
+    let after_star = input.state();
+    if matches!(
+        input.next_including_whitespace_and_comments(),
+        Ok(Token::Ident(name)) if !name.starts_with(b"--")
+    ) {
+        let name = input.slice_from_cloned(name_start);
+        let result = parse_until_after(
+            input,
+            Delimiters::SEMICOLON,
+            ParseUntilErrorBehavior::Stop,
+            (parser, name),
+            |(parser, name), input| {
+                input.expect_colon()?;
+                P::parse_star_hack(parser, name, input)
+            },
+        );
+        if let Ok(declaration) = result {
+            return Some(declaration);
+        }
+    }
+    input.reset(&after_star);
+    None
 }
 
 // ───────────────────────────── ParserOptions ─────────────────────────────

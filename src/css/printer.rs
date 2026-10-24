@@ -535,15 +535,8 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if self.local_names.is_none() {
-            if let Some(ref_) = ident.as_ref() {
-                let ref_ = self.symbols.follow(ref_);
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                let name: &'a [u8] = symbol.original_name.slice();
-                return self.write_ident(name, true);
-            }
+        if let Some(ref_) = ident.as_ref() {
+            return self.write_local_symbol(ref_);
         }
 
         // `lookup_ident_or_ref` returns an `'a`-lifetime slice (arena/symbol-table),
@@ -551,6 +544,20 @@ impl<'a> Printer<'a> {
         // `&mut self` for the writer.
         let str_: &'a [u8] = self.lookup_ident_or_ref(ident);
         self.serialize_identifier(str_)
+    }
+
+    pub(crate) fn write_local_symbol(&mut self, ref_: bun_ast::Ref) -> PrintResult<()> {
+        // `bun build --no-bundle` has no link step, so the printer hashes the original name.
+        if self.local_names.is_none() {
+            let ref_ = self.symbols.follow(ref_);
+            let Some(symbol) = self.symbols.get_const(ref_) else {
+                return Err(self.add_fmt_error());
+            };
+            let name: &'a [u8] = symbol.original_name.slice();
+            return self.write_ident(name, true);
+        }
+        let name: &'a [u8] = self.lookup_symbol(ref_);
+        self.serialize_identifier(name)
     }
 
     /// Writes a CSS identifier to the underlying destination, escaping it

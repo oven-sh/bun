@@ -69,30 +69,6 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    pub(crate) fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
-        // (CssModuleExport can't be Default — BumpVec field), so use the
-        // entry()-API instead.
-        use bun_collections::array_hash_map::MapEntry;
-        match self.exports_by_source_index[source_index as usize].entry(name) {
-            MapEntry::Occupied(mut o) => {
-                o.get_mut().is_referenced = true;
-            }
-            MapEntry::Vacant(v) => {
-                v.insert(CssModuleExport {
-                    name: self.config.pattern.write_to_string(
-                        bump,
-                        BumpVec::new_in(bump),
-                        self.hashes[source_index as usize],
-                        self.sources[source_index as usize].as_ref(),
-                        name,
-                    ),
-                    is_referenced: true,
-                });
-            }
-        }
-    }
-
     // This does not take `&mut Printer`: the only
     // caller (`DashedIdentReference::to_css`) already holds a `&mut` borrow of
     // `dest.css_module` (which *is* `self`), so threading `&mut Printer` in
@@ -125,7 +101,7 @@ impl<'a> CssModule<'a> {
             None => {
                 // Local export. Mark as used.
                 // `CssModuleExport` cannot be `Default` (BumpVec field),
-                // so use the `entry()` API like `get_reference` above.
+                // so `get_or_put` is out: use the `entry()` API.
                 use bun_collections::array_hash_map::MapEntry;
                 match self.exports_by_source_index[source_index as usize].entry(name) {
                     MapEntry::Occupied(mut o) => {
@@ -250,10 +226,6 @@ pub struct Config {
     /// Whether to rename dashed identifiers, e.g. custom properties.
     pub(crate) dashed_idents: bool,
 
-    /// Whether to scope animation names.
-    /// Default is `true`.
-    pub(crate) animation: bool,
-
     /// Whether to scope custom identifiers
     /// Default is `true`.
     pub(crate) custom_idents: bool,
@@ -264,7 +236,6 @@ impl Default for Config {
         Self {
             pattern: Pattern::default(),
             dashed_idents: false,
-            animation: true,
             custom_idents: true,
         }
     }

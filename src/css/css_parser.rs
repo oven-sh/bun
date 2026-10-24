@@ -1469,6 +1469,14 @@ mod rule_parsers {
                 }
             }
 
+            if input.flags.css_modules() {
+                declaration::make_animation_names_local(
+                    &mut nested_parser.declarations,
+                    &mut nested_parser.important_declarations,
+                    input,
+                );
+            }
+
             Ok((
                 DeclarationBlock {
                     declarations: nested_parser.declarations,
@@ -1724,8 +1732,14 @@ mod rule_parsers {
                         }));
                     Ok(())
                 }
-                AtRulePrelude::Container { name, condition } => {
+                AtRulePrelude::Container {
+                    name,
+                    mut condition,
+                } => {
                     let rules = this.parse_style_block(input)?;
+                    if input.flags.css_modules() {
+                        condition.make_animation_names_local(input);
+                    }
                     this.rules
                         .v
                         .push(CssRule::Container(css_rules::container::ContainerRule {
@@ -1761,7 +1775,7 @@ mod rule_parsers {
                         }));
                     Ok(())
                 }
-                AtRulePrelude::Keyframes { name, prefix } => {
+                AtRulePrelude::Keyframes { mut name, prefix } => {
                     let mut parser = css_rules::keyframes::KeyframesListParser;
                     let mut iter = RuleBodyParser::new(input, &mut parser);
                     // todo_stuff.think_mem_mgmt
@@ -1770,6 +1784,9 @@ mod rule_parsers {
                         if let Ok(keyframe) = result {
                             keyframes.push(keyframe);
                         }
+                    }
+                    if input.flags.css_modules() {
+                        name.make_local(input);
                     }
                     this.rules
                         .v
@@ -3078,6 +3095,22 @@ impl<'a> Parser<'a> {
         }
 
         entry.ref_.to_real_ref(source_index)
+    }
+
+    /// The tag is empty: a keyframes name is not a class, so `composes` cannot take it.
+    pub(crate) fn add_symbol_for_keyframes_name(&mut self, name: &[u8]) -> bun_ast::Ref {
+        // A name with an escape is a copy in the arena, not a slice of the source.
+        let start = match bun_alloc::range_of_slice_in_buffer(name, self.input.tokenizer.src) {
+            Some([start, _]) => start as usize,
+            None => self.position(),
+        };
+        self.add_symbol_for_name(
+            name,
+            CssRefTag::empty(),
+            bun_ast::Loc {
+                start: i32::try_from(start).expect("int cast"),
+            },
+        )
     }
 
     // TODO: dedupe import records??

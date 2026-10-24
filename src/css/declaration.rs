@@ -180,10 +180,29 @@ impl DeclarationBlock<'static> {
             }
         }
 
+        if input.flags.css_modules() {
+            make_animation_names_local(&mut declarations, &mut important_declarations, input);
+        }
+
         Ok(DeclarationBlock {
             important_declarations,
             declarations,
         })
+    }
+}
+
+/// Runs on a finished list: the value parsers are speculative, and a list that fails is dropped.
+#[cold]
+pub(crate) fn make_animation_names_local(
+    declarations: &mut DeclarationList<'_>,
+    important_declarations: &mut DeclarationList<'_>,
+    input: &mut css::Parser,
+) {
+    for property in declarations
+        .iter_mut()
+        .chain(important_declarations.iter_mut())
+    {
+        crate::css_properties::animation::make_names_local(property, input);
     }
 }
 

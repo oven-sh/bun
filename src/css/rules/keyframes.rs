@@ -19,47 +19,38 @@ pub enum KeyframesName {
     Ident(CustomIdent),
     /// `<string>` of a `@keyframes` name.
     Custom(&'static [u8]),
+    /// A name that is local to a CSS module: a symbol in `local_scope`.
+    Local(bun_ast::Ref),
+}
+
+/// `none` or a CSS-wide keyword. As a `<string>`, such a name has to keep its quotes.
+pub(crate) fn is_reserved_keyframes_name(name: &[u8]) -> bool {
+    bun_core::strings::eql_case_insensitive_ascii_check_length(name, b"none")
+        || is_reserved_custom_ident(name)
 }
 
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        use bun_core::strings;
-        #[inline]
-        fn write_ident<'a>(
-            dest: &mut Printer<'a>,
-            v: &'a [u8],
-            handle_css_module: bool,
-        ) -> core::result::Result<(), PrintErr> {
-            dest.write_ident(v, handle_css_module)
-        }
-
-        let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
-            css_module.config.animation
-        } else {
-            false
-        };
-
         match self {
-            KeyframesName::Ident(ident) => {
-                write_ident(
-                    dest,
-                    // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-                    unsafe { crate::arena_str(ident.v) },
-                    css_module_animation_enabled,
-                )?;
-            }
+            KeyframesName::Ident(ident) => dest.serialize_identifier(ident.v()),
             KeyframesName::Custom(s) => {
-                // CSS-wide keywords and `none` cannot remove quotes.
-                if strings::eql_case_insensitive_ascii_check_length(s, b"none")
-                    || is_reserved_custom_ident(s)
-                {
-                    dest.serialize_string(s)?;
+                if is_reserved_keyframes_name(s) {
+                    dest.serialize_string(s)
                 } else {
-                    write_ident(dest, s, css_module_animation_enabled)?;
+                    dest.serialize_identifier(s)
                 }
             }
+            KeyframesName::Local(ref_) => dest.write_local_symbol(*ref_),
         }
-        Ok(())
+    }
+
+    pub(crate) fn make_local(&mut self, input: &mut css::Parser) {
+        let name: &[u8] = match self {
+            KeyframesName::Ident(ident) => ident.v(),
+            KeyframesName::Custom(s) if !is_reserved_keyframes_name(s) => s,
+            KeyframesName::Custom(_) | KeyframesName::Local(_) => return,
+        };
+        *self = KeyframesName::Local(input.add_symbol_for_keyframes_name(name));
     }
 }
 
@@ -69,6 +60,7 @@ impl KeyframesName {
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
             Self::Custom(s) => Self::Custom(s),
+            Self::Local(ref_) => Self::Local(*ref_),
         }
     }
 }
@@ -76,14 +68,10 @@ impl KeyframesName {
 // ─── KeyframesName parse ──────────────────────────────────────────────────
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
-        use bun_core::strings;
         let tok = *input.next()?;
         match tok {
             css::Token::Ident(s) => {
-                // CSS-wide keywords without quotes throws an error.
-                if strings::eql_case_insensitive_ascii_check_length(s, b"none")
-                    || is_reserved_custom_ident(s)
-                {
+                if is_reserved_keyframes_name(s) {
                     Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 } else {
                     Ok(KeyframesName::Ident(CustomIdent {

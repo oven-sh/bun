@@ -176,6 +176,20 @@ impl QueryCondition for StyleQuery {
 }
 
 impl StyleQuery {
+    fn make_animation_names_local(&mut self, input: &mut css::Parser) {
+        match self {
+            Self::Feature(property) => {
+                crate::css_properties::animation::make_names_local(property, input)
+            }
+            Self::Not(condition) => condition.make_animation_names_local(input),
+            Self::Operation { conditions, .. } => {
+                for condition in conditions {
+                    condition.make_animation_names_local(input);
+                }
+            }
+        }
+    }
+
     fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Operator` is `Copy`; `Property` routes through `dc::property` until
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
@@ -294,6 +308,21 @@ impl QueryCondition for ContainerCondition {
 }
 
 impl ContainerCondition {
+    /// Call it when the rule is accepted: the condition is parsed speculatively.
+    #[cold]
+    pub(crate) fn make_animation_names_local(&mut self, input: &mut css::Parser) {
+        match self {
+            Self::Feature(_) => {}
+            Self::Not(condition) => condition.make_animation_names_local(input),
+            Self::Operation { conditions, .. } => {
+                for condition in conditions {
+                    condition.make_animation_names_local(input);
+                }
+            }
+            Self::Style(query) => query.make_animation_names_local(input),
+        }
+    }
+
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
         // faithful — see note there); `Operator` is `Copy`.

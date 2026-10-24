@@ -700,7 +700,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
   const ndkRtLinux = join(ndkClangLib, ndkClangVer, "lib", "linux");
   // Populate BOTH layouts: apt.llvm.org clang uses old-style flat
   // (lib/linux/libclang_rt.builtins-<arch>-android.a) while tarball builds use
-  // per-triple (lib/<triple>/libclang_rt.builtins.a). NDK r27 keeps builtins in
+  // per-triple (lib/<triple>/libclang_rt.builtins.a). The NDK keeps builtins in
   // the flat dir but libunwind in the per-arch subdir.
   const flatDir = join(resourceDir, "lib", "linux");
   const links = {
@@ -1104,7 +1104,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : detectAndroidNdk();
     if (androidNdk === undefined) {
       throw new BuildError("--abi=android requires the Android NDK", {
-        hint: "Set ANDROID_NDK_ROOT or pass --android-ndk=<path>. Download: https://developer.android.com/ndk/downloads",
+        hint: `Set ANDROID_NDK_ROOT or pass --android-ndk=<path>. Bun's prebuilt WebKit is built with NDK ${pins.androidNdk.version}: https://dl.google.com/android/repository/android-ndk-${pins.androidNdk.version}-linux.zip`,
       });
     }
     androidApiLevel = partial.androidApiLevel ?? ANDROID_API_LEVEL_DEFAULT;
@@ -1112,7 +1112,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     sysroot = join(ndkPrebuilt, "sysroot");
     if (!existsSync(sysroot)) {
       throw new BuildError(`Android NDK sysroot not found at ${sysroot}`, {
-        hint: `Is ANDROID_NDK_ROOT (${androidNdk}) a valid NDK? Expected r26 or newer.`,
+        hint: `Is ANDROID_NDK_ROOT (${androidNdk}) a valid NDK? Expected ${pins.androidNdk.version}, the release the prebuilt WebKit is built with.`,
       });
     }
     // NDK ships exactly one clang version per release.

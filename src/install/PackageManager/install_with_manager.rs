@@ -1086,10 +1086,8 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
-    // `success > 0` means this install created a store entry or re-pointed a link of an existing
-    // one, and `remove > 0` that it dropped a dependency. Either way an entry of an earlier install
-    // may have lost its last link. A fresh store holds no earlier entry. An install that leaves out
-    // a dependency group or a workspace does not re-point the links of what it leaves out.
+    // An install that created, re-linked or dropped something can leave a store entry without a
+    // link. One that left out a dependency group or a workspace did not re-point their links.
     if isolated
         && install_summary.fail == 0
         && !install_summary.fresh_store

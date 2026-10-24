@@ -1939,27 +1939,19 @@ fn links_package(
     link.st_ino == target.st_ino && link.st_dev == target.st_dev
 }
 
-/// Removes the entries of `node_modules/.bun` that no install of the saved lockfile links to, and
-/// the links into them. The isolated linker names an entry after the package and its peers, so a
-/// re-resolved dependency or a new naming rule leaves the entry of the old name behind.
+/// Removes the entries of `node_modules/.bun` that no install of the saved lockfile names, and the
+/// links into them. Only for an install that laid out every dependency of every workspace, so that
+/// every link into a kept entry was re-pointed.
 ///
-/// The caller only calls this after an install that laid out every dependency of every workspace
-/// (no `--production`, `--omit` or `--filter`) and that created or re-linked an entry, or dropped
-/// a dependency, in an existing store. So the install re-pointed every link of a dependency the
-/// lockfile still has, and a link into a removed entry belongs to a dependency it dropped.
-///
-/// `installed` is the store of that install. The entries it wrote are kept even when the saved
-/// lockfile names them differently: a tarball's integrity is recorded while it installs, and it
-/// is part of the entry name.
+/// `installed` is that install's store. Its entries stay even if the saved lockfile names them
+/// differently: a tarball's integrity is recorded while it installs and is part of the name.
 pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, installed: &Store) {
     let mut plan = Plan::default();
-    // The store is inside the root `node_modules`. Nothing is removed from behind a symlink, and
-    // `bun prune` tells the user why.
+    // Nothing is removed from behind a symlinked `node_modules`. `bun prune` says why.
     if open_workspace_folder(ROOT_DIR, &mut plan.linked_folders).is_none() {
         return;
     }
-    // An install for another platform keeps its entries: the ones of this platform are not
-    // re-created when the user runs `bun install --os` or `--cpu` again.
+    // The entries of another platform stay: an install for this platform does not re-create them.
     let mut names = with_all_platforms(manager, |manager| {
         let wanted = with_install_features(
             manager,
@@ -1976,13 +1968,11 @@ pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, in
     if removed_store.is_empty() {
         return;
     }
-    // The links in the plan's folders are removed by `housekeeping`, in `remove_planned`.
     remove_planned(plan, Layout::Isolated, manager);
     unlink_links_into(manager, &removed_store);
 }
 
-/// Removes the links of the root and of each workspace that point into one of the store entries
-/// `removed`, and the bins that pointed into them.
+/// Unlinks the root's and each workspace's links into the store entries `removed`, and their bins.
 fn unlink_links_into(manager: &PackageManager, removed: &[Box<[u8]>]) {
     let lockfile: &Lockfile = &manager.lockfile;
     let pkg_res = lockfile.packages.items_resolution();
@@ -2480,8 +2470,7 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
     })
 }
 
-/// Pushes the name of each store entry of a package in `wanted`, or of every package if `wanted`
-/// is `None`.
+/// `None` for `wanted` means every package.
 fn push_store_entry_names(
     lockfile: &Lockfile,
     store: &Store,
@@ -2603,8 +2592,7 @@ fn public_hoist_matches(manager: &PackageManager, alias: &[u8]) -> bool {
         .is_some_and(|pattern| pattern.is_match(alias))
 }
 
-/// Plans the removal of every store entry whose name is not in `names`, the sorted names from
-/// `store_entry_names`. Returns the names of the planned removals, sorted.
+/// Plans the removal of every store entry not in the sorted `names`. Returns them, sorted.
 fn plan_store(names: &[Box<[u8]>], plan: &mut Plan) -> Vec<Box<[u8]>> {
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
     if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {

@@ -385,7 +385,7 @@ A few more details:
   - `with { type: "html" }` makes a page of any file.
   - `with { type: "text" }`, `with { type: "file" }`, or the name of any other loader does not. Bun then leaves the scripts in the file alone.
   - Without a `type`, the extension of the file decides. A `.html` file is a page, unless `--loader` or `[loader]` in [`bunfig.toml`](/runtime/bunfig) gives `.html` another loader. Both can also give the `html` loader to another extension. A check of the whole project reads neither, like `bun check`.
-  - The options of `import()` count only if they are written in the call, as in `import("./a.html", { with: { type: "text" } })`.
+  - The options of `import()` count only if the call has `with` and its `type` written out, as in `import("./a.html", { with: { type: "text" } })`. Options from a variable or from a spread do not count.
   - A plugin that loads the file in another way is not known to the check.
 - Bun follows a page that the import names by the path of the file, such as `./index.html`. If the import goes through `paths` in `tsconfig.json`, `imports` in `package.json`, or the name of a workspace package, only `bun build --check` follows it, because the bundle knows which file that is.
 - A page can have a `tsconfig.json` of its own, for example in `web/`. Bun checks the scripts of the page with that one.

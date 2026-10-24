@@ -50,7 +50,11 @@ describe("compile/aot/every-image-of-an-executable-has-its-map", () => {
         if (!isLinux) return;
         const run = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_useAOTPerfMap: "1" });
         const [pid, answer] = run.stdout.trim().split(" ");
-        expect({ answer, exitCode: run.exitCode }).toEqual({ answer: "40", exitCode: 0 });
+        expect({ answer, exitCode: run.exitCode, stderr: run.stderr }).toEqual({
+          answer: "40",
+          exitCode: 0,
+          stderr: "",
+        });
         const perfMap = `/tmp/perf-${pid}.map`;
         const names = readFileSync(perfMap, "utf8");
         rmSync(perfMap);

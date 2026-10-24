@@ -183,9 +183,38 @@ describe("fetch compress option", () => {
     expect(json.rawLength).toBeLessThan(big.length);
   });
 
-  // >512 KiB takes the streaming-zlib slow path; verify it produces a
-  // zlib-wrapped (RFC 1950) stream, not raw deflate.
-  test.concurrent("deflate body larger than the shared buffer (zlib streaming)", async () => {
+  test.concurrent(
+    "a compressible body larger than the shared buffer is compressed by the library that compresses a small one",
+    async () => {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const raw = Buffer.from(await req.arrayBuffer());
+          return Response.json({
+            operatingSystem: raw[9],
+            isSame:
+              gunzipSync(raw).toString() === req.headers.get("x-unit")!.repeat(Number(req.headers.get("x-count"))),
+          });
+        },
+      });
+      const send = async (count: number) => {
+        const res = await fetch(server.url, {
+          method: "POST",
+          body: "abcdefghij".repeat(count),
+          compress: "gzip",
+          headers: { "x-unit": "abcdefghij", "x-count": String(count) },
+        });
+        return (await res.json()) as { operatingSystem: number; isSame: boolean };
+      };
+      const small = await send(100);
+      const large = await send(400 * 1024);
+      expect(small.isSame).toBe(true);
+      expect(large).toEqual(small);
+    },
+  );
+
+  // HTTP "deflate" is the zlib-wrapped (RFC 1950) stream, not raw deflate.
+  test.concurrent("deflate body larger than the shared buffer", async () => {
     using server = makeServer();
     const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
     const res = await fetch(server.url, { method: "POST", body: big, compress: "deflate" });

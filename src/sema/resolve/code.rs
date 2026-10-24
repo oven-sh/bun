@@ -19,6 +19,7 @@ mod typed_versions;
 
 pub use self::config::{JsxRuntime, JsxSettings, TranspileSettings};
 pub use self::options::{CodeOptions, ExtensionOrders};
+pub use self::typed_versions::{TYPED_CONDITION, javascript_path_beside, typed_path_beside};
 
 use self::config::ConfigCaches;
 use self::manifest::CodeManifest;

@@ -247,5 +247,12 @@
   "bytes/sum-the-bytes-of-a-buffer-declared-array-like": 100000,
   "bytes/sum-the-words-of-a-view": 100000,
   "bytes/sum-the-floats-of-a-view": 100000,
-  "bytes/sum-the-shorts-of-a-view": 100000
+  "bytes/sum-the-shorts-of-a-view": 100000,
+  "literal/eight-names-under-a-record-type-then-a-store-by-key": 100000,
+  "built-in/stream-new-duplex": 100000,
+  "closure/a-function-made-around-a-written-name": 1000000,
+  "closure/a-wrapper-made-around-a-known-function": 1000000,
+  "closure/accessors-a-helper-defines-under-its-parameter": 200000,
+  "closure/methods-a-loop-over-written-names-defines": 200000,
+  "closure/properties-defined-by-a-loop-over-written-names": 200000
 }

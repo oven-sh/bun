@@ -477,7 +477,7 @@ describe.concurrent("a package with ES modules and CommonJS, from two runs of bu
     });
     expect(await bun(library, "build", ...entryPoints, "--outdir", "dist/cjs", "--dts", "--format=cjs")).toMatchObject({
       stderr:
-        "warn: the full types that bun compile compiles a package from are left out: it does not support --format other than esm yet\n",
+        "warn: the full types that bun compile compiles a package from are left out: they do not support --format other than esm yet\n",
       exitCode: 0,
     });
     writeFileSync(join(library, "dist/cjs/package.json"), JSON.stringify({ type: "commonjs" }));

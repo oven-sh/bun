@@ -311,6 +311,7 @@ fn freeze_file(
 
 fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) -> Vec<EntryPoint> {
     match input.project {
+        ProjectId::Application if input.is_world => Vec::new(),
         ProjectId::Application => collect_application_entry_points(input.files.entry_points()),
         ProjectId::Runtime => collect_runtime_entry_points(input, entries),
     }

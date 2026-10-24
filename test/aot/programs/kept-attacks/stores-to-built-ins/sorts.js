@@ -2,7 +2,7 @@
 const which = process.argv[2], size = Number(process.argv[3] ?? 16), rounds = Number(process.argv[4] ?? 100);
 const numbers = [], strings = [], objects = [];
 let seed = 12345;
-for (let i = 0; i < size; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; numbers.push((seed % 1000) | 0); strings.push("k" + (seed % 1000)); objects.push({ key: (seed % 1000) | 0, name: "n" + i }); }
+for (let i = 0; i < size; i++) { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; numbers.push((seed % 1000) | 0); strings.push("k" + (seed % 1000)); objects.push({ key: (seed % 1000) | 0, name: "n" + i }); }
 let sum = 0;
 for (let i = 0; i < rounds; i++) {
   switch (which) {

@@ -415,10 +415,8 @@ export function programsWith(typed = false, { which = "", turns = 60, onePlace =
   return made;
 }
 
-// On request code is generated directly, without the optimizer. Some are built with all of their code made that way.
 export function programs(typed = false) {
-  const directly = ["--aot-testing=GenerateAllCodeDirectly"];
   const called = (suffix: string, flags: string[] | undefined, list: ReturnType<typeof programsWith>) => list.map(program => ({ name: program.name + suffix, file: program.file, flags, get text() { return program.text; } }));
-  if (typed) return [...called("", undefined, programsWith(true)), ...called("-direct", directly, programsWith(true, { ballast: 0 }))];
-  return [...called("", undefined, programsWith()), ...called("-joined", undefined, programsWith(false, { joined: true, ballast: 0 })), ...called("-joined-direct", directly, programsWith(false, { joined: true, ballast: 0 }))];
+  if (typed) return called("", undefined, programsWith(true));
+  return [...called("", undefined, programsWith()), ...called("-joined", undefined, programsWith(false, { joined: true, ballast: 0 }))];
 }

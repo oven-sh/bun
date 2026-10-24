@@ -73,7 +73,9 @@ pub(crate) fn compress_into(
             match compress_libdeflate_fast(state, input, enc, opt.level) {
                 Some(n) => Ok(CompressOutput::Shared(n)),
                 None => {
-                    compress_zlib_streaming(input, gzip, opt.level, spill)?;
+                    if !compress_libdeflate_spilled(state, input, enc, opt.level, spill) {
+                        compress_zlib_streaming(input, gzip, opt.level, spill)?;
+                    }
                     Ok(CompressOutput::Spilled)
                 }
             }
@@ -132,8 +134,47 @@ fn compress_libdeflate_fast(
     (result.status == Status::Success).then_some(result.written)
 }
 
-/// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the
-/// shared buffer: streaming zlib `deflate(Z_FINISH)` into a Vec that grows in
+/// libdeflate one-shot into `spill` when the bound exceeds the shared buffer.
+/// Reserves half the input rather than the worst-case bound. Returns `false`
+/// with `spill` empty when that allocation fails or the output doesn't fit.
+fn compress_libdeflate_spilled(
+    state: &mut LibdeflateState,
+    input: &[u8],
+    enc: bun_libdeflate_sys::libdeflate::Encoding,
+    level: Option<i32>,
+    spill: &mut Vec<u8>,
+) -> bool {
+    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor, Status};
+
+    let Some(cached) = state.compressor.as_mut() else {
+        return false;
+    };
+    let mut tmp: Option<OwnedCompressor> = None;
+    let compressor: &mut Compressor = match level {
+        Some(l) if l != DEFAULT_DEFLATE_LEVEL => match OwnedCompressor::new(l) {
+            Some(owned) => tmp.insert(owned),
+            None => return false,
+        },
+        _ => cached,
+    };
+
+    let capacity = input.len() / 2;
+    if spill.try_reserve_exact(capacity).is_err() {
+        return false;
+    }
+    spill.resize(capacity, 0);
+    let result = compressor.compress(input, spill, enc);
+    if result.status != Status::Success {
+        spill.clear();
+        return false;
+    }
+    spill.truncate(result.written);
+    spill.shrink_to_fit();
+    true
+}
+
+/// Slow path for gzip/deflate when the libdeflate output doesn't fit either
+/// buffer: streaming zlib `deflate(Z_FINISH)` into a Vec that grows in
 /// 64 KiB steps so the allocation tracks the actual compressed size, not the
 /// worst-case bound.
 fn compress_zlib_streaming(

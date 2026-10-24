@@ -83,7 +83,7 @@ function readInClosure(text: any) {
 }
 
 let seed = 11;
-const random = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
 const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
 const usual = ["a", "b", "page", "limit", "sort", "=", "=", "=", "&", "&", "1", "20", "top", "A", "Z", "0", "9", "*", "-", ".", "_", "a=1", "page=2&limit=10&sort=old"];
 const odd = ["?", "+", "%", "%20", "%41", "%61", "%zz", "%C3%A9", "%c3%a9", "%ff", "&&", "==", " ", "~", "!", "'", "(", ")", ",", "/", ":", ";", "@", "$", "[", "]", "#", "é", "\u{1F600}", "\ud800", "\t", "\n", "\0", "\\", "\"", "<", "|"];

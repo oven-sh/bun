@@ -823,6 +823,32 @@ impl<'a, 's> Syntax<'a, 's> {
         lists
     }
 
+    fn missing_line_breaks(&self) -> Vec<u32> {
+        let file = self.file;
+        let statements = self.statement_lists().into_iter().map(|list| {
+            let spans = file.ids(list).map(|id| (file[id].start, file[id].loc.end));
+            spans.collect::<Vec<(u32, u32)>>()
+        });
+        let members = file.classes.iter().map(|class| {
+            let spans = class.members.iter().map(|member| &file[member]);
+            spans.map(|member| (member.start, member.loc.end)).collect()
+        });
+        let mut starts: Vec<u32> = statements
+            .chain(members)
+            .flat_map(|spans| {
+                let pairs = spans.iter().zip(spans.iter().skip(1));
+                let on_one_line = pairs.filter(|(before, after)| {
+                    let between = self.text.get(before.1 as usize..after.0 as usize);
+                    between.is_some_and(|between| !between.contains(&b'\n'))
+                });
+                on_one_line.map(|(_, after)| after.0).collect::<Vec<u32>>()
+            })
+            .collect();
+        starts.sort_unstable();
+        starts.dedup();
+        starts
+    }
+
     fn after_modifiers(&self, id: StmtId) -> u32 {
         let statement = &self.file[id];
         let last = self.file.modifier_list(self.file.stmt_modifiers(id)).last();
@@ -1545,13 +1571,24 @@ impl Insertions {
     fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
         self.list.sort_by_key(|a| (a.0, a.1, a.2));
         let mut text = Vec::with_capacity(javascript.len() * 2);
+        // Minified: not `staticreadonly [key]` for `static[key]`, not `a!===b` for `a===b`.
+        let append = |text: &mut Vec<u8>, bytes: &[u8]| {
+            let is_word_byte =
+                |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
+            if let (Some(last), Some(first)) = (text.last(), bytes.first())
+                && (is_word_byte(last) && is_word_byte(first) || (*last, *first) == (b'!', b'='))
+            {
+                text.push(b' ');
+            }
+            text.extend_from_slice(bytes);
+        };
         let mut at = 0;
         for (offset, _, _, inserted) in &self.list {
-            text.extend_from_slice(&javascript[at..*offset as usize]);
-            text.extend_from_slice(inserted);
+            append(&mut text, &javascript[at..*offset as usize]);
+            append(&mut text, inserted);
             at = *offset as usize;
         }
-        text.extend_from_slice(&javascript[at..]);
+        append(&mut text, &javascript[at..]);
         text
     }
 }
@@ -3227,8 +3264,25 @@ pub fn add_types(
 ) -> Result<TypedText, String> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let mappings = Mappings::decode(mappings, javascript, sources)?;
-    let output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
+    let mut mappings = Mappings::decode(mappings, javascript, sources)?;
+    let mut output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
+    // `// @ts-ignore` covers one line, which must not be the whole bundle.
+    let line_breaks = Syntax {
+        file: &output_file,
+        text: javascript,
+    }
+    .missing_line_breaks();
+    let mut insertions = Insertions { list: Vec::new() };
+    for &offset in &line_breaks {
+        insertions.add(offset, Order::Line, b"\n".to_vec());
+    }
+    let javascript = &insertions.apply(javascript)[..];
+    if !line_breaks.is_empty() {
+        for entry in &mut mappings.entries {
+            entry.0 += line_breaks.partition_point(|&offset| offset <= entry.0) as u32;
+        }
+        output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
+    }
     let output = Syntax {
         file: &output_file,
         text: javascript,
@@ -3343,6 +3397,13 @@ pub fn add_types(
         }));
     }
     let paths: Vec<&[u8]> = texts.iter().map(|text| text.0).collect();
+    let type_references: FxHashSet<(&[u8], &[u8])> = (texts.iter().filter_map(|text| text.2))
+        .flat_map(|types| &types.references)
+        .filter_map(|reference| match &reference.1 {
+            Target::Declaration { path, name } => Some((&path[..], &name[..])),
+            Target::Module { .. } => None,
+        })
+        .collect();
     let linked = match bundle {
         Some(bundle) => link(
             &mut written,
@@ -3360,6 +3421,7 @@ pub fn add_types(
         mappings: &mappings,
         modules: &written[..sources.len()],
         linked: &linked,
+        type_references,
         is_bundle: bundle.is_some_and(|bundle| !bundle.keeps_modules_apart),
         is_for_declarations: bundle.is_some_and(|bundle| bundle.is_for_declarations),
         insertions: Insertions { list: Vec::new() },
@@ -3383,6 +3445,7 @@ struct Transfer<'t, 'a, 's> {
     mappings: &'t Mappings,
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
+    type_references: FxHashSet<(&'t [u8], &'t [u8])>,
     is_bundle: bool,
     is_for_declarations: bool,
     insertions: Insertions,
@@ -3856,6 +3919,17 @@ impl<'a> Transfer<'_, 'a, '_> {
                         ExprKind::Satisfies { ty, .. } => {
                             suffix.extend_from_slice(&[&b" satisfies "[..], &text_of(ty)].concat())
                         }
+                        // `!0 as const` is TS1355.
+                        ExprKind::AsConst(_)
+                            if matches!(output_file[operand].kind, ExprKind::Unary { .. })
+                                && matches!(
+                                    syntax.file[chain.operand].kind,
+                                    ExprKind::True | ExprKind::False
+                                ) =>
+                        {
+                            let literal = syntax.word(syntax.file[chain.operand].pos);
+                            suffix.extend_from_slice(&[b" as ", literal].concat())
+                        }
                         ExprKind::AsConst(_) => suffix.extend_from_slice(b" as const"),
                         ExprKind::NonNull(_) => suffix.push(b'!'),
                         ExprKind::Instantiation { type_args, .. } => {
@@ -3965,6 +4039,10 @@ impl<'a> Transfer<'_, 'a, '_> {
         );
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let mut ambient_values: FxHashSet<&[u8]> = FxHashSet::default();
+        let output_identifiers: FxHashSet<&[u8]> = (output_file.exprs.iter())
+            .filter(|expr| matches!(expr.kind, ExprKind::Ident(_)))
+            .map(|expr| output.word(expr.pos))
+            .collect();
         let mut output_statements: FxHashMap<(u32, u32), u32> = FxHashMap::default();
         for (id, statement) in output_file.stmts.iter().enumerate() {
             for key in [statement.start, output.after_modifiers(StmtId(id as u32))] {
@@ -4084,9 +4162,15 @@ impl<'a> Transfer<'_, 'a, '_> {
                             declarations.iter().for_each(|declaration: VarDeclId| {
                                 syntax.identifiers(file[declaration].pat, &mut names)
                             });
+                            let is_referenced = |name: &[u8]| {
+                                output_identifiers.contains(name)
+                                    || module.types.is_none_or(|types| {
+                                        self.type_references.contains(&(&types.path[..], name))
+                                    })
+                            };
                             let mut is_new = false;
-                            for &name in &names {
-                                is_new |= ambient_values.insert(syntax.word(name));
+                            for name in names.iter().map(|&name| syntax.word(name)) {
+                                is_new |= is_referenced(name) && ambient_values.insert(name);
                             }
                             if !is_new {
                                 continue;
@@ -4461,9 +4545,18 @@ impl<'a> Transfer<'_, 'a, '_> {
                             .get(&(index as u32, syntax.member_key(next)))
                             .copied()
                     });
+                    let before =
+                        &javascript[line_start(javascript, close as usize)..close as usize];
+                    let is_terminated =
+                        is_blank(before) || matches!(before.last(), Some(b'{' | b';'));
                     match next {
                         Some(next) => insertions.add_line_before(javascript, next, text),
-                        None => insertions.add_line_before(javascript, close, text),
+                        None if is_terminated => {
+                            insertions.add_line_before(javascript, close, text)
+                        }
+                        None => {
+                            insertions.add_line_before(javascript, close, &[b";", text].concat())
+                        }
                     }
                 };
                 for (place, member) in members.iter().enumerate() {
@@ -4555,23 +4648,7 @@ impl<'a> Transfer<'_, 'a, '_> {
     }
 }
 
-const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [
-    (b".js", b".full.ts"),
-    (b".mjs", b".full.mts"),
-    (b".cjs", b".full.cts"),
-];
-
-pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
-    TYPED_EXTENSIONS
-        .iter()
-        .find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
-}
-
-pub fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
-    TYPED_EXTENSIONS
-        .iter()
-        .find_map(|(to, from)| Some([typed.strip_suffix(*from)?, *to].concat()))
-}
+pub use bun_sema::resolve::{javascript_path_beside, typed_path_beside};
 
 fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
     std::iter::successors(Some(path), |path| {
@@ -5129,18 +5206,6 @@ pub fn typed_outputs(
         .map_err(|why| format!("{shown}: {why}"))?;
         let typed_path = typed_path_beside(output.path)
             .ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
-        let erased =
-            erase_types(&typed_path, &typed.text).map_err(|why| format!("{shown}: {why}"))?;
-        if erased != output.javascript && !is_for_declarations {
-            let at = erased
-                .iter()
-                .zip(output.javascript)
-                .position(|(erased, written)| erased != written)
-                .unwrap_or_else(|| erased.len().min(output.javascript.len()));
-            return Err(format!(
-                "{shown}: with its types erased the full-types file differs from the JavaScript at offset {at}"
-            ));
-        }
         found.push((typed_path, typed));
     }
     Ok(found)
@@ -5265,7 +5330,10 @@ pub fn sound_files(
         found
             .modules_of_untyped_values
             .extend(typed.modules_of_untyped_values);
-        if keeps_modules_apart && let Some(stem) = output.path.strip_suffix(b".js") {
+        // A program that installs the package reads the full-types file where one output imports another.
+        if (keeps_modules_apart || outputs.len() > 1)
+            && let Some(stem) = output.path.strip_suffix(b".js")
+        {
             let name = name_of(&typed_path);
             let name = BStr::new(&name);
             let default = if typed.has_default_export {

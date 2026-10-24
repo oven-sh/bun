@@ -1,4 +1,4 @@
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, PatParent, PrivateMembers, SymbolId};
 use bun_sema::check::aot::{ClassRef, MemberLookup, ObjectMemberKind, ShapeKind};
 use bun_sema::fold::Constant;
@@ -298,6 +298,20 @@ fn includes_all_of(file: &mut FileLowering<'_, '_, '_, '_>, ty: TypeId, position
     file.fragment.types.union(ty, position) == ty
 }
 
+// TypeScript gives `C.prototype` the type of the instances of `C`. The object has their methods and none of their fields: it is no instance.
+fn reads_prototype_object_of_declaration(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    access: ExprId,
+) -> bool {
+    match file.hir.member_key(access) {
+        Some((owner, MemberKey::Name(name))) if name == known::prototype => {
+            let declaration = file.queries.constructed_declaration(file.file, owner);
+            declaration.is_some()
+        }
+        _ => false,
+    }
+}
+
 // The checker keeps what it knows of a member across calls and aliases, so each read has its own conversion and nothing rests on an earlier one.
 pub(in crate::lower) fn convert_narrowed_reference(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
@@ -309,6 +323,9 @@ pub(in crate::lower) fn convert_narrowed_reference(
     }
     let reference = classify_reference(lowering.file, expression);
     if reference == Reference::NotAReference || names_resolved_builtin(lowering.file, reference) {
+        return value;
+    }
+    if reads_prototype_object_of_declaration(lowering.file, expression) {
         return value;
     }
     let before = find_position_before_narrowing(lowering, expression, reference);

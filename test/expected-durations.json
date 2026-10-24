@@ -2966,21 +2966,6 @@
     "asan": 22376,
     "windows": 82534
   },
-  "aot/joined-programs-all-code-direct-1.test.ts": {
-    "default": 23152,
-    "windows": 69,
-    "windows-aarch64": 80
-  },
-  "aot/joined-programs-all-code-direct-2.test.ts": {
-    "default": 23152,
-    "windows": 69,
-    "windows-aarch64": 80
-  },
-  "aot/joined-programs-all-code-direct-3.test.ts": {
-    "default": 23152,
-    "windows": 69,
-    "windows-aarch64": 80
-  },
   "aot/joined-programs-predictions-fail-1.test.ts": {
     "default": 90000
   },
@@ -4007,6 +3992,18 @@
     "default": 131488,
     "windows": 1030
   },
+  "aot/perf/pinned-everyday-idioms-1.test.ts": {
+    "default": 58500
+  },
+  "aot/perf/pinned-everyday-idioms-2.test.ts": {
+    "default": 59500
+  },
+  "aot/perf/pinned-everyday-idioms-3.test.ts": {
+    "default": 65250
+  },
+  "aot/perf/pinned-everyday-idioms-4.test.ts": {
+    "default": 62750
+  },
   "aot/perf/serial-time.test.ts": {
     "default": 11200,
     "asan": 66044,
@@ -4104,9 +4101,53 @@
     "asan": 3993,
     "windows": 1579
   },
-  "aot/programs-that-died-in-code-made-without-optimizing.test.ts": {
-    "default": 2160,
-    "windows": 3199
+  "aot/programs-in-every-run-1.test.ts": {
+    "default": 96750
+  },
+  "aot/programs-in-every-run-10.test.ts": {
+    "default": 68000
+  },
+  "aot/programs-in-every-run-11.test.ts": {
+    "default": 81500
+  },
+  "aot/programs-in-every-run-12.test.ts": {
+    "default": 184750
+  },
+  "aot/programs-in-every-run-13.test.ts": {
+    "default": 98500
+  },
+  "aot/programs-in-every-run-14.test.ts": {
+    "default": 86750
+  },
+  "aot/programs-in-every-run-15.test.ts": {
+    "default": 81250
+  },
+  "aot/programs-in-every-run-16.test.ts": {
+    "default": 84250
+  },
+  "aot/programs-in-every-run-2.test.ts": {
+    "default": 77000
+  },
+  "aot/programs-in-every-run-3.test.ts": {
+    "default": 93750
+  },
+  "aot/programs-in-every-run-4.test.ts": {
+    "default": 70500
+  },
+  "aot/programs-in-every-run-5.test.ts": {
+    "default": 90000
+  },
+  "aot/programs-in-every-run-6.test.ts": {
+    "default": 81750
+  },
+  "aot/programs-in-every-run-7.test.ts": {
+    "default": 106250
+  },
+  "aot/programs-in-every-run-8.test.ts": {
+    "default": 105000
+  },
+  "aot/programs-in-every-run-9.test.ts": {
+    "default": 92250
   },
   "aot/programs-that-stopped-a-validating-build-1.test.ts": {
     "default": 98195,
@@ -4581,12 +4622,33 @@
     "windows": 58,
     "windows-aarch64": 77
   },
+  "aot/servers/bun.test.ts": {
+    "default": 27750
+  },
   "aot/servers/effect.test.ts": {
     "default": 36,
     "asan": 368,
     "musl": 36,
     "windows": 67,
     "windows-aarch64": 82
+  },
+  "aot/servers/elysia.test.ts": {
+    "default": 38500
+  },
+  "aot/servers/express-typed.test.ts": {
+    "default": 47500
+  },
+  "aot/servers/express.test.ts": {
+    "default": 47250
+  },
+  "aot/servers/fastify-schemas.test.ts": {
+    "default": 48000
+  },
+  "aot/servers/fastify-typed.test.ts": {
+    "default": 49500
+  },
+  "aot/servers/fastify.test.ts": {
+    "default": 48250
   },
   "aot/servers/features.test.ts": {
     "default": 31,
@@ -4595,11 +4657,23 @@
     "windows": 63,
     "windows-aarch64": 79
   },
+  "aot/servers/hono.test.ts": {
+    "default": 29250
+  },
+  "aot/servers/koa-typed.test.ts": {
+    "default": 42500
+  },
+  "aot/servers/koa.test.ts": {
+    "default": 42000
+  },
   "aot/servers/layers.test.ts": {
     "default": 202,
     "asan": 387,
     "windows": 1332,
     "windows-aarch64": 2063
+  },
+  "aot/servers/node.test.ts": {
+    "default": 38000
   },
   "aot/servers/schedules.test.ts": {
     "default": 195,
@@ -4609,6 +4683,12 @@
     "default": 627,
     "asan": 384,
     "windows": 877
+  },
+  "aot/servers/tanstack.test.ts": {
+    "default": 90000
+  },
+  "aot/servers/thin.test.ts": {
+    "default": 28000
   },
   "aot/shell-completions-list-flags.test.ts": {
     "default": 26,
@@ -5251,17 +5331,6 @@
     "asan": 4857,
     "musl": 2227,
     "windows": 2931
-  },
-  "aot/variant-all-code-direct-1.test.ts": {
-    "default": 12236,
-    "windows": 21410
-  },
-  "aot/variant-all-code-direct-2.test.ts": {
-    "default": 27662,
-    "windows": 53058
-  },
-  "aot/variant-all-code-direct-3.test.ts": {
-    "default": 13226
   },
   "aot/variant-another-layout.test.ts": {
     "default": 27965,

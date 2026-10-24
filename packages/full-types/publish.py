@@ -4,7 +4,7 @@
        Reads this folder alone. All full types, or the named ones. Run twice, it writes the same bytes.
    publish.py gates <name> <node_modules that holds the package as installed> <out: a new folder>
        Every static gate (check.py) and the packer (pack.py) on the installed version, and then: what they give is what this folder holds. Needs SEMA and BUN (see README.md).
-A tarball holds: package.json, sound.json, LICENSE, NOTICE, README.md and lay/. Never src/.
+A tarball holds: package.json, full-types.json, LICENSE, NOTICE, README.md and lay/. Never src/.
 Before a tarball is written: the manifest, package.json and the folder's name agree; lay/ holds exactly the manifest's paths; every file has the sha256 that lay.sums pins; no file names a path or a person of the machines it was made on.
 A version that keeps no lay/ (family.json: it differs from another version in its version string alone) is made from that version's lay/ here, and must come out with the sums its own lay.sums pins."""
 import gzip, hashlib, io, json, os, re, subprocess, sys, tarfile
@@ -13,12 +13,12 @@ if len(sys.argv) < 3 or sys.argv[1] not in ('pack', 'gates'): sys.exit(__doc__)
 sha = lambda b: hashlib.sha256(b).hexdigest(); read = lambda p: open(p, 'rb').read()
 if sys.argv[1] == 'gates':
     name, N, OUT = sys.argv[2], os.path.abspath(sys.argv[3]), os.path.abspath(sys.argv[4]); v = json.load(open(N + '/' + name + '/package.json'))['version']; D = H + '/' + name + '/' + v
-    if not os.path.exists(D + '/sound.json'): sys.exit('publish.py: no %s/%s in this folder' % (name, v))
+    if not os.path.exists(D + '/full-types.json'): sys.exit('publish.py: no %s/%s in this folder' % (name, v))
     r = subprocess.run([sys.executable, H + '/check.py', N, OUT + '/check', '--elements=plain', '--no-options'], capture_output=True, text=True)
     if r.returncode or ('%s@%s' % (name, v)).ljust(42) + ' same' not in r.stdout: sys.exit('publish.py: the gates fail:\n' + '\n'.join(l for l in r.stdout.split('\n') if l.startswith('FAIL') or ' same ' in l))
     r = subprocess.run([sys.executable, '-I', H + '/pack.py', N, OUT + '/check/sound', OUT + '/pack', name], capture_output=True, text=True)
     if r.returncode: sys.exit('publish.py: pack.py: ' + r.stderr[-400:])
-    for f in ('sound.json', 'package.json', 'LICENSE', 'NOTICE', 'lay.sums'):
+    for f in ('full-types.json', 'package.json', 'LICENSE', 'NOTICE', 'lay.sums'):
         if read(OUT + '/pack/' + name + '/' + v + '/' + f) != read(D + '/' + f): sys.exit('publish.py: %s is not this folder\'s' % f)
     print('publish.py: %s@%s: every gate passes, and what they give is what this folder holds' % (name, v)); sys.exit(0)
 OUT = os.path.abspath(sys.argv[2]); only = set(sys.argv[3:])
@@ -44,14 +44,14 @@ Licence: %(license)s, the package's own. See `LICENSE` and `NOTICE`.
 made = []
 for d, ds, fs in sorted(os.walk(H)):
     ds[:] = sorted(x for x in ds if x not in ('lay', 'src', 'tools', 'trees', 'node_modules'))
-    if 'sound.json' not in fs: continue
-    S = json.loads(read(d + '/sound.json')); P = json.loads(read(d + '/package.json')); name, v = S['name'], S['version']; who = '%s@%s' % (name, v)
+    if 'full-types.json' not in fs: continue
+    S = json.loads(read(d + '/full-types.json')); P = json.loads(read(d + '/package.json')); name, v = S['name'], S['version']; who = '%s@%s' % (name, v)
     if only and who not in only: continue
-    stop = lambda why: sys.exit('publish.py: %s: %s' % (who, why)); flat = '@oven/sound-' + name.lstrip('@').replace('/', '__')
+    stop = lambda why: sys.exit('publish.py: %s: %s' % (who, why)); flat = '@oven/full-types-' + name.lstrip('@').replace('/', '__')
     if os.path.relpath(d, H) != name + '/' + v: stop('it lies in %s' % os.path.relpath(d, H))
-    if S.get('sound') not in (1, 2) or set(S) != {'sound', 'name', 'version', 'when', 'basis', 'lay', 'needs'}: stop('sound.json has other members than the format\'s')
+    if S.get('format') not in (1, 2) or set(S) != {'format', 'name', 'version', 'when', 'basis', 'lay', 'needs'}: stop('full-types.json has other members than the format\'s')
     if (P['name'], P['version'], P.get('peerDependencies')) != (flat, v, {name: v}): stop('package.json: name, version or the peer dependency are not the manifest\'s')
-    if set(P) - {'name', 'version', 'description', 'license', 'peerDependencies', 'files'} or P['files'] != ['sound.json', 'lay', 'LICENSE', 'NOTICE']: stop('package.json holds more than a published package needs')
+    if set(P) - {'name', 'version', 'description', 'license', 'peerDependencies', 'files'} or P['files'] != ['full-types.json', 'lay', 'LICENSE', 'NOTICE']: stop('package.json holds more than a published package needs')
     sums = dict(reversed(l.split('  ', 1)) for l in read(d + '/lay.sums').decode().split('\n') if l)
     if set(sums) != set(S['lay']): stop('lay.sums and the manifest name other paths')
     if os.path.isdir(d + '/lay'):
@@ -63,7 +63,7 @@ for d, ds, fs in sorted(os.walk(H)):
     if set(lay) != set(sums): stop('lay/ holds other files than the manifest names: %s' % sorted(set(lay) ^ set(sums))[:3])
     off = [f for f in lay if sha(lay[f]) != sums[f]]
     if off: stop('not the pinned bytes: %s' % off[:3])
-    files = {'package.json': read(d + '/package.json'), 'sound.json': read(d + '/sound.json'), 'LICENSE': read(d + '/LICENSE'), 'NOTICE': read(d + '/NOTICE')}
+    files = {'package.json': read(d + '/package.json'), 'full-types.json': read(d + '/full-types.json'), 'LICENSE': read(d + '/LICENSE'), 'NOTICE': read(d + '/NOTICE')}
     files['README.md'] = (README % dict(flat=flat, name=name, version=v, license=P['license'], when=''.join('\n\nIt applies to builds that define `%s` as `"%s"` (`--define \'%s="%s"\'`): the package\'s own entry would load other files elsewhere.' % (a, b, a, b) for a, b in S['when'].items()))).encode()
     files.update({'lay/' + f: x for f, x in lay.items()})
     for f, x in files.items():

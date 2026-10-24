@@ -7,15 +7,15 @@ node_modules/react/                                what npm installed; never tou
   compiler-runtime.js
   cjs/react-compiler-runtime.production.js
 
-.sound/react/                                      the full types
-  sound.json                                       what it fits, what it replaces
+.full-types/react/                                 the full types
+  full-types.json                                  what they fit, what they replace
   lay/cjs/react-compiler-runtime.production.js     the same code with TypeScript types added: replaces the
                                                    installed file, in memory, for this build
 ```
 
 ```sh
 bun build --compile --aot --define 'process.env.NODE_ENV="production"' app.tsx
-# note: "react" 19.3.1 is compiled from its full types in .sound/react
+# note: "react" 19.3.1 is compiled from its full types in .full-types/react
 ```
 
 The ahead-of-time compiler gives objects a fixed layout, and where it knows which objects reach
@@ -26,20 +26,20 @@ code behind the guard relies on the type.
 
 Full types are **the package's own published file with type annotations added and nothing else
 changed**. Erase the types and you get npm's code back: a gate proves that on every run, and the compiler
-proves it again in every build. The compiler doesn't accept every full types in this folder yet: see
+proves it again in every build. The compiler doesn't accept all the full types in this folder yet: see
 [What the compiler accepts](#what-the-compiler-accepts).
 
-## Using one
+## Using them
 
 One of these; the first that is there wins.
 
-1. **In the project:** copy `<name>/<version>/sound.json` and `<name>/<version>/lay/` to
-   `<project root>/.sound/<name>/`. Do not copy `src/`: its ambient `.d.ts` files would be picked up by
+1. **In the project:** copy `<name>/<version>/full-types.json` and `<name>/<version>/lay/` to
+   `<project root>/.full-types/<name>/`. Do not copy `src/`: its ambient `.d.ts` files would be picked up by
    your own tsconfig.
 2. **In the package itself:** nothing to do. A package can ship its own full types: `index.full.ts` beside
-   `index.js`, named by the `"full-types"` condition of its `exports`. It has no `sound.json`.
-3. **As a package of its own:** `node_modules/@oven/sound-<name>/`, with the same `sound.json` and `lay/`. For `@scope/name`
-   that is `@oven/sound-scope__name`. This is what `publish.py` packs. Bun looks in the `node_modules` of the project root,
+   `index.js`, named by the `"full-types"` condition of its `exports`. It has no `full-types.json`.
+3. **As a package of its own:** `node_modules/@oven/full-types-<name>/`, with the same `full-types.json` and `lay/`. For `@scope/name`
+   that is `@oven/full-types-scope__name`. This is what `publish.py` packs. Bun looks in the `node_modules` of the project root,
    then in that of each folder above it.
 
 Bun looks nowhere else.
@@ -47,11 +47,11 @@ Bun looks nowhere else.
 Nothing on disk is modified. During an `--aot` build Bun reads each file under `lay/` instead of the installed
 file at the same path. Without `--aot`, `bun run`, `bun test` and `bun build` never see them.
 
-What `sound.json` pins is **all or nothing**. If anything does not fit, the build stops with an error naming the
+What `full-types.json` pins is **all or nothing**. If anything does not fit, the build stops with an error naming the
 first mismatch. A program never gets slower without you hearing about it:
 
 ```
-error: TS100056: The full types of "react-dom" in .sound/react-dom can't be used: it is for version 19.3.0, but 19.2.8 is installed. Replace it with the full types for 19.2.8, or remove it
+error: TS100056: The full types of "react-dom" in .full-types/react-dom can't be used: they are for version 19.3.0, but 19.2.8 is installed. Replace them with the full types for 19.2.8, or remove them
 ```
 
 The code is compared file by file. A full-types file that is not the installed file with types added gets the same
@@ -64,22 +64,22 @@ What to do, by what the error says:
 
 | the error says | do this |
 |---|---|
-| it is for version X, but Y is installed | replace it with the full types for Y. The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the full types, or [carry](#carrying-a-typed-version-to-another-version) it to Y |
-| it needs process.env.NODE_ENV to be defined as "production" | pass `--define 'process.env.NODE_ENV="production"'`, to `bun check --aot` as to the build. In other builds the package's entry loads its development files, which are not typed |
-| this version of Bun doesn't support the "sound" version in its sound.json | `"sound"` is not `2`. Format `1` is no longer read: see [What the compiler accepts](#what-the-compiler-accepts). A higher number is newer than your Bun: update Bun |
-| it adds F, and full types can only replace installed files | `"lay"` says `"new"` for F. Add the types to the installed file, at its own path |
+| they are for version X, but Y is installed | replace them with the full types for Y. The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the full types, or [carry](#carrying-full-types-to-another-version) them to Y |
+| they need process.env.NODE_ENV to be defined as "production" | pass `--define 'process.env.NODE_ENV="production"'`, to `bun check --aot` as to the build. In other builds the package's entry loads its development files, which are not typed |
+| this version of Bun doesn't support the "format" in full-types.json | `"format"` is not `2`. Format `1` is no longer read: see [What the compiler accepts](#what-the-compiler-accepts). A higher number is newer than your Bun: update Bun |
+| they add F, and full types can only replace installed files | `"lay"` says `"new"` for F. Add the types to the installed file, at its own path |
 | lay/F is missing | `"lay"` lists F, and there is no such file under `lay/`. Copy the whole `lay/` folder |
-| it needs the full types of "P", which is not used | `"needs"` lists P. Copy P's full types to `.sound/P/` too. If it is there, the build has an error about it as well |
+| they need the full types of "P", which are not used | `"needs"` lists P. Copy P's full types to `.full-types/P/` too. If it is there, the build has an error about it as well |
 | lay/F without its types doesn't match F | the full-types file changes code: a name, a literal, an operator, one statement more or less. Only types may be added. Or something changed `node_modules/<name>/F`: `patch-package`, `bun patch`, a postinstall script. Full types fits npm's code only: see [A package that the project patches](#a-package-that-the-project-patches) |
 | in lay/F, TypeScript syntax that emits code can't be erased | the full-types file has an `enum`, a `namespace` that is not `declare`d, a parameter property, a decorator, an `accessor` field, JSX, `import x = require()` or `export =` |
 
 A package for which no full types are installed is compiled as always, and nothing is said.
 
-## sound.json
+## full-types.json
 
 ```json
 {
-  "sound": 2,
+  "format": 2,
   "name": "react",
   "version": "19.3.1",
   "when":  {},
@@ -90,7 +90,7 @@ A package for which no full types are installed is compiled as always, and nothi
 
 | field | meaning |
 |---|---|
-| `sound` | format number: `2`. A file under `lay/` holds TypeScript text under the name of the installed `.js`, `.cjs` or `.mjs` file. It replaces that file at its own path, so nothing about how modules find each other changes, and it is read as TypeScript. Any other number stops the build |
+| `format` | format number: `2`. A file under `lay/` holds TypeScript text under the name of the installed `.js`, `.cjs` or `.mjs` file. It replaces that file at its own path, so nothing about how modules find each other changes, and it is read as TypeScript. Any other number stops the build |
 | `name`, `version` | must equal the installed package.json's, exactly |
 | `when` | build-time defines that must have these string values: `{ "process.env.NODE_ENV": "production" }` |
 | `lay` | path inside the package to the sha256 of the installed file it replaces. The replacement is `lay/<same path>`. The compiler doesn't compare the sum: it compares the code, node for node. The gates of this folder compare it |
@@ -120,14 +120,14 @@ and 19.3.1, seroval.
 
 `one_name.py` makes `lay/` of react-reconciler, react-dom 19.3.0 and 19.3.1, seroval and @anthropic-ai/sdk from the same `src/`:
 see [A variable that the bundle reuses](#a-variable-that-the-bundle-reuses). `check.py` and `run.py` still generate and measure all of them in the old form. `check.py` writes the format `1` files into its copy of the packages,
-`<out>/node_modules`, where they are ordinary TypeScript files of the package, so those trees say nothing about `.sound/`.
+`<out>/node_modules`, where they are ordinary TypeScript files of the package, so those trees say nothing about `.full-types/`.
 [What the compiler no longer accepts](#what-the-compiler-no-longer-accepts) has the rules that every `src/` was written by.
 
 ## What is in this folder
 
 ```
 <name>/<version>/
-  package.json  sound.json  lay/               what gets published
+  package.json  full-types.json  lay/               what gets published
   LICENSE  NOTICE                              published too: the package's own licence; whose code it is and what was changed
   lay.sums                                     sha256 of every file under lay/
   src/                                         what lay/ is generated from: the typed text + its shapes
@@ -179,7 +179,7 @@ python3 run.py answers path/to/aot-bun path/to/node_modules out/   # runs them a
 | lax | a file under `lay/` has an error under `noImplicitAny: false`, `strictNullChecks: false` or `strict: false`. Those two options of the user's tsconfig reach a package |
 | fields | a class field the text adds is not `declare`d |
 | changed | (Apache-2.0 packages) the full-types file does not say on its first line that it was changed |
-| same | `lay/` (or `lay.sums`) is not byte for byte what `src/` gives, or a sha256 in `sound.json` is not the installed file's |
+| same | `lay/` (or `lay.sums`) is not byte for byte what `src/` gives, or a sha256 in `full-types.json` is not the installed file's |
 
 `run.py` answers the question the static gates cannot: *are the types true?* Each tree is a long list of
 scenarios, each in its own `try`, printing what the package produced. The same source is run plainly on
@@ -248,7 +248,7 @@ python3 ../tools/piecework.py split            # pieces of about 480 lines, cut 
 3. **Write a test tree.** Walk the package's public API with every kind of input, including malformed input
    and input that came through `JSON.parse`. Print results without using the package.
 4. **Add the package to `check.py`'s table**, run the gates, run the tree. For a file in `PLACED` and a package with
-   `form='placed'`, `check.py` writes `sound.json` and `lay/` in format `2` to `<out>/sound/<name>/`. `pack.py` writes format `2` too.
+   `form='placed'`, `check.py` writes `full-types.json` and `lay/` in format `2` to `<out>/sound/<name>/`. `pack.py` writes format `2` too.
 
 ### A package of many small files
 
@@ -257,9 +257,9 @@ under `lay/` is the installed file, edited in place. They are not in `check.py`'
 they are the installed code and that they type check: `AOT_SERVERS=koa-typed,express-typed,fastify-typed bun test test/aot/servers`.
 
 ```sh
-mkdir -p .sound/koa/lay/lib && cp node_modules/koa/lib/request.js .sound/koa/lay/lib/
-cp .sound/koa/lay/lib/request.js work/request.ts                        # the build names only the first error: check a copy by itself
-bun check --aot --all --no-pretty work/request.ts | python3 tools/implicit_any.py .sound/koa/lay/lib/request.js
+mkdir -p .full-types/koa/lay/lib && cp node_modules/koa/lib/request.js .full-types/koa/lay/lib/
+cp .full-types/koa/lay/lib/request.js work/request.ts                        # the build names only the first error: check a copy by itself
+bun check --aot --all --no-pretty work/request.ts | python3 tools/implicit_any.py .full-types/koa/lay/lib/request.js
 ```
 
 - `require` returns `any`, so the types of a package are declared again at the end of each file (`declare namespace KT { .. }`), and what
@@ -294,7 +294,7 @@ every read through it there tests the shape first and has a slow path.
 
 **The type must say what really arrives.** A value of another type than the one you wrote throws nothing and changes no answer. The
 guard that it meets fails, and the function goes on in its slow version, which does what npm's file does. So a wrong type costs what the
-full types was written to win, and no test of the package notices: `--aot-log-type-mismatches` logs each one. A member that is
+full types were written to win, and no test of the package notices: `--aot-log-type-mismatches` logs each one. A member that is
 missing is no mismatch: it reads as `undefined`, and `undefined` and `null` pass every type. seroval's nodes are allocated with twelve
 members, but a node that went through JSON has two to six, because JSON drops `undefined`. The full types declares eleven of the
 twelve optional, so the type checker knows it too.
@@ -337,7 +337,7 @@ assume that `x` may be any object with a layout in the whole program. Every layo
 field tests for it: 807 of the 3,520 stores in a TanStack Start server, react-dom's among them, for one line of seroval. Give the operand the
 type of what really arrives.
 
-**Do not lean on the host project.** The text is checked under its own options: the `compilerOptions` of its `sound.json`, or
+**Do not lean on the host project.** The text is checked under its own options: the `compilerOptions` of its `full-types.json`, or
 `strict` alone. What the user's tsconfig asks of the user's own text (`noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature`,
 `noImplicitOverride`, `verbatimModuleSyntax`, ..) is not asked of it. Two options are the exception, because they change what a
 type means and a program has one set of types: `strictNullChecks` and `exactOptionalPropertyTypes` are the user's. Without
@@ -411,12 +411,12 @@ BUN=path/to/bun python3 one_name.py path/to/node_modules seroval/1.6.9 work/ [--
 
 ### A package that the project patches
 
-Full types fits npm's code. A project that patches the package (`bun patch`, `patch-package`) keeps its own under `.sound/<name>/`,
+Full types fits npm's code. A project that patches the package (`bun patch`, `patch-package`) keeps its own under `.full-types/<name>/`,
 and `tools/carry_patch.py` writes it: a line that the patch leaves alone keeps its types, a line that it adds or changes comes in as the
 patch wrote it, and a parameter or variable that is left without a type there becomes `any`.
 
 ```sh
-python3 tools/carry_patch.py npm/cjs/x.js <name>/<version>/lay/cjs/x.js node_modules/<name>/cjs/x.js .sound/<name>/lay/cjs/x.js
+python3 tools/carry_patch.py npm/cjs/x.js <name>/<version>/lay/cjs/x.js node_modules/<name>/cjs/x.js .full-types/<name>/lay/cjs/x.js
 ```
 
 ### Where a typed build spends its time
@@ -478,15 +478,15 @@ Fix `out/typed.cts` by hand, run `carry.py … --again` to read the gates again,
 then run the tree against the new version.
 
 Patch releases often differ only in their own version string. Those share one full-types file: see `versions` and
-`token` in `check.py`'s table. Only the newest has `lay/` in this tree; the others have `sound.json`, `lay.sums` and
+`token` in `check.py`'s table. Only the newest has `lay/` in this tree; the others have `full-types.json`, `lay.sums` and
 `family.json`, and `publish.py` generates the rest and checks it against `lay.sums`.
 
 ## Publishing
 
 ```sh
-python3 publish.py pack out/                        # every full types; or name some: react-dom@19.3.1
-# sound-react-dom-19.3.1.tgz    9 files   412345 B  5f0c...
-npm publish out/sound-react-dom-19.3.1.tgz --access public
+python3 publish.py pack out/                        # all full types; or name some: react-dom@19.3.1
+# oven-full-types-react-dom-19.3.1.tgz    9 files   412345 B  5f0c...
+npm publish out/oven-full-types-react-dom-19.3.1.tgz --access public
 ```
 
 `pack` needs Python 3 and this folder, nothing else: no network, no `node_modules`, no compiler. It sends nothing. It writes no

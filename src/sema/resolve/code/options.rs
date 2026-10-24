@@ -53,7 +53,7 @@ impl CodeOptions {
             working_directory: working_directory.to_vec(),
             conditions: byte_strings(&["bun", "node", "node-addons"]),
             custom_conditions: Vec::new(),
-            typed_condition: Some(b"full-types".to_vec()),
+            typed_condition: Some(TYPED_CONDITION.to_vec()),
             main_fields: byte_strings(&["module", "main", "jsnext:main"]),
             has_default_main_fields: true,
             prefers_module_field: false,

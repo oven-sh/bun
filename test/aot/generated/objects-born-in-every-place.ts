@@ -142,8 +142,6 @@ export const ways: Record<string, string[]> = {
   "hot, no inlining": ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"],
   "validating": ["--aot-validate"],
   "types erased": ["--aot-erase-types"],
-  "all code direct": ["--aot-testing=GenerateAllCodeDirectly"],
-  "hot, all code direct": ["--aot-heat=everything-is-hot", "--aot-testing=GenerateAllCodeDirectly"],
   "proofs checked": ["--aot-testing=CheckProofsAtRunTime"],
   "hot, proofs checked": ["--aot-heat=everything-is-hot", "--aot-testing=CheckProofsAtRunTime"],
 };

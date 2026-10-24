@@ -59,6 +59,12 @@ function turn(i: number): number {
   const row = JSON.parse(text) as { id: number; name: string; ok: boolean };
   return row.id + row.name.length + (i & 1);
 }
+//// json-parse-with-a-member-that-the-type-does-not-declare
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { id: number; name: string };
+  return row.id + row.name.length + (i & 1);
+}
 //// json-parse-nested
 const text = '{"user":{"id":7,"roles":["admin","dev"],"address":{"city":"Oslo"}},"total":3}';
 function turn(i: number): number {
@@ -82,6 +88,18 @@ function turn(i: number): number {
 const text = '{"a":1,"b":2,"c":3}';
 function turn(i: number): number {
   return JSON.parse(text, (_, value) => (typeof value === "number" ? value * 2 : value)).c + (i & 1);
+}
+//// json-parse-by-a-type-of-63-members
+interface Wide { id: number; p0?: number; p1?: number; p2?: number; p3?: number; p4?: number; p5?: number; p6?: number; p7?: number; p8?: number; p9?: number; p10?: number; p11?: number; p12?: number; p13?: number; p14?: number; p15?: number; p16?: number; p17?: number; p18?: number; p19?: number; p20?: number; p21?: number; p22?: number; p23?: number; p24?: number; p25?: number; p26?: number; p27?: number; p28?: number; p29?: number; p30?: number; p31?: number; p32?: number; p33?: number; p34?: number; p35?: number; p36?: number; p37?: number; p38?: number; p39?: number; p40?: number; p41?: number; p42?: number; p43?: number; p44?: number; p45?: number; p46?: number; p47?: number; p48?: number; p49?: number; p50?: number; p51?: number; p52?: number; p53?: number; p54?: number; p55?: number; p56?: number; p57?: number; p58?: number; p59?: number; p60?: number; p61?: number }
+const texts: string[] = JSON.parse('["{\\"id\\":1,\\"p3\\":2}","{\\"id\\":2,\\"p61\\":5}"]');
+function turn(i: number): number {
+  return JSON.parse<Wide>(texts[i & 1]!).id;
+}
+//// json-parse-by-a-type-of-66-members
+interface Wide { id: number; p0?: number; p1?: number; p2?: number; p3?: number; p4?: number; p5?: number; p6?: number; p7?: number; p8?: number; p9?: number; p10?: number; p11?: number; p12?: number; p13?: number; p14?: number; p15?: number; p16?: number; p17?: number; p18?: number; p19?: number; p20?: number; p21?: number; p22?: number; p23?: number; p24?: number; p25?: number; p26?: number; p27?: number; p28?: number; p29?: number; p30?: number; p31?: number; p32?: number; p33?: number; p34?: number; p35?: number; p36?: number; p37?: number; p38?: number; p39?: number; p40?: number; p41?: number; p42?: number; p43?: number; p44?: number; p45?: number; p46?: number; p47?: number; p48?: number; p49?: number; p50?: number; p51?: number; p52?: number; p53?: number; p54?: number; p55?: number; p56?: number; p57?: number; p58?: number; p59?: number; p60?: number; p61?: number; p62?: number; p63?: number; p64?: number }
+const texts: string[] = JSON.parse('["{\\"id\\":1,\\"p3\\":2}","{\\"id\\":2,\\"p64\\":5}"]');
+function turn(i: number): number {
+  return JSON.parse<Wide>(texts[i & 1]!).id;
 }
 //// json-parse-that-fails
 function turn(i: number): number {
@@ -552,4 +570,62 @@ function turn(i: number): number {
 //// bun-hash
 function turn(i: number): number {
   return Number(Bun.hash("key" + (i & 255)) & 255n);
+}
+//// one-value-is-tested-for-truthiness-again-and-again
+const kinds: any[] = JSON.parse('[0, 1, "", "a", null, {"a": 1}, [], 2.5, true, false, {"a": 0}]');
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+let noise = 0;
+function side(n: number): number {
+  noise = (noise + n) | 0;
+  return noise & 1;
+}
+function twice(x: any): number {
+  let n = 0;
+  if (x) n += 1;
+  n += side(n);
+  if (x) n += 2;
+  return n;
+}
+function inLoop(flag: any, xs: number[]): number {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (flag) n += xs[i];
+    else n -= xs[i];
+  }
+  return n;
+}
+function behindAnd(x: any): number {
+  return x && x.a ? (x ? 1 : 2) : 3;
+}
+function turn(i: number): number {
+  const x = kinds[i % kinds.length];
+  return twice(x) + inLoop(x, numbers) + behindAnd(x);
+}
+//// two-values-are-compared-again-and-again
+const kinds: any[] = JSON.parse('[0, 1, "", "a", null, {"a": 1}, [], 2.5, true, false, "a", "abcdefgh"]');
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+let noise = 0;
+function side(n: number): number {
+  noise = (noise + n) | 0;
+  return noise & 1;
+}
+function twice(a: any, b: any): number {
+  let n = 0;
+  if (a === b) n += 1;
+  n += side(n);
+  if (a === b) n += 2;
+  return n;
+}
+function inLoop(a: any, b: any, xs: number[]): number {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (a === b) n += xs[i];
+    else n -= xs[i];
+  }
+  return n;
+}
+function turn(i: number): number {
+  const a = kinds[i % kinds.length];
+  const b = kinds[(i * 7 + 3) % kinds.length];
+  return twice(a, b) + inLoop(a, b, numbers);
 }

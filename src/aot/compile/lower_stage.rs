@@ -1,6 +1,5 @@
-use super::program_reach::LeftOutCode;
 use super::runtime_reach::{ReachInput, find_reached_runtime_code};
-use super::{BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
+use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
 use crate::diagnostics::{DiagnosticBuffer, InternalError};
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id};
@@ -11,7 +10,7 @@ use crate::lower::{
     DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
     lower_file,
 };
-use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleKind, ModuleRef, Shape};
+use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::{PackageView, report_package_errors, report_used_versions};
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
@@ -63,32 +62,6 @@ struct Worlds {
     units: Vec<LinkUnit>,
     demoted: Vec<Demotion>,
     demoted_directories: Vec<Vec<u8>>,
-}
-
-fn find_files_that_reach_commonjs_files(graph: &ModuleGraph) -> FxHashSet<FileId> {
-    let mut requesters: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
-    let mut pending = Vec::new();
-    for &file in graph.record_files() {
-        if graph.kind(file) == ModuleKind::CommonJs {
-            pending.push(file);
-        }
-        let inner_modules = graph.inner_modules(file).iter();
-        let inner_modules = inner_modules.map(|&callback| ModuleRef::Inner { file, callback });
-        for module in inner_modules.chain([ModuleRef::File(file)]) {
-            for request in graph.requests_of(module) {
-                if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target {
-                    requesters.entry(target).or_default().push(file);
-                }
-            }
-        }
-    }
-    let mut found = FxHashSet::default();
-    while let Some(file) = pending.pop() {
-        if found.insert(file) {
-            pending.extend(requesters.get(&file).into_iter().flatten());
-        }
-    }
-    found
 }
 
 struct ProjectToLower<'a, 'b, 's> {
@@ -270,23 +243,20 @@ impl Build<'_> {
     }
 
     /// A typed package is checked and lowered by a program of its own, under the `compilerOptions` of its `package.json`.
-    /// Nothing of the application's configuration reaches it. Packages that say the same share one. What a CommonJS file
-    /// exports into is decided by everybody who uses it, so it stays in the application's program, and so does every
-    /// file that leads to one.
+    /// Nothing of the application's configuration reaches it. Packages that say the same share one.
     fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Worlds {
         let left_out = &bound.left_out;
         let application = loaded.project(ProjectId::Application);
         let (files, host) = (application.loaded.files(), application.host);
         let mut groups: BTreeMap<Vec<u8>, (Option<Vec<u8>>, Vec<FileId>)> = BTreeMap::new();
         let mut by_directory: FxHashMap<Vec<u8>, (Vec<u8>, Option<Vec<u8>>)> = FxHashMap::default();
-        let reaches_commonjs_files = find_files_that_reach_commonjs_files(&bound.graph);
         for &file in files.compiled_files() {
             let Some(typed) = (files.compiled(file)).and_then(|it| it.typed_source_path) else {
                 continue;
             };
             if files.role(file) != FileRole::Checked
-                || bound.graph.shape(ModuleRef::File(file)) != Shape::EsModule
-                || reaches_commonjs_files.contains(&file)
+                || bound.graph.shape(ModuleRef::File(file)) == Shape::AsToday
+                || files.entry_points().contains(&file)
                 || files.hir(file).check_directive == Some(false)
                 || left_out.files.binary_search(&file).is_ok()
             {
@@ -315,7 +285,7 @@ impl Build<'_> {
                 config_path: config_path.as_deref(),
                 files: &group,
             };
-            self.lower_world(loaded, left_out, &world, &mut worlds);
+            self.lower_world(loaded, bound, &world, &mut worlds);
         }
         worlds.lowered.sort_unstable();
         worlds
@@ -324,7 +294,7 @@ impl Build<'_> {
     fn lower_world<'s>(
         &mut self,
         loaded: &LoadedBuild<'_, 's>,
-        left_out: &LeftOutCode,
+        bound_application: &BoundProject<'_>,
         world: &WorldToLower<'_, 's>,
         worlds: &mut Worlds,
     ) {
@@ -361,6 +331,14 @@ impl Build<'_> {
         let Ok(sources) = self.freeze_world(&program) else {
             return;
         };
+        let bound_application = BoundApplication {
+            graph: ApplicationGraph {
+                graph: &bound_application.graph,
+                to_local: &|file| to_world.get(&file).copied(),
+                to_application: &|file| to_application[file.idx()],
+            },
+            left_out: &bound_application.left_out,
+        };
         let world_build = LoadedBuild {
             projects: PerProject {
                 application: LoadedProject {
@@ -377,6 +355,7 @@ impl Build<'_> {
                 },
             },
             world_sessions: &[],
+            application: Some(&bound_application),
             session: world.session,
             atoms: loaded.atoms,
             messages: loaded.messages,
@@ -385,8 +364,6 @@ impl Build<'_> {
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             finish_asset_reads: loaded.finish_asset_reads,
         };
-        self.left_out_of_world =
-            Some(left_out.in_other_program(&|file| to_world.get(&file).copied()));
         let Ok(bound) = self.bind_modules(&world_build) else {
             return;
         };
@@ -445,6 +422,7 @@ impl Build<'_> {
         };
         let rehoming = Rehoming {
             files: &to_application,
+            application_graph: bound_application.graph.graph,
             first_fresh_file: files.modules.len() as u32 + ((world.index as u32 + 1) << 20),
             stable_symbol: &|symbol| {
                 let whole = world_files.canonical(symbol);

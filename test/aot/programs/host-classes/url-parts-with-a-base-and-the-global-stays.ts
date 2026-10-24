@@ -63,7 +63,7 @@ async function inAnAsyncFunction(text: string) {
 }
 
 let seed = 11;
-const random = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
 const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
 const choose = <T,>(usual: readonly T[], odd: readonly T[]): T => (random() < 0.93 ? pick(usual) : pick(odd));
 const usualBases = ["http://127.0.0.1", "http://localhost", "http://localhost:3000", "https://example.com", "https://example.com/", "http://example.com/a/b", "http://example.com/a/b?c=d", "http://a-b.c:80#e", "https://x:443?y", "http://a"];

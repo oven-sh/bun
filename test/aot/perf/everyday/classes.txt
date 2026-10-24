@@ -542,6 +542,39 @@ function turn(i: number): number {
   for (const value of new Span(i & 3, 8)) sum += value;
   return sum;
 }
+//// generator-method-of-a-class
+class Span {
+  constructor(
+    public from: number,
+    public to: number,
+  ) {}
+  *values() {
+    for (let k = this.from; k < this.to; k++) yield k;
+  }
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of new Span(i & 3, 8).values()) sum += value;
+  return sum;
+}
+//// symbol-iterator-that-returns-a-generator
+class Span {
+  constructor(
+    public from: number,
+    public to: number,
+  ) {}
+  *values() {
+    for (let k = this.from; k < this.to; k++) yield k;
+  }
+  [Symbol.iterator]() {
+    return this.values();
+  }
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of new Span(i & 3, 8)) sum += value;
+  return sum;
+}
 //// enum-values
 enum Direction {
   Up,

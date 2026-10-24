@@ -1940,10 +1940,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn object_type_of(&mut self, members: &[Member]) -> TypeId {
         let mut props = Vec::with_capacity(members.len());
         for member in members {
-            let flags = match member.usage.facts.contains(Facts::REQUIRED) {
+            let mut flags = match member.usage.facts.contains(Facts::REQUIRED) {
                 true => PropFlags::empty(),
                 false => PropFlags::OPTIONAL,
             };
+            if member.is_called() {
+                flags |= PropFlags::METHOD;
+            }
             props.push(Prop {
                 name: member.name,
                 flags,

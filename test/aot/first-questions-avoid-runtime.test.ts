@@ -49,49 +49,44 @@ const files = {
 const operations =
   /^operationAOT(GetById|GetByIdAndCache|GetGeneric|GetByVal|GetByValGeneric|GetByValAndCache|InById|InByIdAndCache|InByVal|InByValGeneric|InByValAndCache|HasOwnByIdAndCache|HasOwnByValAndCache|HasOwnGeneric)$/;
 
-// The lookup behind the tables exists on x86-64 only.
-test.skipIf(process.arch !== "x64")(
-  "the first question about a name and a kind of object is answered without leaving compiled code",
-  async () => {
-    using dir = tempDir("aot-first-questions", files);
-    const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
-      String(dir),
-      bunEnv,
-    );
-    expect({
-      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
-      exitCode: built.exitCode,
-    }).toEqual({ stderr: [], exitCode: 0 });
-    const leftOften: string[] = [];
-    for (const kind of ["ordinary", "rebuilt", "extended", "instances", "dictionaries", "heirs", "heirsOfRebuilt"]) {
-      // What it takes to start and to make the objects.
-      let callsBeforeQuestions = 0;
-      for (const way of ["nothing", "read", "in", "hasOwn", "readByKey", "inByKey"]) {
-        const expected = await run([bunExe(), "main.mjs", way, kind], String(dir), bunEnv);
-        const path = join(String(dir), "counts-" + kind + way);
-        const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
-        expect(await run([executable, way, kind], String(dir), env)).toEqual({
-          stdout: expected.stdout,
-          stderr: "",
-          exitCode: 0,
-        });
-        let calls = 0;
-        for (const line of readFileSync(path, "utf8").split("\n")) {
-          const [count, name] = line.split("\toperation:");
-          if (name !== undefined && operations.test(name)) calls += Number(count);
-        }
-        // 480 questions, each about a kind of object and a name that were never asked together before.
-        if (way === "nothing") callsBeforeQuestions = calls;
-        else if (calls - callsBeforeQuestions >= kinds)
-          leftOften.push(`${kind} ${way}: ${calls - callsBeforeQuestions} calls`);
+test("the first question about a name and a kind of object is answered without leaving compiled code", async () => {
+  using dir = tempDir("aot-first-questions", files);
+  const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ stderr: [], exitCode: 0 });
+  const leftOften: string[] = [];
+  for (const kind of ["ordinary", "rebuilt", "extended", "instances", "dictionaries", "heirs", "heirsOfRebuilt"]) {
+    // What it takes to start and to make the objects.
+    let callsBeforeQuestions = 0;
+    for (const way of ["nothing", "read", "in", "hasOwn", "readByKey", "inByKey"]) {
+      const expected = await run([bunExe(), "main.mjs", way, kind], String(dir), bunEnv);
+      const path = join(String(dir), "counts-" + kind + way);
+      const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
+      expect(await run([executable, way, kind], String(dir), env)).toEqual({
+        stdout: expected.stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+      let calls = 0;
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        const [count, name] = line.split("\toperation:");
+        if (name !== undefined && operations.test(name)) calls += Number(count);
       }
+      // 480 questions, each about a kind of object and a name that were never asked together before.
+      if (way === "nothing") callsBeforeQuestions = calls;
+      else if (calls - callsBeforeQuestions >= kinds)
+        leftOften.push(`${kind} ${way}: ${calls - callsBeforeQuestions} calls`);
     }
-    expect(leftOften).toEqual([]);
-  },
-  600_000,
-);
+  }
+  expect(leftOften).toEqual([]);
+}, 600_000);
 
 const emptyFields = {
   "main.mjs": `

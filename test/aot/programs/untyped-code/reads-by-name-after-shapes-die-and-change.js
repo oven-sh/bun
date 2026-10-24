@@ -18,7 +18,7 @@ function check(o, expected, what) {
 
 // Shapes that die: each generation puts the four names at other places, in the object and out of line.
 let seed = 12345;
-const random = n => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+const random = n => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) % n;
 function generation(number) {
   const made = [];
   for (let i = 0; i < 200; i++) {

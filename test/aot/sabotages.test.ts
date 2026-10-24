@@ -10,7 +10,7 @@
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
 import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isGlibc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { registry } from "./harness/registry";
 import {
@@ -47,12 +47,6 @@ const rooms = (...programs: string[]): Row => ({
   programs,
 });
 
-// A program notices an inner cell that kept its header only through a word that an earlier frame left on the stack. Which words are left hangs on the
-// frames of Bun and of the system's libraries and on the registers the architecture saves: the programs below have shown it in every run of a Bun linked with LTO
-// for glibc on x64, as CI links it, and nowhere else: not in a Bun for the same machine without LTO either.
-// With AddressSanitizer every other cell is never allocated, and nothing comes to lie where the cell that was let go lay.
-const leavesStaleWordsOnTheStack = isGlibc && !isArm64 && !isASAN;
-
 /** The programs under ./programs that must notice each sabotage. */
 const noticedBy: Record<string, Row> = {
   StackNamesNoInnerCell: innerObjects("the-inner-object-is-held-by-a-local-variable-alone.ts"),
@@ -69,13 +63,6 @@ const noticedBy: Record<string, Row> = {
     "only-the-inner-object-is-still-held.ts",
     "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
   ),
-  // Not at a collection at every allocation that leaves the fast path: at every fifth.
-  ...(leavesStaleWordsOnTheStack && {
-    InnerCellLetGoKeepsItsHeader: innerObjects(
-      "three-levels-are-held-let-go-and-filled-again.ts",
-      "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
-    ),
-  }),
   RoomIsNotInReferenceList: rooms(
     "outer-objects-that-nothing-is-laid-into.ts",
     "an-old-outer-object-gets-young-objects.ts",
@@ -111,9 +98,8 @@ const noticedBy: Record<string, Row> = {
 const noticedByTheEngineTestsAlone: Record<string, string> = {
   // It needs a 32-bit reference in half a word of the stack as the only holder.
   NarrowReferenceOnStackNamesNoInnerCell: "inner-objects/sabotaged/narrow-reference-on-stack-names-no-inner-cell",
-  ...(!leavesStaleWordsOnTheStack && {
-    InnerCellLetGoKeepsItsHeader: "inner-objects/sabotaged/inner-cell-let-go-keeps-its-header",
-  }),
+  // A program notices it only through a word that an earlier frame left on the stack, and which words are left hangs on how Bun was linked.
+  InnerCellLetGoKeepsItsHeader: "inner-objects/sabotaged/inner-cell-let-go-keeps-its-header",
 };
 
 const listed = unsupported ? undefined : registry().sabotages;

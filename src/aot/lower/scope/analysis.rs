@@ -8,7 +8,7 @@ use bun_sema::program::FileId;
 use super::ScopeSlot;
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{FunctionKey, VariableKey};
-use crate::lower::captures::{self, Capture};
+use crate::lower::captures::Capture;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(in crate::lower) enum BindingRef {
@@ -129,6 +129,7 @@ pub(super) struct ClassUnits {
 
 pub(crate) struct ScopeAnalysis {
     pub(super) file: FileId,
+    pub(super) max_captures: usize,
     pub(super) forms: Vec<BindingForm>,
     pub(super) symbol_placements: Vec<Placement>,
     pub(super) slot_placements: Vec<(SlotKey, Placement)>,
@@ -204,7 +205,7 @@ impl ScopeAnalysis {
     /// `Some`: the function has more captures than a closure has room for, also with an environment for each scope that it reaches.
     pub(in crate::lower) fn packed_captures(&self, key: FunctionKey) -> Option<u32> {
         let captures = &self.find_function(key)?.captures;
-        (captures.len() > captures::max_captures()).then_some(captures.start)
+        (captures.len() > self.max_captures).then_some(captures.start)
     }
 
     pub(in crate::lower) fn entry_flags(&self, key: FunctionKey) -> FunctionFlags {

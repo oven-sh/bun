@@ -7,6 +7,7 @@
 //     --plain               nothing is compiled: the Bun under test runs the file plainly too. With --reference: two Buns side by side
 //     --jobs <n>            files at a time (default: a quarter of the cores)
 //     --only <expression>   the files whose path matches the regular expression
+//     --list <file>         the files that it names, one a line, and the folder is not searched
 //     --from <n> --to <n>   a part of the sorted list of files
 //     --seconds <n>         the limit for a run (default 360)
 //     --flags "<flags>"     more flags for the compiled run, for example --aot-erase-types for the files whose own text has type errors
@@ -23,6 +24,7 @@
 //   TIMES-OUT  <file> > <test>: pass | the test's own time limit. On a busy machine this says little
 //   MISSING    <file> > <test>: the plain run reports the test, the compiled run does not
 //   BETTER     <file> > <test>: fail | pass
+//   EXIT       every test has the same verdict and the two runs end with different exit codes
 // Counted and not printed: `same` (every test has the same verdict), `neither` (the plain run reports no test: it needs a service, a package or a platform that is not there).
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, type Dirent } from "node:fs";
 import { availableParallelism } from "node:os";
@@ -31,7 +33,7 @@ import { join, relative, resolve } from "node:path";
 const [root, ...rest] = process.argv.slice(2);
 const option = (name: string) => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined);
 if (!root) {
-  console.error("usage: bun test/aot/other-suites/bun-tests.ts <folder of tests> [--bun <path>] [--reference <path>] [--plain] [--jobs <n>] [--only <expression>] [--from <n>] [--to <n>] [--seconds <n>] [--flags <flags>] [--wrap <command>] [--known <file>] [--out <folder>]");
+  console.error("usage: bun test/aot/other-suites/bun-tests.ts <folder of tests> [--bun <path>] [--reference <path>] [--plain] [--jobs <n>] [--only <expression>] [--list <file>] [--from <n>] [--to <n>] [--seconds <n>] [--flags <flags>] [--wrap <command>] [--known <file>] [--out <folder>]");
   process.exit(2);
 }
 const bun = option("--bun") ?? process.execPath;
@@ -45,9 +47,11 @@ const wrap = option("--wrap")?.split(" ").filter(word => word) ?? [];
 const out = option("--out");
 if (out) mkdirSync(join(out, "printed"), { recursive: true });
 
-const files = (readdirSync(root, { recursive: true, withFileTypes: true }) as Dirent[])
-  .filter(entry => entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name) && !entry.parentPath.split(/[\\/]/).includes("node_modules"))
-  .map(entry => relative(process.cwd(), resolve(entry.parentPath, entry.name)).replaceAll("\\", "/"))
+const found = () =>
+  (readdirSync(root, { recursive: true, withFileTypes: true }) as Dirent[])
+    .filter(entry => entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name) && !entry.parentPath.split(/[\\/]/).includes("node_modules"))
+    .map(entry => relative(process.cwd(), resolve(entry.parentPath, entry.name)).replaceAll("\\", "/"));
+const files = (option("--list") ? readFileSync(option("--list")!, "utf8").split("\n").filter(file => file) : found())
   .filter(file => !only || only.test(file))
   .sort()
   .slice(Number(option("--from")) || 0, Number(option("--to")) || undefined);
@@ -62,7 +66,7 @@ const withoutWhatChanges = (name: string) =>
 type Run = { printed: string; code: number | string; verdicts: Map<string, string>; errors: Map<string, string> };
 
 async function run(file: string, flags: string[], limit: number, runner = bun): Promise<Run> {
-  const cmd = [...wrap.map(word => word.replaceAll("{seconds}", String(limit))), runner, "test", ...flags, "--timeout=30000", "./" + file];
+  const cmd = [...wrap.map(word => word.replaceAll("{seconds}", String(limit))), runner, "test", "--no-install", ...flags, "--timeout=30000", "./" + file];
   const child = Bun.spawn({ cmd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" }, timeout: (limit + 30) * 1000, killSignal: "SIGKILL" });
   const [stdout, stderr] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   const printed = stdout + stderr;
@@ -86,8 +90,10 @@ async function run(file: string, flags: string[], limit: number, runner = bun): 
     if (verdict[1] === "fail") errors.set(name, /this test timed out after/.test(lines[at + 1] ?? "") ? "timed out" : error);
     error = "";
   }
-  // 124 and 137: the limit of `timeout` in a wrapper.
-  return { printed, code: child.signalCode ?? (child.exitCode === 124 || child.exitCode === 137 ? "the time limit" : (child.exitCode ?? -1)), verdicts, errors };
+  // 124 and 137: the limit of `timeout` in a wrapper. A wrapper also turns a signal into 128 + its number.
+  const signals: Record<number, string> = { 132: "SIGILL", 133: "SIGTRAP", 134: "SIGABRT", 135: "SIGBUS", 136: "SIGFPE", 139: "SIGSEGV" };
+  const exitCode = child.exitCode ?? -1;
+  return { printed, code: child.signalCode ?? (exitCode === 124 || exitCode === 137 ? "the time limit" : (signals[exitCode] ?? exitCode)), verdicts, errors };
 }
 
 const firstMatch = (printed: string, expression: RegExp) => printed.split("\n").find(line => expression.test(line))?.slice(0, 220) ?? "";
@@ -112,6 +118,7 @@ async function judge(file: string): Promise<string[]> {
     }
     for (const [name, ours] of compiled.verdicts) if (!plain.verdicts.has(name)) lines.push(`DIFFERS ${file} > ${name}: nothing | ${ours}: ${compiled.errors.get(name) ?? ""}`);
   }
+  if (lines.length === 0 && compiled.code !== plain.code) lines.push(`EXIT ${file}: ${plain.code} | ${compiled.code}: every one of the ${plain.verdicts.size} tests has the same verdict`);
   if (lines.length === 0) return [`same ${file}: ${plain.verdicts.size} tests`];
   if (out) {
     const name = file.replaceAll("/", "_");
@@ -138,6 +145,6 @@ await Promise.all(
 const count = (kind: string) => all.filter(line => line.startsWith(kind + " ")).length;
 const filesOf = (...kinds: string[]) => new Set(all.filter(line => kinds.some(kind => line.startsWith(kind + " "))).map(line => line.split(" ")[1].replace(/:$/, ""))).size;
 console.log(
-  `TOTAL ${files.length} files: same ${count("same")}, the plain run reports no test ${count("neither")}, NOT-BUILT ${count("NOT-BUILT")}, DIES ${count("DIES")}; ` +
+  `TOTAL ${files.length} files: same ${count("same")}, the plain run reports no test ${count("neither")}, NOT-BUILT ${count("NOT-BUILT")}, DIES ${count("DIES")}, EXIT ${count("EXIT")}; ` +
     `tests: DIFFERS ${count("DIFFERS")} and MISSING ${count("MISSING")} in ${filesOf("DIFFERS", "MISSING")} files, TIMES-OUT ${count("TIMES-OUT")}, BETTER ${count("BETTER")}`,
 );

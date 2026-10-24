@@ -86,7 +86,7 @@ function run(count) {
   var seed = 12345;
   var total = 0;
   for (var i = 0; i < count; i++) {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
     total += square((seed >> 8) % 96);
     var name = "k" + ((seed >> 4) % 24);
     var length = names.get(name);

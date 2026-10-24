@@ -87,7 +87,7 @@ const annotate = (text: string) => text.replace("(w, h)", "(w: number, h: number
 const typed = { "area.js": annotate(installed["area.js"]), "perimeter.js": annotate(installed["perimeter.js"]) };
 
 const manifest = (overrides: object = {}) => ({
-  sound: 2,
+  format: 2,
   name: "shapes",
   version: "1.2.3",
   when: {},
@@ -105,7 +105,10 @@ function project(sound: object | null = manifest()): Files {
     "package.json": JSON.stringify({ name: "app" }),
     "main.ts": probe('import { area, perimeter } from "shapes";\n', ["area(input, 7)", "perimeter(input, 7)"]),
     ...prefixPaths("node_modules/shapes", installed),
-    ...(sound && { ".sound/shapes/sound.json": JSON.stringify(sound), ...prefixPaths(".sound/shapes/lay", typed) }),
+    ...(sound && {
+      ".full-types/shapes/full-types.json": JSON.stringify(sound),
+      ...prefixPaths(".full-types/shapes/lay", typed),
+    }),
   };
 }
 
@@ -114,14 +117,14 @@ function otherPackage(version: string): Files {
   return {
     "node_modules/other/package.json": JSON.stringify({ name: "other", version, main: "index.js" }),
     "node_modules/other/index.js": text,
-    ".sound/other/sound.json": JSON.stringify({
-      sound: 2,
+    ".full-types/other/full-types.json": JSON.stringify({
+      format: 2,
       name: "other",
       version: "1.0.0",
       lay: { "index.js": sha256(text) },
       needs: ["shapes"],
     }),
-    ".sound/other/lay/index.js": text,
+    ".full-types/other/lay/index.js": text,
   };
 }
 
@@ -131,14 +134,15 @@ function write(folder: string, path: string, text: string) {
 }
 
 const setManifest = (overrides: object) => (folder: string) =>
-  write(folder, ".sound/shapes/sound.json", JSON.stringify(manifest(overrides)));
+  write(folder, ".full-types/shapes/full-types.json", JSON.stringify(manifest(overrides)));
 
 const runProject = (folder: string, flags: string[] = []) => run(folder, "main.ts", flags, "6");
 
 // The argument is a string where the full types declares a number. The call takes the slow path, so both versions print the same.
 const PRINTED = "42 26\n";
-const USED = '"shapes" 1.2.3 is compiled from its full types in .sound/shapes';
-const unused = (reason: string) => `TS100056: The full types of "shapes" in .sound/shapes can't be used: ${reason}`;
+const USED = '"shapes" 1.2.3 is compiled from its full types in .full-types/shapes';
+const unused = (reason: string) =>
+  `TS100056: The full types of "shapes" in .full-types/shapes can't be used: ${reason}`;
 
 const usesTypedVersion = { errors: [], warnings: [], notes: [USED], exitCode: 0, stdout: PRINTED };
 const compilesAsInstalled = { errors: [], warnings: [], notes: [], exitCode: 0, stdout: PRINTED };
@@ -147,9 +151,9 @@ const compilesAsInstalledAndSaysWhy = (reason: string) => ({ ...compilesAsInstal
 const PRODUCTION_ONLY = { when: { "process.env.NODE_ENV": "production" } };
 const defineNodeEnv = (value: string) => ["--define", `process.env.NODE_ENV="${value}"`];
 
-const NEEDS_PRODUCTION = `it needs process.env.NODE_ENV to be defined as "production". Pass --define 'process.env.NODE_ENV="production"'`;
-const NEEDS_OTHER = 'it needs the full types of "other", which is not used';
-const UNSUPPORTED_FORMAT = `this version of Bun doesn't support the "sound" version in its sound.json`;
+const NEEDS_PRODUCTION = `they need process.env.NODE_ENV to be defined as "production". Pass --define 'process.env.NODE_ENV="production"'`;
+const NEEDS_OTHER = 'they need the full types of "other", which are not used';
+const UNSUPPORTED_FORMAT = `this version of Bun doesn't support the "format" in full-types.json`;
 const ERASURE_DIFFERS = "lay/perimeter.js without its types doesn't match perimeter.js. Was the package patched?";
 const EMITS_CODE = "in lay/perimeter.js, TypeScript syntax that emits code can't be erased";
 
@@ -159,38 +163,38 @@ const mismatches: Mismatch[] = [
   [
     "a different version is installed",
     folder => write(folder, "node_modules/shapes/package.json", installed["package.json"].replace("1.2.3", "1.2.4")),
-    "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the full types for 1.2.4, or remove it",
+    "they are for version 1.2.3, but 1.2.4 is installed. Replace them with the full types for 1.2.4, or remove them",
   ],
   ["the required define is missing", setManifest(PRODUCTION_ONLY), NEEDS_PRODUCTION],
   ["the required define has another value", setManifest(PRODUCTION_ONLY), NEEDS_PRODUCTION, defineNodeEnv("staging")],
   ["a needed full types are missing", setManifest({ needs: ["other"] }), NEEDS_OTHER],
-  ["format 1", setManifest({ sound: 1 }), UNSUPPORTED_FORMAT],
-  ["an unknown format", setManifest({ sound: 99 }), UNSUPPORTED_FORMAT],
+  ["format 1", setManifest({ format: 1 }), UNSUPPORTED_FORMAT],
+  ["an unknown format", setManifest({ format: 99 }), UNSUPPORTED_FORMAT],
   [
     "it adds a file",
     folder => {
       setManifest({ lay: { ...manifest().lay, "extra.ts": "new" } })(folder);
-      write(folder, ".sound/shapes/lay/extra.ts", "export {};\n");
+      write(folder, ".full-types/shapes/lay/extra.ts", "export {};\n");
     },
-    "it adds extra.ts, and full types can only replace installed files",
+    "they add extra.ts, and full types can only replace installed files",
   ],
   [
     "a full-types file is missing",
-    folder => rmSync(join(folder, ".sound/shapes/lay/perimeter.js")),
+    folder => rmSync(join(folder, ".full-types/shapes/lay/perimeter.js")),
     "lay/perimeter.js is missing",
   ],
-  ["lay is empty", setManifest({ lay: {} }), '"lay" in its sound.json is empty'],
+  ["lay is empty", setManifest({ lay: {} }), '"lay" in full-types.json is empty'],
   [
-    "sound.json is not JSON",
-    folder => write(folder, ".sound/shapes/sound.json", "{"),
-    "its sound.json is not valid JSON",
+    "full-types.json is not JSON",
+    folder => write(folder, ".full-types/shapes/full-types.json", "{"),
+    "full-types.json is not valid JSON",
   ],
   [
     "a path escapes the package",
     setManifest({ lay: { "../other/index.js": sha256("") } }),
-    '"../other/index.js" in its sound.json is not a path inside the package',
+    '"../other/index.js" in full-types.json is not a path inside the package',
   ],
-  ["the name does not match its folder", setManifest({ name: "forms" }), "its sound.json is not valid"],
+  ["the name does not match its folder", setManifest({ name: "forms" }), "full-types.json is not valid"],
 ];
 
 const neededPackages: [name: string, version: string, expected: object][] = [
@@ -233,10 +237,10 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "full types of a package the program never loads is ignored",
+    "full types of a package the program never loads are ignored",
     () =>
       slot(async () => {
-        using dir = tempDir("aot-typed-packages", { ...project(), ".sound/unused/sound.json": "{" });
+        using dir = tempDir("aot-typed-packages", { ...project(), ".full-types/unused/full-types.json": "{" });
         expect(await runProject(String(dir))).toMatchObject(usesTypedVersion);
       }),
     600_000,
@@ -281,27 +285,27 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
     "erasure rejects one file: %s",
     (_, text, reason) =>
       slot(async () => {
-        using dir = tempDir("aot-typed-packages", { ...project(), ".sound/shapes/lay/perimeter.js": text });
+        using dir = tempDir("aot-typed-packages", { ...project(), ".full-types/shapes/lay/perimeter.js": text });
         expect(await runProject(String(dir))).toMatchObject(compilesAsInstalledAndSaysWhy(reason));
       }),
     600_000,
   );
 
-  const INSTALLED_FOLDER = "node_modules/@oven/sound-shapes";
+  const INSTALLED_FOLDER = "node_modules/@oven/full-types-shapes";
   const USED_INSTALLED = `"shapes" 1.2.3 is compiled from its full types in ${INSTALLED_FOLDER}`;
   const installedTypedVersion = (sound: object = manifest()): Files => ({
     [`${INSTALLED_FOLDER}/package.json`]: JSON.stringify({
-      name: "@oven/sound-shapes",
+      name: "@oven/full-types-shapes",
       version: "1.2.3",
       peerDependencies: { shapes: "1.2.3" },
-      files: ["sound.json", "lay"],
+      files: ["full-types.json", "lay"],
     }),
-    [`${INSTALLED_FOLDER}/sound.json`]: JSON.stringify(sound),
+    [`${INSTALLED_FOLDER}/full-types.json`]: JSON.stringify(sound),
     ...prefixPaths(`${INSTALLED_FOLDER}/lay`, typed),
   });
 
   test(
-    "full types that is installed as a package of its own is used",
+    "full types that are installed as a package of their own are used",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", { ...project(null), ...installedTypedVersion() });
@@ -330,7 +334,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
         const result = await runProject(join(String(dir), "packages", "app"));
         expect(result).toMatchObject({ errors: [], warnings: [], exitCode: 0, stdout: PRINTED });
         expect(result.notes).toEqual([
-          expect.stringMatching(/^"shapes" 1\.2\.3 is compiled from its full types in .*@oven.sound-shapes$/),
+          expect.stringMatching(/^"shapes" 1\.2\.3 is compiled from its full types in .*@oven.full-types-shapes$/),
         ]);
       }),
     600_000,
@@ -354,18 +358,20 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
           }),
           "node_modules/@forms/double/index.js": text,
           "node_modules/@forms/double/index.d.ts": "export declare function twice(n: number): number;\n",
-          "node_modules/@oven/sound-forms__double/sound.json": JSON.stringify({
-            sound: 2,
+          "node_modules/@oven/full-types-forms__double/full-types.json": JSON.stringify({
+            format: 2,
             name: "@forms/double",
             version: "2.0.0",
             lay: { "index.js": sha256(text) },
           }),
-          "node_modules/@oven/sound-forms__double/lay/index.js": text.replace("(n)", "(n: number): number"),
+          "node_modules/@oven/full-types-forms__double/lay/index.js": text.replace("(n)", "(n: number): number"),
         });
         expect(await runProject(String(dir))).toMatchObject({
           errors: [],
           warnings: [],
-          notes: ['"@forms/double" 2.0.0 is compiled from its full types in node_modules/@oven/sound-forms__double'],
+          notes: [
+            '"@forms/double" 2.0.0 is compiled from its full types in node_modules/@oven/full-types-forms__double',
+          ],
           exitCode: 0,
           stdout: "12\n",
         });
@@ -385,7 +391,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
           ...installedTypedVersion(manifest({ version: "1.2.2" })),
         });
         const reason =
-          "it is for version 1.2.2, but 1.2.3 is installed. Replace it with the full types for 1.2.3, or remove it";
+          "they are for version 1.2.2, but 1.2.3 is installed. Replace them with the full types for 1.2.3, or remove them";
         expect(await runProject(String(dir))).toMatchObject({
           ...compilesAsInstalled,
           warnings: [unusedInstalled(reason)],
@@ -428,7 +434,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "the project's full types counts before an installed one",
+    "the project's full types count before installed ones",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", { ...project(), ...installedTypedVersion({}) });
@@ -468,7 +474,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
     () =>
       slot(async () => {
         const text = typed["perimeter.js"].replace("h: number)", "h: number | undefined)").replace("-h", "-h!");
-        using dir = tempDir("aot-typed-packages", { ...project(), ".sound/shapes/lay/perimeter.js": text });
+        using dir = tempDir("aot-typed-packages", { ...project(), ".full-types/shapes/lay/perimeter.js": text });
         expect(await runProject(String(dir))).toMatchObject(usesTypedVersion);
       }),
     600_000,
@@ -484,7 +490,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
           "node_modules/shapes/area.js": area,
           "node_modules/shapes/scale.js": "export const scale = 1;\n",
           "node_modules/shapes/scale.d.ts": "export declare const scale: number;\n",
-          ".sound/shapes/lay/area.js": annotate(area),
+          ".full-types/shapes/lay/area.js": annotate(area),
         });
         expect(await runProject(String(dir))).toMatchObject(usesTypedVersion);
       }),
@@ -504,7 +510,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
           "main.ts": 'import { texts } from "shapes/area.js";\nconsole.log(JSON.stringify(texts()));\n',
           "node_modules/shapes/area.js": area,
           "node_modules/shapes/area.d.ts": "export declare function texts(): string[];\n",
-          ".sound/shapes/lay/area.js": typed["area.js"] + typedTexts,
+          ".full-types/shapes/lay/area.js": typed["area.js"] + typedTexts,
         });
         expect(await runProject(String(dir))).toMatchObject({
           errors: [],
@@ -543,7 +549,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
     }),
     "tsconfig.json": tsconfig(compilerOptions),
     "node_modules/shapes/perimeter.js": withSides(installed["perimeter.js"]),
-    ".sound/shapes/lay/perimeter.js": leansOnStrictAlone(installed["perimeter.js"]),
+    ".full-types/shapes/lay/perimeter.js": leansOnStrictAlone(installed["perimeter.js"]),
   });
 
   test(
@@ -557,7 +563,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "full types are checked under the options that its sound.json states",
+    "full types are checked under the options that full-types.json states",
     () =>
       slot(async () => {
         const sound = { compilerOptions: { strict: true, noUncheckedIndexedAccess: true } };

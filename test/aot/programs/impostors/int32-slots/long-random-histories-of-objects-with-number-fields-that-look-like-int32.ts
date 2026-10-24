@@ -25,7 +25,7 @@ function copyC(trio: Trio, from: Trio) { trio.c = from.c; }
 function sumOf(trio: Trio) { return trio.a + trio.b + trio.c; }
 let seed = Number(process.argv[2] ?? 12345);
 function random(below: number) {
-  seed = (seed * 1103515245 + 12345) % 2147483648;
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
   return Math.floor((seed / 2147483648) * below);
 }
 const names = ["a", "b", "c"];

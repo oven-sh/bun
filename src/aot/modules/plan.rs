@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests;
 
+use super::ApplicationGraph;
 use super::bindings::{
     Holder, ImportBinding, ModuleExport, ModuleRequest, SyntheticExport, SyntheticExportId,
 };
@@ -41,6 +42,28 @@ pub enum ModuleRef {
         importer: FileId,
         specifier: Atom,
     },
+}
+
+impl ModuleRef {
+    pub fn map_file(self, map: &dyn Fn(FileId) -> Option<FileId>) -> Option<ModuleRef> {
+        Some(match self {
+            ModuleRef::File(file) => ModuleRef::File(map(file)?),
+            ModuleRef::Inner { file, callback } => ModuleRef::Inner {
+                file: map(file)?,
+                callback,
+            },
+            ModuleRef::Face(file) => ModuleRef::Face(map(file)?),
+            ModuleRef::Check(file) => ModuleRef::Check(map(file)?),
+            ModuleRef::Runtime(_) => self,
+            ModuleRef::External {
+                importer,
+                specifier,
+            } => ModuleRef::External {
+                importer: map(importer)?,
+                specifier,
+            },
+        })
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -524,6 +547,34 @@ impl ModuleGraph {
     pub fn set_namespace_is_seen(&mut self, module: ModuleRef) {
         self.plan_mut()
             .add(|plan| &mut plan.is_namespace_seen, module);
+    }
+
+    /// `finish_plan` has to follow.
+    pub fn adopt_plan(&mut self, application: &ApplicationGraph<'_>) {
+        let theirs = application.graph;
+        let modules: Vec<ModuleRef> = self.plan().numbers.modules().collect();
+        let mut left_out_inner_modules = Vec::new();
+        for module in modules {
+            let Some(their_module) = application.application_module(module) else {
+                continue;
+            };
+            if theirs.keeps_module_object(their_module) {
+                self.set_keeps_module_object(module);
+            }
+            if theirs.names_way_to_module_objects(their_module) {
+                self.set_names_way_to_module_objects(module);
+            }
+            if theirs
+                .plan()
+                .has(&theirs.plan().is_namespace_seen, their_module)
+            {
+                self.set_namespace_is_seen(module);
+            }
+            if matches!(module, ModuleRef::Inner { .. }) && theirs.is_left_out(their_module) {
+                left_out_inner_modules.push(module);
+            }
+        }
+        self.leave_out_inner_modules(&left_out_inner_modules);
     }
 
     pub(super) fn mark_plan_unfinished(&mut self) {

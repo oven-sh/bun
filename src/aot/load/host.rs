@@ -202,7 +202,7 @@ impl LoadHost<'_> {
         path: &[u8],
         package: Option<EnclosingPackage<'_>>,
     ) -> Option<Vec<u8>> {
-        // Full types whose sound.json does not fit what is installed is not used: the build says so and goes on.
+        // Full types whose full-types.json does not fit what is installed are not used: the build says so and goes on.
         let packages = self.input.typed_packages;
         if packages
             .find_manifest_mismatch(package?, self.input.defined)

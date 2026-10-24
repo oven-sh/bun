@@ -1313,8 +1313,8 @@ pub struct BundleOptions<'a> {
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_whitespace: bool,
     pub minify_syntax: bool,
-    /// See `Features::keeps_top_level_const` of the parser.
-    pub keeps_top_level_const: bool,
+    /// See `Features::is_library` of the parser.
+    pub is_library: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
@@ -1543,7 +1543,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
             minify_whitespace: self.minify_whitespace,
             minify_syntax: self.minify_syntax,
-            keeps_top_level_const: self.keeps_top_level_const,
+            is_library: self.is_library,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
@@ -1802,7 +1802,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: false,
             minify_whitespace: false,
             minify_syntax: false,
-            keeps_top_level_const: false,
+            is_library: false,
             minify_identifiers: false,
             keep_names: false,
             dead_code_elimination: true,

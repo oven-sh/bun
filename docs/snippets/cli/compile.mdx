@@ -78,8 +78,8 @@ Builds a package to publish instead of an executable. It writes into `--outdir`:
 - each JavaScript file once more with its types kept (`index.full.ts`), which `bun compile` compiles in place of the
   JavaScript
 - a `package.json` made from the project's own: `main`, `module`, `types`, `exports` and `files` name what was written,
-  the `"full-types"` condition names the full-types files, and `scripts`, `devDependencies`, `private` and `workspaces` are
-  left out
+  the `"full-types"` condition names the full-types files, `"compilerOptions"` says how strict the sources are, and
+  `scripts`, `devDependencies`, `private` and `workspaces` are left out
 - the project's `README` and `LICENSE`
 
 `dependencies`, `peerDependencies` and `optionalDependencies` stay imports. `devDependencies` are bundled.

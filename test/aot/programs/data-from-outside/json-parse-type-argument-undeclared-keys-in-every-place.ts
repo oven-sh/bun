@@ -110,7 +110,7 @@ let seed = 1;
 for (let i = 0; i < 600; i++) {
   const members = ['"x":1'];
   for (let k = 0; k < 14; k++) {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
     if (seed & 0x10000) members.push(`"name${k}":${k % 3 ? k : '"v' + k + '"'}`);
     if (k === 6) members.push('"y":2');
   }

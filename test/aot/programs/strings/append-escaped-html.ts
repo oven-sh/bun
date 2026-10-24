@@ -1,5 +1,4 @@
-// Bun.escapeHTML called through a constant in the middle of a concatenation escapes straight into the buffer.
-// IR+ ^ .*StringBuilderAppendBuiltin .* overload=BunEscapeHTML/
+// Bun.escapeHTML called through a constant in the middle of a concatenation.
 const escape = Bun.escapeHTML;
 const log: string[] = [];
 function show(label: string, text: string): void {

@@ -1,3 +1,5 @@
+use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
+use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
 use smallvec::SmallVec;
 
@@ -5,7 +7,7 @@ use super::{is_statically_resolved, lower_expression};
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::RegExpFlags;
 use crate::ir::{TypeId, TypeTable, ValueId};
-use crate::lower::{FileLowering, FunctionLowering, call, condition, types};
+use crate::lower::{FileLowering, FunctionLowering, condition, types};
 
 enum ElementKind {
     Hole,
@@ -55,9 +57,6 @@ pub(super) fn lower_array_literal(
     let ExprKind::Array(elements) = hir[literal].kind else {
         unreachable!("lower_array_literal takes an Array expression");
     };
-    if let Some(made) = call::try_lower_list_of_indexes(lowering, literal) {
-        return made;
-    }
     let contents = types::array_literal_contents(lowering.file, literal);
     let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
     lower_elements(lowering, contents, &[], &elements, hir[literal].pos)
@@ -77,8 +76,33 @@ pub(super) fn lower_regexp_literal(
         diagnostics.report(Code::InvalidRegExpFlags, span, &[letters]);
         return lowering.builder.undefined();
     };
-    let pattern = lowering.file.intern_atom(pattern);
+    let pattern = match pattern_as_printed(lowering.file.queries.atom_bytes(pattern)) {
+        Some(printed) => lowering.file.intern_bytes(&printed),
+        None => lowering.file.intern_atom(pattern),
+    };
     lowering.builder.new_reg_exp(pattern, flags)
+}
+
+/// As `js_printer` writes a literal for `bun run`, so that `source` reads the same. `None`: as written.
+fn pattern_as_printed(written: &[u8]) -> Option<Vec<u8>> {
+    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
+    if written
+        .iter()
+        .all(|&byte| is_printed_as_written(u32::from(byte)))
+    {
+        return None;
+    }
+    let mut printed = Vec::with_capacity(written.len() * 2);
+    let characters = CodepointIterator::init(written);
+    let mut cursor = Cursor::default();
+    while characters.next(&mut cursor) {
+        match cursor.c as u32 {
+            character if is_printed_as_written(character) => printed.push(character as u8),
+            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
+            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
+        }
+    }
+    Some(printed)
 }
 
 pub(in crate::lower) fn lower_argument_list(

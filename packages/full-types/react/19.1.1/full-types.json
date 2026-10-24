@@ -1,0 +1,11 @@
+{
+  "format": 2,
+  "name": "react",
+  "version": "19.1.1",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "cjs/react-compiler-runtime.production.js": "f7d518f5c043cd008514b4fd8c665a9d2fa5686bd36c6e7d44d78187c0438700"
+  },
+  "needs": []
+}

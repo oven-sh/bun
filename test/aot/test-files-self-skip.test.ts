@@ -30,6 +30,7 @@ const needNoCompiler = [
   "aot/the-compiler-reads-no-environment-variable.test.ts",
   "aot/a-switch-of-the-compiler-names-every-enumerator.test.ts",
   "aot/lists-of-operations-in-the-compiler-only-shrink.test.ts",
+  "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts",
   "aot/every-field-of-flows-results-is-written-and-read.test.ts",
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts",
   "aot/host-object-accessors.test.ts",

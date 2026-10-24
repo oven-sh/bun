@@ -59,7 +59,7 @@ pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Lo
     log.add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
-        format_args!("{SKIPPED_TYPED_FILES}: it does not support {option} yet"),
+        format_args!("{SKIPPED_TYPED_FILES}: they do not support {option} yet"),
     );
 }
 
@@ -381,7 +381,7 @@ pub(crate) fn typed_files_for_build(
             Some(_) => "",
         };
         return warn(format_args!(
-            "with its types put back it has type errors{under}, the first at {}:{}:{}: TS{}: {}",
+            "they have type errors{under}, the first at {}:{}:{}: TS{}: {}",
             BStr::new(shown),
             first.line,
             first.column,
@@ -390,9 +390,7 @@ pub(crate) fn typed_files_for_build(
         ));
     }
     if !report.incomplete.is_empty() {
-        return warn(format_args!(
-            "with its types put back it could not be type checked"
-        ));
+        return warn(format_args!("they could not be type checked"));
     }
     let refusal = (found.typed.iter().zip(&outputs)).find_map(|((path, text), output)| {
         why_programs_refuse((path, text), (output.path, output.javascript))

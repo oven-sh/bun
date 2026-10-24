@@ -29,8 +29,8 @@ test("the full types of a package defines its fields, as the JavaScript it stand
     }),
     "node_modules/fields/index.js": javascript,
     "node_modules/fields/index.d.ts": `export declare function keys(): string;\n`,
-    ".sound/fields/sound.json": JSON.stringify({
-      sound: 1,
+    ".full-types/fields/full-types.json": JSON.stringify({
+      format: 1,
       name: "fields",
       version: "1.0.0",
       when: {},
@@ -38,8 +38,8 @@ test("the full types of a package defines its fields, as the JavaScript it stand
       lay: { "index.js": createHash("sha256").update(javascript).digest("hex"), "index.sound.ts": "new" },
       needs: [],
     }),
-    ".sound/fields/lay/index.js": `export * from "./index.sound.ts";\n`,
-    ".sound/fields/lay/index.sound.ts": `class Base { declare seen: number | undefined; set z(v: number) { this.seen = v; } }\nexport class A extends Base { x: number | undefined; y: number = 1; }\nexport class B extends Base { // @ts-expect-error\n  z: number = 2; }\nexport function keys(): string { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`,
+    ".full-types/fields/lay/index.js": `export * from "./index.sound.ts";\n`,
+    ".full-types/fields/lay/index.sound.ts": `class Base { declare seen: number | undefined; set z(v: number) { this.seen = v; } }\nexport class A extends Base { x: number | undefined; y: number = 1; }\nexport class B extends Base { // @ts-expect-error\n  z: number = 2; }\nexport function keys(): string { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`,
   });
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
   const {

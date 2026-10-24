@@ -4,7 +4,7 @@ function text(seed, length) {
   let s = "";
   let x = seed * 2654435761 % 4294967296;
   for (let i = 0;i < length; i++) {
-    x = (x * 1103515245 + 12345) % 2147483648;
+    x = (Math.imul(x, 1103515245) + 12345) & 0x7fffffff;
     s += "abcdefghijklmnopqrstuvwxyz0123456789,:|#@"[(x >>> 8) % "abcdefghijklmnopqrstuvwxyz0123456789,:|#@".length];
   }
   return s;

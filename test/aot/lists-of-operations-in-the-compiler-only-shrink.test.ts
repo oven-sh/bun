@@ -135,7 +135,6 @@ const known: Record<string, number> = {
   "passes/AOTResolveCalls.h callSiteOpcodes": 12,
   "passes/AOTResolveCallsLists.cpp CallResolver::findSpreadOfRest": 6,
   "passes/AOTResolveCallsLists.cpp CallResolver::isSeenByNobodyElse": 6,
-  "passes/AOTReuseEnvironments.cpp holdsAmongSeveralResults": 3,
   "passes/AOTSimplifyCastsInternal.h repeatableCasts": 4,
   "passes/AOTSinkAllocationsCandidates.cpp AllocationPrefilter::neverFolds": 3,
   "passes/AOTSinkAllocationsCandidates.cpp AllocationSinking::collectCandidates": 7,
@@ -146,9 +145,6 @@ const known: Record<string, number> = {
   "passes/AOTSinkAllocationsInterpreter.h interpretedListUses": 8,
   "passes/AOTSinkAllocationsInterpreter.h interpretedReads": 11,
   "passes/AOTSinkAllocationsInterpreter.h interpretedStores": 13,
-  // A guess at whether a loop is worth a copy: an operation that is not listed costs that copy, never an answer.
-  "passes/AOTSplitUnions.cpp LoopSplitter::isUsedAsNumber": 16,
-  "passes/AOTSplitUnions.cpp operationsOnTwoOfAKind": 7,
   "passes/AOTSplitUnions.h accessesByNameOrKey": 13,
   "passes/AOTStringBuilderLikelyKeys.cpp keyedAccesses": 3,
   // TODO: these two are gone from the engine behind the build that this Bun pins. They leave with the next pin.

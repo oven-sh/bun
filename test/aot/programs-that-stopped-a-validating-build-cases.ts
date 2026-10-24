@@ -29,6 +29,8 @@ const stopped: Record<string, string[]> = {
     "array-from-a-length-without-a-mapper/walked-by-for-each-for-in-and-a-pattern",
     "array-from-a-length-without-a-mapper/walked-by-its-iterators",
     "array-from-a-length-without-a-mapper/with-void-0-written-as-the-mapper",
+    "arrays-of-the-greatest-length-are-read-and-stored-into",
+    "names-and-a-length-come-to-the-object-that-a-species-constructor-answers",
     "push-grows-long-arrays",
   ],
   "async-and-generators": [
@@ -150,6 +152,14 @@ const stopped: Record<string, string[]> = {
     "members-are-replaced-for-every-reader",
     "replaced-console-log-keeps-its-arguments",
     "the-global-object-is-asked-for-another-prototype-and-then-for-its-own-names",
+  ],
+  "literal-strings": [
+    "the-keys-of-a-literal-of-flags-beside-an-unread-field-that-holds-one-of-them/the-elements-are-read-compared-switched-on-and-stored",
+    "the-keys-of-a-literal-of-flags-beside-an-unread-field-that-holds-one-of-them/the-keys-of-another-literal-are-listed-far-below",
+    "the-keys-of-a-literal-of-flags-beside-an-unread-field-that-holds-one-of-them/the-list-goes-into-a-set",
+    "the-keys-of-a-literal-of-flags-beside-an-unread-field-that-holds-one-of-them/the-list-is-joined",
+    "the-keys-of-a-literal-of-flags-beside-an-unread-field-that-holds-one-of-them/the-list-is-kept-and-asked-for-its-length",
+    "the-keys-of-a-literal-of-flags-beside-an-unread-field-that-holds-one-of-them/the-list-is-searched",
   ],
   "modules": [
     "function-export-read-by-name-through-the-caches",

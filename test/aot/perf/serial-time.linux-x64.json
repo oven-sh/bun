@@ -40,7 +40,6 @@
   "Optimize | DeferClosuresInFields": 26,
   "Optimize | AllocateInFrames": 305,
   "Optimize | AllocateInnerObjects": 46,
-  "Optimize | ReuseEnvironments": 167,
   "PlanSlots | PlanSlots": 49,
   "Select | Select": 94,
   "Select | observe access sites": 39,

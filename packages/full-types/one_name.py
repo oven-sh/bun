@@ -41,7 +41,7 @@ The gates:
   more     Nor under noUncheckedIndexedAccess, exactOptionalPropertyTypes, noImplicitOverride and useUnknownInCatchVariables.
   verify   Without its types the text prints as npm's file does, line for line. Bun prints both.
   lines    Line n of the text is line n of npm's file with types added: tools/carry_patch.py relies on it.
-  same     lay/, lay.sums and sound.json in the repository are what this run made. --write writes them instead.
+  same     lay/, lay.sums and full-types.json in the repository are what this run made. --write writes them instead.
 
 Environment: BUN, a Bun that has `bun check --aot`. Default: bun"""
 import glob, hashlib, json, os, re, shutil, subprocess, sys
@@ -151,12 +151,12 @@ def printed_lines(path, cwd):
 def finish(lay, installed):
     sha256 = lambda data: hashlib.sha256(data).hexdigest()
     manifest = json.dumps({
-        'sound': 2, 'name': NAME, 'version': VERSION, 'when': {}, 'basis': {},
+        'format': 2, 'name': NAME, 'version': VERSION, 'when': {}, 'basis': {},
         'lay': {path: sha256(installed[path]) for path in sorted(lay)}, 'needs': [],
     }, indent=2) + '\n'
     files = {'lay/' + path: text for path, text in lay.items()}
     files['lay.sums'] = ''.join('%s  %s\n' % (sha256(lay[path].encode()), path) for path in sorted(lay))
-    files['sound.json'] = manifest
+    files['full-types.json'] = manifest
     if WRITES and not failures:
         for path, content in files.items():
             os.makedirs(os.path.dirname(COMMITTED + '/' + path), exist_ok=True)
@@ -172,7 +172,7 @@ def finish(lay, installed):
             for folder, _, names in os.walk(COMMITTED + '/lay') for file in names
             if os.path.relpath(os.path.join(folder, file), COMMITTED + '/lay') not in lay
         ]
-        report(not different, 'same', 'lay/, lay.sums and sound.json are what src/ gives' if not different else 'differs: ' + ' '.join(different))
+        report(not different, 'same', 'lay/, lay.sums and full-types.json are what src/ gives' if not different else 'differs: ' + ' '.join(different))
     print('one_name.py: %s' % ('every gate passed' if not failures else '%d gates failed' % failures))
     sys.exit(1 if failures else 0)
 

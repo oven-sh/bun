@@ -67,7 +67,11 @@ fn equal_entries_print_once() {
 #[test]
 fn notes_without_location_print_after_located_messages() {
     let mut diagnostics = Diagnostics::new();
-    let used = Diagnostic::new(Code::TypedPackageUsed, None, &[b"p", b"1.0.0", b".sound/p"]);
+    let used = Diagnostic::new(
+        Code::TypedPackageUsed,
+        None,
+        &[b"p", b"1.0.0", b".full-types/p"],
+    );
     diagnostics.add(None, used);
     let error = checker_error("/project/a.ts", (1, 5), 2322, "wrong type");
     diagnostics.add_build_diagnostics(Stage::Check, vec![with_effect(error, Effect::StopsBuild)]);
@@ -75,7 +79,7 @@ fn notes_without_location_print_after_located_messages() {
         describe(&written(diagnostics)),
         [
             "/project/a.ts:1:5 Err TS2322: wrong type",
-            "Note \"p\" 1.0.0 is compiled from its full types in .sound/p",
+            "Note \"p\" 1.0.0 is compiled from its full types in .full-types/p",
         ]
     );
 }
@@ -128,7 +132,11 @@ fn warnings_and_notes_do_not_fail_build() {
     let mut diagnostics = Diagnostics::new();
     let warning = Diagnostic::new(Code::FunctionIntrospection, None, &[b"f.caller"]);
     diagnostics.add(None, warning);
-    let note = Diagnostic::new(Code::TypedPackageUsed, None, &[b"p", b"1.0.0", b".sound/p"]);
+    let note = Diagnostic::new(
+        Code::TypedPackageUsed,
+        None,
+        &[b"p", b"1.0.0", b".full-types/p"],
+    );
     diagnostics.add(None, note);
     assert!(!diagnostics.has_errors());
     let log = written(diagnostics);
@@ -142,10 +150,10 @@ fn log_diagnostic_prints_number_and_counts() {
     log_diagnostic(
         &mut log,
         Code::TypedPackageUsed,
-        &[b"shapes", b"1.0.0", b".sound/shapes"],
+        &[b"shapes", b"1.0.0", b".full-types/shapes"],
     );
     let unsupported = "TS100050: --aot does not support --splitting".to_string();
-    let typed = "\"shapes\" 1.0.0 is compiled from its full types in .sound/shapes";
+    let typed = "\"shapes\" 1.0.0 is compiled from its full types in .full-types/shapes";
     assert_eq!(
         kinds_and_texts(&log),
         [(Kind::Err, unsupported), (Kind::Note, typed.to_string())]

@@ -19,7 +19,7 @@ function filesUnder(folder: string, from = folder): string[] {
   });
 }
 function typedVersions(folder = home, depth = 0): string[] {
-  if (existsSync(join(folder, "sound.json"))) return [folder];
+  if (existsSync(join(folder, "full-types.json"))) return [folder];
   if (depth === 3) return [];
   return readdirSync(folder)
     .filter(name => !["tools", "trees", "recipe"].includes(name) && statSync(join(folder, name)).isDirectory())
@@ -145,11 +145,11 @@ test("there are full types", () => {
 });
 
 test("react's compiler-runtime is typed at the installed file's own path", () => {
-  const versions = folders.filter(folder => json(join(folder, "sound.json")).name === "react");
+  const versions = folders.filter(folder => json(join(folder, "full-types.json")).name === "react");
   expect(versions.length).toBeGreaterThan(10);
   for (const folder of versions) {
-    const manifest = json(join(folder, "sound.json"));
-    expect(manifest.sound).toBe(2);
+    const manifest = json(join(folder, "full-types.json"));
+    expect(manifest.format).toBe(2);
     expect(manifest.lay).toHaveProperty(["cjs/react-compiler-runtime.production.js"]);
     expect(Object.keys(manifest.lay)).not.toContain("compiler-runtime.js");
     expect(readFileSync(join(folder, "lay", "cjs", "react-compiler-runtime.production.js"), "utf8")).toContain(
@@ -159,11 +159,11 @@ test("react's compiler-runtime is typed at the installed file's own path", () =>
 });
 
 test("react-dom's server bundles are typed at the installed files' own paths", () => {
-  const versions = folders.filter(folder => json(join(folder, "sound.json")).name === "react-dom");
+  const versions = folders.filter(folder => json(join(folder, "full-types.json")).name === "react-dom");
   expect(versions.length).toBeGreaterThanOrEqual(2);
   for (const folder of versions) {
-    const manifest = json(join(folder, "sound.json"));
-    expect(manifest.sound).toBe(2);
+    const manifest = json(join(folder, "full-types.json"));
+    expect(manifest.format).toBe(2);
     expect(manifest.when).toEqual({});
     expect(Object.keys(manifest.lay)).toEqual([
       "cjs/react-dom-server-legacy.browser.production.js",
@@ -181,7 +181,7 @@ test("react-dom's server bundles are typed at the installed files' own paths", (
 
 test("an int32 of a typed text is Bun's", () => {
   const texts = folders.flatMap(folder => {
-    const { name, version } = json(join(folder, "sound.json"));
+    const { name, version } = json(join(folder, "full-types.json"));
     return Object.entries(layOf(folder, name, version)).map(([path, bytes]) => [
       `${name}/${version}/${path}`,
       bytes.toString(),
@@ -235,13 +235,13 @@ test("no typed text freezes a value of which its type says nothing", () => {
 });
 
 describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"), folder]))("%s", (where, folder) => {
-  const manifest = json(join(folder, "sound.json"));
+  const manifest = json(join(folder, "full-types.json"));
   const { name, version } = manifest;
 
   test("the manifest has the expected format", () => {
     const required = Object.keys(manifest).filter(key => key !== "compilerOptions");
-    expect(required.sort()).toEqual(["basis", "lay", "name", "needs", "sound", "version", "when"]);
-    expect([1, 2]).toContain(manifest.sound);
+    expect(required.sort()).toEqual(["basis", "format", "lay", "name", "needs", "version", "when"]);
+    expect([1, 2]).toContain(manifest.format);
     expect(`${name}/${version}`).toBe(where);
     expect(manifest.needs).toBeArray();
     expect(Object.keys(manifest.lay)).not.toBeEmpty();
@@ -257,10 +257,10 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
   test("package.json is the companion's", () => {
     const companion = json(join(folder, "package.json"));
     expect(licences).toHaveProperty([name]);
-    expect(companion.name).toBe("@oven/sound-" + name.replace(/^@/, "").replaceAll("/", "__"));
+    expect(companion.name).toBe("@oven/full-types-" + name.replace(/^@/, "").replaceAll("/", "__"));
     expect(companion.version).toBe(version);
     expect(companion.peerDependencies).toEqual({ [name]: version });
-    expect(companion.files).toEqual(["sound.json", "lay", "LICENSE", "NOTICE"]);
+    expect(companion.files).toEqual(["full-types.json", "lay", "LICENSE", "NOTICE"]);
     expect(companion.license).toBe(licences[name]?.licence);
     expect(Object.keys(companion).sort()).toEqual([
       "description",
@@ -302,7 +302,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
     if (licence === "MIT") expect(text).toMatch(holder);
     if (licence !== "Apache-2.0") return;
     for (const [path, bytes] of Object.entries(layOf(folder, name, version))) {
-      if (manifest.sound === 1 && manifest.lay[path] !== "new") continue;
+      if (manifest.format === 1 && manifest.lay[path] !== "new") continue;
       expect(bytes.toString().split("\n")[0]).toMatch(/^\/\/ CHANGED: /);
       expect(bytes.toString()).toMatch(holder);
     }
@@ -310,7 +310,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
 
   test("nothing that is published names a machine", () => {
     const machine = /\/Users\/|\/home\/|\/private\/|\/tmp\//;
-    for (const file of ["sound.json", "package.json", "NOTICE"])
+    for (const file of ["full-types.json", "package.json", "NOTICE"])
       expect(readFileSync(join(folder, file), "utf8")).not.toMatch(machine);
     for (const [path, bytes] of Object.entries(layOf(folder, name, version)))
       expect([path, machine.test(bytes.toString())]).toEqual([path, false]);

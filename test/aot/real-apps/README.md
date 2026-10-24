@@ -5,15 +5,18 @@ Open-source TypeScript projects that nobody here wrote, each at a pinned commit,
 `projects.json` is the list: repository, commit, the directory of the package, its `tsconfig.json`, an entry point and a kind.
 
 ```sh
-bun test/aot/real-apps/run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests] [--jobs <n>] [--bun <path>] [--tsc <path>] [--no-jail]
+bun test/aot/real-apps/run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests,compiled] [--jobs <n>] [--files-at-a-time <n>] [--bun <path>] [--tsc <path>] [--results <name>] [--no-jail]
 ```
 
-| Step    | What runs                                                                                     | Network | Runs the project's code |
-| ------- | --------------------------------------------------------------------------------------------- | ------- | ----------------------- |
-| `fetch` | `git fetch --depth 1` of the commit, `bun install --ignore-scripts`                           | yes     | no                      |
-| `types` | TypeScript 7 (`--tsc`) and `bun check` on the same `tsconfig.json`; every difference is a bug | no      | no                      |
-| `build` | `bun build --compile` and `bun build --compile --aot --no-macros` of the entry point          | no      | no                      |
-| `tests` | `bun test` twice, then `bun test --aot`, compared test by test                                | no      | yes                     |
+| Step       | What runs                                                                                     | Network | Runs the project's code |
+| ---------- | --------------------------------------------------------------------------------------------- | ------- | ----------------------- |
+| `fetch`    | `git fetch --depth 1` of the commit, `bun install --ignore-scripts`                           | yes     | no                      |
+| `types`    | TypeScript 7 (`--tsc`) and `bun check` on the same `tsconfig.json`; every difference is a bug | no      | no                      |
+| `build`    | `bun build --compile` and `bun build --compile --aot --no-macros` of the entry point          | no      | no                      |
+| `tests`    | `bun test` twice, then `bun test --aot`, compared test by test                                | no      | yes                     |
+| `compiled` | `bun test` twice, then each test file alone as compiled code, compared test by test           | no      | yes                     |
+
+`bun test --aot` checks a project as the build does and then runs it from its source files. Only `compiled` runs machine code: each file in which plain Bun passes a test is compiled with all it imports and run by `bun test --debug-aot`, alone, so that a file that isn't built or ends early takes no other file with it. It isn't among the default steps. Put `<work folder>/scratch` on a file system in memory: the jail's overlay writes there, and the kernel syncs that file system each time a jail ends.
 
 It prints one line per project and writes `<work folder>/results.json`. A test counts only if plain Bun passes it twice. A failure under `--aot` is grouped by its message and by the innermost stack frame inside the project.
 

@@ -93,10 +93,10 @@ const TYPED_FILE: &str = "export const x: number = 1;\n";
 const TYPED_FILE_WITH_OTHER_CODE: &str = "export const x: number = 2;\n";
 
 const SOUND_JSON_FOR_OTHER_VERSION: &str =
-    r#"{"sound":2,"name":"p","version":"2.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
+    r#"{"format":2,"name":"p","version":"2.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
 
 const SOUND_JSON_FOR_PRODUCTION: &str = concat!(
-    r#"{"sound":2,"name":"p","version":"1.0.0","#,
+    r#"{"format":2,"name":"p","version":"1.0.0","#,
     r#""when":{"process.env.NODE_ENV":"production"},"lay":{"x.js":""},"needs":[]}"#,
 );
 
@@ -117,10 +117,10 @@ const TYPED_CAST_BEFORE_MISMATCH: &str = concat!(
 );
 
 const SHAPES_USED: &str = "\"shapes\" 1.2.3 is compiled from its full types in node_modules/shapes";
-const PROJECT_VERSION_USED: &str = "\"p\" 1.0.0 is compiled from its full types in .sound/p";
-const IS_FOR_OTHER_VERSION: &str = "it is for version 2.0.0, but 1.0.0 is installed. \
-                                    Replace it with the full types for 1.0.0, or remove it";
-const NEEDS_PRODUCTION: &str = "it needs process.env.NODE_ENV to be defined as \"production\". \
+const PROJECT_VERSION_USED: &str = "\"p\" 1.0.0 is compiled from its full types in .full-types/p";
+const IS_FOR_OTHER_VERSION: &str = "they are for version 2.0.0, but 1.0.0 is installed. \
+                                    Replace them with the full types for 1.0.0, or remove them";
+const NEEDS_PRODUCTION: &str = "they need process.env.NODE_ENV to be defined as \"production\". \
                                 Pass --define 'process.env.NODE_ENV=\"production\"'";
 const SHIPPED_VERSION_DIFFERS: &str =
     "index.full.ts without its types doesn't match index.js. Was the package patched?";
@@ -184,7 +184,7 @@ fn shipped_version_not_used(position: &str, sentence: &str) -> Printed {
 }
 
 fn project_version_text(sentence: &str) -> String {
-    format!("TS100056: The full types of \"p\" in .sound/p can't be used: {sentence}")
+    format!("TS100056: The full types of \"p\" in .full-types/p can't be used: {sentence}")
 }
 
 fn load_with_messages(lines: &[String]) -> String {
@@ -272,8 +272,8 @@ fn project_version_files<'a>(sound_json: &'a str, typed: &'a str) -> [(&'a str, 
         ("app.ts", "import \"p\";\n"),
         ("node_modules/p/package.json", TYPED_PACKAGE_JSON),
         ("node_modules/p/x.js", "export const x = 1;\n"),
-        (".sound/p/sound.json", sound_json),
-        (".sound/p/lay/x.js", typed),
+        (".full-types/p/full-types.json", sound_json),
+        (".full-types/p/lay/x.js", typed),
     ]
 }
 
@@ -606,8 +606,8 @@ fn typed_version_error_stops_build() {
         let error = || type_error(packages, x, Effect::StopsBuild);
         report(packages, vec![error(), error()], &[])
     });
-    let text = "TS100021: The full types of 'p' in .sound/p has type errors (2), \
-                the first at /project/.sound/p/lay/x.js:1:7";
+    let text = "TS100021: The full types of 'p' in .full-types/p have type errors (2), \
+                the first at /project/.full-types/p/lay/x.js:1:7";
     let error = message_with_type_error(Kind::Err, text);
     assert_eq!(
         outcome.printed,
@@ -749,7 +749,7 @@ fn accepted_project_version_is_named_by_sound_folder() {
 fn rejected_project_version_is_reported_and_names_both_files() {
     let files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE_WITH_OTHER_CODE);
     let expected = "loaded: /project/node_modules/p/x.js:1:18: TS100056: The full types of \"p\" \
-                    in .sound/p can't be used: lay/x.js without its types doesn't match x.js. \
+                    in .full-types/p can't be used: lay/x.js without its types doesn't match x.js. \
                     Was the package patched?\n";
     assert_eq!(describe_load(&files), expected);
 }
@@ -764,7 +764,7 @@ fn manifest_mismatch_is_reported_without_position() {
 #[test]
 fn manifest_without_pins_is_reported() {
     let files = project_version_files("{}", TYPED_FILE);
-    let expected = load_with_messages(&[project_version_text("its sound.json is not valid")]);
+    let expected = load_with_messages(&[project_version_text("full-types.json is not valid")]);
     assert_eq!(describe_load(&files), expected);
 }
 
@@ -802,8 +802,8 @@ fn each_installed_copy_is_compared_with_manifest() {
         NESTED_COPY_OF_OTHER_VERSION,
     ]
     .concat();
-    let sentence = "it is for version 1.0.0, but 2.0.0 is installed. \
-                    Replace it with the full types for 2.0.0, or remove it";
+    let sentence = "they are for version 1.0.0, but 2.0.0 is installed. \
+                    Replace them with the full types for 2.0.0, or remove them";
     let expected = load_with_messages(&[project_version_text(sentence)]);
     assert_eq!(describe_load(&files), expected);
 }
@@ -833,7 +833,7 @@ fn manifest_is_compared_with_what_build_defines() {
 #[test]
 fn typed_version_of_package_that_is_not_loaded_is_not_compared() {
     let mut files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE).to_vec();
-    files.push((".sound/unused/sound.json", "{"));
+    files.push((".full-types/unused/full-types.json", "{"));
     let outcome = with_packages(&files, report_without_errors);
     assert!(
         outcome.rejected_versions.is_empty(),

@@ -1330,12 +1330,12 @@ Writes the types of a library beside its JavaScript, without running `tsc`. Bun 
 ```txt
   index.js       135 bytes  (entry point)
   index.d.ts     123 bytes  (declaration)
-  index.full.ts  232 bytes  (typed)
+  index.full.ts  232 bytes  (full types)
 ```
 
 | File            | Holds                                              | How many                 | Read by                       |
 | --------------- | -------------------------------------------------- | ------------------------ | ----------------------------- |
-| `index.js`      | The bundle, the same bytes as without `dts`        | One for each entry point | Every runtime and bundler     |
+| `index.js`      | The bundle                                         | One for each entry point | Every runtime and bundler     |
 | `index.d.ts`    | The types of what the source file exports          | One for each source file | Editors, `tsc`, `bun check`   |
 | `index.full.ts` | `index.js` with the types of your sources put back | One for each entry point | [`bun compile`](/bundler/aot) |
 
@@ -1346,11 +1346,13 @@ Point `"types"` in your `package.json` at `index.d.ts`, and the `"full-types"` c
 - **The CLI needs `--outdir`.** `Bun.build()` without `outdir` writes nothing and returns the files in `outputs`. They have `kind: "asset"`.
 - **`dts` can't be used with `compile`.**
 - **A JavaScript entry point gets a `.d.ts` file only.** Bun infers it from the code and its JSDoc comments.
-- **Some options leave out `index.full.ts`.** With `--minify`, `--splitting`, `--no-bundle`, `--sourcemap=inline` or a `--format` other than `esm`, Bun writes the `.d.ts` files and warns about the rest.
+- **Some options leave out `index.full.ts`.** With `--minify-identifiers` (which `--minify` includes), `--no-bundle`, `--sourcemap=inline` or a `--format` other than `esm`, Bun writes the `.d.ts` files and warns about the rest.
 
 ```txt
-warn: the full types that bun compile compiles a package from are left out: it does not support --minify yet
+warn: the full types that bun compile compiles a package from are left out: they do not support --minify-identifiers yet
 ```
+
+- **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, [dead code is removed](/bundler/aot-libraries#dead-code), and [`--minify-syntax` skips a few rewrites](/bundler/aot-libraries#minifying), so that `index.full.ts` type checks like your sources.
 
 ### features
 

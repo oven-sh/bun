@@ -15,13 +15,13 @@ use bun_sema_driver::host::{Disk, to_native};
 use std::collections::BTreeSet;
 
 const SUPPORTED_FORMAT: f64 = 2.0;
-const SOUND_DIRECTORY: &[u8] = b".sound";
-const SOUND_MANIFEST: &[u8] = b"sound.json";
+const SOUND_DIRECTORY: &[u8] = b".full-types";
+const SOUND_MANIFEST: &[u8] = b"full-types.json";
 const PACKAGE_MANIFEST: &[u8] = b"package.json";
 const NODE_MODULES: &[u8] = b"node_modules";
 /// What the name of a package that holds the full types of another package starts with.
-const INSTALLED_PREFIX: (&[u8], &[u8]) = (b"@oven", b"sound-");
-/// `@oven/sound-scope__name` is for `@scope/name`.
+const INSTALLED_PREFIX: (&[u8], &[u8]) = (b"@oven", b"full-types-");
+/// `@oven/full-types-scope__name` is for `@scope/name`.
 const SCOPE_SEPARATOR: &[u8] = b"__";
 const LAY_SUFFIX: &[u8] = b"/lay";
 const ADDED_FILE: &[u8] = b"new";
@@ -32,7 +32,7 @@ pub(crate) struct TypedPackages<'a> {
     packages: Vec<TypedPackage>,
 }
 
-/// Where full types lies. One in the project counts before the one that the package ships, an installed one after it.
+/// Where full types lie. Those in the project count before those that the package ships, installed ones after them.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TypedPackagePlace {
     Project,
@@ -258,44 +258,44 @@ impl ManifestMismatch {
     fn sentence(&self) -> Vec<u8> {
         match self {
             ManifestMismatch::InvalidJson => {
-                format_sentence("its sound.json is not valid JSON", &[])
+                format_sentence("full-types.json is not valid JSON", &[])
             }
             ManifestMismatch::InvalidManifest => {
-                format_sentence("its sound.json is not valid", &[])
+                format_sentence("full-types.json is not valid", &[])
             }
             ManifestMismatch::UnsupportedFormat => format_sentence(
-                "this version of Bun doesn't support the \"sound\" version in its sound.json",
+                "this version of Bun doesn't support the \"format\" in full-types.json",
                 &[],
             ),
             ManifestMismatch::InvalidNeeds => format_sentence(
-                "\"needs\" in its sound.json must be a list of package names",
+                "\"needs\" in full-types.json must be a list of package names",
                 &[],
             ),
             ManifestMismatch::InvalidPath { path } => format_sentence(
-                "\"{0}\" in its sound.json is not a path inside the package",
+                "\"{0}\" in full-types.json is not a path inside the package",
                 &[path],
             ),
             ManifestMismatch::EmptyLay => {
-                format_sentence("\"lay\" in its sound.json is empty", &[])
+                format_sentence("\"lay\" in full-types.json is empty", &[])
             }
             ManifestMismatch::AddsFile { path } => format_sentence(
-                "it adds {0}, and full types can only replace installed files",
+                "they add {0}, and full types can only replace installed files",
                 &[path],
             ),
             ManifestMismatch::VersionDiffers { typed, installed } => format_sentence(
-                "it is for version {0}, but {1} is installed. \
-                 Replace it with the full types for {1}, or remove it",
+                "they are for version {0}, but {1} is installed. \
+                 Replace them with the full types for {1}, or remove them",
                 &[typed, installed],
             ),
             ManifestMismatch::DefineMissing { name, value } => format_sentence(
-                "it needs {0} to be defined as \"{1}\". Pass --define '{0}=\"{1}\"'",
+                "they need {0} to be defined as \"{1}\". Pass --define '{0}=\"{1}\"'",
                 &[name, value],
             ),
             ManifestMismatch::TypedFileMissing { path } => {
                 format_sentence("lay/{0} is missing", &[path])
             }
             ManifestMismatch::NeedsPackage { name } => format_sentence(
-                "it needs the full types of \"{0}\", which is not used",
+                "they need the full types of \"{0}\", which are not used",
                 &[name],
             ),
         }
@@ -375,7 +375,7 @@ fn typed_package_name(folder: &[u8]) -> Vec<u8> {
 
 fn parse_manifest(json: &Json, package_name: &[u8]) -> Result<SoundManifest, ManifestMismatch> {
     const INVALID: ManifestMismatch = ManifestMismatch::InvalidManifest;
-    let Some(Json::Number(format)) = json.get(b"sound") else {
+    let Some(Json::Number(format)) = json.get(b"format") else {
         return Err(INVALID);
     };
     if *format != SUPPORTED_FORMAT {

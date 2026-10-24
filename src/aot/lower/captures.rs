@@ -13,7 +13,6 @@ pub(in crate::lower) use self::values::{
 };
 use super::FunctionLowering;
 use super::scope::{BindingRef, Initialization, WalkedFunction, WalkedFunctionId};
-use crate::ir::generated::LimitId;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(in crate::lower) enum Capture {
@@ -47,9 +46,10 @@ pub(in crate::lower) struct CapturePlan {
     pub(in crate::lower) functions_over_limit: Vec<WalkedFunctionId>,
 }
 
-/// What a closure has room for.
+/// What a closure has room for where no limit is lowered.
+#[cfg(test)]
 pub(in crate::lower) fn max_captures() -> usize {
-    let limit = LimitId::MaxCaptures;
+    let limit = crate::ir::generated::LimitId::MaxCaptures;
     limit.value_on_arm64().min(limit.value_on_x86_64()) as usize
 }
 

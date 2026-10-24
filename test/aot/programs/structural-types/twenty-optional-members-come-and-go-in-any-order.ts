@@ -130,7 +130,7 @@ function churn(label: string, subject: Wide, start: number, steps: number): void
   let wrong = 0;
   let firstWrong = "";
   for (let step = 0; step < steps; step++) {
-    seed = (seed * 1103515245 + 12345) % 2147483648;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
     const key = names[(seed >> 4) % names.length];
     const at = order.indexOf(key);
     if ((seed >> 12) % 4 === 0) {

@@ -46,8 +46,8 @@ const EVERY_ORIGIN: [(&str, &str); 11] = [
     ("node_modules/untyped/index.js", "module.exports = 1;\n"),
     ("node_modules/p/package.json", TYPED_PACKAGE_JSON),
     ("node_modules/p/x.js", "export const x = 1;\n"),
-    (".sound/p/sound.json", TYPED_PACKAGE_SOUND_JSON),
-    (".sound/p/lay/x.js", "export const x: number = 1;\n"),
+    (".full-types/p/full-types.json", TYPED_PACKAGE_SOUND_JSON),
+    (".full-types/p/lay/x.js", "export const x: number = 1;\n"),
 ];
 
 const APPLICATION_FILES: [(FileOrigin, &str); 6] = [
@@ -179,8 +179,8 @@ fn check_project_typed_version(installed: &str, typed: &str) -> Vec<(Kind, u32)>
         ("main.ts", "import \"p\";\n"),
         ("node_modules/p/package.json", TYPED_PACKAGE_JSON),
         ("node_modules/p/x.js", installed),
-        (".sound/p/sound.json", TYPED_PACKAGE_SOUND_JSON),
-        (".sound/p/lay/x.js", typed),
+        (".full-types/p/full-types.json", TYPED_PACKAGE_SOUND_JSON),
+        (".full-types/p/lay/x.js", typed),
     ])
 }
 

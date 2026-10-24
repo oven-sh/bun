@@ -15,7 +15,7 @@ use super::lexical_owners::compute_lexical_owners;
 use super::walk::{EvalUse, ScopeWalk, WalkInput, walk_file};
 use super::{BindingForm, BindingRef, Placement, ScopeInput, WalkedFunctionId};
 use crate::ir::VariableKey;
-use crate::lower::captures::{self, CaptureInput, CapturePlan, CapturedBinding, compute_captures};
+use crate::lower::captures::{CaptureInput, CapturePlan, CapturedBinding, compute_captures};
 use crate::modules::ModuleKind;
 
 struct Context<'x, 's> {
@@ -170,7 +170,7 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         uses: &sharing.captured_uses,
         references: &uses.references,
         entry_captures: &uses.entry_captures,
-        max_captures: captures::max_captures(),
+        max_captures: input.max_captures,
     });
     let placements = storage::place_bindings(&context, &forms, &sharing, &captures);
     tables::build_analysis(

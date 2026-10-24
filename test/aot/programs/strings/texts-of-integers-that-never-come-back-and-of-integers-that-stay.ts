@@ -2,7 +2,7 @@
 // Collections run in between: what they find dead is forgotten, what they find alive is still found, whatever size the memory has by then.
 let seed = 12345;
 function next(): number {
-  seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
   return seed;
 }
 let lengths = 0;

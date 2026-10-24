@@ -34,6 +34,7 @@ type PlanRule = {
     | "DefaultBoolean"
     | "DefaultNumber"
     | "DefaultString";
+  kind: number;
   bound?: number;
   divisor?: number;
   length?: number;
@@ -77,16 +78,22 @@ type PlanNode = {
   message?: string;
   default?: PlanLiteral;
   text?: string;
+  describesArrays?: boolean;
+  describesOtherObjects?: boolean;
+  hasDefault?: boolean;
 };
 
 type Plan = PlanNode[];
 
 // What is made of the text of a plan or of a rule, once. Reporting adds nodes for optional members.
 interface Prepared {
-  parsed: any;
+  nodes: Plan;
+  rule: PlanRule | undefined;
   optionalUnions: Map<number, number>;
-  expressions: Map<string, RegExp>;
 }
+
+// The engine's: what new RegExp(source).test(value) answers, and RegExp.$1 and its like are left as they are.
+type MatchesPattern = (source: string, value: unknown) => boolean;
 
 interface Run {
   nodes: Plan;
@@ -95,29 +102,135 @@ interface Run {
   remainingIssues: number;
   reported: Map<object, unknown[]> | undefined;
   optionalUnions: Map<number, number>;
-  expressions: Map<string, RegExp>;
-  copies: Set<object>;
+  matchesPattern: MatchesPattern;
+  // Undefined when the whole value is a copy that nobody else has.
+  copies: Set<object> | undefined;
 }
 
-function prepare(text: string): Prepared {
-  return { parsed: $jsonParse(text), optionalUnions: new $Map(), expressions: new $Map() };
+// The number of the case in holds(). A rule that tests nothing has none.
+function kindOfRule(rule: PlanRule["rule"]): number {
+  switch (rule) {
+    case "Integer":
+      return 0;
+    case "Minimum":
+      return 1;
+    case "Maximum":
+      return 2;
+    case "ExclusiveMinimum":
+      return 3;
+    case "ExclusiveMaximum":
+      return 4;
+    case "MultipleOf":
+      return 5;
+    case "MinimumLength":
+      return 6;
+    case "MaximumLength":
+      return 7;
+    case "Pattern":
+      return 8;
+    case "Format":
+      return 9;
+    case "Template":
+      return 10;
+    case "Message":
+    case "DefaultNull":
+    case "DefaultBoolean":
+    case "DefaultNumber":
+    case "DefaultString":
+      return 11;
+  }
+}
+
+function createRule(parsed: any): PlanRule {
+  return {
+    rule: parsed.rule,
+    kind: kindOfRule(parsed.rule),
+    bound: parsed.bound,
+    divisor: parsed.divisor,
+    length: parsed.length,
+    format: parsed.format,
+    source: parsed.source,
+    texts: parsed.texts,
+    placeholders: parsed.placeholders,
+  };
+}
+
+function createRules(parsed: any[] | undefined): PlanRule[] | undefined {
+  if (parsed === undefined) return undefined;
+  const rules: PlanRule[] = [];
+  for (let i = 0; i < parsed.length; i++) rules.push(createRule(parsed[i]));
+  return rules;
+}
+
+function createMembers(parsed: any[] | undefined): PlanMember[] | undefined {
+  if (parsed === undefined) return undefined;
+  const members: PlanMember[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const member = parsed[i];
+    members.push({ key: member.key, node: member.node, isOptional: member.isOptional, mustBeOwn: member.mustBeOwn });
+  }
+  return members;
+}
+
+// The parser's objects are read by name. These have the fields of their types.
+function createNodes(parsed: any[]): Plan {
+  const nodes: Plan = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const node = parsed[i];
+    nodes.push({
+      shape: node.shape,
+      primitive: node.primitive,
+      value: node.value,
+      element: node.element,
+      elements: node.elements,
+      arms: node.arms,
+      members: createMembers(node.members),
+      undeclared: node.undeclared,
+      undeclaredValue: node.undeclaredValue,
+      discriminant: node.discriminant,
+      remembers: node.remembers,
+      rules: createRules(node.rules),
+      message: node.message,
+      default: node.default,
+      text: node.text,
+      describesArrays: undefined,
+      describesOtherObjects: undefined,
+      hasDefault: undefined,
+    });
+  }
+  return nodes;
+}
+
+// A library file has no variables: the engine keeps the Map, and compiled code hands it to every function here that takes a text.
+function prepare(text: string, preparedByText: Map<string, Prepared>): Prepared {
+  const known = preparedByText.get(text);
+  if (known !== undefined) return known;
+  const parsed = $jsonParse(text);
+  const isPlan = $isArray(parsed);
+  const prepared = {
+    nodes: isPlan ? createNodes(parsed) : [],
+    rule: isPlan ? undefined : createRule(parsed),
+    optionalUnions: new $Map(),
+  };
+  preparedByText.set(text, prepared);
+  return prepared;
 }
 
 function maxIssueCount(): number {
   return 100;
 }
 
-function createRun(plan: string): Run {
-  const prepared = prepare(plan);
+function createRun(plan: string, preparedByText: Map<string, any>, isCopy: boolean): Run {
+  const prepared = prepare(plan, preparedByText);
   return {
-    nodes: prepared.parsed,
+    nodes: prepared.nodes,
     refused: {},
     verdicts: undefined,
     remainingIssues: maxIssueCount(),
     reported: undefined,
     optionalUnions: prepared.optionalUnions,
-    expressions: prepared.expressions,
-    copies: new $Set(),
+    matchesPattern: preparedByText.get("matchesPattern"),
+    copies: isCopy ? undefined : new $Set(),
   };
 }
 
@@ -190,13 +303,18 @@ function isPlainObject(value: any): boolean {
   return isObject(value) && !$isArray(value);
 }
 
-function matchesPlaceholder(kind: string, part: string): boolean {
+function matchesPlaceholder(matchesPattern: MatchesPattern, kind: string, part: string): boolean {
   if (kind === "s") return true;
   if (kind === "n") return part !== "" && $numberIsFinite(+part);
-  return /^-?(?:0|[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)$/.test(part);
+  return matchesPattern("^-?(?:0|[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)$", part);
 }
 
-function matchesTemplate(texts: string[], placeholders: string, value: string): boolean {
+function matchesTemplate(
+  matchesPattern: MatchesPattern,
+  texts: string[],
+  placeholders: string,
+  value: string,
+): boolean {
   const last = texts.length - 1;
   if (
     value.length < texts[0].length + texts[last].length ||
@@ -209,20 +327,11 @@ function matchesTemplate(texts: string[], placeholders: string, value: string): 
   for (let i = 1; i < last; i++) {
     const partEnd = texts[i] === "" ? position + 1 : value.indexOf(texts[i], position);
     const next = partEnd + texts[i].length;
-    if (partEnd < 0 || next > end || !matchesPlaceholder(placeholders[i - 1], value.slice(position, partEnd)))
-      return false;
+    if (partEnd < 0 || next > end) return false;
+    if (!matchesPlaceholder(matchesPattern, placeholders[i - 1], value.slice(position, partEnd))) return false;
     position = next;
   }
-  return matchesPlaceholder(placeholders[last - 1], value.slice(position, end));
-}
-
-function expressionOf(expressions: Map<string, RegExp>, source: string): RegExp {
-  let expression = expressions.get(source);
-  if (expression === undefined) {
-    expression = new RegExp(source);
-    expressions.set(source, expression);
-  }
-  return expression;
+  return matchesPlaceholder(matchesPattern, placeholders[last - 1], value.slice(position, end));
 }
 
 // A surrogate pair is one character. A surrogate without its other half is one too.
@@ -248,35 +357,31 @@ function hasAtMost(value: any, length: number): boolean {
   return value.length <= length || (typeof value === "string" && countCodePoints(value) <= length);
 }
 
-function holds(expressions: Map<string, RegExp>, rule: PlanRule, value: any): boolean {
-  switch (rule.rule) {
-    case "Integer":
+function holds(matchesPattern: MatchesPattern, rule: PlanRule, value: any): boolean {
+  switch (rule.kind) {
+    case 0:
       return $numberIsInteger(value);
-    case "Minimum":
+    case 1:
       return value >= rule.bound!;
-    case "Maximum":
+    case 2:
       return value <= rule.bound!;
-    case "ExclusiveMinimum":
+    case 3:
       return value > rule.bound!;
-    case "ExclusiveMaximum":
+    case 4:
       return value < rule.bound!;
-    case "MultipleOf":
+    case 5:
       return value % rule.divisor! === 0;
-    case "MinimumLength":
+    case 6:
       return hasAtLeast(value, rule.length!);
-    case "MaximumLength":
+    case 7:
       return hasAtMost(value, rule.length!);
-    case "Pattern":
-      return expressionOf(expressions, rule.source!).test(value);
-    case "Format":
-      return rule.source ? expressionOf(expressions, rule.source).test(value) : $urlCanParse(value);
-    case "Template":
-      return matchesTemplate(rule.texts!, rule.placeholders!, value);
-    case "Message":
-    case "DefaultNull":
-    case "DefaultBoolean":
-    case "DefaultNumber":
-    case "DefaultString":
+    case 8:
+      return matchesPattern(rule.source!, value);
+    case 9:
+      return rule.source ? matchesPattern(rule.source, value) : $urlCanParse(value);
+    case 10:
+      return matchesTemplate(matchesPattern, rule.texts!, rule.placeholders!, value);
+    default:
       return true;
   }
 }
@@ -285,7 +390,7 @@ function allHold(run: Run, node: PlanNode, value: any): boolean {
   const rules = node.rules;
   if (rules === undefined) return true;
   for (let i = 0; i < rules.length; i++) {
-    if (!holds(run.expressions, rules[i], value)) return false;
+    if (!holds(run.matchesPattern, rules[i], value)) return false;
   }
   return true;
 }
@@ -309,44 +414,45 @@ function addOnce(list: number[], at: number): void {
   if (!list.includes(at)) list.push(at);
 }
 
-function kindsDescribedAt(run: Run, at: number): { arrays: boolean; otherObjects: boolean } {
-  const kinds = { arrays: false, otherObjects: false };
-  const alternatives = [at];
-  for (let i = 0; i < alternatives.length; i++) {
-    const node = run.nodes[alternatives[i]];
-    const arms = node.shape === "Union" ? (node.arms ?? []) : [];
-    for (let j = 0; j < arms.length; j++) addOnce(alternatives, arms[j]);
-    if (node.shape === "Array" || node.shape === "Tuple") kinds.arrays = true;
-    else if (node.shape === "Dictionary" || node.shape === "Object") kinds.otherObjects = true;
+function describes(run: Run, at: number, isArray: boolean): boolean {
+  const described = run.nodes[at];
+  if (described.describesArrays === undefined) {
+    described.describesArrays = described.describesOtherObjects = false;
+    const alternatives = [at];
+    for (let i = 0; i < alternatives.length; i++) {
+      const node = run.nodes[alternatives[i]];
+      const arms = node.shape === "Union" ? (node.arms ?? []) : [];
+      for (let j = 0; j < arms.length; j++) addOnce(alternatives, arms[j]);
+      if (node.shape === "Array" || node.shape === "Tuple") described.describesArrays = true;
+      else if (node.shape === "Dictionary" || node.shape === "Object") described.describesOtherObjects = true;
+    }
   }
-  return kinds;
+  return (isArray ? described.describesArrays : described.describesOtherObjects) === true;
 }
 
 // Reading an object may run code of the program: getters, the traps of a proxy, an iterator.
 function heldAt(run: Run, holder: any, key: any, at: number): any {
   const value = holder[key];
-  if (!isObject(value) || run.copies.has(value)) return value;
-  const kinds = kindsDescribedAt(run, at);
-  if (!kinds.arrays && !kinds.otherObjects) return value;
+  const copies = run.copies;
+  if (copies === undefined || !isObject(value) || copies.has(value)) return value;
   const isArray = $isArray(value);
-  if (!(isArray ? kinds.arrays : kinds.otherObjects)) return value;
+  if (!describes(run, at, isArray)) return value;
   const copy = isArray ? $arrayFrom(value) : { ...value };
-  run.copies.add(copy);
+  copies.add(copy);
   define(holder, key, copy);
   return copy;
 }
 
+// The holder is a copy that heldAt made: what it has of its own is enumerable.
 function heldMember(run: Run, holder: any, member: PlanMember): any {
-  return $call<boolean>($Object.prototype.propertyIsEnumerable, holder, member.key)
-    ? heldAt(run, holder, member.key, member.node)
-    : undefined;
+  return $hasOwn(holder, member.key) ? heldAt(run, holder, member.key, member.node) : undefined;
 }
 
 function heldRoot(run: Run, value: unknown): any {
   return heldAt(run, [value], 0, 0);
 }
 
-function appliesDefault(run: Run, at: number): boolean {
+function findDefault(run: Run, at: number): boolean {
   const alternatives = new $Set([at]);
   for (const alternative of alternatives) {
     const node = run.nodes[alternative];
@@ -355,6 +461,10 @@ function appliesDefault(run: Run, at: number): boolean {
     for (let i = 0; i < arms.length; i++) alternatives.add(arms[i]);
   }
   return false;
+}
+
+function appliesDefault(run: Run, at: number): boolean {
+  return (run.nodes[at].hasDefault ??= findDefault(run, at));
 }
 
 function startRemembering(run: Run): void {
@@ -564,7 +674,7 @@ function reportRules(run: Run, node: PlanNode, value: any, path: any[], issues: 
   const isArray = $isArray(value);
   for (let i = 0; i < rules.length; i++) {
     const rule = rules[i];
-    if (holds(run.expressions, rule, value)) continue;
+    if (holds(run.matchesPattern, rule, value)) continue;
     let code = "invalid_format";
     let expected = "";
     switch (rule.rule) {
@@ -684,11 +794,18 @@ function optionalUnionOf(run: Run, at: number): number {
   return unionAt;
 }
 
+// There is nothing to report about such a value, so it needs no path.
+function isRightPrimitive(run: Run, at: number, value: any): boolean {
+  const node = run.nodes[at];
+  return node.shape === "Primitive" && isNearArm(node, value) && allHold(run, node, value);
+}
+
 function reportMembers(run: Run, node: PlanNode, input: any, path: any[], issues: any[]): void {
   const members = node.members ?? [];
   for (let i = 0; i < members.length && run.remainingIssues !== 0; i++) {
     const member = members[i];
     const value = heldMember(run, input, member);
+    if (isRightPrimitive(run, member.node, value)) continue;
     const memberPath = withKey(path, member.key);
     if (isMissing(input, member, value)) {
       const message = run.nodes[member.node].message;
@@ -751,8 +868,10 @@ function report(run: Run, at: number, input: any, path: any[], issues: any[]): v
       expected = "array";
       if (!$isArray(input)) break;
       reportRules(run, node, input, path, issues);
-      for (let i = 0; i < input.length && run.remainingIssues !== 0; i++)
-        report(run, node.element!, heldAt(run, input, i, node.element!), withKey(path, i), issues);
+      for (let i = 0; i < input.length && run.remainingIssues !== 0; i++) {
+        const item = heldAt(run, input, i, node.element!);
+        if (!isRightPrimitive(run, node.element!, item)) report(run, node.element!, item, withKey(path, i), issues);
+      }
       return;
     case "Tuple": {
       const elements = node.elements ?? [];
@@ -884,11 +1003,18 @@ function findIssues(run: Run, value: any): any[] {
   return found;
 }
 
-function errorOf(found: any[]): any {
+function messageAndIssuesOf(found: any[]): [string, any[]] {
   const issues: any[] = [];
   const summaries: string[] = [];
   addWithWholePaths(found, maxIssueCount(), [], issues, summaries);
-  return errorWith(issues, summaries[0]);
+  return [messageOf(issues, summaries[0]), issues];
+}
+
+function errorOf(found: any[]): any {
+  const [message, issues] = messageAndIssuesOf(found);
+  const error: any = new TypeError(message);
+  $putByValDirect(error, "issues", issues);
+  return error;
 }
 
 function isIdentifier(key: string): boolean {
@@ -910,22 +1036,45 @@ function formatPath(path: any[]): string {
   return text;
 }
 
-function errorWith(issues: any[], summary: string): any {
+function messageOf(issues: any[], summary: string): string {
   const first = issues[0];
   if (first.path.length) summary = formatPath(first.path) + ": " + summary;
   if (issues.length > 1) summary += " (and " + (issues.length - 1) + " more)";
-  const error: any = new TypeError(summary);
-  $putByValDirect(error, "issues", issues);
-  return error;
+  return summary;
+}
+
+function addIssueOfRoot(run: Run, found: any[], value: any): void {
+  add(run, found, createIssue([], "invalid_type", expectedOf(run, 0), value, undefined));
+}
+
+// Most errors are caught and never read. The engine copies a value that it can copy without running code of the program. The message and the issues are made of the copy when one of them is first read.
+function tryDeferReport(value: unknown, plan: string, prepared: Map<string, any>): unknown {
+  const error = new TypeError();
+  const isDeferred = prepared.get("deferReport")(error, value, (copy: unknown) => {
+    const run = createRun(plan, prepared, true);
+    const found = findIssues(run, copy);
+    if (found.length === 0) addIssueOfRoot(run, found, copy);
+    return messageAndIssuesOf(found);
+  });
+  return isDeferred ? error : undefined;
 }
 
 export function validate(value: unknown): unknown {
   return value;
 }
 
-// Compiled code that has refused the value says so, and nothing is built. It may have refused a member that the text has once more, further on: then there is nothing to report.
-export function validateByPlan(value: unknown, plan: string, isRefused: boolean): unknown {
-  const run = createRun(plan);
+// Compiled code that has refused the value says so, and nothing is built.
+export function validateByPlan(
+  value: unknown,
+  plan: string,
+  isRefused: boolean,
+  prepared: Map<string, Prepared>,
+): unknown {
+  if (isRefused) {
+    const error = tryDeferReport(value, plan, prepared);
+    if (error !== undefined) throw error;
+  }
+  const run = createRun(plan, prepared, false);
   const held = heldRoot(run, value);
   if (isRefused) {
     const found = findIssues(run, held);
@@ -934,19 +1083,18 @@ export function validateByPlan(value: unknown, plan: string, isRefused: boolean)
   const result = build(run, 0, held);
   if (result !== run.refused) return result;
   const found = findIssues(run, held);
-  if (found.length === 0) add(run, found, createIssue([], "invalid_type", expectedOf(run, 0), held, undefined));
+  if (found.length === 0) addIssueOfRoot(run, found, held);
   throw errorOf(found);
 }
 
-export function interpretNode(value: unknown, plan: string): [boolean, unknown] {
-  const run = createRun(plan);
+export function interpretNode(value: unknown, plan: string, prepared: Map<string, Prepared>): [boolean, unknown] {
+  const run = createRun(plan, prepared, false);
   const result = build(run, 0, heldRoot(run, value));
   return result === run.refused ? [false, undefined] : [true, result];
 }
 
-export function holdsRule(value: unknown, rule: string): boolean {
-  const prepared = prepare(rule);
-  return holds(prepared.expressions, prepared.parsed, value);
+export function holdsRule(value: unknown, rule: string, prepared: Map<string, any>): boolean {
+  return holds(prepared.get("matchesPattern"), prepare(rule, prepared).rule!, value);
 }
 
 export function copyOwnProperties(value: object): object {

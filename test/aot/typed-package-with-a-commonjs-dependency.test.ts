@@ -18,14 +18,18 @@ const tsconfig = JSON.stringify({
   },
 });
 
-const typedPackage = (name: string, code: string, typed: string, declarations: string) => ({
+const callX = `export declare function callX(): string;\n`;
+
+const typedPackage = (name: string, type: "module" | "commonjs", typed: string, declarations = callX) => ({
   [`node_modules/${name}/package.json`]: JSON.stringify({
     name,
     version: "1.0.0",
-    type: "module",
+    type,
     exports: { ".": { types: "./index.d.ts", "full-types": "./index.full.ts", default: "./index.js" } },
   }),
-  [`node_modules/${name}/index.js`]: code,
+  [`node_modules/${name}/index.js`]: typed
+    .replace(/\((this: any)?\): string/g, "()")
+    .replace(/^declare global {.*?^}\n/ms, ""),
   [`node_modules/${name}/index.full.ts`]: typed,
   [`node_modules/${name}/index.d.ts`]: declarations,
 });
@@ -50,67 +54,106 @@ const shared = {
   }),
   "node_modules/between/index.js": `export { x, y } from "dep";\n`,
   "node_modules/between/index.d.ts": `export { x, y } from "dep";\n`,
-  ...typedPackage(
-    "names",
-    `import { x, y } from "dep";\nexport function callX() {\n  return x() + " " + y;\n}\n`,
-    `import { x, y } from "dep";\nexport function callX(): string {\n  return x() + " " + y;\n}\n`,
-    `export declare function callX(): string;\n`,
-  ),
-  ...typedPackage(
-    "whole",
-    `import dep from "dep";\nexport function callX() {\n  return dep.x() + " " + dep.y;\n}\n`,
-    `import dep from "dep";\nexport function callX(): string {\n  return dep.x() + " " + dep.y;\n}\n`,
-    `export declare function callX(): string;\n`,
-  ),
-  ...typedPackage(
-    "handed-on",
-    `export { x as callX } from "dep";\n`,
-    `export { x as callX } from "dep";\n`,
-    `export { x as callX } from "dep";\n`,
-  ),
-  ...typedPackage(
-    "indirect",
-    `import { x, y } from "between";\nexport function callX() {\n  return x() + " " + y;\n}\n`,
-    `import { x, y } from "between";\nexport function callX(): string {\n  return x() + " " + y;\n}\n`,
-    `export declare function callX(): string;\n`,
-  ),
 };
 
-const uses = {
-  "does not use": `console.log(callX());\n`,
-  "lists the names of": `console.log(callX(), Object.keys(require("dep")).join());\n`,
-  "stores a name of": `const dep = require("dep");\ndep.y = 3;\nconsole.log(callX(), dep.y);\n`,
-  "replaces a function of": `const dep = require("dep");\ndep.x = () => "replaced";\nconsole.log(callX(), dep.x());\n`,
-  "imports the default export of": `import dep from "dep";\nconsole.log(callX(), Object.keys(dep).join());\n`,
-  "hands on the namespace of": `import * as dep from "dep";\nconsole.log(callX(), Object.keys(dep).join());\n`,
-  "imports, when it is called,": `console.log(callX(), Object.keys(await import("dep")).join());\n`,
+async function expectSameOutput(name: string, files: Record<string, string>, entry: string) {
+  using dir = tempDir("typed-package-commonjs", { ...shared, ...files });
+  const root = String(dir);
+  const built = await spawned([bunExe(), "compile", `./${entry}`], root, env);
+  const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /full types|^error|^warn/.test(line));
+  const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
+  const plain = await spawned([bunExe(), entry], root, env);
+  expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+    said: [`note: "${name}" 1.0.0 is compiled from its full types in node_modules/${name}`],
+    stdout: plain.stdout,
+    exitCode: 0,
+  });
+  expect(plain.stdout).toMatch(/x of|replaced/);
+}
+
+const importers = {
+  names: `import { x, y } from "dep";\nexport function callX(): string {\n  return x() + " " + y;\n}\n`,
+  default: `import dep from "dep";\nexport function callX(): string {\n  return dep.x() + " " + dep.y;\n}\n`,
+  reexport: `export { x as callX } from "dep";\n`,
+  indirect: `import { x, y } from "between";\nexport function callX(): string {\n  return x() + " " + y;\n}\n`,
+  main: `declare global {\n  interface ImportMeta {\n    main: boolean;\n  }\n}\nimport { x } from "dep";\nexport function callX(): string {\n  return x() + " " + import.meta.main;\n}\n`,
 };
 
-describe.concurrent("a typed package answers as under plain Bun", () => {
-  for (const name of ["names", "whole", "handed-on", "indirect"]) {
-    for (const [use, text] of Object.entries(uses)) {
+const usesOfDependency = {
+  "is not used": `console.log(callX());\n`,
+  "has its keys listed": `console.log(callX(), Object.keys(require("dep")).join());\n`,
+  "is assigned to": `const dep = require("dep");\ndep.y = 3;\nconsole.log(callX(), dep.y);\n`,
+  "has a function replaced": `const dep = require("dep");\ndep.x = () => "replaced";\nconsole.log(callX(), dep.x());\n`,
+  "is a default import": `import dep from "dep";\nconsole.log(callX(), Object.keys(dep).join());\n`,
+  "is a namespace import": `import * as dep from "dep";\nconsole.log(callX(), Object.keys(dep).join());\n`,
+  "is a dynamic import": `console.log(callX(), Object.keys(await import("dep")).join());\n`,
+};
+
+describe.concurrent("a typed ES package imports a CommonJS package that, in the application,", () => {
+  for (const [name, typed] of Object.entries(importers)) {
+    for (const [use, text] of Object.entries(usesOfDependency)) {
       test(
-        `"${name}", where the application ${use} the CommonJS package that it imports`,
+        `${use} (${name})`,
         () =>
-          slot(async () => {
-            using dir = tempDir("typed-package-commonjs", {
-              ...shared,
-              "app.ts": `import { callX } from "${name}";\n${text}`,
-            });
-            const root = String(dir);
-            const built = await spawned([bunExe(), "compile", "./app.ts"], root, env);
-            const said = (built.stdout + built.stderr)
-              .split(/\r?\n/)
-              .filter(line => /full types|^error|^warn/.test(line));
-            const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
-            const plain = await spawned([bunExe(), "app.ts"], root, env);
-            expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-              said: [`note: "${name}" 1.0.0 is compiled from its full types in node_modules/${name}`],
-              stdout: plain.stdout,
-              exitCode: 0,
-            });
-            expect(plain.stdout).toMatch(/^(x of dep|replaced)/);
-          }),
+          slot(() =>
+            expectSameOutput(
+              name,
+              {
+                ...typedPackage(name, "module", typed, name === "reexport" ? typed : callX),
+                "app.ts": `import { callX } from "${name}";\n${text}`,
+              },
+              "app.ts",
+            ),
+          ),
+        300_000,
+      );
+    }
+  }
+});
+
+const commonjsPackages = {
+  assignments: `exports.x = function x(): string {\n  return "x of assignments";\n};\nexports.y = 2;\n`,
+  literal: `function x(): string {\n  return "x of literal";\n}\nconst y = 2;\nmodule.exports = { x, y };\n`,
+  function: `function x(): string {\n  return "x of function";\n}\nx.x = x;\nx.y = 2;\nmodule.exports = x;\n`,
+  marked: `Object.defineProperty(exports, "__esModule", { value: true });\nexports.x = function x(): string {\n  return "x of marked";\n};\nexports.y = 2;\nexports.default = { x: exports.x, y: 4 };\n`,
+  aliases: `const dep = require("dep");\nexports.x = dep.x;\nexports.y = dep.y;\n`,
+  forwarded: `module.exports = require("dep");\n`,
+  cycle: `exports.y = 2;\nconst other = require("./other.js");\nexports.x = function x(): string {\n  return "x of cycle " + other.seen;\n};\n`,
+  receiver: `exports.x = function x(this: any): string {\n  return "x of receiver " + typeof this?.y;\n};\nexports.y = 2;\n`,
+  main: `exports.x = function x(): string {\n  return "x of main " + (require.main === module) + " " + module.loaded;\n};\nexports.y = 2;\n`,
+};
+
+const usesOfPackage = {
+  "destructured require": `const { x, y } = require(P);\nconsole.log(x(), y);\n`,
+  "members of require": `const p = require(P);\nconsole.log(p.x(), p.y);\n`,
+  "keys listed": `console.log(Object.keys(require(P)).join(), require(P).x());\n`,
+  "assigned to": `const p = require(P);\np.y = 3;\nconsole.log(p.x(), p.y, require(P).y);\n`,
+  "function replaced": `const p = require(P);\np.x = () => "replaced";\nconsole.log(p.x(), require(P).x());\n`,
+  "named imports": `import { x, y } from P;\nconsole.log(x(), y);\n`,
+  "default import": `import p from P;\nconsole.log(p.x(), p.y, Object.keys(p).join());\n`,
+  "namespace import": `import * as p from P;\nconsole.log(p.x(), p.y, Object.keys(p).join());\n`,
+  "dynamic import": `const p = await import(P);\nconsole.log(p.x(), p.y, Object.keys(p).join());\n`,
+  "require in a function": `function load() {\n  return require(P);\n}\nconsole.log(load().x(), load().y);\n`,
+  "passed to a function": `function show(p) {\n  console.log(p.x(), p.y);\n}\nshow(require(P));\n`,
+};
+
+describe.concurrent("a typed CommonJS package", () => {
+  for (const [name, typed] of Object.entries(commonjsPackages)) {
+    for (const [use, text] of Object.entries(usesOfPackage)) {
+      test(
+        `${name}: ${use}`,
+        () =>
+          slot(() =>
+            expectSameOutput(
+              name,
+              {
+                ...typedPackage(name, "commonjs", typed),
+                [`node_modules/${name}/other.js`]: `exports.seen = Object.keys(require("./index.js")).join();\n`,
+                "app.js": text.replaceAll("P", JSON.stringify(name)),
+              },
+              "app.js",
+            ),
+          ),
         300_000,
       );
     }
@@ -118,29 +161,31 @@ describe.concurrent("a typed package answers as under plain Bun", () => {
 });
 
 test(
-  "import.meta.main is false in a typed package",
+  "an import of a typed package that fails at run time throws its own error",
   () =>
-    slot(async () => {
-      const code = `export function isMain() {\n  return import.meta.main;\n}\nif (import.meta.main) console.log("main");\n`;
-      using dir = tempDir("typed-package-main", {
-        ...shared,
-        ...typedPackage(
-          "tool",
-          code,
-          `declare global {\n  interface ImportMeta {\n    main: boolean;\n  }\n}\n${code.replace("()", "(): boolean")}`,
-          `export declare function isMain(): boolean;\n`,
-        ),
-        "app.ts": `import { isMain } from "tool";\nconsole.log(isMain(), import.meta.main);\n`,
-      });
-      const root = String(dir);
-      const built = await spawned([bunExe(), "compile", "./app.ts"], root, env);
-      const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /full types|^error|^warn/.test(line));
-      const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
-      expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-        said: [`note: "tool" 1.0.0 is compiled from its full types in node_modules/tool`],
-        stdout: "false true\n",
-        exitCode: 0,
-      });
-    }),
+    slot(() =>
+      expectSameOutput(
+        "absent",
+        {
+          ...typedPackage(
+            "absent",
+            "module",
+            `import { second } from "dep";\nexport const value: string = "x of " + second;\n`.replace(": string", ""),
+          ),
+          "node_modules/absent/index.full.ts": `import { second } from "dep";\nexport const value: string = "x of " + second;\n`,
+          "node_modules/dep/index.d.ts": `export declare const first: number;\nexport declare const second: number;\n`,
+          "late.js": `import { first } from "dep";\nconsole.log(first);\n`,
+          "app.js": `for (const load of [() => import("./late.js"), () => import("absent")]) {
+  try {
+    await load();
+  } catch (error) {
+    console.log("x of", String(error).replace(/ in module.*/, ""));
+  }
+}
+`,
+        },
+        "app.js",
+      ),
+    ),
   300_000,
 );

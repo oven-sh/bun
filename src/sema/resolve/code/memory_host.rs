@@ -674,7 +674,10 @@ mod tests {
         ];
         let host = MemoryHost::new(&files)
             .link("/p/node_modules/pkg", "/real/pkg")
-            .typed("/p/node_modules/pkg/index.js", "/p/.sound/pkg/index.ts");
+            .typed(
+                "/p/node_modules/pkg/index.js",
+                "/p/.full-types/pkg/index.ts",
+            );
         let package = |directory: &'static [u8]| {
             Some(EnclosingPackage {
                 directory,
@@ -683,7 +686,7 @@ mod tests {
             })
         };
         let real = package(b"/real/pkg");
-        let typed = Some(b"/p/.sound/pkg/index.ts".to_vec());
+        let typed = Some(b"/p/.full-types/pkg/index.ts".to_vec());
         assert_eq!(host.typed_version(b"/real/pkg/index.js", real), typed);
         assert_eq!(host.typed_version(b"/real/pkg/index.js", None), typed);
         let linked = package(b"/p/node_modules/pkg");

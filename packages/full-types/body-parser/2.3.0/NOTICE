@@ -1,4 +1,4 @@
-@oven/sound-body-parser 2.3.0
+@oven/full-types-body-parser 2.3.0
 
 This package holds files of body-parser 2.3.0 (https://www.npmjs.com/package/body-parser/v/2.3.0).
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>

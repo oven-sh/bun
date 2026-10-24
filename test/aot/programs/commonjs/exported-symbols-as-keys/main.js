@@ -37,6 +37,7 @@ for (let i = 0; i < 300; i++) {
 }
 show("total", total);
 show("functions that are values too", [Thing, throughTheObject, underWhatACallMade].map(kept => kept.name).join());
+show("called as a value", [underWhatACallMade].map(kept => kept(last)).join());
 show("the same however it is asked for", [keys.kState === kState, keys.kCount === kCount, require("./keys").kShared === kShared, kShared === Symbol.for("shared by its text")].join());
 show("texts", [kState, kCount, kShared, kBare, kMade, kPlain].map(String).join());
 show("own symbols", Object.getOwnPropertySymbols(last).map(String).join());

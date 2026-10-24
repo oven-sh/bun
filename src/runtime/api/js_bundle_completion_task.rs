@@ -1202,7 +1202,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
         transpiler.options.minify_syntax = config.minify.syntax;
-        transpiler.options.keeps_top_level_const = config.dts;
+        transpiler.options.is_library = config.dts;
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;
         transpiler.options.keep_names = config.minify.keep_names;
@@ -1234,11 +1234,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             false => config.check.then_some(check_types as options::TypeCheck),
         };
         if config.dts {
-            let is_minified =
-                config.minify.syntax || config.minify.whitespace || config.minify.identifiers;
             let unsupported = [
-                (is_minified, "minify"),
-                (config.code_splitting, "splitting"),
+                (config.minify.identifiers, "minify.identifiers"),
                 (
                     config.format != options::Format::Esm,
                     "a format other than esm",

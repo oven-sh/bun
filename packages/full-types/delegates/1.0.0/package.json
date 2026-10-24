@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-delegates",
+  "name": "@oven/full-types-delegates",
   "version": "1.0.0",
   "description": "Full types for delegates 1.0.0: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "delegates": "1.0.0"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

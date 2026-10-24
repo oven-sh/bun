@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 let seed = 12345;
 function random(below: number): number {
-    seed = (seed * 1103515245 + 12345) % 2147483648;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
     return Math.floor(seed / 65536) % below;
 }
 

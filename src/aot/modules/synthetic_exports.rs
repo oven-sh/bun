@@ -42,7 +42,7 @@ pub(super) fn number_synthetic_exports(
 ) -> SyntheticExports {
     let SyntheticExportKeys {
         mut keys, required, ..
-    } = collect_synthetic_export_keys(modules, tables, imports, commonjs);
+    } = collect_synthetic_export_keys(input, modules, tables, imports, commonjs);
     let atoms = &input.files.atoms;
     keys.shared_sort_unstable_by(|a, b| {
         let compare_names = || compare_code_units(atoms.bytes(a.1), atoms.bytes(b.1));
@@ -102,6 +102,7 @@ impl SyntheticExportKeys {
 }
 
 fn collect_synthetic_export_keys(
+    input: &BindInput<'_, '_>,
     modules: &ModuleSet,
     tables: &ExportTables,
     imports: &[FileImports],
@@ -168,6 +169,15 @@ fn collect_synthetic_export_keys(
             .flatten()
         {
             keys.add_name(modules, tables, module, name);
+        }
+    }
+    if let Some(application) = input.application {
+        for export in application.graph.synthetic_exports() {
+            if let ModuleRef::File(_) | ModuleRef::Inner { .. } = export.module
+                && let Some(module) = application.local_module(export.module)
+            {
+                keys.add((module, export.name), false);
+            }
         }
     }
     keys

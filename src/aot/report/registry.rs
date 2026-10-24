@@ -2,7 +2,9 @@ use super::format::lower_camel_case;
 use super::json::JsonWriter;
 use crate::builtins::id::Feature;
 use crate::engine::{is_optional_pass, operation_names};
-use crate::ir::generated::{FlowResultKind, PassId, RuntimeCounterId, SCHEMA_HASH, Sabotage};
+use crate::ir::generated::{
+    FlowResultKind, PassId, RuntimeCounterId, SCHEMA_HASH, Sabotage, ValidationFailureKind,
+};
 use crate::statistics::{LimitId, LimitValues, StatisticId};
 
 pub fn write() -> Vec<u8> {
@@ -31,6 +33,7 @@ pub fn write() -> Vec<u8> {
         .into_iter()
         .filter(|&sabotage| sabotage != Sabotage::None);
     write_names(&mut json, "sabotages", sabotages.map(Sabotage::name));
+    write_validation_failures(&mut json);
     let mut document = json.finish();
     document.push(b'\n');
     document
@@ -63,6 +66,18 @@ fn write_passes(json: &mut JsonWriter) {
         json.begin_element();
         json.string("name", pass.name().as_bytes());
         json.boolean("isOptional", is_optional_pass(pass));
+        json.end_object();
+    }
+    json.end_array();
+}
+
+/// What a validating executable prints behind "AOT validation:", each with the word of `--aot-disable` that its check belongs to.
+fn write_validation_failures(json: &mut JsonWriter) {
+    json.begin_array("validationFailures");
+    for kind in ValidationFailureKind::ALL {
+        json.begin_element();
+        json.string("name", kind.name().as_bytes());
+        json.string("disable", kind.disable().as_bytes());
         json.end_object();
     }
     json.end_array();

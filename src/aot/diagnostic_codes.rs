@@ -33,7 +33,7 @@ diagnostic_codes! {
     Legacy 100001..=100049 {
         PackageCompiledWithoutTypes = 100009, Warning, "'{0}' has {1} (the first at {2}), so {3} of its {4} files are compiled without their types. They still work, but run slower.";
         FileCompiledWithoutTypes = 100010, Warning, "'{0}' has {1} (the first at {2}), so it is compiled without its types. It still works, but runs slower.";
-        TypedVersionHasTypeErrors = 100021, Error, "The full types of '{0}' in {1} has type errors ({2}), the first at {3}";
+        TypedVersionHasTypeErrors = 100021, Error, "The full types of '{0}' in {1} have type errors ({2}), the first at {3}";
     }
     LegacyValidation 100107..=100107 {
         UnsupportedValidationType = 100107, Error, "{0}<{1}>() cannot validate '{2}'. Only types that JSON can represent can be validated.";

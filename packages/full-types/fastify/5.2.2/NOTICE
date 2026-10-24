@@ -1,4 +1,4 @@
-@oven/sound-fastify 5.2.2
+@oven/full-types-fastify 5.2.2
 
 This package holds files of fastify 5.2.2 (https://www.npmjs.com/package/fastify/v/5.2.2).
 Copyright (c) 2016-2025 The Fastify Team

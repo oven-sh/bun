@@ -7113,7 +7113,7 @@ impl<'s> Files<'s> {
         let (Ok(Parse { hir, bound, .. }) | Err(Parse { hir, bound, .. })) = &parsed;
         let role = FileRole::of_tree(hir);
         let (build, mut code) = BuildFile::into_parts(build);
-        // What full types writes relative to itself is relative to where its text is.
+        // What a full-types file writes relative to itself is relative to where its text is.
         let typed_source_path = code
             .as_deref()
             .and_then(|code| code.analyzed.typed_source_path);
@@ -7321,7 +7321,7 @@ impl<'s> Files<'s> {
                 let program = is_governed.then_some(program_resolver)?;
                 program.resolve_module_name(text, from, mode)
             });
-            // Full types stands for the installed file: what is not beside its text is beside that file.
+            // A full-types file stands for the installed file: what is not beside its text is beside that file.
             let resolved = resolved.or_else(|| {
                 typed_source_path?;
                 resolver.resolve_module_name(text, path, mode)

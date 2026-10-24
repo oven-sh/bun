@@ -49,7 +49,7 @@ pub(crate) const TYPED_PACKAGE_JSON: &str =
 
 #[cfg(test)]
 pub(crate) const TYPED_PACKAGE_SOUND_JSON: &str =
-    r#"{"sound":2,"name":"p","version":"1.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
+    r#"{"format":2,"name":"p","version":"1.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
 
 struct LoweringRequest<'a> {
     project: ProjectId,
@@ -476,6 +476,7 @@ fn with_loaded_bind_input<R>(
             deferred_exports: &deferred_exports,
             platform: build.platform,
             external_packages: &[],
+            application: None,
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
         }))
@@ -546,8 +547,8 @@ impl TemporaryDirectory {
     pub(crate) fn write_typed_package(&self, installed: &str, typed: &str) {
         self.write("node_modules/p/package.json", TYPED_PACKAGE_JSON);
         self.write("node_modules/p/x.js", installed);
-        self.write(".sound/p/sound.json", TYPED_PACKAGE_SOUND_JSON);
-        self.write(".sound/p/lay/x.js", typed);
+        self.write(".full-types/p/full-types.json", TYPED_PACKAGE_SOUND_JSON);
+        self.write(".full-types/p/lay/x.js", typed);
     }
 }
 

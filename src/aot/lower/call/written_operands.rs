@@ -1,3 +1,4 @@
+use bun_sema::bind::Parent;
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::hir::{Call, Chain, ExprId, ExprKind};
 use smallvec::SmallVec;
@@ -28,6 +29,27 @@ pub(super) fn find_locked_builtin(
         Some(Resolved::Builtin(path)) => path.locked_builtin().map(table::canonical_id),
         Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
     }
+}
+
+/// The literal of `Object.defineProperty(object, key, { .. })`. The call alone has it: what it says becomes part of the definition, also where it says constants alone.
+pub(in crate::lower) fn is_written_descriptor(
+    file: &FileLowering<'_, '_, '_, '_>,
+    literal: ExprId,
+) -> bool {
+    let Parent::Expr(parent) = file.bound.parent_of_expr(literal) else {
+        return false;
+    };
+    let ExprKind::Call(site) = file.hir[parent].kind else {
+        return false;
+    };
+    let site = file.hir[site];
+    let takes_descriptor = matches!(
+        find_locked_builtin(file, site.callee),
+        Some(BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty)
+    );
+    takes_descriptor
+        && matches!(site.chain, Chain::No)
+        && file.hir.ids(site.args).nth(2) == Some(literal)
 }
 
 // An `as` is a conversion of the list, which is then made.
@@ -228,6 +250,7 @@ pub(super) fn try_lower_call(
             lower_definition_by_descriptors(lowering, call, site)
         }
         Some(BuiltinId::ArrayFrom) => array_makers::lower_array_from(lowering, call, site),
+        Some(BuiltinId::Object) => lower_empty_object(lowering, call, site),
         Some(_) => None,
         None => array_makers::try_lower_method_call(lowering, call, site),
     }
@@ -330,6 +353,21 @@ pub(super) fn try_lower_new(
     match find_locked_builtin(lowering.file, site.callee)? {
         BuiltinId::Map => lower_map_of_entries(lowering, expression, site),
         BuiltinId::Set => lower_set_of_values(lowering, expression, site),
+        BuiltinId::Object => lower_empty_object(lowering, expression, site),
         _ => None,
     }
+}
+
+fn lower_empty_object(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    expression: ExprId,
+    site: Call,
+) -> Option<ValueId> {
+    if !site.args.is_empty() {
+        return None;
+    }
+    lowering.set_position(lowering.file.hir[expression].pos);
+    let layout = layouts::untyped_layout(lowering.file, &[]);
+    let made = object::begin_object(lowering, layout);
+    Some(object::finish_object(lowering, made))
 }

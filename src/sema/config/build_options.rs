@@ -276,7 +276,7 @@ pub fn default_options_of_full_types() -> Vec<(Vec<u8>, Json)> {
 
 pub fn find_manifest_of_full_types(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
-        if host.is_file(&join(dir, b"sound.json")) {
+        if host.is_file(&join(dir, b"full-types.json")) {
             return None;
         }
         let path = join(dir, b"package.json");

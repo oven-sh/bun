@@ -40,6 +40,16 @@ const programs: [entry: string, pairs: Pair[]][] = [
     ],
   ],
   [
+    "validation.ts",
+    [
+      ["a text parsed and checked by hand", "a text parsed by its type", 0],
+      ["a parsed object refused by hand", "a parsed object refused by its type", 64],
+      ["a text refused by hand", "a text refused by its type", 0],
+      ["a parsed object checked by hand", "a parsed object validated by its type", 64, "177 | 1859"],
+      ["a literal of the program checked by hand", "a literal of the program validated by its type", 64, "139 | 2631"],
+    ],
+  ],
+  [
     "values.js",
     [
       ["instanceof a constant that holds Promise", "instanceof the global Promise", 2],
@@ -80,6 +90,8 @@ describe.skipIf(!!skipped).each(programs)("compile/aot/perf/equivalent-forms/%s"
         bunEnv,
       ),
     );
+    // validate<T>() is there under --aot alone.
+    if (entry === "validation.ts") return;
     const compiled = await spawned([executable], root, bunEnv);
     const plain = await spawned([bunExe(), "run", join(root, entry)], root, bunEnv);
     expect(compiled.stdout).toBe(plain.stdout);

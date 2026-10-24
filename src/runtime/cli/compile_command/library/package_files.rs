@@ -9,6 +9,7 @@ use bun_options_types::Format;
 use bun_options_types::context::ContextData;
 use bun_paths::resolve_path::platform_to_posix_in_place;
 use bun_sema::json::Json;
+use bun_sema::resolve::TYPED_CONDITION;
 use bun_sema_driver::sound_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
@@ -42,7 +43,6 @@ const FIELDS_COPIED_LAST: [&[u8]; 8] = [
 ];
 const DOCUMENT_NAMES: [&[u8]; 3] = [b"README", b"LICENSE", b"LICENCE"];
 const MAX_PACKAGE_NAME_LENGTH: usize = 214;
-const TYPED_CONDITION: &[u8] = b"full-types";
 
 pub(super) struct PackageRequest<'a> {
     pub(super) project: &'a Project,

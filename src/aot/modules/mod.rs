@@ -73,7 +73,25 @@ pub struct BindInput<'a, 's> {
     pub platform: Platforms,
     /// Packages that an option of the build names as external. A computed specifier can name one that no import site names.
     pub external_packages: &'a [Vec<u8>],
+    pub application: Option<&'a ApplicationGraph<'a>>,
     pub in_parallel: InParallel<'a>,
+}
+
+/// For the graph of a typed package's own program. Every importer of a module has a say in how it exports, and only the application has all of them.
+pub struct ApplicationGraph<'a> {
+    pub graph: &'a ModuleGraph,
+    pub to_local: &'a (dyn Fn(FileId) -> Option<FileId> + Sync),
+    pub to_application: &'a (dyn Fn(FileId) -> Option<FileId> + Sync),
+}
+
+impl ApplicationGraph<'_> {
+    fn local_module(&self, module: ModuleRef) -> Option<ModuleRef> {
+        module.map_file(self.to_local)
+    }
+
+    fn application_module(&self, module: ModuleRef) -> Option<ModuleRef> {
+        module.map_file(self.to_application)
+    }
 }
 
 pub struct BoundModules {

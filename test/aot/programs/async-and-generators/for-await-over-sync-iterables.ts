@@ -1,7 +1,7 @@
 // `for await` over sync iterables of every kind, alone and beside other jobs: the order of everything that happens.
 let seed = 4242;
 function random(below: number): number {
-    seed = (seed * 1103515245 + 12345) % 2147483648;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
     return Math.floor(seed / 65536) % below;
 }
 

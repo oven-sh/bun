@@ -47,6 +47,14 @@ function turn(i: number): number {
   for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
   return hash;
 }
+//// char-codes-of-a-text-built-by-appending
+function turn(i: number): number {
+  let text = "";
+  for (let k = 0; k < 16; k++) text += String.fromCharCode(65 + ((i + k) & 15));
+  let hash = 0;
+  for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+  return hash;
+}
 //// index-loop
 const text = "The quick brown fox jumps over the lazy dog";
 function turn(i: number): number {
@@ -394,4 +402,14 @@ const texts = ["plain", "шире", "again", "ещё"];
 function turn(i: number): number {
   holder.text = texts[i & 3]!;
   return holder.text.length + holder.text.charCodeAt(0);
+}
+//// strip-rare-characters-of-a-unicode-class-from-a-long-text
+const text = ("line: the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n".repeat(40) + "\u2014 \u2026\n").repeat(4);
+function turn(i: number): number {
+  return text.replace(/[\p{Cf}\p{Variation_Selector}]/gu, "").length + (i & 1);
+}
+//// strip-what-is-not-ascii-from-a-long-text
+const text = ("line: the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n".repeat(40) + "\u2014 \u2026\n").repeat(4);
+function turn(i: number): number {
+  return text.replace(/[^\x00-\x7F]/gu, "").length + (i & 1);
 }

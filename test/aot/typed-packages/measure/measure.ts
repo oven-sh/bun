@@ -152,9 +152,9 @@ function layFolder(row: Row, variant: Variant, libraries: Map<string, string>): 
   if (typed) {
     for (const name of row.typedVersions ?? []) {
       const version = JSON.parse(readFileSync(join(findInstalled(name), "package.json"), "utf8")).version;
-      const from = [join(here, "typed-versions"), typedVersions].map(folder => join(folder, name, version)).find(folder => existsSync(join(folder, "sound.json")));
+      const from = [join(here, "typed-versions"), typedVersions].map(folder => join(folder, name, version)).find(folder => existsSync(join(folder, "full-types.json")));
       if (!from) throw new Error(`neither typed-versions nor packages/full-types has full types of ${name} ${version}`);
-      for (const part of ["sound.json", "lay"]) cpSync(join(from, part), join(folder, ".sound", name, part), { recursive: true });
+      for (const part of ["full-types.json", "lay"]) cpSync(join(from, part), join(folder, ".full-types", name, part), { recursive: true });
     }
   }
   return folder;

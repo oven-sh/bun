@@ -101,6 +101,10 @@ impl Build<'_> {
         };
         // A call of a helper that a compiler or a bundler wrote says what a module exports, and where a module begins.
         let known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
+        let application = match project {
+            ProjectId::Application => loaded.application,
+            ProjectId::Runtime => None,
+        };
         let BoundModules {
             mut graph,
             counters,
@@ -111,24 +115,22 @@ impl Build<'_> {
             deferred_exports,
             platform: self.platform,
             external_packages,
+            application: application.map(|application| &application.graph),
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
         });
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);
-        let left_out_of_world = match project {
-            ProjectId::Application => self.left_out_of_world.take(),
-            ProjectId::Runtime => None,
-        };
-        let is_world = left_out_of_world.is_some();
-        let left_out = match project {
-            ProjectId::Application if is_world => {
-                let left_out = left_out_of_world.unwrap_or_default();
+        let left_out = match (project, application) {
+            (_, Some(application)) => {
+                let left_out = application.left_out;
+                let left_out = left_out.in_other_program(application.graph.to_local);
+                graph.adopt_plan(&application.graph);
                 graph.leave_out_files(&left_out.files, &in_parallel);
                 graph.limit_exports(|file, export| left_out.find_export_use(file, export));
                 left_out
             }
-            ProjectId::Application if graph.errors().is_empty() => {
+            (ProjectId::Application, None) if graph.errors().is_empty() => {
                 let input = ProgramReachInput {
                     files: view.files(),
                     sources: view.sources,
@@ -141,11 +143,11 @@ impl Build<'_> {
                 graph.limit_exports(|file, export| left_out.find_export_use(file, export));
                 left_out
             }
-            ProjectId::Application | ProjectId::Runtime => LeftOutCode::default(),
+            (ProjectId::Application | ProjectId::Runtime, None) => LeftOutCode::default(),
         };
         graph.finish_plan(&in_parallel);
         let deferred_data = match project {
-            ProjectId::Application if is_world => DeferredData::default(),
+            ProjectId::Application if application.is_some() => DeferredData::default(),
             ProjectId::Application => self.bundle_pages(loaded, &graph),
             ProjectId::Runtime => DeferredData::default(),
         };

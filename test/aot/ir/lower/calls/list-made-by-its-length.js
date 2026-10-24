@@ -41,10 +41,8 @@
 // CHECK: [[makeUndefined]] = Builtin builtin=CompilerHelpersArrayOfUndefined
 // CHECK-NEXT: = Call [[makeUndefined]], -, [[onlyLength]]
 // CHECK-LABEL: function {{*}}name="indexes"
-// CHECK: b0([[indexesLength]]: {{*}}):
-// CHECK-NOT: NewArray
-// CHECK: [[makeIndexes]] = Builtin builtin=CompilerHelpersArrayOfIndexes
-// CHECK-NEXT: = Call [[makeIndexes]], -, [[indexesLength]]
+// CHECK-NOT: CompilerHelpers
+// CHECK: = Call {{*}}calleeKey="keys"
 // CHECK-LABEL: function {{*}}name="indexesAndMore"
 // CHECK-NOT: CompilerHelpers
 // CHECK: = Call {{*}}calleeKey="keys"

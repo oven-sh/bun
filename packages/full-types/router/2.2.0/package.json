@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-router",
+  "name": "@oven/full-types-router",
   "version": "2.2.0",
   "description": "Full types for router 2.2.0: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "router": "2.2.0"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

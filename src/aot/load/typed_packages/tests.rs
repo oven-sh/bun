@@ -61,13 +61,16 @@ impl Project {
 
     fn add_typed_version(&self, folder: &str) {
         let manifest = sound_manifest(folder, &["cjs/x.js"]);
-        self.write(&format!(".sound/{folder}/sound.json"), &manifest);
-        self.write(&format!(".sound/{folder}/lay/cjs/x.js"), INSTALLED_CODE);
+        self.write(&format!(".full-types/{folder}/full-types.json"), &manifest);
+        self.write(
+            &format!(".full-types/{folder}/lay/cjs/x.js"),
+            INSTALLED_CODE,
+        );
     }
 
     fn install_typed_version(&self, directory: &str, name: &str) {
         let manifest = sound_manifest(name, &["cjs/x.js"]);
-        self.write(&format!("{directory}/sound.json"), &manifest);
+        self.write(&format!("{directory}/full-types.json"), &manifest);
         self.write(&format!("{directory}/lay/cjs/x.js"), INSTALLED_CODE);
     }
 }
@@ -76,7 +79,7 @@ fn sound_manifest(name: &str, replaced_files: &[&str]) -> String {
     let entries = replaced_files.iter().map(|path| format!(r#""{path}":"""#));
     let lay = entries.collect::<Vec<String>>().join(",");
     format!(
-        r#"{{"sound":2,"name":"{name}","version":"1.0.0","when":{{}},"lay":{{{lay}}},"needs":[]}}"#
+        r#"{{"format":2,"name":"{name}","version":"1.0.0","when":{{}},"lay":{{{lay}}},"needs":[]}}"#
     )
 }
 
@@ -164,17 +167,17 @@ fn load_project<R>(
 fn typed_file_is_found_by_relative_path() {
     let project = Project::with_typed_package("relative_path");
     project.write("node_modules/p/a.jsx", INSTALLED_CODE);
-    project.write(".sound/p/lay/a.jsx", INSTALLED_CODE);
+    project.write(".full-types/p/lay/a.jsx", INSTALLED_CODE);
     with_packages(&project, |fixture| {
         let packages = fixture.packages;
-        let typed = project.path(".sound/p/lay/cjs/x.js");
+        let typed = project.path(".full-types/p/lay/cjs/x.js");
         let found = fixture.typed_version(&project.path(INSTALLED_FILE));
         assert_eq!(found.as_ref(), Some(&typed));
         assert_eq!(packages.script_kind(&typed), Some(ScriptKind::Ts));
-        assert_eq!(packages.display_directory(&typed), b".sound/p");
+        assert_eq!(packages.display_directory(&typed), b".full-types/p");
         assert_eq!(packages.display_relative_path(&typed), b"lay/cjs/x.js");
 
-        let typed = project.path(".sound/p/lay/a.jsx");
+        let typed = project.path(".full-types/p/lay/a.jsx");
         let found = fixture.typed_version(&project.path("node_modules/p/a.jsx"));
         assert_eq!(found.as_ref(), Some(&typed));
         assert_eq!(packages.script_kind(&typed), Some(ScriptKind::Tsx));
@@ -223,7 +226,7 @@ fn other_version_still_has_typed_files() {
     let project = Project::with_typed_package("other_version");
     project.install("node_modules/q/node_modules/p", "p", "2.0.0");
     with_packages(&project, |fixture| {
-        let typed = project.path(".sound/p/lay/cjs/x.js");
+        let typed = project.path(".full-types/p/lay/cjs/x.js");
         let nested_file = project.path("node_modules/q/node_modules/p/cjs/x.js");
         assert_eq!(
             fixture
@@ -247,8 +250,8 @@ fn other_version_still_has_typed_files() {
         );
         assert_eq!(found, Some(typed));
         let mismatch = fixture.packages.find_manifest_mismatch(package, &|_| None);
-        let expected = b"it is for version 1.0.0, but 9.9.9 is installed. \
-                         Replace it with the full types for 9.9.9, or remove it";
+        let expected = b"they are for version 1.0.0, but 9.9.9 is installed. \
+                         Replace them with the full types for 9.9.9, or remove them";
         assert_eq!(mismatch.as_deref(), Some(&expected[..]));
     });
 }
@@ -256,16 +259,16 @@ fn other_version_still_has_typed_files() {
 #[test]
 fn package_manifest_has_no_typed_version() {
     let project = Project::with_typed_package("package_manifest");
-    project.write(".sound/p/lay/package.json", "{}");
+    project.write(".full-types/p/lay/package.json", "{}");
     project.write("node_modules/p/dist/package.json", "{}");
-    project.write(".sound/p/lay/dist/package.json", "{}");
+    project.write(".full-types/p/lay/dist/package.json", "{}");
     with_packages(&project, |fixture| {
         assert_eq!(
             fixture.typed_version(&project.path("node_modules/p/package.json")),
             None
         );
         let nested_manifest = project.path("node_modules/p/dist/package.json");
-        let typed = project.path(".sound/p/lay/dist/package.json");
+        let typed = project.path(".full-types/p/lay/dist/package.json");
         assert_eq!(fixture.typed_version(&nested_manifest), Some(typed));
     });
 }
@@ -277,16 +280,19 @@ fn scoped_package_is_found() {
     project.add_typed_version("@s/p");
     project.add_typed_version("@s-x");
     project.add_typed_version("b");
-    project.write(".sound/notes/readme.txt", "");
+    project.write(".full-types/notes/readme.txt", "");
     with_packages(&project, |fixture| {
         let expected: [&[u8]; 3] = [b"@s-x", b"@s/p", b"b"];
         assert_eq!(fixture.package_names(), expected);
 
-        let typed = project.path(".sound/@s/p/lay/cjs/x.js");
+        let typed = project.path(".full-types/@s/p/lay/cjs/x.js");
         let found = fixture.typed_version(&project.path("node_modules/@s/p/cjs/x.js"));
         assert_eq!(found.as_ref(), Some(&typed));
         assert_eq!(fixture.packages.script_kind(&typed), Some(ScriptKind::Ts));
-        assert_eq!(fixture.packages.display_directory(&typed), b".sound/@s/p");
+        assert_eq!(
+            fixture.packages.display_directory(&typed),
+            b".full-types/@s/p"
+        );
         assert_eq!(
             fixture.packages.display_relative_path(&typed),
             b"lay/cjs/x.js"
@@ -299,13 +305,13 @@ fn directory_without_valid_name_or_manifest_is_no_package() {
     let project = Project::new("invalid_names");
     project.add_typed_version("group/member");
     project.add_typed_version("@s/p/deeper");
-    project.write(".sound/without-manifest/lay/cjs/x.js", INSTALLED_CODE);
+    project.write(".full-types/without-manifest/lay/cjs/x.js", INSTALLED_CODE);
     project.add_typed_version("valid");
     with_packages(&project, |fixture| {
         let expected: [&[u8]; 1] = [b"valid"];
         assert_eq!(fixture.package_names(), expected);
         for folder in ["group/member", "@s/p/deeper", "without-manifest"] {
-            let typed = project.path(&format!(".sound/{folder}/lay/cjs/x.js"));
+            let typed = project.path(&format!(".full-types/{folder}/lay/cjs/x.js"));
             assert_eq!(fixture.packages.script_kind(&typed), None, "{folder}");
         }
     });
@@ -323,7 +329,7 @@ fn linked_package_is_found_by_real_path() {
         let link = project.path("node_modules/linked");
         let real_file = fixture.packages.disk.realpath(&inside(&link, b"cjs/x.js"));
         assert_eq!(real_file, inside(&project.path(STORE), b"cjs/x.js"));
-        let typed = project.path(".sound/linked/lay/cjs/x.js");
+        let typed = project.path(".full-types/linked/lay/cjs/x.js");
         assert_eq!(fixture.typed_version(&real_file), Some(typed));
     });
 }
@@ -339,12 +345,12 @@ fn nameless_manifest_does_not_hide_package() {
     project.add_typed_version("s");
     for file in files {
         project.write(&format!("node_modules/s/{file}"), INSTALLED_CODE);
-        project.write(&format!(".sound/s/lay/{file}"), INSTALLED_CODE);
+        project.write(&format!(".full-types/s/lay/{file}"), INSTALLED_CODE);
     }
     with_packages(&project, |fixture| {
         for file in files {
             let typed = fixture.typed_version(&project.path(&format!("node_modules/s/{file}")));
-            let expected = project.path(&format!(".sound/s/lay/{file}"));
+            let expected = project.path(&format!(".full-types/s/lay/{file}"));
             assert_eq!(typed, Some(expected), "{file}");
         }
     });
@@ -355,11 +361,14 @@ fn only_files_below_lay_are_typed_files() {
     let project = Project::with_typed_package("script_kind");
     with_packages(&project, |fixture| {
         let kind_of = |relative: &str| fixture.packages.script_kind(&project.path(relative));
-        assert_eq!(kind_of(".sound/p/lay/cjs/x.js"), Some(ScriptKind::Ts));
-        assert_eq!(kind_of(".sound/p/lay/missing.js"), Some(ScriptKind::Ts));
-        assert_eq!(kind_of(".sound/p/sound.json"), None);
-        assert_eq!(kind_of(".sound/p/notes/x.js"), None);
-        assert_eq!(kind_of(".sound/q/lay/x.js"), None);
+        assert_eq!(kind_of(".full-types/p/lay/cjs/x.js"), Some(ScriptKind::Ts));
+        assert_eq!(
+            kind_of(".full-types/p/lay/missing.js"),
+            Some(ScriptKind::Ts)
+        );
+        assert_eq!(kind_of(".full-types/p/full-types.json"), None);
+        assert_eq!(kind_of(".full-types/p/notes/x.js"), None);
+        assert_eq!(kind_of(".full-types/q/lay/x.js"), None);
         assert_eq!(kind_of(INSTALLED_FILE), None);
         assert_eq!(kind_of("lay/x.js"), None);
     });
@@ -387,8 +396,11 @@ fn project_without_typed_packages_has_no_typed_files() {
     let project = Project::new("no_typed_packages");
     project.install("node_modules/p", "p", "1.0.0");
     project.install_typed_version("node_modules/@other/p", "p");
-    project.install_typed_version("node_modules/sound/p", "p");
-    project.write("node_modules/@oven/sound-p/lay/cjs/x.js", INSTALLED_CODE);
+    project.install_typed_version("node_modules/full-types/p", "p");
+    project.write(
+        "node_modules/@oven/full-types-p/lay/cjs/x.js",
+        INSTALLED_CODE,
+    );
     with_packages(&project, |fixture| {
         assert!(fixture.package_names().is_empty());
         let installed_file = project.path(INSTALLED_FILE);
@@ -403,14 +415,14 @@ fn installed_typed_version_is_found() {
     let project = Project::new("installed");
     project.install("node_modules/p", "p", "1.0.0");
     project.install("node_modules/@s/p", "@s/p", "1.0.0");
-    project.install_typed_version("node_modules/@oven/sound-p", "p");
-    project.install_typed_version("node_modules/@oven/sound-s__p", "@s/p");
+    project.install_typed_version("node_modules/@oven/full-types-p", "p");
+    project.install_typed_version("node_modules/@oven/full-types-s__p", "@s/p");
     with_packages(&project, |fixture| {
         let expected: [&[u8]; 2] = [b"@s/p", b"p"];
         assert_eq!(fixture.package_names(), expected);
         for (installed, folder) in [("p", "p"), ("@s/p", "s__p")] {
             let installed_file = project.path(&format!("node_modules/{installed}/cjs/x.js"));
-            let directory = format!("node_modules/@oven/sound-{folder}");
+            let directory = format!("node_modules/@oven/full-types-{folder}");
             let typed = project.path(&format!("{directory}/lay/cjs/x.js"));
             assert_eq!(fixture.typed_version(&installed_file), None);
             let found = fixture.installed_typed_version(&installed_file);
@@ -424,7 +436,7 @@ fn installed_typed_version_is_found() {
                 packages.display_directory_of_package(installed.as_bytes()),
                 directory.as_bytes()
             );
-            let manifest = project.path(&format!("{directory}/sound.json"));
+            let manifest = project.path(&format!("{directory}/full-types.json"));
             assert_eq!(packages.manifest_path(&typed), Some(manifest));
         }
     });
@@ -433,13 +445,13 @@ fn installed_typed_version_is_found() {
 #[test]
 fn project_typed_version_hides_installed_one() {
     let project = Project::with_typed_package("project_first");
-    project.install_typed_version("node_modules/@oven/sound-p", "p");
+    project.install_typed_version("node_modules/@oven/full-types-p", "p");
     with_packages(&project, |fixture| {
         let installed_file = project.path(INSTALLED_FILE);
-        let typed = project.path(".sound/p/lay/cjs/x.js");
+        let typed = project.path(".full-types/p/lay/cjs/x.js");
         assert_eq!(fixture.typed_version(&installed_file), Some(typed));
         assert_eq!(fixture.installed_typed_version(&installed_file), None);
-        let hidden = project.path("node_modules/@oven/sound-p/lay/cjs/x.js");
+        let hidden = project.path("node_modules/@oven/full-types-p/lay/cjs/x.js");
         assert_eq!(fixture.packages.script_kind(&hidden), None);
     });
 }
@@ -449,9 +461,9 @@ fn nearest_installed_typed_version_is_used() {
     let project = Project::new("nearest");
     project.install("node_modules/p", "p", "1.0.0");
     project.install("node_modules/q", "q", "1.0.0");
-    project.install_typed_version("node_modules/@oven/sound-p", "p");
-    project.install_typed_version("node_modules/@oven/sound-q", "q");
-    project.install_typed_version("app/node_modules/@oven/sound-p", "p");
+    project.install_typed_version("node_modules/@oven/full-types-p", "p");
+    project.install_typed_version("node_modules/@oven/full-types-q", "q");
+    project.install_typed_version("app/node_modules/@oven/full-types-p", "p");
     let session = Session::new();
     let project_root = project.path("app");
     set_up_output();
@@ -465,15 +477,15 @@ fn nearest_installed_typed_version_is_used() {
         let package = resolver.enclosing_package(&path);
         packages.typed_version(TypedPackagePlace::Installed, &path, package)
     };
-    let near = project.path("app/node_modules/@oven/sound-p/lay/cjs/x.js");
+    let near = project.path("app/node_modules/@oven/full-types-p/lay/cjs/x.js");
     assert_eq!(typed_version("p").as_ref(), Some(&near));
     assert_eq!(
         packages.display_directory(&near),
-        b"node_modules/@oven/sound-p"
+        b"node_modules/@oven/full-types-p"
     );
-    let far = project.path("node_modules/@oven/sound-q/lay/cjs/x.js");
+    let far = project.path("node_modules/@oven/full-types-q/lay/cjs/x.js");
     assert_eq!(typed_version("q").as_ref(), Some(&far));
-    let far_directory = project.path("node_modules/@oven/sound-q");
+    let far_directory = project.path("node_modules/@oven/full-types-q");
     assert_eq!(packages.display_directory(&far), to_native(&far_directory));
 }
 
@@ -521,9 +533,9 @@ fn one_rejected_file_is_compiled_from_the_installed_file() {
     directory.write_typed_package("export const x = 1;\n", "export const x: number = 1;\n");
     project.write("node_modules/p/y.js", "export const y = 2;\n");
     let typed_with_extra_statement = "export const y: number = 2;\nexport const z = 3;\n";
-    project.write(".sound/p/lay/y.js", typed_with_extra_statement);
+    project.write(".full-types/p/lay/y.js", typed_with_extra_statement);
     project.write(
-        ".sound/p/sound.json",
+        ".full-types/p/full-types.json",
         &sound_manifest("p", &["x.js", "y.js"]),
     );
     let main = "import { x } from \"p\";\n\

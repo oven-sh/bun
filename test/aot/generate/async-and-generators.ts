@@ -7,7 +7,7 @@ export const programs = () =>
       `// Async functions that keep many values alive across their awaits, so that their frames are large: every value is there again when the function goes on, after a real suspension, after an await that is settled already, and in a catch block.
 let state = 12345;
 function next(): number {
-  state = (state * 1103515245 + 12345) % 2147483648;
+  state = (Math.imul(state, 1103515245) + 12345) & 0x7fffffff;
   return state % 1000;
 }
 interface Box {
@@ -132,7 +132,7 @@ type Keeps = (awaited: Gate) => Promise<number>;
 
 let state = 12345;
 function next(): number {
-  state = (state * 1103515245 + 12345) % 2147483648;
+  state = (Math.imul(state, 1103515245) + 12345) & 0x7fffffff;
   return state % 1000;
 }
 interface Box {

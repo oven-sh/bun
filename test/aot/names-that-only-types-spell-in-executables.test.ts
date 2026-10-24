@@ -29,6 +29,11 @@ export interface ReachedT22 {
   storedT23: number;
   neverNamedT24?: string;
 }
+export interface HandedOnT38 {
+  modeT37: ModeT15;
+  neverStoredModeT39?: ModeT15;
+  neverStoredTextT40?: string;
+}
 export const enum LevelT32 {
   usedLevelT33 = "usedLevelTextT34",
   unusedLevelT35 = "unusedLevelTextT36",
@@ -36,7 +41,7 @@ export const enum LevelT32 {
 `,
   "main.ts": `
 import { LevelT32 } from "./types";
-import type { GivenT19, MappedT9, ModeT15, ParsedT12, ReachedT22, SettingsT1, TableT6 } from "./types";
+import type { GivenT19, HandedOnT38, MappedT9, ModeT15, ParsedT12, ReachedT22, SettingsT1, TableT6 } from "./types";
 function makeSettings(stored: number): SettingsT1 {
   return { storedT2: stored };
 }
@@ -67,13 +72,31 @@ console.log(describeMode(makeMode()), isCompared(process.argv[4] as GivenT19), L
 
 const spell = (...parts: string[]) => parts.join("");
 
-const namesOfTypes = ["SettingsT1", "TableT6", "MappedT9", "ParsedT12", "ModeT15", "GivenT19", "ReachedT22", "KeysT25"];
+const namesOfTypes = [
+  "SettingsT1",
+  "TableT6",
+  "MappedT9",
+  "ParsedT12",
+  "ModeT15",
+  "GivenT19",
+  "ReachedT22",
+  "KeysT25",
+  "HandedOnT38",
+];
+
+const evaluatesText = `
+const handedOn: HandedOnT38 = { modeT37: makeMode() };
+console.log(new Function("handedOn", process.argv[5])(handedOn));
+`;
 
 describe.each([
-  ["by default", []],
-  ["with --minify-identifiers", ["--minify-identifiers"]],
-] as [string, string[]][])("compile/aot/names that only types spell, built %s", (_, flagsOfBuild) => {
-  const folder = String(tempDir("aot-names-that-only-types-spell", sources));
+  ["by default", [], ""],
+  ["with --minify-identifiers", ["--minify-identifiers"], ""],
+  ["by default, where the program hands an object to text that it evaluates", [], evaluatesText],
+] as [string, string[], string][])("compile/aot/names that only types spell, built %s", (_, flagsOfBuild, more) => {
+  const folder = String(
+    tempDir("aot-names-that-only-types-spell", { ...sources, "main.ts": sources["main.ts"] + more }),
+  );
   const executable = join(folder, isWindows ? "program.exe" : "program");
   let bytes = Buffer.alloc(0);
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
@@ -94,7 +117,9 @@ describe.each([
     const json = JSON.stringify({ readT13: 3, [spell("neverRead", "T14")]: "x", [name]: 4 });
     const commands = [[executable], [bunExe(), "run", "./main.ts"]];
     const [compiled, plain] = await Promise.all(
-      commands.map(command => spawned([...command, name, json, text], folder, bunEnv)),
+      commands.map(command =>
+        spawned([...command, name, json, text, "return Object.keys(handedOn).join()"], folder, bunEnv),
+      ),
     );
     expect({ stdout: compiled.stdout, stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
       stdout: plain.stdout,
@@ -110,7 +135,10 @@ describe.each([
   });
 
   eachRow([
-    ["a declared member that nothing stores", ["neverStoredT3", "neverStoredObjectT4", "innerOfNeverStoredT5"]],
+    [
+      "a declared member that nothing stores",
+      ["neverStoredT3", "neverStoredObjectT4", "innerOfNeverStoredT5", "neverStoredModeT39", "neverStoredTextT40"],
+    ],
     [
       "a key of a Record or of a mapped type that nothing stores",
       ["neverStoredKeyT7", "otherNeverStoredKeyT8", "neverStoredMappedT10", "otherNeverStoredMappedT11"],

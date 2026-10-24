@@ -37,7 +37,7 @@ impl<'h> Resolver<'h> {
         }
         let orders = &self.code_options().extension_orders;
         let subpaths = candidate_subpaths(manifest, exports, path);
-        let mut missing = None;
+        let (mut missing, mut is_exported) = (None, false);
         for kind in [CodeImportKind::Import, CodeImportKind::Require] {
             let search = CodeSearch {
                 kind,
@@ -57,6 +57,7 @@ impl<'h> Resolver<'h> {
                 if self.module_path(&exported) != path {
                     continue;
                 }
+                is_exported = true;
                 let typed = self.load_package_exports(manifest, exports, subpath, typed_search);
                 if matches!(typed, SearchResult::NotFound(CodeFailure::ModuleNotFound)) {
                     missing = missing.or_else(|| {
@@ -68,7 +69,12 @@ impl<'h> Resolver<'h> {
                 }
             }
         }
-        missing.map(TypedExport::Missing)
+        if is_exported {
+            return missing.map(TypedExport::Missing);
+        }
+        // What the entry points of a bundle share is a file that `exports` does not name.
+        let beside = typed_path_beside(path).filter(|typed| self.code_host().is_file(typed));
+        beside.map(TypedExport::File)
     }
 
     fn find_package_exports(
@@ -85,6 +91,25 @@ impl<'h> Resolver<'h> {
                 Some((manifest, manifest.exports.as_ref()?))
             })
     }
+}
+
+pub const TYPED_CONDITION: &[u8] = b"full-types";
+const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [
+    (b".js", b".full.ts"),
+    (b".mjs", b".full.mts"),
+    (b".cjs", b".full.cts"),
+];
+
+pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
+    TYPED_EXTENSIONS
+        .iter()
+        .find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
+}
+
+pub fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
+    TYPED_EXTENSIONS
+        .iter()
+        .find_map(|(to, from)| Some([typed.strip_suffix(*from)?, *to].concat()))
 }
 
 #[derive(PartialEq, Eq, Debug)]

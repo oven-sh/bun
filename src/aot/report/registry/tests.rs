@@ -92,3 +92,27 @@ fn only_placeholder_members_are_named_none() {
     assert_eq!(LimitId::ALL[0], LimitId::None);
     assert!(!FlowResultKind::NAMES.contains(&"None"));
 }
+
+#[test]
+fn a_validation_failure_names_a_flow_result_or_nothing() {
+    let document = object_with(write_validation_failures);
+    assert_eq!(
+        count_of(&document, r#"{"name":"#),
+        ValidationFailureKind::COUNT
+    );
+    assert_eq!(
+        count_of(
+            &document,
+            r#"{"name":"ContainerContents","disable":"flow:ProvenContents"}"#
+        ),
+        1
+    );
+    for kind in ValidationFailureKind::ALL {
+        let word = kind.disable();
+        let result = word.strip_prefix("flow:");
+        assert!(
+            word.is_empty() || result.is_some_and(|name| FlowResultKind::NAMES.contains(&name)),
+            "{kind:?}"
+        );
+    }
+}

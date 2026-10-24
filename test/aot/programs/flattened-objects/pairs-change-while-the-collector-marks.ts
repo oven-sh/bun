@@ -17,7 +17,7 @@ function fill(into: Outer[], rows: number, columns: number): void {
 
 let seed = 12345;
 function random(limit: number): number {
-  seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
   return seed % limit;
 }
 

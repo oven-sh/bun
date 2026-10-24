@@ -34,7 +34,7 @@ function orN(shape: Shape) { return (shape.n ??= 5); }
 function addN(shape: Shape) { shape.n = (shape.n ?? 0) + 1; }
 let seed = Number(process.argv[2] ?? 77);
 function random(below: number) {
-  seed = (seed * 1103515245 + 12345) % 2147483648;
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
   return Math.floor((seed / 2147483648) * below);
 }
 function hash(text: string, into: number) {

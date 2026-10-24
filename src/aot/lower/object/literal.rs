@@ -196,7 +196,7 @@ pub(crate) fn holds_dictionary_literal(
         file.decisions().is_data_literal(root),
         "a data literal was expected"
     );
-    if is_stored_as_prototype_object(file, root) {
+    if is_stored_as_prototype_object(file, root) || call::is_written_descriptor(file, root) {
         return true;
     }
     let hir = file.hir;

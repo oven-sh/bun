@@ -87,6 +87,12 @@ impl ModuleNumbers {
         &self.inner_modules
     }
 
+    pub(super) fn modules(&self) -> impl Iterator<Item = ModuleRef> + '_ {
+        let files = (0..self.file_count as u32).map(|file| ModuleRef::File(FileId(file)));
+        let inner_modules = self.inner_modules.iter();
+        files.chain(inner_modules.map(|&(file, callback)| ModuleRef::Inner { file, callback }))
+    }
+
     pub(super) fn number_of(&self, module: ModuleRef) -> Option<usize> {
         match module {
             ModuleRef::File(file) => (file.idx() < self.file_count).then_some(file.idx()),
@@ -791,8 +797,13 @@ fn find_prefix_roots(
         let required = file_sites.sites.iter().map(|site| site.target);
         required.chain(file_sites.other_loads.iter().map(|load| load.1))
     });
+    let application_roots = input.application.into_iter().flat_map(|application| {
+        let roots = application.graph.prefix_roots().iter();
+        roots.filter_map(|&root| Some(ModuleRef::File((application.to_local)(root)?)))
+    });
     let mut roots: Vec<FileId> = entry_points
         .chain(loaded)
+        .chain(application_roots)
         .filter_map(|module| match module {
             ModuleRef::File(file) if is_code_of_program[file.idx()] => Some(file),
             _ => None,
@@ -837,6 +848,18 @@ pub(super) fn compute_order(
         .iter()
         .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library));
     let late_targets = late_targets.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
+    let is_exposed_in_application = |module: &ModuleRef| {
+        let application = input.application?;
+        Some(
+            application
+                .graph
+                .exposed(application.application_module(*module)?),
+        )
+    };
+    let exposed_in_application = numbers.modules();
+    let exposed_in_application =
+        exposed_in_application.filter(|module| is_exposed_in_application(module) == Some(true));
+    let late_targets = late_targets.chain(exposed_in_application);
     let late_targets = late_targets.filter_map(|target| Some(numbers.number_of(target)? as u32));
     let is_exposed = find_reached(&edges.all, late_targets.collect());
     // A late site names every exposed module, or an exposed module asks for it.

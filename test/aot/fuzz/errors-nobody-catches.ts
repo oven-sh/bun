@@ -165,9 +165,15 @@ function works(): string {
   };
   if (random.chance(0.3)) text.push(`let before = 0;\nprocess.on("beforeExit", (code: number) => {\n  console.log("before exit", code, works());\n  if (before++ === 0) ${written(90)}\n});`);
   if (random.chance(0.6)) text.push(`void waitsForever(1);\nconst generator = paused(1);\ngenerator.next();`);
+  const threeTurns = "await turn();\nawait turn();\nawait turn();";
+  const isTimed = (statement: string) => statement.includes("setTimeout(");
   for (let id = 1; id <= episodes; id++) {
-    text.push(`// ${id}\n${written(id)}${random.chance(0.2) ? "\n" + written(id + 50) : ""}`);
-    text.push(`${pick(["await turn();\nawait turn();\nawait turn();", "await turn();\nawait turn();\nawait turn();", "await null;", "", "await turn();"])}\nconsole.log(${id}, works());`);
+    const first = written(id);
+    const second = random.chance(0.2) ? written(id + 50) : "";
+    const wait = pick([threeTurns, threeTurns, "await null;", "", "await turn();"]);
+    // Two timers that throw are never due at once: whether the second is still heard behind the first goes by the clock, in plain Bun too.
+    text.push(`// ${id}\n${first}${second ? "\n" + (isTimed(first) && isTimed(second) ? threeTurns + "\n" : "") + second : ""}`);
+    text.push(`${isTimed(first) || isTimed(second) ? threeTurns : wait}\nconsole.log(${id}, works());`);
   }
   const last = pick(["", "", "", `throw (${pick(values).replaceAll("N", "99")});`, `await Promise.reject(${pick(values).replaceAll("N", "99")});`, `process.exit(${random.between(0, 2)});`]);
   text.push(`console.log("the end");${last ? "\n" + last : ""}`);

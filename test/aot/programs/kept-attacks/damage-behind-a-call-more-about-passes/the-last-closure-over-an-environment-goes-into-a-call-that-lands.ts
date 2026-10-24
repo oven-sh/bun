@@ -1,6 +1,5 @@
-// In every turn of the loop `holder` makes an environment and a closure over it, and the call of `consult` is the last use of both. ReuseEnvironments lets go of such an environment
-// right behind its last use, so that the next turn takes it again. Behind a call with a landing nothing may stand but the test of its result, so the release stands on the normal edge,
-// and on the landing edge there is none. Whichever way the call comes back, the next turn must get an environment of its own:
+// In every turn of the loop `holder` makes an environment and a closure over it, and the call of `consult` is the last use of both.
+// Whichever way the call comes back, the next turn must get an environment of its own:
 // the closures that `consult` has been told to keep are called at the end, and each has to find the variables of its turn.
 // `consult` damages the object that the holder reads in front of the call and behind it, so some of the calls come back at the landing, and it calls itself so that it is not taken in.
 class Point {

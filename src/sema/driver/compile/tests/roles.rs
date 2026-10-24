@@ -509,11 +509,14 @@ fn project_typed_version_is_demoted() {
         ("main.ts", r#"import "shapes";"#),
         ("node_modules/shapes/package.json", manifest),
         ("node_modules/shapes/index.js", INSTALLED_SHAPES),
-        (".sound/shapes/index.ts", MISTYPED_SHAPES),
+        (".full-types/shapes/index.ts", MISTYPED_SHAPES),
     ];
     let disk = project_disk(&files, 1);
     let script = HostScript {
-        typed_versions: &[("node_modules/shapes/index.js", ".sound/shapes/index.ts")],
+        typed_versions: &[(
+            "node_modules/shapes/index.js",
+            ".full-types/shapes/index.ts",
+        )],
         ..HostScript::default()
     };
     with_host(
@@ -532,8 +535,8 @@ fn project_typed_version_is_demoted() {
 }
 
 const TYPED_SHAPES_PACKAGE: [(&str, &str); 2] = [
-    ("node_modules/shapes/a.js", ".sound/shapes/a.ts"),
-    ("node_modules/shapes/b.js", ".sound/shapes/b.ts"),
+    ("node_modules/shapes/a.js", ".full-types/shapes/a.ts"),
+    ("node_modules/shapes/b.js", ".full-types/shapes/b.ts"),
 ];
 
 fn with_typed_shapes_package(typed_b_text: &str, then: impl FnOnce(&TestProgram<'_, '_>)) {
@@ -548,8 +551,8 @@ fn with_typed_shapes_package(typed_b_text: &str, then: impl FnOnce(&TestProgram<
         ),
         ("node_modules/shapes/a.js", INSTALLED_SHAPES),
         ("node_modules/shapes/b.js", "export const sides = 4;\n"),
-        (".sound/shapes/a.ts", MISTYPED_SHAPES),
-        (".sound/shapes/b.ts", typed_b_text),
+        (".full-types/shapes/a.ts", MISTYPED_SHAPES),
+        (".full-types/shapes/b.ts", typed_b_text),
     ];
     let disk = project_disk(&files, 1);
     let script = HostScript {

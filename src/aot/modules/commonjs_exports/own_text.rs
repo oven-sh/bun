@@ -97,8 +97,6 @@ pub(super) struct OwnText {
     /// Somebody may look at the module while its body runs.
     pub is_half: bool,
     pub form: Form,
-    /// Why the form is `Value`. No expression: the file as a whole.
-    pub reason: Option<ExprId>,
     pub accesses: Vec<Access>,
     /// In the order in which the body gets to them; those that a function makes come last.
     pub creations: Vec<Creation>,
@@ -121,7 +119,6 @@ impl OwnText {
             module,
             is_half,
             form: Form::Names,
-            reason: None,
             accesses: Vec::new(),
             creations: Vec::new(),
             aliases: Vec::new(),
@@ -134,11 +131,8 @@ impl OwnText {
         }
     }
 
-    fn keep_object(&mut self, at: ExprId) {
-        if self.form != Form::Value {
-            self.form = Form::Value;
-            self.reason = at.some();
-        }
+    fn keep_object(&mut self) {
+        self.form = Form::Value;
     }
 
     /// The names are variables.
@@ -807,7 +801,7 @@ impl Scan<'_, '_, '_> {
                 if !self.add_definition(index, outermost, user)
                     && !self.add_definitions_of_helper(index, outermost, user)
                 {
-                    self.found(index).keep_object(object);
+                    self.found(index).keep_object();
                 }
                 return;
             }
@@ -818,7 +812,7 @@ impl Scan<'_, '_, '_> {
         match is_some_object {
             // The lowering puts `true` in the place of every mention that is left.
             true => {}
-            false => self.found(index).keep_object(object),
+            false => self.found(index).keep_object(),
         }
     }
 
@@ -854,7 +848,7 @@ impl Scan<'_, '_, '_> {
         };
         if member.is_none() {
             self.found(index).uses_module_object = true;
-            self.found(index).keep_object(module_object);
+            self.found(index).keep_object();
         }
     }
 
@@ -896,7 +890,7 @@ impl Scan<'_, '_, '_> {
                     self.add_mention(0, expression, MentionKind::FirstObject);
                 }
                 Some(_) => {}
-                None => self.found(0).keep_object(expression),
+                None => self.found(0).keep_object(),
             };
         }
         match text.builtins.builtin_of_expression(expression) {
@@ -1092,8 +1086,8 @@ impl Scan<'_, '_, '_> {
             refused = Some(alias.node);
         }
         let found = self.found(index);
-        if let Some(node) = refused {
-            return found.keep_object(node);
+        if refused.is_some() {
+            return found.keep_object();
         }
         // Nobody sees what is stored under a name that a getter is defined for behind the store.
         found
@@ -1193,14 +1187,12 @@ impl Scan<'_, '_, '_> {
         let has_replacements = !self.drafts[index].replacements.is_empty();
         let is_replaced_well = has_replacements && self.apply_replacement(index);
         if has_replacements && !is_replaced_well {
-            let at = self.drafts[index].replacements[0].statement;
-            self.found(index).keep_object(at);
+            self.found(index).keep_object();
         }
-        if !has_replacements && let Some(&store) = self.drafts[index].stores_to_exports_name.first()
-        {
+        if !has_replacements && !self.drafts[index].stores_to_exports_name.is_empty() {
             // Nobody knows what the name holds from then on.
             self.found(index).needs_wrapped_body = true;
-            self.found(index).keep_object(store);
+            self.found(index).keep_object();
         }
         if has_replacements {
             let replacements = self.drafts[index].replacements.iter();
@@ -1291,10 +1283,10 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
     scan.parameters.sort_unstable_by_key(|entry| entry.0);
     if input.is_file_a_module && needs_wrapped_body(text) {
         scan.found(0).needs_wrapped_body = true;
-        scan.found(0).keep_object(ExprId::NONE);
+        scan.found(0).keep_object();
     }
     if input.is_file_a_module && input.is_entry_point {
-        scan.found(0).keep_object(ExprId::NONE);
+        scan.found(0).keep_object();
     }
     if input.is_file_a_module {
         let exports = Binding::CommonJs(CommonJsVariable::Exports);

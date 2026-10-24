@@ -68,18 +68,3 @@ export function mappedFilledArray(length: unknown, value: unknown, mapper: unkno
   const made = new Array<unknown>(length as number);
   return made.fill(value).map(mapper as (value: unknown, index: number) => unknown);
 }
-
-// [...Array(length).keys()]
-$visibility = "Private";
-export function arrayOfIndexes(length: unknown): unknown[] {
-  if (typeof length === "number") {
-    const count = length | 0;
-    if (count === length && count >= 0) {
-      const made = new Array<unknown>(count);
-      for (let index = 0; index < count; index++) made[index] = index;
-      return made;
-    }
-  }
-  const made = new Array<unknown>(length as number);
-  return [...made.keys()];
-}

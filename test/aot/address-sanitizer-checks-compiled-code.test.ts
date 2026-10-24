@@ -26,29 +26,14 @@ let warm = 0;
 for (const m of mixed) for (const n of mixed) warm += same(m, n) ? 1 : 0;
 function read(leaf: any): number { return same(leaf, "x") ? 1 : 2; }`;
 
-const rows: [string, string, string, string[], RegExp, boolean][] = [
-  [
-    "code that B3 generates",
-    typedRead,
-    "7998000\n",
-    ["--aot-heat=everything-is-hot"],
-    /poisoned memory: function \d+/,
-    false,
-  ],
-  [
-    "code that is generated directly",
-    typedRead,
-    "7998000\n",
-    ["--aot-testing=GenerateAllCodeDirectly"],
-    /poisoned memory: function \d+/,
-    true,
-  ],
-  ["a stub", looseEquality, "8000\n", ["--aot-heat=everything-is-hot"], /poisoned memory: a stub/, false],
+const rows: [string, string, string, string[], RegExp][] = [
+  ["code that B3 generates", typedRead, "7998000\n", ["--aot-heat=everything-is-hot"], /poisoned memory: function \d+/],
+  ["a stub", looseEquality, "8000\n", ["--aot-heat=everything-is-hot"], /poisoned memory: a stub/],
 ];
 
 test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each(rows)(
   "AddressSanitizer reports a read of a dead cell by %s",
-  async (_, read, expected, flags, report, isGeneratedDirectly) => {
+  async (_, read, expected, flags, report) => {
     using dir = tempDir("asan-compiled-code", { "entry.ts": leaves(read) });
     for (const sabotage of [[], staleCells.slice(0, 1)]) {
       const executable = join(String(dir), sabotage.length ? "sabotaged" : "sound");
@@ -61,7 +46,6 @@ test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each(rows)(
           ...staleCells.slice(1),
           ...sabotage,
           ...flags,
-          "--explain=statistics",
           "entry.ts",
           "--outfile",
           executable,
@@ -72,8 +56,6 @@ test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each(rows)(
         stderr: "",
         exitCode: 0,
       });
-      const generatedDirectly = Number(/FunctionsGeneratedDirectly (\d+)/.exec(build.stderr + build.stdout)?.[1] ?? 0);
-      expect(generatedDirectly > 0).toBe(isGeneratedDirectly);
 
       const { stdout, stderr, exitCode } = await run([executable], String(dir), {
         ...bunEnv,
@@ -106,7 +88,6 @@ console.log(sum);
 // The pinned engine does not have those cells yet.
 (isASAN && isLinux && process.arch === "x64" ? test.todo : test.skip).each([
   ["code that B3 generates", ["--aot-heat=everything-is-hot"]],
-  ["code that is generated directly", ["--aot-testing=GenerateAllCodeDirectly"]],
 ])(
   "AddressSanitizer reports a read behind the end of an object by %s",
   async (_, flags) => {
@@ -166,16 +147,6 @@ const at = (name: string) => String.raw`    at ${name} \(\S*entry\.ts:\d+:\d+\)\
     new RegExp(
       String.raw`function \d+, at \d+ bytes into the code of the image\n` +
         at("visit") +
-        at("walk") +
-        String.raw`    at \S*entry\.ts:\d+:\d+\n=`,
-    ),
-  ],
-  [
-    "code that is generated directly",
-    typedRead,
-    ["--aot-testing=GenerateAllCodeDirectly"],
-    new RegExp(
-      String.raw`function \d+, at \d+ bytes into the code of the image\n` +
         at("walk") +
         String.raw`    at \S*entry\.ts:\d+:\d+\n=`,
     ),

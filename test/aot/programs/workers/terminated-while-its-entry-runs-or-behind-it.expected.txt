@@ -1,0 +1,6 @@
+of the web, while its entry runs: 0
+of node, while its entry runs: 1
+of the web, while its entry sleeps: 0
+of node, while its entry sleeps: 1
+of the web, behind its entry: 0
+of node, behind its entry: 1

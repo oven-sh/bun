@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-seroval",
+  "name": "@oven/full-types-seroval",
   "version": "1.6.9",
   "description": "Full types for seroval 1.6.9: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "seroval": "1.6.9"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

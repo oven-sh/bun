@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-fastify",
+  "name": "@oven/full-types-fastify",
   "version": "5.2.2",
   "description": "Full types for fastify 5.2.2: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "fastify": "5.2.2"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

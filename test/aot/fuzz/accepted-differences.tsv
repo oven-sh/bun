@@ -7,7 +7,7 @@
 compiled .*(Attempted to assign to readonly property|immutable properties|built-in objects are read-only|read-only in a compiled executable|this executable was compiled assuming)	language	built-in objects are locked: a write to one throws
 exit codes .*(Attempted to assign to readonly property|immutable properties|built-in objects are read-only|read-only in a compiled executable|this executable was compiled assuming)	language	the same, uncaught
 LockedBuiltinWrite|TS100014|built-in objects are read-only	language	a write to a locked built-in that always runs stops the build
-different output plain ".*(Error|is not a|is not an|Cannot |undefined is|null is|not defined|not iterable|Invalid|Unexpected|must be|expected).*" compiled ".*(Error|is not a|is not an|Cannot |undefined is|null is|not defined|not iterable|Invalid|Unexpected|must be|expected)	language	the words of an engine error differ
+different output plain "(.*?)(Error|is not a|is not an|Cannot |undefined is|null is|not defined|not iterable|Invalid|Unexpected|must be|expected).*" compiled "\1(Error|is not a|is not an|Cannot |undefined is|null is|not defined|not iterable|Invalid|Unexpected|must be|expected)	language	the words of an engine error differ: the lines are the same up to the first such word
 ^engine .*(Iterator result interface is not an object|this. is not a Promise|executor did not take)	bed	a stand-in answers for the built-ins that are written in JavaScript
 ^engine .* compiled ".*\blibrary\b	bed	the name of the stand-in
 different output plain ".*\{ ?\}.*" compiled ".*\{"$	language	the text of a function or class is the source's in a compiled program and the transpiler's in plain Bun

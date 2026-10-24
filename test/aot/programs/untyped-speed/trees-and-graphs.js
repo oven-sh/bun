@@ -69,7 +69,7 @@ function run(rounds) {
     var root = null;
     var seed = round + 1;
     for (var i = 0; i < 300; i++) {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
       root = insert(root, seed % 1000, i);
     }
     for (var key = 0; key < 1000; key += 3) total += find(root, key) & 7;

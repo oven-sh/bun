@@ -44,11 +44,10 @@ const files = {
   `,
 };
 
-const reads = ["operationAOTGetById", "operationAOTGetByIdAndCache", "operationAOTGetExtraProperty"];
+const reads = ["operationAOTGetById", "operationAOTGetByIdAndCache"];
 const stores = [
   "operationAOTPutById",
   "operationAOTPutByIdAndCache",
-  "operationAOTPutExtraProperty",
   "operationAOTDidCreateField",
   "operationAOTDidCreateFieldAt",
   "operationAOTDidCreateFieldOutOfLineAt",

@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-body-parser",
+  "name": "@oven/full-types-body-parser",
   "version": "2.3.0",
   "description": "Full types for body-parser 2.3.0: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "body-parser": "2.3.0"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

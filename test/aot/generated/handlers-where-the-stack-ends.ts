@@ -76,7 +76,6 @@ export const dropsPromises = (guard: string) => !!guards[guard].dropsPromises;
 
 export const ways: Record<string, string[]> = {
   "as built by default": [],
-  "all code generated directly": ["--aot-testing=GenerateAllCodeDirectly"],
   "everything hot": ["--aot-heat=everything-is-hot"],
 };
 

@@ -173,7 +173,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
       cpSync(join(import.meta.dir, "app"), typedApp, { recursive: true });
       for (const name of typedPackages) {
         const { version } = JSON.parse(readFileSync(join(app, "node_modules", name, "package.json"), "utf8"));
-        const companion = "sound-" + name.replace(/^@/, "").replace("/", "__");
+        const companion = "full-types-" + name.replace(/^@/, "").replace("/", "__");
         const installed = join(typedApp, "node_modules", "@oven", companion);
         cpSync(join(typedVersions, name, version), installed, { recursive: true });
       }
@@ -213,7 +213,9 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
 
     test.skipIf(!name.endsWith("-typed"))("is compiled from the full types of its packages", () => {
       expect(buildOutput).not.toMatch(/can't be used|type errors?\b/);
-      expect(buildOutput).toMatch(/^note: "[^"]+" \S+ is compiled from its full types in node_modules\/@oven\/sound-/m);
+      expect(buildOutput).toMatch(
+        /^note: "[^"]+" \S+ is compiled from its full types in node_modules\/@oven\/full-types-/m,
+      );
       expect(buildOutput).toContain(`note: "${name.replace(/-typed$/, "")}" `);
     });
 

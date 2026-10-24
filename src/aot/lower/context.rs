@@ -164,6 +164,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             compiled,
             modules: inputs.modules,
             builtins: file_inputs.builtins,
+            max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
         });
         let has_types_in_function_text =
             inputs.options.embeds_function_text && !hir.is_js && compiled.installed_text.is_none();

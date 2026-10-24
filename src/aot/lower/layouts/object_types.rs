@@ -5,7 +5,8 @@ use std::rc::Rc;
 use bun_sema::atom::Atom;
 use bun_sema::bind::Parent;
 use bun_sema::check::aot::{
-    ListedMember, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind, TypeIdentity, WrittenType,
+    ListedMember, MemberLookup, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind,
+    TypeIdentity, WrittenType,
 };
 use bun_sema::hir::{ExprId, ExprKind, PropKey, PropKind};
 use bun_sema::program::FileId;
@@ -1027,6 +1028,31 @@ fn collect_literal_members(file: &mut FileLowering<'_, '_, '_, '_>, literal: Exp
     members
 }
 
+// `{ size: 4, a: 1 }` under `{ size: number; [key: string]: number }`: that type has no field for `a`, and the literal's own type has one.
+fn writes_name_under_index_signature(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    literal: ExprId,
+    ty: CheckerTypeId,
+) -> bool {
+    let signatures = file.queries.index_signatures(ty);
+    if !signatures.is_ok_and(|signatures| !signatures.is_empty()) {
+        return false;
+    }
+    let hir = file.hir;
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return false;
+    };
+    properties.iter().any(|property| {
+        let PropKey::Name(name) = hir.runtime_property_key(property) else {
+            return false;
+        };
+        matches!(
+            file.queries.find_member(ty, name),
+            Ok(MemberLookup::Index(_))
+        )
+    })
+}
+
 fn find_contextual_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     literal: ExprId,
@@ -1035,6 +1061,9 @@ fn find_contextual_layout(
         return Some(found);
     }
     let ty = file.queries.contextual_type(literal).ok()??;
+    if writes_name_under_index_signature(file, literal, ty) {
+        return None;
+    }
     Some((object_type_layout(file, ty)?, ty))
 }
 

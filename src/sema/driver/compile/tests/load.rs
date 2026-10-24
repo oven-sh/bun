@@ -488,13 +488,16 @@ export type Copy = Size;
         ("node_modules/shapes/package.json", shapes_manifest),
         ("node_modules/shapes/index.js", "export const sides = 4;\n"),
         (
-            ".sound/shapes/index.ts",
+            ".full-types/shapes/index.ts",
             "export const sides: number = 4;\n",
         ),
     ];
     let disk = project_disk(&files, 1);
     let script = HostScript {
-        typed_versions: &[("node_modules/shapes/index.js", ".sound/shapes/index.ts")],
+        typed_versions: &[(
+            "node_modules/shapes/index.js",
+            ".full-types/shapes/index.ts",
+        )],
         ..HostScript::default()
     };
     with_host(

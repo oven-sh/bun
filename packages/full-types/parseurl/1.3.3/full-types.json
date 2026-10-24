@@ -1,0 +1,11 @@
+{
+  "format": 2,
+  "name": "parseurl",
+  "version": "1.3.3",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "index.js": "811223d4a19492ccc642384dc84f0af4ad935557dfe8f63750d7ffd673e40f17"
+  },
+  "needs": []
+}

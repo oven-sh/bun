@@ -299,6 +299,7 @@ impl LinkUnit {
         let variable_keys = fragment.variable_keys.into_iter();
         let module_keys = fragment.module_keys.into_iter();
         let function_references = ReferenceLists::new(&fragment.functions);
+        let module_failures = fragment.module_failure_keys.into_iter();
         LinkUnit {
             file: ProgramFile {
                 project: context.project,
@@ -316,7 +317,9 @@ impl LinkUnit {
             code_layout_count: fragment.code_layout_count,
             variables: KeyList::new(variable_keys.map(|key| context.variable_key(key)).collect()),
             modules: module_keys.map(|module| context.module(module)).collect(),
-            module_failures: fragment.module_failure_keys,
+            module_failures: module_failures
+                .map(|id| context.module_failure(id))
+                .collect(),
             function_definitions: fragment.functions,
             function_references,
             layout_definitions: fragment.layouts,

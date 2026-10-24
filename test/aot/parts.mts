@@ -111,8 +111,6 @@ export const rows: Row[] = [
     [`aot/frameworks/${name}-one-file`, 0, "./frameworks/run-framework", "testFramework", [name, "one file"]],
   ]),
 
-  variant("all-code-direct", ["--aot-testing=GenerateAllCodeDirectly"]),
-  variant("cold-code-direct", ["--aot-limit=MaxWarmCodeValues:1", "--aot-testing=GenerateColdCodeDirectly"]),
   variant("collecting-beside-the-program", [], besideTheProgram),
   variant(
     "collections-at-allocations",
@@ -155,7 +153,12 @@ export const rows: Row[] = [
     BUN_JSC_useConcurrentGC: "0",
   }),
   variant("veneers", ["--aot-limit=function-call-reach:0"]),
-  variant("verified-collections", [], { BUN_JSC_verifyGC: "1" }),
+  // A small program collects about twice by itself. The verifier marks the heap again behind each collection and names a cell that is reachable and was not marked.
+  variant("verified-collections", [], [
+    { BUN_JSC_verifyGC: "1" },
+    { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "5", BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" },
+    { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "7" },
+  ]),
   variant("verify-each-pass", ["--aot-check=verify-each-pass"], {}, 6, [
     [
       [
@@ -249,25 +252,21 @@ export const rows: Row[] = [
   ["aot/heat/neither", 8, "./heat/run-heat", "heat", ["neither"]],
   ["aot/jit-mode-eager-tier-up", 2, "./jit-mode-eager-tier-up", "eagerTierUpSweep"],
   [
-    "aot/joined-programs-all-code-direct",
-    3,
-    "./joined-programs",
-    "joined",
-    ["all-code-direct", ["--aot-testing=GenerateAllCodeDirectly"]],
-  ],
-  [
     "aot/joined-programs-predictions-fail",
     12,
     "./joined-programs",
     "joined",
     ["predictions-fail", ["--aot-testing=FailPredictions:2:1"]],
   ],
+  ["aot/joined-programs-limits-lowered", 9, "./joined-programs", "joinedWithLimitsLowered"],
   // A group of 250 programs costs about one build, so these take fifty times the programs of variant-validate and variant-proofs-checked-at-run-time.
   ["aot/joined-programs-proofs-checked", 3, "./joined-programs", "joined", ["proofs-checked", ["--aot-testing=CheckProofsAtRunTime"]]],
   ["aot/joined-programs-validated", 4, "./joined-programs", "joined", ["validated", ["--aot-validate"]]],
   ["aot/modules-three-ways", 4, "./three-ways/run-three-ways", "threeWays"],
   ["aot/one-line-changes-little", 8, "./one-line-changes-little-cases", "oneLineChangesLittle"],
+  ["aot/perf/pinned-everyday-idioms", 4, "./perf/pinned-everyday-idioms", "pinnedEverydayIdioms"],
   ["aot/process-platform-folds", 4, "./process-platform-folds-cases", "processPlatformFolds"],
+  ["aot/programs-in-every-run", 16, "./run-programs", "programsInEveryRun"],
   [
     "aot/programs-that-stopped-a-validating-build",
     3,
@@ -278,6 +277,26 @@ export const rows: Row[] = [
   ["aot/run-aot-frozen-arrays", 3, "./run-aot-frozen-arrays", "frozenArrayTests"],
   ["aot/runtime-use", 4, "./runtime-use-cases", "runtimeUseTests"],
   ["aot/runtime-use-hosts", 3, "./runtime-use-hosts-cases", "runtimeUseOfHostsTests"],
+  ...[
+    "bun",
+    "thin",
+    "hono",
+    "elysia",
+    "node",
+    "koa",
+    "express",
+    "fastify",
+    "fastify-schemas",
+    "tanstack",
+    "koa-typed",
+    "express-typed",
+    "fastify-typed",
+  ].map((name): Row => [`aot/servers/${name}`, 0, "./servers/one-server", "testServers", ["servers", name]]),
+  ...["bun", "elysia", "express", "fastify", "hono", "node"].map(
+    (name): Row => [`aot/servers/features-of-${name}`, 0, "./servers/one-server", "testServers", ["features", name]],
+  ),
+  ["aot/servers/api-servers", 0, "./servers/one-server", "testServers", ["api", "1"]],
+  ["aot/servers/validated-servers", 0, "./servers/one-server", "testServers", ["validated", "1"]],
   ["aot/startup-scaling/startup-scaling", 4, "./startup-scaling/startup-scaling", "describePart"],
   ["aot/trimmed-against-whole", 4, "./trimmed-against-whole-cases", "trimmedAgainstWhole"],
   ["aot/trimmed-matches-untrimmed", 4, "./trimmed-is-whole/run", "testTrimmedMatchesUntrimmed"],

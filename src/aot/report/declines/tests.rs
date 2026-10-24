@@ -285,7 +285,7 @@ fn kind_selects_enum_of_reason() {
         (
             DeclineKind::TypedResultNotSelected,
             TypedResultDeclineReason::TargetIsNotModeledByFlow.to_wire(),
-            "the declared type only becomes visible after inlining",
+            "the declared type only becomes visible after inlining, or it reaches more object and array types than one call handles",
         ),
         (
             DeclineKind::LoopNotVersioned,

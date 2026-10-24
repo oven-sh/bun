@@ -130,9 +130,26 @@ export { join };
       dts: true,
     });
     expect(built.logs.map(log => [log.level, log.message])).toEqual([
-      ["warn", "the full types that bun compile compiles a package from are left out: it does not support minify yet"],
+      [
+        "warn",
+        "the full types that bun compile compiles a package from are left out: they do not support minify.identifiers yet",
+      ],
     ]);
     expect(filesIn(join(root, "out"))).toEqual(["index.d.ts", "index.js", "join.d.ts"]);
+  });
+
+  test("minify.syntax and minify.whitespace: every file", async () => {
+    using dir = tempDir("build-api-dts-minify-syntax", project);
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      minify: { syntax: true, whitespace: true },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    expect(filesIn(join(root, "out"))).toContain("index.full.ts");
   });
 
   test("two builds at once keep their files apart", async () => {

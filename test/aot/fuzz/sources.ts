@@ -25,6 +25,12 @@
 //   typed-instances-changed-through-built-ins an instance of a typed class, and one way in which a built-in, a protocol or a callback changes it or makes another object that passes for one (typed-instances-changed-through-built-ins.ts)
 //   several-changes-one-behind-the-other two to four points of object-mutations on one object, in a drawn order, and two looks at what is left (several-changes-one-behind-the-other.ts)
 //   objects-with-very-many-fields objects with thirty to three hundred members, read by name, key and symbol, directly and from below through a chain of prototypes, around a change (objects-with-very-many-fields.ts)
+//   one-name-for-many-kinds-of-things a name that holds something that can be called, a record without a class and a thing with a fast form, used by element, name, call and walk (one-name-for-many-kinds-of-things.ts)
+//   objects-that-the-host-keeps-and-hands-back an object handed to a timer, a promise, an event, a signal, a stream, a socket or a file, changed turns of the event loop later, and read again by its maker (objects-that-the-host-keeps-and-hands-back.ts)
+//   one-key-asked-in-every-way a key and a value of every kind, asked by a read, `in`, Object.hasOwn, stores, a delete, a call and patterns, one behind the other (one-key-asked-in-every-way.ts)
+//   closures-read-through-array-methods closures over the variables of one turn of a loop or of an array method, read through array methods that follow one another (closures-read-through-array-methods.ts)
+//   objects-that-live-for-one-turn-of-a-loop objects, lists, instances, closures and shared variables made anew in each turn and used inside the function that makes them (objects-that-live-for-one-turn-of-a-loop.ts)
+//   every-birth-and-use the programs of ../generated/births-and-uses, of which the tests run one in forty: all of them, one after the other
 //   programs-as-they-are the programs of ../programs unchanged, one after the other: for lanes that change what is built beside a program (--company) or how it is built (--lowered-limits)
 //   several-changes-behind-a-declared-type the same out of typed-object-mutations, looked at through the typed reference (several-changes-behind-a-declared-type.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
@@ -123,6 +129,30 @@ function asTheyAre(root: string): Source | undefined {
   };
 }
 
+function everyBirthAndUse(): Source | undefined {
+  const folder = join(import.meta.dir, "..", "generated", "births-and-uses");
+  if (!existsSync(folder)) return;
+  const names = readdirSync(folder)
+    .filter(name => name.endsWith(".ts") && name !== "run.ts" && !(process.env.AOT_FUZZ_BIRTHS_WITHOUT ?? "").split(",").includes(name))
+    .sort();
+  const differs = new Set(Object.values(JSON.parse(readFileSync(join(folder, "known-to-differ.json"), "utf8")) as Record<string, Record<string, string>>).flatMap(Object.keys));
+  const tables = new Map<string, { name: string; file: string; text: string; flags?: string[] }[]>();
+  return (seed, bed) => {
+    if (bed.name !== "product") return;
+    const from = names[seed % names.length];
+    const typed = Math.floor(seed / names.length) % 2 === 1;
+    const key = from + typed;
+    if (!tables.has(key)) tables.set(key, require(join(folder, from)).programs(typed));
+    const table = tables.get(key)!;
+    if (!table.length) return;
+    // Neighbours in a table differ in one part: a stride that shares no factor with most lengths takes a batch from all over it.
+    const { name, file, text, flags } = table[(Math.floor(seed / (names.length * 2)) * 7919) % table.length];
+    if (flags?.length || differs.has(name) || text.length > 60_000) return;
+    const program: Program = { text, extension: file.endsWith(".ts") ? "ts" : "js" };
+    return bed.accepts(program) && bed.allows(text) ? { source: "every-birth-and-use", seed, ...program, notes: `${from} ${name}`, group: from } : undefined;
+  };
+}
+
 type Generator = (random: Random, typed: boolean, profile: { library: boolean }) => string;
 
 const generated =
@@ -152,6 +182,17 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
   if (mutants) sources.mutation = mutants;
   const unchanged = asTheyAre(programsRoot);
   if (unchanged) sources["programs-as-they-are"] = unchanged;
+  const pairs = everyBirthAndUse();
+  if (pairs) sources["every-birth-and-use"] = pairs;
+  if (existsSync(join(import.meta.dir, "one-key-asked-in-every-way.ts"))) {
+    const { generate } = await import("./one-key-asked-in-every-way.ts");
+    sources["one-key-asked-in-every-way"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "one-key-asked-in-every-way", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
   if (existsSync(join(import.meta.dir, "unsound-types.ts"))) {
     const { draw } = await import("./unsound-types.ts");
     sources["unsound-types"] = (seed, bed) => {
@@ -161,6 +202,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     };
   }
   for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values", "a-throw-at-every-call", "values-across-joins", "operators-at-the-edges", "objects-across-awaits", "every-kind-of-job", "work-on-the-way-up", "text-beside-compiled-code", "several-changes-one-behind-the-other"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
-  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields", "one-name-for-many-kinds-of-things", "objects-that-the-host-keeps-and-hands-back", "closures-read-through-array-methods", "objects-that-live-for-one-turn-of-a-loop", "patterns-with-subjects-made-from-them"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

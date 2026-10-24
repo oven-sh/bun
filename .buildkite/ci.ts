@@ -1051,6 +1051,10 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     );
     // It lists what once went wrong on one platform alone, so that no draw passes it over there.
     args.push("--always-draw=aot/programs-that-differed-on-one-platform");
+    // What every run takes of the programs, whatever its share. Debian runs every file.
+    if (profile === "asan" || (os === "darwin" && platform.arch === "aarch64")) args.push("--always-draw=aot/programs-in-every-run");
+    // Each HTTP server answers every route.
+    if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/servers/");
     // A library is files in folders, and every platform spells a path its own way.
     args.push(
       "--always-draw=bundler/bun-build-api-dts",
@@ -1105,7 +1109,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     ...(platform.tier === "beta" || (aot && !hasAotChanges(options)) ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
-      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+      platform.tier === "beta" ? 60 : aot || profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.ts asserts the agent matches what

@@ -42,7 +42,7 @@ bun compile --library
 ```txt
   index.js       135 bytes  (entry point)
   index.d.ts     123 bytes  (declaration)
-  index.full.ts  232 bytes  (typed)
+  index.full.ts  232 bytes  (full types)
   package.json   459 bytes  (asset)
 ```
 
@@ -106,7 +106,7 @@ export { greet };
 
 `bun compile` type checks the full-types files as a project of their own, under those options. The rest is always the same: `"target": "esnext"`, `"module": "preserve"`, `"moduleResolution": "bundler"`, `"skipLibCheck": true` and `"noEmit": true`. The `tsconfig.json` of the program that installs your package doesn't count, and neither do its `lib`, its `@types` packages or what it declares globally.
 
-With `--library` and `--dts`, a `const` at the top level of a module stays a `const` in the bundle, where `bun build` otherwise writes `var`. A `const` keeps its literal type, can be a `unique symbol`, and keeps what a test has narrowed, so the full-types file means what your sources mean.
+With `--library` and `--dts`, a `const` stays a `const` in the bundle, where `bun build` otherwise writes `var` at the top level of a module. A `const` keeps its literal type, can be a `unique symbol`, and keeps what a test has narrowed, so the full-types file means what your sources mean.
 
 Bun looks for your `tsconfig.json` from the entry point's folder up to the folder that has your `package.json`, and no further: one above that belongs to another project. Pass `--tsconfig-override` to use it anyway. Without a `tsconfig.json`, your sources are checked as `strict`, with `"lib": ["esnext", "dom", "dom.iterable", "dom.asynciterable"]`.
 
@@ -230,13 +230,72 @@ bun compile --library --outfile greeter
 error: --library writes a folder. Use --outdir instead of --outfile
 ```
 
-### What has no full-types file yet
+### Dead code
 
-With `--minify`, `--splitting`, `--no-bundle`, `--format=cjs` or `--sourcemap=inline`, Bun writes the JavaScript, the `.d.ts` files and the `package.json`, and warns that it left out the full-types file, `"compilerOptions"` and the `"full-types"` condition. `bun compile` then compiles the package as JavaScript.
+`--library` and `--dts` remove statements that can never run:
+
+- an `if` whose condition is `false` after [`--define`](/bundler#define), and the `else` of one whose condition is `true`
+- anything after a `return`, `throw`, `break` or `continue`
+- empty statements and empty blocks
+
+The rest of your code is printed as you wrote it.
+
+```ts src/repeat.ts icon="/icons/typescript.svg"
+declare const __DEV__: boolean;
+
+export function repeat(text: string, times: number): string {
+  if (__DEV__ && times < 0) throw new RangeError("times is negative");
+  if (__DEV__) {
+    console.log("repeat", text, times);
+  }
+  return text.repeat(times);
+}
+```
+
+```bash terminal icon="terminal"
+bun compile --library ./src/repeat.ts --define __DEV__=false --outdir out && cat out/repeat.full.ts
+```
 
 ```txt
-warn: the full types that bun compile compiles a package from are left out: it does not support --minify yet
+// src/repeat.ts
+function repeat(text: string, times: number): string {
+  return text.repeat(times);
+}
+export {
+  repeat
+};
 ```
+
+`declare const __DEV__` is gone too, because nothing refers to it anymore.
+
+### Minifying
+
+`--minify-whitespace` and `--minify-syntax` work with `--library` and `--dts`. `index.js` gets smaller and you still get the full-types file.
+
+With `--minify-whitespace`, the full-types file keeps one line break per statement. A `// @ts-ignore` in your sources applies to the next line, and that line shouldn't be the whole bundle.
+
+With `--minify-syntax`, Bun skips the rewrites that break type checking. That costs about 1% of the bundle size (0.8% for zod).
+
+| `bun build --minify-syntax`                           | With `--library` or `--dts` | Why                                                                                          |
+| ----------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------- |
+| `const` becomes `let`                                 | Stays `const`               | `let` widens literal types and can't be a `unique symbol`                                    |
+| `typeof x > "u"`                                      | `typeof x === "undefined"`  | TypeScript only narrows `x` on the second form                                               |
+| `a["b"]` becomes `a.b`                                | Stays `a["b"]`              | `a["b"]` is allowed on private members, and `noPropertyAccessFromIndexSignature` requires it |
+| `const x: T = f(); return x.y` becomes `return f().y` | Keeps the variable          | The annotation `T` would be lost                                                             |
+| `a(); if (!b) return;` becomes `if (a(), !b) return;` | Stays two statements        | TypeScript doesn't narrow `b` after the second form                                          |
+| `a(); return this;` becomes `return a(), this;`       | Stays two statements        | An inferred return type would depend on `a()`                                                |
+| `while (true)` becomes `while (!0)`                   | `for (;;)`                  | TypeScript doesn't treat `while (!0)` as an infinite loop                                    |
+| `if (a) {}` becomes `if (a);`                         | Stays `if (a) {}`           | `if (a);` is an error in TypeScript                                                          |
+
+### What has no full-types file yet
+
+With `--minify-identifiers`, `--no-bundle`, `--format=cjs` or `--sourcemap=inline`, Bun writes the JavaScript, the `.d.ts` files and the `package.json`, and warns that it left out the full-types file, `"compilerOptions"` and the `"full-types"` condition. `bun compile` then compiles the package as JavaScript.
+
+```txt
+warn: the full types that bun compile compiles a package from are left out: they do not support --minify-identifiers yet
+```
+
+`--minify` turns on `--minify-identifiers`. Types can refer to values by name, as in `typeof options`, and Bun doesn't rename those yet.
 
 Bun also type checks the full-types file before it writes it, and compares it with the JavaScript the way `bun compile` does in a program that installs your package. If the file has a type error, or doesn't match, the build warns you and leaves it out in the same way.
 
@@ -274,7 +333,7 @@ bun build ./src/index.ts --outdir ./dist --dts
 ```txt
   index.js       135 bytes  (entry point)
   index.d.ts     123 bytes  (declaration)
-  index.full.ts  232 bytes  (typed)
+  index.full.ts  232 bytes  (full types)
 ```
 
 Add the condition and `"compilerOptions"` yourself, and publish the project folder.
@@ -312,7 +371,7 @@ note: "greeter" 1.0.0 is compiled from its full types in node_modules/greeter/di
 
 - **Put `"types"` first, then `"full-types"`, then the condition for the JavaScript,** such as `"import"`, `"require"` or `"default"`. Every tool takes the first condition that it knows, in the order in which they appear.
 - **Each entry of `"exports"` has its own full-types file.** With `"."` and `"./version"`, that's two. A pattern such as `"./*"` can have the condition too, and doesn't need a full-types file for every file that it matches.
-- **The condition counts where a program imports the package by name,** as in `"greeter"` or `"greeter/version"`. A file that `index.js` imports by a relative path is compiled without types.
+- **The condition counts where a program imports the package by name,** as in `"greeter"` or `"greeter/version"`. A file that `index.js` imports by a relative path and that no entry of `"exports"` names, such as `./area.js`, takes its types from the `area.full.ts` beside it, if there is one.
 - **The full-types file can have any name, in any folder of the package.** Bun resolves its `import type` statements from the folder of the full-types file, and its other imports from the folder of `index.js`.
 - **The condition can be in a second `package.json`.** If `index.js` is in a folder that has one of its own, such as `dist/package.json`, Bun reads the `"exports"` of that file too.
 - **Publish the file.** If your `package.json` has `"files"`, it has to be in it.
@@ -392,7 +451,7 @@ Bun type checks the full-types files under the `"compilerOptions"` of the packag
 
 ### What a full-types file can contain
 
-When Bun compiles a program, it compares the code of `index.full.ts`, without its types, with the code of the installed `index.js`. White space and comments don't count. If the two differ, Bun prints a warning and compiles `index.js` without types.
+When Bun compiles a program, it parses `index.full.ts`, removes the types, and compares the syntax tree with that of the installed `index.js`. It doesn't compare the text, so white space, comments and redundant parentheses don't count, and `{ a: a }` is the same as `{ a }`. If the two differ, Bun prints a warning and compiles `index.js` without types.
 
 ```txt
 warn: "greeter" is compiled without types, because its full types in node_modules/greeter can't be used: index.full.ts without its types doesn't match index.js. Was the package patched?
@@ -416,17 +475,17 @@ Most packages on npm ship JavaScript and a `.d.ts` file. The `.d.ts` file descri
 
 [Type annotations matter](/bundler/aot-types#what-types-get-you) where the compiler can't track a value on its own, such as the result of `JSON.parse` or the argument of a callback that Bun calls. With a declared type there, a guard checks the value once, and the code after it stays on the fast path. A JavaScript package has no type there, so nothing is known about the value from then on.
 
-Full types put the types there. There are three places for one.
+Full types put the types there. They can come from three places.
 
-| Who writes it                              | Where it goes                                                                          |
-| ------------------------------------------ | -------------------------------------------------------------------------------------- |
-| The author of the package                  | [In the package](#from-source-to-npm), under the `"full-types"` export condition       |
-| You, for a package that you don't maintain | [In your project](#add-types-to-a-package-you-dont-maintain), under `.sound/`          |
-| Someone else, for everyone                 | [In a package of its own](#install-a-typed-version), installed as `@oven/sound-<name>` |
+| Who writes them                            | Where they go                                                                            |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| The author of the package                  | [In the package](#from-source-to-npm), under the `"full-types"` export condition         |
+| You, for a package that you don't maintain | [In your project](#add-types-to-a-package-you-dont-maintain), under `.full-types/`       |
+| Someone else, for everyone                 | [In a package of their own](#install-full-types), installed as `@oven/full-types-<name>` |
 
 ## Add types to a package you don't maintain
 
-Full types of a package is the package's own code with types added and nothing else changed. When your project has one for the exact files that are installed, `bun compile` compiles it in place of the JavaScript. Nothing in `node_modules` changes, and `bun run`, `bun test` and other builds ignore full types.
+The full types of a package are the package's own code with types added and nothing else changed. When your project has them for the exact files that are installed, `bun compile` compiles them in place of the JavaScript. Nothing in `node_modules` changes, and `bun run`, `bun test` and other builds ignore full types.
 
 Here is a package whose only file is `index.js`.
 
@@ -444,11 +503,11 @@ export function eachRow(rows, visit) {
 export function eachRow<Row>(rows: Row[], visit: (row: Row) => void): void;
 ```
 
-Its full types go in `.sound/each-row/`, in the directory that you run the build from. For a scoped package, that's `.sound/@scope/name/`. It has a `sound.json` and a `lay` folder. `lay/index.js` is the installed `index.js` with types added. It keeps the name of the file that it replaces, and Bun reads it as TypeScript.
+Its full types go in `.full-types/each-row/`, in the directory that you run the build from. For a scoped package, that's `.full-types/@scope/name/`. The folder has a `full-types.json` and a `lay` folder. `lay/index.js` is the installed `index.js` with types added. It keeps the name of the file that it replaces, and Bun reads it as TypeScript.
 
-```json .sound/each-row/sound.json icon="file-json"
+```json .full-types/each-row/full-types.json icon="file-json"
 {
-  "sound": 2,
+  "format": 2,
   "name": "each-row",
   "version": "1.0.0",
   "when": {},
@@ -459,7 +518,7 @@ Its full types go in `.sound/each-row/`, in the directory that you run the build
 }
 ```
 
-```ts .sound/each-row/lay/index.js icon="/icons/typescript.svg"
+```ts .full-types/each-row/lay/index.js icon="/icons/typescript.svg"
 export function eachRow<Row>(rows: Row[], visit: (row: Row) => void): void {
   for (const row of rows) visit(row);
 }
@@ -476,14 +535,14 @@ bun compile ./rows-app.ts && ./rows-app
 ```
 
 ```txt
-note: "each-row" 1.0.0 is compiled from its full types in .sound/each-row
+note: "each-row" 1.0.0 is compiled from its full types in .full-types/each-row
 1
 2
 ```
 
 | Field             | Meaning                                                                                                 |
 | ----------------- | ------------------------------------------------------------------------------------------------------- |
-| `sound`           | The version of the format: `2`                                                                          |
+| `format`          | The version of the format: `2`                                                                          |
 | `name`, `version` | The installed package that the full types are for                                                       |
 | `when`            | What the build must [`define`](/bundler#define), as strings: `{ "process.env.NODE_ENV": "production" }` |
 | `lay`             | The files of the package that `lay/<path>` replaces, each with the SHA-256 of the installed file        |
@@ -492,55 +551,55 @@ note: "each-row" 1.0.0 is compiled from its full types in .sound/each-row
 Bun only uses full types if everything matches. Otherwise it compiles the installed JavaScript, as if the full types weren't there, and warns you with what didn't match, for example after you upgrade the package. The program still works, and it never gets slower without you hearing about it.
 
 ```txt
-warn: TS100056: The full types of "each-row" in .sound/each-row can't be used: it is for version 1.0.0, but 1.0.1 is installed. Replace it with the full types for 1.0.1, or remove it
+warn: TS100056: The full types of "each-row" in .full-types/each-row can't be used: they are for version 1.0.0, but 1.0.1 is installed. Replace them with the full types for 1.0.1, or remove them
 ```
 
-Full types only replace files that the package has. It can't add one. Bun compares each file under `lay` with the installed file, as it does for a full-types file that a package ships: without its types, it has to be the same code. That rules out TypeScript syntax that turns into code, such as an `enum`, a `namespace`, a parameter property or a decorator. [What a full-types file can contain](#what-a-typed-file-can-contain) has the list.
+Full types only replace files that the package has. They can't add one. Bun compares each file under `lay` with the installed file, as it does for a full-types file that a package ships: without its types, it has to be the same code. That rules out TypeScript syntax that turns into code, such as an `enum`, a `namespace`, a parameter property or a decorator. [What a full-types file can contain](#what-a-full-types-file-can-contain) has the list.
 
-Bun type checks full types at build time. If it has a type error, the package is compiled without its types and the build warns you with the first error, as it does for a package that ships TypeScript. It's checked as a project of its own, as `strict`: your `tsconfig.json` doesn't apply to it.
+Bun type checks full types at build time. If they have a type error, the package is compiled without its types and the build warns you with the first error, as it does for a package that ships TypeScript. They're checked as a project of their own, as `strict`: your `tsconfig.json` doesn't apply to them.
 
 An [`int32`](/bundler/aot-types#32-bit-integers) in your own code stops the build if Bun can't prove it, because you can fix it. In full types, or in a package that ships TypeScript, you can't. There the build continues and warns you: every `int32` that the file declares is tested when the program runs, instead of being taken for granted.
 
 ```txt
-warn: TS100066: The compiler can't prove every 'int32' that ".sound/each-row/lay/index.js" declares, so it tests them when the program runs. The file still works, but runs slower.
+warn: TS100066: The compiler can't prove every 'int32' that ".full-types/each-row/lay/index.js" declares, so it tests them when the program runs. The file still works, but runs slower.
 ```
 
 ## Install full types
 
-Full types can also be a package of its own, the way `@types/each-row` holds the `.d.ts` files of `each-row`. It's the same folder as above, with a `package.json` beside `sound.json`.
+Full types can also be a package of their own, the way `@types/each-row` holds the `.d.ts` files of `each-row`. It's the same folder as above, with a `package.json` beside `full-types.json`.
 
-```json node_modules/@oven/sound-each-row/package.json icon="file-json"
+```json node_modules/@oven/full-types-each-row/package.json icon="file-json"
 {
-  "name": "@oven/sound-each-row",
+  "name": "@oven/full-types-each-row",
   "version": "1.0.0",
   "peerDependencies": { "each-row": "1.0.0" },
-  "files": ["sound.json", "lay"]
+  "files": ["full-types.json", "lay"]
 }
 ```
 
 ```txt
-node_modules/@oven/sound-each-row/sound.json
-node_modules/@oven/sound-each-row/lay/index.js
+node_modules/@oven/full-types-each-row/full-types.json
+node_modules/@oven/full-types-each-row/lay/index.js
 ```
 
-The full types of a scoped package, `@scope/name`, is `@oven/sound-scope__name`.
+For a scoped package, `@scope/name`, the name is `@oven/full-types-scope__name`.
 
 A project that has it in `node_modules` needs no other setup.
 
 ```txt
-note: "each-row" 1.0.0 is compiled from its full types in node_modules/@oven/sound-each-row
+note: "each-row" 1.0.0 is compiled from its full types in node_modules/@oven/full-types-each-row
 ```
 
-Bun looks in the `node_modules` of the directory that you run the build from, then in that of each directory above it, and takes the first `@oven/sound-each-row` that it finds.
+Bun looks in the `node_modules` of the directory that you run the build from, then in that of each directory above it, and takes the first `@oven/full-types-each-row` that it finds.
 
-Installed full types pass the same checks as one in `.sound/`. Its `sound.json` has to match what's installed, each file under `lay` without its types has to be the same code as the file that it replaces, and Bun type checks it. If one of them fails, Bun warns you and compiles the installed JavaScript.
+Installed full types pass the same checks as those in `.full-types/`. Their `full-types.json` has to match what's installed, each file under `lay` without its types has to be the same code as the file that it replaces, and Bun type checks them. If one of them fails, Bun warns you and compiles the installed JavaScript.
 
 ## Which full types Bun uses
 
 For each file of a package, Bun takes the first of these that has one.
 
-1. The full types in your project, `.sound/<name>/`
-2. The full-types file that the package [ships](#write-the-typed-file-with-another-build)
-3. The full types that's installed as `@oven/sound-<name>`
+1. The full types in your project, `.full-types/<name>/`
+2. The full-types file that the package [ships](#write-the-full-types-file-with-another-build)
+3. The full types that are installed as `@oven/full-types-<name>`
 
-If `.sound/` has full types of a package, Bun doesn't look at `@oven/sound-<name>`, even if yours can't be used.
+If `.full-types/` has the full types of a package, Bun doesn't look at `@oven/full-types-<name>`, even if yours can't be used.

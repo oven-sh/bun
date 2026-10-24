@@ -346,6 +346,7 @@ impl<'a> Build<'a> {
         let loaded = LoadedBuild {
             projects,
             world_sessions: shared.world_sessions,
+            application: None,
             session: shared.sessions.application,
             atoms: shared.atoms,
             messages: shared.messages,

@@ -1018,7 +1018,7 @@ fn typed_version_text_is_the_typed_file() {
     let [(path, text)] = package_sources[..] else {
         panic!("{package_sources:?}");
     };
-    assert!(path.ends_with(b"/.sound/p/lay/x.js"));
+    assert!(path.ends_with(b"/.full-types/p/lay/x.js"));
     assert_eq!(text, TYPED);
 }
 

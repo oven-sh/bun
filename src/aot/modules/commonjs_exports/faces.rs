@@ -13,7 +13,7 @@ use crate::modules::module_set::ModuleSet;
 use crate::modules::plan::Shape;
 use crate::modules::reached_targets::ReachedTargets;
 use crate::modules::requests::Scans;
-use crate::modules::{ModuleRef, collect_pending_failures};
+use crate::modules::{ApplicationGraph, ModuleRef, collect_pending_failures};
 use bun_sema::atom::{Atom, known};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -206,6 +206,9 @@ impl Faces {
             seen_namespaces: collect_seen_namespaces(modules, tables, imports),
             ..Faces::default()
         };
+        if let Some(application) = input.bind.application {
+            faces.adopt_imports(application);
+        }
         let atoms = &input.bind.files.atoms;
         for &file in &faces.seen_namespaces {
             if let Some(mut names) = tables.names_of_commonjs_module(ModuleRef::File(file)) {
@@ -245,6 +248,25 @@ impl Faces {
         );
         faces.absent_names = absent_names;
         faces
+    }
+
+    fn adopt_imports(&mut self, application: &ApplicationGraph<'_>) {
+        let theirs = &application.graph.commonjs().faces;
+        let to_local = application.to_local;
+        self.written_imports.clear();
+        let imported_variables = theirs.imported_variables.iter();
+        self.imported_variables = imported_variables
+            .filter_map(|imported| {
+                Some(ImportedVariable {
+                    exporter: to_local(imported.exporter)?,
+                    owner: application.local_module(imported.owner)?,
+                    name: imported.name,
+                })
+            })
+            .collect();
+        let seen_namespaces = theirs.seen_namespaces.iter();
+        self.seen_namespaces = seen_namespaces.filter_map(|&file| to_local(file)).collect();
+        self.seen_namespaces.sort_unstable();
     }
 
     pub(super) fn has_face(&self, file: FileId) -> bool {

@@ -10,7 +10,7 @@ const lines: string[] = [];
 
 let state = 12345;
 function next(): number {
-  state = (state * 1103515245 + 12345) % 2147483648;
+  state = (Math.imul(state, 1103515245) + 12345) & 0x7fffffff;
   return state % 1000;
 }
 interface Box {

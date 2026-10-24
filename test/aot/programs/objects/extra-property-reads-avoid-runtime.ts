@@ -1,7 +1,7 @@
 // By-name reads of properties outside an object's layout (getters of a literal that also has data members, properties added later, absent names) are answered
 // by the stubs without calling the runtime, for one object and for many. The jsc shell counts the calls; elsewhere the program checks the values alone.
 declare const aotOperationCount: undefined | ((name: string) => number);
-const operations = ["operationAOTGetExtraProperty", "operationAOTGetByIdAndCache"];
+const operations = ["operationAOTGetById", "operationAOTGetByIdAndCache"];
 function entered(): number { let sum = 0; if (typeof aotOperationCount === "function") for (const operation of operations) sum += aotOperationCount(operation); return sum; }
 const lines: string[] = [];
 function measure(label: string, reads: number, run: () => number): void {

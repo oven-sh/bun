@@ -21,6 +21,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
     let (functions, captures) = compute_function_summaries(context, &parts);
     ScopeAnalysis {
         file: context.input.file,
+        max_captures: context.input.max_captures,
         bindings: group_bindings(context, &parts.forms, &parts.placements),
         environment_fields: group_fields(context, &parts.placements),
         hoisted_functions: group_hoisted_functions(context),

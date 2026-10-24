@@ -4,7 +4,7 @@ mod tests;
 use crate::builtins::RuntimeModule;
 use crate::ir::{FunctionKey, LayoutKey, VariableKey};
 use crate::load::{ProgramFile, ProjectId, Sources};
-use crate::modules::{ModuleGraph, ModuleRef};
+use crate::modules::{ModuleFailureId, ModuleGraph, ModuleRef};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::{
     ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeParameterRef,
@@ -138,6 +138,7 @@ pub enum ProgramKey {
 pub struct Rehoming<'a> {
     /// By file of the package's program: the application's file at the same path.
     pub files: &'a [Option<FileId>],
+    pub application_graph: &'a ModuleGraph,
     /// A file that only the package's program has gets a number that no file of the application has.
     pub first_fresh_file: u32,
     /// The first declaration's symbol of a symbol of the package's program.
@@ -342,6 +343,20 @@ impl KeyContext<'_> {
                     .map_or(key, |rehoming| rehoming.variable_key(key)),
             }),
         }
+    }
+
+    pub fn module_failure(&self, id: ModuleFailureId) -> ModuleFailureId {
+        let Some(rehoming) = self.rehoming else {
+            return id;
+        };
+        let failure = self.graph.failure(id);
+        let importer = rehoming.file(failure.importer);
+        let mut failures = rehoming.application_graph.failures().iter();
+        let position = failures.position(|other| {
+            (other.importer, other.site, other.start, other.end)
+                == (importer, failure.site, failure.start, failure.end)
+        });
+        position.map_or(id, |position| ModuleFailureId(position as u32))
     }
 
     pub fn module(&self, module: ModuleRef) -> ProgramModule {

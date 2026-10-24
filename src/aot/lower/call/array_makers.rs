@@ -9,7 +9,7 @@ use crate::ir::{TypeTable, ValueId};
 use crate::lower::expression::{self, lower_expression};
 use crate::lower::{FileLowering, FunctionLowering, condition, convert};
 
-// The ways in which programs write "a list of this length": `Array.from({ length }, mapper)`, `Array(length).fill(value)`, `[...Array(length).keys()]`.
+// The ways in which programs write "a list of this length": `Array.from({ length }, mapper)`, `Array(length).fill(value)`.
 
 fn is_named(file: &FileLowering<'_, '_, '_, '_>, key: PropKey, name: &[u8]) -> bool {
     matches!(key, PropKey::Name(atom) if file.queries.atom_bytes(atom) == name)
@@ -311,44 +311,4 @@ pub(super) fn try_lower_method_call(
 ) -> Option<ValueId> {
     lower_filled_array(lowering, call, site)
         .or_else(|| lower_mapped_filled_array(lowering, call, site))
-}
-
-// [...Array(n).keys()]
-pub(in crate::lower) fn try_lower_list_of_indexes(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    literal: ExprId,
-) -> Option<ValueId> {
-    let hir = lowering.file.hir;
-    let ExprKind::Array(elements) = hir[literal].kind else {
-        return None;
-    };
-    let mut elements = hir.ids(elements);
-    let ExprKind::Spread(spread) = hir[elements.next()?].kind else {
-        return None;
-    };
-    if elements.next().is_some() {
-        return None;
-    }
-    let keys = find_method_call_at(
-        lowering.file,
-        spread,
-        b"keys",
-        BuiltinId::ArrayPrototypeKeys,
-    )?;
-    let array = find_array_of_length(lowering.file, keys.receiver)?;
-    if hir.ids(keys.site.args).next().is_some() {
-        return None;
-    }
-
-    let length = lower_length(lowering, &array, &[]);
-    lowering.set_position(hir[literal].pos);
-    let function =
-        expression::emit_locked_builtin(lowering, BuiltinId::CompilerHelpersArrayOfIndexes);
-    Some(emit_call(
-        lowering,
-        function,
-        None,
-        Arguments::Values(SmallVec::from_slice(&[length])),
-        CallSite::default(),
-    ))
 }

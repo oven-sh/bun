@@ -4108,7 +4108,7 @@ function scrambled(seed: number, count: number) {
   for (let i = 0; i < 80; i++) order.push(i);
   let state = seed * 2654435761 + 1;
   for (let i = 79; i > 0; i--) {
-    state = (state * 1103515245 + 12345) % 2147483648;
+    state = (Math.imul(state, 1103515245) + 12345) & 0x7fffffff;
     const j = state % (i + 1);
     [order[i], order[j]] = [order[j], order[i]];
   }

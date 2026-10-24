@@ -398,7 +398,6 @@ export default b.declarations(
       // Where the length is no small number the list is filled and mapped as the program wrote it, and the mapper gets that list too.
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
-    arrayOfIndexes: arrayMaker("arrayOfIndexes", newArrayOf(b.length), { length: b.inspected }),
     ...helpersIn("prelude/array-traversal", b.any, {
       traverseArray: {
         array: keptWithContents,
@@ -413,8 +412,8 @@ export default b.declarations(
       "prelude/validation",
       b.any,
       {
-        validateByPlan: { value: validated, plan: b.inspected, isRefused: b.inspected },
-        interpretNode: { value: validated, plan: b.inspected },
+        validateByPlan: { value: validated, plan: b.inspected, isRefused: b.inspected, prepared: b.inspected },
+        interpretNode: { value: validated, plan: b.inspected, prepared: b.inspected },
         copyOwnProperties: { value: copied("OwnKeys", "OwnValues") },
       },
       usesOnlyFixedBuiltins,
@@ -428,7 +427,13 @@ export default b.declarations(
     ...helpersIn(
       "prelude/validation",
       b.bool,
-      { holdsRule: { value: [b.runs("ToPrimitive", b.named("length"), textMethods)], rule: b.inspected } },
+      {
+        holdsRule: {
+          value: [b.runs("ToPrimitive", b.named("length"), textMethods)],
+          rule: b.inspected,
+          prepared: b.inspected,
+        },
+      },
       usesOnlyFixedBuiltins,
     ),
     ...helpersIn(

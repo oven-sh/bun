@@ -215,7 +215,7 @@ function put(given, index, value) {
 }
 let seed = 12345;
 function next(limit) {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
     return seed % limit;
 }
 const kept = [];

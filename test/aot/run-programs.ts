@@ -417,28 +417,9 @@ function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
   expect(unmet.map(({ name, relation, bound }) => `${name} ${relation} ${bound}, but the build counted ${counted.get(name) ?? "no such statistic"}`)).toEqual([]);
 }
 
-// The check of references reads what B3's road leaves behind, so a build with it generates no code directly: a program that is here for the direct code generators is built without.
-// There are none on Windows.
-const generatesAllCodeDirectly = (program: CompiledProgram) => !isWindows && program.buildFlags.includes("--aot-testing=GenerateAllCodeDirectly");
-const generatesCodeDirectly = (program: CompiledProgram) => generatesAllCodeDirectly(program) || (!isWindows && program.buildFlags.includes("--aot-testing=GenerateColdCodeDirectly"));
-// A function that the direct generator turns down while it plans goes to B3 and is counted nowhere: one that handles a 32-bit float, say. A small program may have no other function,
-// so the demand is on the programs of a test file together.
-const builtAllDirectly = { programs: 0, withoutDirectCode: [] as string[] };
-function noteDirectCode(program: CompiledProgram, buildOutput: string) {
-  builtAllDirectly.programs++;
-  if (!Number(/^FunctionsGeneratedDirectly (\d+)$/m.exec(buildOutput)?.[1] ?? 0)) builtAllDirectly.withoutDirectCode.push(program.entryPoints[0]);
-}
-function expectDirectCodeInMostPrograms() {
-  const { programs, withoutDirectCode } = builtAllDirectly;
-  builtAllDirectly.programs = 0;
-  builtAllDirectly.withoutDirectCode = [];
-  if (programs >= 10 && withoutDirectCode.length * 10 >= programs) expect({ programs, withoutDirectCode }).toEqual({ programs, withoutDirectCode: [] });
-}
-
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");
-  const checks = generatesCodeDirectly(program) ? [] : ["--aot-check=validate-references"];
-  const flags = [...checks, ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected || generatesAllCodeDirectly(program) ? ["--explain=statistics"] : [])];
+  const flags = ["--aot-check=validate-references", ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected ? ["--explain=statistics"] : [])];
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, ...program.entryPoints, "--outfile", executable];
   const ran = await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment });
   const build = { ...ran, executable };
@@ -460,7 +441,6 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
       ...(program.statistics ?? []),
       ...(program.stubCopiesExpected ? [{ name: "StubCopiesEmitted", relation: ">=", bound: 2 } as const] : []),
     ]);
-    if (generatesAllCodeDirectly(program)) noteDirectCode(program, build.stderr);
     let spentCollecting = 0;
     for (const environment of program.runEnvironments) {
       // A list of environments goes from mild to harsh. A program that has taken a minute in the mild ones is not run in the harsh ones.
@@ -597,13 +577,15 @@ async function run(path: string, beside: string, setup: Setup) {
 
 const hash = (path: string) => BigInt(Bun.hash(inPrograms(path).replaceAll("\\", "/")));
 const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
+// AOT_PROGRAMS=quick names the same tenth every time. The tenth that a debug or ASAN build takes by itself goes by the commit, as every share does: in time all are taken.
+const isInTenthOfSlowBuild = (path: string) =>
+  process.env.AOT_PROGRAMS === undefined && seedOfShare !== "all" ? inShare(inPrograms(path), 10, true) : isQuick(path);
 const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
 const runsWithASAN = (path: string) => isASAN && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
 
 function define(title: string, chosen: string[], settings: Omit<Setup, "folder" | "carrier">) {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
-  afterAll(expectDirectCodeInMostPrograms);
   const carrier = !unsupported && chosen.length >= 20 ? withoutDebugInformation() : [];
 
   describe.concurrent(title, () => {
@@ -638,7 +620,28 @@ export function programs(topic: string, part = 1, parts = 1) {
       find(topic)
         .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
         .filter(mayHoldWhatIsWanted),
-      path => (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : isWanted(path)) && inShare(inPrograms(path), 10),
+      path => (wanted === "quick" ? isInTenthOfSlowBuild(path) || runsWithASAN(path) : isWanted(path)) && inShare(inPrograms(path), 10),
+    ),
+    { buildFlags: [], runEnv: {}, erasesTypes: true },
+  );
+}
+
+/**
+ * The programs that every run takes, whatever its share and whatever the build of Bun: all of ./programs/counterexamples, and those that ./programs-in-every-run.txt lists, one a line,
+ * as a path below ./programs without its extension. Each is judged as programs() judges it. A line that names no program fails.
+ */
+export function programsInEveryRun(part = 1, parts = 1) {
+  const listed = readFileSync(join(import.meta.dir, "programs-in-every-run.txt"), "utf8").split(/\r?\n/).filter(line => line !== "");
+  const nameOf = (path: string) => besideOf(inPrograms(path)).replaceAll("\\", "/");
+  const all = [...new Set(["counterexamples", ...listed.map(name => name.slice(0, name.indexOf("/")))])].flatMap(find).filter(path => !groups.has(path));
+  const names = new Set(all.map(nameOf));
+  if (part === 1) test("every line of programs-in-every-run.txt names a program", () => expect(listed.filter(name => !names.has(name))).toEqual([]));
+  const isListed = new Set(listed);
+  define(
+    "compile/aot/in-every-run",
+    taken(
+      all.filter(path => Number((hash(path) >> 24n) % BigInt(parts)) === part - 1),
+      path => (nameOf(path).startsWith("counterexamples/") || isListed.has(nameOf(path))) && (wanted === "" || wanted === "quick" || isWanted(path)),
     ),
     { buildFlags: [], runEnv: {}, erasesTypes: true },
   );
@@ -664,7 +667,7 @@ export function programsBuiltWith(topic: string, label: string, buildFlags: stri
         .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
         .filter(mayHoldWhatIsWanted),
       path =>
-        (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : isWanted(path)) &&
+        (wanted === "quick" ? isInTenthOfSlowBuild(path) || runsWithASAN(path) : isWanted(path)) &&
         // A list of names is a list of programs that once went wrong so: all of them are taken.
         (only ? only.includes(nameOf(path)) : inShare(label + " " + inPrograms(path), 10)),
     )

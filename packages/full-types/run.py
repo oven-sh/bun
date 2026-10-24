@@ -259,7 +259,7 @@ def declare_missing_exports(project):
 def link_packages(project, modules):
     os.symlink(modules, project + '/node_modules')
     if modules != INSTALLED and os.path.isdir(OUT + '/sound'):
-        shutil.copytree(OUT + '/sound', project + '/.sound')
+        shutil.copytree(OUT + '/sound', project + '/.full-types')
 
 
 def create_project(tree, build, modules):

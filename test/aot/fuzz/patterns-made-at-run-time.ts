@@ -12,7 +12,7 @@
 // Each use prints its answer, or the name of its error, and lastIndex behind it.
 import type { Random } from "./random";
 
-const prelude = `type Case = { pieces: string[]; flags: string; head: string; unit: string; count: number; tail: string };
+export const prelude = `type Case = { pieces: string[]; flags: string; head: string; unit: string; count: number; tail: string };
 function show(value: unknown): string {
   if (value === undefined) return "u";
   if (value === null) return "null";
@@ -201,7 +201,7 @@ class Grammar {
 }
 
 // `re` is the RegExp, `s` the subject.
-const uses: Record<string, string> = {
+export const uses: Record<string, string> = {
   exec: "attempt(() => re.exec(s))",
   "exec-in-a-loop": 'attempt(() => {\n      let all = "";\n      for (let i = 0; i < 8; i++) {\n        const m = re.exec(s);\n        all += show(m) + re.lastIndex + " ";\n        if (!m) break;\n        if (m[0] === "" && (re.global || re.sticky)) re.lastIndex++;\n      }\n      return all;\n    })',
   test: "attempt(() => re.test(s))",

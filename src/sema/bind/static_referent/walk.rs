@@ -5,8 +5,8 @@ use super::{
 use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::has_decorators;
 use crate::bind::{
-    Binding, BindingInitializer, BindingStability, Bound, CommonJsVariable, Decl, InitialState,
-    Parent,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
+    InitialState, Parent, PatParent, SymbolId,
 };
 use crate::check::aot::{ClassRef, FunctionRef};
 use crate::hir::*;
@@ -41,6 +41,60 @@ type StepOf<'s, C> = Step<<C as ReferentContext<'s>>::Builtin, <C as ReferentCon
 
 fn unknown<B, M>(reason: UnknownReferent) -> Step<B, M> {
     Step::Found(StaticReferent::Unknown(reason))
+}
+
+// What every call of `function` that returns evaluates to: the value of its one `return`, which is a statement of its body.
+fn find_only_returned_value(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<ExprId> {
+    if hir[function]
+        .flags
+        .intersects(Flags::ASYNC | Flags::GENERATOR)
+    {
+        return None;
+    }
+    let mut returns = bound.ids(bound.fns[function.idx()].returns);
+    let (Some(statement), None) = (returns.next(), returns.next()) else {
+        return None;
+    };
+    match hir[statement].kind {
+        StmtKind::Return(value)
+            if value.is_some() && bound.parent_of_stmt(statement) == Parent::FnBody(function) =>
+        {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+// The argument that a parameter of a function expression stands for, where the function runs where it is written and at no other time.
+fn find_argument_of_only_call(hir: &File<'_>, bound: &Bound<'_>, id: SymbolId) -> Option<ExprId> {
+    let &[Decl::Param(pattern)] = bound.symbol(id).decls else {
+        return None;
+    };
+    let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let written = &hir[parameter];
+    let is_plain_name = matches!(hir[pattern].kind, PatKind::Ident(_))
+        && written.default.is_none()
+        && !written.flags.contains(Flags::REST);
+    let function = bound.param_fn[parameter.idx()];
+    if !is_plain_name || function == FnId::NONE {
+        return None;
+    }
+    let call = bound.get_immediately_invoked_function_expression(hir, function)?;
+    // It looks at every expression of the file where the function has a name.
+    if bound.finds_itself(hir, function) {
+        return None;
+    }
+    let index = hir[function].params.iter().position(|it| it == parameter)?;
+    let mut arguments = hir.ids(hir[call].args).take(index + 1);
+    if arguments
+        .clone()
+        .any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
+    {
+        return None;
+    }
+    arguments.nth(index)
 }
 
 fn reads_module_exports(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
@@ -295,9 +349,17 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 op: None, value, ..
             } => Step::Expression(file, value),
             ExprKind::Object(properties) => self.step_object_literal(file, properties),
-            ExprKind::Call(_) => match context.loaded_value(file, expr) {
+            ExprKind::Call(site) => match context.loaded_value(file, expr) {
                 Some(loaded) => self.step_loaded_value(loaded),
-                None => unknown(UnknownReferent::NotAReference),
+                None => match hir[hir.skip_type_assertions(hir[site].callee)].kind {
+                    ExprKind::Fn(function) => {
+                        match find_only_returned_value(hir, context.bound(file), function) {
+                            Some(value) => Step::Expression(file, value),
+                            None => unknown(UnknownReferent::NotAReference),
+                        }
+                    }
+                    _ => unknown(UnknownReferent::NotAReference),
+                },
             },
             _ => unknown(UnknownReferent::NotAReference),
         }
@@ -501,6 +563,12 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
             BindingInitializer::EntityName(import) => self.step_entity_name(file, import),
             BindingInitializer::Import => Step::Linked(context.linked_binding(file, id)),
+            BindingInitializer::Opaque if bound.binding_kind(id) == BindingKind::Parameter => {
+                match find_argument_of_only_call(hir, bound, id) {
+                    Some(argument) => Step::Expression(file, argument),
+                    None => unknown(UnknownReferent::OpaqueInitializer),
+                }
+            }
             BindingInitializer::Opaque => unknown(UnknownReferent::OpaqueInitializer),
         }
     }

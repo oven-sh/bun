@@ -1,4 +1,4 @@
-@oven/sound-koa__router 15.7.0
+@oven/full-types-koa__router 15.7.0
 
 This package holds files of @koa/router 15.7.0 (https://www.npmjs.com/package/@koa/router/v/15.7.0).
 Copyright (c) 2015 @koajs maintainers and contributors

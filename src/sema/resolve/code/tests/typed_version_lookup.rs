@@ -83,7 +83,7 @@ fn typed_version_comes_from_host_then_condition() {
         by(FromPackage, TYPED)
     );
 
-    let sound = "/p/.sound/pkg/index.ts";
+    let sound = "/p/.full-types/pkg/index.ts";
     let host = typed_package().typed(INSTALLED, sound);
     assert_eq!(typed_version(&host, INSTALLED), by(FromHost, sound));
 }
@@ -91,12 +91,12 @@ fn typed_version_comes_from_host_then_condition() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn installed_typed_version_comes_after_condition() {
-    let installed_typed = "/p/node_modules/@oven/sound-pkg/lay/index.js";
+    let installed_typed = "/p/node_modules/@oven/full-types-pkg/lay/index.js";
     let host = typed_package().installed_typed(INSTALLED, installed_typed);
     assert_eq!(typed_version(&host, INSTALLED), by(FromPackage, TYPED));
 
     let other = "/p/node_modules/pkg/other.js";
-    let other_typed = "/p/node_modules/@oven/sound-pkg/lay/other.js";
+    let other_typed = "/p/node_modules/@oven/full-types-pkg/lay/other.js";
     let host = typed_package().installed_typed(other, other_typed);
     assert_eq!(typed_version(&host, other), by(FromHost, other_typed));
 }
@@ -106,7 +106,7 @@ fn installed_typed_version_comes_after_condition() {
 fn typed_condition_needs_package_exports() {
     assert_eq!(typed_version(&typed_package(), "/p/local.js"), None);
 
-    let sound = "/p/.sound/local.ts";
+    let sound = "/p/.full-types/local.ts";
     let host = typed_package().typed("/p/local.js", sound);
     assert_eq!(typed_version(&host, "/p/local.js"), by(FromHost, sound));
 }
@@ -118,7 +118,7 @@ fn typed_versions_can_be_off() {
         typed_condition: None,
         ..bun_run()
     };
-    let host = typed_package().typed(INSTALLED, "/p/.sound/pkg/index.ts");
+    let host = typed_package().typed(INSTALLED, "/p/.full-types/pkg/index.ts");
     assert_eq!(typed_version_with(&host, &options, INSTALLED), None);
     assert_eq!(host.typed_version_calls(), 0);
 }
@@ -160,7 +160,7 @@ fn typed_version_does_not_depend_on_request() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn host_is_asked_once_per_path() {
-    let host = typed_package().typed(INSTALLED, "/p/.sound/pkg/index.ts");
+    let host = typed_package().typed(INSTALLED, "/p/.full-types/pkg/index.ts");
     with_resolver(&host, &bun_run(), |resolver| {
         let first = resolver.typed_version_of(INSTALLED.as_bytes());
         assert_eq!(resolver.typed_version_of(INSTALLED.as_bytes()), first);
@@ -213,7 +213,6 @@ fn manifest_must_export_file_and_other_typed_file() {
     let dist_manifests = [
         r#"{"name": "dist"}"#,
         r#"{"exports": {".": "./index.js"}}"#,
-        r#"{"exports": {".": {"full-types": "./index.full.ts", "default": "./other.js"}}}"#,
         r#"{"exports": {".": {"full-types": "./index.js", "default": "./index.js"}}}"#,
         r#"{"exports": {".": {"full-types": null, "default": "./index.js"}}}"#,
         r#"{"exports": {"./full-types": "./index.full.ts", ".": {"default": "./index.js"}}}"#,
@@ -222,6 +221,15 @@ fn manifest_must_export_file_and_other_typed_file() {
         let found = dist_typed_version(MAIN_IN_DIST, dist_manifest);
         assert_eq!(found, None, "{dist_manifest}");
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn file_that_exports_does_not_name_has_its_typed_file_beside_it() {
+    let dist_manifest =
+        r#"{"exports": {".": {"full-types": "./other.full.ts", "default": "./other.js"}}}"#;
+    let found = dist_typed_version(MAIN_IN_DIST, dist_manifest);
+    assert_eq!(found, by(FromPackage, DIST_TYPED_FILE));
 }
 
 #[test]

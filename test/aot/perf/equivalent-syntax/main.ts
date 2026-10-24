@@ -10,12 +10,29 @@ class WithGetter { constructor(private w: number, private h: number) {} get area
 class WithMethod { constructor(private w: number, private h: number) {} area() { return this.w * this.h; } }
 class WithArrowField { n = 3; add = (v: number) => v + this.n; }
 class WithPlainMethod { n = 3; add(v: number) { return v + this.n; } }
+class Above { a: number; constructor(a: number) { this.a = a; } }
+class Below extends Above { b: number; constructor(a: number) { super(a); this.b = 2; } }
+const inheritFrom = (function () {
+  return function (d: any, b: any) {
+    Object.setPrototypeOf(d, b);
+    function Between(this: any) { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : ((Between.prototype = b.prototype), new (Between as any)());
+  };
+})();
+const AboveForES5: any = (function () { function Above(this: any, a: number) { this.a = a; } return Above; })();
+const BelowForES5: any = (function (_super: any) { inheritFrom(Below, _super); function Below(this: any, a: number) { var _this = _super.call(this, a) || this; _this.b = 2; return _this; } return Below; })(AboveForES5);
 
 interface Inner { value: number; text: string }
 interface Outer { inner: Inner; maybe?: Inner; list: number[]; a: number; b: number; c: number }
 const outers: Outer[] = [];
 for (let i = 0; i < 64; i++) outers.push({ inner: { value: i, text: "t" + i }, maybe: { value: i + 1, text: "m" + i }, list: [i, i + 1, i + 2], a: i, b: i * 2, c: i * 3 });
 const maybeOuters: (Outer | undefined)[] = outers.slice();
+const digits: string[] = outers.map(outer => String(outer.a * 37));
+interface ListedBag { size: number; a: number; b: number }
+interface OpenBag { size: number; [key: string]: number }
+const listedBags: ListedBag[] = [];
+const openBags: OpenBag[] = [];
+for (let i = 0; i < 64; i++) { listedBags.push({ size: i, a: i + 1, b: 2 }); openBags.push({ size: i, a: i + 1, b: 2 }); }
 const getters: WithGetter[] = [], methods: WithMethod[] = [], arrows: WithArrowField[] = [], plains: WithPlainMethod[] = [], hashes: WithPrivateNames[] = [], keywords: WithPrivateKeyword[] = [];
 for (let i = 0; i < 64; i++) { getters.push(new WithGetter(i, 2)); methods.push(new WithMethod(i, 2)); arrows.push(new WithArrowField()); plains.push(new WithPlainMethod()); hashes.push(new WithPrivateNames(i, 1)); keywords.push(new WithPrivateKeyword(i, 1)); }
 
@@ -76,6 +93,16 @@ const loops: Record<string, (n: number) => number> = {
   "switch": n => { let s = 0; for (let i = 0; i < n; i++) s += bySwitch(i & 3); return s; },
   "counted loop": n => { let s = 0; for (let i = 0; i < n; i++) s += i; return s; },
   "generator": n => { let s = 0; for (const i of counting(n)) s += i; return s; },
+  "Number(text)": n => { let s = 0; for (let i = 0; i < n; i++) s += Number(digits[i & 63]); return s; },
+  "+text": n => { let s = 0; for (let i = 0; i < n; i++) s += +digits[i & 63]; return s; },
+  "template literal of a number": n => { let s = 0; for (let i = 0; i < n; i++) s += `${i & 1023}`.length; return s; },
+  "String(number)": n => { let s = 0; for (let i = 0; i < n; i++) s += String(i & 1023).length; return s; },
+  "typeof compared with undefined": n => { let s = 0; for (let i = 0; i < n; i++) s += typeof maybeOuters[i & 127] === "undefined" ? 1 : 2; return s; },
+  "typeof above u": n => { let s = 0; for (let i = 0; i < n; i++) s += typeof maybeOuters[i & 127] > "u" ? 1 : 2; return s; },
+  "class below a class": n => { let s = 0; for (let i = 0; i < n; i++) { const v = new Below(i & 7); s += v.a + v.b; } return s; },
+  "class below a class as written for ES5": n => { let s = 0; for (let i = 0; i < n; i++) { const v = new BelowForES5(i & 7); s += v.a + v.b; } return s; },
+  "names that the type of the literal lists": n => { let s = 0; for (let i = 0; i < n; i++) { const v = listedBags[i & 63]; s += v.size + v.a + v.b; } return s; },
+  "names under the index signature of the type of the literal": n => { let s = 0; for (let i = 0; i < n; i++) { const v = openBags[i & 63]; s += v.size + v.a + v.b; } return s; },
 };
 let outersKeep: unknown = undefined;
 

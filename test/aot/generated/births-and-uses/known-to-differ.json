@@ -332,5 +332,13 @@
     "nativeToString-setPrototype": "it changes a built-in object, which an executable refuses",
     "returnsFunction-replaceWith": "the text of a function is what was written; plain Bun prints what its transpiler printed",
     "returnsThis-asElement": "plain Bun's transpiler folds `[F][0]` to `F`, so the call loses the array as its `this`"
+  },
+  "two kinds of object read through any": {
+    "discriminants-getter-parsed-2": "the build stops: internal compiler error (ChooseRepresentations): UnsupportedConversion, at the literal with the getter; programs/typed-objects/a-literal-with-a-getter-and-parsed-objects-are-held-under-one-type-in-two-functions.ts is the short form",
+    "discriminants-getter-parsedOther-2": "the build stops: internal compiler error (ChooseRepresentations): UnsupportedConversion, at the literal with the getter; programs/typed-objects/a-literal-with-a-getter-and-parsed-objects-are-held-under-one-type-in-two-functions.ts is the short form"
+  },
+  "typed two kinds of object at one place": {
+    "discriminants-getter-parsed-2": "the build stops: internal compiler error (ChooseRepresentations): UnsupportedConversion, at the literal with the getter; programs/typed-objects/a-literal-with-a-getter-and-parsed-objects-are-held-under-one-type-in-two-functions.ts is the short form",
+    "discriminants-getter-parsedOther-2": "the build stops: internal compiler error (ChooseRepresentations): UnsupportedConversion, at the literal with the getter; programs/typed-objects/a-literal-with-a-getter-and-parsed-objects-are-held-under-one-type-in-two-functions.ts is the short form"
   }
 }

@@ -98,7 +98,7 @@ const conditions = (stem: string) => ({
 });
 const untypedConditions = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
 const NO_TYPED_FILES_WITHOUT_BUNDLING =
-  "warn: the full types that bun compile compiles a package from are left out: it does not support --no-bundle yet\n";
+  "warn: the full types that bun compile compiles a package from are left out: they do not support --no-bundle yet\n";
 
 describe.concurrent("bun compile --library", () => {
   test("writes JavaScript, declaration files and a package.json into dist", async () => {
@@ -591,7 +591,7 @@ describe.concurrent("the full-types file that bun compile --library writes", () 
     using dir = tempDir("library-typed-file", library(sources));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(built.stdout).toMatch(/index\.full\.ts .*\(typed\)/);
+    expect(built.stdout).toMatch(/index\.full\.ts .*\(full types\)/);
     const typed = typedFile(dir);
     expect(typed).toContain("function area(shape: Shape): number {");
     expect(typed).toContain("interface Shape {");
@@ -765,16 +765,244 @@ export function counts(): Counts {
     expect(filesIn(join(String(dir), "dist"))).toContain("cli.full.ts");
   });
 
+  const development = {
+    "src/index.ts": `import { warn } from "./warn";
+declare const __DEV__: boolean;
+export function greet(name: string, times: number): string {
+  if (__DEV__ && name.length === 0) throw new Error("a name is needed");
+  if (__DEV__) {
+    warn("one");
+  } else {
+    times += 1;
+  }
+  if (!__DEV__) times += 2;
+  if (!__DEV__) {
+    const twice: number = times * 2;
+    times = twice;
+  }
+  __DEV__ && warn("two");
+  const word: string = __DEV__ ? "debug" : "hello";
+  if (name) {
+    if (__DEV__) warn("three");
+  }
+  if (times > 3) if (__DEV__) warn("four");
+  for (const letter of name) {
+    if (__DEV__) warn(letter);
+    else continue;
+  }
+  switch (times) {
+    case 0:
+      return "";
+      times += 3;
+    case 1:
+      break;
+      times += 4;
+  }
+  {
+  }
+  return later(word + " " + name);
+  times += 5;
+  function later(text: string): string {
+    return text.repeat(times);
+  }
+  var hoisted = 1;
+}
+`,
+    "src/warn.ts": `declare const __DEV__: boolean;
+declare const console: { warn(text: string): void };
+export function warn(text: string): void {
+  if (__DEV__) console.warn(text);
+}
+`,
+  };
+
+  test("removes dead statements from the bundle and the full-types file", async () => {
+    using dir = tempDir("library-typed-file-dead", library(development));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--define", "__DEV__=false");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "dist/index.js"), "utf8")).toBe(`// src/index.ts
+function greet(name, times) {
+  times += 1;
+  times += 2;
+  {
+    const twice = times * 2;
+    times = twice;
+  }
+  const word = "hello";
+  if (times > 3) {}
+  for (const letter of name) {
+    continue;
+  }
+  switch (times) {
+    case 0:
+      return "";
+    case 1:
+      break;
+  }
+  return later(word + " " + name);
+  function later(text) {
+    return text.repeat(times);
+  }
+  var hoisted;
+}
+export {
+  greet
+};
+`);
+    expect(typedFile(dir)).toBe(`// src/index.ts
+function greet(name: string, times: number): string {
+  times += 1;
+  times += 2;
+  {
+    const twice: number = times * 2;
+    times = twice;
+  }
+  const word: string = "hello";
+  if (times > 3) {}
+  for (const letter of name) {
+    continue;
+  }
+  switch (times) {
+    case 0:
+      return "";
+    case 1:
+      break;
+  }
+  return later(word + " " + name);
+  function later(text: string): string {
+    return text.repeat(times);
+  }
+  var hoisted;
+}
+export {
+  greet
+};
+`);
+  });
+
+  test("keeps a declare that code or a type still references", async () => {
+    using dir = tempDir(
+      "library-typed-file-declared",
+      library({
+        "src/index.ts": `declare const __DEV__: boolean;
+declare const __MODE__: "fast" | "slow";
+declare const __LEFT__: number;
+export type Mode = typeof __MODE__;
+export function mode(): Mode {
+  return __DEV__ ? "slow" : __MODE__;
+}
+export const left: number = __LEFT__;
+`,
+      }),
+    );
+    const flags = ["--define", "__DEV__=false", "--define", '__MODE__="fast"'];
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/^declare .*$/gm)).toEqual([
+      'declare const __MODE__: "fast" | "slow";',
+      "declare const __LEFT__: number;",
+    ]);
+  });
+
+  const rewritten = {
+    "src/index.ts": `let notes = 0;
+const note = (): void => void notes++;
+export class Box {
+  private hidden = 1;
+  [key: string]: unknown;
+}
+export const special: ReadonlySet<string> = new Set(["Ada"]);
+export function privateMember(box: Box): unknown {
+  return box["hidden"];
+}
+export function declaredType(maker: object): unknown {
+  const Made: any = maker.constructor;
+  return new Made();
+}
+export function narrowedBehindACall(text?: string): number {
+  note();
+  if (!text) return 0;
+  return text.length;
+}
+export class Chain {
+  private later: Promise<Chain>[] = [];
+  use(next?: Promise<Chain>) {
+    if (next) {
+      this.later.push(next.then(other => other.use()));
+      return this;
+    }
+    return this;
+  }
+}
+export function emptyBody(count: number): void {
+  if (count > 3) {
+    // Nothing yet.
+  }
+}
+export function missing(value?: { size: number }): number {
+  return typeof value === "undefined" ? 0 : value.size;
+}
+export function literal(which: "plain" | "loud"): { done: true } {
+  const kind = "plain";
+  const answer = { done: true as const };
+  return which === kind ? answer : literal(kind);
+}
+`,
+  };
+
+  test.each([["--minify-syntax"], ["--minify-whitespace"], ["--minify-syntax", "--minify-whitespace"]])(
+    "%s %s keeps the full-types file",
+    async (...flags) => {
+      using dir = tempDir("library-typed-file-minified", library(rewritten));
+      const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags.filter(Boolean));
+      expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(filesIn(join(String(dir), "dist"))).toContain("index.full.ts");
+      const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
+      expect(javascript.match(/\b(let|var) \w+/g)).toEqual(["var notes"]);
+      const code = (text: string) => text.replace(/\s+/g, "");
+      const erased = new Bun.Transpiler({ loader: "ts", target: "node" }).transformSync(typedFile(dir));
+      expect(code(erased)).toBe(code(new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(javascript)));
+    },
+  );
+
+  test("--minify-whitespace puts each statement of the full-types file on its own line", async () => {
+    using dir = tempDir(
+      "library-typed-file-lines",
+      library({
+        "src/index.ts": `export function first(): number {
+  // @ts-ignore
+  const wrong: number = "one";
+  return wrong;
+}
+export function second(): string {
+  return "two";
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-whitespace");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "dist/index.js"), "utf8")).toBe(
+      'function first(){const wrong="one";return wrong}function second(){return"two"}export{first,second};\n',
+    );
+    expect(typedFile(dir)).toBe(`// @ts-ignore
+function first(): number{const wrong: number="one";
+return wrong}
+function second(): string{return"two"}
+export{first,second};
+`);
+  });
+
   test.each([
-    ["--minify", "--minify"],
-    ["--splitting", "--splitting"],
+    ["--minify", "--minify-identifiers"],
+    ["--minify-identifiers", "--minify-identifiers"],
     ["--format=cjs", "--format other than esm"],
     ["--no-bundle", "--no-bundle"],
   ])("%s: a warning, and a package without it", async (flag, named) => {
     using dir = tempDir("library-typed-file-skipped", library(sources));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", flag);
     expect(built.stderr).toBe(
-      `warn: the full types that bun compile compiles a package from are left out: it does not support ${named} yet\n`,
+      `warn: the full types that bun compile compiles a package from are left out: they do not support ${named} yet\n`,
     );
     expect(built.exitCode).toBe(0);
     expect(filesIn(join(String(dir), "dist")).filter(path => /\.aot\.|tsconfig/.test(path))).toEqual([]);

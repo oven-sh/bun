@@ -99,10 +99,39 @@ describe.concurrent("bun build --dts", () => {
     using dir = tempDir("build-dts-minify", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts", "--minify");
     expect(built.stderr).toBe(
-      "warn: the full types that bun compile compiles a package from are left out: it does not support --minify yet\n",
+      "warn: the full types that bun compile compiles a package from are left out: they do not support --minify-identifiers yet\n",
     );
     expect(built.exitCode).toBe(0);
     expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.d.ts", "index.js", "join.d.ts"]);
+  });
+
+  test("--minify-syntax --minify-whitespace: every file", async () => {
+    using dir = tempDir("build-dts-minify-syntax", project);
+    const flags = ["--dts", "--minify-syntax", "--minify-whitespace"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.full.ts"), "utf8")).toContain(
+      "function greet(options: Options): string{return join(",
+    );
+  });
+
+  test("a statement that never runs is left out", async () => {
+    using dir = tempDir("build-dts-dead", {
+      ...project,
+      "src/join.ts": `declare const __DEV__: boolean;
+export function join(first: string, second: string): string {
+  if (__DEV__ && first.length === 0) throw new Error("empty");
+  return first + " " + second;
+}
+`,
+    });
+    const flags = ["--dts", "--define", "__DEV__=false"];
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.js"), "utf8")).toContain(
+      'function join(first, second) {\n  return first + " " + second;\n}',
+    );
+    expect(readFileSync(join(String(dir), "out/index.full.ts"), "utf8")).not.toContain("__DEV__");
   });
 
   test("a build without it writes what it always did", async () => {

@@ -143,7 +143,7 @@ let seed = 12345;
 const names: Key[] = ["a", "b", "c", "d", "e", "f"];
 const shadow: Key[] = [];
 for (let step = 0; step < 5000; step++) {
-  seed = (seed * 1103515245 + 12345) % 2147483648;
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
   const key = names[seed % 6];
   const at = shadow.indexOf(key);
   if ((seed >> 8) % 3 === 0) {

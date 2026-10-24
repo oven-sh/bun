@@ -21,7 +21,7 @@ const typedWithOtherCode = typed.replace("box.w * box.h", "box.w + box.h");
 const typedWithTypeError = typed.replace("h: number): number", "h: string): number");
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const manifest = (more: object = {}) => ({
-  sound: 2,
+  format: 2,
   name: "shapes",
   version: "1.2.3",
   when: {},
@@ -53,7 +53,7 @@ function write(folder: string, files: Record<string, string>) {
   }
 }
 function typedVersion(folder: string, more: object = {}) {
-  write(folder, { "sound.json": JSON.stringify(manifest(more)), "lay/index.js": typed });
+  write(folder, { "full-types.json": JSON.stringify(manifest(more)), "lay/index.js": typed });
 }
 const folders: string[] = [];
 afterAll(() => folders.forEach(folder => rmSync(folder, { recursive: true, force: true })));
@@ -119,52 +119,52 @@ describe("compile/aot/TypedPackages", () => {
 
   test("the project's own folder", async () => {
     const folder = project("aot-typed-own");
-    typedVersion(join(folder, ".sound", "shapes"));
-    expect(await built(folder)).toEqual({ said: used(".sound/shapes"), stdout: output, exitCode: 0 });
+    typedVersion(join(folder, ".full-types", "shapes"));
+    expect(await built(folder)).toEqual({ said: used(".full-types/shapes"), stdout: output, exitCode: 0 });
     expect(await Bun.file(join(folder, "node_modules", "shapes", "index.js")).text()).toBe(installed["index.js"]);
     expect(readdirSync(join(folder, "node_modules", "shapes")).sort()).toEqual(Object.keys(installed).sort());
   });
 
   test("builds without --aot ignore it", async () => {
     const folder = project("aot-typed-no-aot");
-    typedVersion(join(folder, ".sound", "shapes"));
+    typedVersion(join(folder, ".full-types", "shapes"));
     expect(await spawned([bunExe(), "build", "app.ts", "--target=bun", "--outfile", "app.js"], folder)).toMatchObject({
       stderr: "",
       exitCode: 0,
     });
     const bundle = await Bun.file(join(folder, "app.js")).text();
     expect(bundle).toContain("node_modules/shapes/index.js");
-    expect(bundle).not.toContain(".sound");
+    expect(bundle).not.toContain(".full-types");
   });
 
-  test("a package named @oven/sound-<name> is read, whether the project lists it or not", async () => {
+  test("a package named @oven/full-types-<name> is read, whether the project lists it or not", async () => {
     const folder = project("aot-typed-scope");
-    typedVersion(join(folder, "node_modules", "@oven", "sound-shapes"));
-    const usesInstalled = { said: used("node_modules/@oven/sound-shapes"), stdout: output, exitCode: 0 };
+    typedVersion(join(folder, "node_modules", "@oven", "full-types-shapes"));
+    const usesInstalled = { said: used("node_modules/@oven/full-types-shapes"), stdout: output, exitCode: 0 };
     expect(await built(folder)).toEqual(usesInstalled);
     write(folder, {
-      "package.json": JSON.stringify({ name: "app", devDependencies: { "@oven/sound-shapes": "1.2.3" } }),
+      "package.json": JSON.stringify({ name: "app", devDependencies: { "@oven/full-types-shapes": "1.2.3" } }),
     });
     expect(await built(folder)).toEqual(usesInstalled);
     expect(await Bun.file(join(folder, "node_modules", "shapes", "index.js")).text()).toBe(installed["index.js"]);
   });
 
-  test("builds without --aot ignore a package named @oven/sound-<name>", async () => {
+  test("builds without --aot ignore a package named @oven/full-types-<name>", async () => {
     const folder = project("aot-typed-scope-no-aot");
-    typedVersion(join(folder, "node_modules", "@oven", "sound-shapes"));
+    typedVersion(join(folder, "node_modules", "@oven", "full-types-shapes"));
     expect(await spawned([bunExe(), "build", "app.ts", "--target=bun", "--outfile", "app.js"], folder)).toMatchObject({
       stderr: "",
       exitCode: 0,
     });
     const bundle = await Bun.file(join(folder, "app.js")).text();
     expect(bundle).toContain("node_modules/shapes/index.js");
-    expect(bundle).not.toContain("sound-shapes");
+    expect(bundle).not.toContain("full-types-shapes");
   });
 
   test("a package under another scope of node_modules is never read", async () => {
     const folder = project("aot-typed-other-scope");
     typedVersion(join(folder, "node_modules", "@types", "shapes"));
-    typedVersion(join(folder, "node_modules", "sound", "shapes"));
+    typedVersion(join(folder, "node_modules", "full-types", "shapes"));
     typedVersion(join(folder, "node_modules", "@oven", "shapes"));
     expect(await built(folder)).toEqual({ said: [], stdout: output, exitCode: 0 });
   });
@@ -225,16 +225,16 @@ describe("compile/aot/TypedPackages", () => {
     const folder = project("aot-typed-order");
     shipped(folder);
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: output, exitCode: 0 });
-    typedVersion(join(folder, ".sound", "shapes"));
-    expect(await built(folder)).toEqual({ said: used(".sound/shapes"), stdout: output, exitCode: 0 });
+    typedVersion(join(folder, ".full-types", "shapes"));
+    expect(await built(folder)).toEqual({ said: used(".full-types/shapes"), stdout: output, exitCode: 0 });
   });
 
   test("a broken full types in the project is as if it were not there: what the package ships is used", async () => {
     const folder = project("aot-typed-fallback");
     shipped(folder);
-    write(join(folder, ".sound", "shapes"), { "sound.json": "{" });
+    write(join(folder, ".full-types", "shapes"), { "full-types.json": "{" });
     expect(await builtWithout(folder)).toEqual(
-      warned(".sound/shapes", "its sound.json is not valid JSON", used("node_modules/shapes")),
+      warned(".full-types/shapes", "full-types.json is not valid JSON", used("node_modules/shapes")),
     );
   });
 
@@ -372,7 +372,7 @@ describe("compile/aot/TypedPackages", () => {
 
   test("a symlinked package", async () => {
     const folder = project("aot-typed-symlink");
-    typedVersion(join(folder, ".sound", "linked"), { name: "linked" });
+    typedVersion(join(folder, ".full-types", "linked"), { name: "linked" });
     const store = join(folder, "node_modules", ".store", "linked@1.2.3", "node_modules", "linked");
     write(store, {
       ...installed,
@@ -387,7 +387,7 @@ describe("compile/aot/TypedPackages", () => {
     symlinkSync(join(".store", "linked@1.2.3", "node_modules", "linked"), join(folder, "node_modules", "linked"));
     write(folder, { "app.ts": app("linked") });
     expect(await built(folder)).toEqual({
-      said: [`note: "linked" 1.2.3 is compiled from its full types in .sound/linked`],
+      said: [`note: "linked" 1.2.3 is compiled from its full types in .full-types/linked`],
       stdout: output,
       exitCode: 0,
     });
@@ -400,82 +400,84 @@ describe("compile/aot/TypedPackages", () => {
         write(join(folder, "node_modules", "shapes"), {
           "package.json": installed["package.json"].replace("1.2.3", "1.2.4"),
         }),
-      "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the full types for 1.2.4, or remove it",
+      "they are for version 1.2.3, but 1.2.4 is installed. Replace them with the full types for 1.2.4, or remove them",
     ],
     [
       "it adds a file",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { lay: { ...manifest().lay, "more.ts": "new" } }),
-      "it adds more.ts, and full types can only replace installed files",
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { lay: { ...manifest().lay, "more.ts": "new" } }),
+      "they add more.ts, and full types can only replace installed files",
     ],
     [
       "a path leaves the package",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { lay: { "../other/index.js": "new" } }),
-      `"../other/index.js" in its sound.json is not a path inside the package`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { lay: { "../other/index.js": "new" } }),
+      `"../other/index.js" in full-types.json is not a path inside the package`,
     ],
     [
       "package.json cannot be replaced",
       folder =>
-        typedVersion(join(folder, ".sound", "shapes"), { lay: { "package.json": sha256(installed["package.json"]) } }),
-      `"package.json" in its sound.json is not a path inside the package`,
+        typedVersion(join(folder, ".full-types", "shapes"), {
+          lay: { "package.json": sha256(installed["package.json"]) },
+        }),
+      `"package.json" in full-types.json is not a path inside the package`,
     ],
     [
       "a replacement is missing",
-      folder => rmSync(join(folder, ".sound", "shapes", "lay", "index.js")),
+      folder => rmSync(join(folder, ".full-types", "shapes", "lay", "index.js")),
       "lay/index.js is missing",
     ],
     [
       "a replacement has different code",
-      folder => write(join(folder, ".sound", "shapes", "lay"), { "index.js": typedWithOtherCode }),
+      folder => write(join(folder, ".full-types", "shapes", "lay"), { "index.js": typedWithOtherCode }),
       "lay/index.js without its types doesn't match index.js. Was the package patched?",
     ],
     [
       "nothing is replaced",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { lay: {} }),
-      `"lay" in its sound.json is empty`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { lay: {} }),
+      `"lay" in full-types.json is empty`,
     ],
     [
       "the build does not define what it is for",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { when: { "process.env.NODE_ENV": "production" } }),
-      `it needs process.env.NODE_ENV to be defined as "production". Pass --define 'process.env.NODE_ENV="production"'`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { when: { "process.env.NODE_ENV": "production" } }),
+      `they need process.env.NODE_ENV to be defined as "production". Pass --define 'process.env.NODE_ENV="production"'`,
     ],
     [
       "a needed full types are not in use",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { needs: ["other"] }),
-      `it needs the full types of "other", which is not used`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { needs: ["other"] }),
+      `they need the full types of "other", which are not used`,
     ],
     [
       "what it needs is no package",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { needs: ["../x"] }),
-      `"needs" in its sound.json must be a list of package names`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { needs: ["../x"] }),
+      `"needs" in full-types.json must be a list of package names`,
     ],
     [
       "format 1",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { sound: 1 }),
-      `this version of Bun doesn't support the "sound" version in its sound.json`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { format: 1 }),
+      `this version of Bun doesn't support the "format" in full-types.json`,
     ],
     [
       "an unknown format",
-      folder => typedVersion(join(folder, ".sound", "shapes"), { sound: 99 }),
-      `this version of Bun doesn't support the "sound" version in its sound.json`,
+      folder => typedVersion(join(folder, ".full-types", "shapes"), { format: 99 }),
+      `this version of Bun doesn't support the "format" in full-types.json`,
     ],
     [
       "a manifest that is not JSON",
-      folder => write(join(folder, ".sound", "shapes"), { "sound.json": "{" }),
-      "its sound.json is not valid JSON",
+      folder => write(join(folder, ".full-types", "shapes"), { "full-types.json": "{" }),
+      "full-types.json is not valid JSON",
     ],
   ];
   test.each(mismatches)("%s: the build warns and goes on without it", async (_, change, why) => {
     const folder = project("aot-typed-mismatch");
-    typedVersion(join(folder, ".sound", "shapes"));
+    typedVersion(join(folder, ".full-types", "shapes"));
     change(folder);
-    expect(await builtWithout(folder)).toEqual(warned(".sound/shapes", why));
+    expect(await builtWithout(folder)).toEqual(warned(".full-types/shapes", why));
   });
 
   test("what the build defines", async () => {
     const folder = project("aot-typed-when");
-    typedVersion(join(folder, ".sound", "shapes"), { when: { "process.env.NODE_ENV": "production" } });
+    typedVersion(join(folder, ".full-types", "shapes"), { when: { "process.env.NODE_ENV": "production" } });
     expect(await built(folder, ["--aot", "--define", `process.env.NODE_ENV="production"`])).toEqual({
-      said: used(".sound/shapes"),
+      said: used(".full-types/shapes"),
       stdout: output,
       exitCode: 0,
     });
@@ -483,19 +485,19 @@ describe("compile/aot/TypedPackages", () => {
 
   test("control characters in the manifest do not reach the terminal", async () => {
     const folder = project("aot-typed-control");
-    typedVersion(join(folder, ".sound", "shapes"), { version: "1.2\u001b[31m.3" });
+    typedVersion(join(folder, ".full-types", "shapes"), { version: "1.2\u001b[31m.3" });
     expect((await builtWithout(folder)).said).toEqual(
       unused(
-        ".sound/shapes",
-        "it is for version 1.2?[31m.3, but 1.2.3 is installed. Replace it with the full types for 1.2.3, or remove it",
+        ".full-types/shapes",
+        "they are for version 1.2?[31m.3, but 1.2.3 is installed. Replace them with the full types for 1.2.3, or remove them",
       ),
     );
   });
 
-  test("full types that does not type check: the package is compiled without its types, and the build warns with the first error", async () => {
+  test("full types that do not type check: the package is compiled without its types, and the build warns with the first error", async () => {
     const folder = project("aot-typed-lie");
-    typedVersion(join(folder, ".sound", "shapes"));
-    write(join(folder, ".sound", "shapes", "lay"), { "index.js": typedWithTypeError });
+    typedVersion(join(folder, ".full-types", "shapes"));
+    write(join(folder, ".full-types", "shapes", "lay"), { "index.js": typedWithTypeError });
     const build = await compiled(folder);
     const said = build.stdout + build.stderr;
     expect(said).toContain("warn: TS100009: 'shapes' has 1 type error (the first at ");
@@ -523,8 +525,8 @@ describe("compile/aot/TypedPackages", () => {
       );
     const javascript = withNewerLibrary(installed["index.js"], "");
     write(join(folder, "node_modules", "shapes"), { "index.js": javascript });
-    typedVersion(join(folder, ".sound", "shapes"), { lay: { "index.js": sha256(javascript) } });
-    write(join(folder, ".sound", "shapes", "lay"), { "index.js": withNewerLibrary(typed, "!") });
+    typedVersion(join(folder, ".full-types", "shapes"), { lay: { "index.js": sha256(javascript) } });
+    write(join(folder, ".full-types", "shapes", "lay"), { "index.js": withNewerLibrary(typed, "!") });
     write(folder, {
       "app.ts": `declare const console: { log(...all: unknown[]): void };\n` + app(),
       "tsconfig.json": JSON.stringify({
@@ -542,19 +544,19 @@ describe("compile/aot/TypedPackages", () => {
     });
     const build = await compiled(folder);
     expect(build.stdout + build.stderr).not.toContain("TS100009");
-    expect(build.stdout + build.stderr).toContain(used(".sound/shapes")[0]);
+    expect(build.stdout + build.stderr).toContain(used(".full-types/shapes")[0]);
     expect(build.exitCode).toBe(0);
     expect(await ran(folder)).toEqual({ stdout: output, stderr: "", exitCode: 0 });
   });
 
   test("Bun.build has the note and the warning in its logs", async () => {
     const folder = project("aot-typed-api");
-    typedVersion(join(folder, ".sound", "shapes"));
+    typedVersion(join(folder, ".full-types", "shapes"));
     write(folder, {
       "build.ts": `const result = await Bun.build({ entrypoints: ["app.ts"], compile: { outfile: "./app", aot: true }, throw: false });\nconsole.log(JSON.stringify(result.logs.map(log => log.level + ": " + log.message)));\n`,
     });
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({
-      stdout: JSON.stringify(used(".sound/shapes")) + "\n",
+      stdout: JSON.stringify(used(".full-types/shapes")) + "\n",
       stderr: "",
       exitCode: 0,
     });
@@ -566,8 +568,8 @@ describe("compile/aot/TypedPackages", () => {
       stdout:
         JSON.stringify(
           unused(
-            ".sound/shapes",
-            "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the full types for 1.2.4, or remove it",
+            ".full-types/shapes",
+            "they are for version 1.2.3, but 1.2.4 is installed. Replace them with the full types for 1.2.4, or remove them",
           ),
         ) + "\n",
       stderr: "",
@@ -577,12 +579,12 @@ describe("compile/aot/TypedPackages", () => {
 
   test("an onResolve plugin that returns nothing is skipped", async () => {
     const folder = project("aot-typed-plugin");
-    typedVersion(join(folder, ".sound", "shapes"));
+    typedVersion(join(folder, ".full-types", "shapes"));
     write(folder, {
       "build.ts": `const result = await Bun.build({ entrypoints: ["app.ts"], compile: { outfile: "./app", aot: true }, plugins: [{ name: "asks", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } }] });\nconsole.log(JSON.stringify(result.logs.map(log => log.level + ": " + log.message)));\n`,
     });
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({
-      stdout: JSON.stringify(used(".sound/shapes")) + "\n",
+      stdout: JSON.stringify(used(".full-types/shapes")) + "\n",
       stderr: "",
       exitCode: 0,
     });
@@ -591,7 +593,7 @@ describe("compile/aot/TypedPackages", () => {
 
   test("bun run --aot prints neither", async () => {
     const folder = project("aot-typed-run");
-    typedVersion(join(folder, ".sound", "shapes"));
+    typedVersion(join(folder, ".full-types", "shapes"));
     expect(await spawned([bunExe(), "run", "--debug-aot", "app.ts", "6"], folder)).toEqual({
       stdout: output,
       stderr: "",

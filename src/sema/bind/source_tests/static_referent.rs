@@ -246,6 +246,69 @@ fn functions_of_one_file() {
 }
 
 #[test]
+fn value_of_function_called_where_it_is_written() {
+    const FOUND: &[&str] = &[
+        "const g = (function () { return function f() {}; })(); g;",
+        "const g = (function () { function f() {} f.prototype.m = 1; return f; })(); g;",
+        "const g = (function () { function f() {} return f; }()); g;",
+        "const g = (() => { function f() {} return f; })(); g;",
+        "function f() {} const g = (function (p) { return p; })(f); g;",
+        "function f() {} const r = (function (p) { p; })(f);",
+        "function f() {} const r = (function (a, p) { p; })(1, f);",
+        "function f() {} const r = (function (p) { const s = (function (q) { q; })(p); })(f);",
+    ];
+    for &text in FOUND {
+        with_program(&[("a.mjs", text)], |program| {
+            assert_eq!(
+                program.resolve().referent,
+                program.function(0, "f"),
+                "{text}"
+            );
+        });
+    }
+}
+
+#[test]
+fn value_of_function_that_may_return_otherwise() {
+    const NOT_A_REFERENCE: &[&str] = &[
+        "const g = (function () { function f() {} if (f.x) return f; })(); g;",
+        "const g = (function () { function f() {} if (f.x) return 1; return f; })(); g;",
+        "const g = (function () { function f() {} })(); g;",
+        "const g = (function* () { function f() {} return f; })(); g;",
+        "const g = (async function () { function f() {} return f; })(); g;",
+        "function make() { function f() {} return f; } const g = make(); g;",
+    ];
+    for &text in NOT_A_REFERENCE {
+        assert_unknown("a.mjs", text, UnknownReferent::NotAReference);
+    }
+}
+
+#[test]
+fn parameter_that_stands_for_more_than_one_argument() {
+    const OPAQUE: &[&str] = &[
+        "function f() {} function g(p) { p; } const r = g(f);",
+        "function f() {} const r = (function again(p) { const s = again(1); p; })(f);",
+        "function f() {} const r = (function (p = 1) { p; })(f);",
+        "function f() {} const r = (function (...p) { p; })(f);",
+        "function f() {} const r = (function ({ p }) { p; })(f);",
+        "function f() {} const r = (function (a, p) { p; })(...[1, f]);",
+        "function f() {} const r = (function (a, p) { p; })(f);",
+        "function f() {} const g = function (p) { p; }; const r = g(f);",
+    ];
+    for &text in OPAQUE {
+        with_program(&[("a.mjs", text)], |program| {
+            let found = program.resolve().referent;
+            assert!(matches!(found, StaticReferent::Unknown(_)), "{text}");
+        });
+    }
+    assert_unknown(
+        "a.mjs",
+        "function f() {} const r = (function (p) { const s = (p = 1); p; })(f);",
+        UnknownReferent::UnstableBinding(BindingStability::Stored),
+    );
+}
+
+#[test]
 fn hoisted_variable_is_expected() {
     with_program(&[("a.cjs", "var B = class A {}; B;")], |program| {
         let expected = Resolved {

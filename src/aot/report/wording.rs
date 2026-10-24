@@ -391,7 +391,7 @@ pub(super) fn decline_sentence(kind: DeclineKind) -> &'static str {
             "an allocation couldn't be removed or moved to the stack (see --explain=allocations)"
         }
         DeclineKind::TypedResultNotSelected => {
-            "a built-in call returns a boxed value even though full types exists"
+            "a built-in call returns a boxed value even though a typed version exists"
         }
         DeclineKind::IterationNotExpandedByClass => {
             "a loop uses the iterator protocol because the type of the iterable isn't known"
@@ -418,9 +418,9 @@ pub(super) fn typed_result_decline_sentence(reason: u32) -> Option<&'static str>
     match TypedResultDeclineReason::from_wire(reason)? {
         TypedResultDeclineReason::None => None,
         TypedResultDeclineReason::NoTarget => Some("the result isn't converted to a declared type"),
-        TypedResultDeclineReason::TargetIsNotModeledByFlow => {
-            Some("the declared type only becomes visible after inlining")
-        }
+        TypedResultDeclineReason::TargetIsNotModeledByFlow => Some(
+            "the declared type only becomes visible after inlining, or it reaches more object and array types than one call handles",
+        ),
         TypedResultDeclineReason::TargetHasNoTypedPart => {
             Some("the type contains no object or array")
         }

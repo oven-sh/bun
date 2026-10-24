@@ -28,6 +28,7 @@ export interface Result {
   types?: { tsc: number; bunCheck: number; onlyTsc: string[]; onlyBunCheck: string[] };
   build?: { stock: Built; aot: Built };
   tests?: Compared;
+  compiled?: Compared;
 }
 
 interface Built {
@@ -48,6 +49,8 @@ export interface Compared {
   filesRefused: number;
   typeErrors: number;
   causes: { tests: number; message: string; place: string }[];
+  filesNotBuilt?: { file: string; error: string }[];
+  filesEndedBySignal?: { file: string; signal: string }[];
 }
 
 interface Counts {
@@ -77,6 +80,7 @@ export class Runner {
     readonly tsc: string | undefined,
     readonly usesJail: boolean,
     readonly secondsPerStep = 900,
+    readonly filesAtATime = 4,
   ) {
     for (const folder of ["sources", "cache", "home", "scratch", "empty"]) mkdirSync(join(work, folder), { recursive: true });
   }
@@ -161,6 +165,32 @@ export class Runner {
     const test = (flags: string[]) => this.spawn(project, cwd, [this.bun, "test", ...flags, "--timeout", "60000"]);
     const [first, second, aot] = [await test([]), await test([]), await test(["--aot"])];
     return compare(readTests(first, source), readTests(second, source), readTests(aot, source));
+  }
+
+  async compareCompiledTests(project: Project): Promise<Compared> {
+    const source = this.sourceOf(project);
+    const cwd = join(source, project.directory);
+    const test = (flags: string[]) => this.spawn(project, cwd, [this.bun, "test", ...flags, "--timeout", "60000"]);
+    const [first, second] = [readTests(await test([]), source), readTests(await test([]), source)];
+    const waiting = [...new Set([...first.verdicts].filter(([, verdict]) => verdict === "pass").map(([name]) => name.slice(0, name.indexOf(" > "))))];
+    const all: Tests = { run: { exitCode: 0, signal: null, output: "", seconds: 0, peakMegabytes: 0 }, verdicts: new Map(), errors: new Map(), filesRefused: 0, typeErrors: 0, source };
+    const [filesNotBuilt, filesEndedBySignal]: [Compared["filesNotBuilt"] & {}, Compared["filesEndedBySignal"] & {}] = [[], []];
+    const worker = async () => {
+      for (let file; (file = waiting.shift()); ) {
+        const one = readTests(await test(["--debug-aot", "./" + file]), source);
+        for (const [name, verdict] of one.verdicts) all.verdicts.set(name, verdict);
+        for (const [name, block] of one.errors) all.errors.set(name, block);
+        all.typeErrors += one.typeErrors;
+        all.run.seconds += one.run.seconds;
+        all.run.peakMegabytes = Math.max(all.run.peakMegabytes, one.run.peakMegabytes);
+        all.run.exitCode = Math.max(all.run.exitCode, one.run.exitCode);
+        if (one.run.signal) filesEndedBySignal.push({ file, signal: one.run.signal });
+        else if (one.verdicts.size === 0) filesNotBuilt.push({ file, error: one.run.output.split("\n").find(line => /error|panic/i.test(line))?.slice(0, 300) ?? "(no message)" });
+        all.run.signal ??= one.run.signal;
+      }
+    };
+    await Promise.all(Array.from({ length: this.filesAtATime }, worker));
+    return { ...compare(first, second, all), filesNotBuilt, filesEndedBySignal };
   }
 }
 
@@ -251,7 +281,7 @@ export function compare(first: Tests, second: Tests, aot: Tests): Compared {
 }
 
 export function rowOf(result: Result) {
-  const { types, build, tests } = result;
+  const { types, build, tests, compiled } = result;
   const built = (it: Built) => (it.signal ? it.signal : it.exitCode ? `exit ${it.exitCode}` : `${it.seconds.toFixed(1)} s, ${it.peakMegabytes} MB`);
   return [
     result.name,
@@ -261,6 +291,9 @@ export function rowOf(result: Result) {
     tests ? `${tests.plain.pass} | ${tests.aot.pass}` : "",
     tests ? `${tests.failedOnlyUnderAot.length} failed, ${tests.neverReportedUnderAot.length} never reported, ${tests.filesRefused} files refused` : "",
     tests?.aot.signal ?? tests?.causes[0]?.message ?? "",
+    compiled ? `${compiled.plain.pass} | ${compiled.aot.pass}` : "",
+    compiled ? `${compiled.failedOnlyUnderAot.length} failed, ${compiled.neverReportedUnderAot.length} never reported, ${compiled.filesNotBuilt!.length} files not built, ${compiled.filesEndedBySignal!.length} files ended by a signal` : "",
+    compiled?.filesEndedBySignal![0]?.file ?? compiled?.causes[0]?.message ?? "",
   ].join(" | ");
 }
 
@@ -274,15 +307,17 @@ if (import.meta.main) {
       bun: { type: "string", default: process.execPath },
       tsc: { type: "string" },
       "no-jail": { type: "boolean", default: false },
+      "files-at-a-time": { type: "string", default: "4" },
+      results: { type: "string", default: "results.json" },
     },
   });
   if (!positionals[0]) {
-    console.error("usage: bun run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests] [--jobs <n>] [--bun <path>] [--tsc <path>] [--no-jail]");
+    console.error("usage: bun run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests,compiled] [--jobs <n>] [--files-at-a-time <n>] [--bun <path>] [--tsc <path>] [--results <name>] [--no-jail]");
     process.exit(1);
   }
   const work = resolve(positionals[0]);
   const usesJail = !values["no-jail"] && process.platform === "linux";
-  const runner = new Runner(work, resolve(values.bun), values.tsc && resolve(values.tsc), usesJail);
+  const runner = new Runner(work, resolve(values.bun), values.tsc && resolve(values.tsc), usesJail, 900, Number(values["files-at-a-time"]));
   const steps = new Set(values.steps.split(","));
   const waiting = projects.filter(project => new RegExp(values.only).test(project.name));
   const results: Result[] = [];
@@ -294,11 +329,12 @@ if (import.meta.main) {
         if (steps.has("types")) result.types = await runner.compareTypes(project);
         if (steps.has("build")) result.build = await runner.build(project);
         if (steps.has("tests")) result.tests = await runner.compareTests(project);
+        if (steps.has("compiled")) result.compiled = await runner.compareCompiledTests(project);
       }
       results.push(result);
       console.log(rowOf(result));
+      writeFileSync(join(work, values.results), JSON.stringify(results, null, 2));
     }
   };
   await Promise.all(Array.from({ length: Number(values.jobs) }, worker));
-  writeFileSync(join(work, "results.json"), JSON.stringify(results, null, 2));
 }

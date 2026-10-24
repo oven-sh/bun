@@ -1,7 +1,7 @@
 // A lookup key that was built at run time is a different string object than the equal key in the table.
 declare const console: { log(...args: unknown[]): void }
 const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789,:|#@"
-function text(seed: number, length: number): string { let s = ""; let x = seed * 2654435761 % 4294967296; for (let i = 0; i < length; i++) { x = (x * 1103515245 + 12345) % 2147483648; s += alphabet[(x >>> 8) % alphabet.length] } return s }
+function text(seed: number, length: number): string { let s = ""; let x = seed * 2654435761 % 4294967296; for (let i = 0; i < length; i++) { x = (Math.imul(x, 1103515245) + 12345) & 0x7fffffff; s += alphabet[(x >>> 8) % alphabet.length] } return s }
 function again(s: string): string { return s.split("").join("") }
 function changed(s: string, at: number): string { return again(s.slice(0, at) + (s[at] === "a" ? "b" : "a") + s.slice(at + 1)) }
 let sum = 0

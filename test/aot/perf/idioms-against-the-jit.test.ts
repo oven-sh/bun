@@ -6,6 +6,7 @@
 // Every other idiom of ./everyday fails at over 1.35 times and 8 instructions: the JIT's own number moves by up to a tenth from run to run.
 // ./idioms.test.ts holds the idioms of ./idioms against pins.
 // A run measures one idiom in ten, others for each commit of Bun; AOT_SHARE=all measures all of them (../run-programs.ts).
+// AOT_PERF_BUILD_FLAGS="--aot-.. --aot-.." goes to every `bun build --compile --aot`: which idioms an option of the compiler turns red.
 //
 // Nor may type annotations cost: no idiom, of ./idioms too, may take over 1.05 times and one instruction more as TypeScript than as the same text without its types.
 // ./typed-dearer-than-untyped.<os>-<arch>.json names those that did when they were last measured: todos of the same kind, rewritten by the same flag.
@@ -41,7 +42,10 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms-against-the-jit", () => {
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const behind: Record<string, number> = JSON.parse(readFileSync(behindPath, "utf8"));
   const dearer: Record<string, number> = existsSync(dearerPath) ? JSON.parse(readFileSync(dearerPath, "utf8")) : {};
-  const { names, measure } = idiomsAgainstTheJit(bunExe(), folder, { collections: false });
+  const { names, measure } = idiomsAgainstTheJit(bunExe(), folder, {
+    collections: false,
+    buildFlags: process.env.AOT_PERF_BUILD_FLAGS?.split(" ") ?? [],
+  });
   const rows = new Map<string, Promise<Row>>();
   // An idiom takes about six seconds of one core.
   const taken = names.filter(name => inShare(name, 10));

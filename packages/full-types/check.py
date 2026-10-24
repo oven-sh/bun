@@ -24,7 +24,7 @@ The gates, for each package that <node_modules> has at that version:
   form     The CommonJS file becomes an ES module with its declarations appended (tools/module_form8.py). For
            react-reconciler, the types of objects that other code creates become `any` (tools/given2.py), and a React element
            has the type that the typed jsx-runtime declares (--elements=shared) or is `any` (--elements=plain). react-dom's
-           bundles stay CommonJS at npm's own path (format 2 of sound.json, written to <out>/sound/react-dom): the full-types file,
+           bundles stay CommonJS at npm's own path (format 2 of full-types.json, written to <out>/sound/react-dom): the full-types file,
            followed by the declarations of the ES module form. So the compiler still drops an export of theirs that nothing
            reads.
   clean    tools/clean_lay.py removes the notes from the generated file.
@@ -36,10 +36,10 @@ The gates, for each package that <node_modules> has at that version:
            `import * as x$module` lines is ignored and counted in the output.
   lax      Each generated file also has no error under `noImplicitAny: false`, `strictNullChecks: false` and `strict: false`.
            Those options of the user's tsconfig.json apply to a package too, and one error compiles it untyped.
-  same     lay/ in the repository is byte for byte what src/ generates, and the sha256 sums in sound.json are those of the
+  same     lay/ in the repository is byte for byte what src/ generates, and the sha256 sums in full-types.json are those of the
            installed files.
 
-Writes <out>/laid/<package>/ (the generated files), <out>/sound/<package>/ (what a project has as .sound/<package>/) and
+Writes <out>/laid/<package>/ (the generated files), <out>/sound/<package>/ (what a project has as .full-types/<package>/) and
 <out>/node_modules, which `bun build --compile --aot` can build against. Exits with 1 if a gate fails.
 
 It does not check that the types are true. run.py does, for the code that its test trees run."""
@@ -205,7 +205,7 @@ SMALL_FILES = {
     ),
 }
 
-# Format 2 of sound.json: a small CommonJS file keeps its path and its `exports.name = ..`, so the entry point, and the way an
+# Format 2 of full-types.json: a small CommonJS file keeps its path and its `exports.name = ..`, so the entry point, and the way an
 # importer finds a name, stay npm's own. The full-types file is a .cts file under src/. It is not written to <out>/node_modules,
 # where a .js file would be read as JavaScript, but to <out>/sound/<package>/. run.py copies that folder into the typed
 # projects.
@@ -524,11 +524,11 @@ def write_manifest(package_name, version, lay):
     written = OUT + '/sound/' + package_name
     committed = HERE + '/' + package_name + '/' + version
     json.dump(
-        {'sound': 2, 'name': package_name, 'version': version, 'when': {}, 'basis': {}, 'lay': lay, 'needs': []},
-        open(written + '/sound.json', 'w'), indent=2,
+        {'format': 2, 'name': package_name, 'version': version, 'when': {}, 'basis': {}, 'lay': lay, 'needs': []},
+        open(written + '/full-types.json', 'w'), indent=2,
     )
-    open(written + '/sound.json', 'a').write('\n')
-    if not os.path.exists(committed + '/sound.json'):
+    open(written + '/full-types.json', 'a').write('\n')
+    if not os.path.exists(committed + '/full-types.json'):
         return
     if any('one-name' in folders for _, folders, _ in os.walk(committed + '/src')):
         print('--   %-42s same    one_name.py makes lay/ from the same src/, and has its own gates' % (package_name + '@' + version))
@@ -543,7 +543,7 @@ def write_manifest(package_name, version, lay):
             if file not in lay or open(committed + '/lay/' + file, 'rb').read() != open(written + '/lay/' + file, 'rb').read()
         ]
         + [file for file in lay if committed_files and file not in committed_files]
-        + (['sound.json'] if open(committed + '/sound.json').read() != open(written + '/sound.json').read() else [])
+        + (['full-types.json'] if open(committed + '/full-types.json').read() != open(written + '/full-types.json').read() else [])
         + (
             ['lay.sums']
             if open(committed + '/lay.sums').read() != ''.join(
@@ -555,7 +555,7 @@ def write_manifest(package_name, version, lay):
     )
     report(
         not different, package_name + '@' + version, 'same',
-        '%slay.sums and sound.json are what src/ generates (%d files)' % ('lay/, ' if committed_files else '', len(lay))
+        '%slay.sums and full-types.json are what src/ generates (%d files)' % ('lay/, ' if committed_files else '', len(lay))
         if not different else 'differs: ' + ' '.join(different),
     )
 
@@ -667,12 +667,12 @@ for package_name in sorted({
     for version in sorted(os.listdir(HERE + '/' + package_name)) if os.path.isdir(HERE + '/' + package_name) else []:
         committed = HERE + '/' + package_name + '/' + version
         if (
-            not os.path.exists(committed + '/sound.json')
+            not os.path.exists(committed + '/full-types.json')
             or json.load(open(INSTALLED + '/' + package_name + '/package.json'))['version'] != version
         ):
             continue
-        manifest = json.load(open(committed + '/sound.json'))
-        if manifest['sound'] == 2:
+        manifest = json.load(open(committed + '/full-types.json'))
+        if manifest['format'] == 2:
             print('--   %-42s same    lay/ is in format 2: one_name.py makes it from the same src/, and has its own gates' % (
                 package_name + '@' + version,
             ))

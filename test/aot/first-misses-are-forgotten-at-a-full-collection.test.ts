@@ -38,15 +38,12 @@ test("names that are read once each are still told from names that come back aft
     BUN_JSC_aotCountsPath: path,
   });
   expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
-  let firstMisses = 0;
   let asked = 0;
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const [value, name] = line.split("\t");
-    if (name === "counter:FirstMissesNotFiled") firstMisses = Number(value);
     if (name === "operation:operationAOTGetByValGeneric" || name === "operation:operationAOTGetByValAndCache")
       asked += Number(value);
   }
-  // On x86-64 the object itself answers a name that is in no table, and nothing is there to be told apart.
-  if (process.arch === "x64") expect(asked).toBeLessThan(count / 8);
-  else expect(firstMisses).toBeGreaterThan((count * 2) / 3);
+  // The object itself answers a name that is in no table, and nothing is there to be told apart.
+  expect(asked).toBeLessThan(count / 8);
 }, 240_000);

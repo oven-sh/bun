@@ -38,7 +38,7 @@ use crate::load::source_provider::SourceProvider;
 use crate::load::typed_packages::TypedPackages;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::ModuleList;
-use crate::modules::{DeferredData, ModuleGraph};
+use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::Options;
 use crate::package_diagnostics::PackageView;
 use crate::report::SourceTexts;
@@ -55,9 +55,11 @@ use bun_sema_driver::{
 };
 use bun_sys::{Fd, File};
 use core::fmt;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::num::NonZeroUsize;
-use std::time::Instant;
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 pub struct ProgramSummary {
     pub entry_points: Vec<EntryPointPaths>,
@@ -134,8 +136,6 @@ pub(crate) struct Build<'a> {
     // Each with `QueryStatistics::closed_cycles`, which is not 0.
     circular_runtime_files: Vec<(FileId, u32)>,
     import_graph: Option<ImportGraph>,
-    /// While the modules of a typed package's own program are bound: what the application leaves out of its files.
-    pub(crate) left_out_of_world: Option<LeftOutCode>,
     /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
     pub(crate) checked_elsewhere: Vec<FileId>,
 }
@@ -151,6 +151,8 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub projects: PerProject<LoadedProject<'b, 's>>,
     /// One for each program that checks a typed package by itself.
     pub world_sessions: &'s [Session],
+    /// Of a program that checks a typed package by itself.
+    pub application: Option<&'b BoundApplication<'b>>,
     pub session: &'s Session,
     pub atoms: Interner<'s>,
     pub messages: &'b LoadMessages,
@@ -159,6 +161,11 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub can_load_code_at_run_time: bool,
     /// Waits until the plugins have answered for every asset. False: one of them is no asset, and the caller gives up.
     pub finish_asset_reads: &'b dyn Fn() -> bool,
+}
+
+pub(crate) struct BoundApplication<'b> {
+    pub graph: ApplicationGraph<'b>,
+    pub left_out: &'b LeftOutCode,
 }
 
 pub(crate) struct BoundProject<'s> {
@@ -288,12 +295,96 @@ impl Drop for HandsOutLastFreedMemory {
     }
 }
 
+// The allocator gives the free blocks inside pages that are still in use back to the system. That lowers the most memory a
+// build ever holds only while the build stands near it. Further down the stages take the same blocks again a moment later,
+// and every block that is given back interrupts all the threads. What a stage frees when it ends stands right behind a peak:
+// that is given back as ever.
+struct KeepsFreeBlocksBelowThePeak {
+    is_over: Arc<AtomicBool>,
+    watcher: Option<JoinHandle<()>>,
+}
+
+static BUILDS_THAT_KEEP_FREE_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+
+impl KeepsFreeBlocksBelowThePeak {
+    const PERCENT_OF_PEAK: usize = 85;
+    const TIME_BEHIND_THE_PEAK: Duration = Duration::from_millis(1500);
+    const TIME_BETWEEN_LOOKS: Duration = Duration::from_millis(20);
+
+    fn begin() -> KeepsFreeBlocksBelowThePeak {
+        let is_over = Arc::new(AtomicBool::new(false));
+        let is_first = BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_add(1, Ordering::AcqRel) == 0;
+        let watcher = (bun_alloc::USE_MIMALLOC && is_first)
+            .then(|| {
+                let is_over = Arc::clone(&is_over);
+                let thread = std::thread::Builder::new().name("AOT memory".into());
+                thread.spawn(move || Self::watch(&is_over)).ok()
+            })
+            .flatten();
+        KeepsFreeBlocksBelowThePeak { is_over, watcher }
+    }
+
+    fn watch(is_over: &AtomicBool) {
+        let mut gives_back = true;
+        let mut was_near_peak_at = Instant::now();
+        while !is_over.load(Ordering::Acquire) {
+            let (resident, peak) = Self::resident_now_and_at_most();
+            if resident / 100 >= peak / 10_000 * Self::PERCENT_OF_PEAK {
+                was_near_peak_at = Instant::now();
+            }
+            let should_give_back = was_near_peak_at.elapsed() < Self::TIME_BEHIND_THE_PEAK;
+            if should_give_back != gives_back {
+                gives_back = should_give_back;
+                Self::give_back(gives_back);
+            }
+            std::thread::park_timeout(Self::TIME_BETWEEN_LOOKS);
+        }
+        Self::give_back(true);
+    }
+
+    fn give_back(gives_back: bool) {
+        let option = bun_alloc::mimalloc::Option::purge_holes;
+        bun_alloc::mimalloc::mi_option_set_default(option, gives_back.into());
+    }
+
+    fn resident_now_and_at_most() -> (usize, usize) {
+        let (mut resident, mut peak) = (0, 0);
+        let unused = core::ptr::null_mut();
+        // SAFETY: it writes a number through each pointer that is not null.
+        unsafe {
+            bun_alloc::mimalloc::mi_process_info(
+                unused,
+                unused,
+                unused,
+                &raw mut resident,
+                &raw mut peak,
+                unused,
+                unused,
+                unused,
+            );
+        }
+        (resident, peak)
+    }
+}
+
+impl Drop for KeepsFreeBlocksBelowThePeak {
+    fn drop(&mut self) {
+        BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_sub(1, Ordering::AcqRel);
+        self.is_over.store(true, Ordering::Release);
+        if let Some(watcher) = self.watcher.take() {
+            watcher.thread().unpark();
+            let _ = watcher.join();
+        }
+    }
+}
+
 pub fn compile(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     let _hands_out_last_freed_memory = HandsOutLastFreedMemory::begin();
+    let _keeps_free_blocks_below_the_peak = KeepsFreeBlocksBelowThePeak::begin();
     let request = EngineRequest {
         options: options.aot,
         identity: options.executable_identity,
@@ -401,7 +492,6 @@ impl<'a> Build<'a> {
             unreached_runtime_files: Vec::new(),
             circular_runtime_files: Vec::new(),
             import_graph: None,
-            left_out_of_world: None,
             checked_elsewhere: Vec::new(),
         }
     }

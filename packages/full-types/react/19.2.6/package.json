@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-react",
+  "name": "@oven/full-types-react",
   "version": "19.2.6",
   "description": "Full types for react 19.2.6: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "react": "19.2.6"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

@@ -55,6 +55,8 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) compiled: &'x CompiledModule<'s>,
     pub(crate) modules: &'x ModuleGraph,
     pub(crate) builtins: &'x ResolvedBuiltins,
+    /// What a closure has room for in this build.
+    pub(crate) max_captures: usize,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]

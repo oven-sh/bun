@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-koa__router",
+  "name": "@oven/full-types-koa__router",
   "version": "15.7.0",
   "description": "Full types for @koa/router 15.7.0: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "@koa/router": "15.7.0"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

@@ -181,11 +181,8 @@ impl BuildCommand {
             });
         let skips_typed_files_for = {
             let options = &ctx.bundler_options;
-            let is_minified =
-                options.minify_syntax || options.minify_whitespace || options.minify_identifiers;
             let unsupported = [
-                (is_minified, "--minify"),
-                (options.code_splitting, "--splitting"),
+                (options.minify_identifiers, "--minify-identifiers"),
                 (
                     options.output_format != options::Format::Esm,
                     "--format other than esm",
@@ -298,7 +295,7 @@ impl BuildCommand {
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.split_require = ctx.bundler_options.split_require;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_transpiler.options.keeps_top_level_const = ctx.bundler_options.dts;
+        this_transpiler.options.is_library = ctx.bundler_options.dts;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
@@ -1277,7 +1274,7 @@ impl BuildCommand {
                             "declaration"
                         }
                         options::OutputKind::Asset if super::compile_command::is_typed_file(f) => {
-                            "typed"
+                            "full types"
                         }
                         options::OutputKind::Asset => "asset",
                         options::OutputKind::Sourcemap => "source map",

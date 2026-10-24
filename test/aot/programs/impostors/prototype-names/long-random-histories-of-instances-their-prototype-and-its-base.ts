@@ -31,7 +31,7 @@ function orA(object: Derived) { return (object.a ??= 7); }
 function bumpB(object: Derived) { object.b = (object.b ?? 0) + 1; }
 let seed = Number(process.argv[2] ?? 2024);
 function random(below: number) {
-  seed = (seed * 1103515245 + 12345) % 2147483648;
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
   return Math.floor((seed / 2147483648) * below);
 }
 function hash(text: string, into: number) {

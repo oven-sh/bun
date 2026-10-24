@@ -5,18 +5,18 @@ use bun_sema_driver::host::{AlreadyRead, from_native};
 const CODE: &str = "exports.x = 1;\n";
 const P: (&str, &str) = ("p", "1.0.0");
 const Q: (&str, &str) = ("q", "1.0.0");
-const NOT_JSON: &str = "its sound.json is not valid JSON";
-const NOT_VALID: &str = "its sound.json is not valid";
+const NOT_JSON: &str = "full-types.json is not valid JSON";
+const NOT_VALID: &str = "full-types.json is not valid";
 const UNSUPPORTED_FORMAT: &str =
-    "this version of Bun doesn't support the \"sound\" version in its sound.json";
-const INVALID_NEEDS: &str = "\"needs\" in its sound.json must be a list of package names";
-const EMPTY_LAY: &str = "\"lay\" in its sound.json is empty";
-const ADDS_FILE: &str = "it adds y.ts, and full types can only replace installed files";
-const OTHER_VERSION: &str = "it is for version 1.0.0, but 1.0.1 is installed. \
-                             Replace it with the full types for 1.0.1, or remove it";
-const NEEDS_PRODUCTION: &str = "it needs process.env.NODE_ENV to be defined as \"production\". \
+    "this version of Bun doesn't support the \"format\" in full-types.json";
+const INVALID_NEEDS: &str = "\"needs\" in full-types.json must be a list of package names";
+const EMPTY_LAY: &str = "\"lay\" in full-types.json is empty";
+const ADDS_FILE: &str = "they add y.ts, and full types can only replace installed files";
+const OTHER_VERSION: &str = "they are for version 1.0.0, but 1.0.1 is installed. \
+                             Replace them with the full types for 1.0.1, or remove them";
+const NEEDS_PRODUCTION: &str = "they need process.env.NODE_ENV to be defined as \"production\". \
                                 Pass --define 'process.env.NODE_ENV=\"production\"'";
-const NEEDS_Q: &str = "it needs the full types of \"q\", which is not used";
+const NEEDS_Q: &str = "they need the full types of \"q\", which are not used";
 
 struct Project {
     directory: TemporaryDirectory,
@@ -40,9 +40,9 @@ impl Project {
 
     fn add_typed_version(&self, name: &str, manifest: &str) {
         self.directory
-            .write(&format!(".sound/{name}/sound.json"), manifest);
+            .write(&format!(".full-types/{name}/full-types.json"), manifest);
         self.directory
-            .write(&format!(".sound/{name}/lay/x.js"), CODE);
+            .write(&format!(".full-types/{name}/lay/x.js"), CODE);
     }
 
     fn with_packages<R>(&self, then: impl FnOnce(&TypedPackages<'_>, &[u8]) -> R) -> R {
@@ -75,7 +75,7 @@ impl Project {
 }
 
 fn manifest(name: &str, more: &str) -> String {
-    format!(r#"{{"sound":2,"name":"{name}","version":"1.0.0","lay":{{"x.js":""}}{more}}}"#)
+    format!(r#"{{"format":2,"name":"{name}","version":"1.0.0","lay":{{"x.js":""}}{more}}}"#)
 }
 
 #[test]
@@ -115,16 +115,16 @@ fn text_that_is_no_manifest_is_mismatch() {
     let project = Project::new("no_manifest");
     for (text, expected) in [
         ("{", NOT_JSON),
-        (r#"{"sound":2"#, NOT_JSON),
+        (r#"{"format":2"#, NOT_JSON),
         ("", NOT_VALID),
         ("[]", NOT_VALID),
         ("{}", NOT_VALID),
-        (r#"{"sound":"2"}"#, NOT_VALID),
-        (r#"{"sound":1}"#, UNSUPPORTED_FORMAT),
-        (r#"{"sound":99}"#, UNSUPPORTED_FORMAT),
-        (r#"{"sound":2}"#, NOT_VALID),
-        (r#"{"sound":2,"name":"p"}"#, NOT_VALID),
-        (r#"{"sound":2,"name":"p","version":"1.0.0"}"#, EMPTY_LAY),
+        (r#"{"format":"2"}"#, NOT_VALID),
+        (r#"{"format":1}"#, UNSUPPORTED_FORMAT),
+        (r#"{"format":99}"#, UNSUPPORTED_FORMAT),
+        (r#"{"format":2}"#, NOT_VALID),
+        (r#"{"format":2,"name":"p"}"#, NOT_VALID),
+        (r#"{"format":2,"name":"p","version":"1.0.0"}"#, EMPTY_LAY),
     ] {
         project.add_typed_version("p", text);
         assert_eq!(
@@ -154,11 +154,11 @@ fn field_of_wrong_shape_is_mismatch() {
         (r#","lay":{"x.js":"","y.ts":"new"}"#, ADDS_FILE),
         (
             r#","lay":{"x.js":"","../q/x.js":""}"#,
-            "\"../q/x.js\" in its sound.json is not a path inside the package",
+            "\"../q/x.js\" in full-types.json is not a path inside the package",
         ),
         (
             r#","lay":{"package.json":""}"#,
-            "\"package.json\" in its sound.json is not a path inside the package",
+            "\"package.json\" in full-types.json is not a path inside the package",
         ),
     ] {
         project.add_typed_version("p", &manifest("p", more));
@@ -175,12 +175,12 @@ fn first_mismatch_is_reported() {
     let project = Project::new("first_mismatch");
     let installed = ("p", "1.0.1");
     for (more, expected) in [
-        (r#","sound":1,"name":"q""#, UNSUPPORTED_FORMAT),
+        (r#","format":1,"name":"q""#, UNSUPPORTED_FORMAT),
         (r#","name":"q","needs":{}"#, NOT_VALID),
         (r#","needs":{},"lay":{"../x":""}"#, INVALID_NEEDS),
         (
             r#","lay":{"../x":"new"}"#,
-            "\"../x\" in its sound.json is not a path inside the package",
+            "\"../x\" in full-types.json is not a path inside the package",
         ),
         (r#","lay":{"x.js":"","y.ts":"new"}"#, ADDS_FILE),
         (
@@ -197,14 +197,14 @@ fn first_mismatch_is_reported() {
     }
     let more = r#","when":{"MODE":"test"},"lay":{"y.js":""},"needs":["q"]"#;
     project.add_typed_version("p", &manifest("p", more));
-    let needs_define = "it needs MODE to be defined as \"test\". Pass --define 'MODE=\"test\"'";
+    let needs_define = "they need MODE to be defined as \"test\". Pass --define 'MODE=\"test\"'";
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(needs_define));
     let defines = [("MODE", "test")];
     assert_eq!(
         project.find_mismatch(P, &defines).as_deref(),
         Some("lay/y.js is missing")
     );
-    project.directory.write(".sound/p/lay/y.js", CODE);
+    project.directory.write(".full-types/p/lay/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &defines).as_deref(), Some(NEEDS_Q));
 }
 
@@ -244,7 +244,7 @@ fn listed_file_must_be_below_lay() {
         project.find_mismatch(P, &[]).as_deref(),
         Some("lay/cjs/y.js is missing")
     );
-    project.directory.write(".sound/p/lay/cjs/y.js", CODE);
+    project.directory.write(".full-types/p/lay/cjs/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &[]), None);
 }
 
@@ -300,7 +300,7 @@ fn need_of_needed_package_counts() {
     project.install("node_modules/q", "q", "1.0.0");
     project.add_typed_version("p", &manifest("p", r#","needs":["q"]"#));
     project.add_typed_version("q", &manifest("q", r#","needs":["r"]"#));
-    let needs_r = "it needs the full types of \"r\", which is not used";
+    let needs_r = "they need the full types of \"r\", which are not used";
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(needs_r));
     project.install("node_modules/r", "r", "1.0.0");
     project.add_typed_version("r", &manifest("r", ""));
@@ -322,10 +322,13 @@ fn needed_package_is_nearest_installed_copy() {
 fn package_is_shown_below_sound_directory() {
     let project = Project::new("display_directory");
     project.with_packages(|packages, _| {
-        assert_eq!(packages.display_directory_of_package(b"p"), b".sound/p");
+        assert_eq!(
+            packages.display_directory_of_package(b"p"),
+            b".full-types/p"
+        );
         assert_eq!(
             packages.display_directory_of_package(b"@s/p"),
-            b".sound/@s/p"
+            b".full-types/@s/p"
         );
     });
 }

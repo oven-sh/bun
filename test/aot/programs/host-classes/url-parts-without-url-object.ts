@@ -42,7 +42,7 @@ function partsReadInClosure(text: string) {
 }
 
 let seed = 7;
-const random = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
 const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
 const choose = <T,>(usual: readonly T[], odd: readonly T[]): T => (random() < 0.93 ? pick(usual) : pick(odd));
 const usualHeads = ["http://example.com", "https://example.com", "http://localhost:3000", "http://127.0.0.1:8080", "https://api.example.co.uk", "http://a-b.c:80", "https://x:443"];

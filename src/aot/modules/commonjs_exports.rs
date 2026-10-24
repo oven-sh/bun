@@ -21,7 +21,7 @@ use super::module_set::ModuleSet;
 use super::plan::{Member, Shape};
 use super::requests::Scans;
 use super::synthetic_exports::SyntheticExports;
-use super::{BindInput, ModuleRef, find_library_files};
+use super::{ApplicationGraph, BindInput, ModuleRef, find_library_files};
 use crate::ir::for_each_mut;
 use crate::load::SourceKind;
 use crate::load::sources::parsed_source;
@@ -370,10 +370,32 @@ impl CommonJsExports {
         exports.add_stores_of_other_files(input, imports);
         exports.look_at_modules_that_call_through_their_object();
         exports.look_at_modules_whose_object_importers_see(input, tables, imports);
+        if let Some(application) = input.bind.application {
+            exports.adopt_decisions(application);
+        }
         let mut faces = Faces::new(input, tables, imports);
         faces.decide(&exports);
         exports.faces = faces;
         exports
+    }
+
+    fn adopt_decisions(&mut self, application: &ApplicationGraph<'_>) {
+        let theirs = application.graph.commonjs();
+        for (&(module, name), &ignores_this) in &theirs.stored_by_other_files {
+            if let Some(module) = application.local_module(module) {
+                *self
+                    .stored_by_other_files
+                    .entry((module, name))
+                    .or_insert(true) &= ignores_this;
+            }
+        }
+        for text in &theirs.modules {
+            if theirs.shape(text.module) == Shape::Value
+                && let Some(module) = application.local_module(text.module)
+            {
+                self.look_at(module);
+            }
+        }
     }
 
     fn add_module(&mut self, module: u32, text: &OwnText) {
@@ -641,11 +663,6 @@ impl CommonJsExports {
     fn keeps_names(&self, number: usize) -> bool {
         let text = &self.modules[number];
         text.has_names() && !self.has_object[number]
-    }
-
-    /// The expression that makes the module keep its object, by its own text. No expression: the file as a whole.
-    pub fn reason_for_value(&self, module: ModuleRef) -> Option<ExprId> {
-        self.text_of(module)?.reason
     }
 
     /// The modules with a name that stands for a name of the module.

@@ -195,6 +195,8 @@ interface Order {
 
 `MinLength` and `MaxLength` count Unicode code points, like JSON Schema and zod. `"🍞".length` is 2, but it's one character here. Half of a surrogate pair on its own counts as one.
 
+`Pattern` and `Format` don't change `RegExp.$1`, `RegExp.lastMatch` and the other legacy properties of `RegExp`. After a call, they still describe the last match that your own code made.
+
 ## What a type means
 
 The check is a little stricter than TypeScript. Some values that you can assign to `T` don't pass.

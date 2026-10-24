@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
@@ -139,6 +139,13 @@ describe.concurrent(
       expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")]));
     });
 
+    scene("that --minify-syntax and --minify-whitespace made smaller", async root => {
+      const flags = ["--minify-syntax", "--minify-whitespace"];
+      await bun(root, "library", "compile", "--library", "src/index.ts", "src/version.ts", ...flags);
+      await bun(root, "app", "add", "../library/dist");
+      expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")]));
+    });
+
     scene("that bun link links", async root => {
       await build(root);
       await bun(root, "library/dist", "link");
@@ -171,6 +178,47 @@ describe.concurrent(
           ...application,
           "package.json": JSON.stringify({ name: "app", type: "module", dependencies: { shapes: "workspace:*" } }),
         }),
+      },
+    );
+
+    scene(
+      "whose entry points share a chunk",
+      async root => {
+        await bun(root, "library", "compile", "--library", "src/index.ts", "src/make.ts", "--splitting");
+        const chunks = readdirSync(join(root, "library/dist"))
+          .filter(name => /^index-\w+\./.test(name))
+          .sort();
+        expect(chunks.map(name => name.replace(/-\w+/, ""))).toEqual(["index.full.ts", "index.js"]);
+        await bun(root, "app", "add", "--backend=copyfile", "../library/dist");
+        expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")], "18\n"));
+        writeFileSync(join(root, "app/node_modules/shapes", chunks[1]), "");
+        expect((await compile(root)).said).toEqual([unused(differs(chunks[1].replace(".js", "")))]);
+      },
+      {
+        ...project,
+        "library/src/area.ts":
+          project["library/src/area.ts"].replace('"./index"', '"./shape"') + "export const made: Shape[] = [];\n",
+        "library/src/shape.ts": `export interface Shape {\n  kind: "circle" | "square";\n  size: number;\n}\n`,
+        "library/src/index.ts": `import { area, made } from "./area";
+import type { Shape } from "./shape";
+export function total(shapes: Shape[]): number {
+  let sum = 0;
+  for (const shape of shapes) sum += area(shape);
+  return sum + made.length;
+}
+`,
+        "library/src/make.ts": `import { made } from "./area";
+import type { Shape } from "./shape";
+export function make(size: number): Shape {
+  const shape: Shape = { kind: "square", size };
+  made.push(shape);
+  return shape;
+}
+`,
+        "app/app.ts": `import { total } from "shapes";
+import { make } from "shapes/make";
+console.log(total([make(2), { kind: "circle", size: 1 }, make(3)]));
+`,
       },
     );
 

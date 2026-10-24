@@ -1,0 +1,1 @@
+An executable hands a required file to what the program has stored as module.children (or to a push of its own on the list) at the next read of module.children. Without --aot it is handed over when it is required: 500500 for -499500.

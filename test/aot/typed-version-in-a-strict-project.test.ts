@@ -23,15 +23,15 @@ function project(main: string, typedFile = typed) {
       main: "index.js",
     }),
     "node_modules/adder/index.js": installed,
-    ".sound/adder/sound.json": JSON.stringify({
-      sound: 2,
+    ".full-types/adder/full-types.json": JSON.stringify({
+      format: 2,
       name: "adder",
       version: "1.0.0",
       when: {},
       lay: { "index.js": createHash("sha256").update(installed).digest("hex") },
       needs: [],
     }),
-    ".sound/adder/lay/index.js": typedFile,
+    ".full-types/adder/lay/index.js": typedFile,
   });
 }
 
@@ -70,7 +70,7 @@ describe("full types of a package without declarations, in a strict project", ()
   );
 
   test(
-    "full types that is rejected declares nothing",
+    "full types that are rejected declare nothing",
     () =>
       slot(async () => {
         using dir = project(`import { add } from "adder";\nconsole.log(add(1, 2));\n`, typed.replace("a + b", "a - b"));

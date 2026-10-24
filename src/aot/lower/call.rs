@@ -24,7 +24,6 @@ use crate::builtins::{Resolved, builtin_value_of};
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, ValueId};
 
-pub(in crate::lower) use self::array_makers::try_lower_list_of_indexes;
 pub(in crate::lower) use self::callee::{
     last_mapped_position, last_reported_position, lower_callee,
 };
@@ -32,6 +31,7 @@ pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
 pub(in crate::lower) use self::number_questions::{
     emit_number_question, find_number_question, lower_operand_of_question,
 };
+pub(in crate::lower) use self::written_operands::is_written_descriptor;
 
 pub(crate) enum Arguments {
     Values(SmallVec<[ValueId; 4]>),

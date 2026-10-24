@@ -183,9 +183,19 @@ const standardInputFunctions = functionsIn(
   "getStdinStream",
 );
 
-const requireCacheFunctions = functionsIn("builtins/CommonJS", "createRequireCache", "pushObservableChild");
+// The host brings the list behind `module.children` up to date: (list, child). What the program has stored in the list's place is out of sight from the store on, and the analysis lets the children go with it.
+const moduleChildrenFunctions = [
+  b.functionUsed(
+    b.functionIn("builtins/CommonJS", "pushObservableChild"),
+    b.calledByHost({
+      times: "Repeatedly",
+      args: [b.instance("Array").holding({ element: b.builtin("%ModuleObject%") }), b.builtin("%ModuleObject%")],
+      result: b.dropped,
+    }),
+  ),
+];
 
-const moduleChildrenFunctions = functionsIn("builtins/CommonJS", "pushObservableChild");
+const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
 
 const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
 
@@ -197,7 +207,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
-  "%ModuleRequire%.main": functionsIn("builtins/CommonJS", "main", "pushObservableChild"),
+  "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Array.prototype.filter": fusedTraversalFunctions,
   "Array.prototype.map": fusedTraversalFunctions,

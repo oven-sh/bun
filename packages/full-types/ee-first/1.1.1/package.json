@@ -1,5 +1,5 @@
 {
-  "name": "@oven/sound-ee-first",
+  "name": "@oven/full-types-ee-first",
   "version": "1.1.1",
   "description": "Full types for ee-first 1.1.1: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",
@@ -7,7 +7,7 @@
     "ee-first": "1.1.1"
   },
   "files": [
-    "sound.json",
+    "full-types.json",
     "lay",
     "LICENSE",
     "NOTICE"

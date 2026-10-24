@@ -4,21 +4,21 @@
 Writes the folder that this repository has for full types and that publish.py publishes: <out folder>/<name>/<version>/.
 
   <node_modules>    the packages as npm installed them
-  <full types>  <name>/sound.json and <name>/lay/ for each package: <out>/sound of check.py, or the .sound/ of a project
+  <full types>  <name>/full-types.json and <name>/lay/ for each package: <out>/sound of check.py, or the .full-types/ of a project
   <out folder>      a new folder
   <package> ..      the packages to pack. Default: every package in <full types>
 
 The folder has:
-  sound.json    the manifest, in format 2. README.md describes its members.
+  full-types.json    the manifest, in format 2. README.md describes its members.
   lay/<path>    each full-types file, at the path of the installed file that it replaces
-  package.json  what npm needs to publish the folder: @oven/sound-<name>, the version and the license of the package, and a peer
+  package.json  what npm needs to publish the folder: @oven/full-types-<name>, the version and the license of the package, and a peer
                 dependency on exactly that version
   LICENSE       the package's own, as installed: lay/ is a copy of its code
   NOTICE        whose code it is, under which license, and which files were changed and how
   lay.sums      the sha256 and the path of each file under lay/
 
 It does not have src/, which check.py generates lay/ from: copy that into the folder. Never copy src/ to a project's
-.sound/<name>/, where the project's tsconfig.json includes its ambient .d.ts files.
+.full-types/<name>/, where the project's tsconfig.json includes its ambient .d.ts files.
 
 The manifest is not trusted. It is checked against <node_modules> as the compiler checks it in a build
 (src/aot/load/typed_packages.rs): the format, the name, the version, each path, and the sha256 of each installed file in `lay`
@@ -42,7 +42,7 @@ for folder in (INSTALLED, TYPED):
 if os.path.exists(OUT):
     sys.exit('pack.py: %s exists already: name a new folder' % OUT)
 FORMAT = 2
-MEMBERS = ('sound', 'name', 'version', 'when', 'basis', 'lay', 'needs')
+MEMBERS = ('format', 'name', 'version', 'when', 'basis', 'lay', 'needs')
 LICENSE_FILES = ('LICENSE', 'LICENSE.md', 'LICENSE.txt', 'License', 'license')
 CHANGED = '// CHANGED: '
 DESCRIPTION = (
@@ -82,12 +82,12 @@ def files_under(folder):
 def find_typed_packages():
     names = []
     for name in sorted(os.listdir(TYPED)):
-        if os.path.isfile('%s/%s/sound.json' % (TYPED, name)):
+        if os.path.isfile('%s/%s/full-types.json' % (TYPED, name)):
             names.append(name)
         elif os.path.isdir(TYPED + '/' + name):
             names += [
                 name + '/' + member for member in sorted(os.listdir(TYPED + '/' + name))
-                if os.path.isfile('%s/%s/%s/sound.json' % (TYPED, name, member))
+                if os.path.isfile('%s/%s/%s/full-types.json' % (TYPED, name, member))
             ]
     return names
 
@@ -115,51 +115,51 @@ def is_string_map(value):
 
 def check_manifest(manifest, name, version, stop):
     if not isinstance(manifest, dict):
-        stop('its sound.json is not valid')
-    if manifest.get('sound') != FORMAT:
-        stop('"sound" in its sound.json is %s, and the compiler reads format %d only' % (
-            json.dumps(manifest.get('sound')), FORMAT,
+        stop('full-types.json is not valid')
+    if manifest.get('format') != FORMAT:
+        stop('"format" in full-types.json is %s, and the compiler reads format %d only' % (
+            json.dumps(manifest.get('format')), FORMAT,
         ))
     unknown = sorted(set(manifest) - set(MEMBERS))
     if unknown:
-        stop('format %d has no "%s" in sound.json' % (FORMAT, unknown[0]))
+        stop('format %d has no "%s" in full-types.json' % (FORMAT, unknown[0]))
     if manifest.get('name') != name:
-        stop('"name" in its sound.json is not the name of its folder')
+        stop('"name" in full-types.json is not the name of its folder')
     if manifest.get('version') != version:
-        stop('it is for version %s, but %s is installed' % (manifest.get('version'), version))
+        stop('they are for version %s, but %s is installed' % (manifest.get('version'), version))
     when, basis, lay = (manifest.get(member, {}) for member in ('when', 'basis', 'lay'))
     needs = manifest.get('needs', [])
     if not all(is_string_map(member) for member in (when, basis, lay)):
-        stop('"when", "basis" and "lay" in its sound.json must be objects whose values are strings')
+        stop('"when", "basis" and "lay" in full-types.json must be objects whose values are strings')
     if not isinstance(needs, list) or not all(is_valid_package_name(need) for need in needs):
-        stop('"needs" in its sound.json must be a list of package names')
+        stop('"needs" in full-types.json must be a list of package names')
     for path in list(basis) + list(lay):
         if not is_valid_path(path):
-            stop('"%s" in its sound.json is not a path inside the package' % path)
+            stop('"%s" in full-types.json is not a path inside the package' % path)
     if not lay:
-        stop('"lay" in its sound.json is empty')
+        stop('"lay" in full-types.json is empty')
     return when, basis, lay, needs
 
 
 def check_files(installed, typed, basis, lay, stop):
     for path in lay:
         if lay[path] == 'new':
-            stop('it adds %s, and full types can only replace installed files' % path)
+            stop('they add %s, and full types can only replace installed files' % path)
         if path in basis:
             stop('%s is in "lay" and in "basis"' % path)
         if re.search(r'\.d\.[cm]?ts$', path):
-            stop('%s is a declaration file, and full types replaces code' % path)
+            stop('%s is a declaration file, and full types replace code' % path)
     for path, digest in list(basis.items()) + list(lay.items()):
         installed_file = installed + '/' + path
         if not os.path.isfile(installed_file) or sha256_of(installed_file) != digest.lower():
-            stop('the installed %s differs from the file this full types was written for' % path)
+            stop('the installed %s differs from the file these full types were written for' % path)
     typed_files = files_under(typed + '/lay')
     for path in lay:
         if path not in typed_files:
             stop('lay/%s is missing' % path)
     for path in typed_files:
         if path not in lay:
-            stop('lay/%s is not in "lay" of its sound.json' % path)
+            stop('lay/%s is not in "lay" of full-types.json' % path)
 
 
 def check_license(installed, typed, license_name, lay, stop):
@@ -181,7 +181,7 @@ def check(name):
         sys.exit('pack.py: %s: %s' % (name, message))
 
     installed, typed = INSTALLED + '/' + name, TYPED + '/' + name
-    if not os.path.isfile(typed + '/sound.json'):
+    if not os.path.isfile(typed + '/full-types.json'):
         stop('%s has no full types of it' % TYPED)
     if not os.path.isfile(installed + '/package.json'):
         stop('it is not installed in ' + INSTALLED)
@@ -190,25 +190,25 @@ def check(name):
     if package.get('name') != name or not isinstance(version, str) or not version:
         stop('the installed package.json has another name, or no version')
     try:
-        manifest = json.load(open(typed + '/sound.json'))
+        manifest = json.load(open(typed + '/full-types.json'))
     except ValueError:
-        stop('its sound.json is not valid JSON')
+        stop('full-types.json is not valid JSON')
     when, basis, lay, needs = check_manifest(manifest, name, version, stop)
     check_files(installed, typed, basis, lay, stop)
     license_file, copyright_line = check_license(installed, typed, license_name, lay, stop)
-    companion = '@oven/sound-' + name.lstrip('@').replace('/', '__')
+    companion = '@oven/full-types-' + name.lstrip('@').replace('/', '__')
     sorted_digests = lambda digests: {path: digest.lower() for path, digest in sorted(digests.items())}
     return dict(
         folder='%s/%s/%s' % (OUT, name, version),
         typed=typed,
         license_file=license_file,
         manifest={
-            'sound': FORMAT, 'name': name, 'version': version, 'when': dict(sorted(when.items())),
+            'format': FORMAT, 'name': name, 'version': version, 'when': dict(sorted(when.items())),
             'basis': sorted_digests(basis), 'lay': sorted_digests(lay), 'needs': needs,
         },
         package={
             'name': companion, 'version': version, 'description': DESCRIPTION % (name, version), 'license': license_name,
-            'peerDependencies': {name: version}, 'files': ['sound.json', 'lay', 'LICENSE', 'NOTICE'],
+            'peerDependencies': {name: version}, 'files': ['full-types.json', 'lay', 'LICENSE', 'NOTICE'],
         },
         notice=NOTICE % dict(
             companion=companion, name=name, version=version, copyright=copyright_line, license=license_name,
@@ -226,7 +226,7 @@ def write(packed):
     shutil.copy(packed['license_file'], folder + '/LICENSE')
     open(folder + '/NOTICE', 'w', encoding='utf-8').write(packed['notice'])
     open(folder + '/lay.sums', 'w').write(''.join('%s  %s\n' % (sha256_of(folder + '/lay/' + path), path) for path in lay))
-    write_json(folder + '/sound.json', manifest)
+    write_json(folder + '/full-types.json', manifest)
     write_json(folder + '/package.json', packed['package'])
     print('%s@%s: lay %d · basis %d · %d bytes · %s' % (
         manifest['name'], manifest['version'], len(lay), len(manifest['basis']),

@@ -1,0 +1,1 @@
+The build stops: internal compiler error (ChooseRepresentations): UnsupportedConversion: no conversion between the two representations, at the NewObject of the literal with the getter. Each of the two functions alone in a program builds, and prints what plain Bun prints.

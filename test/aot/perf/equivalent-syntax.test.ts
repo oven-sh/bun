@@ -32,6 +32,11 @@ const pairs: [baseline: string, other: string, allowance: number][] = [
   ["concatenation", "template literal", 4],
   ["chain of ifs", "switch", 4],
   ["counted loop", "generator", 4],
+  ["Number(text)", "+text", 4],
+  ["template literal of a number", "String(number)", 4],
+  ["typeof compared with undefined", "typeof above u", 4],
+  ["class below a class", "class below a class as written for ES5", 60],
+  ["names that the type of the literal lists", "names under the index signature of the type of the literal", 4],
 ];
 
 const skipped =

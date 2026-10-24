@@ -1,7 +1,7 @@
 use super::answers::ObjectMemberKind;
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, Bound, FnOwner, Parent, SymbolId};
+use crate::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent, SymbolId};
 use crate::check::Program;
 use crate::hir::{
     self, BinOp, ClassId, ExprId, ExprKind, ExprTag, FnId, FnKind, MemberKey, PropKey, PropKind,
@@ -147,8 +147,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 | None => continue,
             };
             let object = hir.skip_type_assertions(object);
-            if matches!(hir[object].kind, ExprKind::This) {
-                if let Some(owner) = self.this_owner(file, object) {
+            if let Some(this) = find_this_held_by(hir, bound, object) {
+                if let Some(owner) = self.this_owner(file, this) {
                     let is_in_every_construction = form == StoreForm::Plain
                         && self.is_in_every_construction(file, owner, assign, &mut first_exits);
                     this_stores.push(ThisStore {
@@ -382,6 +382,30 @@ fn add_prototype_literal_stores(
             PropKey::Name(_) | PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {}
         }
     }
+}
+
+// `this`, or a variable that holds it: `var self = this`, and `var _this = _super.call(this) || this` wherever the call returns nothing.
+fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> Option<ExprId> {
+    if matches!(hir[object].kind, ExprKind::This) {
+        return Some(object);
+    }
+    let variable = bound_symbol(hir, bound, object)?;
+    if !bound.is_stable_binding(variable) {
+        return None;
+    }
+    let BindingInitializer::Expression(value) = bound.binding_initializer(hir, variable) else {
+        return None;
+    };
+    let value = match hir[hir.skip_type_assertions(value)].kind {
+        ExprKind::Binary {
+            op: BinOp::Or,
+            right,
+            ..
+        } => right,
+        _ => value,
+    };
+    let value = hir.skip_type_assertions(value);
+    matches!(hir[value].kind, ExprKind::This).then_some(value)
 }
 
 fn bound_symbol(hir: &hir::File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {

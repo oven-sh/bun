@@ -5,12 +5,12 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingKind, Bound, Decl, Parent, PatParent, SymbolId};
 use crate::check::Program;
 use crate::hir::{
-    self, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, IdList, MemberKey, PatKind, PropId, Span,
-    is_proto_setter,
+    self, BinOp, Branches, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, IdList, MemberKey,
+    PatKind, PropId, Span, is_proto_setter,
 };
 use crate::program::FileId;
 use crate::session::Arena;
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 use std::sync::OnceLock;
 
 // What a call of a function does. The numbers are positions of arguments.
@@ -89,6 +89,7 @@ pub(in crate::check) struct PrototypeLinks<'s> {
     calls_passing_parameters: &'s [(FnId, FunctionCall)],
     calls_passing_this: &'s [(FnId, FunctionCall)],
     copied_literals: &'s [(FnId, ExprId)],
+    functions_sharing_prototype_objects: &'s [FnId],
     pub(super) linked_functions: OnceLock<LinkedFunctions<'s>>,
     pub(super) declarations_used_like_constructors: OnceLock<&'s [SymbolId]>,
 }
@@ -119,6 +120,13 @@ impl<'s> PrototypeLinks<'s> {
     // In the order of the text.
     pub(super) fn calls_passing_this_of(&self, function: FnId) -> &'s [(FnId, FunctionCall)] {
         entries_of(self.calls_passing_this, function)
+    }
+
+    // `function.prototype = G.prototype`: what it constructs are objects of `G`, and it has no prototype object of its own.
+    pub(super) fn shares_prototype_object(&self, function: FnId) -> bool {
+        self.functions_sharing_prototype_objects
+            .binary_search(&function)
+            .is_ok()
     }
 
     // The object literals whose properties are copied into the prototype object of `function`, in the order of the text.
@@ -189,9 +197,6 @@ impl EndFinder<'_, '_, '_> {
     }
 
     fn find_end(&self, expression: ExprId) -> Option<LinkEnd> {
-        if let Some(parameter) = self.find_referenced_parameter(expression) {
-            return Some(parameter);
-        }
         match self.named_values.find_named_value(self.file, expression) {
             Some(NamedValue::Class(class)) => {
                 Some(LinkEnd::Declaration(ClassDeclaration::Class(class)))
@@ -204,7 +209,8 @@ impl EndFinder<'_, '_, '_> {
                 let declaration = self
                     .named_values
                     .find_library_declaration(self.file, expression);
-                declaration.map(LinkEnd::LibraryDeclaration)
+                let declaration = declaration.map(LinkEnd::LibraryDeclaration);
+                declaration.or_else(|| self.find_referenced_parameter(expression))
             }
         }
     }
@@ -274,14 +280,41 @@ impl EndFinder<'_, '_, '_> {
         self.find_owner_of_prototype_object(self.hir[parent].value)
     }
 
+    // The arm of `test ? yes : no` that is evaluated where what `test` compares with `null` is a class or a function.
+    fn find_arm_for_declaration(&self, test: ExprId, arms: Branches) -> Option<ExprId> {
+        let ExprKind::Binary { op, left, right } = self.hir[test].kind else {
+            return None;
+        };
+        let arm = match op {
+            BinOp::EqEq | BinOp::EqEqEq => arms.no,
+            BinOp::NotEq | BinOp::NotEqEq => arms.yes,
+            _ => return None,
+        };
+        let is_null = |side: ExprId| matches!(self.hir[side].kind, ExprKind::Null);
+        let compared = match (is_null(left), is_null(right)) {
+            (false, true) => left,
+            (true, false) => right,
+            _ => return None,
+        };
+        self.find_end(compared).map(|_| arm)
+    }
+
     // The owner of the prototype object from which the object that `value` creates inherits.
     fn find_parent_of_created_object(&self, value: ExprId) -> Option<LinkEnd> {
         let value = self.hir.skip_type_assertions(value);
-        if let ExprKind::New(site) = self.hir[value].kind {
-            return self.find_end(self.hir[site].callee);
-        }
-        if let ExprKind::Object(properties) = self.hir[value].kind {
-            return self.find_parent_in_literal(properties);
+        match self.hir[value].kind {
+            ExprKind::New(site) => return self.find_end(self.hir[site].callee),
+            ExprKind::Object(properties) => return self.find_parent_in_literal(properties),
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => return self.find_parent_of_created_object(right),
+            ExprKind::Cond { test, branches } => {
+                let arm = self.find_arm_for_declaration(test, self.hir.branches(branches))?;
+                return self.find_parent_of_created_object(arm);
+            }
+            _ => {}
         }
         match self.find_callee(value)? {
             NamedValue::PrototypeOperation(
@@ -326,6 +359,8 @@ struct CallPassingThis {
 
 struct LinkCollector<'c, 'p, 's> {
     ends: EndFinder<'c, 'p, 's>,
+    // `F.prototype = G.prototype`: what `new F` creates inherits from the prototype object of `G`. `None`: the text has several such stores into `F`.
+    owners_of_shared_prototype_objects: FxHashMap<LinkEnd, Option<LinkEnd>>,
     links: Vec<PrototypeLink>,
     known_links: FxHashSet<PrototypeLink>,
     calls: Vec<FunctionCall>,
@@ -338,6 +373,7 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
     fn new(ends: EndFinder<'c, 'p, 's>) -> Self {
         LinkCollector {
             ends,
+            owners_of_shared_prototype_objects: FxHashMap::default(),
             links: Vec::new(),
             known_links: FxHashSet::default(),
             calls: Vec::new(),
@@ -459,6 +495,31 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
         }
     }
 
+    fn visit_store_of_shared_prototype_object(&mut self, target: ExprId, value: ExprId) {
+        let ends = self.ends;
+        let value = ends.hir.skip_type_assertions(value);
+        let is_prototype_object = matches!(
+            ends.hir.member_key(value),
+            Some((_, MemberKey::Name(name))) if name == known::prototype
+        );
+        let Some(sharer) = ends.find_owner_of_prototype_object(target) else {
+            return;
+        };
+        if is_prototype_object {
+            let owner = ends.find_owner_of_prototype_object(value);
+            let known = self.owners_of_shared_prototype_objects.entry(sharer);
+            known.and_modify(|known| *known = None).or_insert(owner);
+        }
+    }
+
+    fn find_parent_of_created_object(&self, value: ExprId) -> Option<LinkEnd> {
+        let parent = self.ends.find_parent_of_created_object(value)?;
+        match self.owners_of_shared_prototype_objects.get(&parent) {
+            Some(&owner) => owner,
+            None => Some(parent),
+        }
+    }
+
     fn visit_store(&mut self, target: ExprId, value: ExprId) {
         let ends = self.ends;
         let Some((object, MemberKey::Name(name))) = ends.hir.member_key(target) else {
@@ -466,7 +527,7 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
         };
         if name == known::prototype {
             let child = ends.find_end(object);
-            self.add_link(child, ends.find_parent_of_created_object(value));
+            self.add_link(child, self.find_parent_of_created_object(value));
             let copy = ends.hir.skip_type_assertions(value);
             if let Some(NamedValue::PrototypeOperation(operation)) = ends.find_callee(copy)
                 && let PrototypeOperation::CopyProperties { target } = operation
@@ -517,19 +578,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     collector.visit_call(call);
                 }
             }
-            for &assign in expressions.of(ExprTag::Assign) {
-                if let ExprKind::Assign {
+            let stores = expressions.of(ExprTag::Assign).iter();
+            let stores = stores.filter_map(|&assign| match hir[assign].kind {
+                ExprKind::Assign {
                     op: None,
                     target,
                     value,
-                } = hir[assign].kind
-                    && is_live(assign)
-                {
-                    collector.visit_store(target, value);
-                }
+                } if is_live(assign) => Some((target, value)),
+                _ => None,
+            });
+            for (target, value) in stores.clone() {
+                collector.visit_store_of_shared_prototype_object(target, value);
+            }
+            for (target, value) in stores {
+                collector.visit_store(target, value);
             }
         }
         let LinkCollector {
+            owners_of_shared_prototype_objects,
             links,
             calls,
             mut calls_passing_parameters,
@@ -555,6 +621,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .into_iter()
             .filter_map(find_caller)
             .collect();
+        let sharers = owners_of_shared_prototype_objects.into_keys();
+        let mut functions_sharing_prototype_objects: Vec<FnId> = sharers
+            .filter_map(|sharer| match sharer {
+                LinkEnd::Declaration(ClassDeclaration::Function(function))
+                    if function.file == file =>
+                {
+                    Some(function.function)
+                }
+                _ => None,
+            })
+            .collect();
+        functions_sharing_prototype_objects.sort_unstable();
         links_of_parameters.sort_by_key(|entry| entry.0);
         calls_passing_parameters.sort_by_key(|entry| entry.0);
         calls_passing_this.sort_by_key(|&(caller, call)| (caller, hir[call.call].pos, call.call));
@@ -567,6 +645,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             calls_passing_parameters: list_in(arena, &calls_passing_parameters),
             calls_passing_this: list_in(arena, &calls_passing_this),
             copied_literals: list_in(arena, &copied_literals),
+            functions_sharing_prototype_objects: list_in(
+                arena,
+                &functions_sharing_prototype_objects,
+            ),
             linked_functions: OnceLock::new(),
             declarations_used_like_constructors: OnceLock::new(),
         }

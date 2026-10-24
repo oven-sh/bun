@@ -1,4 +1,4 @@
-@oven/sound-koa 3.2.1
+@oven/full-types-koa 3.2.1
 
 This package holds files of koa 3.2.1 (https://www.npmjs.com/package/koa/v/3.2.1).
 Copyright (c) 2019 Koa contributors

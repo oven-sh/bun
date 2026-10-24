@@ -352,8 +352,8 @@ test.each([
       }),
       "node_modules/shapes/index.js": javascript,
       "node_modules/shapes/index.d.ts": `export declare function area(side: number): number;\n`,
-      ".sound/shapes/sound.json": JSON.stringify({
-        sound: 2,
+      ".full-types/shapes/full-types.json": JSON.stringify({
+        format: 2,
         name: "shapes",
         version: "1.0.0",
         when: {},
@@ -361,7 +361,7 @@ test.each([
         lay: { "index.js": createHash("sha256").update(javascript).digest("hex") },
         needs: [],
       }),
-      ".sound/shapes/lay/index.js": typed,
+      ".full-types/shapes/lay/index.js": typed,
     });
     const codes = (said: string) =>
       [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
@@ -372,7 +372,7 @@ test.each([
       build: outcome !== "stops",
       check: outcome !== "stops",
     });
-    expect(checked.said.includes(`"shapes" 1.0.0 is compiled from its full types in .sound/shapes`)).toBe(
+    expect(checked.said.includes(`"shapes" 1.0.0 is compiled from its full types in .full-types/shapes`)).toBe(
       outcome !== "untyped",
     );
   },
@@ -397,8 +397,8 @@ test.each([
       }),
       "node_modules/shapes/index.js": untypedArea,
       [`node_modules/shapes/${declarations}`]: `export declare function area(side: number): number;\n`,
-      ".sound/shapes/sound.json": JSON.stringify({
-        sound: 2,
+      ".full-types/shapes/full-types.json": JSON.stringify({
+        format: 2,
         name: "shapes",
         version: "1.0.0",
         when,
@@ -406,7 +406,7 @@ test.each([
         lay: { "index.js": createHash("sha256").update(untypedArea).digest("hex") },
         needs: [],
       }),
-      ".sound/shapes/lay/index.js": `export function area(side: number): string { return side * side; }\n`,
+      ".full-types/shapes/lay/index.js": `export function area(side: number): string { return side * side; }\n`,
     });
     const codes = (said: string) =>
       [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();

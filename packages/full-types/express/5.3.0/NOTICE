@@ -1,4 +1,4 @@
-@oven/sound-express 5.3.0
+@oven/full-types-express 5.3.0
 
 This package holds files of express 5.3.0 (https://www.npmjs.com/package/express/v/5.3.0).
 Copyright (c) 2009-2014 TJ Holowaychuk <tj@vision-media.ca>

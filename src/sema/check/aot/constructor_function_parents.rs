@@ -314,8 +314,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         function: FunctionRef,
     ) -> Option<&'c ClassShape<'c>> {
-        let own = self.own_constructor_function_shape(function);
         let of_file = self.prototype_links(function.file);
+        if of_file.shares_prototype_object(function.function) {
+            return None;
+        }
+        let own = self.own_constructor_function_shape(function);
         let calls = of_file.calls_passing_this_of(function.function);
         let literals = of_file.copied_literals_of(function.function);
         let stores_into_this_only =

@@ -14,7 +14,7 @@
 # Environment:
 #   NODE_MODULES  A node_modules folder with seroval 1.6.9 and @types/node. seroval, @types/node and undici-types are
 #                 copied from it into each project. The md5 of seroval/dist/index.js must start with ccbd0950: that is
-#                 the file the full types was written for.
+#                 the file the full types were written for.
 #   SEMA          The type checker's command-line tool. Full types with a type error under --strict is not built.
 #                 UNCHECKED=1 skips the check.
 #   AUDIT=1       Also builds each full types with --aot-type-errors=log, as `<name>.audit`.
@@ -55,7 +55,7 @@ if [ "$STEP" = build ]; then
   mkdir -p "$WORK/out"; : > "$WORK/builds"
   sum="$(md5_of "$MODULES/seroval/dist/index.js" | cut -c1-8)"
   if [ "$sum" != ccbd0950 ]; then
-    echo "seroval_wide.sh: the md5 of seroval/dist/index.js starts with $sum: the full types was written for ccbd0950"
+    echo "seroval_wide.sh: the md5 of seroval/dist/index.js starts with $sum: the full types were written for ccbd0950"
     exit 1
   fi
 

@@ -240,11 +240,11 @@ impl Lazy {
             }
         }
 
-        // One write wakes every registration of a file. Off Linux the reader that lost the bytes then reads with no second check and blocks, unless the file is a socket (`PosixBufferedReader::sys_read`).
+        // Off Linux a pipe reader that wakes after another registration took the bytes blocks in `read`.
         #[cfg(unix)]
         let two_can_poll = cfg!(any(target_os = "linux", target_os = "android"))
             || this.file_type == FileType::Socket;
-        // The caller's own stdio fd gets here when it did not reopen as a terminal. An event loop holds one registration per fd number (epoll refuses a second with EEXIST, kqueue replaces the first), so a reader that polls takes a dup, as for any other fd. With no descriptor left it keeps the stdio fd. Windows opens a libuv handle per reader and registers no fd number.
+        // An event loop keeps one registration per fd number, so a reader that polls a stdio fd takes a dup.
         #[cfg(unix)]
         let fd = if two_can_poll && this.pollable && fd.stdio_tag().is_some() {
             sys::dup_at_least(fd, 3).unwrap_or(fd)

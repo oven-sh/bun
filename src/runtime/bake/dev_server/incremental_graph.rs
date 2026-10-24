@@ -179,6 +179,8 @@ impl Default for File {
 pub(crate) struct CurrentChunkSourceMapData {
     pub(crate) file_index: ServerFileIndex,
     pub(crate) source_map: packed_map::Shared,
+    /// The bundler's index of the source that the part was printed from. Valid only in the bundle that made the part.
+    pub(crate) source_index: bun_ast::Index,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -272,9 +274,7 @@ pub(crate) struct TakeJSBundleOptionsServer {
     pub(crate) kind: ChunkKind,
 }
 
-/// Starts every server chunk. The directive makes all of the chunk strict
-/// code, as the ES modules of a production build are. It adds no line, so the
-/// source map of the chunk does not move.
+/// Starts every server chunk. The directive makes the chunk strict code and adds no line, so the source map does not move.
 const SERVER_CHUNK_START: &bun_core::ZStr = bun_core::ZStr::from_static(b"\"use strict\";({\0");
 
 #[repr(C)]
@@ -800,6 +800,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .push(CurrentChunkSourceMapData {
                             file_index: ServerFileIndex::init(file_index.get()),
                             source_map: packed,
+                            source_index: index,
                         });
                 }
             }
@@ -1798,11 +1799,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(chunk)
     }
 
-    /// One part of the current server chunk as a program of its own, for
-    /// JSC's parser: strict code as in the chunk, or sloppy code. It does not
-    /// start with `(` as the chunk does: after an error, JSC reads a leading
-    /// `(` again as the parameters of an arrow function and reports the
-    /// wrapper in place of the error.
+    /// One part of the chunk as its own program, strict like the chunk or sloppy. A program that starts with `(` gets JSC's error for arrow parameters.
     pub(crate) fn current_chunk_part_alone(&self, part: usize, strict: bool) -> Vec<u8> {
         debug_assert!(matches!(SIDE, Side::Server));
         let start: &[u8] = if strict {
@@ -1819,9 +1816,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         text
     }
 
-    /// Takes a part that the server runtime will not get out of the current
-    /// server chunk. `receive_chunk` listed its file as a client component to
-    /// register, which holds only while another part of that file remains.
+    /// Removes a part from the current server chunk. Its file leaves `client_components_added` unless another part remains.
     pub(crate) fn remove_current_chunk_part(&mut self, part: usize) -> CurrentChunkSourceMapData {
         debug_assert!(matches!(SIDE, Side::Server));
         self.current_chunk_len -= self.current_chunk_code.remove(part).len();

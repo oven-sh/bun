@@ -64,16 +64,6 @@ impl<'a> HotUpdateContext<'a> {
 
         &mut self.resolved_index_cache[start..][..len][i.get() as usize]
     }
-
-    /// The bundler's source of a server file that this bundle produced.
-    fn server_source(&self, file: incremental_graph::ServerFileIndex) -> Option<&bun_ast::Source> {
-        let len = self.sources.len();
-        let file = CachedFileIndex::from(Some(file));
-        let index = self.resolved_index_cache[len..][..len]
-            .iter()
-            .position(|cached| *cached == file)?;
-        Some(&self.sources[index])
-    }
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
@@ -159,8 +149,7 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
     }
 }
 
-/// Builds the text and the source map of the current server chunk and runs
-/// it. The inner `Err` is what JSC threw.
+/// Runs the current server chunk. The inner `Err` is what JSC threw.
 fn evaluate_server_chunk(dev: &mut DevServer) -> JsResult<JsResult<JSValue>> {
     let source_map_json = {
         // Create a temporary source map entry to render
@@ -171,8 +160,7 @@ fn evaluate_server_chunk(dev: &mut DevServer) -> JsResult<JsResult<JSValue>> {
 
         // Fill the source map entry
         dev.server_graph.take_source_map(&mut source_map_entry)?;
-        // Note: erase to raw ptr so `render_json` can borrow the entry
-        // while the cleanup guard is armed.
+        // Note: erase to raw ptr so `render_json` can borrow the entry while the cleanup guard is armed.
         let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
         scopeguard::defer! {
             // SAFETY: `source_map_entry` is a stack local that outlives this guard.
@@ -206,28 +194,24 @@ fn abort_on_server_chunk_error(dev: &mut DevServer, exception: JSValue) -> ! {
     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
     // `print_error_like_object_to_console` needs `&mut`.
     dev.vm_mut().print_error_like_object_to_console(exception);
-    // Note: `panic!()` would unwind through the
-    // `extern "C"` boundary above (`nounwind` UB), so abort.
+    // Note: `panic!()` would unwind through the `extern "C"` boundary above (`nounwind` UB), so abort.
     bun_core::Output::panic(format_args!(
         "Error thrown while evaluating server code. This is always a bug in the bundler."
     ));
 }
 
-/// Loads the current server chunk. Returns its modules for the server runtime,
-/// or `None` when this round gives the runtime nothing to register.
-///
-/// JSC parses the chunk as one program, so a module that it rejects stops all
-/// of them. Each such module becomes the failure of its file, like a parse
-/// error, and the rest of the chunk loads without it.
-fn load_server_chunk(dev: &mut DevServer, ctx: &HotUpdateContext<'_>) -> JsResult<Option<JSValue>> {
+/// Loads the current server chunk. A module that JSC rejects becomes the build error of its file, and the rest load.
+fn load_server_chunk(
+    dev: &mut DevServer,
+    sources: &[bun_ast::Source],
+) -> JsResult<Option<JSValue>> {
     let global = dev.global();
-    let exception = match evaluate_server_chunk(dev)? {
+    let mut exception = match evaluate_server_chunk(dev)? {
         Ok(modules) => return Ok(Some(modules)),
         Err(err) => global.take_exception(err),
     };
 
-    // The one error that JSC reports for the chunk can name a place in
-    // another module, so each module is parsed alone.
+    // JSC's error for the chunk can name a place in another module, so each module is parsed alone.
     let mut rejected_any = false;
     let mut part = 0;
     while part < dev.server_graph.current_chunk_code.len() {
@@ -248,80 +232,132 @@ fn load_server_chunk(dev: &mut DevServer, ctx: &HotUpdateContext<'_>) -> JsResul
         .is_none();
 
         let module = dev.server_graph.remove_current_chunk_part(part);
-        let file = module.file_index;
-        // The server and SSR graphs share one record per file, and so one failure.
-        if !dev.server_graph.bundled_files.values()[file.get() as usize].failed {
-            let source = ctx.server_source(file);
-            let loc = source
-                .and_then(|source| {
-                    original_loc(
-                        source,
-                        &module.source_map,
-                        syntax_error.line,
-                        syntax_error.column,
-                    )
-                })
-                .unwrap_or(bun_ast::Loc::EMPTY);
-            let mut notes = vec![bun_ast::range_data(
+        let source = &sources[module.source_index.get() as usize];
+        let message = syntax_error.message.to_utf8();
+        // JSC reads the token after a regular expression before it rejects the expression.
+        let token_is_rejected =
+            !strings::has_prefix_comptime(message.slice(), b"Invalid regular expression");
+        let loc = original_loc(
+            source,
+            &module.source_map,
+            (syntax_error.line, syntax_error.column),
+            token_is_rejected,
+        );
+        let mut log = Log::init();
+        log.add_range_error_fmt_with_notes(
+            Some(source),
+            bun_ast::Range {
+                loc: loc.unwrap_or(bun_ast::Loc::EMPTY),
+                len: 0,
+            },
+            Box::new([bun_ast::range_data(
                 None,
                 bun_ast::Range::NONE,
-                "Bun's parser accepted this file, and JavaScriptCore rejected it when the dev server loaded it",
-            )];
-            if only_strict_code_is_rejected {
-                notes.push(bun_ast::range_data(
-                    None,
-                    bun_ast::Range::NONE,
-                    "The dev server runs every server module as strict code, as \"bun build --app\" does",
-                ));
-            }
-            let mut log = Log::init();
-            log.add_range_error_fmt_with_notes(
-                source,
-                bun_ast::Range { loc, len: 0 },
-                notes.into_boxed_slice(),
-                format_args!("{}", syntax_error.message),
-            );
-            dev.server_graph
-                .insert_failure(incremental_graph::InsertFailureKey::Index(file.get()), &log)?;
-        }
+                if only_strict_code_is_rejected {
+                    "The dev server runs every server module as strict code, as \"bun build --app\" does"
+                } else {
+                    "JavaScriptCore rejected the code that Bun generated for this file. If the file is valid, this is a bug in Bun's bundler."
+                },
+            )]),
+            format_args!("{}", bstr::BStr::new(message.slice())),
+        );
+        fail_server_file(dev, module.file_index, &log)?;
     }
-    if !rejected_any {
+
+    if dev.server_graph.current_chunk_len > 0 {
+        if rejected_any {
+            exception = match evaluate_server_chunk(dev)? {
+                Ok(modules) => return Ok(Some(modules)),
+                Err(err) => global.take_exception(err),
+            };
+        }
+        fail_server_chunk(dev, sources, exception)?;
+    }
+    // No module is left. The runtime must still hear of a client component that this round removed.
+    let removed = !dev.incremental_result.client_components_removed.is_empty();
+    Ok(removed.then(|| JSValue::create_empty_object(global, 0)))
+}
+
+/// Makes what the load of the current server chunk threw the build error of each file that the chunk holds.
+fn fail_server_chunk(
+    dev: &mut DevServer,
+    sources: &[bun_ast::Source],
+    exception: JSValue,
+) -> JsResult<()> {
+    let global = dev.global();
+    let chunk =
+        dev.server_graph
+            .take_js_bundle_server(&incremental_graph::TakeJSBundleOptionsServer {
+                kind: ChunkKind::HmrChunk,
+            })?;
+    if server_hmr_ffi::bake_find_server_code_syntax_error(global, BunString::clone_utf8(&chunk))
+        .is_some()
+    {
+        // JSC parses each module alone, so the text that Bun puts around the modules is wrong.
         abort_on_server_chunk_error(dev, exception);
     }
 
-    if dev.server_graph.current_chunk_len == 0 {
-        // No module is left to load. A client component that this round
-        // removed must still leave the manifests of the runtime.
-        let removed = !dev.incremental_result.client_components_removed.is_empty();
-        return Ok(removed.then(|| JSValue::create_empty_object(global, 0)));
+    let message = if exception.is_termination_exception() {
+        b"JavaScript execution was terminated".to_vec()
+    } else {
+        let mut holder = jsc::zig_exception::Holder::init();
+        exception.to_zig_exception(global, holder.zig_exception());
+        holder.zig_exception().message.to_owned_slice()
+    };
+    while !dev.server_graph.current_chunk_code.is_empty() {
+        let module = dev.server_graph.remove_current_chunk_part(0);
+        let mut log = Log::init();
+        log.add_error_fmt(
+            Some(&sources[module.source_index.get() as usize]),
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "The server code of this bundle did not load: {}",
+                bstr::BStr::new(&message)
+            ),
+        );
+        fail_server_file(dev, module.file_index, &log)?;
     }
-    match evaluate_server_chunk(dev)? {
-        Ok(modules) => Ok(Some(modules)),
-        Err(err) => abort_on_server_chunk_error(dev, global.take_exception(err)),
-    }
+    Ok(())
 }
 
-/// Where in `source` the text at (`line`, `column`) of its module in a chunk came
-/// from, if the source map of the module says. Both are 0-based.
+fn fail_server_file(
+    dev: &mut DevServer,
+    file: incremental_graph::ServerFileIndex,
+    log: &Log,
+) -> JsResult<()> {
+    // The server and SSR graphs share one record per file, and so one failure.
+    if !dev.server_graph.bundled_files.values()[file.get() as usize].failed {
+        dev.server_graph
+            .insert_failure(incremental_graph::InsertFailureKey::Index(file.get()), log)?;
+    }
+    Ok(())
+}
+
+/// Maps a 0-based (line, column) of a module's text in a chunk back to `source`, through the last mapping before it.
 fn original_loc(
     source: &bun_ast::Source,
     source_map: &packed_map::Shared,
-    line: u32,
-    column: u32,
+    position: (u32, u32),
+    or_at_position: bool,
 ) -> Option<bun_ast::Loc> {
     // The mappings of one module name one source.
     let parsed =
         bun_sourcemap::mapping::parse(source_map.get()?.vlq(), None, 1, Default::default()).ok()?;
-    let mapping = parsed.mappings.find(
-        bun_core::Ordinal::from_zero_based(i32::try_from(line).ok()?),
-        bun_core::Ordinal::from_zero_based(i32::try_from(column).ok()?),
-    )?;
+    let position = (
+        i32::try_from(position.0).ok()?,
+        i32::try_from(position.1).ok()?,
+    );
+    let after = parsed.mappings.generated().partition_point(|mapping| {
+        let mapping = (mapping.lines.zero_based(), mapping.columns.zero_based());
+        mapping < position || (or_at_position && mapping == position)
+    });
+    let original = parsed.mappings.original()[after.checked_sub(1)?];
     let offset = bun_ast::Source::line_col_to_byte_offset(
         &source.contents,
         1,
         1,
-        u64::try_from(mapping.original_line()).ok()? + 1,
-        u64::try_from(mapping.original_column()).ok()? + 1,
+        u64::try_from(original.lines.zero_based()).ok()? + 1,
+        u64::try_from(original.columns.zero_based()).ok()? + 1,
     )?;
     Some(bun_ast::Loc {
         start: i32::try_from(offset).ok()?,
@@ -840,7 +876,7 @@ pub(super) fn finalize_bundle(
     // Load all new chunks into the server runtime.
     if !dev.frontend_only
         && dev.server_graph.current_chunk_len > 0
-        && let Some(server_modules) = load_server_chunk(dev, &ctx)?
+        && let Some(server_modules) = load_server_chunk(dev, ctx.sources)?
     {
         let global = dev.global();
         // Note: `make_array_for_server_components_patch` needs `&mut self`
@@ -878,8 +914,7 @@ pub(super) fn finalize_bundle(
         let _ = errors; // TODO:
     }
 
-    // Index all failed files now that the incremental graph has been updated
-    // and the server runtime has seen the chunk.
+    // Index all failed files. The server chunk load above can add failures, so this comes after it.
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()
     {

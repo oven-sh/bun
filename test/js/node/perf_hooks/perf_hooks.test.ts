@@ -1,6 +1,6 @@
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry, type RecordableHistogram } from "perf_hooks";
 import { MessageChannel, receiveMessageOnPort, Worker, type MessagePort } from "worker_threads";
@@ -12,6 +12,9 @@ test("stubs", () => {
   expect(perf.performance.timeOrigin).toBeNumber();
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
+
+// CI runs tests with BUN_GARBAGE_COLLECTOR_LEVEL=1, with which `expect()` collects. So a test of whether the GC runs by
+// itself is in `withoutAggressiveGC`.
 
 // Buckets are allocated 4 KB at a time, when a value is first recorded in them.
 const chunk = 4096;
@@ -52,13 +55,15 @@ test("the garbage collector knows the size of a histogram", () => {
 test("histograms that grew are collected without an explicit GC", () => {
   // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
   let created = 0;
-  do {
-    for (let i = 0; i < 100; i++) {
-      const histogram = perf.createHistogram();
-      for (const value of valuesInEveryChunk) histogram.record(value);
-    }
-    created += 100;
-  } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
+  withoutAggressiveGC(() => {
+    do {
+      for (let i = 0; i < 100; i++) {
+        const histogram = perf.createHistogram();
+        for (const value of valuesInEveryChunk) histogram.record(value);
+      }
+      created += 100;
+    } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
+  });
   expect(created).toBeLessThan(2000);
 });
 
@@ -73,10 +78,13 @@ test("a structured clone in the same thread does not count as an allocation", ()
 
   // They share its buckets. If each counted as a part of the 37 MB, the GC would run every few clones.
   // Collecting first leaves no other reason for the GC to run: recording has just allocated the 37 MB.
-  Bun.gc(true);
-  const before = heapStats().objectTypeCounts.Histogram;
-  for (let i = 0; i < 300; i++) structuredClone(histogram);
-  expect(heapStats().objectTypeCounts.Histogram - before).toBeGreaterThan(150);
+  const kept = withoutAggressiveGC(() => {
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Histogram;
+    for (let i = 0; i < 300; i++) structuredClone(histogram);
+    return heapStats().objectTypeCounts.Histogram - before;
+  });
+  expect(kept).toBeGreaterThan(150);
 });
 
 describe("histograms that two threads share", () => {
@@ -142,19 +150,23 @@ describe("histograms that two threads share", () => {
     const { port1, port2 } = new MessageChannel();
     control.port1.postMessage({ inWorker, port: port2 }, [port2]);
     try {
-      Bun.gc(true);
-      const kept = heapStats().objectTypeCounts.Histogram ?? 0;
-      let step = 0;
-      do {
-        before(port1, ++step);
-        Atomics.add(turn, 0, 1);
-        Atomics.notify(turn, 0);
-        // Not a turn of the event loop, in which an idle GC could run. So nothing would time the test out.
-        expect(Atomics.wait(turn, 0, ++turns * 2 - 1, 30_000)).not.toBe("timed-out");
-        if (Atomics.load(turn, 0) < 0) throw await failed;
-        after(port1, step);
-      } while (step < rounds && heapStats().objectTypeCounts.Histogram - kept > step * 50);
-      return step;
+      const taken = withoutAggressiveGC(() => {
+        Bun.gc(true);
+        const kept = heapStats().objectTypeCounts.Histogram ?? 0;
+        let step = 0;
+        do {
+          before(port1, ++step);
+          Atomics.add(turn, 0, 1);
+          Atomics.notify(turn, 0);
+          // Not a turn of the event loop, in which an idle GC could run. So nothing would time the test out.
+          expect(Atomics.wait(turn, 0, ++turns * 2 - 1, 30_000)).not.toBe("timed-out");
+          if (Atomics.load(turn, 0) < 0) return;
+          after(port1, step);
+        } while (step < rounds && heapStats().objectTypeCounts.Histogram - kept > step * 50);
+        return step;
+      });
+      if (taken === undefined) throw await failed;
+      return taken;
     } finally {
       port1.close();
     }

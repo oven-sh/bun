@@ -161,6 +161,23 @@ pub(crate) fn filter<'a>(
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
+    /// The scan's `Transpiler` and `Log` are in the CLI arena, which never drops them.
+    struct ScanTranspiler(*mut Transpiler<'static>);
+    impl Drop for ScanTranspiler {
+        fn drop(&mut self) {
+            // SAFETY: nothing else drops these, and no bundle borrows the transpiler any more.
+            unsafe {
+                (*self.0).log_mut().clear_and_free();
+                (*self.0).deinit();
+            }
+        }
+    }
+    let scan_transpiler_ptr: *mut Transpiler<'static> = scan_transpiler;
+    // Declared before `event_loop` and `bundle`, so it is dropped after both.
+    let _scan_transpiler_owner = ScanTranspiler(scan_transpiler_ptr);
+    // SAFETY: the arena allocation. Only the guard also reaches it, when it drops.
+    let scan_transpiler: &'static mut Transpiler<'static> = unsafe { &mut *scan_transpiler_ptr };
+
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
     let mut event_loop = bun_event_loop::AnyEventLoop::init();
@@ -298,14 +315,8 @@ pub(crate) fn filter<'a>(
     // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
-    // everything needed has been copied out above. The scan transpiler itself
-    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
-    // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` still holds.
+    // everything needed has been copied out above.
     bundle.deinit_without_freeing_arena();
-    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
-    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
-    unsafe { bundle.transpiler.deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],

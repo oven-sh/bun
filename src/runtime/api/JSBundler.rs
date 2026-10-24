@@ -2017,6 +2017,11 @@ pub(crate) fn worker_live_count() -> usize {
     bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst)
 }
 
+/// `bun:internal-for-testing`: bundler thread pools made so far, one per `BundleV2::init`.
+pub(crate) fn pools_created() -> u64 {
+    bun_bundler::thread_pool::pools_created()
+}
+
 pub(crate) use js_bundler::BunPluginTarget;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;

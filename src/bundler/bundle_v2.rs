@@ -4588,18 +4588,19 @@ pub mod bv2_impl {
         /// not a bounded arena leak. The
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
+        /// An `Err` leaves no bundle behind.
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
-            this.unique_key = generate_unique_key();
-
-            if this.transpiler.log().has_errors() {
+            if transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
             }
+
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
+            this.unique_key = generate_unique_key();
 
             // enqueueEntryPoints schedules the runtime task before any fallible
             // allocation. If a later allocation fails we must still drain the
@@ -4607,6 +4608,7 @@ pub mod bv2_impl {
             // stack-allocated Transpiler.
             if let Err(err) = this.enqueue_entry_points_normal(entry_points) {
                 this.wait_for_parse();
+                this.deinit_without_freeing_arena();
                 return Err(err);
             }
 

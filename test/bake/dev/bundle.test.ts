@@ -877,6 +877,278 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
     },
   });
 }
+// The bundle of the second route doesn't parse shared.ts again, so it doesn't visit broken.ts.
+devTest("a route shows the build error of a file it reaches through a module another route already bundled", {
+  framework: minimalFramework,
+  files: {
+    "broken.ts": `export const broken = ;`,
+    "shared.ts": `
+      import { broken } from "./broken";
+      export const shared = "shared " + broken;
+    `,
+    "routes/index.ts": `
+      import { shared } from "../shared";
+      export default function () {
+        return new Response("index " + shared);
+      }
+    `,
+    "routes/other.ts": `
+      import { shared } from "../shared";
+      export default function () {
+        return new Response("other " + shared);
+      }
+    `,
+    "routes/fine.ts": `
+      export default function () {
+        return new Response("fine");
+      }
+    `,
+  },
+  async test(dev) {
+    const responses: [string, number, string][] = [];
+    for (const path of ["/", "/other", "/fine", "/other"]) {
+      const response = await dev.fetch(path);
+      const text = await response.text();
+      responses.push([path, response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text]);
+    }
+    expect(responses).toEqual([
+      ["/", 500, "Bun - Build Failed"],
+      ["/other", 500, "Bun - Build Failed"],
+      ["/fine", 200, "fine"],
+      ["/other", 500, "Bun - Build Failed"],
+    ]);
+    await dev.write("broken.ts", `export const broken = 1;`);
+    await dev.fetch("/other").equals("other shared 1");
+    await dev.fetch("/").equals("index shared 1");
+  },
+});
+// The save's bundle parses leaf.ts only. shared.ts is already bundled for the client, so nothing visits broken.ts.
+devTest("a route shows the build error after a save makes its client component import a module with a broken import", {
+  framework: minimalFramework,
+  files: {
+    "broken.ts": `export const broken = ;`,
+    "shared.ts": `
+      import "./broken";
+      export const shared = 1;
+    `,
+    "leaf.ts": `export const leaf = 1;`,
+    "Failed.ts": `
+      "use client";
+      import "./shared";
+      export const Failed = 1;
+    `,
+    "Edited.ts": `
+      "use client";
+      import "./leaf";
+      export const Edited = 1;
+    `,
+    "routes/failed.ts": `
+      import * as Component from "../Failed";
+      export default function () {
+        return new Response("failed " + typeof Component.Failed);
+      }
+    `,
+    "routes/edited.ts": `
+      import * as Component from "../Edited";
+      export default function () {
+        return new Response("edited " + typeof Component.Edited);
+      }
+    `,
+  },
+  async test(dev) {
+    const title = async (path: string) => {
+      const response = await dev.fetch(path);
+      const text = await response.text();
+      return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text];
+    };
+    expect(await title("/failed")).toEqual([500, "Bun - Build Failed"]);
+    await dev.fetch("/edited").equals("edited object");
+    await dev.write("leaf.ts", `import "./shared";\nexport const leaf = 2;`, { errors: null });
+    expect(await title("/edited")).toEqual([500, "Bun - Build Failed"]);
+    await dev.write("broken.ts", `export const broken = 1;`);
+    await dev.fetch("/edited").equals("edited object");
+  },
+});
+// The same save in a server module: the route is above the saved file in the server graph.
+devTest("a route shows the build error after a save makes its server module import a module with a broken import", {
+  framework: minimalFramework,
+  files: {
+    "broken.ts": `export const broken = ;`,
+    "shared.ts": `
+      import { broken } from "./broken";
+      export const shared = "shared " + broken;
+    `,
+    "leaf.ts": `export const leaf = "leaf";`,
+    "routes/failed.ts": `
+      import { shared } from "../shared";
+      export default function () {
+        return new Response("failed " + shared);
+      }
+    `,
+    "routes/edited.ts": `
+      import { leaf } from "../leaf";
+      export default function () {
+        return new Response("edited " + leaf);
+      }
+    `,
+  },
+  async test(dev) {
+    const title = async (path: string) => {
+      const response = await dev.fetch(path);
+      const text = await response.text();
+      return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text];
+    };
+    expect(await title("/failed")).toEqual([500, "Bun - Build Failed"]);
+    await dev.fetch("/edited").equals("edited leaf");
+    await dev.write("leaf.ts", `import { shared } from "./shared";\nexport const leaf = "leaf " + shared;`, {
+      errors: null,
+    });
+    expect(await title("/edited")).toEqual([500, "Bun - Build Failed"]);
+    await dev.write("broken.ts", `export const broken = 1;`);
+    await dev.fetch("/edited").equals("edited leaf shared 1");
+  },
+});
+// The saved file is a layout: every route below it is above the saved file.
+devTest("routes show the build error after a save makes their layout import a module with a broken import", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], layouts: true }],
+  },
+  files: {
+    "broken.ts": `export const broken = ;`,
+    "shared.ts": `
+      import { broken } from "./broken";
+      export const shared = "shared " + broken;
+    `,
+    "routes/_layout.ts": `
+      export default function Layout() {
+        return "layout";
+      }
+    `,
+    "routes/failed.ts": `
+      import { shared } from "../shared";
+      export default function () {
+        return new Response("failed " + shared);
+      }
+    `,
+    "routes/child.ts": `
+      export default function () {
+        return new Response("child");
+      }
+    `,
+    "routes/dir/nested.ts": `
+      export default function () {
+        return new Response("nested");
+      }
+    `,
+  },
+  async test(dev) {
+    const title = async (path: string) => {
+      const response = await dev.fetch(path);
+      const text = await response.text();
+      return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text];
+    };
+    expect(await title("/failed")).toEqual([500, "Bun - Build Failed"]);
+    await dev.fetch("/child").equals("child");
+    await dev.fetch("/dir/nested").equals("nested");
+    await dev.write(
+      "routes/_layout.ts",
+      `import { shared } from "../shared";\nexport default function Layout() {\n  return "layout " + shared;\n}`,
+      { errors: null },
+    );
+    expect([await title("/child"), await title("/dir/nested")]).toEqual([
+      [500, "Bun - Build Failed"],
+      [500, "Bun - Build Failed"],
+    ]);
+    await dev.write("broken.ts", `export const broken = 1;`);
+    await dev.fetch("/child").equals("child");
+    await dev.fetch("/dir/nested").equals("nested");
+  },
+});
+// The server entry point of a router type renders every one of its routes.
+devTest("a route keeps the build error of a file that its router's server entry point imports", {
+  framework: {
+    fileSystemRouterTypes: [
+      { root: "routes", style: "nextjs-pages", serverEntryPoint: "./entry.server.ts" },
+      { root: "control", style: "nextjs-pages", serverEntryPoint: "./control.server.ts" },
+    ],
+    serverComponents: {
+      separateSSRGraph: false,
+      serverRuntimeImportSource: "./entry.server.ts",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  },
+  files: {
+    "entry.server.ts": `
+      import { broken } from "./broken";
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta, broken);
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "control.server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta, "control");
+      }
+    `,
+    "broken.ts": `export const broken = ;`,
+    "routes/index.ts": `
+      export default function (req, meta, broken) {
+        return new Response("index " + broken);
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta, broken) {
+        return new Response("other " + broken);
+      }
+    `,
+    "routes/third.ts": `
+      export default function (req, meta, broken) {
+        return new Response("third " + broken);
+      }
+    `,
+    "control/fine.ts": `
+      export default function (req, meta, value) {
+        return new Response("fine " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    const answers = async (paths: string[]) => {
+      const responses: [string, number, string][] = [];
+      for (const path of paths) {
+        const response = await dev.fetch(path);
+        const text = await response.text();
+        responses.push([path, response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text]);
+      }
+      return responses;
+    };
+    expect(await answers(["/", "/", "/other", "/", "/fine"])).toEqual([
+      ["/", 500, "Bun - Build Failed"],
+      ["/", 500, "Bun - Build Failed"],
+      ["/other", 500, "Bun - Build Failed"],
+      ["/", 500, "Bun - Build Failed"],
+      // A route of another router type has its own server entry point.
+      ["/fine", 200, "fine control"],
+    ]);
+    await dev.write("broken.ts", `export const broken = 1;`);
+    await dev.fetch("/").equals("index 1");
+    await dev.fetch("/other").equals("other 1");
+    // Both routes are loaded now, and no request waits for the bundle of this save.
+    await dev.write("broken.ts", `export const broken = ;`, { errors: null });
+    expect(await answers(["/other", "/", "/third", "/fine"])).toEqual([
+      ["/other", 500, "Bun - Build Failed"],
+      ["/", 500, "Bun - Build Failed"],
+      ["/third", 500, "Bun - Build Failed"],
+      ["/fine", 200, "fine control"],
+    ]);
+    await dev.write("broken.ts", `export const broken = 2;`);
+    await dev.fetch("/other").equals("other 2");
+    await dev.fetch("/").equals("index 2");
+  },
+});
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,
   files: {
@@ -1716,6 +1988,56 @@ devTest("a route loads after a request for it was answered with 413", {
 
     await dev.fetch("/other").equals("other");
     await dev.fetch("/about").equals("about");
+  },
+});
+// The 413 leaves the route with a record and no bundle. A failure below its layout must not make
+// the dev server treat that route as bundled once the failure is fixed.
+devTest("a route answered with 413 loads after a build error below its layout is fixed", {
+  files: {
+    "dep.ts": `export const dep = 1;`,
+    "routes/sub/_layout.ts": `
+      import { dep } from "../../dep";
+      export const layoutDep = dep;
+      export default function Layout() {}
+    `,
+    "routes/sub/index.ts": `
+      export default function () {
+        return new Response("sub index");
+      }
+    `,
+    "routes/sub/other.ts": `
+      export default function () {
+        return new Response("sub other");
+      }
+    `,
+    "bun.app.ts": `
+      export default {
+        maxRequestBodySize: 1024,
+        app: {
+          framework: ${JSON.stringify({
+            ...minimalFramework,
+            fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], layouts: true }],
+          })},
+        },
+      };
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/sub").equals("sub index");
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(dev.port, "localhost", () => {
+      socket.write("POST /sub/other HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999\r\n\r\n");
+    });
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(data.split("\r\n")[0]));
+    expect(await promise).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    await dev.write("dep.ts", `export const dep = ;`, { errors: null });
+    await dev.write("dep.ts", `export const dep = 2;`);
+    await dev.fetch("/sub/other").equals("sub other");
   },
 });
 // "loop" is a symlink to itself, so kqueue can't open the directory to watch it.

@@ -864,6 +864,8 @@ pub(super) fn finalize_bundle(
                 index,
             )?;
         }
+        // The traces of the second pass stop at a client component. This one lists the routes above it.
+        dev.fail_loaded_routes_above_bundled_files();
 
         for request in &dev.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
@@ -1240,13 +1242,41 @@ pub(super) fn finalize_bundle(
         }
     }
 
+    // This bundle added no failure, but it doesn't parse a module that is already bundled. So each
+    // waiting route is decided by the recorded failures that it reaches.
+    let mut failed_routes: Vec<(route_bundle::Index, Vec<SerializedFailure>)> = Vec::new();
+    if !dev.bundling_failures.is_empty() {
+        let mut checked: Vec<route_bundle::Index> = Vec::new();
+        let mut node = current_bundle!().requests.first;
+        while !node.is_null() {
+            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
+            // `data` was initialized by `defer_request`.
+            let n = unsafe { &*node };
+            node = n.next;
+            // SAFETY: `data` was initialized by `defer_request` before being linked.
+            let index = unsafe { n.data.assume_init_ref() }.route_bundle_index;
+            if checked.contains(&index) {
+                continue;
+            }
+            checked.push(index);
+            dev.trace_route_failures(index, ctx.gts)?;
+            if !ctx.gts.failures.is_empty() {
+                failed_routes.push((index, ::core::mem::take(&mut ctx.gts.failures)));
+            }
+        }
+    }
+    let failures_for = |index: route_bundle::Index| -> Option<&[SerializedFailure]> {
+        let found = failed_routes.iter().find(|(failed, _)| *failed == index);
+        found.map(|(_, failures)| failures.as_slice())
+    };
+
     // Release the lock because the underlying handler may acquire one.
     dev.graph_safety_lock.unlock();
     // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
     // so the outer unlock guard sees a locked state again.
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
-    // Set all the deferred routes to the .loaded state up front
+    // Set all the deferred routes to their state up front
     {
         let mut node = current_bundle!().requests.first;
         while !node.is_null() {
@@ -1254,8 +1284,12 @@ pub(super) fn finalize_bundle(
             // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
             // SAFETY: `data` was initialized by `defer_request` before being linked.
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
-            rb.server_state = route_bundle::State::Loaded;
+            let index = unsafe { n.data.assume_init_ref() }.route_bundle_index;
+            dev.route_bundle_ptr(index).server_state = if failures_for(index).is_some() {
+                route_bundle::State::PossibleBundlingFailures
+            } else {
+                route_bundle::State::Loaded
+            };
             node = n.next;
         }
     }
@@ -1269,6 +1303,21 @@ pub(super) fn finalize_bundle(
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
+        if let Some(failures) = failures_for(req.route_bundle_index) {
+            rb.server_state = route_bundle::State::PossibleBundlingFailures;
+
+            let resp: AnyResponse = match &mut req.handler {
+                Handler::Aborted => continue,
+                Handler::ServerHandler(saved) => 'brk: {
+                    let resp = saved.response;
+                    saved.deinit();
+                    break 'brk resp;
+                }
+                Handler::BundledHtmlPage(ram) => ram.response,
+            };
+            dev.send_serialized_failures(resp, failures, None)?;
+            continue;
+        }
         rb.server_state = route_bundle::State::Loaded;
 
         // Note: `SavedRequest` is move-only (`Strong` field). Take the

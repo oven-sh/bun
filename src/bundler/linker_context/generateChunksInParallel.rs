@@ -45,6 +45,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 ) -> crate::Result<Vec<options::OutputFile>> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
+    // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
+    let has_top_level_await = unsafe {
+        (*LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)))
+            .has_any_top_level_await_modules
+    };
+    if !IS_DEV_SERVER && has_top_level_await {
+        c.validate_commonjs_imports_of_async_modules()?;
+    }
+
     c.mangle_local_css();
 
     let mut has_js_chunk = false;

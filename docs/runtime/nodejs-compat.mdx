@@ -125,6 +125,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
+Socket close notifications use internal scheduling and continue to run when user code replaces `setImmediate`.
+
 🟢 Fully implemented, including `BlockList`, `SocketAddress`, `autoSelectFamily`, Unix domain sockets and `server.listen({ fd })`. `new net.Socket({ fd })` cannot read from an existing file descriptor (only write-only wrapping works). `server.listen(handle)` only accepts `{ fd }`. Missing `blockList.toJSON()`/`fromJSON()`.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)

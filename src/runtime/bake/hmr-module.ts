@@ -819,18 +819,24 @@ function patchImporters(mod: HMRModule) {
   const exports = getEsmExports(mod);
   for (const importer of importers) {
     if (!importer.esm || !importer.updateImport) continue;
-    const index = importer.imports!.indexOf(mod);
-    if (index === -1) continue; // require or dynamic import
-    importer.updateImport![index](exports);
+    const imports = importer.imports!;
+    // Not listed: require or dynamic import. Listed once for each import statement of the module.
+    for (let index = imports.indexOf(mod); index !== -1; index = imports.indexOf(mod, index + 1)) {
+      importer.updateImport![index](exports);
+    }
   }
 }
 
 function createAcceptArray(modules: string[], key: Id) {
   const arr = new Array(modules.length);
   arr.fill(undefined);
-  const i = modules.indexOf(key);
+  const exports = getEsmExports(registry.get(key)!);
+  let i = modules.indexOf(key);
   DEBUG.ASSERT(i !== -1);
-  arr[i] = getEsmExports(registry.get(key)!);
+  // Two specifiers of one accept call can name the module.
+  for (; i !== -1; i = modules.indexOf(key, i + 1)) {
+    arr[i] = exports;
+  }
   return arr;
 }
 

@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use bun_alloc::AllocError;
 use bun_ast::import_record;
+use bun_collections::ArrayHashMap;
 use bun_collections::StringArrayHashMap;
 use bun_collections::VecExt;
 
@@ -14,6 +15,8 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
     /// can be a bit more concise for re-exports
     pub is_in_node_modules: bool,
     pub imports_seen: StringArrayHashMap<ImportRef>,
+    /// The imports with `with { type }`: the loader can make another module of the same specifier.
+    pub imports_seen_with_loader: ArrayHashMap<(&'static [u8], js_ast::Loader), ImportRef>,
     pub export_star_props: Vec<G::Property>,
     pub export_props: Vec<G::Property>,
     pub stmts: Vec<Stmt>,
@@ -393,8 +396,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    /// Deduplicates imports, returning a previously used Ref and import record
-    /// index if present.
+    /// Deduplicates imports of one specifier and loader, returning a previously
+    /// used Ref and import record index if present.
     fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, SCAN>,
@@ -405,12 +408,21 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
     ) -> Result<DeduplicatedImportResult, AllocError> {
-        let path_text = p.import_records.items()[import_record_index as usize]
-            .path
-            .text;
-        let gop = self.imports_seen.get_or_put(path_text)?;
-        if gop.found_existing {
-            let stmt_index = gop.value_ptr.stmt_index;
+        let record = &p.import_records.items()[import_record_index as usize];
+        let (found_existing, import_ref) = match record.loader {
+            None => {
+                let gop = self.imports_seen.get_or_put(record.path.text)?;
+                (gop.found_existing, gop.value_ptr)
+            }
+            Some(loader) => {
+                let gop = self
+                    .imports_seen_with_loader
+                    .get_or_put((record.path.text, loader))?;
+                (gop.found_existing, gop.value_ptr)
+            }
+        };
+        if found_existing {
+            let stmt_index = import_ref.stmt_index;
             // Disable this one since an older record is getting used.  It isn't
             // practical to delete this import record entry since an import or
             // require expression can exist.
@@ -505,7 +517,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             loc,
         ));
 
-        *gop.value_ptr = ImportRef {
+        *import_ref = ImportRef {
             stmt_index: u32::try_from(self.stmts.len() - 1).expect("int cast"),
         };
         Ok(DeduplicatedImportResult {

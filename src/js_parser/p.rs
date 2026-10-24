@@ -8440,10 +8440,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let specifier = str_.data;
 
         let import_record_index = 'found: {
+            // An import with `with { type }` can be another module: the specifier names the one without.
+            let mut with_loader: Option<usize> = None;
             for (i, import_record) in self.import_records.items().iter().enumerate() {
                 if strings::eql(&specifier, import_record.path.text) {
-                    break 'found i;
+                    if import_record.loader.is_none() {
+                        break 'found i;
+                    }
+                    with_loader.get_or_insert(i);
                 }
+            }
+            if let Some(i) = with_loader {
+                break 'found i;
             }
             let _ = self
                 .log()
@@ -8844,6 +8852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 last_part,
                 is_in_node_modules: self.source.path.is_node_module(),
                 imports_seen: Default::default(),
+                imports_seen_with_loader: Default::default(),
                 export_star_props: Vec::new(),
                 export_props: Vec::new(),
                 stmts: Vec::new(),

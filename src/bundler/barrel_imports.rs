@@ -326,6 +326,32 @@ fn record_target(
     map?.get().get(rec.module_key())
 }
 
+/// The module of a named import's record. HMR lowering merges a statement into the first one of
+/// its specifier and `with { type }`, and only that one's record is resolved: a merged record
+/// gets the module of a resolved record of the same specifier and loader.
+fn named_import_key<'a>(
+    ir: &'a bun_ast::ImportRecord,
+    records: &'a [bun_ast::ImportRecord],
+    dedup_fallback: &StringArrayHashMap<ModuleKey<'a>>,
+) -> ModuleKey<'a> {
+    if !ir.flags.contains(import_record::Flags::IS_UNUSED) {
+        return ir.module_key();
+    }
+    let resolved = match ir.loader {
+        None => dedup_fallback.get(ir.path.text).copied(),
+        // Rare. A resolved record holds the loader that the bundler used for it.
+        Some(_) => records
+            .iter()
+            .find(|sibling| {
+                sibling.loader == ir.loader
+                    && sibling.original_path == ir.path.text
+                    && !sibling.flags.contains(import_record::Flags::IS_UNUSED)
+            })
+            .map(bun_ast::ImportRecord::module_key),
+    };
+    resolved.unwrap_or_else(|| ir.module_key())
+}
+
 /// The export names the result of `import()` / `require()` record `idx` can
 /// be read by, when the parser accounted for every use of it: the names read
 /// off it, and the one the call itself reads (`await` reads `then`; `require()`
@@ -479,15 +505,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // so we can detect bare imports (those with no specific export bindings).
     let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len())?;
 
-    // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
-    // two `import { X } from 'mod'` statements become one, and the second
-    // record is marked is_unused=true. resolveImportRecords then skips those
+    // In HMR, ConvertESMExportsForHmr deduplicates import records by path and
+    // `with { type }`: two `import { X } from 'mod'` statements become one, and
+    // the second record is marked is_unused=true. resolveImportRecords then skips those
     // records, so their path.text stays as the raw specifier while the
     // surviving record's path.text becomes the resolved absolute path.
     // named_imports entries created for the dedup'd record still point at
     // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
+    // Build a fallback: raw specifier → the module that a record without
+    // `with { type }` resolves to, using non-unused records in this file. See #28886.
     let mut dedup_fallback: StringArrayHashMap<ModuleKey<'_>> = StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
@@ -500,6 +526,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 continue;
             }
             if ir_probe.original_path == ir_probe.path.text {
+                continue;
+            }
+            if ir_probe.key_loader.is_some() {
                 continue;
             }
             dedup_fallback.put(ir_probe.original_path, ir_probe.module_key())?;
@@ -525,14 +554,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // For dedup'd HMR records (is_unused), fall back to a sibling's
         // resolved path text since the record itself still has the raw
         // specifier in path.text.
-        let key = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or_else(|| ir.module_key())
-        } else {
-            ir.module_key()
-        };
+        let key = named_import_key(ir, file_import_records.as_slice(), &dedup_fallback);
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
@@ -618,14 +640,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let key = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or_else(|| ir.module_key())
-        } else {
-            ir.module_key()
-        };
+        let key = named_import_key(ir, file_import_records.as_slice(), &dedup_fallback);
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {

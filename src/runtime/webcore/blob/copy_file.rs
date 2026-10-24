@@ -369,16 +369,6 @@ impl CopyFile {
             return self.fallback_read_write(remain, unknown_size, &mut total_written);
         }
 
-        // The kernel copies reject an O_APPEND destination (`>> log`, make, an "a" fd); the description is shared, so keep the flag.
-        if matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) && bun_sys::get_fcntl_flags(dest_fd)
-            .is_ok_and(|flags| flags as i32 & bun_sys::O::APPEND != 0)
-        {
-            return self.fallback_read_write(remain, unknown_size, &mut total_written);
-        }
-
         loop {
             // TODO: this should use non-blocking I/O.
             let written: isize = match USE {
@@ -429,6 +419,15 @@ impl CopyFile {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
+                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                }
+
+                // EBADF: copy_file_range rejects an O_APPEND destination (`>> log`, an "a" fd).
+                bun_sys::E::EBADF
+                    if matches!(USE, TryWith::CopyFileRange)
+                        && total_written == 0
+                        && is_writable_append(dest_fd) =>
+                {
                     return self.fallback_read_write(remain, unknown_size, &mut total_written);
                 }
 
@@ -912,6 +911,15 @@ impl CopyFile {
             compile_error!("TODO: implement copyfile");
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_writable_append(fd: Fd) -> bool {
+    bun_sys::get_fcntl_flags(fd).is_ok_and(|flags| {
+        let flags = flags as i32;
+        let writable = matches!(flags & libc::O_ACCMODE, libc::O_WRONLY | libc::O_RDWR);
+        writable && flags & libc::O_APPEND != 0
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -281,6 +281,7 @@ impl<'f, 's> Binder<'f, 's> {
             expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
             expr_parent: filled(old.expr_parent, f.exprs.len(), PackedParent::default()),
             expr_flow: filled(old.expr_flow, f.exprs.len(), UNREACHABLE),
+            context_sensitive: filled(old.context_sensitive, f.exprs.len().div_ceil(64), 0),
             stmt_parent: filled(old.stmt_parent, f.stmts.len(), PackedParent::default()),
             stmt_scope: filled(old.stmt_scope, f.stmts.len(), ScopeId::NONE),
             stmt_flow: filled(old.stmt_flow, f.stmts.len(), UNREACHABLE),
@@ -4630,6 +4631,15 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    /// The last part of `expr`, after everything in `id` is bound. It isn't inlined so that it doesn't add to the stack
+    /// frame of `expr`, which recurses.
+    #[inline(never)]
+    fn leave_expr(&mut self, id: ExprId) {
+        if self.b.is_context_sensitive_given_operands(self.f, id) {
+            self.b.context_sensitive[id.idx() / 64] |= 1 << (id.idx() % 64);
+        }
+    }
+
     fn expr(&mut self, id: ExprId, parent: Parent) {
         if self.is_out_of_stack() {
             return;
@@ -4995,6 +5005,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
             }
         }
+        self.leave_expr(id);
         (self.true_target, self.false_target) = targets;
         self.in_assignment_pattern = outer_in_pattern;
         self.scope_change_of = scope_change_of;
@@ -5357,6 +5368,9 @@ impl<'f, 's> Binder<'f, 's> {
                 self.condition(right, me, on.0, on.1);
             }
             self.scope_change_of = scope_change_of;
+            if node != id {
+                self.leave_expr(node);
+            }
         }
         // `bindBinaryExpressionFlow`: the outcome makes no difference afterwards, unless an
         // assignment occurred along the way.

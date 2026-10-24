@@ -1661,6 +1661,8 @@ pub struct BoundIn<S: Storage> {
     /// `FlowFlagsShared`, one bit per node of `flow`. Set if the node is the antecedent of more
     /// than one node.
     pub flow_shared: S::List<u64>,
+    /// `isContextSensitive`, one bit per expression.
+    pub context_sensitive: S::List<u64>,
     /// Upper bound on how deep `getTypeAtFlowNode` calls can nest in a walk of `flow`. See
     /// [`can_reach_flow_depth_limit`](Self::can_reach_flow_depth_limit).
     pub flow_depth: u32,
@@ -1770,48 +1772,38 @@ impl<S: Storage> BoundIn<S> {
         self.ids[list.range()].iter().map(|&i| T::from(i))
     }
 
-    /// `isContextSensitive`. For `JsxAttributes`, see `Checker::is_jsx_attributes_context_sensitive`.
-    pub fn is_context_sensitive(&self, hir: &File, e: ExprId) -> bool {
+    /// `isContextSensitive`, or false if `e` is `NONE`. For `JsxAttributes`, see
+    /// `Checker::is_jsx_attributes_context_sensitive`.
+    #[inline]
+    pub fn is_context_sensitive(&self, e: ExprId) -> bool {
+        let word = self.context_sensitive.get(e.idx() / 64);
+        word.is_some_and(|word| word >> (e.idx() % 64) & 1 != 0)
+    }
+
+    /// `isContextSensitive(e)`, for the binder. The answers for the expressions in `e` are in place.
+    fn is_context_sensitive_given_operands(&self, hir: &File, e: ExprId) -> bool {
         match hir[e].kind {
             // There is no case for an accessor.
             ExprKind::Fn(f) => {
                 !matches!(hir[f].kind, FnKind::Getter | FnKind::Setter)
                     && self.fns[f.idx()].is_context_sensitive
             }
-            ExprKind::Yield { value, .. } => {
-                value.is_some() && self.is_context_sensitive(hir, value)
-            }
+            ExprKind::Yield { value, .. } => self.is_context_sensitive(value),
             // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
             ExprKind::Object(props) => props.iter().any(|p| {
                 matches!(hir[p].kind, PropKind::Init | PropKind::Method)
-                    && hir[p].value.is_some()
-                    && self.is_context_sensitive(hir, hir[p].value)
+                    && self.is_context_sensitive(hir[p].value)
             }),
-            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(hir, i)),
+            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(i)),
             ExprKind::Cond { branches, .. } => {
                 let Branches { yes, no } = hir.branches(branches);
-                self.is_context_sensitive(hir, yes) || self.is_context_sensitive(hir, no)
+                self.is_context_sensitive(yes) || self.is_context_sensitive(no)
             }
             ExprKind::Binary {
                 op: BinOp::Or | BinOp::Nullish,
-                ..
-            } => {
-                // The parser builds `a || b || c` in a loop, so nothing limits how deep the left
-                // operands nest.
-                let mut e = e;
-                while let ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    left,
-                    right,
-                } = hir[e].kind
-                {
-                    if self.is_context_sensitive(hir, right) {
-                        return true;
-                    }
-                    e = left;
-                }
-                self.is_context_sensitive(hir, e)
-            }
+                left,
+                right,
+            } => self.is_context_sensitive(left) || self.is_context_sensitive(right),
             _ => false,
         }
     }
@@ -1844,17 +1836,19 @@ impl<S: Storage> BoundIn<S> {
         let returns_one = || match func.body {
             _ if !func.type_params.is_empty() || func.ret.is_some() => false,
             FnBody::None => false,
-            FnBody::Expr(body) => self.is_context_sensitive(hir, body),
-            FnBody::Block(_) => self.ids(self.fns[f.idx()].returns).any(|s| {
-                matches!(hir[s].kind, StmtKind::Return(value)
-                    if value.is_some() && self.is_context_sensitive(hir, value))
-            }),
+            FnBody::Expr(body) => self.is_context_sensitive(body),
+            FnBody::Block(_) => self
+                .ids(self.fns[f.idx()].returns)
+                .any(|s| match hir[s].kind {
+                    StmtKind::Return(value) => self.is_context_sensitive(value),
+                    _ => false,
+                }),
         };
         self.has_context_sensitive_parameters(hir, f)
             || returns_one()
             // `hasContextSensitiveYieldExpression`
             || func.flags.contains(Flags::GENERATOR)
-                && self.ids(yields).any(|y| self.is_context_sensitive(hir, y))
+                && self.ids(yields).any(|y| self.is_context_sensitive(y))
     }
 
     /// Returns the entry of `yields` for `f`, or an empty list.
@@ -2741,6 +2735,7 @@ impl BoundBuilder {
             flow,
             flow_edges,
             flow_shared,
+            context_sensitive,
             flow_depth,
             has_loop_types_that_depend_on_order,
             expr_kinds,
@@ -2838,6 +2833,7 @@ impl BoundBuilder {
         flow.clear();
         flow_edges.clear();
         flow_shared.clear();
+        context_sensitive.clear();
         *flow_depth = Default::default();
         *has_loop_types_that_depend_on_order = Default::default();
         expr_kinds.clear();
@@ -2977,6 +2973,7 @@ impl BoundBuilder {
             flow: copy_to_arena(&mut self.flow, arena),
             flow_edges: copy_to_arena(&mut self.flow_edges, arena),
             flow_shared: copy_to_arena(&mut self.flow_shared, arena),
+            context_sensitive: copy_to_arena(&mut self.context_sensitive, arena),
             flow_depth: self.flow_depth,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
@@ -3139,6 +3136,7 @@ impl Bound<'_> {
             flow: Fixed::shared(&self.flow),
             flow_edges: Fixed::shared(&self.flow_edges),
             flow_shared: Fixed::shared(&self.flow_shared),
+            context_sensitive: Fixed::shared(&self.context_sensitive),
             flow_depth: self.flow_depth,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: Fixed::shared(&self.expr_kinds),

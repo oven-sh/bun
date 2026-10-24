@@ -158,7 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isContextSensitive`. For `JsxAttributes`, see `is_jsx_attributes_context_sensitive`.
     #[inline]
     pub fn is_context_sensitive(&self, file: FileId, e: ExprId) -> bool {
-        self.bound(file).is_context_sensitive(self.hir(file), e)
+        self.bound(file).is_context_sensitive(e)
     }
 
     /// `HasContextSensitiveParameters`

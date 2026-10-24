@@ -7595,6 +7595,19 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // Whether a generator is context sensitive depends on each of its `yield` expressions, and here each contains the
+    // rest of them. The chains are too deep to bind.
+    test("doesn't hang on 60,000 `yield` in a row in each of 32 generators", async () => {
+      const generator = (i: number) => `export function* g${i}() { ${repeat("yield ", 60_000)}1; }\n`;
+      using dir = project({
+        "a.ts": Array.from({ length: 32 }, (_, i) => generator(i)).join(""),
+        "b.ts": `export const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
     // At every link, the binder checks whether the expression below it can be narrowed. The chain is too deep to check.
     test("doesn't crash or hang on 100,000 optional property accesses in a row", async () => {
       using dir = project({

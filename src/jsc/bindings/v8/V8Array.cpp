@@ -17,7 +17,6 @@ ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Array)
 
 using JSC::ArrayAllocationProfile;
 using JSC::JSArray;
-using JSC::JSGlobalObject;
 using JSC::JSValue;
 using JSC::MarkedArgumentBuffer;
 

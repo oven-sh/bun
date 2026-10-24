@@ -63,8 +63,6 @@ struct Handle {
 
     Handle(const Handle& that);
 
-    Handle(const ObjectLayout* that);
-
     Handle()
         : m_toV8Object(0)
         , m_object()

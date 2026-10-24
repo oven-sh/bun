@@ -278,7 +278,7 @@ pub mod compat {
     use core::ffi::c_void;
 
     pub use bun_windows_sys::*;
-    // Distinct sub-module so `w::ntdll::NtClose` etc. resolve.
+    // Distinct sub-module so `w::ntdll::NtCreateFile` etc. resolve.
     pub use bun_windows_sys::ntdll;
 
     // ── aliases / consts not yet in bun_windows_sys ──

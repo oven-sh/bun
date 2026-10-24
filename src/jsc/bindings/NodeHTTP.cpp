@@ -7,7 +7,6 @@
 
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
 #include "JSFetchHeaders.h"
 #include "HTTPLatin1String.h"

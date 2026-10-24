@@ -3,11 +3,6 @@
 #ifndef BUN__ROOT__H
 #define BUN__ROOT__H
 
-// pick an arbitrary #define to test
-#ifdef ENABLE_3D_TRANSFORMS
-#error "root.h must be included before any other WebCore or JavaScriptCore headers"
-#endif
-
 #if defined(WIN32) || defined(_WIN32)
 #define BUN_EXPORT __declspec(dllexport)
 #else

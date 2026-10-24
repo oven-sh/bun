@@ -31,8 +31,6 @@
 #include "napi_external.h"
 #include "WebCoreJSBuiltins.h"
 
-#include <JavaScriptCore/JSPromise.h>
-
 #if OS(WINDOWS)
 #include <windows.h>
 #else

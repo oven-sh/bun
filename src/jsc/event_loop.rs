@@ -1466,34 +1466,6 @@ bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         iteration_number() => (&*(*this).usockets_loop()).iteration_number()
             + (*this).task_drains.load(Ordering::Relaxed),
-        // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM.
-        file_polls() => core::ptr::from_mut(
-            (*this)
-                .vm_ref()
-                .as_mut()
-                .rare_data()
-                .file_polls
-                .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-                .as_mut(),
-        ),
-        put_file_poll(poll, was_ever_registered) => {
-            // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
-            // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
-            // while holding the store.
-            let store = core::ptr::from_mut(
-                (*this)
-                    .vm_ref()
-                    .as_mut()
-                    .rare_data()
-                    .file_polls
-                    .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-                    .as_mut(),
-            );
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
         uws_loop() => (*this).usockets_loop(),
         event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),
@@ -1501,8 +1473,6 @@ bun_event_loop::link_impl_JsEventLoop! {
         auto_tick_active() => (*this).auto_tick_active(),
         global_object() => (*this).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
-        stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),
-        stderr() => (*this).vm_ref().as_mut().rare_data().stderr().cast(),
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),

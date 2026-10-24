@@ -31,8 +31,6 @@
 
 namespace WebCore {
 
-class CryptoKeyAKP;
-
 // One implementation backs ML-KEM-768/1024; the registered subclasses below
 // only pin the name and identifier, mirroring Node's ml_kem.js. ML-KEM-512
 // is not registered because the vendored BoringSSL has no EVP support for it.

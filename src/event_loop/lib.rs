@@ -47,8 +47,6 @@ bun_dispatch::link_interface! {
     pub JsEventLoop[Jsc] {
         // Changes when the loop runs a task, a timer, or I/O, but not when it drains microtasks.
         fn iteration_number() -> u64;
-        fn file_polls() -> *mut bun_io::file_poll::Store;
-        fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
         fn event_loop_ctx() -> bun_io::EventLoopCtx;
         fn tick();
@@ -56,8 +54,6 @@ bun_dispatch::link_interface! {
         fn auto_tick_active();
         fn global_object() -> *mut ();
         fn bun_vm() -> *mut ();
-        fn stdout() -> *mut ();
-        fn stderr() -> *mut ();
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);

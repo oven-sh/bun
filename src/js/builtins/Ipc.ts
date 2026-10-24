@@ -56,7 +56,6 @@ export function serialize(message, handle: IpcHandle, options) {
 export function parseHandle(target, serialized, fd) {
   const emit = $bindgen("ipc_host.bind.ts", "emitHandleIPCMessage");
   const net = require("node:net");
-  // const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();

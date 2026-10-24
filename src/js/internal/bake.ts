@@ -455,8 +455,11 @@ async function start() {
   // An empty one is no hostname: `Bun.serve()` would listen on every interface.
   const exportedHostname = (exported?.hostname ?? exported?.host) || undefined;
   const exportedPort = exported?.port;
+  const exportedUnix = exported?.unix;
+  // `null`, `false` and an empty one are no socket: `Bun.serve()` would listen on every interface.
+  const hasUnix = exportedUnix != null && exportedUnix !== false && exportedUnix !== "";
   // A `unix` socket in the export is kept unless a flag asks for a TCP address.
-  const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
+  const useUnix = hasUnix && flags.hostname === undefined && flags.port === undefined;
   let server: Server<undefined>;
   try {
     server = serveOnFreePort(
@@ -475,6 +478,8 @@ async function start() {
           own("hostname", undefined);
           own("host", undefined);
           own("port", undefined);
+          // The value that was tested: a second read by `Bun.serve()` can return another one.
+          own("unix", exportedUnix);
         } else {
           own("unix", undefined);
           own("hostname", flags.hostname ?? exportedHostname ?? "localhost");

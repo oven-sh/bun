@@ -1228,6 +1228,189 @@ devTest("a route imports a json file that a second server module imports as text
     await dev.fetch("/").equals({ data: { version: 1 }, text: `{"version":1}` });
   },
 });
+// The dev server merges the import statements of one specifier. A statement with another
+// `with { type }` imports another module, so it stays a statement of its own.
+for (const first of ["json", "text"]) {
+  const jsonImport = `import data from "./d.json";`;
+  const textImport = `import text from "./d.json" with { type: "text" };`;
+  devTest(`one module imports a json file and its text, with the ${first} import first`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      "d.json": `{"version":1}`,
+      "app.ts": `
+        ${first === "json" ? jsonImport : textImport}
+        ${first === "json" ? textImport : jsonImport}
+        const load = 1;
+        let value;
+        try {
+          value = typeof data + " " + data.version + ", " + typeof text + " " + text;
+        } catch (e) {
+          value = "throws " + e.name;
+        }
+        console.log("load " + load + ": " + value);
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage(`load 1: object 1, string {"version":1}`);
+
+      // Only the importer is bundled again. It finds both modules of the file in the dev server's cache.
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", { find: "load = 1", replace: "load = 2" });
+      });
+      await c.expectMessage(`load 2: object 1, string {"version":1}`);
+
+      // Both modules of the file are bundled again.
+      await c.expectReload(async () => {
+        await dev.write("d.json", `{"version":2}`);
+      });
+      await c.expectMessage(`load 2: object 2, string {"version":2}`);
+    },
+  });
+}
+for (const first of ["module", "text"]) {
+  const moduleImport = `import { m } from "./m.ts";`;
+  const textImport = `import text from "./m.ts" with { type: "text" };`;
+  devTest(`one module imports a module and its text, with the ${first} import first`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      "m.ts": `export const m = 1;`,
+      "app.ts": `
+        ${first === "module" ? moduleImport : textImport}
+        ${first === "module" ? textImport : moduleImport}
+        let value;
+        try {
+          value = typeof m + " " + m + ", " + typeof text + " " + text;
+        } catch (e) {
+          value = "throws " + e.name;
+        }
+        console.log(value);
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("number 1, string export const m = 1;");
+
+      await c.expectReload(async () => {
+        await dev.write("m.ts", `export const m = 2;`);
+      });
+      await c.expectMessage("number 2, string export const m = 2;");
+    },
+  });
+  // The dev server rewrites the specifier of `import.meta.hot.accept` to the id of a module.
+  devTest(`import.meta.hot.accept names the module and not its text, with the ${first} import first`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      "m.ts": `export const m = 1;`,
+      "app.ts": `
+        ${first === "module" ? moduleImport : textImport}
+        ${first === "module" ? textImport : moduleImport}
+        let value;
+        try {
+          value = typeof m + " " + typeof text;
+        } catch (e) {
+          value = "throws " + e.name;
+        }
+        console.log(value);
+        import.meta.hot.accept("./m.ts", () => {});
+        import.meta.hot.accept();
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { storeHotChunks: true });
+      const loaded = await c.getStringMessage();
+      await dev.writeNoChanges("app.ts");
+      const chunk = await c.getMostRecentHmrChunk();
+      const loadedAgain = await c.getStringMessage();
+      expect({ loaded, loadedAgain, accepts: chunk.match(/\.acceptSpecifiers\("([^"]*)"/)?.[1] }).toEqual({
+        loaded: "number string",
+        loadedAgain: "number string",
+        accepts: "m.ts",
+      });
+    },
+  });
+}
+for (const first of ["export", "text"]) {
+  const reexports = `export * from "./m.ts"; export { m as renamed } from "./m.ts";`;
+  const textImport = `import text from "./m.ts" with { type: "text" };`;
+  devTest(`one module re-exports a module and exports its text, with the ${first} statement first`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      "m.ts": `export const m = 1;`,
+      "reexport.ts": `
+        ${first === "export" ? reexports : textImport}
+        ${first === "export" ? textImport : reexports}
+        export { text };
+      `,
+      "app.ts": `
+        import * as all from "./reexport.ts";
+        let value;
+        try {
+          value = Object.keys(all).sort() + ": " + all.m + " " + all.renamed + " " + all.text;
+        } catch (e) {
+          value = "throws " + e.name;
+        }
+        console.log(value);
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("m,renamed,text: 1 1 export const m = 1;");
+    },
+  });
+}
+// The second statement has another specifier or another `with { type }`, so the dev server
+// does not merge it into the first one: the importer lists the module twice.
+for (const [name, second] of [
+  ["another specifier", `"./m"`],
+  ["a type attribute", `"./m.ts" with { type: "ts" }`],
+]) {
+  devTest(`a hot update reaches both import statements of one module, the second with ${name}`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      "m.ts": `
+        export const value = 1;
+        import.meta.hot.accept();
+      `,
+      "app.ts": `
+        import { value as first } from "./m.ts";
+        import { value as second } from ${second};
+        globalThis.readBoth = () => {
+          try {
+            return first + " " + second;
+          } catch (e) {
+            return "throws " + e.name;
+          }
+        };
+        console.log("loaded " + readBoth());
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("loaded 1 1");
+
+      // "m.ts" accepts the update, so "app.ts" does not run again.
+      await dev.patch("m.ts", { find: "value = 1", replace: "value = 2" });
+      expect(await c.js<string>`readBoth()`).toBe("2 2");
+    },
+  });
+}
+devTest("a route imports a json file and its text", {
+  framework: minimalFramework,
+  files: {
+    "d.json": `{"version":1}`,
+    "routes/index.ts": `
+      import data from "../d.json";
+      import text from "../d.json" with { type: "text" };
+      export default function (req, meta) {
+        return Response.json({ data, text });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ data: { version: 1 }, text: `{"version":1}` });
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({
@@ -1659,6 +1842,45 @@ devTest("barrel optimization: export star after another statement of the same pa
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("got: function function function function function");
+  },
+});
+
+// A statement is merged into the first statement of its path and its `with { type }`. The
+// export that a merged statement imports has to reach the barrel of that first statement.
+devTest("barrel optimization: merged import statements next to another type of the same barrel", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a as importPlain } from 'plain';
+      import { a as importTyped } from 'typed' with { type: "ts" };
+      let value;
+      try {
+        value = (await importPlain()).got + ', ' + (await importTyped()).got;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log('got: ' + value);
+    `,
+    // Each barrel has deferred b.js by the time its a.js leads to the module that imports b.
+    ...abPackage("plain", abBarrel),
+    "node_modules/plain/a.js": `export const a = () => import('../../late-plain');`,
+    "late-plain.ts": `
+      import { a } from 'plain';
+      import source from 'plain' with { type: "text" };
+      import { b } from 'plain';
+      export const got = typeof a + ' ' + typeof b + ' ' + source;
+    `,
+    ...abPackage("typed", abBarrel),
+    "node_modules/typed/a.js": `export const a = () => import('../../late-typed');`,
+    "late-typed.ts": `
+      import { a } from 'typed' with { type: "ts" };
+      import { b } from 'typed' with { type: "ts" };
+      export const got = typeof a + ' ' + typeof b;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function function " + abBarrel + ", function function");
   },
 });
 

@@ -313,6 +313,42 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
+// The callback gets the updated module at the index of every specifier that names it.
+devTest("import.meta.hot.accept with two specifiers of one module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { count } from "./counter.ts";
+      import { count as again } from "./counter";
+      import { name } from "./name.ts";
+      console.log("Initial: " + count + " " + again + " " + name);
+
+      import.meta.hot.accept(["./counter.ts", "./name.ts", "./counter"], (newModules) => {
+        console.log("Updated: " + newModules.map(mod => mod?.count ?? mod?.name));
+      });
+    `,
+    "counter.ts": `
+      export const count = 1;
+    `,
+    "name.ts": `
+      export const name = "Alice";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("Initial: 1 1 Alice");
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 2;
+      `,
+    );
+    await c.expectMessage("Updated: 2,,2");
+  },
+});
 // The parser rewrites the `import.meta.hot.accept` dependency list's items in place.
 devTest("import.meta.hot.accept with a dependency list from a define", {
   files: {

@@ -974,6 +974,49 @@ devTest("one script imports a stylesheet and another script imports it as text",
     await c.style(".box").color.expect.toBe("red");
   },
 });
+// The dev server merges the import statements of one specifier. A statement with another
+// `with { type }` imports another module, so it stays a statement of its own.
+for (const first of ["stylesheet", "text"]) {
+  const stylesheetImport = `import "./x.css";`;
+  const textImport = `import text from "./x.css" with { type: "text" };`;
+  devTest(`one module imports a stylesheet and its text, with the ${first} import first`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      "x.css": `.box { color: red; }`,
+      "app.ts": `
+        ${first === "stylesheet" ? stylesheetImport : textImport}
+        ${first === "stylesheet" ? textImport : stylesheetImport}
+        const load = 1;
+        let value;
+        try {
+          value = text;
+        } catch (e) {
+          value = "throws " + e.name;
+        }
+        console.log("load " + load + ": " + value);
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("load 1: .box { color: red; }");
+      await c.style(".box").color.expect.toBe("red");
+
+      // Only the importer is bundled again. It finds both modules of the file in the dev server's cache.
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", { find: "load = 1", replace: "load = 2" });
+      });
+      await c.expectMessage("load 2: .box { color: red; }");
+      await c.style(".box").color.expect.toBe("red");
+
+      // Both modules of the file are bundled again.
+      await c.expectReload(async () => {
+        await dev.write("x.css", `.box { color: blue; }`);
+      });
+      await c.expectMessage("load 2: .box { color: blue; }");
+      await c.style(".box").color.expect.toBe("#00f");
+    },
+  });
+}
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

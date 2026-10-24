@@ -2717,39 +2717,31 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// Mirrors the duplicate-path error in `generateChunksInParallel`.
     fn reject_duplicate_output_paths(&mut self) -> crate::Result<()> {
+        use crate::output_paths::{Destination, OutputPaths};
         use std::io::Write as _;
 
-        let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> = Default::default();
-        let mut has_duplicates = false;
-        for (index, file) in self.output_files.iter().enumerate() {
-            if file.dest_path.is_empty() {
-                continue;
+        let files = &self.output_files;
+        let destination = if self.options.output_dir.is_empty() {
+            Destination::Returned
+        } else {
+            Destination::Directory(&self.options.output_dir)
+        };
+        let mut paths = OutputPaths::with_capacity(destination, files.len());
+        for (index, file) in files.iter().enumerate() {
+            if !file.dest_path.is_empty() {
+                paths.claim(index, &file.dest_path, |_| false)?;
             }
-            let entry = by_dest_path.get_or_put(&file.dest_path)?;
-            has_duplicates |= entry.found_existing;
-            entry.value_ptr.push(index);
         }
-        if !has_duplicates {
+        let mut duplicates = paths.finish();
+        let case_note = duplicates
+            .add_case_pairs(|[a, b]| Ok(files[a].value.as_slice() != files[b].value.as_slice()))?;
+        if duplicates.is_empty() {
             return Ok(());
         }
 
         let mut msg: Vec<u8> = Vec::new();
-        writeln!(&mut msg, "Multiple files share the same output path")?;
-        for (dest_path, indices) in by_dest_path.keys().iter().zip(by_dest_path.values()) {
-            if indices.len() < 2 {
-                continue;
-            }
-            writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
-            for &index in indices {
-                writeln!(
-                    &mut msg,
-                    "    from input {}",
-                    bstr::BStr::new(self.output_files[index].src_path.pretty)
-                )?;
-            }
-        }
+        duplicates.write_error(&mut msg, |index| Some(files[index].src_path.pretty))?;
 
         let mut note: Vec<u8> = Vec::new();
         write!(
@@ -2757,14 +2749,17 @@ impl<'a> Transpiler<'a> {
             "entry naming is '{}', consider adding '[hash]' to make filenames unique",
             bstr::BStr::new(&self.entry_naming_template().data),
         )?;
+        let notes: Vec<bun_ast::Data> = (case_note.into_iter().chain([note]))
+            .map(|text| bun_ast::Data {
+                text: text.into(),
+                ..Default::default()
+            })
+            .collect();
         self.log_mut().add_range_error_with_notes(
             None,
             Default::default(),
             msg,
-            Box::new([bun_ast::Data {
-                text: note.into(),
-                ..Default::default()
-            }]),
+            notes.into_boxed_slice(),
         );
         Ok(())
     }

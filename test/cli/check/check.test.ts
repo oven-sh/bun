@@ -17136,6 +17136,37 @@ export function k<T>() { const d = 1; abstract class C { abstract m({ a = { b: d
       expect(exitCode).toBe(1);
     });
 
+    // `evaluate` resolves each name it visits as a use. The expected output is tsc's.
+    test("a variable that's only written where a template, an enum member or a shift count is evaluated is used", async () => {
+      using dir = project({
+        "a.ts": `declare function call(): number;
+declare function tag(...parts: unknown[]): string;
+export function template() { let w: number; return \`x\${(w = 1)}\`; }
+export function block(c: boolean) { if (c) { let w: number; return \`x\${w = 1}\`; } return ""; }
+export function operand() { let w: number; return \`x\${1 + -(w = 1)}\`; }
+export function afterConstant() { let w: number; return \`\${1}\${w = 1}\`; }
+export function afterCall() { let w: number; return \`\${call()}\${w = 1}\`; }
+export function tagged() { let w: number; return tag\`x\${w = 1}\`; }
+export function member() { let w: number; enum E { X = (w = 1) } return E; }
+export function constant() { let w: number; const K = (w = 1); return \`\${K}\`; }
+export function variable() { let w: number; let k = (w = 1); return \`\${k}\`; }
+export function shift() { let w: number; return 1 << (w = 1); }
+export function parameter(w: number) { return \`x\${w = 1}\`; }
+export function element() { let w: number; return [(w = 1)]; }
+export function pattern() { let w: number; return \`x\${[w] = [1]}\`; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--noUnusedLocals", "--noUnusedParameters"]);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(7,35): error TS6133: 'w' is declared but its value is never read.`,
+        `a.ts(8,32): error TS6133: 'w' is declared but its value is never read.`,
+        `a.ts(11,34): error TS6133: 'w' is declared but its value is never read.`,
+        `a.ts(14,33): error TS6133: 'w' is declared but its value is never read.`,
+        `a.ts(15,33): error TS6133: 'w' is declared but its value is never read.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

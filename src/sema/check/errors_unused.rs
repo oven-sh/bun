@@ -503,16 +503,25 @@ impl Checker<'_, '_> {
             .iter()
             .chain(index.of(ExprTag::Assign))
         {
-            let (ExprKind::Binary { op, right, .. }
+            let (ExprKind::Binary { op, left, right }
             | ExprKind::Assign {
                 op: Some(op),
+                target: left,
                 value: right,
-                ..
             }) = hir[e].kind
             else {
                 continue;
             };
-            if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr) && is_checked(u, e) {
+            if !matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr) || !is_checked(u, e) {
+                continue;
+            }
+            // `leftOk && rightOk`
+            let numeric = self.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+            if [left, right].into_iter().all(|operand| {
+                let ty = self.type_of_expr(file, operand);
+                let ty = self.non_nullable(ty);
+                self.is_assignable(ty, numeric)
+            }) {
                 self.note_evaluated(file, u, right, Location::Expr(file, right));
             }
         }
@@ -583,8 +592,16 @@ impl Checker<'_, '_> {
                 ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
                     self.note_qualified_name(file, u, e);
                 }
-                // A constant's initializer.
+                // `evaluateEntity` resolves the name with `isUse`, even where the name is only written. Then it evaluates
+                // a constant's initializer.
                 ExprKind::Ident(_) => {
+                    let local = u.bound.symbol_of_expr(e);
+                    if local.is_some()
+                        && u.bound.symbol(local).flags.intersects(SymFlags::VALUE)
+                        && !is_inside_declaration_of(hir, u.bound, hir[e].pos, local)
+                    {
+                        u.referenced[local.idx()] |= reference_kinds(SymFlags::VALUE);
+                    }
                     if let Some(symbol) =
                         self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
                         && let Some((of, d)) = self.constant_variable_declaration(symbol, location)

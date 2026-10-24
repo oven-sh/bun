@@ -3,6 +3,50 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
+const profileDurationFixture = (mode: "idle" | "busy") => `
+import assert from 'node:assert/strict';
+import { Session, url } from 'node:inspector/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+const mode = ${JSON.stringify(mode)};
+const session = new Session();
+session.connect();
+try {
+  await session.post('Profiler.enable');
+  await session.post('Profiler.setSamplingInterval', { interval: mode === 'idle' ? 1000000000 : 1000 });
+  let previousEnd = 0;
+  for (let iteration = 0; iteration < 3; iteration++) {
+    function beginCapture() { return { result: session.post('Profiler.start') }; }
+    const before = performance.now();
+    await beginCapture().result;
+    const started = performance.now();
+    if (mode === 'busy') {
+      function work() { let x=0; for (let i=0;i<10000;i++) x += Math.sqrt(i); return x; }
+      while (performance.now() - started < 30) work();
+    }
+    // Elapsed idle time is the behavior under test; no readiness event represents it.
+    await delay(25);
+    const stopping = performance.now();
+    const { profile } = await session.post('Profiler.stop');
+    const stopped = performance.now();
+    const actual = (profile.endTime - profile.startTime) / 1000;
+    assert.ok(actual > 0, JSON.stringify(profile));
+    assert.ok(actual >= stopping - started - 0.001, "capture omitted idle time: " + actual);
+    assert.ok(actual <= stopped - before + 0.001, "capture exceeds elapsed time: " + actual);
+    assert.ok(profile.startTime >= previousEnd);
+    previousEnd = profile.endTime;
+    assert.ok(profile.samples.length > 0);
+    assert.equal(profile.samples.length, profile.timeDeltas.length);
+    assert.ok(profile.timeDeltas.every(d => Number.isFinite(d) && d >= 0));
+    const ids = new Set(profile.nodes.map(n => n.id));
+    assert.ok(profile.samples.every(id => ids.has(id)));
+    assert.ok(profile.nodes.some(n => n.callFrame.functionName === 'beginCapture'));
+    assert.equal(url(), undefined);
+  }
+  await session.post('Profiler.disable');
+} finally { session.disconnect(); }
+console.log('ok');
+`;
+
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
 // through node:vm, then takePreciseCoverage.
@@ -219,6 +263,70 @@ describe("node:inspector", () => {
   });
 
   describe("Profiler", () => {
+    for (const mode of ["idle", "busy"] as const) {
+      for (const worker of [false, true]) {
+        test.concurrent(
+          `measures the whole ${mode} capture and samples its startup stack (worker: ${worker})`,
+          async () => {
+            const fixture = profileDurationFixture(mode);
+            const source = worker
+              ? `import { Worker } from 'node:worker_threads';
+               const worker = new Worker(new URL(${JSON.stringify("data:text/javascript," + encodeURIComponent(fixture))}));
+               worker.on('error', error => { console.error(error); process.exitCode = 1; });
+               worker.on('exit', code => { if (code) process.exitCode = code; });`
+              : fixture;
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "--input-type=module", "-e", source],
+              env: bunEnv,
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+          },
+        );
+      }
+    }
+
+    test.concurrent("includes idle time in an externally started worker CPU profile", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--input-type=module",
+          "-e",
+          `import assert from 'node:assert/strict';
+           import { Worker } from 'node:worker_threads';
+           import { setTimeout as delay } from 'node:timers/promises';
+           const worker = new Worker(\`const { parentPort } = require('node:worker_threads');
+             parentPort.on('message', () => {}); parentPort.postMessage('ready');\`, { eval: true });
+           try {
+             await new Promise((resolve, reject) => {
+               worker.once('message', resolve);
+               worker.once('error', reject);
+               worker.once('exit', () => reject(new Error('worker exited before ready')));
+             });
+             const before = performance.now();
+             const handle = await worker.startCpuProfile();
+             const started = performance.now();
+             // The worker stays outside JS: JSC can return no periodic samples.
+             await delay(25);
+             const stopping = performance.now();
+             const profile = JSON.parse(await handle.stop());
+             const stopped = performance.now();
+             const duration = (profile.endTime - profile.startTime) / 1000;
+             assert.ok(duration >= stopping - started - 0.001, JSON.stringify(profile));
+             assert.ok(duration <= stopped - before + 0.001);
+           } finally { await worker.terminate(); }
+           console.log('ok');`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    });
+
     let session: inspector.Session;
 
     beforeEach(() => {

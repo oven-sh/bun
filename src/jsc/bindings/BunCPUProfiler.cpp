@@ -1,5 +1,6 @@
 #include "root.h"
 #include "BunCPUProfiler.h"
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
@@ -10,6 +11,8 @@
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/CodeBlock.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/StringBuilder.h>
@@ -31,27 +34,60 @@ void Bun__setSamplingInterval(int intervalMicroseconds)
 
 namespace Bun {
 
-// Store the profiling start time in microseconds since Unix epoch
-static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
-static thread_local bool s_isProfilerRunning = false;
+static CPUProfilerState& cpuProfilerState(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->cpuProfilerState;
+}
+
+static double profileTimestamp(const CPUProfilerState& state, MonotonicTime timestamp)
+{
+    return state.startTime + (timestamp.secondsSinceEpoch().microseconds() - state.monotonicStartTime);
+}
+
+static CPUProfileFrame captureProfileFrame(JSC::VM&, JSC::SamplingProfiler::StackFrame&);
 
 void setSamplingInterval(int intervalMicroseconds)
 {
     s_samplingInterval = intervalMicroseconds;
 }
 
-bool isCPUProfilerRunning()
+bool isCPUProfilerRunning(JSC::VM& vm)
 {
-    return s_isProfilerRunning;
+    return cpuProfilerState(vm).running;
 }
 
-void startCPUProfiler(JSC::VM& vm)
+void startCPUProfiler(JSC::VM& vm, bool captureInitialStack)
 {
-    // Capture the wall clock time when profiling starts (before creating stopwatch)
-    // This will be used as the profile's startTime
-    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+    auto& state = cpuProfilerState(vm);
+    auto now = MonotonicTime::now();
+    // Keep the existing epoch origin, but measure elapsed time with a monotonic clock.
+    state.startTime = now.approximate<WTF::WallTime>().secondsSinceEpoch().microseconds();
+    state.monotonicStartTime = now.secondsSinceEpoch().microseconds();
+    state.initialFrames.clear();
+    if (captureInitialStack) {
+        // V8 takes a synchronous startup sample even when the rest of the capture is idle.
+        JSC::DeferGC deferGC(vm);
+        JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) {
+            JSC::SamplingProfiler::StackFrame frame;
+            if (auto* codeBlock = visitor->codeBlock()) {
+                frame.frameType = JSC::SamplingProfiler::FrameType::Executable;
+                frame.executable = codeBlock->ownerExecutable();
+                frame.semanticLocation.lineColumn = visitor->computeLineAndColumn();
+            } else if (visitor->isWasmFrame()) {
+                frame.frameType = JSC::SamplingProfiler::FrameType::Wasm;
+            } else {
+                frame.frameType = JSC::SamplingProfiler::FrameType::Host;
+            }
+            if (visitor->callee().isCell())
+                frame.callee = dynamicDowncast<JSC::JSObject>(visitor->callee().asCell());
+            // Store only copied metadata, not GC-managed callees or executables.
+            state.initialFrames.append(captureProfileFrame(vm, frame));
+            return WTF::IterationStatus::Continue;
+        });
+        state.initialSampleTime = profileTimestamp(state, MonotonicTime::now());
+    }
 
     // Create a stopwatch and start it
     auto stopwatch = WTF::Stopwatch::create();
@@ -61,7 +97,7 @@ void startCPUProfiler(JSC::VM& vm)
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    s_isProfilerRunning = true;
+    state.running = true;
 }
 
 struct ProfileNode {
@@ -274,22 +310,128 @@ static WTF::String formatCodeSpan(const WTF::String& str)
     return sb.toString();
 }
 
-// Helper to generate a minimal valid cpuprofile JSON with no samples
-static WTF::String generateEmptyProfileJSON()
+static CPUProfileFrame captureProfileFrame(JSC::VM& vm, JSC::SamplingProfiler::StackFrame& frame)
 {
-    // Return a minimal valid Chrome DevTools CPU profile format
-    // Use s_profilingStartTime if available, otherwise fall back to current time
-    long long timestamp;
-    if (s_profilingStartTime > 0)
-        timestamp = static_cast<long long>(s_profilingStartTime);
-    else
-        timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
+    WTF::String functionName = frame.displayName(vm);
+    WTF::String url;
+    int scriptId = 0;
+    // Function-definition line/column (0-indexed) for callFrame.
+    int functionDefLine = -1;
+    int functionDefColumn = -1;
+    // Current-sample line (1-indexed) for positionTicks.
+    int sampleLine = 0;
 
+    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+        auto sourceProviderAndID = frame.sourceProviderAndID();
+        auto* provider = std::get<0>(sourceProviderAndID);
+        if (provider) {
+            url = provider->sourceURL();
+            scriptId = static_cast<int>(provider->asID());
+        }
+
+        // Absolute file path → `file://` URL. Chrome DevTools
+        // expects `callFrame.url` to be a proper URL; leaving
+        // the raw path breaks source-view resolution. We run
+        // this AFTER the sourcemap callbacks below because the
+        // callback (see FormatStackTraceForJS.cpp) unconditionally
+        // rewrites its out-param back to the raw provider URL when
+        // no sourcemap is found, which would undo an earlier
+        // normalization. See #29240.
+        auto normalizeURL = [](WTF::String& u) {
+            if (u.isEmpty())
+                return;
+            bool isAbsolutePath = false;
+            if (u[0] == '/') {
+                isAbsolutePath = true;
+            } else if (u.length() >= 2 && u[1] == ':') {
+                char firstChar = u[0];
+                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                    isAbsolutePath = true;
+            } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
+                isAbsolutePath = true;
+            }
+            if (isAbsolutePath)
+                u = WTF::URL::fileURLWithFileSystemPath(u).string();
+        };
+
+        // Function definition location. JSC returns these 1-based;
+        // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
+        // The definition (not the sample position) is remapped
+        // through the sourcemap callback so callFrame.url and
+        // callFrame.line/column agree on the function's source.
+        int rawFunctionStartLine = frame.functionStartLine();
+        unsigned rawFunctionStartColumn = frame.functionStartColumn();
+        if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
+            JSC::LineColumn functionStartLineColumn {
+                static_cast<unsigned>(rawFunctionStartLine),
+                rawFunctionStartColumn,
+            };
+            if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                auto& fn = vm.computeLineColumnWithSourcemap();
+                if (fn) {
+                    // `url` is the out-param — on a successful
+                    // remap it becomes the original-source URL.
+                    fn(vm, provider, functionStartLineColumn, url);
+                }
+#endif
+            }
+            functionDefLine = functionStartLineColumn.line > 0
+                ? static_cast<int>(functionStartLineColumn.line) - 1
+                : 0;
+            functionDefColumn = functionStartLineColumn.column > 0
+                ? static_cast<int>(functionStartLineColumn.column) - 1
+                : 0;
+        }
+
+        // Normalize `url` to a `file://` URL now that any
+        // sourcemap rewriting is done.
+        normalizeURL(url);
+
+        if (frame.hasExpressionInfo()) {
+            // Sample position for positionTicks. Use a throwaway
+            // out-param so the sample remap can't clobber `url`
+            // with a different file than the function definition.
+            // We also drop the sample line entirely if the sample
+            // maps back to a DIFFERENT original source file than
+            // the definition (cross-module inlining in bundled
+            // code) — attaching a line number from one file to a
+            // ProfileNode whose callFrame.url is a different file
+            // would mislocate the tick in Chrome DevTools.
+            JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+            // Seed with the raw provider URL (NOT empty). If the
+            // sourcemap callback is a no-op — BUN_JSC_ADDITIONS
+            // off, fn null, or the provider has no sourcemap —
+            // sampleURL stays at this seed, and normalizeURL()
+            // below converts it to the same `file://` form as
+            // `url`, letting the `sampleURL == url` guard pass
+            // for plain .js files. Seeding empty would silently
+            // suppress positionTicks for every non-sourcemapped
+            // script.
+            WTF::String sampleURL = provider ? WTF::String(provider->sourceURL()) : WTF::String();
+            if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                auto& fn = vm.computeLineColumnWithSourcemap();
+                if (fn) {
+                    fn(vm, provider, sourceMappedLineColumn, sampleURL);
+                }
+#endif
+            }
+            normalizeURL(sampleURL);
+            if (sourceMappedLineColumn.line > 0 && sampleURL == url)
+                sampleLine = static_cast<int>(sourceMappedLineColumn.line);
+        }
+    }
+    return { functionName, url, scriptId, functionDefLine, functionDefColumn, sampleLine };
+}
+
+static WTF::String generateEmptyProfileJSON(double startTime, double endTime)
+{
     WTF::StringBuilder sb;
     sb.append("{\"nodes\":[{\"id\":1,\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"hitCount\":0,\"children\":[]}],\"startTime\":"_s);
-    sb.append(timestamp);
+    sb.append(startTime);
     sb.append(",\"endTime\":"_s);
-    sb.append(timestamp);
+    sb.append(endTime);
     sb.append(",\"samples\":[],\"timeDeltas\":[]}"_s);
     return sb.toString();
 }
@@ -297,7 +439,10 @@ static WTF::String generateEmptyProfileJSON()
 // Unified function that stops the profiler and generates requested output formats
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 {
-    s_isProfilerRunning = false;
+    auto& state = cpuProfilerState(vm);
+    state.running = false;
+    auto initialFrames = WTF::move(state.initialFrames);
+    double startTime = state.startTime;
 
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler) {
@@ -316,6 +461,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     auto& lock = profiler->getLock();
     WTF::Locker profilerLocker { lock };
     profiler->pause();
+    double endTime = profileTimestamp(state, MonotonicTime::now());
 
     // releaseStackTraces() calls processUnverifiedStackTraces() internally
     auto stackTraces = profiler->releaseStackTraces();
@@ -325,8 +471,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     if (!outJSON && !outText)
         return;
 
-    if (stackTraces.isEmpty()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON();
+    if (stackTraces.isEmpty() && initialFrames.isEmpty()) {
+        if (outJSON) *outJSON = generateEmptyProfileJSON(startTime, endTime);
         if (outText) *outText = "No samples collected.\n"_s;
         return;
     }
@@ -362,135 +508,13 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         WTF::Vector<int> samples;
         WTF::Vector<long long> timeDeltas;
 
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double lastTime = startTime;
 
-        for (size_t idx : sortedIndices) {
-            auto& stackTrace = stackTraces[idx];
-            if (stackTrace.frames.isEmpty()) {
-                samples.append(1);
-                double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
-                double delta = std::max(0.0, currentTime - lastTime);
-                timeDeltas.append(static_cast<long long>(delta));
-                lastTime = currentTime;
-                continue;
-            }
-
+        auto appendSample = [&](auto& frames, double currentTime, auto&& frameMetadata) {
             int currentParentId = 1;
 
-            for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
-                auto& frame = stackTrace.frames[i];
-
-                WTF::String functionName = frame.displayName(vm);
-                WTF::String url;
-                int scriptId = 0;
-                // Function-definition line/column (0-indexed) for callFrame.
-                int functionDefLine = -1;
-                int functionDefColumn = -1;
-                // Current-sample line (1-indexed) for positionTicks.
-                int sampleLine = 0;
-
-                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                    auto sourceProviderAndID = frame.sourceProviderAndID();
-                    auto* provider = std::get<0>(sourceProviderAndID);
-                    if (provider) {
-                        url = provider->sourceURL();
-                        scriptId = static_cast<int>(provider->asID());
-                    }
-
-                    // Absolute file path → `file://` URL. Chrome DevTools
-                    // expects `callFrame.url` to be a proper URL; leaving
-                    // the raw path breaks source-view resolution. We run
-                    // this AFTER the sourcemap callbacks below because the
-                    // callback (see FormatStackTraceForJS.cpp) unconditionally
-                    // rewrites its out-param back to the raw provider URL when
-                    // no sourcemap is found, which would undo an earlier
-                    // normalization. See #29240.
-                    auto normalizeURL = [](WTF::String& u) {
-                        if (u.isEmpty())
-                            return;
-                        bool isAbsolutePath = false;
-                        if (u[0] == '/') {
-                            isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[1] == ':') {
-                            char firstChar = u[0];
-                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
-                            isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
-                    };
-
-                    // Function definition location. JSC returns these 1-based;
-                    // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
-                    // The definition (not the sample position) is remapped
-                    // through the sourcemap callback so callFrame.url and
-                    // callFrame.line/column agree on the function's source.
-                    int rawFunctionStartLine = frame.functionStartLine();
-                    unsigned rawFunctionStartColumn = frame.functionStartColumn();
-                    if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
-                        JSC::LineColumn functionStartLineColumn {
-                            static_cast<unsigned>(rawFunctionStartLine),
-                            rawFunctionStartColumn,
-                        };
-                        if (provider) {
-#if USE(BUN_JSC_ADDITIONS)
-                            auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn) {
-                                // `url` is the out-param — on a successful
-                                // remap it becomes the original-source URL.
-                                fn(vm, provider, functionStartLineColumn, url);
-                            }
-#endif
-                        }
-                        functionDefLine = functionStartLineColumn.line > 0
-                            ? static_cast<int>(functionStartLineColumn.line) - 1
-                            : 0;
-                        functionDefColumn = functionStartLineColumn.column > 0
-                            ? static_cast<int>(functionStartLineColumn.column) - 1
-                            : 0;
-                    }
-
-                    // Normalize `url` to a `file://` URL now that any
-                    // sourcemap rewriting is done.
-                    normalizeURL(url);
-
-                    if (frame.hasExpressionInfo()) {
-                        // Sample position for positionTicks. Use a throwaway
-                        // out-param so the sample remap can't clobber `url`
-                        // with a different file than the function definition.
-                        // We also drop the sample line entirely if the sample
-                        // maps back to a DIFFERENT original source file than
-                        // the definition (cross-module inlining in bundled
-                        // code) — attaching a line number from one file to a
-                        // ProfileNode whose callFrame.url is a different file
-                        // would mislocate the tick in Chrome DevTools.
-                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                        // Seed with the raw provider URL (NOT empty). If the
-                        // sourcemap callback is a no-op — BUN_JSC_ADDITIONS
-                        // off, fn null, or the provider has no sourcemap —
-                        // sampleURL stays at this seed, and normalizeURL()
-                        // below converts it to the same `file://` form as
-                        // `url`, letting the `sampleURL == url` guard pass
-                        // for plain .js files. Seeding empty would silently
-                        // suppress positionTicks for every non-sourcemapped
-                        // script.
-                        WTF::String sampleURL = provider ? WTF::String(provider->sourceURL()) : WTF::String();
-                        if (provider) {
-#if USE(BUN_JSC_ADDITIONS)
-                            auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn) {
-                                fn(vm, provider, sourceMappedLineColumn, sampleURL);
-                            }
-#endif
-                        }
-                        normalizeURL(sampleURL);
-                        if (sourceMappedLineColumn.line > 0 && sampleURL == url)
-                            sampleLine = static_cast<int>(sourceMappedLineColumn.line);
-                    }
-                }
+            for (int i = frames.size() - 1; i >= 0; i--) {
+                const auto& [functionName, url, scriptId, functionDefLine, functionDefColumn, sampleLine] = frameMetadata(frames[i]);
 
                 // line/column here identify the function's DEFINITION, so all
                 // samples of the same function under the same parent collapse.
@@ -543,13 +567,17 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
             samples.append(currentParentId);
 
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
             double delta = std::max(0.0, currentTime - lastTime);
             timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;
-        }
+        };
 
-        double endTime = lastTime;
+        if (!initialFrames.isEmpty())
+            appendSample(initialFrames, state.initialSampleTime, [](const CPUProfileFrame& frame) -> const CPUProfileFrame& { return frame; });
+        for (size_t idx : sortedIndices) {
+            auto& stackTrace = stackTraces[idx];
+            appendSample(stackTrace.frames, profileTimestamp(state, stackTrace.timestamp), [&](auto& frame) { return captureProfileFrame(vm, frame); });
+        }
 
         // Build JSON
         using namespace WTF;
@@ -622,9 +650,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
     // Generate text format if requested
     if (outText) {
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
-        double endTime = startTime;
+        double lastTime = startTime;
 
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
@@ -634,11 +660,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
 
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+            double currentTime = profileTimestamp(state, stackTrace.timestamp);
             long long deltaUs = static_cast<long long>(std::max(0.0, currentTime - lastTime));
             totalTimeUs += deltaUs;
             lastTime = currentTime;
-            endTime = currentTime;
 
             if (stackTrace.frames.isEmpty())
                 continue;

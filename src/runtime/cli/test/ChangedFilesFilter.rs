@@ -156,8 +156,8 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
-    // A transpiler for bun inlines `process.env`, which drops the imports of a branch that is dead now.
-    scan_transpiler.options.env.behavior = api::DotEnvBehavior::Disable;
+    // The run reads `process.env` when the code runs, so the scan does not inline it and drop a branch.
+    scan_transpiler.options.env.behavior = vm.transpiler.options.env.behavior;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the

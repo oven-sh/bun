@@ -2821,6 +2821,39 @@ c {
     },
   });
 
+  // The two import orders have the same entries and differ only in the import conditions of the first two. The key
+  // of a CSS chunk leaves the conditions out, so e1.js gets the stylesheet of e0.js and no e1.css is written.
+  // main writes both files for this input and has the same defect for other inputs. #46357 compares the orders.
+  itBundled("css/CSSAtLayerOrderTwoEntryPointsThatDifferInImportConditions", {
+    todo: true,
+    files: {
+      "/e0.js": `import "./f0.css";`,
+      "/e1.js": `import "./f2.css"; import "./f0.css";`,
+      "/f0.css": /* css */ `
+        @import "./f2.css" layer(w) screen;
+        @import "./f1.css";
+        @import "./f2.css";
+      `,
+      "/f1.css": /* css */ `
+        @layer a;
+        @import "./f2.css";
+        @import "./f2.css" layer(w) screen;
+        @import "./f2.css";
+        @layer w { .t { color: blue } }
+      `,
+      "/f2.css": `@layer a { .t { color: red } }`,
+    },
+    entryPoints: ["/e0.js", "/e1.js"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const rest =
+        "@layer a;@media screen{@layer w{@layer a{.t{color:red}}}}@layer w{.t{color:#00f}}@layer a{.t{color:red}}\n";
+      api.expectFile("/out/e0.css").toBe("@media screen{@layer w{@layer a;}}@layer a;" + rest);
+      api.expectFile("/out/e1.css").toBe("@layer a;@media screen{@layer w{@layer a;}}" + rest);
+    },
+  });
+
   // Random "@import" graphs (css-layer-order.ts). The bundle must give `.t` the rule that the sources give it, and
   // the same order of named layers. bun 1.4.3 is wrong on each of these.
   for (const [seed, options] of [

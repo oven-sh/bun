@@ -7,6 +7,7 @@
 #include "JavaScriptCore/VMTrapsInlines.h"
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
+#include "JavaScriptCore/TypeError.h"
 #include "BunClientData.h"
 
 namespace Bun {
@@ -31,6 +32,29 @@ void GlobalScope::finishCreation(JSC::VM& vm)
             RELEASE_ASSERT(offset == 1);
             init.set(structure);
         });
+}
+
+bool GlobalScope::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* proxy = uncheckedDowncast<GlobalScope>(object)->globalThis();
+
+    if (proxy->getPrototypeDirect() == prototype)
+        return true;
+
+    // A prototype chain holds the global's proxy, which the cycle check in JSObject doesn't compare with.
+    for (JSValue next = prototype; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
+        if (next == proxy && object->isStructureExtensible())
+            return typeError(globalObject, scope, shouldThrowIfCantSet, "cyclic __proto__ value"_s);
+    }
+
+    bool didSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
+    RETURN_IF_EXCEPTION(scope, false);
+    // The cycle check of any other object walks through the proxy's own prototype.
+    if (didSet)
+        proxy->setPrototypeDirect(vm, prototype);
+    return didSet;
 }
 
 DEFINE_VISIT_CHILDREN(GlobalScope);

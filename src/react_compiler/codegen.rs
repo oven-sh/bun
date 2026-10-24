@@ -14,10 +14,11 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
+use crate::collections::sort_slice_by;
 use bun_alloc::{Arena, ArenaVec, AstAlloc, AstVec};
 use bun_ast::{
     self as ast, ArrayBinding, Binding, Case, Catch, E, Expr, ExprData, ExprNodeList, Finally, G,
@@ -120,7 +121,7 @@ impl<'h> Codegen<'h> {
             arena,
             id_to_ref: IdMap::new(),
             well_known: [None; WellKnown::COUNT],
-            name_to_ref: HashMap::new(),
+            name_to_ref: HashMap::default(),
             label_to_ref: IdMap::new(),
         }
     }
@@ -348,6 +349,7 @@ pub(crate) fn codegen_function(
                     test: if_test,
                     yes: expr_stmt(call, Loc::EMPTY),
                     no: None,
+                    else_loc: Loc::EMPTY,
                 },
                 Loc::EMPTY,
             );
@@ -411,11 +413,11 @@ impl<'a, 'h> Context<'a, 'h> {
             env,
             cg,
             next_cache_index: 0,
-            declarations: HashSet::new(),
+            declarations: HashSet::default(),
             temp: IdMap::new(),
             object_methods: IdMap::new(),
             unique_identifiers,
-            synthesized_names: HashMap::new(),
+            synthesized_names: HashMap::default(),
         }
     }
 
@@ -578,6 +580,9 @@ fn codegen_block_no_reset(
     cx: &mut Context,
     block: &ReactiveBlock,
 ) -> Result<Vec<Stmt>, CompilerError> {
+    if !cx.env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let mut statements: Vec<Stmt> = Vec::new();
     for item in block {
         match item {
@@ -657,9 +662,10 @@ fn codegen_reactive_scope(
     let mut cache_load_exprs: Vec<Expr> = Vec::new();
     let mut cache_loads: Vec<(Ref, u32, Expr)> = Vec::new();
     let mut change_exprs: Vec<Expr> = Vec::new();
+    let mut values_before: Vec<Expr> = Vec::new();
 
     let mut deps = scope_deps;
-    deps.sort_unstable_by(|a, b| compare_scope_dependency(a, b, cx.env));
+    sort_slice_by(&mut deps, |a, b| compare_scope_dependency(a, b, cx.env));
 
     let cache_name = cx.synthesize_name("$");
     let cache_ref = cx
@@ -690,7 +696,24 @@ fn codegen_reactive_scope(
         );
         change_exprs.push(comparison);
 
-        let dep_value = codegen_dependency(cx, dep)?;
+        let mut dep_value = codegen_dependency(cx, dep)?;
+        let declaration = cx.env.identifiers[dep.identifier.0 as usize].declaration_id;
+        // Not in upstream: the scope assigns it, so it is kept as it was. Not stored at once: the scope may throw.
+        if scope_reassignments
+            .iter()
+            .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == declaration)
+        {
+            let before = cx.alloc_cache_index();
+            values_before.push(Expr::init(
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left: cache_slot(before),
+                    right: dep_value,
+                },
+                loc,
+            ));
+            dep_value = cache_slot(before);
+        }
         cache_store_exprs.push(Expr::init(
             E::Binary {
                 op: OpCode::BinAssign,
@@ -704,7 +727,9 @@ fn codegen_reactive_scope(
     let mut first_output_index: Option<u32> = None;
 
     let mut decls = scope_decls;
-    decls.sort_unstable_by(|(_a, a), (_b, b)| compare_scope_declaration(a, b, cx.env));
+    sort_slice_by(&mut decls, |(_a, a), (_b, b)| {
+        compare_scope_declaration(a, b, cx.env)
+    });
 
     let mut output_declarators: Vec<G::Decl> = Vec::new();
     for (_ident_id, decl) in &decls {
@@ -784,6 +809,9 @@ fn codegen_reactive_scope(
     };
 
     let mut computation_block = codegen_block(cx, block)?;
+    if !values_before.is_empty() {
+        computation_block.insert(0, expr_stmt(comma_seq(values_before, loc), loc));
+    }
 
     for (name_ref, index, value) in &cache_loads {
         cache_store_exprs.push(Expr::init(
@@ -839,6 +867,7 @@ fn codegen_reactive_scope(
             test: test_condition,
             yes,
             no,
+            else_loc: Loc::EMPTY,
         },
         loc,
     );
@@ -874,6 +903,7 @@ fn codegen_reactive_scope(
                     loc,
                 ),
                 no: None,
+                else_loc: Loc::EMPTY,
             },
             loc,
         ));
@@ -973,6 +1003,7 @@ fn codegen_terminal(
                     test: test_expr,
                     yes: body_stmt(consequent_block, stmt_loc),
                     no: alternate_stmt,
+                    else_loc: Loc::EMPTY,
                 },
                 stmt_loc,
             )))
@@ -1000,7 +1031,7 @@ fn codegen_terminal(
                     None => StmtNodeList::EMPTY,
                 };
                 switch_cases.push(Case {
-                    loc: stmt_loc,
+                    loc: convert_loc(case.loc),
                     value: test,
                     body: consequent,
                 });
@@ -1095,6 +1126,8 @@ fn codegen_terminal(
             block,
             handler_binding,
             handler,
+            handler_loc,
+            handler_body_loc,
             loc,
             ..
         } => {
@@ -1115,10 +1148,10 @@ fn codegen_terminal(
                     body_loc: stmt_loc,
                     body: leak_stmts(try_block),
                     catch: Some(Catch {
-                        loc: stmt_loc,
+                        loc: convert_loc(*handler_loc),
                         binding: catch_param,
                         body: leak_stmts(handler_block),
-                        body_loc: stmt_loc,
+                        body_loc: convert_loc(*handler_body_loc),
                     }),
                     finally: None,
                 },
@@ -1485,7 +1518,7 @@ fn codegen_store_or_declare(
             lvalue, value: val, ..
         } => {
             let kind = lvalue.kind;
-            for place in crate::hir::visitors::each_pattern_operand(&lvalue.pattern) {
+            for place in crate::hir::visitors::pattern_operands(&lvalue.pattern) {
                 let ident = &cx.env.identifiers[place.identifier.0 as usize];
                 if kind != InstructionKind::Reassign && ident.name.is_none() {
                     cx.temp.insert(ident.declaration_id, None);
@@ -2982,6 +3015,7 @@ fn codegen_object_pattern(
         b::Object {
             properties: StoreSlice::from_bump(properties),
             is_single_line: true,
+            close_brace_loc: Loc::EMPTY,
         },
         loc,
     ))
@@ -3479,7 +3513,7 @@ fn compare_scope_dependency(
     b: &crate::hir::ReactiveScopeDependency,
     env: &Environment,
 ) -> std::cmp::Ordering {
-    dep_to_sort_key(a, env).cmp(&dep_to_sort_key(b, env))
+    bun_core::strings::order_utf16(&dep_to_sort_key(a, env), &dep_to_sort_key(b, env))
 }
 
 fn dep_to_sort_key(dep: &crate::hir::ReactiveScopeDependency, env: &Environment) -> Vec<u8> {
@@ -3512,7 +3546,7 @@ fn compare_scope_declaration(
     let mut buf_b = [0u8; 24];
     let ka = ident_sort_key(a.identifier, env, &mut buf_a);
     let kb = ident_sort_key(b.identifier, env, &mut buf_b);
-    ka.cmp(kb)
+    bun_core::strings::order_utf16(ka, kb)
 }
 
 fn ident_sort_key<'a>(id: IdentifierId, env: &'a Environment, buf: &'a mut [u8; 24]) -> &'a [u8] {
@@ -3583,6 +3617,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                body_loc: loc,
             }),
         },
         loc,
@@ -3643,6 +3678,7 @@ fn create_function_body_hook_guard(
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                body_loc: loc,
             }),
         },
         loc,

@@ -69,7 +69,7 @@ it("should encrypt & decrypt using streaming interface", () => {
   // so drain the stream instead of assuming a single read returns everything.
   const readAll = stream => {
     const chunks: Buffer[] = [];
-    for (let chunk; (chunk = stream.read()) !== null; ) chunks.push(chunk);
+    for (let chunk; (chunk = stream.read()) !== null;) chunks.push(chunk);
     return Buffer.concat(chunks);
   };
 

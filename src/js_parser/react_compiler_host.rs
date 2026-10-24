@@ -10,21 +10,19 @@ use bun_collections::VecExt;
 use crate::JSXImport;
 use crate::p::P;
 
-pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> {
-    p: &'p mut P<'a, TS, SCAN_ONLY, SEMA>,
+pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
+    p: &'p mut P<'a, TS, SCAN_ONLY>,
 }
 
-impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    ReactCompilerHost<'p, 'a, TS, SCAN_ONLY, SEMA>
-{
+impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
     #[inline]
-    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY, SEMA>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
         Self { p }
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> bun_react_compiler::Host
-    for ReactCompilerHost<'_, 'a, TS, SCAN_ONLY, SEMA>
+impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
+    for ReactCompilerHost<'_, 'a, TS, SCAN_ONLY>
 {
     fn symbols(&self) -> &[js_ast::Symbol] {
         self.p.symbols.as_slice()
@@ -34,6 +32,12 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> bun_react_comp
     }
     fn import_records(&self) -> &[js_ast::ImportRecord] {
         self.p.import_records.items()
+    }
+    fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
+        let symbol = self.p.symbols.get(item.inner_index() as usize)?;
+        let name = symbol.original_name.slice();
+        let mut all = self.p.import_items_for_namespace.iter();
+        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
     }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
@@ -160,7 +164,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> bun_react_comp
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> P<'a, TS, SCAN_ONLY, SEMA> {
+impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
         let mut body = self.current_scope;

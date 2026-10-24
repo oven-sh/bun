@@ -483,6 +483,39 @@ describe("Bun.serve() directory routes", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.skipIf(!isLinux)("keeps clamping symlinks to the root when only Android's variables are set", async () => {
+    using dir = tempDir("serve-dir-android-env", {
+      "secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+    });
+    const root = String(dir);
+    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
+
+    const script = `
+        const server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: ${JSON.stringify(join(root, "public"))} } },
+        });
+        const out = [];
+        for (const p of ["escape-rel", "escape-abs", "ok.txt"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ANDROID_ROOT: join(root, "system"), ANDROID_DATA: join(root, "data") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
+    expect(exitCode).toBe(0);
+  });
+
   it("percent-decodes file names", async () => {
     using dir = tempDir("serve-dir-pct", {
       "public/hello world.txt": "hi",

@@ -1,5 +1,5 @@
 // See 30-late-completion.js.
-const { test } = require("node:test");
+import { test } from "node:test";
 
 test("skips itself after the runner's timeout", async t => {
   await new Promise(resolve => setImmediate(resolve));

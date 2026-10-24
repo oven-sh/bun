@@ -4,7 +4,7 @@
 // fire before it completes. The late test of each file comes first: a test
 // that starts while the runner handles a timeout can be judged before its body
 // resumes.
-const { test } = require("node:test");
+import { test } from "node:test";
 
 const block = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 

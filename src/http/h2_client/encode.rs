@@ -96,13 +96,6 @@ pub(crate) fn write_request(
     let mut encoded = core::mem::take(&mut session.encode_scratch);
     encoded.clear();
 
-    if let Some(cap) = session.pending_hpack_enc_capacity {
-        session.pending_hpack_enc_capacity = None;
-        session.hpack.set_encoder_max_capacity(cap);
-        encoded.reserve(8);
-        encode_hpack_table_size_update(&mut encoded, cap);
-    }
-
     let mut authority: &[u8] = client.url.host;
     let mut has_expect_continue = false;
     let mut lower_buf = [0u8; 256];
@@ -144,7 +137,7 @@ pub(crate) fn write_request(
     for h in request.headers {
         // §8.2.1: field names MUST be lowercase on the wire. copy_lowercase_if_needed
         // returns the input slice unchanged when it's already lowercase, so
-        // the common (Fetch-normalised) case is zero-copy. lshpack rejects
+        // the common (Fetch-normalised) case is zero-copy. The encoder rejects
         // names+values >64KiB anyway, so the heap fallback only ever holds a
         // few hundred bytes.
         let mut heap: Vec<u8>;
@@ -407,35 +400,13 @@ fn encode_header(
     value: &[u8],
     never_index: bool,
 ) -> crate::Result<()> {
-    let required = encoded.len() + name.len() + value.len() + 32;
-    encoded.reserve(required.saturating_sub(encoded.len()));
-    let len = encoded.len();
-    // Write through the raw buffer and set_len after.
-    // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
-    // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
-    let written = session
-        .hpack
-        .encode(name, value, never_index, buf, len)
-        .map_err(crate::Error::from)?;
-    // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
-    unsafe { bun_core::vec::commit_spare(encoded, written) };
-    Ok(())
-}
-
-/// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
-/// integer. Must be the first opcode in a header block. Caller guarantees
-/// at least 6 bytes of capacity (max for a u32).
-fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
-    if value < 31 {
-        encoded.push(0x20 | u8::try_from(value).expect("int cast"));
-        return;
-    }
-    encoded.push(0x20 | 31);
-    let mut rest = value - 31;
-    while rest >= 128 {
-        encoded.push((rest as u8) | 0x80);
-        rest >>= 7;
-    }
-    encoded.push(rest as u8);
+    let indexing = if never_index {
+        bun_hpack::Indexing::Never
+    } else {
+        bun_hpack::Indexing::Add
+    };
+    session
+        .hpack_encoder
+        .encode(encoded, name, value, indexing)
+        .map_err(|_| crate::Error::UnableToEncode)
 }

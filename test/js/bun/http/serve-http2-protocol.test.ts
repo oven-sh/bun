@@ -11,6 +11,7 @@ import {
   connectH2,
   decodeStatus,
   frame,
+  hpackFields,
   hpackLiteral,
   request,
   startFixture,
@@ -498,6 +499,56 @@ describe.concurrent("Bun.serve http2 protocol", () => {
           Buffer.concat([
             hpackLiteral(baseHeaders("/hello")),
             Buffer.from([0x00, 0x85, 0xf2, 0xb2, 0x4a, 0x84, 0xff, 0x83, 0x49, 0x50, 0x90]),
+          ]),
+        ),
+      9,
+    ],
+    [
+      "HPACK literal that ends after its name",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([hpackLiteral(baseHeaders("/hello")), Buffer.from([0x00, 0x03]), Buffer.from("x-a")]),
+        ),
+      9,
+    ],
+    [
+      "HPACK literal that ends after its name index",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([hpackLiteral(baseHeaders("/hello")), Buffer.from([0x0f, 0x2b])]), // user-agent
+        ),
+      9,
+    ],
+    [
+      "HPACK table size update between two fields",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([hpackLiteral(baseHeaders("/hello")), Buffer.from([0x21]), hpackLiteral([["x-a", "1"]])]),
+        ),
+      9,
+    ],
+    [
+      // "31623933471" takes 63 bits, so the string is over after eight bytes.
+      "HPACK huffman padding longer than 7 bits in a ninth byte",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([
+            hpackLiteral(baseHeaders("/hello")),
+            Buffer.from([0x00, 0x03]),
+            Buffer.from("x-a"),
+            Buffer.from([0x89, 0x64, 0x2e, 0x09, 0x97, 0xd9, 0x65, 0xa7, 0x43, 0xff]),
           ]),
         ),
       9,
@@ -1022,6 +1073,21 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     for (let i = 0; i < 3; i++)
       expect((await request(s0, { ":path": "/set-cookies" })).headers["x-multi"]).toBe("1, 2");
     s0.close();
+  });
+
+  test("peer SETTINGS_HEADER_TABLE_SIZE below the default: a field still enters the table the first time it is sent", async () => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, 2048) });
+    await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+    raw.headers(1, baseHeaders("/hello"));
+    const h1 = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+    expect(h1.payload.subarray(0, 3)).toEqual(Buffer.from([0x3f, 0xe1, 0x0f])); // size update to 2048
+    await raw.body(1);
+    raw.headers(3, baseHeaders("/hello"));
+    const h3 = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3);
+    // The second response refers to what the first one added.
+    expect(hpackFields(h3.payload).filter(f => f.value === undefined && f.index! > 61)).not.toBeEmpty();
+    await raw.body(3);
+    raw.close();
   });
 
   test("HPACK request encodings: indexed, incremental, never-indexed, huffman, size updates are all accepted", async () => {

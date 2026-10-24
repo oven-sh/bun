@@ -109,4 +109,5 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 ## Additional credits
 
 - Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
+- Bun's HPACK encoder decides what to add to the dynamic table the way LiteSpeed's [ls-hpack](https://github.com/litespeedtech/ls-hpack) (MIT) does.
 - Credit to [@kipply](https://github.com/kipply) for the name "Bun"!

@@ -240,8 +240,6 @@ pub enum Error {
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
-    Hpack(#[from] bun_http::lshpack::HpackError),
-    #[error(transparent)]
     JsPrinter(#[from] bun_js_printer::Error),
     #[error(transparent)]
     Sourcemap(#[from] bun_sourcemap::Error),
@@ -457,7 +455,6 @@ impl Error {
             Self::Clap(e) => e.name(),
             Self::Zlib(e) => <&'static str>::from(e),
             Self::Http(e) => e.name(),
-            Self::Hpack(e) => <&'static str>::from(e),
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),

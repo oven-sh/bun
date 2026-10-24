@@ -142,6 +142,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/hpack/` - HPACK, the header compression of HTTP/2 (`fetch`, `node:http2`, `Bun.serve`)
 - `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
 - `src/bake/` - Server-side rendering / dev server framework
 

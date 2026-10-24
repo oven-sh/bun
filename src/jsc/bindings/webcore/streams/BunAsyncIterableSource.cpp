@@ -171,9 +171,7 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
 }
 
 // Ends the pump: iterator.return() unless the iterator itself failed, then the pull promise settles in the same turn.
-// It rejects with `error` when the consumer failed, and resolves when the body ended. A cancel() or close() made
-// from inside return() has settled it already, so neither branch does anything then.
-// Out of line: it runs once per body, and inlined it grows every per-chunk function of the pump.
+// NEVER_INLINE: it runs once per body, so it stays out of the per-chunk functions.
 static NEVER_INLINE void asyncIterFinish(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -423,8 +421,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceCancel, (JSGloba
 }
 
 // close(): the consumer is gone; the iterator's finally still runs via return(), and a throw from
-// it propagates to whoever closed the source. The pull promise resolves first, as in cancel(), so
-// that throw does not leave it pending.
+// it propagates to whoever closed the source, so the pull promise is resolved first.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

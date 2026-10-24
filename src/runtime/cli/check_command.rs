@@ -244,8 +244,6 @@ struct Entries<'a> {
     conditions: &'a [Box<[u8]>],
     /// `None`: the loader that has the name of each extension, because `bun check` takes no `--loader`.
     loaders: Option<&'a bun_ast::LoaderHashTable>,
-    /// `PageRules::not_pages`
-    not_pages: &'a [Vec<u8>],
 }
 
 fn run<R>(
@@ -365,10 +363,7 @@ fn request<'a>(
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
-        pages: Some(bun_sema_driver::PageRules {
-            loaders: entries.loaders.unwrap_or(no_loaders),
-            not_pages: entries.not_pages,
-        }),
+        loaders: Some(entries.loaders.unwrap_or(no_loaders)),
         compiler_options,
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -585,7 +580,6 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
         loaders: Some(&loaders),
-        not_pages: &[],
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
 }
@@ -660,8 +654,6 @@ pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
 fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
-    use bun_sema_driver::host::from_native;
     let TypeChecked {
         cwd,
         tsconfig,
@@ -669,7 +661,6 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         loaders,
         entry_points,
         sources,
-        not_pages,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows each file's loader. Files in `node_modules` always go by their extension.
@@ -696,15 +687,12 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     if paths.is_empty() {
         return true;
     }
-    let as_given = |path| join_abs_string::<Auto>(cwd, &[path]);
-    let not_pages: Vec<Vec<u8>> = not_pages.map(|it| from_native(as_given(it))).collect();
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
         loaders: Some(loaders),
-        not_pages: &not_pages,
     });
     let then = |report| report;
     let report = match shows_progress {

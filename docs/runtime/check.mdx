@@ -381,12 +381,12 @@ A few more details:
 - `--filter`, `--parallel`, and `--sequential` check the whole project before the first script starts.
 - Bun reads a JavaScript entry point to find what it imports, with or without `allowJs`. Bun reports errors in the JavaScript file itself only if `checkJs` is on.
 - Bun runs a file without an extension as TSX, for example a script that starts with `#!/usr/bin/env bun`. The same goes for `-e`, `-p`, and code from stdin. `--check` checks that code as TSX too. Errors in it appear at `[eval]` or `[stdin]`.
-- An import is a page when Bun loads it with the HTML loader:
+- Bun reads each import to tell whether it names a page, by the rule that it uses to pick a loader:
   - `with { type: "html" }` makes a page of any file.
   - `with { type: "text" }`, `with { type: "file" }`, or the name of any other loader does not. Bun then leaves the scripts in the file alone.
   - Without a `type`, the extension of the file decides. A `.html` file is a page, unless `--loader` or `[loader]` in [`bunfig.toml`](/runtime/bunfig) gives `.html` another loader. Both can also give the `html` loader to another extension. A check of the whole project reads neither, like `bun check`.
-  - `import type`, and a type such as `typeof import("./index.html")`, make no page. Bun loads nothing for a type.
-  - A plugin from `preload` that loads the file in another way is not known to the check.
+  - The options of `import()` count only if they are written in the call, as in `import("./a.html", { with: { type: "text" } })`.
+  - A plugin that loads the file in another way is not known to the check.
 - Bun follows a page that the import names by the path of the file, such as `./index.html`. If the import goes through `paths` in `tsconfig.json`, `imports` in `package.json`, or the name of a workspace package, only `bun build --check` follows it, because the bundle knows which file that is.
 - A page can have a `tsconfig.json` of its own, for example in `web/`. Bun checks the scripts of the page with that one.
 - With `--tsconfig-override`, or `tsconfig` in `Bun.build()`, the check uses that `tsconfig.json`.
@@ -422,7 +422,7 @@ note: TS6500: The expected type comes from property 'age' which is declared here
    at /app/src/greet.ts:1:46
 ```
 
-The check follows an imported HTML page as it does when Bun runs a file. The bundle has the last word on its own files: a `.html` file that a plugin loads in another way is not a page.
+The check follows an imported HTML page as it does when Bun runs a file.
 
 ### `Bun.build`
 

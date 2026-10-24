@@ -246,7 +246,7 @@ impl<'e> Inferred<'e> {
             script_kinds: &[],
             script_kinds_by_extension: &[],
             conditions: &[],
-            pages: None,
+            loaders: None,
             compiler_options: &command_line.compiler_options,
             threads: self.threads,
             libs: self.environment.libs,

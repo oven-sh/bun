@@ -78,7 +78,7 @@ fn run(args: &[String]) {
                 script_kinds: &[],
                 script_kinds_by_extension: &[],
                 conditions: &[],
-                pages: None,
+                loaders: None,
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,
                 after_file: None,

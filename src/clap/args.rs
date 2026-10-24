@@ -74,8 +74,8 @@ impl ArgIter<'static> for OsIterator {
         self.remain
     }
     fn last_is_from_bun_options(&self) -> bool {
-        // The order is argv[0], then the `BUN_OPTIONS` tokens, then what the user typed.
-        os_argv().len() - self.remain.len() <= 1 + bun_core::bun_options_argc()
+        // Both environment option windows precede the user arguments.
+        os_argv().len() - self.remain.len() <= 1 + bun_core::injected_argv_argc()
     }
 }
 

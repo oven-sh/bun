@@ -36,7 +36,7 @@ test("HTTPResponseSink displays correct message", async () => {
   expect(() => leakedCtrl.write("c")).toThrow(
     'This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
   );
-  expect(() => leakedCtrl.write.call({}, "c")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => leakedCtrl.write.call({}, "c")).toThrow("Expected this to be instanceof ReadableSinkController");
 });
 
 test("every native sink gives a direct stream the same controller class", async () => {

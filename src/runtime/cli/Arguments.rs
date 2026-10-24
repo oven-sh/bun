@@ -1417,6 +1417,19 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 }
                 _ => bun_options_types::context::WorkerEvalMode::Auto,
             };
+            // Bunfig paths belong to the startup directory, even if the parent later changes cwd.
+            for preload in &mut ctx.preloads {
+                if preload.starts_with(b"./") || preload.starts_with(b"../") {
+                    let mut spill = Vec::new();
+                    let path = resolve_path::join_abs_string_spill::<platform::Loose>(
+                        ctx.args.absolute_working_dir.as_deref().unwrap(),
+                        &mut spill,
+                        &[preload.as_ref()],
+                    );
+                    *preload = Box::<[u8]>::from(path);
+                }
+            }
+
             ctx.worker_eval_preloads.clone_from(&ctx.preloads);
             ctx.worker_eval_preloads.extend(
                 preloads

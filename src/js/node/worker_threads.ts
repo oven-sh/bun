@@ -97,7 +97,7 @@ const {
   typeof globalThis.BroadcastChannel,
 ];
 
-// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads instance.
+// The Worker constructor takes internal parameters for the node:worker_threads instance and its eval source.
 type WebWorkerConstructor = new (
   filename: string | URL,
   options: object,

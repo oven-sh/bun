@@ -606,10 +606,12 @@ impl WebWorker {
                 ))
             };
             if let Some(flags) = parsed {
-                if let Some(invalid) = flags.invalid {
+                // Node options were validated in JSWorker, where environment and explicit argv
+                // are distinguished. Web Workers use the effective vector as their explicit argv.
+                if let Some(invalid) = flags.invalid.filter(|_| !is_node_worker && !inherit_exec_argv) {
                     use bun_core::WTFStringImplExt as _;
-                    // SAFETY: an index into the same slice, whose strings the caller keeps alive.
-                    let arg = unsafe { &**exec_argv_ptr.add(invalid) }.to_owned_slice_z();
+                    // SAFETY: `invalid` indexes the effective slice passed to the parser above.
+                    let arg = unsafe { &**effective_exec_argv_ptr.add(invalid) }.to_owned_slice_z();
                     let mut message = b"Initiated Worker with invalid execArgv flags: ".to_vec();
                     message.extend_from_slice(arg.as_bytes());
                     *error_message = BunString::clone_utf8(&message);

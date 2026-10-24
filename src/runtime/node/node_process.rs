@@ -332,11 +332,15 @@ mod _impl {
         let vm = global_object.bun_vm();
 
         if let Some(worker) = vm.worker_ref() {
-            // was explicitly overridden for the worker?
+            // The worker stores its selected inherited or explicit argument list.
             if let Some(exec_argv) = worker.exec_argv() {
+                let mut has_strict = false;
                 let array =
                     JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                        super::worker_option_string(wtf).into_js(global_object)
+                        let argument = super::worker_option_string(wtf);
+                        has_strict |= argument.to_utf8().slice()
+                            == b"--disallow-code-generation-from-strings=strict";
+                        argument.into_js(global_object)
                     })?;
                 // `=strict` is the process's and no Worker runs without it, so a Worker reads it
                 // here whatever `execArgv` it was given (which cannot contain it: the Worker
@@ -344,7 +348,8 @@ mod _impl {
                 // `process.execArgv` is what it was given. Nor is it added in a build that has
                 // the level as a constant: there nobody gave the flag, and a list that names it
                 // cannot be handed on to another Worker.
-                if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
+                if !has_strict
+                    && !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
                     && bun_core::code_generation_from_strings_by_flags()
                         == bun_core::CodeGenerationFromStrings::Strict
                 {

@@ -594,26 +594,34 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
 
   // Each step waits for `marker` on the child's stdout (if any), then writes `input`.
   // With `end: false` stdin stays open, so the child has to exit by itself.
-  // With `shellPipe` the child's stdin is an anonymous pipe that `cat` writes to, not a socket.
+  // With `shellPipe` the child's stdin is an anonymous pipe, not a socket. The writer is not `cat`:
+  // busybox `cat` uses sendfile(), which locks the pipe while it waits for input and stalls the reader.
   async function run(
     script: string,
     steps: [marker: string | null, input: string][],
     { end = true, shellPipe = false } = {},
   ) {
     await using proc = Bun.spawn({
-      cmd: shellPipe ? ["sh", "-c", 'cat | "$0" -e "$1"', bunExe(), script] : [bunExe(), "-e", script],
+      cmd: shellPipe
+        ? ["sh", "-c", '"$0" -e "$2" | "$0" -e "$1"', bunExe(), script, "process.stdin.pipe(process.stdout)"]
+        : [bunExe(), "-e", script],
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       env: bunEnv,
     });
+    // Drained from the start, so a child that fails before its marker shows why.
+    const stderr = proc.stderr.text();
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
     for (const [marker, input] of steps) {
       while (marker && !stdout.includes(marker)) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`stdout ended before ${marker}; stdout=${JSON.stringify(stdout)}`);
+        if (done) {
+          const output = JSON.stringify({ stdout, stderr: await stderr });
+          throw new Error(`stdout ended before ${JSON.stringify(marker)}: ${output}`);
+        }
         stdout += decoder.decode(value, { stream: true });
       }
       proc.stdin.write(input);
@@ -623,8 +631,7 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
       stdout += decoder.decode(chunk.value, { stream: true });
     }
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+    return { stdout, stderr: await stderr, exitCode: await proc.exited, signalCode: proc.signalCode };
   }
 
   describe.each(Object.entries(doors))("%s", (_, { first, seen, door }) => {

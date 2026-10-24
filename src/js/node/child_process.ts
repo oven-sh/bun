@@ -69,6 +69,10 @@ interface SpawnSyncResult {
 }
 
 const kFromNode = Symbol("kFromNode");
+// On a pipe at stdio index >= 3: true once it is passed as stdio to another spawn, whose child reads it then.
+const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
+// Fake timers replace the global, and 'exit' must still fire.
+const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -1162,13 +1166,26 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #handleOnExit(exitCode, signalCode, err) {
+  #setExitStatus(exitCode, signalCode) {
     if (typeof signalCode === "string") {
       this.signalCode = signalCode;
     } else {
       // A signal with no name (a number from Bun.spawn) is "" in node, which then stores libuv's exit status, 0: https://github.com/nodejs/node/blob/v26.3.0/src/process_wrap.cc#L410
       this.exitCode = typeof signalCode === "number" ? 0 : exitCode;
     }
+  }
+
+  // A waiter thread (no pidfd) and Bun.spawn itself (a child that is gone already) report the exit ahead of the poll that reads the pipes: a pipe that has not ended gets one more turn of the loop.
+  static #exitAfterPoll(child: ChildProcess, exitCode, signalCode, err, polled: boolean) {
+    if (!polled && hasReadableExtraPipe(child.#stdioObject)) {
+      setImmediate(ChildProcess.#exitAfterPoll, child, exitCode, signalCode, err, true);
+    } else {
+      child.#handleOnExit(exitCode, signalCode, err);
+    }
+  }
+
+  #handleOnExit(exitCode, signalCode, err) {
+    this.#setExitStatus(exitCode, signalCode);
 
     // Drain stdio streams
     {
@@ -1223,6 +1240,15 @@ class ChildProcess extends EventEmitter {
     }
 
     this.emit("exit", this.exitCode, this.signalCode);
+
+    // 'close' waits for each extra pipe (index >= 3), and a socket that holds unread bytes never ends.
+    const stdio = this.#stdioObject;
+    if (stdio) {
+      for (let i = 3; i < stdio.length; i++) {
+        const pipe = stdio[i];
+        if (pipe) process.nextTick(flushStdioPipe, pipe);
+      }
+    }
 
     this.#maybeClose();
   }
@@ -1319,14 +1345,19 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
-          case "socket-fd":
+          case "socket-fd": {
             if (!NetModule) NetModule = require("node:net");
             // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
-            return NetModule.connect({ fd });
+            const socket = NetModule.connect({ fd });
+            socket[kIsUsedAsStdio] = false;
+            this.#closesNeeded++;
+            socket.once("close", () => this.#maybeClose());
+            return socket;
+          }
         }
         return null;
     }
@@ -1412,9 +1443,11 @@ class ChildProcess extends EventEmitter {
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
     // them OwnedFd so finalize_streams still closes them. On Windows extra
     // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
-    if (process.platform !== "win32") {
-      for (let i = 3; i < bunStdio.length; i++) {
-        if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
+    let hasExtraPipe = false;
+    for (let i = 3; i < bunStdio.length; i++) {
+      if (bunStdio[i] === "pipe") {
+        hasExtraPipe = true;
+        if (process.platform !== "win32") bunStdio[i] = "socket-fd";
       }
     }
 
@@ -1485,12 +1518,19 @@ class ChildProcess extends EventEmitter {
             });
           }
 
-          process.nextTick(
-            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
-            exitCode,
-            signalCode,
-            err,
-          );
+          if (hasExtraPipe) {
+            // The pid is gone from here on, so the codes are set now: null says that the child still runs.
+            this.#setExitStatus(exitCode, signalCode);
+            // After the other I/O of this poll, as libuv orders it: an extra pipe (index >= 3) then has what the child wrote.
+            setImmediate(ChildProcess.#exitAfterPoll, this, exitCode, signalCode, err, false);
+          } else {
+            process.nextTick(
+              (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
+              exitCode,
+              signalCode,
+              err,
+            );
+          }
         },
         lazy: true,
         ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
@@ -1501,6 +1541,12 @@ class ChildProcess extends EventEmitter {
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
       });
       this.pid = this.#handle.pid;
+      if ($isJSArray(stdio)) {
+        for (let i = 0; i < stdio.length; i++) {
+          const item = stdio[i];
+          if (item != null && item[kIsUsedAsStdio] === false) item[kIsUsedAsStdio] = true;
+        }
+      }
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
@@ -1741,6 +1787,20 @@ class ChildProcess extends EventEmitter {
 //------------------------------------------------------------------------------
 // Section 4. ChildProcess helpers
 //------------------------------------------------------------------------------
+// Node's flushStdio, for one stream. It runs on the tick after 'exit', so an 'exit' listener can still start to read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L297-L332
+function flushStdioPipe(pipe) {
+  if (pipe.readable && !pipe[kIsUsedAsStdio]) pipe.resume();
+}
+
+function hasReadableExtraPipe(stdio) {
+  if (stdio) {
+    for (let i = 3; i < stdio.length; i++) {
+      if (stdio[i]?.readable) return true;
+    }
+  }
+  return false;
+}
+
 const nodeToBunLookup = {
   ignore: null,
   pipe: "pipe",

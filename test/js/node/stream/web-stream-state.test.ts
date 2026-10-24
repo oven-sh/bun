@@ -86,6 +86,8 @@ describe.concurrent("a stream that a native consumer takes", () => {
       port: 0,
       socket: {
         data(socket) {
+          // One response for each connection, however many pieces its request arrives in.
+          if (connections.includes(socket)) return;
           socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nfirst \r\n");
           connections.push(socket);
         },

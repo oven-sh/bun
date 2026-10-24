@@ -448,6 +448,27 @@ impl PosixStdio {
     }
 }
 
+/// `bun_sys::O` flags that open a `Path` stdio at child fd `slot`, on every
+/// platform. stdout and stderr replace the file, like `>`. An extra slot opens
+/// like `n<>file`: the child can read it or write it, so it is not truncated.
+pub const fn path_slot_open_flags(slot: usize) -> i32 {
+    use bun_sys::O;
+    match slot {
+        0 => O::RDONLY | O::CREAT,
+        1 | 2 => O::WRONLY | O::CREAT | O::TRUNC,
+        _ => O::RDWR | O::CREAT,
+    }
+}
+
+#[cfg(windows)]
+const _: () = {
+    use bun_libuv_sys::O;
+    assert!(O::from_bun_o(path_slot_open_flags(0)) == O::RDONLY | O::CREAT);
+    assert!(O::from_bun_o(path_slot_open_flags(1)) == O::WRONLY | O::CREAT | O::TRUNC);
+    assert!(O::from_bun_o(path_slot_open_flags(2)) == O::WRONLY | O::CREAT | O::TRUNC);
+    assert!(O::from_bun_o(path_slot_open_flags(3)) == O::RDWR | O::CREAT);
+};
+
 #[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
@@ -798,7 +819,7 @@ pub unsafe fn spawn_process_posix(
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Path(path) => {
-                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
+                actions.open(fileno, path, path_slot_open_flags(i) as u32, 0o664)?;
             }
             PosixStdio::Buffer => {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -955,12 +976,7 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {
-                actions.open(
-                    fileno,
-                    path,
-                    (bun_sys::O::RDWR | bun_sys::O::CREAT) as u32,
-                    0o664,
-                )?;
+                actions.open(fileno, path, path_slot_open_flags(3 + i) as u32, 0o664)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {

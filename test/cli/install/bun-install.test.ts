@@ -16894,12 +16894,17 @@ describe.concurrent("bun version check", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Other commands that parse the root package.json leave the check to `bun install`.
-  it.each([[["update"]], [["dedupe"]], [["pm", "pack"]], [["outdated"]]])("bun %j is silent", async cmd => {
+  // Every command that installs warns. A command that only reads the root package.json does not.
+  it.each([
+    [["update"], 1],
+    [["dedupe"], 1],
+    [["pm", "pack"], 0],
+    [["outdated"], 0],
+  ])("bun %j warns %i times", async (cmd, times) => {
     using dir = project({ packageManager: "bun@0.0.1" }, { dep: "./dep" });
     await bunIn(String(dir), ["install", "--ignore-engines"]);
     const { stderr, exitCode } = await bunIn(String(dir), cmd);
-    expect(count(stderr)).toBe(0);
+    expect(count(stderr)).toBe(times);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });

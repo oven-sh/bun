@@ -427,7 +427,7 @@ When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads miss
 
 ## Bun version check
 
-`package.json` can declare the version of Bun that a project expects. `bun install`, `bun add`, `bun remove` and `bun run <script>` compare it with the running version and print a warning when it does not match:
+`package.json` can declare the version of Bun that a project expects. Every command that installs packages (`bun install`, `bun add`, `bun remove`, `bun update`, `bun link`, `bun patch`, `bun dedupe`) and `bun run <script>` compare it with the running version and print a warning when it does not match:
 
 ```json package.json icon="file-code"
 {
@@ -444,7 +444,7 @@ The check reads `packageManager` first. If it names another package manager, or 
 
 `bun install` reads the root `package.json` of the workspace. `bun run <script>` reads the `package.json` that holds the script, so in a workspace member it can check a different file. `bun run` checks only `package.json` scripts, not an executable from `node_modules/.bin`, and each `bun` process checks once, so a script that runs `bun` again prints the warning again.
 
-The warning does not change the exit code, and `engines` of dependencies are not checked. To silence it, set `BUN_CONFIG_IGNORE_ENGINES=1`, or pass `--silent`. `bun install`, `bun add` and `bun remove` also accept `--ignore-engines`.
+The warning does not change the exit code, and `engines` of dependencies are not checked. To silence it, set `BUN_CONFIG_IGNORE_ENGINES=1` in the environment, or pass `--silent`. The install commands also accept `--ignore-engines`, which takes no value: `--ignore-engines=true` is an error.
 
 ## CI/CD
 
@@ -648,7 +648,6 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 | `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                     |
 | `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these          |
 | `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error   |
-| `--ignore-engines`                                             | Skip the bun version check                      |
 | `--unsafe-perm`                                                | Nothing: scripts run as the current user        |
 | `--non-interactive`                                            | Nothing: an install asks no questions           |
 | `--prefer-frozen-lockfile`                                     | Nothing: the default                            |

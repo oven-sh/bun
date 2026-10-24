@@ -88,10 +88,8 @@ pub fn install_with_manager(
         Global::crash();
     }
 
-    if matches!(
-        manager.subcommand,
-        Subcommand::Install | Subcommand::Add | Subcommand::Remove
-    ) && !manager.options.ignore_engines
+    if !manager.options.ignore_engines
+        && !manager.options.runtime_auto_install
         && !log_level.is_silent()
     {
         warn_bun_version(manager, root_package_json_path);

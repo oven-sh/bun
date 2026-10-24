@@ -751,7 +751,8 @@ pub(crate) mod command {
                 // Without a POSIX shell, that install runs each lifecycle script by running this
                 // executable again as `bunx exec --no-env-file`. See `ScriptArgv`.
                 if next_bytes == b"exec"
-                    && (argv.get(2 + bun::node_options_argc())).is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
+                    && (argv.get(2 + bun::node_options_argc()))
+                        .is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
                 {
                     return Tag::ExecCommand;
                 }

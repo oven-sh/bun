@@ -11,7 +11,8 @@
  *   bun run rust:clippy --message-format=short           # other args go to `cargo clippy`
  *
  * With one target named, cargo's "unused dependency" warnings include crates
- * that only another target uses. Trust them from a run over every target.
+ * that only another target uses. Trust them from a run over every target,
+ * which is also the only one that lints the standalone `bun_shim_impl` binary.
  *
  * Read what `--fix` did before keeping it. Clippy sees the code after `cfg`
  * stripping, so a fix for one target can delete what another target needs: an

@@ -1713,6 +1713,7 @@ it.if(isWindows)("NoDefaultCurrentDirectoryInExePath set at runtime stops the wo
         return err.code;
       }
     };
+    delete process.env.NoDefaultCurrentDirectoryInExePath;
     const unset = run();
     process.env.NoDefaultCurrentDirectoryInExePath = "1";
     const set = run();

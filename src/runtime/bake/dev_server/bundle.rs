@@ -536,10 +536,7 @@ impl DevServer {
         scopeguard::defer! {
             // SAFETY: the pending server reference keeps this owner alive until cleanup ends.
             unsafe {
-                if let Some(bundle) = (*dev).current_bundle.as_mut() {
-                    super::finalize::drain_current_bundle_requests(bundle);
-                }
-                super::finalize::finish_bundle_cleanup(&mut *dev, true);
+                (*dev).cleanup_failed_preparation();
             }
         };
         for (path, flags) in entry_points.set.iter() {
@@ -562,6 +559,13 @@ impl DevServer {
         }
         self.index_failures()?;
         super::finalize::respond_to_failed_bundle(self)
+    }
+
+    fn cleanup_failed_preparation(&mut self) {
+        if let Some(bundle) = self.current_bundle.as_mut() {
+            super::finalize::drain_current_bundle_requests(bundle);
+        }
+        super::finalize::finish_bundle_cleanup(self, true);
     }
 
     /// Bundle the files a testing batch collected, or report an empty batch.
@@ -687,7 +691,11 @@ pub(crate) fn on_start_resolved(
     context: *mut DevServer,
 ) -> JsResult<()> {
     // SAFETY: start_async_bundle's pending server reference owns the callback lifetime.
-    unsafe { (*context).begin_prepared_bundle() }?;
+    if let Err(error) = unsafe { (*context).begin_prepared_bundle() } {
+        // SAFETY: the pending server reference remains owned until this cleanup.
+        unsafe { (*context).cleanup_failed_preparation() };
+        return Err(error.into());
+    }
     Ok(())
 }
 

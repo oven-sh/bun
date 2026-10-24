@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 import { expect } from "bun:test";
 import { renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 
@@ -156,7 +156,7 @@ devTest("watchDirs follows an empty directory after removal and recreation", {
   },
   async test(dev) {
     const expectManifest = async (expected: string) => {
-      const deadline = Date.now() + 2_000;
+      const deadline = Date.now() + 2_000 * WAIT_MULTIPLIER;
       let actual: string;
       do {
         actual = await dev.fetch("/").text();

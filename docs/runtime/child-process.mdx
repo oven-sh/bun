@@ -113,7 +113,7 @@ Configure the output stream by passing one of the following values to `stdout/st
 | `Bun.file(path)` | Write to the file at that path. Bun creates the file if it does not exist and replaces its content  |
 | `number`         | Write to the file with the given file descriptor. Bun does not create or truncate the file          |
 
-Bun opens a `Bun.file(path)` and empties it before the command starts. If the command cannot start, the file can already be empty. When the same path is also `stdin`, the command reads an empty file. To filter a file in place, pass `stdin: await Bun.file(path).bytes()`.
+Bun opens a `Bun.file(path)` and empties it before the command starts. If the command cannot start, the file can already be empty. `Bun.spawn` throws when `stdin` is the same `Bun.file(path)`, because the command would read an empty file. To filter a file in place, pass `stdin: await Bun.file(path).bytes()`.
 
 To append to a file, or to keep its content, open the file and pass the file descriptor. To collect `stdout` and `stderr` in one file, pass the same file descriptor to both.
 

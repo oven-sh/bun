@@ -671,6 +671,19 @@ fn spawn_maybe_sync(
                 }
             }
 
+            // The open of stdout or stderr empties the file before the child reads stdin.
+            if let Stdio::Path(input) = &stdio[0] {
+                let is_input = |output: &Stdio| match output {
+                    Stdio::Path(path) => path.slice() == input.slice(),
+                    _ => false,
+                };
+                if is_input(&stdio[1]) || is_input(&stdio[2]) {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "stdin cannot be the same file as stdout or stderr: Bun empties that file before the command reads it. Read it first: stdin: await Bun.file(path).bytes()"
+                    )));
+                }
+            }
+
             if !is_sync {
                 if let Some(lazy_val) = args.get(cx.global(), "lazy")? {
                     if lazy_val.is_boolean() {

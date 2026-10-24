@@ -17,12 +17,13 @@ const sizeThenWrite = (fd: 1 | 2) =>
   `const fs = require("fs"); fs.writeSync(${fd === 1 ? 2 : 1}, String(fs.fstatSync(${fd}).size)); fs.writeSync(${fd}, "NEW")`;
 
 describe("Bun.file(path) as stdout or stderr replaces the file", () => {
-  const forms = [
-    { slot: "stdout", fd: 1, stdio: (file: BunFile) => ({ stdout: file, stderr: "pipe" }) },
-    { slot: "stderr", fd: 2, stdio: (file: BunFile) => ({ stderr: file, stdout: "pipe" }) },
-    { slot: "stdio[1]", fd: 1, stdio: (file: BunFile) => ({ stdio: ["ignore", file, "pipe"] }) },
-    { slot: "stdio[2]", fd: 2, stdio: (file: BunFile) => ({ stdio: ["ignore", "pipe", file] }) },
-  ] as const;
+  // The other output stream is a pipe: the child reports on it.
+  const forms: { slot: string; fd: 1 | 2; stdio: (file: BunFile) => object }[] = [
+    { slot: "stdout", fd: 1, stdio: file => ({ stdout: file, stderr: "pipe" }) },
+    { slot: "stderr", fd: 2, stdio: file => ({ stderr: file, stdout: "pipe" }) },
+    { slot: "stdio[1]", fd: 1, stdio: file => ({ stdio: ["ignore", file, "pipe"] }) },
+    { slot: "stdio[2]", fd: 2, stdio: file => ({ stdio: ["ignore", "pipe", file] }) },
+  ];
   // The file is empty when the child starts, and holds only the new output when the child exits.
   const replaced = { sizeAtStart: "0", file: "NEW", exitCode: 0 };
 
@@ -30,10 +31,10 @@ describe("Bun.file(path) as stdout or stderr replaces the file", () => {
     test.each(forms)("$slot", async ({ fd, stdio }) => {
       using dir = tempDir("spawn-stdio-file", { "out.txt": OLD });
       const out = join(String(dir), "out.txt");
-      await using proc = Bun.spawn({
+      await using proc = Bun.spawn<"ignore", "pipe", "pipe">({
         cmd: [bunExe(), "-e", sizeThenWrite(fd)],
         env: bunEnv,
-        ...(stdio(Bun.file(out)) as { stdout: "pipe"; stderr: "pipe" }),
+        ...stdio(Bun.file(out)),
       });
       const [sizeAtStart, exitCode] = await Promise.all([(fd === 1 ? proc.stderr : proc.stdout).text(), proc.exited]);
       expect({ sizeAtStart, file: readFileSync(out, "utf8"), exitCode }).toEqual(replaced);
@@ -48,18 +49,19 @@ describe("Bun.file(path) as stdout or stderr replaces the file", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("the same file as stdin and stdout is empty before the child reads it", async () => {
+    // The way to filter a file in place: the file is read before stdout empties it.
+    test("stdin from the bytes of the file that stdout replaces", async () => {
       using dir = tempDir("spawn-stdio-file", { "both.txt": OLD });
       const both = join(String(dir), "both.txt");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", echoStdin],
+        cmd: [bunExe(), "-e", `const fs = require("fs"); fs.writeSync(1, fs.readFileSync(0, "utf8").toLowerCase())`],
         env: bunEnv,
-        stdin: Bun.file(both),
+        stdin: await Bun.file(both).bytes(),
         stdout: Bun.file(both),
         stderr: "inherit",
       });
       const exitCode = await proc.exited;
-      expect(readFileSync(both, "utf8")).toBe("");
+      expect(readFileSync(both, "utf8")).toBe(OLD.toLowerCase());
       expect(exitCode).toBe(0);
     });
   });
@@ -68,10 +70,10 @@ describe("Bun.file(path) as stdout or stderr replaces the file", () => {
     test.each(forms)("$slot", ({ fd, stdio }) => {
       using dir = tempDir("spawn-stdio-file", { "out.txt": OLD });
       const out = join(String(dir), "out.txt");
-      const { stdout, stderr, exitCode } = Bun.spawnSync({
+      const { stdout, stderr, exitCode } = Bun.spawnSync<"ignore", "pipe", "pipe">({
         cmd: [bunExe(), "-e", sizeThenWrite(fd)],
         env: bunEnv,
-        ...(stdio(Bun.file(out)) as { stdout: "pipe"; stderr: "pipe" }),
+        ...stdio(Bun.file(out)),
       });
       const sizeAtStart = (fd === 1 ? stderr : stdout).toString();
       expect({ sizeAtStart, file: readFileSync(out, "utf8"), exitCode }).toEqual(replaced);
@@ -93,6 +95,24 @@ describe("Bun.file(path) as stdout or stderr replaces the file", () => {
       code = (error as NodeJS.ErrnoException).code;
     }
     expect({ code, file: readFileSync(out, "utf8") }).toEqual({ code: "ENOENT", file });
+  });
+
+  // stdout and stderr empty the file before the child reads stdin, so the same file at both is an error.
+  describe.each(["stdout", "stderr"] as const)("the same Bun.file(path) as stdin and %s", output => {
+    test.each(["spawn", "spawnSync"] as const)("Bun.%s throws and keeps the file", method => {
+      using dir = tempDir("spawn-stdio-file", { "both.txt": OLD });
+      const both = join(String(dir), "both.txt");
+      const options = {
+        cmd: [bunExe(), "-e", echoStdin],
+        env: bunEnv,
+        stdin: Bun.file(both),
+        [output]: Bun.file(both),
+      };
+      expect(() => (Bun[method] as (options: object) => unknown)(options)).toThrow(
+        "stdin cannot be the same file as stdout or stderr",
+      );
+      expect(readFileSync(both, "utf8")).toBe(OLD);
+    });
   });
 
   describe.skipIf(!isWindows)("on Windows", () => {

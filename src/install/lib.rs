@@ -391,10 +391,7 @@ impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `<tmpdir>/bun-node-<uid>-<sha>` (or debug variant): the temp dir is
-    /// everybody's, this is one user's. `<tmpdir>` is `RealFS::tmpdir_path()`:
-    /// non-empty `BUN_TMPDIR`, then `TMPDIR`, `TMP`, `TEMP`, then the platform
-    /// default. The install temp dir and the node-gyp shim dir that share this
-    /// `PATH` use the same lookup.
+    /// everybody's, this is one user's. `<tmpdir>` is `RealFS::tmpdir_path()`.
     ///
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
@@ -413,9 +410,7 @@ impl RunCommand {
         static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
         DIR.get_or_init(|| {
             let name = format!("bun-node-{}{SUFFIX}", bun_sys::c::getuid());
-            // `$TMPDIR` can be relative. The dir goes into `PATH`, `NODE` and
-            // `npm_node_execpath` of child processes that run from other
-            // working directories, so it is made absolute once, here.
+            // Absolute: `$TMPDIR` can be relative and the dir goes into child `PATH`.
             let mut spill = Vec::new();
             let dir = join_abs_string_spill::<platform::Posix>(
                 bun_fs::FileSystem::get().top_level_dir(),
@@ -624,8 +619,7 @@ impl RunCommand {
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
             let created = match bun_sys::mkdir(dir, 0o700) {
-                // `$TMPDIR` can name a directory that does not exist yet.
-                // Create its parents with the default mode, the leaf stays 0700.
+                // `$TMPDIR` may not exist yet. Parents get the default mode, the leaf 0700.
                 Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                     use bun_sys::FdDirExt as _;
                     if let Some(parent) = bun_paths::dirname(dir.as_bytes()) {

@@ -140,11 +140,14 @@ fn write_product(
             entry_point.image_index = index;
         }
     }
-    pair_embedded_copies(
-        &mut entry_points,
-        &build.entry_points,
-        &mut build.output_files,
-    )?;
+    // In place a file that is embedded keeps the path of its source, which names the entry point already.
+    if !options.runs_in_place {
+        pair_embedded_copies(
+            &mut entry_points,
+            &build.entry_points,
+            &mut build.output_files,
+        )?;
+    }
     let further_images: Vec<&[u8]> = build
         .further_programs
         .iter()
@@ -639,10 +642,17 @@ pub(super) fn pair_embedded_copies<'b>(
     entry_points: &[AotEntryPoint],
     output_files: &mut [OutputFile],
 ) -> Result<(), CompileFailure> {
-    let copies = output_files.iter_mut().filter(|file| {
-        file.entry_point_index.is_none() && file.output_kind == options::OutputKind::Asset
-    });
-    for copy in copies {
+    // Of the files with one path the executable holds the first, and a pair needs a file.
+    let mut paths: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    for copy in output_files.iter_mut() {
+        let path = bun_core::strings::remove_leading_dot_slash(&copy.dest_path);
+        let is_first = paths.insert(path.to_vec());
+        let is_held = matches!(copy.value, options::OutputFileValue::Buffer { .. });
+        let is_copy =
+            copy.entry_point_index.is_none() && copy.output_kind == options::OutputKind::Asset;
+        if !is_first || !is_held || !is_copy {
+            continue;
+        }
         let is_source =
             |entry_point: &AotEntryPoint| *entry_point.source_path == *copy.src_path.text;
         let Some(position) = entry_points.iter().position(is_source) else {

@@ -37,8 +37,7 @@ let refreshRuntime: any;
 let lazyDynamicImportWithOptions: null | Function = null;
 /** How many `import()` calls are in the synchronous part of their load right now. See `loadModuleAsync`. */
 let dynamicLoads = 0;
-/** Client only. The modules that are held from outside the module graph: the page's entry point, a page
- *  of a router. Only a page reload evaluates such a module again, unless a module that accepts imports it. */
+/** Client only. The modules that are held from outside the module graph, such as the page's entry point. */
 const roots = new Set<HMRModule>();
 /** For a module, the self-accept callback that was called last and the evaluation that it got. */
 const delivered = new WeakMap<HMRModule, { cb: HotAcceptFunction; evaluation: number }>();
@@ -139,21 +138,17 @@ export class HMRModule {
   selfAccept: HotAcceptFunction | null = null;
   /** When calling `import.meta.hot.accept` on another module */
   depAccepts: Record<Id, HotAccept> | null = null;
-  /** All modules that have imported this module, each with its `version` at the time. An import
-   *  counts until an update replaces the code of the importer. A body that runs again from the
-   *  same code has the same imports, but may not have repeated a `require()` or an `import()` yet. */
+  /** The modules that imported this module, each with its `version` then. An entry counts while that is its version. */
   importers = new Map<HMRModule, number>();
   /** How many times an update replaced the code of this module */
   version = 0;
   /** How many times this module started an evaluation again */
   evaluation = 0;
-  /** The evaluation that went on past a top-level await. While the module is Pending, `promise`
-   *  settles when that evaluation ends. `asyncId` is the module that has the `await`. */
+  /** Set by an evaluation that went past a top-level await. `asyncId` is the module that has the `await`. */
   loading: { promise: Promise<HMRModule>; asyncId: Id } | null = null;
   /** Kept across evaluations. `import.meta.hot.data` rewrites to `data`. */
   hotData: any = {};
-  /** An update reached this module. From then on an importer waits for an evaluation of it that
-   *  is suspended on top-level await. Before that, an importer gets the module as it is. */
+  /** An update reached this module. From then on, an importer waits for an evaluation of it that is suspended. */
   updated = false;
 
   constructor(id: Id, isCommonJS: boolean) {
@@ -234,8 +229,7 @@ export class HMRModule {
   }
 
   // Bundler rewrites all import.meta.hot.* to access the corresponding methods
-  // on HMRModule directly.  The following code implements that interface. `data`
-  // is the accessor above. Its value is kept because HMRModule is not destructed.
+  // on HMRModule directly. The following code implements that interface.
 
   accept(
     arg1?: string | readonly string[] | HotAcceptFunction,
@@ -449,8 +443,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       const { loading } = mod;
       // `loading` is null for a module with no top-level await in it or below it: the common exit.
       if (loading === null || !isSuspended(mod)) return mod;
-      // A load that an `import()` started gets the module as it is, as on a first load. The
-      // suspended module can be the one that awaits that `import()`, and then a wait never ends.
+      // No wait in a load that `import()` started: the suspended module can be the one that awaits that `import()`.
       return importer && dynamicLoads > 0 ? mod : loading.promise;
     }
   }
@@ -583,11 +576,7 @@ function clearHooks(mod: HMRModule) {
   mod.depAccepts = null;
 }
 
-/**
- * For a module that has `loading`: whether an importer waits for it. An update reached the module,
- * and an evaluation of it is suspended on top-level await. A module that no update reached is on
- * its first load, where an importer gets it as it is.
- */
+/** For a module that has `loading`: whether importers wait for it. Only after an update reached it, not on a first load. */
 function isSuspended(mod: HMRModule) {
   return mod.state === State.Pending && mod.updated;
 }
@@ -610,16 +599,11 @@ function finishEvaluation(mod: HMRModule, exportsBefore: any) {
   patchImporters(mod);
 }
 
+// Not `dispose`: what a replaced body made after its await has to be released too.
 const replacedHooks = new Set<PropertyKey>(["accept", "acceptSpecifiers", "on", "reactRefreshAccept"]);
 function replacedHook() {}
 
-/**
- * What a body with top-level await gets as `hmr`. After an await, an update can have replaced the
- * evaluation that the body belongs to. The body still ends with a write to `exports`, and it can
- * still call the hooks. What it writes and registers then must not get to the module, which the
- * new evaluation owns. Its `dispose()` calls still register, because what the body made after the
- * await has to be released too.
- */
+/** What a body with top-level await gets as `hmr`: a body that an update replaced cannot write exports or add hooks. */
 function evaluationView(mod: HMRModule, evaluation: number): HMRModule {
   const isBodyReplaced = () => mod.evaluation !== evaluation || mod.state === State.Stale;
   return new Proxy(mod, {
@@ -832,8 +816,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         }
       }
 
-      // A server has no page to reload. What the update reaches there and no module accepts stays
-      // Stale, and the next request that needs it evaluates it, as on a first load.
+      // A server has no page to reload: what nothing accepts there stays Stale until a request needs it.
       if (side === "client" && propagates && roots.has(mod)) {
         if (hasImporter) {
           (importedRoots ??= []).push(mod);
@@ -846,9 +829,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // A module that did not load, above a module that takes the update itself, can have failed with
-  // the old code of that module. Its next load evaluates it again, and so for the modules that did
-  // not load above it. A loaded module above them does not have to accept that.
+  // Modules that did not load above a self-accepting module can have failed with its old code: their next load runs them.
   if (revive) {
     for (let i = 0; i < revive.length; i++) {
       const mod = revive[i];
@@ -861,8 +842,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // An `accept(dep)` counts when the update does not evaluate its importer again. The loads then
-  // start at the accepted module, as at a self-accepting module.
+  // An `accept(dep)` counts only when the update does not evaluate its importer again. The loads then start at `dep`.
   for (const [accept, { importer, keys }] of toAccept) {
     if (reached.has(importer)) {
       toAccept.delete(accept);
@@ -874,16 +854,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Only a reload evaluates a root again, unless a boundary imports it. A root can have importers
-  // and no boundary above it: the modules that it imports can import it back.
+  // Only a reload evaluates a root again, unless a boundary imports it. A root in an import cycle has importers too.
   if (importedRoots) {
     for (const root of importedRoots) {
       if (!boundaries.has(root) && !isBelowBoundary(root, boundaries)) {
         (failures ??= new Map()).set(root.id, [root.id]);
       }
     }
-    // A boundary can import a root from a function that runs later. The new body of the boundary
-    // does not load the root then, so the loads start at the root too.
+    // A boundary can import a root from a function that runs later, so the loads start at the root too.
     if (!failures) {
       for (const root of importedRoots) {
         if (!boundaries.has(root)) boundaries.set(root, null);
@@ -926,8 +904,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     if (mod.onDispose) disposing.push(mod);
   }
   if (disposing.length > 1) {
-    // A module is disposed of before the modules that it imports. The importer entries have every
-    // kind of import, so the order comes from them: a module goes after its importers.
+    // A module is disposed of before its imports. The importer entries have every kind of import, so they give the order.
     const inOrder: HMRModule[] = (disposing = []);
     const ordered = new Set<HMRModule>();
     const order = (mod: HMRModule) => {
@@ -954,15 +931,12 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Every reached module is Stale after the callbacks ran and before the wait for their promises.
-  // A callback that loads a reached module gets the copy that is disposed of. A load that comes
-  // during the wait evaluates the new code.
+  // Stale only now: a dispose callback that loads a reached module gets the old copy, a load during the wait the new code.
   for (const mod of reached.keys()) {
     mod.state = State.Stale;
     mod.updated = true;
   }
-  // The imports that the old code of a saved module made stop counting here. See `importers`. In
-  // the walk and in the dispose order they still count: the body that is replaced made them.
+  // Only now: the walk and the dispose order still count the imports that the replaced code made. See `importers`.
   for (const key of keys) {
     const existing = registry.get(key);
     if (existing) existing.version++;
@@ -971,9 +945,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     await settle(disposePromises, errors);
   }
 
-  // Reload all modules. The loads start at the boundaries, so the loader evaluates the Stale
-  // imports of a boundary before the boundary, as on a first load. The boundary that loaded first
-  // goes first: in an import cycle it is where the first load entered the cycle.
+  // Reload all modules from the boundaries, in first-load order: the loader evaluates Stale imports before importers.
   let starts: Iterable<HMRModule> = boundaries.keys();
   if (boundaries.size > 1) {
     const inLoadOrder: HMRModule[] = (starts = []);
@@ -1037,10 +1009,7 @@ function deliver(errors: unknown[], mod: HMRModule, cb: HotAcceptFunction) {
   attempt(errors, cb, getEsmExports(mod));
 }
 
-/**
- * Calls a callback of a hot update. On the client an error ends the update, because the page
- * reloads for it. A server has no page to reload: it keeps the error and applies the rest.
- */
+/** Calls a callback of a hot update. The client rethrows, and the page reloads. The server keeps the error and goes on. */
 function attempt<A, B>(errors: unknown[], fn: (a: A, b: B) => unknown, a: A, b?: B) {
   try {
     return fn(a, b as B);
@@ -1060,10 +1029,7 @@ function settle(promises: Promise<unknown>[], errors: unknown[]): Promise<unknow
   });
 }
 
-/**
- * Whether a boundary imports `root`, directly or through other modules. The walk of the update
- * reached every module that this looks at, so their expired importer entries are gone.
- */
+/** Whether a boundary imports `root`, directly or through other modules. The walk already dropped expired importers. */
 function isBelowBoundary(root: HMRModule, boundaries: Map<HMRModule, unknown>) {
   const seen = new Set([root]);
   const stack = [root];

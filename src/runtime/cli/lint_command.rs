@@ -6,6 +6,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
+use bun_lint_driver::lsp::{Features, Process, Realms};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
@@ -236,7 +237,6 @@ impl LintDefaults {
 
 /// The options of `bun lint <args>` run in `directory`, with its bunfigs, for the editor's server. `Err` is what
 /// the command would print before exiting with 2.
-#[allow(dead_code)]
 pub(crate) fn lint_options_in(directory: &[u8], args: &[&[u8]]) -> Result<Options, Vec<u8>> {
     let options = Options::parse(args).map_err(|UsageError(message)| message)?;
     let cwd = bun_lint_driver::from_native_path(directory);
@@ -267,7 +267,6 @@ pub(crate) fn read_format_defaults(
 
 /// The options of `bun fmt <args>` run in `directory`, with its bunfigs, for the editor's server. `Err` is what
 /// the command would print before exiting with 2.
-#[allow(dead_code)]
 pub(crate) fn format_options_in(
     directory: &[u8],
     args: &[&[u8]],
@@ -529,6 +528,51 @@ pub(crate) fn run_and_exit(
     Global::exit(u32::from(exit_code));
 }
 
+impl Realms for super::lint_js::Engines {
+    fn end_all(&self) {
+        super::lint_js::Engines::end_all(self);
+    }
+
+    fn free_all(&self) {
+        super::lint_js::Engines::free_all(self);
+    }
+}
+
+/// `bun lint --lsp` and `bun fmt --lsp`: serves the editor on standard input and output until it says `exit`.
+/// `command` is `lint` or `fmt`, `args` what follows it.
+pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]], features: Features) -> ! {
+    // The messages go to a private copy of fd 1, and fd 1 becomes stderr: what else prints in this process, like
+    // `console.log` in a plugin, does not get between them.
+    #[cfg(unix)]
+    let to_client = bun_sys::dup(bun_core::Fd::stdout())
+        .and_then(|own| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).map(|_| own))
+        .map_or_else(|_| File::stdout(), File::from_fd);
+    #[cfg(not(unix))]
+    let to_client = File::stdout();
+    let from_client = File::stdin();
+    run_and_exit(command, None, |environment| {
+        bun_lint_driver::lsp::serve(
+            args,
+            environment,
+            &Process {
+                read: &|buffer| from_client.read(buffer).unwrap_or(0),
+                write: &|message| _ = to_client.write_all(message),
+                // A folder's plugins run in VMs of its own. On Windows fd 1 still carries what a plugin prints, so
+                // no plugin runs there.
+                engines: &|| {
+                    (!cfg!(windows))
+                        .then(|| Box::new(super::lint_js::Engines::default()) as Box<dyn Realms>)
+                },
+                exit: &|code| Global::exit(u32::from(code)),
+                features,
+                lint_options: &lint_options_in,
+                format_options: &format_options_in,
+            },
+        );
+        Outcome::default()
+    })
+}
+
 impl LintCommand {
     /// True if `bun lint <flag>` is a valid command line.
     pub(crate) fn has_flag(flag: &[u8]) -> bool {
@@ -576,6 +620,16 @@ impl LintCommand {
         if options.help {
             crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
+        }
+        if options.lsp {
+            serve_editor(
+                b"lint",
+                &args,
+                Features {
+                    lint: true,
+                    format: true,
+                },
+            );
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             let mut defaults = LintDefaults::default();

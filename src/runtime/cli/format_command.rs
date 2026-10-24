@@ -6,7 +6,9 @@ use bun_format_conformance::{Bundle, Flags, Format};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
 use super::command::{ContextData, Tag};
-use super::lint_command::{read_bunfigs, read_format_defaults, run_and_exit, usage_error};
+use super::lint_command::{
+    read_bunfigs, read_format_defaults, run_and_exit, serve_editor, usage_error,
+};
 
 pub(crate) struct FormatCommand;
 
@@ -106,6 +108,16 @@ impl FormatCommand {
         if options.help {
             crate::cli::command::tag_print_help(Tag::FormatCommand, options.all);
             Global::exit(0);
+        }
+        if options.lsp {
+            serve_editor(
+                b"fmt",
+                &args,
+                bun_lint_driver::lsp::Features {
+                    format: true,
+                    lint: false,
+                },
+            );
         }
         let cwd = options.cwd.clone();
         run_and_exit(b"fmt", cwd.as_deref(), |environment| {

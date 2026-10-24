@@ -23,21 +23,23 @@ use super::{
     TimeoutObject,
 };
 
+const FAKEABLE_INTERVAL_BIT: u32 = 1 << 31;
+const TIMER_INTERVAL_MASK: u32 = !FAKEABLE_INTERVAL_BIT;
+
 /// Data that TimerObject and ImmediateObject have in common.
 #[repr(C)]
 pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
     pub(crate) id: u64,
     pub this_value: JsCell<JsRef>,
+    /// Millisecond interval in the low 31 bits; the high bit marks timers
+    /// created by fake timer functions without expanding this C-layout struct.
     pub(crate) interval: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
     /// The context whose script created the timer.
     pub(crate) context: bun_jsc::ContextId,
     /// `VirtualMachine::test_isolation_generation` when it did.
     pub(crate) generation: u32,
-    /// Whether this timeout came from the fake timer functions installed by
-    /// `useFakeTimers`. Captured native timer functions remain real timers.
-    pub(crate) fakeable: bool,
 }
 
 // Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
@@ -64,7 +66,6 @@ impl Default for TimerObjectInternals {
             flags: Cell::new(Flags::default()),
             context: bun_jsc::ContextId::default(),
             generation: 0,
-            fakeable: false,
         }
     }
 }
@@ -101,6 +102,16 @@ enum TimerParent {
 }
 
 impl TimerObjectInternals {
+    #[inline]
+    pub(crate) fn interval_ms(&self) -> u32 {
+        self.interval.get() & TIMER_INTERVAL_MASK
+    }
+
+    #[inline]
+    pub(crate) fn is_fakeable(&self) -> bool {
+        self.interval.get() & FAKEABLE_INTERVAL_BIT != 0
+    }
+
     /// `@fieldParentPtr("internals", self)` — the single `container_of` site.
     /// Every other helper (`event_loop_timer`, `ref_`, `deref`, `init`,
     /// `event_loop_timer_state`) routes through this so the `from_field_ptr!`
@@ -308,10 +319,9 @@ impl TimerObjectInternals {
                 f.set_epoch(unsafe { (*state).timer.epoch });
                 Cell::new(f)
             },
-            interval: Cell::new(interval),
+            interval: Cell::new(interval | if fakeable { FAKEABLE_INTERVAL_BIT } else { 0 }),
             context: cx.context().id(),
             generation: cx.vm().test_isolation_generation,
-            fakeable,
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).
@@ -572,12 +582,12 @@ impl TimerObjectInternals {
             s.this_value.with_mut(|r| r.downgrade());
         } else {
             time_before_call = Timespec::ms_from_now(
-                if s.fakeable {
+                if s.is_fakeable() {
                     TimespecMockMode::AllowMockedTime
                 } else {
                     TimespecMockMode::ForceRealTime
                 },
-                i64::from(s.interval.get()),
+                i64::from(s.interval_ms()),
             );
         }
         this_object.ensure_still_alive();
@@ -751,7 +761,8 @@ impl TimerObjectInternals {
         self.this_value
             .with_mut(|r| r.set_strong(timer, global_ref));
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
-        self.interval.set(new_interval);
+        self.interval
+            .set((self.interval.get() & FAKEABLE_INTERVAL_BIT) | new_interval);
         self.reschedule(timer, vm, global);
     }
 
@@ -794,20 +805,20 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
-        let now = Timespec::now(if self.fakeable {
+        let now = Timespec::now(if self.is_fakeable() {
             TimespecMockMode::AllowMockedTime
         } else {
             TimespecMockMode::ForceRealTime
         });
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-        let min_delay = if self.fakeable {
+        let min_delay = if self.is_fakeable() {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
             unsafe { (*state).timer.fake_timers.min_delay_ms() }
         } else {
             0
         };
         // Only `Bun.sleep()` has an `interval` below 1.
-        let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));
+        let scheduled_time = now.add_ms(i64::from(self.interval_ms().max(min_delay)));
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
@@ -984,7 +995,7 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
         let ms = (idle_start_ms as i64)
-            .saturating_add(i64::from(self.interval.get()))
+            .saturating_add(i64::from(self.interval_ms()))
             .max(0);
         let scheduled_time = Timespec::EPOCH.add_ms(ms);
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh

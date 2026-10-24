@@ -533,7 +533,13 @@ pub(crate) fn set_timeout_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_timeout(&global.js_thread(context), callback, arguments, countdown, false)
+    All::set_timeout(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        false,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__setFakeTimeout, c)
@@ -544,7 +550,13 @@ pub(crate) fn set_fake_timeout_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_timeout(&global.js_thread(context), callback, arguments, countdown, true)
+    All::set_timeout(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        true,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
@@ -555,7 +567,13 @@ pub(crate) fn set_interval_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_interval(&global.js_thread(context), callback, arguments, countdown, false)
+    All::set_interval(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        false,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__setFakeInterval, c)
@@ -566,7 +584,13 @@ pub(crate) fn set_fake_interval_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_interval(&global.js_thread(context), callback, arguments, countdown, true)
+    All::set_interval(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        true,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)

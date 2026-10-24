@@ -619,9 +619,13 @@ impl All {
 
         let is_fakeable_timeout = if tag == EventLoopTimerTag::TimeoutObject {
             // SAFETY: `timer` is live and tagged as a `TimeoutObject` per the
-            // constructor invariant; the immutable flag records which timer
-            // API scheduled it, including future interval refreshes.
-            unsafe { (*TimeoutObject::from_timer_ptr(timer)).internals.fakeable }
+            // constructor invariant; the packed interval bit records which
+            // timer API scheduled it, including future interval refreshes.
+            unsafe {
+                (*TimeoutObject::from_timer_ptr(timer))
+                    .internals
+                    .is_fakeable()
+            }
         } else {
             tag.allow_fake_timers()
         };

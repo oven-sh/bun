@@ -58,6 +58,30 @@ test("fake timer marker belongs to the installed setTimeout", () => {
   expect(Object.hasOwnProperty.call(originalSetTimeout, "clock")).toBe(false);
 });
 
+test("useRealTimers() deactivates fake timers when removing the marker throws", () => {
+  const realSetTimeout = globalThis.setTimeout;
+  vi.useFakeTimers();
+  setTimeout(() => {}, 1_000);
+
+  try {
+    Object.defineProperty(globalThis, "setTimeout", {
+      configurable: true,
+      get() {
+        throw new Error("setTimeout getter failed");
+      },
+    });
+
+    expect(() => vi.useRealTimers()).toThrow("setTimeout getter failed");
+    expect(vi.isFakeTimers()).toBe(false);
+  } finally {
+    Object.defineProperty(globalThis, "setTimeout", {
+      configurable: true,
+      writable: true,
+      value: realSetTimeout,
+    });
+  }
+});
+
 test("setTimeout captured before fake timers remains a real timer", () => {
   const capturedSetTimeout = globalThis.setTimeout.bind(globalThis);
   const capturedSetInterval = globalThis.setInterval.bind(globalThis);

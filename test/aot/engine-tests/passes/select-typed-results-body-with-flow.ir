@@ -33,7 +33,7 @@ function f1 name="ofResponse" flags=[IsAsync] parameters=[{type=Response flags=[
     Return v5
 }
 # CHECK-LABEL: function f1 name="ofResponse"
-# CHECK: = CallBuiltin {{*}} overload=ResponsePrototypeBytes/0
+# CHECK: = CallBuiltin {{*}} overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK: [[bytes]]:{{*}}= Await
 # CHECK: = JSONSourceOpen [[bytes]]
 # CHECK: = CallDirect {{*}} function=[[parserOfOrder]]

@@ -23,7 +23,7 @@ function f0 name="castBeforeAwait" flags=[IsAsync] parameters=[{type=Response}] 
 }
 # CHECK-LABEL: function f0 name="castBeforeAwait"
 # CHECK: b0(v0: Response):
-# CHECK-NEXT: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes0]]:{{*}}= Await v1
 # CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen [[bytes0]]
 # CHECK: [[done0]](v3:{{*}}):
@@ -42,7 +42,7 @@ function f1 name="twoCastsBeforeAwait" flags=[IsAsync] parameters=[{type=Request
     Return v5
 }
 # CHECK-LABEL: function f1 name="twoCastsBeforeAwait"
-# CHECK: v1:{{*}}= CallBuiltin v0 overload=RequestPrototypeBytes/0
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes1]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes1]]
 # CHECK: = CallDirect {{*}} function=[[parser]]

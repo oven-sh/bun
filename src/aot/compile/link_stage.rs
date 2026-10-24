@@ -1,6 +1,6 @@
 use super::module_list::collect_module_list;
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
-use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild};
+use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
 use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
@@ -148,6 +148,7 @@ impl Build<'_> {
             body_remap,
             names,
             keys: _,
+            writes_preload,
             counters,
             leftovers,
         } = match linked {
@@ -168,15 +169,16 @@ impl Build<'_> {
         self.statistics.add_counters(application.view(), counters);
         let entry_points = collect_entry_point_paths(application);
         debug_assert_eq!(entry_points.len(), program.entries.len());
-        // Nothing loads the one entry point of a program by a name.
-        let folders = match entry_points.len() {
-            0 | 1 => Vec::new(),
+        // Nothing loads the one entry point of a build by a name.
+        let folders = match (entry_points.len(), self.place) {
+            (0 | 1, ProgramPlace::Only) => Vec::new(),
             _ => collect_folder_paths(application),
         };
         self.retire(leftovers);
         let mut expected_results = program.expected_results.iter();
         let validates_by_type = expected_results.any(|expected| !expected.validation.is_empty());
         Ok(FrontEndOutput {
+            writes_preload,
             validates_by_type,
             program,
             body_remap,

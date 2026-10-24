@@ -295,10 +295,10 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "the class of such a branch, and the properties of the objects it makes",
         of("importedConstant", [...propertiesOfObjectsMadeInBranch, "ClassQ16"]),
       ],
-      gap("the constant objects of a function that has no code any more are still written", [
+      [
         "the properties of the constant objects of a function that only such a branch calls",
         of("importedConstant", propertiesOfConstantObjectsInBranch),
-      ]),
+      ],
       gap(
         "an object that the program does make has a place for every property that the program as written adds to it",
         [

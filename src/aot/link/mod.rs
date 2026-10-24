@@ -99,6 +99,8 @@ pub struct Linked {
     pub body_remap: BodyRemap,
     pub names: ProgramNames,
     pub keys: ProgramKeys,
+    /// The program writes a property of that name, which is an option of `Worker`.
+    pub writes_preload: bool,
     pub counters: Counters,
     pub leftovers: Leftovers,
 }
@@ -320,6 +322,7 @@ pub fn link_while(
             run_beside(beside, build_records, || meanwhile(&keys)).0
         },
     );
+    let mut writes_preload = false;
     run_beside(
         beside,
         || {
@@ -331,7 +334,7 @@ pub fn link_while(
                 strings: &strings,
                 in_parallel,
             };
-            mark_unused_records(defined, &uses);
+            writes_preload = mark_unused_records(defined, &uses, b"preload");
             literal_slots::widen_literal_slots(defined, &uses, &types);
             add_views_of_literals(defined, views);
         },
@@ -358,6 +361,7 @@ pub fn link_while(
         body_remap,
         names,
         keys,
+        writes_preload,
         counters: times.counters,
         leftovers: Box::new((units, numbering, retained, functions, layouts, variables)),
     })

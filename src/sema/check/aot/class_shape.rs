@@ -2,13 +2,16 @@ use super::answers::{
     ClassDeclaration, ClassMember, ClassMemberSource, ClassRef, ClassShape, FunctionRef, GaveUp,
     MemberName, ObjectMemberKind, PositionTypes,
 };
-use super::class_stores::{BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner};
+use super::class_stores::{
+    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner,
+    find_prototype_object_held_by, is_prototype_property,
+};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Bound, Decl, FnOwner, Parent, SymbolId};
 use crate::hir::{
-    self, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, MemberKey, MemberKind,
-    ModifierKind, PatKind, PropKey, TypeNodeId, has_body,
+    self, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, MemberKind, ModifierKind,
+    PatKind, PropKey, TypeNodeId, has_body,
 };
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
@@ -404,9 +407,10 @@ fn can_be_constructor_function(function: &hir::Func) -> bool {
     }
 }
 
-fn is_prototype_object(hir: &hir::File<'_>, object: ExprId) -> bool {
+pub(super) fn is_prototype_object(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> bool {
     let object = hir.skip_type_assertions(object);
-    matches!(hir.member_key(object), Some((_, MemberKey::Name(name))) if name == known::prototype)
+    is_prototype_property(hir, object)
+        || find_prototype_object_held_by(hir, bound, object).is_some()
 }
 
 fn is_stored_into(
@@ -427,7 +431,7 @@ fn is_stored_into(
     )
 }
 
-// `F.prototype.name = function () { .. }`, a function in the literal that becomes a prototype object, the `get` or the `set` of a property descriptor.
+// `F.prototype.name = function () { .. }`, the same through a variable that holds `F.prototype`, a function in the literal that becomes a prototype object, the `get` or the `set` of a property descriptor.
 fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
@@ -439,13 +443,15 @@ fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) 
         );
         let literal = bound.prop_owner[property.idx()];
         return is_accessor_of_descriptor
-            || is_stored_into(hir, bound, literal, |place| is_prototype_object(hir, place));
+            || is_stored_into(hir, bound, literal, |place| {
+                is_prototype_property(hir, hir.skip_type_assertions(place))
+            });
     }
     is_stored_into(
         hir,
         bound,
         expression,
-        |place| matches!(hir.member_key(place), Some((object, _)) if is_prototype_object(hir, object)),
+        |place| matches!(hir.member_key(place), Some((object, _)) if is_prototype_object(hir, bound, object)),
     )
 }
 

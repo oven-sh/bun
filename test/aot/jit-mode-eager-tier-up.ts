@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "path";
-import { inPrograms, inShare, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, told, unsupported, wanted } from "./run-programs";
+import { inPrograms, inShare, inTenthOfAll, inThirdOfAll, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, told, unsupported, wanted } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 
@@ -50,8 +50,8 @@ export function eagerTierUpSweep(part: number, parts: number) {
       .filter(mayHoldWhatIsWanted)
       .filter(path => inShare("eager tier-up " + inPrograms(path), 10, true))
       .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
-      .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n),
-    path => (wanted === "" || wanted === "quick" ? (hash(path) >> 8n) % 10n === 0n : inPrograms(path).includes(wanted)),
+      .filter(path => !isASAN || inThirdOfAll("eager tier-up", path)),
+    path => (wanted === "" || wanted === "quick" ? inTenthOfAll("eager tier-up", path) : inPrograms(path).includes(wanted)),
   ).filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt"));
 
   describe.concurrent("run --aot with eager tier-up", () => {

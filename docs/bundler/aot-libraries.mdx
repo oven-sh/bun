@@ -106,6 +106,8 @@ export { greet };
 
 `bun compile` type checks the full-types files as a project of their own, under those options. The rest is always the same: `"target": "esnext"`, `"module": "preserve"`, `"moduleResolution": "bundler"`, `"skipLibCheck": true` and `"noEmit": true`. The `tsconfig.json` of the program that installs your package doesn't count, and neither do its `lib`, its `@types` packages or what it declares globally.
 
+`@types/bun` is the exception, because it declares what Bun itself provides. Where the program has it installed, `process`, `Buffer`, `node:http` and the rest have their types in your full-types files. Where it doesn't, they're `any`. Add `"types": []` to `"compilerOptions"` to leave it out.
+
 With `--library` and `--dts`, a `const` stays a `const` in the bundle, where `bun build` otherwise writes `var` at the top level of a module. A `const` keeps its literal type, can be a `unique symbol`, and keeps what a test has narrowed, so the full-types file means what your sources mean.
 
 Bun looks for your `tsconfig.json` from the entry point's folder up to the folder that has your `package.json`, and no further: one above that belongs to another project. Pass `--tsconfig-override` to use it anyway. Without a `tsconfig.json`, your sources are checked as `strict`, with `"lib": ["esnext", "dom", "dom.iterable", "dom.asynciterable"]`.
@@ -143,14 +145,15 @@ console.log(greet({ name: "Ada", times: 2 }));
 bun compile ./app.ts && ./app
 ```
 
-The build starts with a note:
+The build starts with two notes:
 
 ```txt
 note: "greeter" 1.0.0 is compiled from its full types in node_modules/greeter
+note: 1 package has full types, and 1 is compiled from them
 hello Ada hello Ada
 ```
 
-The note says that `bun compile` found the full-types file. `bun ./app.ts` and Node.js print the same line from `index.js`.
+The first note says that `bun compile` found the full-types file. The second one counts the packages that have full types, and how many of them are compiled from their full types. If the two numbers differ, [a warning says why](#when-the-full-types-file-cant-be-used). `bun ./app.ts` and Node.js print the same line from `index.js`.
 
 ### 4. Publish
 
@@ -183,7 +186,7 @@ Only `bun compile` knows the `"full-types"` condition. Everything else skips it 
 
 ### When the full-types file can't be used
 
-The full-types file never fails your user's build. Bun warns, and compiles `index.js` without types.
+The full-types file never fails your user's build. Bun warns, and compiles `index.js` without types. A package that has a full-types file is never compiled without it in silence.
 
 | What happened                                                    | What the build prints                                                                              |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -191,9 +194,27 @@ The full-types file never fails your user's build. Bun warns, and compiles `inde
 | `index.full.ts` belongs to another version, or doesn't parse     | The same                                                                                           |
 | `index.full.ts` isn't in the package                             | `index.full.ts is missing`                                                                         |
 | `index.full.ts` has a type error under its own `compilerOptions` | [`TS100009`](/bundler/aot-troubleshooting#a-package-has-type-errors-so-its-compiled-without-types) |
+| `index.full.ts` has a `// @ts-nocheck` comment                   | `index.full.ts has a // @ts-nocheck comment, so nothing checks its types. Remove the comment`      |
 
 ```txt
 warn: "greeter" is compiled without types, because its full types in node_modules/greeter can't be used: index.full.ts is missing
+```
+
+The same warning tells you when `package.json` doesn't lead to the file.
+
+| What `package.json` gets wrong                                           | What the build prints                                                                                                                                                                     |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.full.ts` is beside `index.js`, and no condition points at it      | `index.full.ts is beside index.js, but no "full-types" condition in the "exports" of package.json points at it`                                                                           |
+| The condition comes after `"default"`, or after another one that matches | `in the "exports" of package.json, the "full-types" condition that points at index.full.ts comes after a condition that already matches. Put it before "import", "require" and "default"` |
+| The condition is spelled `"full-type"`, `"fullTypes"` or `"Full-Types"`  | `the "exports" of package.json point at index.full.ts under a condition that isn't spelled "full-types"`                                                                                  |
+| `"full-types"` is a field beside `"types"`, and not a condition          | `package.json points at index.full.ts in a "full-types" field at the top level. It has to be a condition in "exports"`                                                                    |
+| The condition points at `index.d.ts`                                     | `index.d.ts is a declaration file. A full-types file is index.js with types added`                                                                                                        |
+
+`"compilerOptions"` only counts at the top level of `package.json`. If it's inside `"exports"` or `"publishConfig"`, or spelled differently, the full types are checked as `strict`, and the build says what it skipped. It also reports the first option that TypeScript rejects.
+
+```txt
+warn: TS100068: "exports > . > compilerOptions" in node_modules/greeter/package.json is ignored, so the full types of "greeter" are type checked as strict. bun compile reads "compilerOptions" at the top level of that file
+warn: TS100070: "compilerOptions" in node_modules/greeter/package.json has an error, so the full types of "greeter" are type checked without that option: TS5023: Unknown compiler option 'stric'.
 ```
 
 ## Test before you publish
@@ -536,6 +557,7 @@ bun compile ./rows-app.ts && ./rows-app
 
 ```txt
 note: "each-row" 1.0.0 is compiled from its full types in .full-types/each-row
+note: 1 package has full types, and 1 is compiled from them
 1
 2
 ```
@@ -547,6 +569,7 @@ note: "each-row" 1.0.0 is compiled from its full types in .full-types/each-row
 | `when`            | What the build must [`define`](/bundler#define), as strings: `{ "process.env.NODE_ENV": "production" }` |
 | `lay`             | The files of the package that `lay/<path>` replaces, each with the SHA-256 of the installed file        |
 | `needs`           | Other packages whose full types must be in use too                                                      |
+| `compilerOptions` | Optional. The options that the files under `lay` are type checked under, as in a `package.json`         |
 
 Bun only uses full types if everything matches. Otherwise it compiles the installed JavaScript, as if the full types weren't there, and warns you with what didn't match, for example after you upgrade the package. The program still works, and it never gets slower without you hearing about it.
 
@@ -554,15 +577,35 @@ Bun only uses full types if everything matches. Otherwise it compiles the instal
 warn: TS100056: The full types of "each-row" in .full-types/each-row can't be used: they are for version 1.0.0, but 1.0.1 is installed. Replace them with the full types for 1.0.1, or remove them
 ```
 
+The build also tells you about full types that it never gets to.
+
+| What's in the project                                                                | What the build prints                                                                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `.full-types/each-row` for a package that the program doesn't import                 | `TS100056`: `the program doesn't import "each-row". Check the name of the folder, or remove it`        |
+| `.full-types/Each-Row`, and the package is `each-row`                                | `TS100056`: `the program imports "each-row", spelled differently. Rename the folder`                   |
+| `lay/index.ts`, and the installed file is `index.js`                                 | `TS100056`: `they add index.ts, and full types can only replace installed files`                       |
+| `.full-types/each-row` without a `full-types.json`                                   | `TS100067`: `it has no full-types.json. Add the file, or remove the folder`                            |
+| The folders are in `full-types`, `.full_types` or `.Full-Types`                      | `TS100067`: `the folder has to be named .full-types`                                                   |
+| `.full-types` is beside the entry point, or further up, and the build runs elsewhere | `TS100067`: `full types go in the .full-types of the directory that the build runs from`, and its path |
+| `node_modules/@oven/each-row` has a `full-types.json`                                | `TS100067`: `a package that holds full types is named @oven/full-types-<name>`                         |
+
+```txt
+warn: TS100067: bun compile doesn't read .full-types/each-row: it has no full-types.json. Add the file, or remove the folder
+```
+
+A project that has none of this gets no warning and no note.
+
 Full types only replace files that the package has. They can't add one. Bun compares each file under `lay` with the installed file, as it does for a full-types file that a package ships: without its types, it has to be the same code. That rules out TypeScript syntax that turns into code, such as an `enum`, a `namespace`, a parameter property or a decorator. [What a full-types file can contain](#what-a-full-types-file-can-contain) has the list.
 
-Bun type checks full types at build time. If they have a type error, the package is compiled without its types and the build warns you with the first error, as it does for a package that ships TypeScript. They're checked as a project of their own, as `strict`: your `tsconfig.json` doesn't apply to them.
+Bun type checks full types at build time. If they have a type error, the package is compiled without its types and the build warns you with the first error, as it does for a package that ships TypeScript. They're checked as a project of their own, under the options that [a package's own full-types files](#write-the-full-types-file-with-another-build) are checked under: `strict`, with the default `lib` and with `@types/bun` if it's installed, unless `full-types.json` has `"compilerOptions"`. Your `tsconfig.json` doesn't apply to them.
 
 An [`int32`](/bundler/aot-types#32-bit-integers) in your own code stops the build if Bun can't prove it, because you can fix it. In full types, or in a package that ships TypeScript, you can't. There the build continues and warns you: every `int32` that the file declares is tested when the program runs, instead of being taken for granted.
 
 ```txt
 warn: TS100066: The compiler can't prove every 'int32' that ".full-types/each-row/lay/index.js" declares, so it tests them when the program runs. The file still works, but runs slower.
 ```
+
+If you write the full types, you can avoid the warning. Where you know a value is an `int32` and Bun can't prove it, write `value as int32`. In full types, and in a package that ships TypeScript, Bun takes your word for it: it doesn't warn, and it tests the value when the program runs.
 
 ## Install full types
 

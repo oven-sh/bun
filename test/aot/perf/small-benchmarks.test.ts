@@ -160,8 +160,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
     base = await measure(nothing);
   }, 600_000);
 
-  // TODO: `{ ...source, session, id }` of a source of any shape takes 301,133 operations of the run time where the budget is 1,440.
-  const overTheirBudgets = new Set(["an-object-of-any-shape-is-copied-and-given-two-names"]);
+  const overTheirBudgets = new Set<string>();
   for (const path of programs) {
     const name = nameOf(path);
     if (wanted !== "quick" && !name.includes(wanted)) continue;

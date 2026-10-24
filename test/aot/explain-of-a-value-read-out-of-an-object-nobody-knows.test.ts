@@ -19,7 +19,7 @@ async function explain(files: Record<string, string>) {
 const placeOf = ({ file, line, column, reason }: ExplainCause) => `${file}:${line}:${column} ${reason}`;
 
 describe.concurrent("a function that only code outside the program calls", () => {
-  test("what is read out of its parameter is read from a shared object: no built-in function has answered it", async () => {
+  test("what is read out of its parameter hangs on the line that lets such code in, not on the reads: no built-in function has answered it", async () => {
     const { causes, exitCode } = await explain({
       "main.ts": `function handle(context: any) {
   return context.request.method;
@@ -28,9 +28,15 @@ describe.concurrent("a function that only code outside the program calls", () =>
 console.log((globalThis as any).handler({ request: { method: "GET" } }));
 `,
     });
-    expect({ inHandle: causes.filter(cause => cause.line === 2).map(placeOf), exitCode }).toEqual({
-      inHandle: ["main.ts:2:10 called-by-unknown-code", "main.ts:2:18 read-from-shared-object"],
+    expect({
+      inHandle: causes.filter(cause => cause.line === 2).map(placeOf),
+      first: placeOf(causes[0]),
+      exitCode,
+    }).toEqual({
+      inHandle: [],
+      first: "main.ts:5:14 called-by-unknown-code",
       exitCode: 0,
     });
+    expect(causes[0].accesses).toBeGreaterThanOrEqual(2);
   }, 60_000);
 });

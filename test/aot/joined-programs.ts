@@ -218,11 +218,11 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
 
 type Way = { name: string; flags: string[]; env?: Record<string, string> };
 
-async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string) => Way[]) {
+async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string) => Way[], mustBeMet = false) {
   const cwd = join(folder, String(group));
   const paths = joinable(listed);
   if (paths.length > 2 * namesInGroup) {
-    for (let from = 0; from < paths.length; from += namesInGroup) await compareWays(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), waysOf);
+    for (let from = 0; from < paths.length; from += namesInGroup) await compareWays(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), waysOf, mustBeMet);
     return;
   }
   const ways = waysOf(String(group));
@@ -275,6 +275,7 @@ async function compareWays(folder: string, carrier: string[], group: number | st
         const byClock = ran.stopped.filter(stop => stop.endsWith(": SIGKILL"));
         const found = [...ran.stopped.filter(stop => !byClock.includes(stop)).map(stop => `stopped in ${stop}`), ...differing(ran, names.filter(name => !byClock.some(stop => stop.startsWith(name + ": "))))];
         for (const what of found) reds.push(says(way.name, what));
+        if (mustBeMet && !Number(met)) reds.push(says(way.name, "no program is beyond the limit"));
         if (found.length === 0) says(way.name, `same, ${names.length} programs${met === undefined ? "" : `, met ${met} times`}`);
       }),
     ),
@@ -308,5 +309,21 @@ export function joinedWithLimitsLowered(part = 1, parts = 1, oneIn = isASAN ? 96
       test(`group ${group}: ${nameOf(listed[0])} to ${nameOf(listed.at(-1)!)}`, () => compareWays(folder, carrier, group, listed, waysOf), 900_000 + (process.env.AOT_SHARE === "all" ? 86_400_000 : 0));
     }
     if (first > groups.length) test.skip("no group selected", () => {});
+  });
+}
+
+/**
+ * On ARM64 a call reaches 128 MB. In a larger program a call between functions that lie further apart goes through a jump behind the caller, and the code that all functions share
+ * is there several times, each copy within reach of its callers. No test program is that large, so the reach is lowered. The same groups in every run, one a part.
+ */
+export function joinedBeyondTheReachOfCalls(part = 1, parts = 1) {
+  const folder = String(tempDir("aot-joined-programs", {}));
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  describe("compile/aot/joined/beyond-the-reach-of-calls", () => {
+    if (unsupported) return void test.skip(unsupported, () => {});
+    const groups = groupsOf(programsOfOneFile());
+    const ways = ["FunctionCallReach:0", "DirectCallReach:524288"].map(name => ({ name, flags: [`--aot-limit=${name}`] }));
+    const group = Math.floor((groups.length * part) / (parts + 1));
+    test(`group ${group}`, () => compareWays(folder, withoutDebugInformation(), group, groups[group], () => ways, true), 900_000);
   });
 }

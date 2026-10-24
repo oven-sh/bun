@@ -24,5 +24,7 @@ export default b.declarations(
   b.fn("Bun.sql", queriesRows),
   // Both names answer the default export of bun:sql: defaultBunSQLObject in BunObject.cpp.
   b.same("Bun.postgres", "Bun.sql"),
-  classesWithBody.flatMap(name => b.extend(`${name}.prototype.json`, { bodyBytesForm: `${name}.prototype.bytes` })),
+  classesWithBody.flatMap(name =>
+    b.extend(`${name}.prototype.json`, { bodyBytesForm: "%CompilerHelpers%.jsonSourceOfBody" }),
+  ),
 );

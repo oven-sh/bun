@@ -15,6 +15,7 @@ pub struct Manifest {
     defines: Vec<(Box<[u8]>, Box<[u8]>)>,
     modules: Vec<Module>,
     function_files: Vec<Box<[u8]>>,
+    module_declarations: Vec<Box<[u8]>>,
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
 }
@@ -55,6 +56,7 @@ impl Manifest {
                     specifier: optional(field()?),
                 }),
                 b"functions" => manifest.function_files.push(field()?.into()),
+                b"declarations" => manifest.module_declarations.push(field()?.into()),
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
                     let file = field()?;
@@ -138,6 +140,11 @@ impl Manifest {
 
     pub fn function_files(&self) -> &[Box<[u8]>] {
         &self.function_files
+    }
+
+    /// Each says what `require` answers for the module beside it.
+    pub fn module_declarations(&self) -> &[Box<[u8]>] {
+        &self.module_declarations
     }
 
     /// Only `$linkTimeConstant` calls from other function files reach these.
@@ -262,7 +269,8 @@ mod tests {
         function\t65536\tbuiltins/Fifo.ts\tcreateFIFO\n\
         function\t7\tengine/ArrayPrototype.js\tmap\n\
         functions\tengine/ArrayPrototype.js\n\
-        functions\tbuiltins/Fifo.ts\n";
+        functions\tbuiltins/Fifo.ts\n\
+        declarations\tnode/fs.listed.d.ts\n";
 
     fn error_line(text: &[u8]) -> Option<usize> {
         Manifest::parse(text).err().map(|error| error.line)
@@ -283,6 +291,8 @@ mod tests {
         assert!(manifest.module(4).unwrap().path.is_none());
         assert_eq!(manifest.function_files().len(), 2);
         assert_eq!(&*manifest.function_files()[1], b"builtins/Fifo.ts");
+        assert_eq!(manifest.module_declarations().len(), 1);
+        assert_eq!(&*manifest.module_declarations()[0], b"node/fs.listed.d.ts");
     }
 
     #[test]

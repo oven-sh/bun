@@ -668,15 +668,15 @@ fn empty_layout_has_kind_of_its_key() {
 #[test]
 fn synthetic_export_variable_is_untyped_and_uninitialized() {
     let (name, module) = (StringId::new(3), ModuleId::new(2));
-    // A copy stays empty where the object lacks the name, and the check of the importer tests for that.
-    let may_stay_empty = DeclaredType {
+    // A copy stays empty where the object lacks the name, and what a face takes is empty for an importer that the CommonJS file itself requires. The check of the importer tests for that.
+    let may_be_read_empty = || DeclaredType {
         ty: TypeTable::ANYTHING_OR_ABSENT,
         ..DeclaredType::untyped()
     };
     let writers = [
         (ExportWriter::Loader, DeclaredType::untyped()),
-        (ExportWriter::Face, DeclaredType::untyped()),
-        (ExportWriter::Capture, may_stay_empty),
+        (ExportWriter::Face, may_be_read_empty()),
+        (ExportWriter::Capture, may_be_read_empty()),
     ];
     for (writer, declared) in writers {
         let expected = Variable {

@@ -365,6 +365,14 @@ impl ModuleGraph {
         }
     }
 
+    /// What such a name of an ES module is bound to, where it stands for a name of a CommonJS module: `export { N } from "./k.cjs"`.
+    pub fn binding_of_member_named(&self, module: ModuleRef, name: Atom) -> Option<ImportBinding> {
+        match self.plan().named_members.get(&(module, name)) {
+            Some(&NamedMember::Binding(binding)) => Some(binding),
+            Some(NamedMember::Fixed(_)) | None => None,
+        }
+    }
+
     fn finish_fixed_member(&self, module: ModuleRef, member: Member) -> Member {
         match member {
             Member::Marker(_) => self.marker(module).map_or(Member::OnObject, Member::Marker),

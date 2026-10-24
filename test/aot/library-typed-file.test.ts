@@ -61,7 +61,9 @@ async function install(root: string) {
 async function compile(root: string) {
   const app = join(root, "app");
   const build = await spawned([bunExe(), "compile", "./app.ts"], app, env);
-  const said = (build.stdout + build.stderr).split(/\r?\n/).filter(line => /^(note|warn|error): /.test(line));
+  const said = (build.stdout + build.stderr)
+    .split(/\r?\n/)
+    .filter(line => /^(note|warn|error): /.test(line) && !/ full types, and /.test(line));
   const ran = build.exitCode === 0 ? await spawned([join(app, isWindows ? "app.exe" : "app")], app, env) : undefined;
   return { said, exitCode: build.exitCode, signal: build.signal, stdout: ran?.stdout };
 }

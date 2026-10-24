@@ -5,8 +5,8 @@ import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from 
 import { join } from "node:path";
 import { run as runCommand } from "../harness/run";
 
-// TODO: the build of these ends with exit code 134 and says nothing.
-const notYetBuilt = ["ddtrace", "sentry"];
+// TODO: the build of this one ends with exit code 134.
+const notYetBuilt = ["sentry"];
 const shipsNoBuildForThisPlatform = ["win32-arm64", "darwin-x64"].includes(`${process.platform}-${process.arch}`) ? ["argon2"] : [];
 
 function testEachProgram(

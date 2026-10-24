@@ -1,1 +1,0 @@
-The pinned engine does not have the fix yet: listing the keys of a namespace object reads behind the end of its Structure (aot/builtins/AOTOwnPropertyBuiltinEmitter.cpp, generateOwnPropertyKeys()).

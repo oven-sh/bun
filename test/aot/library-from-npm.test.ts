@@ -83,7 +83,7 @@ async function compile(root: string, folder = "app", entry = "app.ts") {
   const built = await spawned([bunExe(), "compile", `./${entry}`], app, environment(root));
   const said = (built.stdout + built.stderr)
     .split(/\r?\n/)
-    .filter(line => /full types|without (its |their )?types/.test(line) && !/^\s*\[/.test(line))
+    .filter(line => /full types|without (its |their )?types/.test(line) && !/^\s*\[| full types, and /.test(line))
     .map(line => line.replaceAll(root, "<root>").replaceAll("\\", "/"));
   const name = entry.replace(/\.[a-z]+$/, isWindows ? ".exe" : "");
   const ran = built.exitCode === 0 ? await spawned([join(app, name)], app, environment(root)) : undefined;

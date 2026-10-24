@@ -340,6 +340,7 @@ fn with_code_files(
         entry_points: Vec::new(),
         entry_of_file: Vec::new(),
         is_in_types_program: is_in_types_program.to_vec(),
+        typed_files_with_other_code: FxHashSet::default(),
     };
     code_files.index_entries(is_in_types_program.len());
     test(code_files);

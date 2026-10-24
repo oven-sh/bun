@@ -52,8 +52,7 @@ async function growsWithItsLength({ file, length, source, prints }: Program) {
   expect(whole / half < mostGrowth ? "" : told).toBe("");
 }
 
-// TODO: twice the length costs 2.9 times the instructions.
-test.todo(
+test(
   "a switch of numbers as long as a generator writes it is built in time that grows with its length",
   () =>
     growsWithItsLength({
@@ -66,7 +65,7 @@ test.todo(
   limit,
 );
 
-// TODO: twice the length costs 3.0 times the instructions.
+// TODO: twice the length costs 2.44 times the instructions, which is too near the bound to be held to it.
 test.todo(
   "try blocks whose catch clauses hand their parameters on, as many as a generator writes",
   () =>

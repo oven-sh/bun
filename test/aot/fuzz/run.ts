@@ -16,7 +16,7 @@
 //   --validate            also builds each program in validate mode
 //   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, and those that run only when named here:
 //                         erased-and-hot, nothing-inlined, hot-and-nothing-inlined, no-flow-results, hot-without-flow-results, every-function-cold, counts-as-very-large, cold-and-very-large, erased-cold-and-very-large,
-//                         erased-and-cold, allocations-leave-the-fast-path
+//                         erased-and-cold, allocations-leave-the-fast-path, claims-checked, moved-loads-checked, hot-with-claims-checked, hot-with-moved-loads-checked
 //   --collector-stress 1,2,3,5,7,11   the executable runs with a collection at every n-th allocation that leaves the fast path, freed cells overwritten and never reused;
 //                         n and whether the collections are full or young are drawn anew for every batch and stand among the flags of a finding as --in-the-run=<variable>
 //                         (0 among them: no collections but the program's own); --fenced: half of the batches with every write barrier on its fenced road
@@ -103,4 +103,6 @@ if (replay) {
     });
     console.log(summary.status);
   } while (has("rounds") && !existsSync(join(out, "STOP")));
+  // A source may leave something behind that keeps the process alive.
+  process.exit(0);
 }

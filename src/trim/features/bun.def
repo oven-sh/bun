@@ -173,6 +173,8 @@ feature TlsSockets "TLS sockets and servers"
 
 feature X509 "crypto.X509Certificate and crypto.KeyObject"
 
+feature SystemCaCertificates "tls.getCACertificates('system')"
+
 feature Tls "TLS"
   c-function us_internal_ssl_attach us_internal_ssl_detach us_internal_ssl_close us_internal_ssl_shutdown
   c-function us_internal_ssl_on_open us_internal_ssl_on_data us_internal_ssl_on_writable us_internal_ssl_on_timeout

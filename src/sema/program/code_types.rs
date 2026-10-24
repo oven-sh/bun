@@ -1,6 +1,6 @@
 use super::code_load::{CodeTarget, LoadKey, LoadedCode, ParsedCodeFile};
 use super::*;
-use crate::resolve::{CodeImportKind, HostPayload, is_declaration_file_name};
+use crate::resolve::{CodeHost, CodeImportKind, HostPayload, is_declaration_file_name};
 
 impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
     pub(super) fn answer_types_question(
@@ -48,16 +48,20 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         loaded: &Loaded<'s, 'r>,
         code: &LoadedCode<'s, 'r>,
     ) -> Option<Resolution<'r>> {
-        let is_untyped = loaded.module.role == FileRole::Inferred
-            && key.loader == HostLoader::default()
-            && code.analyzed.typed_source_path.is_none();
+        let is_untyped =
+            loaded.module.role == FileRole::Inferred && code.analyzed.typed_source_path.is_none();
         if !is_untyped {
             return None;
         }
+        let path = match key.loader == HostLoader::default() {
+            true => self.resolver.declaration_file_of(key.path)?,
+            false if self.is_in_place_of_typed_file(key) => key.path,
+            false => return None,
+        };
         Some(Resolution {
             spec: known::own_declaration,
             mode: ResolutionMode::None,
-            path: self.resolver.declaration_file_of(key.path)?,
+            path,
             number: NOT_NUMBERED,
             should_add_file: true,
             increases_depth: false,
@@ -65,6 +69,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             is_importable: true,
             unsupported_extension: None,
         })
+    }
+
+    pub(super) fn is_in_place_of_typed_file(&self, key: LoadKey<'_>) -> bool {
+        key.loader != HostLoader::default()
+            && self.host.loader_of_code_in_place_of_typed_file(key.path) == Some(key.loader)
     }
 
     pub(super) fn types_file_parse_options(&self, path: &[u8]) -> ParseOptions {
@@ -102,12 +111,10 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         if question.project.is_some() || role == FileRole::TypesOnly {
             return question;
         }
-        let manifest = typed_source_path.and_then(|it| self.host.typed_version_manifest(it));
-        let governing = match (manifest, typed_source_path, code) {
-            (Some(manifest), ..) => Some(self.projects.of_typed_version(self, &manifest)),
-            (None, Some(_), _) => self.projects.governing_full_types(self, text_path),
-            (None, None, Some(_)) => self.projects.governing_code(self, text_path),
-            (None, None, None) => self.projects.governing(self, text_path),
+        let governing = match (typed_source_path, code) {
+            (Some(_), _) => self.projects.governing_full_types(self, text_path),
+            (None, Some(_)) => self.projects.governing_code(self, text_path),
+            (None, None) => self.projects.governing(self, text_path),
         };
         match governing {
             Some(options) => TypesQuestion {
@@ -165,6 +172,24 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
                 self.types_answers.push((specifier, mode, target));
             }
         }
+        true
+    }
+
+    /// Returns true if another loader than the one that the name of the file stands for answers the import, and not with code. TypeScript goes by the name.
+    pub(super) fn answer_types_from_data_loader(
+        &mut self,
+        host: &dyn CodeHost,
+        specifier: Atom,
+        mode: ResolutionMode,
+    ) -> bool {
+        let Some(index) = self.find_target(specifier, mode) else {
+            return false;
+        };
+        let key = self.targets[index as usize].key;
+        if key.loader == HostLoader::default() || host.loads_as_code(key.path, key.loader) {
+            return false;
+        }
+        self.types_answers.push((specifier, mode, index));
         true
     }
 

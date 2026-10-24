@@ -61,10 +61,6 @@ pub trait CodeHost: Host {
         None
     }
 
-    fn typed_version_manifest(&self, _typed_path: &[u8]) -> Option<Vec<u8>> {
-        None
-    }
-
     fn compiler_declarations(&self) -> Vec<Vec<u8>> {
         Vec::new()
     }
@@ -81,6 +77,11 @@ pub trait CodeHost: Host {
 
     fn loader_of(&self, _request: &LoaderRequest<'_>) -> HostLoader {
         HostLoader::default()
+    }
+
+    /// False if `loader` makes a module out of the file without reading it as code: an asset, a text, data. What such a module exports is all that an importer sees of the file.
+    fn loads_as_code(&self, _path: &[u8], _loader: HostLoader) -> bool {
+        true
     }
 
     fn read_code(&self, path: &[u8]) -> CodeRead {
@@ -114,6 +115,11 @@ pub trait CodeHost: Host {
 
     fn is_plugin_source(&self, _path: &[u8]) -> bool {
         false
+    }
+
+    /// `Some` once `read_code` has answered JavaScript for a TypeScript file: the loader of what runs. The file is still what its importers see as types, `read_source` answers its own text, and nobody has held the one against the other.
+    fn loader_of_code_in_place_of_typed_file(&self, _path: &[u8]) -> Option<HostLoader> {
+        None
     }
 
     fn is_library_file(&self, _path: &[u8]) -> bool {

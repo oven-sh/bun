@@ -67,8 +67,11 @@ for (const main of Object.keys(mains)) {
   );
 }
 
-test.todo("require() of a further entry point does not call a `then` that it exports", () =>
-  isAsPlain("main.cjs", `const load = require;\nconsole.log(Object.keys(load("./rt/" + "thenable.cjs")).join());\n`, {
-    "rt/thenable.cjs": `module.exports = { then() { throw new Error("asked"); } };\n`,
-  }),
+test(
+  "require() of a further entry point does not call a `then` that it exports",
+  () =>
+    isAsPlain("main.cjs", `const load = require;\nconsole.log(Object.keys(load("./rt/" + "thenable.cjs")).join());\n`, {
+      "rt/thenable.cjs": `module.exports = { then() { throw new Error("asked"); } };\n`,
+    }),
+  120_000,
 );

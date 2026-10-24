@@ -15,7 +15,7 @@ groups of tests, the one command that runs each, what CI has to know, and where 
 | **Needs `perf`** | `AOT_PERF=1 bun test test/aot/perf` | Instructions per iteration of everyday idioms against the pinned numbers in `perf/pins.<os>-<arch>.json` | Linux, `perf stat` with user-mode counters |
 | **Against the JIT** | `bun test/aot/perf/idioms-against-the-jit.ts` | Every idiom of `perf/idioms` and `perf/everyday`, compiled as TypeScript and as JavaScript, against the same binary's JIT: instructions per iteration, collections, peak memory; the losses first. `perf/idioms-against-the-jit.test.ts` lists each loss as a todo | Linux, user-mode counters |
 | **Needs installed packages** | `AOT_TYPED_PACKAGES=<node_modules> SEMA=<bun-sema> bun test test/aot/typed-packages-wide-trees` | `packages/full-types/run.py`: the full types of react-dom, react-reconciler, seroval, fuse.js .. compiled into large programs: the answers of the untouched packages, and that each is still compiled as typed | A `node_modules` with the packages as npm installs them, `bun-sema` (the checker's CLI), python3, and a front end and `testaot`, found as for the scripts of `shell/` |
-| **Needs the network** | `AOT_SERVERS=1 bun test test/aot/servers` | Thirteen HTTP servers, compiled, asked for every route. CI runs `servers.test.ts` for each as a unit of its own, `servers/<name>` in `parts.mts`, `features.test.ts` likewise (`servers/features-of-<name>`), `api.test.ts` and `validated.test.ts`; the other files of the folder run only where the variable is set | npm, or `AOT_SERVERS_MODULES=<a node_modules folder>` |
+| **Needs the network** | `AOT_SERVERS=1 bun test test/aot/servers` | Thirteen HTTP servers, compiled, asked for every route. CI runs `servers.test.ts` for each as a unit of its own, `servers/<name>` in `parts.mts`, `features.test.ts` likewise (`servers/features-of-<name>`), `api.test.ts`, `validated.test.ts` and `every-pass-changes-a-real-program.test.ts`; the other files of the folder run only where the variable is set | npm, or `AOT_SERVERS_MODULES=<a node_modules folder>` |
 | **Needs the compiler's own tools** | `JSC=<jsc> FRONT_END=<bun> TESTAOT=<testaot> PLAIN=<any bun> test/aot/shell/quick.py all` | The programs again without building Bun: front end, `testaot compile` with B3 and Air validated after every phase, `jsc` | `jsc` and `testaot`; the top of `shell/toolchain.py` says how to build them. `FRONT_END`: `full-types` (`cargo build --release -p bun_aot_standalone`), or a Bun, which is its own front end (`bun compile --aot-out=<file>`). python3 |
 | | `JSC=<jsc> FRONT_END=<bun> TESTAOT=<testaot> test/aot/shell/expectations.py all` | What the compiler generates: the `// IR=`, `// CALLS-`, `// SIZE<`, `// COUNTER:` .. lines and the `//!` comments in the programs. **These are the positive and negative tests of the optimizations.** `bun test test/aot/generated-code` runs this script, in six seconds, with the Bun under test as the front end and the `jsc` and `testaot` that lie beside it (`$JSC` and `$TESTAOT` otherwise). CI packs both, built from the WebKit that Bun was linked with, into the same zip | The same. The `CALLS` and `SIZE` lines are read on ARM64 only |
 | | `JSC=<jsc> FRONT_END=<bun> TESTAOT=<testaot> PLAIN=<any bun> python3 test/aot/shell/collector-stress.py all` | The programs twice: as they are, and with a collection at every third allocation that leaves the fast path and every freed cell overwritten while the compiled program runs. **It finds values that compiled code still uses and the collector cannot see.** `--every 1` and `--every 2` find other ones; `--young` finds a store without a write barrier. `bun test test/aot/collector-stress` runs it, full and young, dealt out to fifty files | The same. Linux x64 shows more than ARM64. Four and a half hours of one core for both |
@@ -59,14 +59,24 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `src/crash_handler/compiled_frames.rs`, `src/sql_jsc/shared/RowDecoder.rs`, `src/runtime/cli/check_command/compile_check.rs`,
   `src/codegen/declared-type-checks.ts`, `src/jsc/bindings/BunCompiled*` ..) runs it on every platform but Ubuntu: every file on
   Debian, `collector-stress` and `bad-time` on Debian x64 alone. Any other build runs a tenth, on Debian x64 and arm64: one file in ten,
-  without those two groups, `heat`, `startup-scaling` and `variant-*`. macOS x64 and Windows arm64 only ever run that tenth. A failing
+  without those two groups, `heat`, `startup-scaling` and `variant-*`. A pull request that touches none of those paths but `src/js`,
+  `src/codegen` or a `*.bind.ts` changes what an executable compiles or what the table of built-ins is written from: on the two Debian
+  lanes its first step also has `builtins/`, `servers/` and `programs-in-every-run-*` (`libraryAotGroups`), and holds up the merge.
+  macOS x64 and Windows arm64 only ever run that tenth. A failing
   file is run once more, not three times.
+- **Two steps a platform.** `<platform>-test-aot` may hold up a merge, so it is the same on every commit: the tests with a body of their own, `programs-in-every-run-*`, what once went
+  wrong, the servers, the frameworks, the engine's tests. `<platform>-test-aot-drawn` is whatever goes by the commit, and a red there is seen and holds up nothing (`soft_fail`): the
+  shares of the programs, of the variants, of what is generated, the groups of `joined-programs-*`, a new seed for each random generator (`generated-fresh-seeds-*`), and on the lanes
+  that draw their files the draw. On Debian the runner gets `--aot-takes=fixed` or `--aot-takes=drawn`:
+  it sets `AOT_TAKES`, which `inShare()` and `takesWhatIsFixed` of `run-programs.ts` read, and leaves out what has nothing for that step (`unitsThatDraw`, `unitsThatOnlyDraw` in
+  `parts.mts`; a test file draws if it calls a helper that does). On the other lanes the first step is what `getAotAlwaysDrawn()` lists. A program that the drawn step found red gets a
+  line in `programs-in-every-run.txt` with its cure.
 - **Every lane but Debian's two draws its files**: `getAotFileDraw()` in `.buildkite/ci.ts` gives the runner `--one-in=<n>`: one file in
   two on macOS, one in eight on Alpine, Windows and the ASAN build. The draw follows from the commit and the path, so
   every shard makes the same one, each commit takes other files, and in time all are taken.
   `BUILDKITE_COMMIT=<commit> scripts/runner.node.ts --include=aot/ --one-in=<n>` makes it again.
-- **The number of shards follows from the lines of these tests in `test/expected-durations.json`**, twelve minutes to a shard and at most 27 (16 on arm64, 8 on macOS), and
-  the files are dealt out by those lines. A file without a line adds nothing to the number of shards and is dealt out as the median of the
+- **The number of shards follows from the lines of these tests in `test/expected-durations.json`**, twelve minutes to a shard and at most 27 (24 on arm64, 8 on macOS), and
+  the files are dealt out by those lines. What a lane runs whatever it draws (`getAotAlwaysDrawn()`) counts whole, the rest by the lane's draw. A file without a line adds nothing to the number of shards and is dealt out as the median of the
   folder: a new file that takes minutes needs a line. `scripts/update-test-durations.mjs` renews them from builds that ran all of the
   folder.
 - **No platform rejects `--aot`**, and `every-platform.test.ts` never skips itself. Only a Bun that was built without the compiler
@@ -103,20 +113,39 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   code that every function can take: `joined-programs-predictions-fail-*`,
   `joined-programs-validated-*` (`--aot-validate`), `joined-programs-proofs-checked-*`. All groups validated: `AOT_SHARE=all TEST_PART=aot/joined-programs-validated bun test ./test/aot/parts.test.ts`, nine minutes. A red
   names the programs that differ or stopped the executable; each is then run alone with the same flags.
+- **Every program in every commit.** `every-program-<part>` (`programs-as-entry-points.ts`) makes the programs of a part, some 600, the entry points of one executable and runs each in a
+  process of its own, with its types and with its types erased: all 41,000 in 48 minutes of a shard, a tenth of what they cost one by one. A program among hundreds is not compiled
+  as it is alone, so this stands beside the share and takes nothing from it. What a program prints may hang on being alone in its executable: `"alone": "<why>"` in its
+  `<program>.json` leaves it out. A red says whether the program is red alone too. It is in the step that holds up nothing until CI has shown it green.
 - **The check of references.** `run-programs.ts` builds every program with `--aot-check=validate-references`.
+- **What the back end is told.** `--aot-check=ClaimsToBackEnd` leaves the code of an ordinary build as it is up to the last phase that moves a value and adds code that finds out in
+  the run whether a word that was said never to change has changed, a number lies in its range, a cell in the frame is read before it is filled. An ASAN or debug build of Bun builds
+  every program that way; `joined-programs-claims-checked-*` takes all of them. `--aot-check=MovedLoads` (`joined-programs-moved-loads-checked-*`) reads every load again that a phase
+  moved or replaced; its second reads stand in the way of later phases, so it is not quite the ordinary build. `what-the-back-end-is-told-is-checked-at-run-time.test.ts` tells the
+  back end something untrue of each kind and asks for the line that names it.
 - **The share.** All programs in all ways are 130 hours of one processor, and CI has 24 shards of twelve minutes on four vCPUs. So a
   run that is told nothing takes a share, and which one follows from `Bun.revision`: each commit takes other programs, and in
   time all are taken. `inShare(name, oneIn)` and `partInShare(part, parts, oneIn)` of `run-programs.ts` decide: one program in
   10 for `programs()` and `programsBuiltWith()` (a list of names given to the second is taken whole), one in 400 for each
-  `variant-*` (a fortieth of its tenth, another for each variant), one in 10 of `each-case-alone`, one in 100 for
-  `jit-mode-eager-tier-up`, a quarter for `generated()`, one of forty pieces of each file's part for `collector-stress`, `heat` and
+  `variant-*` (of all programs, others for each variant), one in 10 of `each-case-alone`, one in 100 for
+  `jit-mode-eager-tier-up`, a quarter for `generated()` (what is marked `wasOnceWrong` is taken whole, and of what a generator does not mean for every run one program in 400), one of forty pieces of each file's part for `collector-stress`, `heat` and
   `AOT_PROGRAMS=<name> bun test test/aot/<file>` runs a red again, `AOT_SHARE=<revision>` the whole share of that commit,
   `AOT_SHARE=all` everything. A test with a body of its own in a `*.test.ts` is in no share: it runs every time. What grows with
   the suite belongs in a share.
 - **What every run takes.** A program in a share is run by one commit in ten, so a change that breaks it is seldom the commit that
   shows it. All of `programs/counterexamples` and every program that `programs-in-every-run.txt` lists (a path below `programs/`
   without its extension, one a line, sorted) are run by every commit: `programs-in-every-run-<part>`, on Debian, on macOS arm64 and
-  in the ASAN build, whatever those lanes draw. A program that is written for a fix gets a line there.
+  in the ASAN build, whatever those lanes draw. A program that is written for a fix gets a line there. One that compares two times (`"skipWithASAN": "a clock"`) is
+  run by every commit too, in the step that holds up nothing: a machine that runs other tests beside it moves the ratio.
+- **A mark that outlives its cure hides the next fault.** `programs-marked-as-failing` runs the programs that are left out because they fail (`<name>.todo.txt`, `"todoOn"` for the
+  platform, and with AddressSanitizer a `"skipWithASAN"` that begins with `TODO`), and one that does what is expected is red: its mark goes out. A `.todo.txt` that begins with
+  `Not every time:` is not asked. It is in the step that holds up nothing,
+  on every lane whatever the lane draws (`getAotAlwaysInDrawnStep()` in `.buildkite/ci.ts`). A `test.todo` with a body is asked the same by `bun test --todo <file>`.
+- **The engine's tests with a sanitizer and assertions.** `engine-tests-in-parts-<part>` on the ASAN lane, where `engine-tests.test.ts` leaves its three long tests out: every twelfth IR text
+  test and every twelfth native test. In the step that holds up nothing until CI has shown them green.
+- **Speed is pinned in instructions**, which are the same at any load: `perf/pins.<os>-<arch>.json` (`perf/idioms.test.ts`), `perf/everyday-pins.<os>-<arch>.json`
+  (`perf/pinned-everyday-idioms-<part>`) and `perf/application-pins.<os>-<arch>.json` (`perf/pinned-applications`: zod, the checker of TypeScript). A pin only goes down:
+  `AOT_PERF=lower`. A platform without a file prints what it measures and judges nothing; `perf/pins-from-a-log.ts <os>-<arch> <logs>` writes its files from the log.
 - **What a script writes is not kept.** Some folders of `programs/` are written by a script, whole or in part: `generate.ts` lists
   them. What is kept under the name of such a program takes its place, and what somebody has decided about one (`<name>.expected.txt`, `<name>.json` ..) is kept under its name. A test file writes the programs that it runs into a temporary folder when it starts, under the names they would have in
   `programs/`, and treats them like any other program. `bun test/aot/generate.ts <folder> <where>` writes a folder out to be read. The programs of

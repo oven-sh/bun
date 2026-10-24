@@ -28,17 +28,18 @@ its one name again:
            patches.json (after it). Each replacement has to fit exactly once.
   index    tools/bang_index.py: `!` behind an element read where noUncheckedIndexedAccess would report an error.
   numbers  An int32 keeps its proof in a reused variable whose other roles are objects. Where another role is a number or `any`
-           it cannot be proven, and an int32 that is not proven stops a build: the types under `numbers` in the table below
-           become `number`.
+           it cannot be proven, and every build warns of a file with an int32 that is not proven (TS100066): the types under
+           `numbers` in the table below become `number`. One variable or parameter alone: patches.json.
 
 The folder one-name/ lies beside typed.cts.
 
 The gates:
   md5      npm's file is the one that the types were written for.
-  strict   The checker of a build reports nothing under `strict`: `bun check --aot` with the text as the entry point. There
-           `new F(..)` has the type that F declares for `this`, and each int32 has to be proven. What the text requires is
-           loaded from <node_modules>.
+  strict   The checker of a build reports no type error under `strict`: `bun check --aot` with the text as the entry point.
+           There `new F(..)` has the type that F declares for `this`. What the text requires is loaded from <node_modules>.
   more     Nor under noUncheckedIndexedAccess, exactOptionalPropertyTypes, noImplicitOverride and useUnknownInCatchVariables.
+  proven   A program that has the text as a file of a package gets no warning about it: each int32 is proven, or the value that
+           enters it is written `e as int32`, which is the author's word for e and is tested when the program runs.
   verify   Without its types the text prints as npm's file does, line for line. Bun prints both.
   lines    Line n of the text is line n of npm's file with types added: tools/carry_patch.py relies on it.
   same     lay/, lay.sums and full-types.json in the repository are what this run made. --write writes them instead.
@@ -70,7 +71,7 @@ BUNDLES = {
     'seroval/1.6.9': [
         dict(
             space='SV', file='dist/index.js', md5='ccbd09502b548d78881f2353cf209c2b', source='', text='typed.mts',
-            numbers=['TemporalType', 'ErrorTag', 'SymbolTag', 'SpecialRef', 'ConstantTag'],
+            numbers=['TemporalType', 'ErrorTag', 'SymbolTag', 'SpecialRef', 'ConstantTag', 'NodeLength'],
         ),
     ],
     'react-dom/19.3.0': [
@@ -141,6 +142,20 @@ def errors_in(folder, entry_point=None):
     if result.returncode and not errors:
         return ['the checker stopped with exit code %d and named no type error:' % result.returncode] + lines[-8:]
     return errors
+
+
+# What a program is told about the text when the text is a file of one of its packages.
+def said_to_program(folder, name):
+    program = folder + '/program'
+    package = program + '/node_modules/full-types-under-test'
+    os.makedirs(package)
+    shutil.copy(folder + '/' + name, package + '/' + name)
+    json.dump({'name': 'full-types-under-test', 'version': '1.0.0', 'main': name}, open(package + '/package.json', 'w'))
+    open(program + '/entry.ts', 'w').write('import * as all from "full-types-under-test";\nconsole.log(typeof all);\n')
+    build = ['--aot', '--define', 'process.env.NODE_ENV="production"', 'entry.ts']
+    result = subprocess.run([BUN, 'check', '--no-pretty'] + build, cwd=program, env=ENV, capture_output=True, text=True)
+    lines = [line for line in (result.stdout + result.stderr).split('\n') if re.search(r'\bTS\d+:', line)]
+    return lines if lines or not result.returncode else ['the checker stopped with exit code %d' % result.returncode]
 
 
 def printed_lines(path, cwd):
@@ -283,8 +298,14 @@ def make_bundle(bundle, work):
         open(folder + '/' + name, 'w').write(made)
 
     for gate, folder in (('strict', strict), ('more', more)):
-        errors = errors_in(folder, name)
+        found = errors_in(folder, name)
+        flows = [error for error in found if ': error TS100031: ' in error]
+        errors = [error for error in found if error not in flows]
         report(not errors, gate, '%d errors%s' % (len(errors), ''.join('\n     ' + error[:200] for error in errors[:10])))
+    said = said_to_program(strict, name)
+    # As an entry point the text is the program's own, where `e as int32` needs the proof too: those are left out of the hints.
+    hints = [flow for flow in flows if 'This expression is declared' not in flow and not re.search(r" as [^']*' might not be", flow)]
+    report(not said, 'proven', '%d warnings%s' % (len(said), ''.join('\n     ' + line[:200] for line in said[:3] + hints[:20])))
     os.makedirs(work + '/verify')
     extension = os.path.splitext(name)[1]
     shutil.copy(npm_path, work + '/verify/npm' + extension.replace('t', 'j'))

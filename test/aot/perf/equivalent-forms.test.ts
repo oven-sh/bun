@@ -32,6 +32,16 @@ const programs: [entry: string, pairs: Pair[]][] = [
     ],
   ],
   [
+    "prototype-methods.js",
+    [
+      [
+        "methods assigned to the prototype of a function",
+        "methods assigned to a variable that holds the prototype",
+        8,
+      ],
+    ],
+  ],
+  [
     "creation-order.ts",
     [
       ["members stored in the order of their declarations", "members stored in the reverse order", 8],
@@ -45,8 +55,10 @@ const programs: [entry: string, pairs: Pair[]][] = [
       ["a text parsed and checked by hand", "a text parsed by its type", 0],
       ["a parsed object refused by hand", "a parsed object refused by its type", 64],
       ["a text refused by hand", "a text refused by its type", 0],
-      ["a parsed object checked by hand", "a parsed object validated by its type", 64, "177 | 1859"],
-      ["a literal of the program checked by hand", "a literal of the program validated by its type", 64, "139 | 2631"],
+      ["a parsed object checked by hand", "a parsed object validated by its type", 64],
+      ["two members checked by hand", "two members validated by a type of 67", 1024],
+      ["a literal of the program checked by hand", "a literal of the program validated by its type", 64, "139 | 726"],
+      ["a literal of the program checked by hand", "a literal of the program validated by its type", 1024],
     ],
   ],
   [
@@ -55,6 +67,22 @@ const programs: [entry: string, pairs: Pair[]][] = [
       ["instanceof a constant that holds Promise", "instanceof the global Promise", 2],
       ["the elements of a literal", "the elements of what map answers", 16, "56 | 664"],
       ["an index compared as it is", "an index compared as an unsigned number", 4, "69 | 91"],
+    ],
+  ],
+  [
+    "optional-members.ts",
+    [
+      ["given members compared with what was kept", "omitted members compared with what was kept", 64],
+      ["given members compared with each other", "omitted members compared with each other", 32],
+      ["given members compared loosely", "omitted members compared loosely", 32],
+      ["given members asked whether truthy", "omitted members asked whether truthy", 16],
+      ["given members replaced where missing", "omitted members replaced where missing", 16],
+      ["given members destructured with defaults", "omitted members destructured with defaults", 32],
+      ["given members arguments with defaults", "omitted members arguments with defaults", 32],
+      ["given members handed on to built-in functions", "omitted members handed on to built-in functions", 64],
+      ["given members switched on", "omitted members switched on", 16],
+      ["given members stored and returned", "omitted members stored and returned", 32],
+      ["given members printed", "omitted members printed", 64, "249 | 802"],
     ],
   ],
 ];

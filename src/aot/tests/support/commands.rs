@@ -347,6 +347,7 @@ mod tests {
             statistics,
             compilation: None,
             refused_entry_points: None,
+            begins_no_other_global: false,
         }
     }
 

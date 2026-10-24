@@ -25,10 +25,10 @@ async function retained(text: string, features: string[]) {
 describe.concurrent("the engine's own JavaScript reads its arrays by index", () => {
   eachRow([
     ["using", `{ using held = { [Symbol.dispose]() { console.log("disposed"); } }; console.log("inside"); }`],
-    gap(notYet.everyBuiltin, [
+    [
       "await using",
       `{ await using held = { async [Symbol.asyncDispose]() { console.log("disposed"); } }; console.log("inside"); }`,
-    ]),
+    ],
     gap(notYet.everyBuiltin, [
       "await using of what has only a synchronous method",
       `{ await using held = { [Symbol.dispose]() { console.log("disposed"); } }; console.log("inside"); }`,
@@ -59,8 +59,8 @@ describe.concurrent("the engine's own JavaScript reads its arrays by index", () 
   });
 
   eachRow([
-    gap(notYet.everyBuiltin, ["numbers", `console.log(new Float64Array([1234.5, 0.25]).toLocaleString("de"));`]),
-    gap(notYet.everyBuiltin, ["BigInts", `console.log(new BigInt64Array([1234n]).toLocaleString("de"));`]),
+    ["numbers", `console.log(new Float64Array([1234.5, 0.25]).toLocaleString("de"));`],
+    ["BigInts", `console.log(new BigInt64Array([1234n]).toLocaleString("de"));`],
   ])("toLocaleString on a typed array of %s formats numbers and nothing else", async (_, text) => {
     expect(await retained(text, [...numberFormatting, ...namedByNoProgramHere])).toEqual(numberFormatting);
   });

@@ -21,7 +21,7 @@ import argparse, json, statistics
 
 import layers
 
-NAMES = {"api-bun": "API on Bun.serve", "api-thin": "API on the thin typed framework", "api-hono": "API on Hono", "bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "express": "Express", "fastify": "Fastify", "fastify-schemas": "Fastify with schemas", "tanstack": "TanStack Start", "tanstack-typed": "TanStack Start with full types", "koa-typed": "Koa with full types", "express-typed": "Express with full types", "fastify-typed": "Fastify with full types"}
+NAMES = {"api-bun": "API on Bun.serve", "api-thin": "API on the thin typed framework", "api-hono": "API on Hono", "api-elysia": "API on Elysia", "api-node": "API on node:http", "api-express": "API on Express", "api-fastify": "API on Fastify", "api-koa": "API on Koa", "bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "express": "Express", "fastify": "Fastify", "fastify-schemas": "Fastify with schemas", "tanstack": "TanStack Start", "tanstack-typed": "TanStack Start with full types", "koa-typed": "Koa with full types", "express-typed": "Express with full types", "fastify-typed": "Fastify with full types"}
 MEMORY = (("ready_rss_mb", "RSS at ready, MB"), ("peak_rss_mb", "peak RSS, MB"), ("private_mb", "private memory, MB"), ("first_response_ms", "first response, ms"))
 
 parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -175,7 +175,7 @@ for (server, route, column), first in layer_rows.items():
     lines, differences = [], {}
     for layer in ["compiled"] + layers.LAYERS + ["kernel", "all"]:
         line = ["all compiled code \\| code made at run time" if layer == "compiled" else layers.TITLES.get(layer, layer).replace("|", "\\|")]
-        for event in ("cycles", "instructions"):
+        for event in first["layers"]:
             values = []
             for each in (first, second):
                 by_layer = each["layers"][event]
@@ -183,10 +183,10 @@ for (server, route, column), first in layer_rows.items():
             line += ["%d" % values[0] if values[0] else "", "%d" % values[1] if values[1] else "", "%+d" % (values[0] - values[1])]
             if event == "cycles" and layer not in COMPILED + ("all",):
                 differences[line[0]] = values[0] - values[1]
-        if line[1] or line[2] or line[4] or line[5]:
+        if any(line[index] for index in range(1, len(line)) if index % 3):
             lines.append(line)
     print("### %s, %s: %s vs. %s\n" % (NAMES.get(server, server), route, options.first, options.second))
-    print_table(["layer", "cycles: " + options.first, options.second, "difference", "instructions: " + options.first, options.second, "difference"], lines)
+    print_table(["layer"] + [head for event in first["layers"] for head in (event + ": " + options.first, options.second, "difference")], lines)
     largest = sorted(differences.items(), key=lambda pair: -pair[1])[:3]
     total = sum(first["layers"]["cycles"].values()) - sum(second["layers"]["cycles"].values())
     summary.append([NAMES.get(server, server), route, "%+d" % total] + ["%s %+d" % pair for pair in largest])

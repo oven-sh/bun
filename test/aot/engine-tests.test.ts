@@ -2,6 +2,7 @@
 // Bun was linked against. `testaot all` runs them in one go, which takes longer than one test may: here the IR text tests
 // are one test and the native tests four, each a part of the list, at the same time.
 // engine-tests/ has the IR text tests that name entries of Bun's table of built-ins.
+// With a sanitizer they take several times as long: ./engine-tests-in-parts.ts runs them there.
 //
 // Needs `testaot`, the `aot-tests` folder for two of the tests, and `jsc` for two: the engine's own tests want it in the
 // folder of `testaot`. shell/tools.ts says where each is looked for. A test whose tool is missing is skipped, and stderr
@@ -12,6 +13,7 @@ import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { isArm64, isASAN, isCI, isMacOS, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
+import { comeInParts } from "./engine-tests-in-parts";
 import { run as runCommand } from "./harness/run";
 import { engineTests, jsc, scriptSkipReason, testaot, toolEnv } from "./shell/tools";
 
@@ -131,7 +133,7 @@ function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<t
   });
 }
 
-(whyEngineTestsSkipped ? test.skip : test.concurrent)(
+(whyEngineTestsSkipped || comeInParts ? test.skip : test.concurrent)(
   "the engine's IR text tests pass",
   async () => {
     expectEveryTestPassed(await run("run", engineTests!));
@@ -148,7 +150,7 @@ test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
   },
 );
 
-(whySkipped ? test.skip : test.concurrent)(
+(whySkipped || comeInParts ? test.skip : test.concurrent)(
   "the engine's IR text tests of Bun's entries pass",
   async () => {
     expectEveryTestPassed(await run("run", join(import.meta.dir, "engine-tests")));
@@ -158,7 +160,7 @@ test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
 
 const parts = 4;
 const cannotRunNativeTests = shellTakesNoImage || nativeTestsOutlastTheRunner;
-(whyNativeTestsSkipped ? test.skip : cannotRunNativeTests ? test.todo : test.concurrent).each(
+(whyNativeTestsSkipped || comeInParts ? test.skip : cannotRunNativeTests ? test.todo : test.concurrent).each(
   Array.from({ length: parts }, (_, index) => index + 1),
 )(
   `the engine's native tests pass: part %d of ${parts}`,

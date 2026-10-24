@@ -485,6 +485,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
         }
         auto* data = static_cast<const uint8_t*>(view->vector());
         size_t length = view->byteLength();
+        Vector<uint8_t> copyOfSharedBytes;
+        if (view->isShared()) {
+            if (!copyOfSharedBytes.tryAppend(std::span { data, length })) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            data = copyOfSharedBytes.span().data();
+        }
 
         // Skip UTF-8 BOM if present
         if (length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
@@ -492,10 +500,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
             length -= 3;
         }
 
-        if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-        } else {
+        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
+        if (length <= String::MaxLength) {
+            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(data), length }, values);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
+            values.clear();
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
             if (u16Length > String::MaxLength) {
                 throwOutOfMemoryError(globalObject, scope);
@@ -581,6 +592,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
 
         const uint8_t* sliceData = data + start;
         size_t sliceLen = end - start;
+        Vector<uint8_t> copyOfSharedBytes;
+        if (view->isShared()) {
+            if (!copyOfSharedBytes.tryAppend(std::span { sliceData, sliceLen })) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            sliceData = copyOfSharedBytes.span().data();
+        }
 
         // Skip UTF-8 BOM if present at the start of the slice
         size_t bomOffset = 0;
@@ -590,12 +609,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
             bomOffset = 3;
         }
 
-        if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-            // For ASCII, byte offset = character offset
+        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
+        if (sliceLen <= String::MaxLength) {
+            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen }, values);
+            RETURN_IF_EXCEPTION(scope, {});
             readBytes = start + bomOffset + result.charactersConsumed;
-        } else {
+        }
+        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
+            values.clear();
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(sliceData), sliceLen);
             if (u16Length > String::MaxLength) {
                 throwOutOfMemoryError(globalObject, scope);

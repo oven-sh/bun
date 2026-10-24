@@ -79,6 +79,8 @@ export default b.declarations(
     ...nativeBindings("Cpp", "Worker.cpp", "createNodeWorkerConstructor", "createNodeWorkerThreadsBinding"),
   ),
   extendAll(["WorkerConstructor"], "node:worker_threads"),
+  // A build with several entry points asks for it: such a Worker loads node:worker_threads before its entry point.
+  extendAll(["NodeWorker"], ...nativeBindings("Cpp", "Worker.cpp", "createNodeWorkerConstructor")),
 
   extendAll(webSocketFeatures, "WebSocket", ...nativeBindings("Cpp", "JSWebSocket.cpp", "createWebSocketBindingForWs")),
 

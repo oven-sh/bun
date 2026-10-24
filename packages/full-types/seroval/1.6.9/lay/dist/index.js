@@ -1959,7 +1959,7 @@ function createDeleteAssignment(ctx: SV.SerializerContext, ref: SV.RefId, key: s
 		v: void 0
 	});
 }
-function createArrayAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: string | SV.int32, value: string): void {
+function createArrayAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: string | number, value: string): void {
 	createAssignment(ctx.base, getRefParam(ctx, ref) + "[" + index + "]", value);
 }
 function createObjectAssign(ctx: SV.SerializerContext, ref: SV.RefId, key: string, value: string): void {
@@ -3115,7 +3115,7 @@ declare namespace SV {
   type TemporalType = number;
   type PromiseStatus = int32;
   type SequenceIndex = number;
-  type NodeLength = int32;
+  type NodeLength = number;
   type AssignmentType = int32;
   type RefKind = int32;
   type Count = number;

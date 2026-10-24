@@ -42,6 +42,7 @@ const members: Record<string, { type: string; value: (seed: string) => string; b
   map: { type: "Map<string, number>", value: seed => `new Map([["k", ${seed}]])` },
   bytes: { type: "Uint8Array", value: seed => `new Uint8Array([${seed}, 255])` },
   wrappedNumber: { type: "Number", value: seed => `new Number(${seed})` },
+  thatChangesWhatHoldsIt: { type: "Meddler", beside: "class Meddler { owner: object | null = null; how: number; constructor(how: number) { this.how = how; } toJSON(): unknown { const held = this.owner as { z?: unknown; more?: number } | null; if (held) { if (this.how % 3 === 0) delete held.z; else if (this.how % 3 === 1) held.z = 5; else held.more = 1; } return this.how; } }", value: seed => `new Meddler(${seed})` },
   thatWritesItself: { type: "{ toJSON(): unknown }", value: seed => `{ toJSON() { say("asked"); return { written: ${seed} }; } }` },
   instance: { type: "Inner", beside: "class Inner { x: number; #hidden = 1; constructor(x: number) { this.x = x; } get computed(): number { return this.x + this.#hidden; } }", value: seed => `new Inner(${seed})` },
 };
@@ -70,12 +71,14 @@ const pasts: Record<string, string> = {
   anotherKindWasStored: `(it as { a: unknown }).a = "not a number";`,
   itWentBelowWhatWritesItself: `Object.setPrototypeOf(it, { toJSON() { return "from above"; } });`,
   itGotAWayToWriteItself: `(it as Made & { toJSON?: () => unknown }).toJSON = () => ({ own: true });`,
+  itsMemberKnowsIt: `(it.m as { owner?: unknown }).owner = it;`,
   itHoldsItself: `(it as { m: unknown }).m = it;`,
 };
 
 function stretch(memberName: string, writerName: string, pastName: string): Stretch | undefined {
   const member = members[memberName];
   if (pastName === "itHoldsItself" && writerName.startsWith("indented")) return undefined;
+  if (pastName === "itsMemberKnowsIt" && memberName !== "thatChangesWhatHoldsIt") return undefined;
   return {
     name: `${memberName}-${writerName}-${pastName}`,
     beside: `${member.beside ?? ""}\ntype Made = { a: number; m: ${member.type}; z: string };\nfunction make(seed: number): Made { return { a: seed, m: ${member.value("seed")}, z: "z" + seed }; }`,

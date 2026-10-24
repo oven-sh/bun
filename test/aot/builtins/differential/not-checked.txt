@@ -3,49 +3,12 @@
 AtomicsWait/0: it is not called: it blocks the thread
 AtomicsWait/1: it is not called: it blocks the thread
 BuildArtifactPrototypeSlice/0: the process ended or did not come back
-BunArchivePrototypeBlob/0: no set of operands selects it
-BunArchivePrototypeBytes/0: no set of operands selects it
-BunArchivePrototypeExtract/0: no set of operands selects it
-BunArchivePrototypeFiles/0: no set of operands selects it
 BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
 BunBundleValidate/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
-BunCryptoHasherPrototypeAlgorithm/0: no set of operands selects it
-BunCryptoHasherPrototypeByteLength/0: no set of operands selects it
-BunCryptoHasherPrototypeCopy/0: no set of operands selects it
-BunCryptoHasherPrototypeDigest/0: no set of operands selects it
-BunCryptoHasherPrototypeUpdate/0: no set of operands selects it
-BunCryptoHasherPrototypeUpdate/1: no set of operands selects it
 BunDollar/0: it is not called: it blocks, starts a process or opens a socket
-BunFileSystemRouterPrototypeAssetPrefix/0: no set of operands selects it
-BunFileSystemRouterPrototypeMatch/0: no set of operands selects it
-BunFileSystemRouterPrototypeOrigin/0: no set of operands selects it
-BunFileSystemRouterPrototypeReload/0: no set of operands selects it
-BunFileSystemRouterPrototypeRoutes/0: no set of operands selects it
-BunFileSystemRouterPrototypeStyle/0: no set of operands selects it
 BunGenerateHeapSnapshot/0: it is not called: it blocks, starts a process or opens a socket
-BunImagePrototypeAvif/0: no set of operands selects it
-BunImagePrototypeBlob/0: no set of operands selects it
-BunImagePrototypeBuffer/0: no set of operands selects it
-BunImagePrototypeBytes/0: no set of operands selects it
-BunImagePrototypeDataurl/0: no set of operands selects it
-BunImagePrototypeFlip/0: no set of operands selects it
-BunImagePrototypeFlop/0: no set of operands selects it
-BunImagePrototypeHeic/0: no set of operands selects it
-BunImagePrototypeHeight/0: no set of operands selects it
-BunImagePrototypeJpeg/0: no set of operands selects it
-BunImagePrototypeMetadata/0: no set of operands selects it
-BunImagePrototypeModulate/0: no set of operands selects it
-BunImagePrototypePlaceholder/0: no set of operands selects it
-BunImagePrototypePng/0: no set of operands selects it
-BunImagePrototypeResize/0: no set of operands selects it
-BunImagePrototypeRotate/0: no set of operands selects it
-BunImagePrototypeToBase64/0: no set of operands selects it
-BunImagePrototypeToBuffer/0: no set of operands selects it
-BunImagePrototypeWebp/0: no set of operands selects it
-BunImagePrototypeWidth/0: no set of operands selects it
-BunImagePrototypeWrite/0: no set of operands selects it
 BunListen/0: it is not called: it blocks, starts a process or opens a socket
 BunOpenInEditor/0: it is not called: it blocks, starts a process or opens a socket
 BunServe/0: it is not called: it blocks, starts a process or opens a socket
@@ -55,23 +18,6 @@ BunSpawn/0: it is not called: it blocks, starts a process or opens a socket
 BunSpawn/1: it is not called: it blocks, starts a process or opens a socket
 BunSpawnSync/0: it is not called: it blocks, starts a process or opens a socket
 BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
-BunTerminalPrototypeClose/0: no set of operands selects it
-BunTerminalPrototypeClosed/0: no set of operands selects it
-BunTerminalPrototypeControlFlags/0: no set of operands selects it
-BunTerminalPrototypeControlFlags/1: no set of operands selects it
-BunTerminalPrototypeInputFlags/0: no set of operands selects it
-BunTerminalPrototypeInputFlags/1: no set of operands selects it
-BunTerminalPrototypeLocalFlags/0: no set of operands selects it
-BunTerminalPrototypeLocalFlags/1: no set of operands selects it
-BunTerminalPrototypeOutputFlags/0: no set of operands selects it
-BunTerminalPrototypeOutputFlags/1: no set of operands selects it
-BunTerminalPrototypeRef/0: no set of operands selects it
-BunTerminalPrototypeResize/0: no set of operands selects it
-BunTerminalPrototypeSetRawMode/0: no set of operands selects it
-BunTerminalPrototypeSetRawMode/1: no set of operands selects it
-BunTerminalPrototypeSymbolAsyncDispose/0: no set of operands selects it
-BunTerminalPrototypeUnref/0: no set of operands selects it
-BunTerminalPrototypeWrite/0: no set of operands selects it
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
@@ -82,14 +28,11 @@ CompilerHelpersEncodeIntoRangeOfBytes/0: it is not called: the compiler hands it
 CompilerHelpersEncodeIntoRangeOfBytes/1: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
-CompilerHelpersHoldsRule/0: it differs in parameters
-CompilerHelpersInterpretNode/0: it differs in parameters
 CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
-CompilerHelpersValidateByPlan/0: it differs in parameters
 CompilerHelpersViewOrRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CrashHandlerJscCrashHandlerAbort/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerFastfail/0: the process ended or did not come back
@@ -102,42 +45,9 @@ CrashHandlerJscCrashHandlerRootError/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfault/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfaultInDll/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerTrap/0: the process ended or did not come back
-CronJobPrototypeCron/0: no set of operands selects it
-CronJobPrototypeRef/0: no set of operands selects it
-CronJobPrototypeStop/0: no set of operands selects it
-CronJobPrototypeSymbolDispose/0: no set of operands selects it
-CronJobPrototypeUnref/0: no set of operands selects it
-DNSResolverPrototypeCancel/0: no set of operands selects it
-DNSResolverPrototypeGetServers/0: no set of operands selects it
-DNSResolverPrototypeResolve/0: no set of operands selects it
-DNSResolverPrototypeResolveAny/0: no set of operands selects it
-DNSResolverPrototypeResolveCaa/0: no set of operands selects it
-DNSResolverPrototypeResolveCname/0: no set of operands selects it
-DNSResolverPrototypeResolveMx/0: no set of operands selects it
-DNSResolverPrototypeResolveNaptr/0: no set of operands selects it
-DNSResolverPrototypeResolveNs/0: no set of operands selects it
-DNSResolverPrototypeResolvePtr/0: no set of operands selects it
-DNSResolverPrototypeResolveSoa/0: no set of operands selects it
-DNSResolverPrototypeResolveSrv/0: no set of operands selects it
-DNSResolverPrototypeResolveTxt/0: no set of operands selects it
-DNSResolverPrototypeReverse/0: no set of operands selects it
-DNSResolverPrototypeSetLocalAddress/0: no set of operands selects it
-DNSResolverPrototypeSetServers/0: no set of operands selects it
 DebugHTTPSServerPrototypePublish/0: the process ended or did not come back
 DebugHTTPServerPrototypePublish/0: the process ended or did not come back
-ExpectCustomAsymmetricMatcherPrototypeAsymmetricMatch/0: no set of operands selects it
 ExpectExtend/0: it differs in receiver
-ExpectMatcherContextPrototypeEquals/0: no set of operands selects it
-ExpectMatcherContextPrototypeExpand/0: no set of operands selects it
-ExpectMatcherContextPrototypeIsNot/0: no set of operands selects it
-ExpectMatcherContextPrototypePromise/0: no set of operands selects it
-ExpectMatcherContextPrototypeUtils/0: no set of operands selects it
-ExpectMatcherUtilsPrototypeEXPECTED_COLOR/0: no set of operands selects it
-ExpectMatcherUtilsPrototypeMatcherHint/0: no set of operands selects it
-ExpectMatcherUtilsPrototypePrintExpected/0: no set of operands selects it
-ExpectMatcherUtilsPrototypePrintReceived/0: no set of operands selects it
-ExpectMatcherUtilsPrototypeRECEIVED_COLOR/0: no set of operands selects it
-ExpectMatcherUtilsPrototypeStringify/0: no set of operands selects it
 FFIPrototypeClose/0: no set of operands selects it
 FFIPrototypeSymbols/0: no set of operands selects it
 FileInternalReadableStreamSourcePrototypeSetRawMode/0: the process ended or did not come back
@@ -148,24 +58,6 @@ HTTPSServerPrototypePublish/0: the process ended or did not come back
 HTTPServerPrototypePublish/0: the process ended or did not come back
 ImportMetaResolve/0: it is not called: this realm does not have it
 ImportMetaResolveSync/0: it is not called: this realm does not have it
-MatchedRoutePrototypeFilePath/0: no set of operands selects it
-MatchedRoutePrototypeKind/0: no set of operands selects it
-MatchedRoutePrototypeName/0: no set of operands selects it
-MatchedRoutePrototypeParams/0: no set of operands selects it
-MatchedRoutePrototypePathname/0: no set of operands selects it
-MatchedRoutePrototypeQuery/0: no set of operands selects it
-MatchedRoutePrototypeScriptSrc/0: no set of operands selects it
-MatchedRoutePrototypeSrc/0: no set of operands selects it
-MySQLConnectionPrototypeClose/0: no set of operands selects it
-MySQLConnectionPrototypeFlush/0: no set of operands selects it
-MySQLConnectionPrototypeHold/0: no set of operands selects it
-MySQLConnectionPrototypeInTransaction/0: no set of operands selects it
-MySQLConnectionPrototypeUnhold/0: no set of operands selects it
-MySQLQueryPrototypeCancel/0: no set of operands selects it
-MySQLQueryPrototypeDescribeResult/0: no set of operands selects it
-MySQLQueryPrototypeRun/0: no set of operands selects it
-MySQLQueryPrototypeSetMode/0: no set of operands selects it
-MySQLQueryPrototypeSetPendingValue/0: no set of operands selects it
 MysqlBindingCreateConnection/0: it differs in parameters
 NativeBindgenBake_pluginsBindTsRestartProcess/0: the process ended or did not come back
 NativeBindgenBake_pluginsBindTsSetPages/0: the test itself threw: 47 |   const method = value[name] as Function;
@@ -267,12 +159,6 @@ NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/0: it is n
 NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/1: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/1: it is not called: this realm does not have it
-NetworkSinkPrototypeClose/0: no set of operands selects it
-NetworkSinkPrototypeEnd/0: no set of operands selects it
-NetworkSinkPrototypeFlush/0: no set of operands selects it
-NetworkSinkPrototypeStart/0: no set of operands selects it
-NetworkSinkPrototypeWrite/0: no set of operands selects it
-NetworkSinkPrototype_getFd/0: no set of operands selects it
 NodeCryptoBindingCryptoScryptSync/0: the process ended or did not come back
 NodeJSFSPrototypeClose/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NodeJSFSPrototypeCloseCb/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -280,22 +166,7 @@ NodeJSFSPrototypeCloseSync/0: it is not called: it closes, cuts or takes over wh
 NodeJSFSPrototypeFtruncate/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NodeJSFSPrototypeFtruncateCb/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NodeJSFSPrototypeFtruncateSync/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
-NodeModuleSourceMapPrototypeFindEntry/0: no set of operands selects it
-NodeModuleSourceMapPrototypeFindOrigin/0: no set of operands selects it
-NodeModuleSourceMapPrototypeLineLengths/0: no set of operands selects it
-NodeModuleSourceMapPrototypePayload/0: no set of operands selects it
 PostgresBindingCreateConnection/0: it differs in parameters
-PostgresSQLQueryPrototypeCancel/0: no set of operands selects it
-PostgresSQLQueryPrototypeCopyDone/0: no set of operands selects it
-PostgresSQLQueryPrototypeCopyFail/0: no set of operands selects it
-PostgresSQLQueryPrototypeCopyResume/0: no set of operands selects it
-PostgresSQLQueryPrototypeCopyWrite/0: no set of operands selects it
-PostgresSQLQueryPrototypeDescribeResult/0: no set of operands selects it
-PostgresSQLQueryPrototypeRun/0: no set of operands selects it
-PostgresSQLQueryPrototypeSetCopy/0: no set of operands selects it
-PostgresSQLQueryPrototypeSetCopy/1: no set of operands selects it
-PostgresSQLQueryPrototypeSetMode/0: no set of operands selects it
-PostgresSQLQueryPrototypeSetPendingValue/0: no set of operands selects it
 PrivateGlobalsInherits/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
 PrivateGlobalsMakeErrorWithCode/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
 PrivateGlobalsMakeErrorWithCode/1: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
@@ -360,12 +231,6 @@ QuicStreamPrototypeSetPriority/0: no set of operands selects it
 QuicStreamPrototypeSetWakeup/0: no set of operands selects it
 QuicStreamPrototypeStopSending/0: no set of operands selects it
 QuicStreamPrototypeWrite/0: no set of operands selects it
-ReadableSinkControllerPrototypeClose/0: no set of operands selects it
-ReadableSinkControllerPrototypeEnd/0: no set of operands selects it
-ReadableSinkControllerPrototypeFlush/0: no set of operands selects it
-ReadableSinkControllerPrototypeSinkId/0: no set of operands selects it
-ReadableSinkControllerPrototypeStart/0: no set of operands selects it
-ReadableSinkControllerPrototypeWrite/0: no set of operands selects it
 S3StatPrototypeEtag/0: no set of operands selects it
 S3StatPrototypeLastModified/0: no set of operands selects it
 S3StatPrototypeSize/0: no set of operands selects it

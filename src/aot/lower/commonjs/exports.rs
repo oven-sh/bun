@@ -12,7 +12,7 @@ use crate::ir::{FunctionKey, ModuleId, ValueId, VariableId, VariableKey};
 use crate::lower::captures::Capture;
 use crate::lower::member::{self, PropertyName, Reference};
 use crate::lower::scope::{self, BindingForm, BindingRef, Storage};
-use crate::lower::{FileLowering, FunctionLowering, expression, function};
+use crate::lower::{FileLowering, FunctionLowering, expression, function, module};
 use crate::modules::{Member, ModuleRef, Shape, Site, SyntheticExportId, View};
 
 pub(super) fn own_shape(file: &FileLowering<'_, '_, '_, '_>) -> Shape {
@@ -225,9 +225,14 @@ pub(in crate::lower) fn read_named_export(
     name: Atom,
 ) -> Option<ValueId> {
     let modules = lowering.file.inputs.modules;
-    let member = match modules.member_named(module, name)? {
-        Member::Undefined => return None,
-        member => member,
+    let member = match modules.member_named(module, name) {
+        Some(Member::Undefined) => return None,
+        Some(member) => member,
+        None => {
+            let binding = modules.binding_of_member_named(module, name)?;
+            let name = lowering.file.intern_atom(name);
+            return Some(module::emit_import_binding(lowering, binding, name));
+        }
     };
     if let Some(value) = emit_member_read(lowering, member) {
         return Some(value);

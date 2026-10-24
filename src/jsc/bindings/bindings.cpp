@@ -2818,9 +2818,16 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
         compiledParser = JSC::CompiledJSONParser::Skip;
     }
 #endif
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (Zig::isTaggedUTF8Ptr(strPtr->ptr) && strPtr->len <= std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength))) {
+        JSValue parsed = JSC::JSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(Zig::untag(strPtr->ptr)), strPtr->len });
+        RETURN_IF_EXCEPTION(scope, {});
+        if (parsed)
+            return JSValue::encode(parsed);
+        // The message of the error quotes characters of the text.
+    }
     // Zig::toString() is null for an empty slice, and JSONParseWithException throws nothing for null.
     auto str = strPtr->len ? Zig::toString(*strPtr) : emptyString();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (str.isNull()) {
         // isNull() will be true for strings which are too long, and when an allocation fails.

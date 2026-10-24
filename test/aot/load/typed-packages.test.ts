@@ -19,7 +19,9 @@ async function run(folder: string, entry: string, flags: string[] = [], argument
   expectNoSignal(build);
   const lines = (build.stdout + build.stderr).split(/\r?\n/);
   const messages = (prefix: string) =>
-    lines.filter(line => line.startsWith(prefix)).map(line => line.slice(prefix.length));
+    lines
+      .filter(line => line.startsWith(prefix) && !/ full types, and /.test(line))
+      .map(line => line.slice(prefix.length));
   let stdout: string | undefined;
   if (build.exitCode === 0) {
     const ran = await spawned([program, argument], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
@@ -194,7 +196,11 @@ const mismatches: Mismatch[] = [
     setManifest({ lay: { "../other/index.js": sha256("") } }),
     '"../other/index.js" in full-types.json is not a path inside the package',
   ],
-  ["the name does not match its folder", setManifest({ name: "forms" }), "full-types.json is not valid"],
+  [
+    "the name does not match its folder",
+    setManifest({ name: "forms" }),
+    'the "name" in full-types.json is "forms", but the folder is for "shapes"',
+  ],
 ];
 
 const neededPackages: [name: string, version: string, expected: object][] = [
@@ -237,11 +243,16 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "full types of a package the program never loads are ignored",
+    "full types of a package the program never loads are not read, and the build says so",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", { ...project(), ".full-types/unused/full-types.json": "{" });
-        expect(await runProject(String(dir))).toMatchObject(usesTypedVersion);
+        expect(await runProject(String(dir))).toMatchObject({
+          ...usesTypedVersion,
+          warnings: [
+            `TS100056: The full types of "unused" in .full-types/unused can't be used: the program doesn't import "unused". Check the name of the folder, or remove it`,
+          ],
+        });
       }),
     600_000,
   );

@@ -91,6 +91,10 @@ pub(crate) struct ParsedSource {
     pub evaluated_function: Option<FnId>,
     pub modules_named_in_choices: Vec<NamedModule>,
     pub library_names_passed_to_imports: Vec<(SymbolId, NamedModule)>,
+    pub library_modules_passed_for_parameters: Vec<RuntimeModule>,
+    pub library_modules_written_as_values: Vec<RuntimeModule>,
+    pub loads_by_unknown_name: bool,
+    pub imports_given_unknown_names: Vec<SymbolId>,
     pub(super) named_modules: OnceLock<Vec<NamedModule>>,
     pub diagnostics: Vec<FileDiagnostic>,
 }
@@ -111,6 +115,10 @@ impl ParsedSource {
             evaluated_function: None,
             modules_named_in_choices: Vec::new(),
             library_names_passed_to_imports: Vec::new(),
+            library_modules_passed_for_parameters: Vec::new(),
+            library_modules_written_as_values: Vec::new(),
+            loads_by_unknown_name: false,
+            imports_given_unknown_names: Vec::new(),
             named_modules: OnceLock::new(),
             diagnostics: Vec::new(),
         }

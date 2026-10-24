@@ -49,7 +49,16 @@ fn package_files(manifest: &str, names: &[&str]) -> MemoryHost {
 }
 
 fn describe(typed: Option<TypedVersionFile<'_>>) -> Found {
-    typed.map(|typed| (text(typed.path), typed.origin))
+    let usable = typed.filter(|typed| typed.rejected_as.is_none());
+    usable.map(|typed| (text(typed.path), typed.origin))
+}
+
+fn rejected_in_dist(dist_manifest: &str) -> Option<(String, ErasureMismatchKind)> {
+    let host = package_with_dist(MAIN_IN_DIST, dist_manifest);
+    with_resolver(&host, &bun_run(), |resolver| {
+        let typed = resolver.typed_version_of(DIST_FILE.as_bytes())?;
+        Some((text(typed.path), typed.rejected_as?))
+    })
 }
 
 fn by(origin: TypedVersionOrigin, path: &str) -> Found {
@@ -241,13 +250,89 @@ fn typed_file_that_condition_names_can_be_missing() {
     with_resolver(&host, &bun_run(), |resolver| {
         let typed = resolver.typed_version_of(DIST_FILE.as_bytes()).unwrap();
         assert_eq!(text(typed.path), "/p/node_modules/pkg/dist/missing.full.ts");
-        assert!(typed.is_missing);
+        assert_eq!(typed.rejected_as, Some(ErasureMismatchKind::Missing));
     });
     let host = package_with_dist(MAIN_IN_DIST, DIST_TYPED_EXPORTS);
     with_resolver(&host, &bun_run(), |resolver| {
         let typed = resolver.typed_version_of(DIST_FILE.as_bytes()).unwrap();
-        assert!(!typed.is_missing);
+        assert_eq!(typed.rejected_as, None);
     });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn typed_file_that_nothing_leads_to_is_rejected() {
+    use ErasureMismatchKind::{Misspelled, NotExported, NotReached, OutsideExports};
+    for (dist_manifest, kind) in [
+        (r#"{"name": "dist"}"#, NotExported),
+        (r#"{"exports": {".": "./index.js"}}"#, NotExported),
+        (
+            r#"{"exports": {".": {"full-types": "./index.js", "default": "./index.js"}}}"#,
+            NotExported,
+        ),
+        (
+            r#"{"exports": {"./full-types": "./index.full.ts", ".": {"default": "./index.js"}}}"#,
+            NotExported,
+        ),
+        (
+            r#"{"exports": {".": {"default": "./index.js", "full-types": "./index.full.ts"}}}"#,
+            NotReached,
+        ),
+        (
+            r#"{"exports": {"default": "./index.js", "full-types": "./index.full.ts"}}"#,
+            NotReached,
+        ),
+        (
+            r#"{"exports": {".": {"node": {"default": "./index.js", "full-types": "./index.full.ts"}}}}"#,
+            NotReached,
+        ),
+        (
+            r#"{"exports": {".": {"full-type": "./index.full.ts", "default": "./index.js"}}}"#,
+            Misspelled,
+        ),
+        (
+            r#"{"exports": {".": {"import": {"fullTypes": "./index.full.ts", "default": "./index.js"}}}}"#,
+            Misspelled,
+        ),
+        (
+            r#"{"full-types": "./index.full.ts", "exports": {".": "./index.js"}}"#,
+            OutsideExports,
+        ),
+        (r#"{"full-types": "./index.full.ts"}"#, OutsideExports),
+    ] {
+        let expected = Some((DIST_TYPED_FILE.to_owned(), kind));
+        assert_eq!(rejected_in_dist(dist_manifest), expected, "{dist_manifest}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn condition_of_other_import_kind_is_not_behind_match() {
+    let dist_manifest = r#"{"exports": {".": {
+        "require": {"default": "./index.js"},
+        "import": {"full-types": "./other.full.ts", "default": "./other.js"}
+    }}}"#;
+    let host = MemoryHost::new(&[
+        (MANIFEST, MAIN_IN_DIST),
+        (DIST_MANIFEST, dist_manifest),
+        (DIST_FILE, ""),
+        (DIST_OTHER_FILE, ""),
+    ]);
+    with_resolver(&host, &bun_run(), |resolver| {
+        assert_eq!(resolver.typed_version_of(DIST_FILE.as_bytes()), None);
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn installed_typed_version_comes_before_rejected_file() {
+    let installed_typed = "/p/node_modules/@oven/full-types-pkg/lay/dist/index.js";
+    let host = package_with_dist(MAIN_IN_DIST, r#"{"name": "dist"}"#)
+        .installed_typed(DIST_FILE, installed_typed);
+    assert_eq!(
+        typed_version(&host, DIST_FILE),
+        by(FromHost, installed_typed)
+    );
 }
 
 #[test]

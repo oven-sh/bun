@@ -1,7 +1,7 @@
 // Every program under ./programs, in every run. A build costs half a second of processor time before it has read a line of the program, and a program of twenty lines is built twice: built
 // one by one, all programs are too much for a commit, so run-programs.ts takes one in ten. Here the programs of a part are the entry points of ONE executable, behind
 // programs/start-the-entry-point-named.ts, which imports the one that AOT_PROGRAM names. One build for hundreds of programs, and each of them still runs in a process of its own:
-// it may exit, change a built-in, read the clock or end by a signal. Each is judged as run-programs.ts judges it: with its types and with its types erased it prints what plain Bun prints, or its .expected.txt.
+// it may exit, change a built-in or read the clock. Each is judged as run-programs.ts judges it: with its types and with its types erased it prints what plain Bun prints, or its .expected.txt.
 //
 // The compiler sees the whole program, so a program among hundreds is not compiled as it is alone: what one of them does to a class or a built-in holds for all. This is beside the share of
 // run-programs.ts and programs-in-every-run.txt, which build each program alone, and not in their place.
@@ -63,8 +63,17 @@ function declaresForEverybody(path: string): boolean {
   );
 }
 
+// What a script writes has no <program>.json to say "alone" in. By how the names of a family end.
+const familiesAlone = [
+  // Which members of a library module an executable holds goes by what all of its entry points name.
+  /^ways-into-library-modules\/.*-through-get-builtin-module-under-a-computed-key$/,
+  // require.main is the module of the first entry point.
+  /^ways-into-library-modules\/.*-through-require-main-require-in-commonjs$/,
+];
+
 function canBeOneOfMany(path: string): boolean {
   const beside = besideOf(path);
+  if (familiesAlone.some(family => family.test(nameOf(path)))) return false;
   if (existsSync(beside + ".todo.txt") || existsSync(beside + ".build-errors.txt")) return false;
   const { build, entryPoints, buildEnv, reference, alone, skipWithASAN, todoOn } = optionsOf(path);
   if (build?.length || entryPoints?.length || buildEnv || reference || alone || (isASAN && skipWithASAN) || todoOn?.[process.platform]) return false;
@@ -86,7 +95,7 @@ function refusedBy(stderr: string, programs: string[]): Map<string, string> {
   let error: string | undefined;
   for (const line of stderr.split(/\r?\n/)) {
     if (/^error\b/.test(line)) error = line;
-    const [, file] = /^\s+at (.+):\d+:\d+$/.exec(line) ?? [];
+    const [, file] = /^\s+at (.+):\d+:\d+$/.exec(line) ?? /^error\b.* at (\S+):\d+:\d+$/.exec(line) ?? [];
     if (!file || error === undefined) continue;
     const program = programs.find(path => path === file || (/[\\/]main\.[a-z]+$/.test(path) && file.startsWith(dirname(path) + sep)));
     if (program && !refused.has(program)) refused.set(program, `${error} ${line.trim()}`);
@@ -107,6 +116,8 @@ function firstDifference(result: RunResult, expected: RunResult | string): strin
 class Way {
   executableOf = new Map<string, string>();
   refused = new Map<string, string>();
+  /** The smallest sets of programs that were not built together, though each half of the set was, with the command that says so. */
+  notBuiltTogether: string[] = [];
   #executables = 0;
   constructor(
     readonly name: string,
@@ -137,7 +148,10 @@ class Way {
     if (programs.length === 1) return void this.refused.set(programs[0], refused.get(programs[0]) ?? said);
     if (refused.size === 0 || refused.size === programs.length) {
       console.error(`IN HALVES: the build of ${programs.length} programs, ${this.name}, ended with ${said}`);
-      return this.#buildHalves(root, programs);
+      const [smaller, alone] = [this.notBuiltTogether.length, this.refused.size];
+      await this.#buildHalves(root, programs);
+      if (smaller === this.notBuiltTogether.length && alone === this.refused.size) this.notBuiltTogether.push(`${said}\n  cd ${root} && ${this.command(["./" + starter, ...spelled], "programs").join(" ")}`);
+      return;
     }
     for (const [path, error] of refused) console.error(`REFUSED among ${programs.length} programs, ${this.name}: ${nameOf(path)}: ${error}`);
     await this.build(root, programs.filter(path => !refused.has(path)));
@@ -217,6 +231,16 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
       rmSync(executable, { force: true });
       console.error(`  ${nameOf(path)}, ${way.name}, built alone: ${verdict}`);
     }
+
+    // Entry points that are built one by one and not together are a valid program that the compiler refuses.
+    test(
+      "the programs are built together",
+      async () => {
+        await Promise.all(ways.map((_, index) => buildOnce(index)));
+        expect(ways.flatMap(way => way.notBuiltTogether)).toEqual([]);
+      },
+      1_500_000,
+    );
 
     for (const path of chosen) {
       test(

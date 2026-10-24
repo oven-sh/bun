@@ -202,8 +202,12 @@ function createNodes(parsed: any[]): Plan {
 }
 
 // A library file has no variables: the engine keeps the Map, and compiled code hands it to every function here that takes a text.
+function preparedUnder(name: string, preparedByText: Map<string, any>): any {
+  return $call<any>($Map.prototype.get, preparedByText, name);
+}
+
 function prepare(text: string, preparedByText: Map<string, Prepared>): Prepared {
-  const known = preparedByText.get(text);
+  const known: Prepared | undefined = preparedUnder(text, preparedByText);
   if (known !== undefined) return known;
   const parsed = $jsonParse(text);
   const isPlan = $isArray(parsed);
@@ -212,7 +216,7 @@ function prepare(text: string, preparedByText: Map<string, Prepared>): Prepared 
     rule: isPlan ? undefined : createRule(parsed),
     optionalUnions: new $Map(),
   };
-  preparedByText.set(text, prepared);
+  $call<unknown>($Map.prototype.set, preparedByText, text, prepared);
   return prepared;
 }
 
@@ -229,7 +233,7 @@ function createRun(plan: string, preparedByText: Map<string, any>, isCopy: boole
     remainingIssues: maxIssueCount(),
     reported: undefined,
     optionalUnions: prepared.optionalUnions,
-    matchesPattern: preparedByText.get("matchesPattern"),
+    matchesPattern: preparedUnder("matchesPattern", preparedByText),
     copies: isCopy ? undefined : new $Set(),
   };
 }
@@ -1050,7 +1054,7 @@ function addIssueOfRoot(run: Run, found: any[], value: any): void {
 // Most errors are caught and never read. The engine copies a value that it can copy without running code of the program. The message and the issues are made of the copy when one of them is first read.
 function tryDeferReport(value: unknown, plan: string, prepared: Map<string, any>): unknown {
   const error = new TypeError();
-  const isDeferred = prepared.get("deferReport")(error, value, (copy: unknown) => {
+  const isDeferred = preparedUnder("deferReport", prepared)(error, value, (copy: unknown) => {
     const run = createRun(plan, prepared, true);
     const found = findIssues(run, copy);
     if (found.length === 0) addIssueOfRoot(run, found, copy);
@@ -1094,7 +1098,7 @@ export function interpretNode(value: unknown, plan: string, prepared: Map<string
 }
 
 export function holdsRule(value: unknown, rule: string, prepared: Map<string, any>): boolean {
-  return holds(prepared.get("matchesPattern"), prepare(rule, prepared).rule!, value);
+  return holds(preparedUnder("matchesPattern", prepared), prepare(rule, prepared).rule!, value);
 }
 
 export function copyOwnProperties(value: object): object {

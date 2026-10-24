@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
-import { slot, unsupported, wanted } from "../run-programs";
+import { inShareOfList, slot, unsupported, wanted } from "../run-programs";
 import { typednessOf, type Typedness } from "./typedness";
 
 const base = readFileSync(join(import.meta.dir, "one-line", "base.ts"), "utf8");
@@ -61,7 +61,9 @@ describe.skipIf(!!unsupported)("compile/aot/typedness/one-line", () => {
     expect(before.types).toEqual([]);
     expect(before.line).toStartWith("0 open, ");
     expect(typedAccessCount(before)).toBeGreaterThan(10);
-    const mine = rows.filter(row => !row.opens).filter((_, index) => wanted !== "quick" || index % 10 === 0);
+    const mine = rows
+      .filter(row => !row.opens)
+      .filter(({ title }, index) => wanted !== "quick" || inShareOfList(`one line ${title}`, index));
     const found = await Promise.all(
       mine.map(({ title, code }, index) =>
         slot(async () => {

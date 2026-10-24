@@ -176,12 +176,12 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "narrow it first, for example with instanceof Error.",
         ),
         UnprovenCause::ParameterOfEscapedFunction => (
-            "Code the compiler can't see can call this function with any arguments.",
-            "give the parameter a type, or narrow it.",
+            "A function is handed to code the compiler can't see here, which can call it with any arguments.",
+            "call the function from your own code, or hand over a small wrapper that checks its arguments with validate<T>(value).",
         ),
         UnprovenCause::ContentsOfEscapedObject => (
-            "The value is read from an object that code the compiler can't see can write to.",
-            "keep the object out of that code, or pass a copy.",
+            "An object is handed to code the compiler can't see here, which can write anything into it.",
+            "hand over a copy, or only the fields that code needs.",
         ),
         UnprovenCause::ResultOfUnknownCallee => (
             "The value is returned by a call whose callee isn't known at build time.",

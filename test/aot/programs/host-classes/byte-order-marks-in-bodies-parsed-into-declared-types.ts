@@ -1,4 +1,4 @@
-// `await body.json()` that goes to a declared type, on bodies that start with a byte order mark. What json() does with a mark depends on what holds the body: a Blob splits off a UTF-8 or a UTF-16 mark and rejects a body that has nothing else, bytes lose a UTF-8 mark only, and a string keeps its first character. The compiled form reads the bytes, which do not say what held them, and has one rule: a UTF-8 mark is dropped and a UTF-16 mark decoded. The stored texts have that.
+// `await body.json()` that goes to a declared type, on bodies that start with a byte order mark. What json() does with a mark depends on what holds the body: a Blob splits off a UTF-8 or a UTF-16 mark and rejects a body that has nothing else, bytes lose a UTF-8 mark only, and a string keeps its first character. The declared type changes none of that.
 interface Order {
   id: number;
 }

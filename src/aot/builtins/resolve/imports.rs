@@ -160,7 +160,7 @@ impl Resolver<'_, '_> {
             // `finish` mentions the path of every symbol it publishes.
             HolderKind::Object => {}
         }
-        if self.exported_symbols.contains(&symbol)
+        if self.is_exported(symbol)
             || bound.is_visible_to_eval(symbol)
             || self.is_named_outside(symbol)
         {

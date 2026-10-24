@@ -149,7 +149,7 @@ describe.concurrent("a package's full types mean what its package.json says", ()
         const built = await spawned([bunExe(), "compile", "./app.ts"], root, env);
         const said = (built.stdout + built.stderr)
           .split(/\r?\n/)
-          .filter(line => /full types|without .*types/.test(line))
+          .filter(line => /full types|without .*types/.test(line) && !/ full types, and /.test(line))
           .map(line => line.replaceAll("\\", "/"));
         expect({ said: said.sort(), exitCode: built.exitCode }).toEqual({
           said: ["by-hand", ...Object.keys(libraries)]

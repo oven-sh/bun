@@ -138,7 +138,9 @@ struct Printed {
 
 struct Outcome {
     rejected_versions: Vec<Printed>,
+    /// Without the count.
     printed: Vec<Printed>,
+    count: Option<String>,
     stops_build: bool,
     remaining: Vec<BuildDiagnostic>,
     demoted_directories: Vec<String>,
@@ -356,12 +358,24 @@ fn report(
     let roles = role_decision(packages, demoted);
     let mut diagnostics = Diagnostics::new();
     let errors = report_package_errors(&mut diagnostics, packages, checked, &roles);
-    report_used_versions(&mut diagnostics, packages, &errors.demoted_directories);
+    report_unchecked_versions(&mut diagnostics, packages, &roles);
+    let refused_at_load = report_rejected_versions(&mut Diagnostics::new(), packages, &|_| None);
+    report_used_versions(
+        &mut diagnostics,
+        packages,
+        &errors.demoted_directories,
+        &refused_at_load,
+    );
     let demoted_directories = errors.demoted_directories.iter();
+    let stops_build = diagnostics.has_errors();
+    let is_count = |printed: &Printed| printed.text.contains(" full types, and ");
+    let (count, printed): (Vec<Printed>, Vec<Printed>) =
+        print(diagnostics).into_iter().partition(is_count);
     Outcome {
         rejected_versions: print_rejected_versions(packages, &[]),
-        stops_build: diagnostics.has_errors(),
-        printed: print(diagnostics),
+        stops_build,
+        printed,
+        count: count.into_iter().next().map(|count| count.text),
         remaining: errors.remaining,
         demoted_directories: demoted_directories
             .map(|directory| BStr::new(directory).to_string())
@@ -743,6 +757,41 @@ fn accepted_project_version_is_named_by_sound_folder() {
     let outcome = with_project_version(TYPED_FILE, report_without_errors);
     assert_eq!(outcome.printed, [message(Kind::Note, PROJECT_VERSION_USED)]);
     assert!(outcome.rejected_versions.is_empty());
+    let count = "1 package has full types, and 1 is compiled from them";
+    assert_eq!(outcome.count.as_deref(), Some(count));
+}
+
+#[test]
+fn program_without_full_types_has_no_count() {
+    let outcome = with_packages(DEPENDENCIES, report_without_errors);
+    assert_eq!(outcome.count, None);
+    assert!(outcome.rejected_versions.is_empty());
+}
+
+#[test]
+fn refused_project_version_is_counted() {
+    let files = project_version_files(SOUND_JSON_FOR_OTHER_VERSION, TYPED_FILE);
+    let outcome = with_packages(&files, report_without_errors);
+    let count = "1 package has full types, and none are compiled from them";
+    assert_eq!(outcome.count.as_deref(), Some(count));
+}
+
+#[test]
+fn project_version_under_ts_nocheck_is_reported() {
+    let outcome = with_project_version(TYPED_FILE, |packages| {
+        let files = packages.view.files();
+        let is_typed = |file: &&FileId| {
+            let compiled = files.compiled(**file);
+            compiled.is_some_and(|it| it.typed_source_path.is_some())
+        };
+        let file = *files.compiled_files().iter().find(is_typed).unwrap();
+        let cause = DemotionCause::UnverifiedTypes;
+        report(packages, Vec::new(), &[Demotion { file, cause }])
+    });
+    let warning = project_version_text(
+        "lay/x.js has a // @ts-nocheck comment, so nothing checks its types. Remove the comment",
+    );
+    assert_eq!(outcome.printed, [message(Kind::Warn, &warning)]);
 }
 
 #[test]
@@ -764,7 +813,9 @@ fn manifest_mismatch_is_reported_without_position() {
 #[test]
 fn manifest_without_pins_is_reported() {
     let files = project_version_files("{}", TYPED_FILE);
-    let expected = load_with_messages(&[project_version_text("full-types.json is not valid")]);
+    let expected = load_with_messages(&[project_version_text(
+        "\"format\" in full-types.json is missing or not valid",
+    )]);
     assert_eq!(describe_load(&files), expected);
 }
 
@@ -831,16 +882,16 @@ fn manifest_is_compared_with_what_build_defines() {
 }
 
 #[test]
-fn typed_version_of_package_that_is_not_loaded_is_not_compared() {
+fn typed_version_of_package_that_is_not_loaded_is_reported_and_not_read() {
     let mut files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE).to_vec();
     files.push((".full-types/unused/full-types.json", "{"));
     let outcome = with_packages(&files, report_without_errors);
-    assert!(
-        outcome.rejected_versions.is_empty(),
-        "{:?}",
-        outcome.rejected_versions
-    );
+    let warning = "TS100056: The full types of \"unused\" in .full-types/unused can't be used: \
+                   the program doesn't import \"unused\". Check the name of the folder, or remove it";
+    assert_eq!(outcome.rejected_versions, [message(Kind::Warn, warning)]);
     assert_eq!(outcome.printed, [message(Kind::Note, PROJECT_VERSION_USED)]);
+    let count = "2 packages have full types, and 1 is compiled from them";
+    assert_eq!(outcome.count.as_deref(), Some(count));
 }
 
 #[test]

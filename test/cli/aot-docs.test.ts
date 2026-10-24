@@ -79,33 +79,30 @@ describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%
   });
 
   const titled = examples.map(it => [`line ${it.line}: ${it.commands.replaceAll("\n", "; ")}`, it] as const);
-  test.todo.each(titled.filter(([, it]) => isNotYetTrue(name, it)))("%s", () => {});
-  test.concurrent.each(titled.filter(([, it]) => !isNotYetTrue(name, it)))(
-    "%s",
-    async (_, { commands, printed, filesAbove, hasBunTypes }) => {
-      using dir = (hasBunTypes ? tempDirWithBunTypes : tempDir)("aot-docs", { ...files, ...filesAbove });
-      const cwd = realpathSync(String(dir));
-      mkdirSync(join(cwd, ".bin"));
-      symlinkSync(bunExe(), join(cwd, ".bin", "bun"));
-      await using proc = Bun.spawn({
-        cmd: ["sh", "-c", `{ ${commands}\n} 2>&1`],
-        cwd,
-        env: { ...bunEnv, NO_COLOR: "1", PATH: `${join(cwd, ".bin")}:${bunEnv.PATH}` },
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
-      const output = withoutTimes(stdout.replaceAll(cwd, "/path/to"));
-      const expected = withoutTimes(printed);
-      let at = 0;
-      const found = expected.filter(line => {
-        const index = output.indexOf(line, at);
-        if (index < 0) return false;
-        at = index + 1;
-        return true;
-      });
-      expect({ found, output }).toEqual({ found: expected, output });
-    },
-    120_000,
-  );
+  const printsWhatThePageSays = async (_: string, { commands, printed, filesAbove, hasBunTypes }: Example) => {
+    using dir = (hasBunTypes ? tempDirWithBunTypes : tempDir)("aot-docs", { ...files, ...filesAbove });
+    const cwd = realpathSync(String(dir));
+    mkdirSync(join(cwd, ".bin"));
+    symlinkSync(bunExe(), join(cwd, ".bin", "bun"));
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `{ ${commands}\n} 2>&1`],
+      cwd,
+      env: { ...bunEnv, NO_COLOR: "1", PATH: `${join(cwd, ".bin")}:${bunEnv.PATH}` },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const output = withoutTimes(stdout.replaceAll(cwd, "/path/to"));
+    const expected = withoutTimes(printed);
+    let at = 0;
+    const found = expected.filter(line => {
+      const index = output.indexOf(line, at);
+      if (index < 0) return false;
+      at = index + 1;
+      return true;
+    });
+    expect({ found, output }).toEqual({ found: expected, output });
+  };
+  test.todo.each(titled.filter(([, it]) => isNotYetTrue(name, it)))("%s", printsWhatThePageSays, 120_000);
+  test.concurrent.each(titled.filter(([, it]) => !isNotYetTrue(name, it)))("%s", printsWhatThePageSays, 120_000);
 });

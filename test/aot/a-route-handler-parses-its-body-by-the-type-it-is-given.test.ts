@@ -120,8 +120,8 @@ for (const [name, { source, answer }] of Object.entries(programs)) {
   });
 }
 
-// TODO: the handler hands the request to a function that other handlers call too, and then reads the body.
-test.todo("a handler that first hands its request to a shared function", async () => {
+// The handler hands the request to a function that other handlers call too, and then reads the body.
+test("a handler that first hands its request to a shared function", async () => {
   const app = join(import.meta.dir, "servers", "app");
   const files = {
     "main.ts": readFileSync(join(app, "api-bun.ts"), "utf8"),
@@ -130,8 +130,8 @@ test.todo("a handler that first hands its request to a shared function", async (
   expect((await build(files, false)).isParsedByType).toBe(true);
 });
 
-// TODO: plain Bun parses the string itself, mark included, where the body was made of a string. Of bytes it drops the mark.
-test.todo("a body made of a string that starts with a byte order mark", async () => {
+// Plain Bun parses the string itself, mark included, where the body was made of a string. Of bytes it drops the mark.
+test("a body made of a string that starts with a byte order mark", async () => {
   const source = `type Task = { title: string; points: number };
 async function read(source: Response): Promise<string> {
   try {

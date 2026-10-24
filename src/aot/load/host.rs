@@ -8,6 +8,7 @@ use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Interner;
+use bun_sema::erasure::{Erasure, check_erasure};
 use bun_sema::hir::ExprId;
 use bun_sema::hir_from_data::HostValue;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -273,6 +274,11 @@ impl LoadHost<'_> {
     fn default_loader_for(&self, path: &[u8], kind: CodeImportKind) -> Loader {
         let loaders = &self.input.options.load.loaders;
         if !self.is_entry_point(path) {
+            // An executable carries a file of a kind that nothing names, whichever way the program asks for it. `bun run` reads it as code for `require`.
+            let kind = match (kind, self.input.options.aot.runs_in_place) {
+                (CodeImportKind::Require, false) => CodeImportKind::Import,
+                _ => kind,
+            };
             return loader_by_path(loaders, path, kind);
         }
         match self.is_among(&self.binary_entry_point_paths, path) {
@@ -284,6 +290,18 @@ impl LoadHost<'_> {
     fn plugin_loader(&self, path: &[u8]) -> Option<Loader> {
         let module = self.plugins.loaded(path)?;
         module.is_from_plugin.then_some(module.loader)
+    }
+
+    /// The loader of the JavaScript that a plugin has answered for a TypeScript file.
+    fn loader_in_place_of_typed_file(&self, path: &[u8]) -> Option<Loader> {
+        if is_host_path(path) || is_declaration_file_name(path) {
+            return None;
+        }
+        let is_javascript = |loader| script_kind_of(loader).map(ScriptKind::is_javascript);
+        let loader = self.plugin_loader(path)?;
+        let is_untyped_for_typed = is_javascript(loader) == Some(true)
+            && is_javascript(self.default_loader(path)) == Some(false);
+        is_untyped_for_typed.then_some(loader)
     }
 
     fn plugin_module_name(&self, path: &[u8]) -> Option<PluginModuleName> {
@@ -384,6 +402,9 @@ impl Host for LoadHost<'_> {
         if is_on_disk && !self.plugins.was_read(path) && !self.is_background_read(path) {
             return without_commonjs_wrapper(self.disk.read_source(path));
         }
+        if self.loader_in_place_of_typed_file(path).is_some() {
+            return self.disk.read_source(path);
+        }
         match self.read_code(path) {
             CodeRead::Text(text) => text,
             CodeRead::Deferred => Cow::default(),
@@ -450,8 +471,8 @@ impl Host for LoadHost<'_> {
             return None;
         }
         let loader = match self.plugin_loader(path) {
-            Some(loader) => loader,
-            None => self.default_loader(path),
+            Some(loader) if self.loader_in_place_of_typed_file(path).is_none() => loader,
+            Some(_) | None => self.default_loader(path),
         };
         script_kind_of(loader).filter(|kind| kind.differs_from_name(path))
     }
@@ -544,10 +565,6 @@ impl CodeHost for LoadHost<'_> {
         self.typed_version_in(TypedPackagePlace::Installed, path, package)
     }
 
-    fn typed_version_manifest(&self, typed_path: &[u8]) -> Option<Vec<u8>> {
-        self.input.typed_packages.manifest_path(typed_path)
-    }
-
     fn compiler_declarations(&self) -> Vec<Vec<u8>> {
         vec![compiler_declarations::PATH.to_vec()]
     }
@@ -585,6 +602,11 @@ impl CodeHost for LoadHost<'_> {
             }
         };
         to_host_loader(chosen, path)
+    }
+
+    fn loads_as_code(&self, path: &[u8], loader: HostLoader) -> bool {
+        let kind = self.classify_host_loader(loader, path);
+        script_kind_of(requested_loader(kind, path)).is_some()
     }
 
     fn read_code(&self, path: &[u8]) -> CodeRead {
@@ -647,6 +669,11 @@ impl CodeHost for LoadHost<'_> {
         self.plugin_loader(path).is_some()
     }
 
+    fn loader_of_code_in_place_of_typed_file(&self, path: &[u8]) -> Option<HostLoader> {
+        let loader = to_host_loader(self.loader_in_place_of_typed_file(path)?, path);
+        (loader != BY_NAME).then_some(loader)
+    }
+
     fn is_evaluated_text(&self, path: &[u8]) -> bool {
         self.evaluated_texts.contains(path)
     }
@@ -705,13 +732,29 @@ impl CodeHost for LoadHost<'_> {
         let compile_options = CompileParseOptions {
             path,
             script_kind: Some(script_kind).filter(|kind| kind.differs_from_name(path)),
-            experimental_decorators: request.options.experimental_decorators,
+            experimental_decorators: request.options.experimental_decorators
+                && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
             keeps_function_directives: source_kind == SourceKind::EvaluatedText,
         };
+        let mut hir = parse_for_compile(arena, &compile_options, text, atoms);
+        let is_language_assumed = matches!(served_by, ServedBy::Disk)
+            && !is_from_plugin
+            && loader_named_by_path(&self.input.options.load.loaders, path).is_none();
+        if is_language_assumed && hir.check_directive.is_none() {
+            let javascript_options = CompileParseOptions {
+                script_kind: Some(ScriptKind::Jsx),
+                ..compile_options
+            };
+            let as_javascript = parse_for_compile(arena, &javascript_options, text, atoms);
+            // Nothing says that the text is TypeScript, and it is JavaScript too.
+            if check_erasure(&hir, &as_javascript) == Erasure::Exact {
+                hir.check_directive = Some(false);
+            }
+        }
         ParsedCode {
-            hir: parse_for_compile(arena, &compile_options, text, atoms),
+            hir,
             host_values: &[],
             payload: Some(Box::new(ParsedSource {
                 byte_count: text.len(),
@@ -789,6 +832,10 @@ impl CodeHost for LoadHost<'_> {
         answers.extend(modules.map(HostResolution::Module));
         source.modules_named_in_choices = named.modules;
         source.library_names_passed_to_imports = named.passed_to_imports;
+        source.library_modules_passed_for_parameters = named.passed_for_parameters;
+        source.library_modules_written_as_values = named.written_as_values;
+        source.loads_by_unknown_name = named.loads_by_unknown_name;
+        source.imports_given_unknown_names = named.imports_given_unknown_names;
         answers
     }
 }

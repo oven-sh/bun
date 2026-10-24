@@ -59,10 +59,35 @@ const openPostgresConnection: Open = realm => {
   };
 };
 
+const openMySQLConnection: Open = realm => {
+  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: noop, open: noop, close: noop, error: noop } });
+  const { createConnection } = bindingOf(realm, "native:Bindgen:mysql.bind.ts:binding");
+  const connection = createConnection("127.0.0.1", listener.port, "user", "password", "database", 0, null, "", "", noop, noop, 0, 0, 0, false, false, undefined, false, 0, undefined);
+  return {
+    value: connection,
+    close() {
+      connection.close();
+      listener.stop(true);
+    },
+  };
+};
+
+// A query that no connection has run. Native code settles a query through what the library's module hands it when it is loaded.
+function openQuery(adapter: "postgres" | "mysql"): Open {
+  return realm => {
+    void new Bun.SQL(`${adapter}://user@127.0.0.1:1/database`);
+    const { createQuery } = bindingOf(realm, `native:Bindgen:${adapter}.bind.ts:binding`);
+    return { value: createQuery("select 1", [], [], false, false), close: noop };
+  };
+}
+
 export const openersOfWhatTheLibraryHolds: Open[] = [
   receiverOf("%ParsedShellScript%.prototype", "setEnv", () => void Bun.$`true`.env({})),
   sourceOf("Blob", () => new Blob(["text"]).stream()),
   sourceOf("File", () => Bun.file("native-contract-scratch.txt").stream()),
   sourceOf("Bytes", createStreamOfResponse),
   openPostgresConnection,
+  openMySQLConnection,
+  openQuery("postgres"),
+  openQuery("mysql"),
 ];

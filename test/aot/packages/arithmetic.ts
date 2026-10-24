@@ -1,9 +1,6 @@
 // The arithmetic inside hashing, big-number, encoding and random-number packages: 32-bit wrap-around, Math.imul, limbs and carries, shifts, doubles beyond 2^53. Each source once as JavaScript in a package and once as TypeScript.
 import { js, pkg, ts, type Case } from "./run-packages";
 
-const differs =
-  "`x as number` converts under --aot: an `undefined` read past the end of an array becomes NaN.";
-
 export const cases: Case[] = [
   {
     name: "sha256",
@@ -178,7 +175,6 @@ for (const x of run() as unknown[]) console.log(show(x));
   },
   {
     name: "counters",
-    differs,
     files: {
       ...pkg("k_counters", {
         "index.js": `"use strict";

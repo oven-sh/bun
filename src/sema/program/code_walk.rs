@@ -141,6 +141,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             (entry.payload, entry.predicted_type_files) = std::mem::take(update.get_mut());
         }
 
+        let keys = entries.iter().map(|entry| entry.key);
+        let typed_files_with_other_code = keys
+            .filter(|&key| self.is_in_place_of_typed_file(key))
+            .map(|key| to_path(key.path, self.is_case_sensitive).into_owned())
+            .collect();
         CodeFiles {
             session: self.session,
             atoms: self.atoms,
@@ -149,6 +154,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             entry_points,
             entry_of_file: Vec::new(),
             is_in_types_program: Vec::new(),
+            typed_files_with_other_code,
         }
     }
 
@@ -163,6 +169,16 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
                 path: self.resolver.keep(&path),
                 loader: key.loader,
             },
+        }
+    }
+
+    fn key_of_read_code(&self, key: LoadKey<'r>) -> LoadKey<'r> {
+        if key.loader != HostLoader::default() {
+            return key;
+        }
+        match self.host.loader_of_code_in_place_of_typed_file(key.path) {
+            Some(loader) => LoadKey { loader, ..key },
+            None => key,
         }
     }
 
@@ -642,7 +658,7 @@ fn order_files<'s, 'r>(
         }
         ordered.steps.push(steps);
         ordered.entries.push(CodeEntry {
-            key: file.target.key,
+            key: context.key_of_read_code(file.target.key),
             host_module: file.target.host_module,
             role: match &file.parsed {
                 Some(parsed) => FileRole::of_tree(&parsed.parse.hir),

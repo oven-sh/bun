@@ -24,8 +24,8 @@
 //   calls                the calls of compiled functions in a round, and those among them that enter a function which the compiler took
 //                        for cold, for run once, or for reachable only behind a test that fails: it gave them its slowest code
 //
-// A number that is worse than its budget fails the test, which then names the places that are new. Whoever means to accept it
-// edits ./budgets.json, where a reviewer sees it.
+// A number that is over its budget by more than 2% and by more than 3 fails the test, which then names the places that are new: how a stream
+// is cut into pieces moves a few calls and cells from run to run. Whoever means to accept it edits ./budgets.json, where a reviewer sees it.
 //
 //   AOT_SERVERS=1 bun test test/aot/servers/budgets.test.ts             all (about three minutes on eight cores, and three more for "typescript")
 //   AOT_SERVERS=node,hono ..                                            only these
@@ -78,7 +78,17 @@ interface Budget {
 type Later = "calls" | "accessesByName" | "runtimeOperations" | "allocated" | "closures";
 type StoredBudget = Omit<Budget, Later> & Partial<Pick<Budget, Later>>;
 
-const servers = filterRequested(["node", "express", "hono", "fastify", "elysia", "tanstack", "typescript"]);
+const servers = filterRequested([
+  "bun",
+  "node",
+  "koa",
+  "express",
+  "hono",
+  "fastify",
+  "elysia",
+  "tanstack",
+  "typescript",
+]);
 const budgetsPath = process.env.AOT_BUDGETS_FILE ?? join(import.meta.dir, "budgets.json");
 const budgets: Record<string, StoredBudget> = existsSync(budgetsPath)
   ? JSON.parse(readFileSync(budgetsPath, "utf8"))
@@ -267,7 +277,9 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
       mkdirSync(join(typescript, "node_modules"));
       const modules = process.env.AOT_SERVERS_MODULES;
       symlinkSync(
-        modules ? join(modules, "typescript") : dirname(require.resolve("typescript/package.json")),
+        modules && existsSync(join(modules, "typescript"))
+          ? join(modules, "typescript")
+          : dirname(require.resolve("typescript/package.json")),
         join(typescript, "node_modules", "typescript"),
       );
     }
@@ -307,7 +319,9 @@ describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("co
         keyof typeof allowed,
         number,
       ][];
-      const worse = numbers.filter(([what, value]) => value > (allowed[what] ?? Infinity));
+      const worse = numbers.filter(
+        ([what, value]) => value > (allowed[what] ?? Infinity) * 1.02 && value > allowed[what]! + 3,
+      );
       somethingGotWorse ||= worse.length > 0;
       const newPlaces = Object.entries(now.alwaysFailing.bun).flatMap(([path, places]) =>
         places.filter(place => !budget.alwaysFailing.bun[path]?.includes(place)).map(place => `${path} ${place}`),

@@ -37,12 +37,15 @@ export const readReport = (path: string): Report => JSON.parse(readFileSync(path
 const isNamed = (record: FunctionRecord, names: string[]) =>
   names.includes(record.name) && record.file !== "" && !record.file.startsWith("..");
 
+// The report lists operators on values of unknown type too. The rows are about accesses to properties and about calls.
+const kindsOfRows = ["read", "store", "define", "has", "delete", "call", "construct"];
+
 export function sitesOf(report: Report, names: string[]): string[] {
   const written = new Set(
     report.functions.flatMap((record, index) => (isNamed(record, names) && record.role === "Source" ? [index] : [])),
   );
   return report.accessSites
-    .filter(site => site.function !== null && written.has(site.function))
+    .filter(site => site.function !== null && written.has(site.function) && kindsOfRows.includes(site.kind))
     .sort((a, b) => a.line - b.line || a.column - b.column)
     .map(site => `${site.kind} ${site.level}`);
 }

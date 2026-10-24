@@ -121,13 +121,13 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["an object literal", `console.log({ a: 1 });`],
     ["an array", `console.log([1, 2]);`],
     ["a Map", `console.log(new Map());`],
-    gap(notYet.everyBuiltin, ["an Error", `console.log(new Error("x"));`]),
+    ["an Error", `console.log(new Error("x"));`],
     ["an element of an array", `const list: string[] = ["p", "q"]; console.log(list[0]);`],
     ["the result of JSON.parse", `console.log(JSON.parse(process.argv[2]));`],
-    gap(notYet.everyBuiltin, [
+    [
       "dates, typed arrays, sets, regular expressions, symbols and functions",
       `console.log(new Date(0), 5n, new Uint8Array(2), new Set([1]), /x/, Symbol("s"), () => 1);`,
-    ]),
+    ],
     gap(notYet.everyBuiltin, ["a URL, which has an inspector of its own", `console.log(new URL("http://x/"));`]),
     gap(notYet.everyBuiltin, [
       "a mark, whose inspector prints an object of the program",

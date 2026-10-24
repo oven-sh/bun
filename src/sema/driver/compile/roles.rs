@@ -153,7 +153,10 @@ fn find_rejected_neighbors(files: &Files<'_>, files_to_lower: &[FileId]) -> Vec<
     let rejected_directories: FxHashSet<&[u8]> = files_to_lower
         .iter()
         .filter_map(|&file| in_package(file))
-        .filter(|(compiled, _)| compiled.rejected_typed_version.is_some())
+        .filter(|(compiled, _)| {
+            let rejected = compiled.rejected_typed_version;
+            rejected.is_some_and(|it| !it.kind.is_fault_of_manifest())
+        })
         .map(|(_, directory)| directory)
         .collect();
     if rejected_directories.is_empty() {

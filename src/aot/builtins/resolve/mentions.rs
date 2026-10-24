@@ -54,6 +54,9 @@ fn implicit_reference_path(
 
 impl Resolver<'_, '_> {
     pub(super) fn collect_exported_symbols(&mut self) {
+        if self.has_facts() {
+            return;
+        }
         let input = self.input;
         for index in 0..input.hir.export_specs.len() as u32 {
             let spec = ExportSpecId(index);

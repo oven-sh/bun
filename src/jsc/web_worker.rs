@@ -82,6 +82,8 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
+    /// In an executable whose entry points begin programs of their own: the image of the program that begins at the specifier.
+    image: Option<&'static [u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
 
@@ -367,6 +369,21 @@ impl WebWorker {
             }
         }
 
+        // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
+        let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
+            let mut ignored_message = BunString::EMPTY;
+            // SAFETY: as for the preloads.
+            let path = unsafe {
+                resolve_entry_point_specifier(
+                    parent,
+                    spec_slice.slice(),
+                    &mut ignored_message,
+                    temp_log,
+                )
+            };
+            crate::compiled_program::image_of_worker(path)
+        });
+
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
@@ -441,6 +458,7 @@ impl WebWorker {
             exec_argv_len,
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
+            image,
             preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
@@ -715,6 +733,9 @@ impl WebWorker {
             return Ok(core::ptr::null_mut());
         }
 
+        if let Some(image) = self.image {
+            crate::compiled_program::use_image_of_worker(image);
+        }
         let vm = VirtualMachine::init_worker(
             self,
             virtual_machine::Options {

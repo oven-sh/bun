@@ -25,6 +25,25 @@ pub enum ErasureMismatchKind {
     ChildCount,
     EmitsCode,
     Missing,
+    NotExported,
+    NotReached,
+    Misspelled,
+    OutsideExports,
+    DeclarationFile,
+}
+
+impl ErasureMismatchKind {
+    /// `package.json` leads to no full-types file: the file is one that the package has no types for.
+    pub fn is_fault_of_manifest(self) -> bool {
+        matches!(
+            self,
+            Self::NotExported
+                | Self::NotReached
+                | Self::Misspelled
+                | Self::OutsideExports
+                | Self::DeclarationFile
+        )
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -65,12 +65,14 @@ pub(crate) fn finish_runtime_file(
     source: &mut ParsedSource,
 ) -> Vec<HostResolution> {
     let resolved = resolve_builtins(input, request, SourceDialect::Runtime);
-    let answers = collect_implied_answers(
+    let mut answers = collect_implied_answers(
         runtime_modules,
         resolved.loaded_modules(),
         resolved.called_functions(),
         request.path,
     );
+    let declarations = runtime_modules.declarations_of_module(request.path);
+    answers.extend(declarations.map(HostResolution::Path));
     source.builtins = resolved;
     answers
 }

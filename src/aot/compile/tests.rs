@@ -317,6 +317,51 @@ fn counts_each_file_once() {
     assert_eq!(counted.map(count).iter().sum::<u64>(), file_count as u64);
 }
 
+// The text of a module of Bun's that the build has read to the end, if the module is in the program of the run time.
+fn is_runtime_module_read(source: &str, path: &[u8]) -> Option<bool> {
+    let files = [("main.ts", source)];
+    with_loaded_build(&files, &default_settings(), |_, loaded| {
+        let files = loaded.project(ProjectId::Runtime).loaded.files();
+        let file = files.by_path.get(path)?;
+        Some(!files.hir(file).stmts.is_empty())
+    })
+}
+
+#[test]
+fn module_of_bun_is_read_for_the_code_that_asks_for_it() {
+    let path = b"/$bun/js/node/querystring.ts";
+    let prints = "console.log('a line');";
+    assert_eq!(is_runtime_module_read(prints, path), Some(false));
+    let parses = "import { parse } from 'node:querystring'; console.log(parse('a=b'));";
+    assert_eq!(is_runtime_module_read(parses, path), Some(true));
+}
+
+// Where several files of Bun's declare one interface, the order of the files is the order of its members and overloads.
+#[test]
+fn files_of_bun_are_ordered_as_their_directories_list_them() {
+    let files = [("main.ts", "import 'node:http'; console.log('a line');")];
+    let paths: Vec<Vec<u8>> = with_loaded_build(&files, &default_settings(), |_, loaded| {
+        let files = loaded.project(ProjectId::Runtime).loaded.files();
+        let paths = files
+            .order
+            .iter()
+            .map(|&file| files.module(file).file_name());
+        let own = paths.filter(|path| path.starts_with(b"/$bun/js/"));
+        own.map(<[u8]>::to_vec).collect()
+    });
+    // A name that ends a path sorts before every name that is followed by another.
+    let key_of = |path: &[u8]| -> Vec<(bool, Vec<u8>)> {
+        let names: Vec<&[u8]> = bun_core::strings::split(path, b"/").collect();
+        let last = names.len() - 1;
+        let keyed = names.iter().enumerate();
+        keyed
+            .map(|(at, name)| (at != last, name.to_vec()))
+            .collect()
+    };
+    assert!(paths.len() > 100);
+    assert!(paths.is_sorted_by_key(|path| key_of(path)));
+}
+
 fn count_builtin_types_degraded_to_views(declarations: &str) -> u64 {
     let files = [SMALL_PROGRAM[0], GLOBALS, ("registry.d.ts", declarations)];
     let statistics = link_successfully(&files).summary.statistics;

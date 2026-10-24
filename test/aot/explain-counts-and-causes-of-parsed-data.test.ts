@@ -63,7 +63,7 @@ describe.concurrent("an object that JSON.parse has made reaches a type", () => {
   test("it belongs to the family unknown-code", async () => {
     const { lines } = await explain(program, "--explain=unknown-code");
     expect(lines.filter(line => line.startsWith("aot: "))).toEqual([
-      "aot: unknown-code: unknown-object at main.ts:7:25, 1 access, types 'Item', why external-data",
+      "aot: unknown-code: unknown-object at main.ts:7:25, 1 access, 1 untyped operator, types 'Item', why external-data",
     ]);
     expect((await explain(program, "--explain=unproven-type")).lines.filter(line => line.startsWith("aot: "))).toEqual(
       [],

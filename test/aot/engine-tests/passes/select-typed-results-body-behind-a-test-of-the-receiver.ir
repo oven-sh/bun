@@ -34,7 +34,7 @@ function f0 name="behindTestOfReceiver" flags=[IsAsync] parameters=[{type=anythi
 }
 # CHECK-LABEL: function f0 name="behindTestOfReceiver"
 # CHECK: b1(v2: Response):
-# CHECK-NEXT: v3:{{*}}= CallBuiltin v2 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: v3:{{*}}= CallBuiltin -, v2 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
 # CHECK-NEXT: Jump -> next b3(v3, [[yes0]])
 # CHECK: v5:{{*}}= Call v4, v0
@@ -73,7 +73,7 @@ function f1 name="castsOnBothSidesOfTheJump" flags=[IsAsync] parameters=[{type=a
     Return v9
 }
 # CHECK-LABEL: function f1 name="castsOnBothSidesOfTheJump"
-# CHECK: v3:{{*}}= CallBuiltin v2 overload=RequestPrototypeBytes/0
+# CHECK: v3:{{*}}= CallBuiltin -, v2 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[yes1]]: true = Boolean boolean=true
 # CHECK-NEXT: Jump -> next b3(v3, [[yes1]])
 # CHECK: b3(v7:{{*}}, [[holdsBytes1]]: boolean):
@@ -101,7 +101,7 @@ function f2 name="valuesWithoutEffectsOnTheWay" flags=[IsAsync] parameters=[{typ
     Return v12
 }
 # CHECK-LABEL: function f2 name="valuesWithoutEffectsOnTheWay"
-# CHECK: v4:{{*}}= CallBuiltin v3 overload=BlobPrototypeBytes/0
+# CHECK: v4:{{*}}= CallBuiltin -, v3 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK: b3(v8:{{*}}, v9: number, [[holdsBytes2]]: boolean):
 # CHECK-NEXT: v10: number = Add v9, v9
 # CHECK-NEXT: [[awaited2]]:{{*}}= Await v8

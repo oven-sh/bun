@@ -170,18 +170,20 @@ fn accept_tree<'s, 'r>(
         true => resolver.typed_version_of(path),
         false => None,
     };
-    let (missing, typed_version) = match typed_version {
-        Some(typed) if typed.is_missing => (Some(typed), None),
+    let (rejected, typed_version) = match typed_version {
+        Some(typed) if typed.rejected_as.is_some() => (Some(typed), None),
         typed_version => (None, typed_version),
     };
     let typed = typed_version.and_then(|typed| match host.read_code(typed.path) {
         CodeRead::Text(typed_text) => Some((typed, typed_text)),
         CodeRead::Deferred => None,
     });
-    let mut rejected_typed_version = missing.map(|typed| RejectedTypedVersion {
-        path: typed.path,
-        kind: ErasureMismatchKind::Missing,
-        installed_range: (0, 0),
+    let mut rejected_typed_version = rejected.and_then(|typed| {
+        Some(RejectedTypedVersion {
+            path: typed.path,
+            kind: typed.rejected_as?,
+            installed_range: (0, 0),
+        })
     });
     let mut typed_version_origin = None;
     if let Some((typed, typed_text)) = typed {
@@ -426,12 +428,13 @@ fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> 
             && is_same_path(entry_point.key.path, key.path, context.is_case_sensitive)
     });
     match (
-        is_entry_point && context.inputs.has_main_module,
+        is_entry_point,
+        context.inputs.main_module,
         entry_points.len(),
     ) {
-        (false, _) => Some(false),
-        (true, 1) => Some(true),
-        (true, _) => None,
+        (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
+        (true, MainModule::EntryPoint, 1) => Some(true),
+        (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,
     }
 }
 

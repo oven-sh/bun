@@ -50,6 +50,10 @@ diagnostic_codes! {
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
         TypedPackageUsed = 100062, Note, "\"{0}\" {1} is compiled from its full types in {2}";
         ShippedTypedVersionNotUsed = 100065, Warning, "\"{0}\" is compiled without types, because its full types in {1} can't be used: {2}";
+        FullTypesFolderNotRead = 100067, Warning, "bun compile doesn't read {0}: {1}";
+        CompilerOptionsNotRead = 100068, Warning, "\"{0}\" in {1} is ignored, so the full types of \"{2}\" are type checked as strict. bun compile reads \"compilerOptions\" at the top level of that file";
+        FullTypesSummary = 100069, Note, "{0} full types, and {1} compiled from them";
+        CompilerOptionsInvalid = 100070, Warning, "\"compilerOptions\" in {0} has an error, so the full types of \"{1}\" are type checked without that option: {2}";
     }
     Fold 100100..=100149 {
         FeatureArgumentCount = 100100, Error, "feature() requires exactly one string argument";
@@ -112,8 +116,11 @@ pub const RETIRED_NUMBERS: &[u32] = &[
     100500, 100502, 100513,
 ];
 
-pub const WITHOUT_PRINTED_NUMBER: &[Code] =
-    &[Code::TypedPackageUsed, Code::ShippedTypedVersionNotUsed];
+pub const WITHOUT_PRINTED_NUMBER: &[Code] = &[
+    Code::TypedPackageUsed,
+    Code::ShippedTypedVersionNotUsed,
+    Code::FullTypesSummary,
+];
 
 impl Code {
     pub fn prints_number(self) -> bool {
@@ -251,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn two_codes_omit_number() {
+    fn three_codes_omit_number() {
         let unnumbered: Vec<Code> = Code::ALL
             .iter()
             .filter(|code| !code.prints_number())
@@ -259,7 +266,11 @@ mod tests {
             .collect();
         assert_eq!(
             unnumbered,
-            [Code::TypedPackageUsed, Code::ShippedTypedVersionNotUsed]
+            [
+                Code::TypedPackageUsed,
+                Code::ShippedTypedVersionNotUsed,
+                Code::FullTypesSummary
+            ]
         );
     }
 }

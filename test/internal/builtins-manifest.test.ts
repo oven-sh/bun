@@ -85,9 +85,15 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 4 and its four record kinds", () => {
+  test("the manifest has format 4 and its five record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "4"]);
-    expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual(["define", "module", "functions", "function"]);
+    expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
+      "define",
+      "module",
+      "functions",
+      "function",
+      "declarations",
+    ]);
   });
 
   test("the defines do not depend on --debug", () => {
@@ -128,9 +134,23 @@ describe("builtins-manifest.ts", () => {
     expect(read("engine/A.js")).toBe("function first() {}\n");
     expect(read("manifest")).toBe(readFileSync(fixture.manifest, "utf8"));
     expect(read("engine/A.js")).toBe("function first() {}\n");
-    for (const name of ["runtime.js", "runtime.bun.js", "node/fs.ts", "builtins/Fifo.ts", "private.d.ts"]) {
+    for (const name of ["runtime.js", "runtime.bun.js", "node/fs.ts", "builtins/Fifo.ts"]) {
       expect(read(name)).toBe(readFileSync(locate(name), "utf8"));
     }
+    // What private.d.ts says a module answers lies beside the module, so whoever reads the one need not read all the others.
+    const listings = records.filter(([kind]) => kind === "declarations").map(([, name]) => name);
+    expect(names).toEqual(expect.arrayContaining(listings));
+    expect(read("node/fs.listed.d.ts")).toContain('  "node:fs": $ModuleValue<typeof import("./fs")>;\n');
+    const modulesListedIn = (text: string) =>
+      [...text.matchAll(/^  "([^"]+)": \$ModuleValue<typeof import\(/gm)].map(([, name]) => name);
+    const written = readFileSync(locate("private.d.ts"), "utf8");
+    const besideModules = listings.flatMap(name => modulesListedIn(read(name)));
+    expect(besideModules).toContain("node:fs");
+    expect(modulesListedIn(read("private.d.ts"))).not.toContain("node:fs");
+    expect([...modulesListedIn(read("private.d.ts")), ...besideModules].toSorted()).toEqual(
+      modulesListedIn(written).toSorted(),
+    );
+    expect(read("private.d.ts").split("\n").length + besideModules.length).toBe(written.split("\n").length);
     // A module's second text, for the compiler alone, goes under the module's own name.
     expect(names.filter(name => name.startsWith("ahead-of-time/"))).toEqual([]);
     for (const name of textsForTheCompiler) {

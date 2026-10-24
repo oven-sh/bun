@@ -15,7 +15,7 @@ Untyped code works, but runs slower. Run with --explain to see what to fix.
 
 A typed access is one load or one store at a fixed offset. An untyped access runs a test of its own first, or looks the property up by name at run time. The higher the number, the faster the executable. How much faster depends on the program.
 
-`bun compile --explain` lists what's lowering the number, worst first. Each entry has a location, a fix, and the number of property accesses the fix can speed up.
+`bun compile --explain` lists what's lowering the number, worst first. Each entry has the line where the missing type begins, a fix, and what hangs on that line: property accesses, indirect calls and untyped operators, with an estimate of how much of the run time they take.
 
 ## What is counted
 
@@ -59,6 +59,17 @@ So the total moves when you change code nearby. Watch the percentage, not the to
 
 A read with a computed key, such as `prices[name]` on a `Record<string, number>`, is counted as `by name`.
 
+### What else the report counts
+
+The percentage is about property accesses. `--explain` also counts two other kinds of operations that are slow for the same reason, and lists them under the same causes.
+
+| The entry says      | Counts                                                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `indirect calls`    | Calls and `new` where the compiler doesn't know the callee, so it finds the function at run time and can't inline it                                                            |
+| `untyped operators` | `if (x)`, `!x`, `a && b`, `===`, `==`, `<`, `+`, `-` and the other operators, `typeof`, `instanceof`, `for...of` and `{ ...x }` on a value whose type the compiler doesn't know |
+
+With known types each of these is a few instructions. Without, it's a call to a routine that looks at the value first. An operator where the compiler knows one side, or knows that the value is a string or a number, isn't counted.
+
 **An access counts for the file it's in**, wherever Bun inlines it. Code in `node_modules` is counted on its own `Dependencies:` line, above yours.
 
 ```txt
@@ -100,27 +111,32 @@ note: 1. unknown-object: An object from untyped code is used as this type here, 
    at main.ts:7:25
 
 note: 1 of 1 untyped access
+note: 1 untyped operator
+note: about 100% of the time in untyped operations, by how often the compiler expects each to run
 note: types: 'Item'
 note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
 note: fix: validate it where it enters typed code (JSON.parse<T>, validate<T>), or build a new object of this type from it.
 note: https://bun.com/docs/bundler/aot-explain#unknown-object
 ```
 
-The program has one property access, `item.price`. An `Item` in the list can be the object literal from line 6 or whatever `JSON.parse` returned, so the compiled code checks the shape of each `item` before it reads from it.
+The program has one property access, `item.price`, and one operator that works on what it reads, `+=`. An `Item` in the list can be the object literal from line 6 or whatever `JSON.parse` returned, so the compiled code checks the shape of each `item` before it reads from it.
 
-| Line                | Says                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| The first line      | The rank, the [code of the cause](#causes), and what happens at the location                                                          |
-| `at`                | The location, with the source line above it. A cause with no single location has neither                                              |
-| `1 of 1 untyped ..` | How many accesses the fix can speed up, out of all the untyped accesses                                                               |
-| `in function`       | The function around the location. Code at the top level of a module, as here, has no such line                                        |
-| `types:`            | Up to eight of the types that the cause affects, and a count of the rest. An object literal with no declared type has no name to list |
-| `limit`             | The compiler limit that was hit, its value and what it limits. Only [limit-reached](#limit-reached) has it                            |
-| `why`               | [Why the access isn't proven](#why-a-guard-is-there), with a code of its own. Not every entry has one                                 |
-| `fix:`              | The fix                                                                                                                               |
-| The link            | The section of this page about the cause                                                                                              |
+| Line                  | Says                                                                                                                                          |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| The first line        | The rank, the [code of the cause](#causes), and what happens at the location                                                                  |
+| `at`                  | [Where the missing type begins](#the-location-is-where-it-begins), with the source line above it. A cause with no single location has neither |
+| `1 of 1 untyped ..`   | How many accesses the fix can speed up, out of all the untyped accesses                                                                       |
+| `3 indirect calls ..` | How many [indirect calls and untyped operators](#what-else-the-report-counts) hang on the same line. Only if there are any                    |
+| `about 100% ..`       | [The estimate](#how-entries-are-ranked) that the entries are sorted by                                                                        |
+| `12 of these stay ..` | How many of them have [another cause as well](#the-location-is-where-it-begins). Only if there are any                                        |
+| `in function`         | The function around the location. Code at the top level of a module, as here, has no such line                                                |
+| `types:`              | Up to eight of the types that the cause affects, and a count of the rest. An object literal with no declared type has no name to list         |
+| `limit`               | The compiler limit that was hit, its value and what it limits. Only [limit-reached](#limit-reached) has it                                    |
+| `why`                 | [Why the access isn't proven](#why-a-guard-is-there), with a code of its own. Not every entry has one                                         |
+| `fix:`                | The fix                                                                                                                                       |
+| The link              | The section of this page about the cause                                                                                                      |
 
-An access has exactly one cause, so the entries add up to the number of untyped accesses.
+An operation is listed under exactly one entry, so the entries add up to the number of untyped accesses.
 
 | The count reads                                               | The accesses are  |
 | ------------------------------------------------------------- | ----------------- |
@@ -128,7 +144,39 @@ An access has exactly one cause, so the entries add up to the number of untyped 
 | `4 of 4 untyped accesses in dependencies`                     | In `node_modules` |
 | `2 of 5 untyped accesses, and 1,200 of 4,000 in dependencies` | In both           |
 
-Bun sorts the entries by the number of accesses in your own code, then by the number in dependencies. It prints the first 20 and counts the rest. [`--explain=json`](#json) prints all of them.
+It prints the first 20 entries and counts the rest. [`--explain=json`](#json) prints all of them.
+
+### The location is where it begins
+
+A value of unknown type spreads. What you read from it has no type, what it returns when you call it has no type, and a function that you hand to it can be called with anything. Bun follows all of that back, through variables, parameters, fields and calls, in all files, to the one operation that no earlier operation explains. That's the location of the entry.
+
+```ts settings.ts icon="/icons/typescript.svg"
+export const settings: any = JSON.parse(text); // the entry points here
+```
+
+```ts render.ts icon="/icons/typescript.svg"
+import { settings } from "./settings";
+
+function width(panel: any) {
+  return panel.size.width * 2; // two accesses and an operator that count for settings.ts:1
+}
+width(settings.panel); // one more
+```
+
+For a function or an object that code outside of the program gets hold of, the location is where you hand it over, not where you use it.
+
+A value can have more than one such beginning: two calls of `JSON.parse` whose results reach the same function, for example. Bun lists the operation under the nearest one and prefers a line of your code or your dependencies to a line in Bun's own modules. The entry says how many of its operations `stay untyped until other entries are fixed too`.
+
+### How entries are ranked
+
+Bun sorts the entries by an estimate of the time that the fix saves in your own code, then in dependencies.
+
+- **Each operation has a cost**: about how many instructions it executes beyond what it would with types. A lookup by name costs 28, a test 2, an indirect call 13, an untyped operator 6 to 60.
+- **The cost is multiplied by how often the compiler expects the operation to run.** This is the estimate that it uses to decide what to inline and where guards are worth their size: code in a loop counts about ten times the code around it, and the functions that are called the most count up to a hundred times the ones that are called the least. It comes from the structure of your program. Nothing is measured.
+
+So five accesses in an inner loop rank above a hundred that run once at startup. The plain counts are always printed next to the estimate.
+
+Entries that you can't fix come last, whatever they cost: [missed-optimization](#missed-optimization), [unknown](#unknown), [analysis-disabled](#analysis-disabled) and entries whose location is in one of Bun's own modules.
 
 Every cause belongs to a [family](#causes). Pass a family to `--explain` to see only its causes, one per line.
 
@@ -137,7 +185,7 @@ bun compile ./main.ts --explain=unknown-code
 ```
 
 ```txt
-aot: unknown-code: unknown-object at main.ts:7:25, 1 access, types 'Item', why external-data
+aot: unknown-code: unknown-object at main.ts:7:25, 1 access, 1 untyped operator, types 'Item', why external-data
 ```
 
 Here is the fix.
@@ -218,6 +266,10 @@ bun check --aot ./main.ts --explain=json
   "url": "https://bun.com/docs/bundler/aot-explain#unknown-object",
   "accesses": 1,
   "dependencyAccesses": 0,
+  "calls": 0,
+  "operators": 1,
+  "fixedByThisAlone": 2,
+  "estimatedPercent": 100.0,
   "function": "",
   "types": ["Item"],
   "family": "unknown-code",
@@ -230,20 +282,23 @@ bun check --aot ./main.ts --explain=json
 }
 ```
 
-| Field                            | Contains                                                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `rank`                           | The position in the report, from 1                                                                                  |
-| `reason`, `url`                  | The code of the cause, and the section of this page about it                                                        |
-| `limit`                          | The compiler limit that was hit, or `null`                                                                          |
-| `file`, `line`, `column`         | The location. `file` is empty and the numbers are `0` if the cause has no single location                           |
-| `inDependency`                   | `true` if `accesses` is `0`: the entry only counts for dependencies                                                 |
-| `source`                         | The source line, or an empty string                                                                                 |
-| `message`, `fix`                 | What happens there, and how to fix it                                                                               |
-| `accesses`, `dependencyAccesses` | How many accesses the fix can speed up, in your own code and in dependencies                                        |
-| `function`                       | The function around the location, or an empty string                                                                |
-| `types`                          | The names of all the types that the cause affects                                                                   |
-| `family`                         | The [group of causes](#causes) that the code belongs to: `unknown-code`, `mutation`, `unproven-type` or `limit`     |
-| `why`                            | [Why the access isn't proven](#why-a-guard-is-there): a code, a message, a fix and a link of its own. Can be `null` |
+| Field                            | Contains                                                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `rank`                           | The position in the report, from 1                                                                                   |
+| `reason`, `url`                  | The code of the cause, and the section of this page about it                                                         |
+| `limit`                          | The compiler limit that was hit, or `null`                                                                           |
+| `file`, `line`, `column`         | The location. `file` is empty and the numbers are `0` if the cause has no single location                            |
+| `inDependency`                   | `true` if nothing in your own code hangs on the entry: it only counts for dependencies                               |
+| `source`                         | The source line, or an empty string                                                                                  |
+| `message`, `fix`                 | What happens there, and how to fix it                                                                                |
+| `accesses`, `dependencyAccesses` | How many accesses the fix can speed up, in your own code and in dependencies                                         |
+| `calls`, `operators`             | How many [indirect calls and untyped operators](#what-else-the-report-counts) it can speed up, dependencies included |
+| `fixedByThisAlone`               | How many of all these have [no other cause](#the-location-is-where-it-begins)                                        |
+| `estimatedPercent`               | [The estimate](#how-entries-are-ranked): the entry's share of the time in untyped operations                         |
+| `function`                       | The function around the location, or an empty string                                                                 |
+| `types`                          | The names of all the types that the cause affects                                                                    |
+| `family`                         | The [group of causes](#causes) that the code belongs to: `unknown-code`, `mutation`, `unproven-type` or `limit`      |
+| `why`                            | [Why the access isn't proven](#why-a-guard-is-there): a code, a message, a fix and a link of its own. Can be `null`  |
 
 The first line has the numbers, for a script or for CI. This one is from the larger program.
 
@@ -274,8 +329,8 @@ The first line has the numbers, for a script or for CI. This one is from the lar
 Give your agent the command and the goal:
 
 ```txt
-Run `bun compile --explain`. Fix the first entry the way its `fix` line says, without changing what the program does.
-Run the tests, then run the command again. Repeat until it prints 100% typed.
+Run `bun compile --explain=json`. Fix the first entry, at its file, line and column, the way its `fix` says, without changing
+what the program does. Run the tests, then run the command again. Stop when the first entry's estimatedPercent is small.
 ```
 
 Read what it changes. Some fixes add a check that was not there: `JSON.parse<T>` throws on data that doesn't match. `validate<T>` returns a copy, so a later change to the copy doesn't reach the original object.
@@ -692,15 +747,28 @@ Narrow it first, for example with `instanceof Error`.
 
 ### called-by-unknown-code
 
-> Code the compiler can't see can call this function with any arguments.
+> A function is handed to code the compiler can't see here, which can call it with any arguments.
 
-Give the parameter a type, or narrow it.
+The entry points to where the function, or an object that holds it, is handed over. Everything that the function does with its parameters counts for that line.
+
+```ts
+import { validate } from "bun:bundle"; // [!code ++]
+
+const plugin = await import(process.argv[2]);
+
+plugin.onOrder(handleOrder); // [!code --]
+plugin.onOrder((body: unknown) => handleOrder(validate<Order>(body))); // [!code ++]
+```
+
+Call the function from your own code, or hand over a small wrapper that checks its arguments with `validate<T>(value)`.
 
 ### read-from-shared-object
 
-> The value is read from an object that code the compiler can't see can write to.
+> An object is handed to code the compiler can't see here, which can write anything into it.
 
-Keep the object out of that code, or pass a copy.
+The entry points to where the object is handed over. Everything that's read from it afterwards counts for that line.
+
+Hand over a copy, or only the fields that code needs.
 
 ### unknown-callee-result
 

@@ -1,5 +1,6 @@
 use core::mem::{replace, take};
 use core::ops::Range;
+use std::sync::OnceLock;
 
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, SymbolId};
@@ -21,11 +22,12 @@ use crate::builtins::table::{
     self, MODULE_LOADER_FUNCTIONS, RuntimeFunctionRole, STARTUP_FUNCTIONS, STARTUP_LOADS,
 };
 use crate::builtins::{
-    BuiltinNames, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved, RuntimeFunction,
-    RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
+    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
+    RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
 };
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
+use crate::load::named_loads::find_library_modules_that_unknown_names_may_stand_for;
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::lower::collect_library_functions;
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
@@ -913,6 +915,7 @@ impl<'a, 's> FileScan<'a, 's> {
 struct Walk<'a, 's> {
     input: &'a ReachInput<'a, 's>,
     files: Vec<Option<Box<FileUnits>>>,
+    facts: Vec<OnceLock<FileFacts>>,
     function_by_id: FxHashMap<RuntimeFunction, (FileId, u32)>,
     is_file_reached: Vec<bool>,
     reads_imports_by_name: bool,
@@ -943,22 +946,21 @@ fn find_uses_of_builtins(
     names: &BuiltinNames,
     platform: Platforms,
     text: &RegionText,
+    facts: &OnceLock<FileFacts>,
 ) -> RuntimeUses {
     let analysis = files.analysis(text.file);
-    let builtins = resolve_within(
-        &ResolveInput {
-            hir: files.hir(text.file),
-            bound: files.bound(text.file),
-            decisions: &analysis.decisions,
-            module_format: analysis.module_format,
-            targets: &ImportTargets::new(&text.targets),
-            names,
-            platform,
-            dialect: SourceDialect::Runtime,
-        },
-        &text.ranges,
-    );
-    builtins.uses().clone()
+    let input = ResolveInput {
+        hir: files.hir(text.file),
+        bound: files.bound(text.file),
+        decisions: &analysis.decisions,
+        module_format: analysis.module_format,
+        targets: &ImportTargets::new(&text.targets),
+        names,
+        platform,
+        dialect: SourceDialect::Runtime,
+    };
+    let facts = facts.get_or_init(|| FileFacts::new(&input));
+    resolve_within(&input, &text.ranges, facts).uses().clone()
 }
 
 // The compiler calls its own functions wherever it sees fit, and a model stands for native code that no source names.
@@ -975,6 +977,7 @@ impl<'a, 's> Walk<'a, 's> {
         let mut walk = Walk {
             input,
             files: (0..file_count).map(|_| None).collect(),
+            facts: (0..file_count).map(|_| OnceLock::new()).collect(),
             function_by_id: FxHashMap::default(),
             is_file_reached: vec![false; file_count],
             reads_imports_by_name: false,
@@ -1112,6 +1115,9 @@ impl<'a, 's> Walk<'a, 's> {
                     self.reach_every_export(ModuleRef::Runtime(named.module));
                 }
             }
+        }
+        for module in find_library_modules_that_unknown_names_may_stand_for(application) {
+            self.reach_every_export(ModuleRef::Runtime(module));
         }
         for &file in self.input.runtime.compiled_files() {
             if self.input.sources.kind(file) != SourceKind::RuntimeFunctions {
@@ -1310,8 +1316,9 @@ impl<'a, 's> Walk<'a, 's> {
             platform,
             ..
         } = *self.input;
+        let facts = &self.facts;
         for_each_mut(&mut regions, in_parallel, &|(text, uses)| {
-            *uses = find_uses_of_builtins(runtime, names, platform, text);
+            *uses = find_uses_of_builtins(runtime, names, platform, text, &facts[text.file.idx()]);
         });
         for (_, uses) in &regions {
             self.reach_uses(uses);

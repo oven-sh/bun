@@ -8,8 +8,9 @@ function listOf(...list: unknown[]): unknown[] {
   return list;
 }
 
-const ring: import("./tick_ring").Ring = { read: undefined, write: undefined, size: 0, pushWithInitHooks: undefined };
+const ring: import("./tick_ring").Ring = { read: undefined, write: undefined, made: 0, pushWithInitHooks: undefined };
 let growRing!: TickRing["growRing"];
+let pushWithList!: TickRing["pushWithList"];
 let tickInitHooks!: TickRing["tickInitHooks"];
 let installedNextTick: unknown = {};
 let tickingProcess!: NodeJS.Process;
@@ -22,6 +23,7 @@ const asyncContext = $asyncContext;
 function setUp(): void {
   const tickRing = require("internal/process/tick_ring");
   growRing = tickRing.growRing;
+  pushWithList = tickRing.pushWithList;
   tickInitHooks = tickRing.tickInitHooks;
   $putInternalField(nextTickQueue, 0, 0);
   $putInternalField(nextTickQueue, 2, tickRing.start(tickingProcess, nextTickQueue, drainMicrotasks));
@@ -51,22 +53,17 @@ function nextTick(cb: TickCallback, ...args: unknown[]) {
   if (tickInitHooks.length !== 0) {
     ("unlikely");
     ring.pushWithInitHooks!(cb, count !== 0 ? listOf(...args) : undefined, frame);
+  } else if (count > 3) {
+    ("unlikely");
+    pushWithList(cb, listOf(...args), frame);
   } else {
     const tick = takeTick(cb, frame);
     tick.count = count;
     if (count !== 0) {
-      if (count > 4) {
-        ("unlikely");
-        tick.list = listOf(...args);
-      } else {
-        tick.first = args[0];
-        if (count !== 1) {
-          tick.second = args[1];
-          if (count !== 2) {
-            tick.third = args[2];
-            if (count !== 3) tick.fourth = args[3];
-          }
-        }
+      tick.first = args[0];
+      if (count !== 1) {
+        tick.second = args[1];
+        if (count !== 2) tick.third = args[2];
       }
     }
   }

@@ -1,4 +1,4 @@
-// Whatever object type `await request.json()` goes to, a body that holds an object, an array or null gives what json() gives, whatever its members are, and a body that is no JSON gives the error of json(). Only a body that starts with a byte order mark differs (rows 20 and 22): the compiled form reads the bytes, drops a UTF-8 mark and decodes after a UTF-16 mark, whatever held them. A body that holds a number or a string gives that number or string.
+// Whatever object type `await request.json()` goes to, a body that holds an object, an array or null gives what json() gives, whatever its members are, and a body that is no JSON gives the error of json(). So does a body that starts with a byte order mark (rows 20, 22 and 23). A body that holds a number or a string gives that number or string.
 interface Order {
   customer: { id: number; name: string };
   items: { sku: string; quantity: number }[];

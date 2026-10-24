@@ -144,6 +144,19 @@ test("there are full types", () => {
   expect(folders.map(folder => relative(home, folder).replaceAll("\\", "/"))).toContain("react-dom/19.3.1");
 });
 
+// A child is `any` in React's own text. Where the reconciler asks a child what it is, the full types say what is expected there,
+// an element: left to `any`, the compiler guesses from the names `$$typeof` and `type`, and the functions that reconcile children
+// run their generic versions for every element.
+test("the reconciler asks a child what it is as an element", () => {
+  const versions = folders.filter(folder => json(join(folder, "full-types.json")).name === "react-reconciler");
+  expect(versions).not.toBeEmpty();
+  for (const folder of versions) {
+    const text = readFileSync(join(folder, "lay", "cjs", "react-reconciler.production.js"), "utf8");
+    expect(text.match(/switch \(\(newChild as RR\.ReactElement\)\.\$\$typeof\)/g)).toHaveLength(4);
+    expect(text).not.toMatch(/switch \(newChild\.\$\$typeof\)|[^.\w]newChild\.type === REACT_FRAGMENT_TYPE/);
+  }
+});
+
 test("react's compiler-runtime is typed at the installed file's own path", () => {
   const versions = folders.filter(folder => json(join(folder, "full-types.json")).name === "react");
   expect(versions.length).toBeGreaterThan(10);

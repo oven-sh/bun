@@ -1,4 +1,3 @@
 {
-  "runWithASAN": "objects of the program are changed by code that the compiler does not see",
-  "skipWithASAN": "TODO: a build with assertions stops in ContiguousData<double>::atUnsafe: index < m_length"
+  "runWithASAN": "objects of the program are changed by code that the compiler does not see"
 }

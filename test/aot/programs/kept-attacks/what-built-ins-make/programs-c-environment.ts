@@ -1,5 +1,6 @@
 // process.env, Bun.env and import.meta.env are one object. It holds strings alone: whatever is stored or defined is made a string, by code that only the object calls.
 const say = (...values: unknown[]) => console.log(...values);
+if (process.env.IS_THE_CHILD) { say(process.env.CONVERTED, process.env.NUMBER); process.exit(0); }
 const env = process.env as Record<string, any>;
 say(process.env === Bun.env, process.env === import.meta.env, typeof env.PATH, env.NOBODY_HAS_SET_THIS, typeof env.toString, env.constructor === Object, "PATH" in env, "NOBODY_HAS_SET_THIS" in env);
 env.TEXT = "text"; env.NUMBER = 1.5; env.FLAG = true; say(env.TEXT, env.NUMBER, typeof env.NUMBER, env.FLAG, typeof env.FLAG, Bun.env.TEXT, import.meta.env.TEXT);
@@ -19,6 +20,6 @@ const copy = { ...env }; say(copy.NUMBER, typeof copy.CONVERTED, JSON.parse(JSON
 let strings = 0; for (const name in env) if (typeof env[name] === "string") strings++; say(strings === Object.keys(env).length);
 env.TZ = "America/New_York"; say(env.TZ, new Date(0).getHours()); env.TZ = { toString: () => "UTC" }; say(env.TZ, new Date(0).getHours());
 const heir = Object.create(env); const kept = { toString() { say("never run"); return ""; } }; heir.OWN = kept; say(heir.OWN === kept, env.OWN, heir.NUMBER);
-say(Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log(process.env.CONVERTED, process.env.NUMBER)"], env: { ...env, BUN_BE_BUN: "1" } }).stdout.toString().trim());
+say(Bun.spawnSync({ cmd: /[$~]bun/i.test(process.argv[1]!) ? [process.execPath] : [process.execPath, process.argv[1]!], env: { ...env, IS_THE_CHILD: "1" } }).stdout.toString().trim());
 Object.setPrototypeOf(env, { INHERITED: () => "a function above the environment" }); say(env.INHERITED(), typeof env.toString, env.NUMBER); Object.setPrototypeOf(env, Object.prototype);
 const replaced = { HOME: () => "a function of the program" }; (process as any).env = replaced; say((process.env as any).HOME(), process.env === (replaced as any), Bun.env === (replaced as any));

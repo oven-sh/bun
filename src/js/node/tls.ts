@@ -156,7 +156,6 @@ const getBundledRootCertificates: () => string[] = $newCppFunction("NodeTLS.cpp"
 const getExtraCACertificates: () => string[] = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 // Node warns at the first secure context; the once-per-process native load is what prints it.
 const maybeWarnAboutExtraCACerts: () => void = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
-const getSystemCACertificates: () => string[] = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const canonicalizeIP: (ip: string) => string | undefined = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates: (certs: CACertInput[]) => string[] = $newCppFunction(
   "NodeTLS.cpp",
@@ -1766,7 +1765,8 @@ function cacheDefaultCACertificates() {
 
 let systemCACertificates: string[] | undefined;
 function cacheSystemCACertificates(): string[] {
-  systemCACertificates ||= getSystemCACertificates() as string[];
+  // Named here and nowhere else: a program compiled ahead of time that never gets here does not load them at start.
+  systemCACertificates ||= ($newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1) as () => string[])();
   return systemCACertificates;
 }
 

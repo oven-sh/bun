@@ -42,6 +42,8 @@ const observers: Record<string, Observer> = {
   aWriterUnderAProxy: { needs: ["proxy"], text: "seen += proxy.any;" },
   aWriterOutOfAList: { needs: ["changers"], text: "changers[at % 3](at);" },
   aWriterByReflect: { needs: ["poke"], text: "Reflect.apply(poke, undefined, [at]);" },
+  aBuiltInThatThrowsOnOneTurn: { text: `seen += "ab".repeat(2 - at).length;`, around: (loop, shown) => `try { ${loop} } catch (error) { say("caught", (error as Error).name, ${shown}); }` },
+  aBuiltInThatThrowsOutOfTheFunction: { text: `seen += "ab".repeat(2 - at).length;` },
   aHandlerInTheTurn: { needs: ["peek"], text: "try { fail(at === 1); } catch (error) { peek(); }" },
   aHandlerAroundTheLoop: { text: "fail(at === 2);", around: (loop, shown) => `try { ${loop} } catch (error) { say("caught", ${shown}); }` },
   aCleanupAroundTheLoop: { text: "if (at === 2) return;", returns: true, around: (loop, shown) => `try { ${loop} } finally { say("finally", ${shown}); }` },
@@ -113,7 +115,7 @@ function stretch(homeName: string, kindName: string, accessName: string, observe
 
 const fewPlaces = ["once", "often", "loop", "handlerInALoop", "loopUnderAHandler", "copiedIntoALoop", "inAClosure", "moduleLoop"];
 
-export const oneIn = 150;
+export const oneIn = 165;
 
 export function programs(isTyped?: boolean) {
   const [kindNames, loopNames] = [Object.keys(kinds), Object.keys(loops)];

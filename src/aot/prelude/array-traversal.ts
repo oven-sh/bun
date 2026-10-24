@@ -93,7 +93,7 @@ export function traverseArray(
   const length = array.length;
   const first = start === 0 ? 0 : clampToLength(start, length);
   const last = end === undefined ? length : clampToLength(end, length);
-  const count = last > first ? last - first : 0;
+  const count = first === 0 ? last : last > first ? last - first : 0;
 
   let passedFirst = 0;
   let passedSecond = 0;
@@ -106,56 +106,69 @@ export function traverseArray(
   if (endKind === endArray && !isDense) out = $newArrayLike<unknown>(count, array);
   else if (endKind === endArray || endKind === endFlatMap) out = $newArrayWithCapacity<unknown>(count, array);
 
-  for (let position = first; position < last; position++) {
-    let index = position - first;
-    if (!(position in array)) {
-      if (visitsHoles && $call<unknown>(endCallback, endThis, undefined, index))
-        return endKind === endFind ? undefined : index;
-      continue;
-    }
-    let value: unknown = array[position];
+  // A store that the new array does not take leaves the loop, which is entered anew: what the loop knows of the two arrays it has from in front of itself.
+  let position = first;
+  entered: for (;;) {
+    for (; position < last; position++) {
+      let index = position - first;
+      if (!(position in array)) {
+        if (visitsHoles && $call<unknown>(endCallback, endThis, undefined, index))
+          return endKind === endFind ? undefined : index;
+        continue;
+      }
+      let value: unknown = array[position];
 
-    if (firstLink === linkMap) value = $call<unknown>(operands[0], operands[1], value, index, array);
-    else if (firstLink === linkFilter) {
-      if (!$call<unknown>(operands[0], operands[1], value, index, array)) continue;
-      index = passedFirst++;
-    }
-    if (secondLink === linkMap) value = $call<unknown>(operands[2], operands[3], value, index);
-    else if (secondLink === linkFilter) {
-      if (!$call<unknown>(operands[2], operands[3], value, index)) continue;
-      index = passedSecond++;
-    }
-    if (thirdLink === linkMap) value = $call<unknown>(operands[4], operands[5], value, index);
-    else if (thirdLink === linkFilter) {
-      if (!$call<unknown>(operands[4], operands[5], value, index)) continue;
-      index = passedThird++;
-    }
+      if (firstLink === linkMap) value = $call<unknown>(operands[0], operands[1], value, index, array);
+      else if (firstLink === linkFilter) {
+        if (!$call<unknown>(operands[0], operands[1], value, index, array)) continue;
+        index = passedFirst;
+        passedFirst = (index + 1) >>> 0;
+      }
+      if (secondLink === linkMap) value = $call<unknown>(operands[2], operands[3], value, index);
+      else if (secondLink === linkFilter) {
+        if (!$call<unknown>(operands[2], operands[3], value, index)) continue;
+        index = passedSecond;
+        passedSecond = (index + 1) >>> 0;
+      }
+      if (thirdLink === linkMap) value = $call<unknown>(operands[4], operands[5], value, index);
+      else if (thirdLink === linkFilter) {
+        if (!$call<unknown>(operands[4], operands[5], value, index)) continue;
+        index = passedThird;
+        passedThird = (index + 1) >>> 0;
+      }
 
-    if (endKind === endArray) {
-      const isStored: boolean = $tryPutByValDirect(out!, index, value);
-      if (!isStored) out![index] = value;
-      reached = index + 1;
-    } else if (endKind === endLength) reached = index + 1;
-    else if (endKind === endForEach) $call<unknown>(endCallback, endThis, value, index);
-    else if (endKind === endReduce) {
-      accumulator = hasAccumulator ? $call<unknown>(endCallback, undefined, accumulator, value, index) : value;
-      hasAccumulator = true;
-    } else if (endKind === endSome) {
-      if ($call<unknown>(endCallback, endThis, value, index)) return true;
-    } else if (endKind === endEvery) {
-      if (!$call<unknown>(endCallback, endThis, value, index)) return false;
-    } else if (endKind === endFind) {
-      if ($call<unknown>(endCallback, endThis, value, index)) return value;
-    } else if (endKind === endFindIndex) {
-      if ($call<unknown>(endCallback, endThis, value, index)) return index;
-    } else if (endKind === endJoin) {
-      for (; reached < index; reached++) text += operand as string;
-      text += joinedText(value);
-    } else reached = appendParts(out!, reached, $call<unknown>(endCallback, endThis, value, index));
+      if (endKind === endArray) {
+        const isStored: boolean = $tryPutByValDirect(out!, index, value);
+        if (!isStored) {
+          out![index] = value;
+          position++;
+          continue entered;
+        }
+      } else if (endKind === endLength) continue;
+      else if (endKind === endForEach) $call<unknown>(endCallback, endThis, value, index);
+      else if (endKind === endReduce) {
+        accumulator = hasAccumulator ? $call<unknown>(endCallback, undefined, accumulator, value, index) : value;
+        hasAccumulator = true;
+      } else if (endKind === endSome) {
+        if ($call<unknown>(endCallback, endThis, value, index)) return true;
+      } else if (endKind === endEvery) {
+        if (!$call<unknown>(endCallback, endThis, value, index)) return false;
+      } else if (endKind === endFind) {
+        if ($call<unknown>(endCallback, endThis, value, index)) return value;
+      } else if (endKind === endFindIndex) {
+        if ($call<unknown>(endCallback, endThis, value, index)) return index;
+      } else if (endKind === endJoin) {
+        for (; reached < index; reached++) text += operand as string;
+        text += joinedText(value);
+      } else reached = appendParts(out!, reached, $call<unknown>(endCallback, endThis, value, index, array));
+    }
+    break;
   }
 
-  if (out !== undefined) return isDense || endKind === endFlatMap ? $truncateNewArray<unknown>(out, reached) : out;
-  if (endKind === endLength) return isDense ? reached : count;
+  const passed = thirdLink === linkFilter ? passedThird : secondLink === linkFilter ? passedSecond : passedFirst;
+  if (endKind === endFlatMap) return $truncateNewArray<unknown>(out!, reached);
+  if (out !== undefined) return isDense ? $truncateNewArray<unknown>(out, passed) : out;
+  if (endKind === endLength) return isDense ? passed : count;
   if (endKind === endReduce) return finishReduce(hasAccumulator, accumulator);
   if (endKind === endJoin) return finishJoin(text, operand as string, reached, isDense ? reached + 1 : count);
   return endKind === endSome ? false : endKind === endEvery ? true : endKind === endFindIndex ? -1 : undefined;

@@ -36,6 +36,7 @@ struct ImageFileArgument {
 unsafe extern "C" {
     fn Bun__AOT__useImage(
         image: Bytes,
+        all_images: Bytes,
         file_or_null: *const ImageFileArgument,
         identity: *const u8,
     ) -> u32;
@@ -73,11 +74,16 @@ pub fn runs_in_place() -> bool {
     compiled_program().is_some_and(|program| program.preserves_source_paths)
 }
 
-fn image_of(program: &CompiledProgram) -> Bytes {
+fn bytes_of(image: &[u8]) -> Bytes {
     Bytes {
-        ptr: program.image.as_ptr(),
-        len: program.image.len(),
+        ptr: image.as_ptr(),
+        len: image.len(),
     }
+}
+
+/// What the options of the build say is the same in every image.
+fn image_of(program: &CompiledProgram) -> Bytes {
+    bytes_of(program.first_image())
 }
 
 /// Answers before `use_image` has run. `None`: `use_image` refuses the image.
@@ -91,7 +97,8 @@ pub fn admitted_code_of(program: &CompiledProgram) -> Option<AdmittedCode> {
 /// Whether the compiler allowed for script and machine code that it did not see.
 pub fn admits_unknown_javascript(program: &CompiledProgram) -> bool {
     // SAFETY: the engine reads the image before it returns.
-    unsafe { Bun__AOT__admitsUnknownJavaScript(image_of(program)) }
+    let admits = |image: &[u8]| unsafe { Bun__AOT__admitsUnknownJavaScript(bytes_of(image)) };
+    program.images().any(admits)
 }
 
 /// Whether the program was built with `--no-compile-function-source`.
@@ -496,6 +503,54 @@ pub fn refuse_variables_that_are_never_read() {
     }
 }
 
+static IDENTITY: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+
+/// A VM that this thread creates from here on runs the program of the image.
+fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [u8]) {
+    let identity = IDENTITY.get().expect("the main thread has found it");
+    let offset_in_images = image.as_ptr() as usize - program.image.as_ptr() as usize;
+    let file = program.backing_file.as_ref().map(|file| ImageFileArgument {
+        descriptor: file.descriptor,
+        offset: file.offset + offset_in_images as i64,
+    });
+    // SAFETY: the images are part of the `'static` graph, which is never unmapped. `file` and
+    // `identity` outlive the call.
+    let raw_verdict = unsafe {
+        Bun__AOT__useImage(
+            bytes_of(image),
+            bytes_of(program.image),
+            file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
+            identity.as_ptr(),
+        )
+    };
+    let verdict = ImageVerdict::from_wire(raw_verdict).unwrap_or(ImageVerdict::Unsupported);
+    if let Some(sentence) = sentence_of(verdict) {
+        exit_with(sentence);
+    }
+}
+
+pub(crate) fn has_image_for_each_entry_point() -> bool {
+    compiled_program().is_some_and(|program| program.images().nth(1).is_some())
+}
+
+/// The image of the program that a Worker runs whose entry point resolves to `path`.
+pub(crate) fn image_of_worker(path: Option<&[u8]>) -> &'static [u8] {
+    let graph = standalone_module_graph().expect("it has a compiled program");
+    let program = graph.compiled_program().expect("it has several images");
+    let key = path.map(|path| entry_module_key_in(graph, path));
+    key.map_or_else(
+        || program.first_image(),
+        |key| program.image_beginning_at(key),
+    )
+}
+
+/// On the thread of a Worker, before its VM is created.
+pub(crate) fn use_image_of_worker(image: &'static [u8]) {
+    if let Some(program) = compiled_program() {
+        use_image_on_this_thread(program, image);
+    }
+}
+
 pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     let Some(program) = graph.compiled_program() else {
@@ -527,23 +582,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             Ok(identity) => identity,
             Err(error) => exit_with(identity_error_sentence(error)),
         };
-        let file = program.backing_file.as_ref().map(|file| ImageFileArgument {
-            descriptor: file.descriptor,
-            offset: file.offset,
-        });
-        // SAFETY: the image is part of the `'static` graph, which is never unmapped. `file` and
-        // `identity` outlive the call.
-        let raw_verdict = unsafe {
-            Bun__AOT__useImage(
-                image_of(program),
-                file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
-                identity.as_ptr(),
-            )
-        };
-        let verdict = ImageVerdict::from_wire(raw_verdict).unwrap_or(ImageVerdict::Unsupported);
-        if let Some(sentence) = sentence_of(verdict) {
-            exit_with(sentence);
-        }
+        let _ = IDENTITY.set(identity);
+        use_image_on_this_thread(program, program.first_image());
         #[cfg(not(bun_hardened))]
         write_execute::deny();
         #[cfg(bun_hardened)]
@@ -558,7 +598,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         bun_crash_handler::report_aborts();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {
-            settings_for_debugging::print_image_summary(program.image.len());
+            settings_for_debugging::print_image_summary(program.first_image().len());
         }
         bun_analytics::features::aot.fetch_add(1, Ordering::Relaxed);
     });

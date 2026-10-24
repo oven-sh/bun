@@ -3,7 +3,7 @@
 // ./made/<topic>.json holds the verdict of each case in which the three do not all agree. A verdict that changes fails the test, for better or for worse.
 // AOT_PROGRAMS_UPDATE=1 rewrites the file.
 //
-//   bun test test/aot/made-cases-three-ways                      the cases in which --aot is alone, and one in ten of the others
+//   bun test test/aot/made-cases-three-ways                      the cases in which --aot is alone, and one in ten of the others, others for each commit of Bun
 //   AOT_GENERATED=all bun test test/aot/made-cases-three-ways    all
 //   AOT_GENERATED=<text> bun test test/aot/made-cases-three-ways those whose name contains the text
 import { spawnSync } from "bun";
@@ -11,7 +11,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join, relative } from "path";
-import { wanted as programsWanted, slot, unsupported } from "../run-programs";
+import { inShare, wanted as programsWanted, slot, takesWhatIsFixed, unsupported } from "../run-programs";
 import { judged } from "./run-three-ways";
 
 const python = Bun.which("python3");
@@ -76,8 +76,8 @@ function madeCases(topic: string, { without = [], seeds = 0 }: { without?: strin
     const names = Object.keys(cases)
       .sort()
       .filter(name => !without.includes(name));
-    const chosen = names.filter((name, index) =>
-      wanted === "all" || updates ? true : wanted ? `${topic} ${name}`.includes(wanted) : programsWanted === "quick" ? index % 50 === 0 : verdicts[name]?.startsWith("alone") || index % 10 === 0,
+    const chosen = names.filter(name =>
+      wanted === "all" || updates ? true : wanted ? `${topic} ${name}`.includes(wanted) : programsWanted === "quick" ? inShare(`${topic} ${name}`, 50, true) : (takesWhatIsFixed && verdicts[name]?.startsWith("alone")) || inShare(`${topic} ${name}`, 10),
     );
     if (chosen.length === 0) test.skip("no case selected", () => {});
     for (const name of chosen) {

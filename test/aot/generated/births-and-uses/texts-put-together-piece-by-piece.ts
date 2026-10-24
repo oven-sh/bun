@@ -49,6 +49,10 @@ const ways: Record<string, (text: string, piece: string, other: string) => strin
   addsInALoopOnSomeTurns: (text, piece, other) => `for (let at = 0; at < 4; at++) { if (at % 2) ${text} += ${piece}; else ${text} += "."; ${other} }`,
   addsOnOneOfTwoWays: (text, piece, other) => `if (${text}.length % 2) ${text} += ${piece}; else ${text} += "e" + ${piece}; ${other}`,
   addsByConcat: (text, piece, other) => `${text} = ${text}.concat(String(${piece}), "!"); ${other}`,
+  isMadeATextThatBecomesPartOfAKey: (text, piece, other) => `{ const first = \`\${${piece}}\`; ${other} counts[first + "k"] = ${text}.length; }`,
+  getsAPieceAheadOfACallThatMayThrow: (text, piece, other) => `${text} = ${text} + "a" + ${piece} + orStop(${text}.length); ${other}`,
+  growsWhileWhatItWasIsStillHeld: (text, piece, other) => `const was = ${text}; ${text} += ${piece}; ${other} ${text} += "."; say(was.length, was.slice(-2));`,
+  growsInALoopWhileWhatItWasIsStillHeld: (text, piece, other) => `let was = ""; for (let at = 0; at < 3; at++) { if (at === 1) was = ${text}; ${text} += ${piece}; ${other} } say(was.length, was.slice(-2));`,
   startsAnewNowAndThen: (text, piece, other) => `if (${text}.length > 12) ${text} = ""; ${text} += ${piece}; ${other}`,
 };
 
@@ -72,7 +76,7 @@ function stretch(homeName: string, pieceName: string, wayName: string, otherName
   const isOutside = homeName === "moduleVariable";
   return {
     name: `${homeName}-${pieceName}-${wayName}-${otherName}`,
-    beside: `const copies: string[] = [];\nconst counts: Record<string, number> = {};\nfunction look(text: string): void { say("look", text.length, text.slice(-3)); }\nfunction left(): string { const all = copies.join("|") + "/" + Object.keys(counts).join("|"); copies.length = 0; for (const key in counts) delete counts[key]; return all; }\n${home.beside ?? ""}\n${piece.beside ?? ""}\n${isOutside ? changer : ""}`,
+    beside: `const copies: string[] = [];\nconst counts: Record<string, number> = {};\nfunction look(text: string): void { say("look", text.length, text.slice(-3)); }\nfunction orStop(length: number): string { fail(length % 5 === 2); return "."; }\nfunction left(): string { const all = copies.join("|") + "/" + Object.keys(counts).join("|"); copies.length = 0; for (const key in counts) delete counts[key]; return all; }\n${home.beside ?? ""}\n${piece.beside ?? ""}\n${isOutside ? changer : ""}`,
     before: seed => `${home.before(seed)} ${isOutside ? "" : changer}`,
     body: turn => ways[wayName](home.text, piece.text(turn).replaceAll("@", home.text), others[otherName](home.text)),
     after: `${home.text} + "/" + left()${homeName === "variableHeldByAClosure" ? ` + "/" + readers[readers.length - 1]()` : ""}`,
@@ -81,7 +85,7 @@ function stretch(homeName: string, pieceName: string, wayName: string, otherName
 
 const fewPlaces = ["once", "often", "loop", "loopWithContinue", "handlerInALoop", "loopUnderAHandler", "handlerAndCleanup", "copiedIntoALoop", "inAClosure", "loopWithAYield", "loopWithAnAwait", "moduleLoop"];
 
-export const oneIn = 200;
+export const oneIn = 260;
 
 export function programs(isTyped?: boolean) {
   const [pieceNames, homeNames] = [Object.keys(pieces), Object.keys(homes)];

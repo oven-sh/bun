@@ -77,6 +77,26 @@ function stretch(stateName: string, carrierName: string, strangerName: string, p
   };
 }
 
+// What a text from outside holds nobody knows before it is read: there a declared type is all there is to go by.
+const carriersFromOutside: Record<string, { type: string; text: (values: string[]) => string; read: string }> = {
+  element: { type: "number[]", text: values => `[${values.join(",")}]`, read: "items[at]" },
+  field: { type: "{ x: number }[]", text: values => `[${values.map(value => `{"x":${value}}`).join(",")}]`, read: "items[at].x" },
+  firstOfAPair: { type: "[number, string][]", text: values => `[${values.map(value => `[${value},"p"]`).join(",")}]`, read: "items[at][0]" },
+  fieldThatMayBeMissing: { type: "{ x?: number }[]", text: values => `[${values.map(value => `{"x":${value}}`).join(",")}]`, read: "(items[at].x ?? 0)" },
+};
+const strangersFromOutside: Record<string, string> = { text: `"5"`, emptyText: `""`, none: "null", truth: "true", list: "[3]", record: "{}", fraction: "2.5", pastWholeNumbers: "2147483648", infinite: "1e400", negativeZero: "-0" };
+
+function stretchFromOutside(stateName: string, carrierName: string, strangerName: string, position: number): Stretch {
+  const [state, carrier] = [states[stateName], carriersFromOutside[carrierName]];
+  const text = (stranger?: string) => carrier.text(["1", "2", "3", "5", "@"].map((value, at) => (stranger !== undefined && at === position ? stranger : value)));
+  return {
+    ...stretch(stateName, "element", "text", position),
+    name: `${stateName}-${carrierName}FromOutside-${strangerName}-at${position}`,
+    before: seed => `const usual = JSON.parse('${text()}'.replace("@", String(${seed}))) as ${carrier.type}; const unusual = JSON.parse('${text(strangersFromOutside[strangerName])}'.replace("@", String(${seed}))) as ${carrier.type};`,
+    body: turn => `const items = (${turn}) % 2 ? unusual : usual; ${state.before} for (let at = 0; at < items.length; at++) { const v = ${carrier.read}; ${state.step} } say(String(${state.after}));`,
+  };
+}
+
 const somePlaces = ["once", "often", "moduleLoop", "loop", "loopOften", "twoLoops", "loopWithContinue", "handlerInALoop", "loopUnderAHandler", "handlerAndCleanup", "copiedIntoALoop", "alsoCalledWhereItSeldomRuns", "inAClosure", "method", "loopWithAYield", "loopWithAnAwait"];
 
 export const oneIn = 140;
@@ -85,5 +105,6 @@ export function programs(isTyped?: boolean) {
   const all: Stretch[] = [];
   let at = 0;
   for (const state in states) for (const carrier in carriers) for (const stranger in strangers) all.push(stretch(state, carrier, stranger, [2, 0, 4, 3][at++ % 4]));
+  for (const state in states) for (const carrier in carriersFromOutside) for (const stranger in strangersFromOutside) all.push(stretchFromOutside(state, carrier, stranger, [2, 0, 3, 1][at++ % 4]));
   return inEveryPlace(all, isTyped, somePlaces);
 }

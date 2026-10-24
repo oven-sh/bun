@@ -39,14 +39,10 @@ describe.skipIf(isASAN || isDebug).concurrent("compile/aot/operations that may n
     expect(wrong).toEqual([]);
   };
 
-  // TODO: the pinned engine stops for the collector in reads of private names.
-  test.todo.each([
-    ["private names of a class factory", "classes-and-closures", "typed-class-factory-over-private-fields.ts", 48],
-    ["private names beside added properties", "untyped-code", "contents-survive-added-properties-and-elements.js", 8],
-  ])("%s", startsAsPlainBun, 240_000);
-
   // TODO: on Windows an executable in which the collector asks from another thread all the time does not end within four minutes.
   test.todoIf(isWindows).each([
+    ["private names of a class factory", "classes-and-closures", "typed-class-factory-over-private-fields.ts", 48],
+    ["private names beside added properties", "untyped-code", "contents-survive-added-properties-and-elements.js", 8],
     [
       "a method of a class that is evaluated again",
       "inner-objects",

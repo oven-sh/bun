@@ -1,3 +1,4 @@
+use super::aliases::declared_names;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, ModuleObjectMention, ResolveInput, Resolved,
     ResolvedBuiltins, SourceDialect,
@@ -6,9 +7,9 @@ use crate::builtins::runtime_uses::{Mentions, RuntimeUses, reaches_unknown_modul
 use crate::builtins::table::{
     BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
-use bun_sema::bind::{Binding, Parent, SymbolId};
+use bun_sema::bind::{Binding, Decl, Parent, SymbolId};
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, MemberKey};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::cell::OnceCell;
 use core::ops::Range;
@@ -72,12 +73,90 @@ impl ExprState {
     }
 }
 
+#[derive(Clone)]
 pub(super) enum AliasSource {
     Known(ResolvedValue),
     Initializer {
         initializer: ExprId,
         members: SmallVec<[BuiltinName; 2]>,
     },
+}
+
+pub(super) struct DeclaredAlias {
+    pub(super) symbol: SymbolId,
+    pub(super) source: AliasSource,
+}
+
+/// What the resolver reads off a file whichever part of it is resolved.
+pub struct FileFacts {
+    // The position and the id of every expression, in the order of the positions.
+    exprs_by_position: Vec<(u32, u32)>,
+    declared_aliases: Vec<DeclaredAlias>,
+    // Where the name is written, or the id of the initializer without its type assertions, and the index of the alias. Both in order.
+    aliases_by_position: Vec<(u32, u32)>,
+    aliases_by_initializer: Vec<(u32, u32)>,
+    symbols_exported_by_name: FxHashSet<SymbolId>,
+    symbols_exported_where_declared: FxHashSet<SymbolId>,
+}
+
+fn entries_within(entries: &[(u32, u32)], keys: Range<u32>) -> &[(u32, u32)] {
+    let start = entries.partition_point(|entry| entry.0 < keys.start);
+    let end = entries.partition_point(|entry| entry.0 < keys.end);
+    &entries[start..end.max(start)]
+}
+
+impl FileFacts {
+    pub fn new(input: &ResolveInput<'_, '_>) -> FileFacts {
+        let hir = input.hir;
+        let mut resolver = Resolver::new(input, None, None);
+        resolver.collect_exported_symbols();
+        let mut facts = FileFacts {
+            exprs_by_position: (0..hir.exprs.len() as u32)
+                .map(|id| (hir[ExprId(id)].pos, id))
+                .collect(),
+            declared_aliases: Vec::new(),
+            aliases_by_position: Vec::new(),
+            aliases_by_initializer: Vec::new(),
+            symbols_exported_by_name: core::mem::take(&mut resolver.exported_symbols),
+            symbols_exported_where_declared: FxHashSet::default(),
+        };
+        for (name, symbol) in declared_names(input) {
+            let flags = input.bound.modifier_flags(hir, Decl::Var(name));
+            if flags.contains(Flags::EXPORT) {
+                facts.symbols_exported_where_declared.insert(symbol);
+            }
+            let Some(source) = resolver.find_alias_source(symbol) else {
+                continue;
+            };
+            let index = facts.declared_aliases.len() as u32;
+            if let AliasSource::Initializer { initializer, .. } = source {
+                let initializer = hir.skip_type_assertions(initializer);
+                facts.aliases_by_initializer.push((initializer.0, index));
+            }
+            facts.aliases_by_position.push((hir[name].pos, index));
+            facts
+                .declared_aliases
+                .push(DeclaredAlias { symbol, source });
+        }
+        facts.exprs_by_position.shared_sort_unstable();
+        facts.aliases_by_position.shared_sort_unstable();
+        facts.aliases_by_initializer.shared_sort_unstable();
+        facts
+    }
+
+    // The ids of the expressions that are written in the ranges lie in this range.
+    fn ids_within(&self, ranges: &[Range<u32>]) -> Range<u32> {
+        let mut ids = 0..0;
+        for range in ranges {
+            for &(_, id) in entries_within(&self.exprs_by_position, range.clone()) {
+                if ids.is_empty() {
+                    ids = id..id + 1;
+                }
+                ids = ids.start.min(id)..ids.end.max(id + 1);
+            }
+        }
+        ids
+    }
 }
 
 #[derive(Default)]
@@ -97,7 +176,11 @@ pub(super) struct ResolverOutput {
 
 pub(super) struct Resolver<'a, 's> {
     pub(super) input: &'a ResolveInput<'a, 's>,
-    pub(super) states: Vec<ExprState>,
+    // Of the expressions from `first_state` on. What has none does not count as evaluated.
+    states: Vec<ExprState>,
+    first_state: u32,
+    facts: Option<&'a FileFacts>,
+    has_seen_declarations: bool,
     pub(super) aliases: FxHashMap<SymbolId, AliasSource>,
     // The one built-in that is stored into a binding all of whose reads are in this file. `None`: several are.
     pub(super) held: FxHashMap<SymbolId, Option<ResolvedValue>>,
@@ -128,8 +211,12 @@ fn sorted_unique<T: Ord>(mut list: Vec<T>) -> Box<[T]> {
     list.into_boxed_slice()
 }
 
-pub(super) fn run(input: &ResolveInput<'_, '_>, within: Option<&[Range<u32>]>) -> ResolvedBuiltins {
-    let mut resolver = Resolver::new(input, within);
+pub(super) fn run(
+    input: &ResolveInput<'_, '_>,
+    within: Option<&[Range<u32>]>,
+    facts: Option<&FileFacts>,
+) -> ResolvedBuiltins {
+    let mut resolver = Resolver::new(input, within, facts);
     resolver.mark_unevaluated_exprs();
     resolver.resolve_commonjs_variables();
     resolver.collect_exported_symbols();
@@ -149,14 +236,34 @@ pub(super) fn run(input: &ResolveInput<'_, '_>, within: Option<&[Range<u32>]>) -
     resolver.finish()
 }
 
+#[cfg(test)]
+pub(super) fn count_states(
+    input: &ResolveInput<'_, '_>,
+    ranges: &[Range<u32>],
+    facts: &FileFacts,
+) -> usize {
+    Resolver::new(input, Some(ranges), Some(facts)).states.len()
+}
+
 impl<'a, 's> Resolver<'a, 's> {
-    fn new(input: &'a ResolveInput<'a, 's>, within: Option<&'a [Range<u32>]>) -> Resolver<'a, 's> {
+    fn new(
+        input: &'a ResolveInput<'a, 's>,
+        within: Option<&'a [Range<u32>]>,
+        facts: Option<&'a FileFacts>,
+    ) -> Resolver<'a, 's> {
+        let evaluated = match (within, facts) {
+            (Some(ranges), Some(facts)) => facts.ids_within(ranges),
+            (Some(_) | None, _) => 0..input.hir.exprs.len() as u32,
+        };
         Resolver {
             input,
             within,
+            facts,
+            has_seen_declarations: false,
             named_outside: OnceCell::new(),
-            evaluated: 0..input.hir.exprs.len() as u32,
-            states: vec![ExprState::Unvisited; input.hir.exprs.len()],
+            states: vec![ExprState::Unvisited; evaluated.len()],
+            first_state: evaluated.start,
+            evaluated,
             aliases: FxHashMap::default(),
             held: FxHashMap::default(),
             exported_symbols: FxHashSet::default(),
@@ -173,7 +280,46 @@ impl<'a, 's> Resolver<'a, 's> {
     }
 
     pub(super) fn state(&self, expr: ExprId) -> ExprState {
-        self.states[expr.idx()]
+        let index = expr.0.checked_sub(self.first_state);
+        let state = index.and_then(|index| self.states.get(index as usize));
+        state.copied().unwrap_or(ExprState::NotEvaluated)
+    }
+
+    fn set_state(&mut self, expr: ExprId, state: ExprState) {
+        self.states[(expr.0 - self.first_state) as usize] = state;
+    }
+
+    pub(super) fn is_exported(&self, symbol: SymbolId) -> bool {
+        self.exported_symbols.contains(&symbol)
+            || self.facts.is_some_and(|facts| {
+                facts.symbols_exported_by_name.contains(&symbol)
+                    || (self.has_seen_declarations
+                        && facts.symbols_exported_where_declared.contains(&symbol))
+            })
+    }
+
+    pub(super) fn has_facts(&self) -> bool {
+        self.facts.is_some()
+    }
+
+    // An alias whose name and whose initializer are both written elsewhere stands for nothing here, and nobody asks for it.
+    pub(super) fn add_declared_aliases_of_part(&mut self, facts: &FileFacts) {
+        self.has_seen_declarations = true;
+        let ids = self.first_state..self.first_state + self.states.len() as u32;
+        let by_initializer = entries_within(&facts.aliases_by_initializer, ids);
+        let ranges = self.within.unwrap_or_default().iter();
+        let by_position =
+            ranges.flat_map(|range| entries_within(&facts.aliases_by_position, range.clone()));
+        for &(_, index) in by_initializer.iter().chain(by_position) {
+            let alias = &facts.declared_aliases[index as usize];
+            if !self.aliases.contains_key(&alias.symbol) {
+                self.aliases.insert(alias.symbol, alias.source.clone());
+            }
+        }
+    }
+
+    pub(super) fn facts(&self) -> Option<&'a FileFacts> {
+        self.facts
     }
 
     pub(super) fn value_of(&self, expr: ExprId) -> Option<ResolvedValue> {
@@ -260,7 +406,7 @@ impl<'a, 's> Resolver<'a, 's> {
         let mut evaluated = 0..0;
         for expr in self.evaluated_exprs() {
             if !self.is_evaluated(expr) {
-                self.states[expr.idx()] = ExprState::NotEvaluated;
+                self.set_state(expr, ExprState::NotEvaluated);
                 continue;
             }
             if evaluated.is_empty() {
@@ -274,7 +420,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 }
                 Decision::GlobalPath(path) => self.resolve_global_path(path),
             };
-            self.states[expr.idx()] = state;
+            self.set_state(expr, state);
         }
         self.evaluated = evaluated;
     }
@@ -285,7 +431,7 @@ impl<'a, 's> Resolver<'a, 's> {
             let is_computed = !matches!(self.state(expr), ExprState::NotEvaluated)
                 && matches!(self.input.decisions.decision(expr), Decision::Unknown);
             if is_computed {
-                self.states[expr.idx()] = ExprState::Unvisited;
+                self.set_state(expr, ExprState::Unvisited);
             }
         }
     }
@@ -302,12 +448,12 @@ impl<'a, 's> Resolver<'a, 's> {
         self.work_stack.push(start);
         while let Some(&expr) = self.work_stack.last() {
             if let Some(dependency) = self.find_unvisited_dependency(expr) {
-                self.states[expr.idx()] = ExprState::InProgress;
+                self.set_state(expr, ExprState::InProgress);
                 self.work_stack.push(dependency);
                 continue;
             }
             let state = self.compute_state(expr);
-            self.states[expr.idx()] = state;
+            self.set_state(expr, state);
             self.work_stack.pop();
         }
     }
@@ -376,6 +522,7 @@ impl<'a, 's> Resolver<'a, 's> {
         let Resolver {
             input,
             states,
+            first_state,
             evaluated,
             commonjs,
             mut output,
@@ -407,9 +554,9 @@ impl<'a, 's> Resolver<'a, 's> {
             SourceDialect::Runtime => false,
         };
         let mut exprs = Vec::new();
-        let mut expr_bits = vec![0u64; states.len().div_ceil(64)];
+        let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
         for expr in evaluated.map(ExprId) {
-            let resolved = match states[expr.idx()] {
+            let resolved = match states[(expr.0 - first_state) as usize] {
                 ExprState::Builtin(ResolvedValue {
                     path,
                     kind: HolderKind::Object,

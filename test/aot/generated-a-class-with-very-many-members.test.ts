@@ -30,17 +30,41 @@ const c = new C; c.p${n - 1} = 7; console.log(c.p0 + c.p${n - 1} + c.p${n >> 1},
   },
   "public fields of a class and private fields of its heir": {
     file: "main.js",
-    refusedFrom: 4095,
     text: n => `class A {\n${many(n >> 1, i => `a${i} = ${i};`)}\n}
 class B extends A {\n${many(n - (n >> 1), i => `#b${i} = ${i};`)}\nlast() { return this.#b${n - (n >> 1) - 1} + this.a0; } }
 const c = new B; console.log(c.last(), Object.keys(c).length);`,
   },
   "public fields of a class and of its heir": {
     file: "main.js",
-    refusedFrom: 4096,
     text: n => `class A {\n${many(n >> 1, i => `a${i} = ${i};`)}\n}
 class B extends A {\n${many(n - (n >> 1), i => `b${i} = ${i};`)}\n}
 const c = new B; c.b0 = 7; console.log(c.a0 + c.b0 + c.b${n - (n >> 1) - 1}, Object.keys(c).length);`,
+  },
+  "declared fields of a class and of its heir": {
+    file: "main.ts",
+    text: n => `class A {\n${many(n >> 1, i => `a${i}: number = ${i};`)}\n}
+class B extends A {\n${many(n - (n >> 1), i => `b${i}: number = ${i};`)}\nsum(): number { return this.a0 + this.a${(n >> 1) - 1} + this.b0 + this.b${n - (n >> 1) - 1}; } }
+function first(a: A): number { return a.a0 + a.a${(n >> 1) - 1}; }
+const c = new B; c.b0 = 7; c.a0 = 9; console.log(c.sum(), first(c), first(new A), Object.keys(c).length, Object.keys(c)[${n - 1}], JSON.stringify(c).length);`,
+  },
+  "public fields of five classes in a row": {
+    file: "main.js",
+    text: n => `${many(5, k => `class C${k} ${k ? `extends C${k - 1} ` : ""}{\n${many(Math.ceil(n / 5), i => `f${k}_${i} = ${i + k};`)}\n}`)}
+const c = new C4; c.f4_0 = 5; c.f0_0 = 6; console.log(c.f0_0 + c.f4_0 + c.f3_7 + c.f4_${Math.ceil(n / 5) - 1}, Object.keys(c).length, Object.keys(c)[${n - 1}], Object.keys(new C3).length);`,
+  },
+  "stores of a constructor function and public fields of its heir": {
+    file: "main.js",
+    text: n => `function A() {\n${many(n >> 1, i => `this.a${i} = ${i};`)}\n}
+class B extends A {\n${many(n - (n >> 1), i => `b${i} = ${i};`)}\n}
+const c = new B; c.b0 = 7; console.log(c.a0 + c.b0 + c.a${(n >> 1) - 1} + c.b${n - (n >> 1) - 1}, Object.keys(c).length, Object.keys(c)[${n - 1}]);`,
+  },
+  "a large class with a large heir and a small one": {
+    file: "main.js",
+    text: n => `class A {\n${many(n - 200, i => `a${i} = ${i};`)}\n}
+class B extends A {\n${many(200, i => `b${i} = ${i};`)}\n}
+class C extends A {\n${many(9, i => `c${i} = ${i};`)}\n}
+function read(o) { return o.a${n - 201} + (o.b199 ?? 0) + (o.c8 ?? 0) + (o.b0 ?? 0); }
+console.log(read(new A), read(new B), read(new C), Object.keys(new B).length, Object.keys(new C).length);`,
   },
   "stores in a constructor": {
     file: "main.js",

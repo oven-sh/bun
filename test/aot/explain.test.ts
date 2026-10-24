@@ -286,8 +286,11 @@ function expectOneAccount({ numbers, causes, summary }: ExplainReport) {
   expect(sum(causes.map(cause => cause.accesses))).toBe(untyped(numbers.accesses));
   expect(sum(causes.map(cause => cause.dependencyAccesses))).toBe(untyped(numbers.dependencyAccesses));
   for (const cause of causes) {
-    expect(cause.accesses + cause.dependencyAccesses).toBeGreaterThan(0);
-    expect(cause.inDependency).toBe(cause.accesses === 0);
+    expect(cause.accesses + cause.dependencyAccesses + cause.calls + cause.operators).toBeGreaterThan(0);
+    if (cause.accesses > 0) expect(cause.inDependency).toBe(false);
+    expect(cause.fixedByThisAlone).toBeLessThanOrEqual(
+      cause.accesses + cause.dependencyAccesses + cause.calls + cause.operators,
+    );
     expect(cause.message).not.toBeEmpty();
     expect(cause.fix).not.toBeEmpty();
     expect(cause.url).toBe(urlOf(cause.reason));
@@ -368,6 +371,10 @@ describe.concurrent("--explain", () => {
             "url",
             "accesses",
             "dependencyAccesses",
+            "calls",
+            "operators",
+            "fixedByThisAlone",
+            "estimatedPercent",
             "function",
             "types",
             "family",
@@ -424,14 +431,15 @@ describe.concurrent("--explain", () => {
           files[`part${part}.ts`] = `${head}\n  return JSON.parse(text).n;\n}\n`;
         }
         const { lines } = await check(files, "--explain");
-        expect(lines).toContain("note: Untyped code works, but runs slower. 25 causes:");
-        expect(lines.filter(line => /^note: \d+\. [a-z-]+: /.test(line))).toHaveLength(maxShownCauses);
-        expect(lines).toContain(
-          "note: 5 more causes not shown. Use --explain=json to print all of them, one JSON object per line.",
-        );
         const report = await explain(files);
         expectOneAccount(report);
-        expect(report.causes.map(cause => cause.file).sort()).toEqual(parts.map(part => `part${part}.ts`).sort());
+        expect(lines).toContain(`note: Untyped code works, but runs slower. ${report.causes.length} causes:`);
+        expect(lines.filter(line => /^note: \d+\. [a-z-]+: /.test(line))).toHaveLength(maxShownCauses);
+        expect(lines).toContain(
+          `note: ${report.causes.length - maxShownCauses} more causes not shown. Use --explain=json to print all of them, one JSON object per line.`,
+        );
+        const ofAccesses = report.causes.filter(cause => cause.accesses > 0);
+        expect(ofAccesses.map(cause => cause.file).sort()).toEqual(parts.map(part => `part${part}.ts`).sort());
       }),
     buildTimeout,
   );

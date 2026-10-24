@@ -22,6 +22,8 @@ const NO_LOCATION: SourceLocation = SourceLocation {
     position: 0,
 };
 const EVERY_FAMILY: ExplainSet = ExplainSet::empty();
+const ESTIMATE: &str =
+    "of the time in untyped operations, by how often the compiler expects each to run";
 
 fn access(
     module: u32,
@@ -57,6 +59,9 @@ fn access(
             KnowledgeLevel::Expected => AccessCost::TestsReceiver,
             KnowledgeLevel::Proven => AccessCost::Free,
         },
+        has_other_roots: 0,
+        reserved: 0,
+        heat: 0.0,
     }
 }
 
@@ -112,6 +117,8 @@ fn counts(program: u64, dependencies: u64) -> OriginCounts {
     }
 }
 
+const INSTRUCTIONS_OF_ACCESS_BY_NAME: f64 = 28.0;
+
 fn cause(kind: UnprovenCause, position: Option<Position>, accesses: OriginCounts) -> Cause {
     Cause {
         cause: kind,
@@ -121,6 +128,14 @@ fn cause(kind: UnprovenCause, position: Option<Position>, accesses: OriginCounts
         function: None,
         layouts: Vec::new(),
         accesses,
+        calls: OriginCounts::default(),
+        operators: OriginCounts::default(),
+        alone: accesses.total(),
+        cost: EstimatedCost {
+            program: accesses.program as f64 * INSTRUCTIONS_OF_ACCESS_BY_NAME,
+            dependencies: accesses.dependencies as f64 * INSTRUCTIONS_OF_ACCESS_BY_NAME,
+        },
+        is_in_runtime: false,
     }
 }
 
@@ -356,16 +371,103 @@ fn free_access_has_no_cause() {
 }
 
 #[test]
-fn calls_have_no_cause() {
+fn every_kind_of_operation_counts_in_one_column() {
     for kind in AccessKind::ALL {
-        let is_call = matches!(kind, AccessKind::Call | AccessKind::Construct);
         let record = AccessRecord {
             kind,
             ..unknown_object(PROGRAM, 0, 100)
         };
-        assert_eq!(is_property_access(kind), !is_call, "{kind:?}");
-        assert_eq!(collect(&[record]).is_empty(), is_call, "{kind:?}");
+        let causes = collect(&[record]);
+        let Some(class) = operation_class(kind) else {
+            assert!(causes.is_empty(), "{kind:?}");
+            continue;
+        };
+        let columns = [causes[0].accesses, causes[0].calls, causes[0].operators];
+        let expected = match class {
+            OperationClass::PropertyAccess => [1, 0, 0],
+            OperationClass::Call => [0, 1, 0],
+            OperationClass::Operator => [0, 0, 1],
+        };
+        assert_eq!(columns.map(OriginCounts::total), expected, "{kind:?}");
+        assert_eq!(is_property_access(kind), expected[0] == 1, "{kind:?}");
     }
+}
+
+#[test]
+fn a_call_that_is_tested_or_direct_has_no_cause() {
+    for cost in [
+        AccessCost::TestsReceiver,
+        AccessCost::TestsSlot,
+        AccessCost::Free,
+    ] {
+        let record = AccessRecord {
+            kind: AccessKind::Call,
+            cost,
+            ..unknown_object(PROGRAM, 0, 100)
+        };
+        assert!(collect(&[record]).is_empty(), "{cost:?}");
+    }
+}
+
+#[test]
+fn a_few_hot_operations_outrank_many_cold_ones() {
+    let mut records: Vec<AccessRecord> = (0..1200)
+        .map(|offset| unknown_object(PROGRAM, offset, 100))
+        .collect();
+    records.extend((0..5).map(|offset| AccessRecord {
+        heat: 1e6,
+        ..unknown_object(PROGRAM, 5000 + offset, 200)
+    }));
+    let causes = collect(&records);
+    let counts: Vec<u64> = causes.iter().map(|cause| cause.accesses.program).collect();
+    assert_eq!(counts, [5, 1200]);
+}
+
+#[test]
+fn what_only_the_compiler_can_fix_ranks_last() {
+    let left_by_passes = AccessRecord {
+        heat: 1e9,
+        ..access(
+            PROGRAM,
+            0,
+            KnowledgeLevel::Unknown,
+            UnprovenCause::LeftByPasses,
+            100,
+        )
+    };
+    let kinds = collected_kinds(
+        &[left_by_passes, unknown_object(PROGRAM, 4, 200)],
+        EVERY_FAMILY,
+    );
+    assert_eq!(
+        kinds,
+        [UnprovenCause::UnknownObject, UnprovenCause::LeftByPasses]
+    );
+}
+
+#[test]
+fn operations_with_another_root_are_told_apart() {
+    let shared = AccessRecord {
+        has_other_roots: 1,
+        ..unknown_object(PROGRAM, 4, 100)
+    };
+    let causes = collect(&[unknown_object(PROGRAM, 0, 100), shared]);
+    assert_eq!((causes[0].accesses.program, causes[0].alone), (2, 1));
+    let entry = text_entry(
+        &causes[0],
+        1,
+        &totals([2, 0, 0], [0; 3]),
+        &names(),
+        0,
+        causes[0].cost.total(),
+    );
+    assert!(
+        note_texts(&entry).contains(&BString::from(
+            "1 of these stay untyped until other entries are fixed too"
+        )),
+        "{:?}",
+        note_texts(&entry)
+    );
 }
 
 #[test]
@@ -394,7 +496,10 @@ fn witness_in_runtime_module_does_not_hide_cause() {
         position: 7,
     };
     let record = with_witness_location(unknown_object(PROGRAM, 0, 100), location);
-    let counted = cause(UnprovenCause::UnknownObject, at(RUNTIME, 7), counts(1, 0));
+    let counted = Cause {
+        is_in_runtime: true,
+        ..cause(UnprovenCause::UnknownObject, at(RUNTIME, 7), counts(1, 0))
+    };
     assert_eq!(collect(&[record]), [counted]);
 }
 
@@ -606,7 +711,9 @@ fn text_entry_orders_notes() {
         layouts: layouts(&[0, 2]),
         ..cause(UnprovenCause::LimitReached, at(PROGRAM, 12), counts(2, 0))
     };
-    let entry = text_entry(&cause, 3, &totals([10, 0, 0], [0; 3]), &names(), 4096);
+    let whole_cost = 8.0 * INSTRUCTIONS_OF_ACCESS_BY_NAME;
+    let totals = totals([10, 0, 0], [0; 3]);
+    let entry = text_entry(&cause, 3, &totals, &names(), 4096, whole_cost);
     let wording = cause_wording(UnprovenCause::LimitReached);
 
     assert_eq!(entry.kind, ExplainSet::TEXT);
@@ -619,6 +726,7 @@ fn text_entry_orders_notes() {
         note_texts(&entry),
         [
             "2 of 10 untyped accesses".to_owned(),
+            format!("about 25% {ESTIMATE}"),
             "in function 'render'".to_owned(),
             "types: 'Item', 'Order'".to_owned(),
             format!(
@@ -640,11 +748,14 @@ fn text_entry_orders_notes() {
 #[test]
 fn absent_notes_are_omitted() {
     let cause = cause(UnprovenCause::FieldDeleted, at(PROGRAM, 12), counts(1, 0));
-    let entry = text_entry(&cause, 1, &totals([1, 0, 0], [0; 3]), &names(), 4096);
+    let whole_cost = cause.cost.total();
+    let totals = totals([1, 0, 0], [0; 3]);
+    let entry = text_entry(&cause, 1, &totals, &names(), 4096, whole_cost);
     assert_eq!(
         note_texts(&entry),
         [
             "1 of 1 untyped access".to_owned(),
+            format!("about 100% {ESTIMATE}"),
             format!("fix: {}", cause_wording(UnprovenCause::FieldDeleted).fix),
             "https://bun.com/docs/bundler/aot-explain#field-deleted".to_owned(),
         ]
@@ -655,7 +766,7 @@ fn absent_notes_are_omitted() {
 fn text_entry_prints_code_of_wording() {
     for kind in UnprovenCause::ALL {
         let cause = cause(kind, at(PROGRAM, 12), counts(1, 0));
-        let entry = text_entry(&cause, 1, &totals([1, 0, 0], [0; 3]), &names(), 0);
+        let entry = text_entry(&cause, 1, &totals([1, 0, 0], [0; 3]), &names(), 0, 1.0);
         let code = cause_code(kind);
         assert!(
             entry.text.starts_with(format!("1. {code}: ").as_bytes()),
@@ -669,7 +780,14 @@ fn text_entry_prints_code_of_wording() {
         );
     }
     let untyped_code = cause(UnprovenCause::ReachesUnknownJavaScript, None, counts(1, 0));
-    let entry = text_entry(&untyped_code, 2, &totals([1, 0, 0], [0; 3]), &names(), 0);
+    let entry = text_entry(
+        &untyped_code,
+        2,
+        &totals([1, 0, 0], [0; 3]),
+        &names(),
+        0,
+        1.0,
+    );
     assert!(entry.text.starts_with(b"2. passed-to-untyped-code: "));
 }
 
@@ -789,7 +907,10 @@ fn limit_value_is_asked_per_cause() {
     let mut entries = Vec::new();
     let totals = totals([2, 0, 0], [0; 3]);
     collect_text_entries(&causes, &totals, &names(), value_of, &mut entries);
-    let limit_note = |entry: &ReportEntry| note_texts(entry).swap_remove(1);
+    let limit_note = |entry: &ReportEntry| {
+        let mut notes = note_texts(entry).into_iter();
+        notes.find(|note| note.starts_with(b"limit ")).unwrap()
+    };
     assert!(limit_note(&entries[1]).starts_with(b"limit MaxTypeNodes = 3 (limits "));
     assert!(limit_note(&entries[2]).starts_with(b"limit MaxValueFlowEdgesLogged = 70 (limits "));
 }

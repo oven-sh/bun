@@ -1,6 +1,6 @@
 use super::{
-    BuiltinPath, ImportTargets, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
-    resolve_file, resolve_within,
+    BuiltinPath, FileFacts, ImportTargets, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
+    resolve_file, resolve_within, resolver,
 };
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::table::{
@@ -15,6 +15,7 @@ use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::session::{Arena, Session};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+use core::ops::Range;
 use std::borrow::Cow;
 
 macro_rules! case_tests {
@@ -89,6 +90,8 @@ struct Case<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     resolved: &'a ResolvedBuiltins,
+    // How many expressions the resolver has kept a state of.
+    states: usize,
 }
 
 fn intern_all<'s>(texts: &[&str], atoms: &Interner<'s>, arena: &'s Arena) -> &'s [Atom] {
@@ -141,6 +144,26 @@ fn find_target(atoms: &Interner<'_>, specifier: ImportSpecifier) -> Option<Runti
     };
     let module = MODULES.iter().find(|module| module.0.as_bytes() == text);
     module.map(|module| module.1)
+}
+
+// The facts of the file change nothing in what is found in a part of it.
+fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins, source: &str) {
+    let describe = |resolved: &ResolvedBuiltins| {
+        format!(
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            resolved.exprs,
+            resolved.expr_bits,
+            resolved.symbols,
+            resolved.evaluated_texts,
+            resolved.module_object_mentions,
+            resolved.stores_with_module_exports,
+            resolved.mentioned,
+            resolved.exposed,
+            resolved.uses,
+            resolved.loads_unknown_modules,
+        )
+    };
+    assert_eq!(describe(with_facts), describe(without), "{source}");
 }
 
 fn with_case<R>(setup: Setup, source: &str, then: impl FnOnce(&Case<'_, '_>) -> R) -> R {
@@ -216,9 +239,33 @@ fn with_parts<R>(
         let start = source.find(part).expect("the part stands in the source") as u32;
         start..start + part.len() as u32
     };
+    let facts = FileFacts::new(&input);
+    let resolve_part = |ranges: &[Range<u32>]| {
+        let resolved = resolve_within(&input, ranges, &facts);
+        assert_same_answers(
+            &resolved,
+            &resolver::run(&input, Some(ranges), None),
+            source,
+        );
+        resolved
+    };
+    let ranges_of_parts = parts.map(|parts| parts.iter().map(range_of).collect::<Vec<_>>());
+    let states = match &ranges_of_parts {
+        None => hir.exprs.len(),
+        Some(ranges) => resolver::count_states(&input, ranges, &facts),
+    };
     let resolved = match parts {
-        None => resolve_file(&input),
-        Some(parts) => resolve_within(&input, &parts.iter().map(range_of).collect::<Vec<_>>()),
+        None => {
+            let ends = source
+                .match_indices([';', '{', '}'])
+                .map(|found| found.0 as u32 + 1);
+            for end in ends.take(24) {
+                resolve_part(&[0..end]);
+                resolve_part(&[end..source.len() as u32]);
+            }
+            resolve_file(&input)
+        }
+        Some(_) => resolve_part(ranges_of_parts.as_deref().unwrap_or_default()),
     };
     then(&Case {
         source,
@@ -227,6 +274,7 @@ fn with_parts<R>(
         hir: &hir,
         bound: &bound,
         resolved: &resolved,
+        states,
     })
 }
 

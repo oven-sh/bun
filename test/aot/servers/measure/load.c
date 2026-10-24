@@ -432,6 +432,10 @@ int main(int argc, char** argv)
         parseList("LOAD_UNTIL", &sendUntil, 1);
     }
 
+    // A process with several threads that opens its 64th file waits until every core has passed through the scheduler, while the kernel grows its table of files:
+    // 170 ms on a busy machine with 192 cores. Here there is one thread yet, and the table is grown at once.
+    close(dup2(0, connectionCount + 64));
+
     double* latencies = malloc(requests * sizeof(double));
     double* answeredAt = malloc(requests * sizeof(double));
     Worker* workers = calloc(threadCount, sizeof(Worker));

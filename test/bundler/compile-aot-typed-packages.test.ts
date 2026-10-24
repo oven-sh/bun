@@ -87,19 +87,24 @@ const compiled = (folder: string, flags: string[] = ["--aot"]) =>
 const ran = (folder: string) => spawned([join(folder, "app"), "6"], folder);
 async function built(folder: string, flags?: string[]) {
   const build = await compiled(folder, flags);
-  const said = (build.stdout + build.stderr).split("\n").filter(line => /full types/.test(line));
+  const said = (build.stdout + build.stderr)
+    .split("\n")
+    .filter(line => /full types/.test(line) && !/ full types, and /.test(line));
   expect(build.stderr).not.toContain("error");
   expect(build.exitCode).toBe(0);
   const run = await ran(folder);
   return { said, stdout: run.stdout, exitCode: run.exitCode };
 }
 const used = (directory: string) => [`note: "shapes" 1.2.3 is compiled from its full types in ${directory}`];
+const counted = (used: 0 | 1) => `note: 1 package has full types, and ${used ? "1 is" : "none are"} compiled from them`;
 const unused = (directory: string, why: string) => [
   `warn: TS100056: The full types of "shapes" in ${directory} can't be used: ${why}`,
 ];
 async function builtWithout(folder: string, flags?: string[]) {
   const build = await compiled(folder, flags);
-  const said = (build.stdout + build.stderr).split("\n").filter(line => /full types/.test(line));
+  const said = (build.stdout + build.stderr)
+    .split("\n")
+    .filter(line => /full types/.test(line) && !/ full types, and /.test(line));
   return { said, exitCode: build.exitCode, wroteExecutable: existsSync(join(folder, isWindows ? "app.exe" : "app")) };
 }
 // Full types are only used if everything matches. Otherwise the build goes on as if it were not there, and says what did not match.
@@ -166,7 +171,10 @@ describe("compile/aot/TypedPackages", () => {
     typedVersion(join(folder, "node_modules", "@types", "shapes"));
     typedVersion(join(folder, "node_modules", "full-types", "shapes"));
     typedVersion(join(folder, "node_modules", "@oven", "shapes"));
-    expect(await built(folder)).toEqual({ said: [], stdout: output, exitCode: 0 });
+    const said = [
+      "warn: TS100067: bun compile doesn't read node_modules/@oven/shapes: a package that holds full types is named @oven/full-types-<name>",
+    ];
+    expect(await built(folder)).toEqual({ said, stdout: output, exitCode: 0 });
   });
 
   const withCondition = (typedFile: string | null = "./index.full.ts", folder = ".") =>
@@ -284,11 +292,13 @@ describe("compile/aot/TypedPackages", () => {
     ["the condition is null", folder => shipped(folder, withCondition(null))],
   ];
   test.each(unnamedTypedFiles)(
-    "no shipped version: %s: no message, and the package is compiled as installed",
+    "no shipped version: %s: the package is compiled as installed, and the build says that nothing leads to the file",
     async (_, change) => {
       const folder = project("aot-typed-shipped-unnamed");
       change(folder);
-      expect(await built(folder)).toEqual({ said: [], stdout: output, exitCode: 0 });
+      const why =
+        'index.full.ts is beside index.js, but no "full-types" condition in the "exports" of package.json points at it';
+      expect(await built(folder)).toEqual({ said: shippedUnused(why), stdout: output, exitCode: 0 });
     },
   );
 
@@ -556,7 +566,7 @@ describe("compile/aot/TypedPackages", () => {
       "build.ts": `const result = await Bun.build({ entrypoints: ["app.ts"], compile: { outfile: "./app", aot: true }, throw: false });\nconsole.log(JSON.stringify(result.logs.map(log => log.level + ": " + log.message)));\n`,
     });
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({
-      stdout: JSON.stringify(used(".full-types/shapes")) + "\n",
+      stdout: JSON.stringify([...used(".full-types/shapes"), counted(1)]) + "\n",
       stderr: "",
       exitCode: 0,
     });
@@ -566,12 +576,13 @@ describe("compile/aot/TypedPackages", () => {
     });
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({
       stdout:
-        JSON.stringify(
-          unused(
+        JSON.stringify([
+          ...unused(
             ".full-types/shapes",
             "they are for version 1.2.3, but 1.2.4 is installed. Replace them with the full types for 1.2.4, or remove them",
           ),
-        ) + "\n",
+          counted(0),
+        ]) + "\n",
       stderr: "",
       exitCode: 0,
     });
@@ -584,7 +595,7 @@ describe("compile/aot/TypedPackages", () => {
       "build.ts": `const result = await Bun.build({ entrypoints: ["app.ts"], compile: { outfile: "./app", aot: true }, plugins: [{ name: "asks", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } }] });\nconsole.log(JSON.stringify(result.logs.map(log => log.level + ": " + log.message)));\n`,
     });
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({
-      stdout: JSON.stringify(used(".full-types/shapes")) + "\n",
+      stdout: JSON.stringify([...used(".full-types/shapes"), counted(1)]) + "\n",
       stderr: "",
       exitCode: 0,
     });

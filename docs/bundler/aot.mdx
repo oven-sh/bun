@@ -156,6 +156,8 @@ If the nearest `tsconfig.json` has nothing but `references`, like the one from `
 
 The build doesn't report errors in code that it removes, such as the `process.platform === "win32"` branch in a build for Linux.
 
+Bun reads a file without an extension, like the `bin/tool` of many packages, as TypeScript. If the file is already valid JavaScript, the build doesn't check its types, as in a `.js` file.
+
 ### Compile a project
 
 Without an entry point, `bun compile` reads `package.json`. It compiles the file that `"bin"` points to. If there's no `"bin"`, it uses `"module"`, then `"main"`, then `index.ts`. The executable is named after the `"bin"` entry, or after the package without its scope.

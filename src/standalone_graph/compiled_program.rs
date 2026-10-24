@@ -24,6 +24,8 @@ const CORRUPTED: Error = Error::CorruptedCompiledProgram;
 const PAYLOAD_HEADER_SIZE: usize = size_of::<u64>();
 const RECORD_SIZE: usize = 4 * size_of::<u32>();
 const PRESERVES_SOURCE_PATHS: u32 = 1;
+/// Behind the names of packages: for each entry point where its image begins in `CompiledProgramRecord::image`, and its length.
+const HAS_IMAGE_FOR_EACH_ENTRY_POINT: u32 = 2;
 /// The length of the path, what `require` and what `import` find, and whether the name hides other paths.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const NO_ENTRY_POINT: u32 = u32::MAX;
@@ -59,6 +61,8 @@ pub struct CompiledEntryPointInput<'a> {
     pub module_id: bun_aot::engine::EngineModuleId,
     pub source_path: &'a [u8],
     pub module_path: &'a [u8],
+    /// 0: `CompiledProgramInput::image`. Above: a position in `further_images`, plus one.
+    pub image_index: u32,
 }
 
 /// `CompiledPackageName`. The indices are positions in `CompiledProgramInput::entry_points`.
@@ -77,6 +81,8 @@ pub(crate) struct EntryPointPathPointers {
 
 pub struct CompiledProgramInput<'a> {
     pub image: &'a [u8],
+    /// Of an executable whose entry points begin programs of their own.
+    pub further_images: &'a [&'a [u8]],
     pub image_alignment: usize,
     /// Entry point `i` belongs to the output file whose `entry_point_index` is `Some(i)`.
     pub entry_points: &'a [CompiledEntryPointInput<'a>],
@@ -99,7 +105,14 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         .iter()
         .map(|name| PACKAGE_NAME_SIZE + name.path.len())
         .sum();
+    let further_images: usize = input.further_images.iter().map(|image| image.len()).sum();
+    let image_ranges = match input.further_images.len() {
+        0 => 0,
+        _ => input.entry_points.len() * size_of::<StringPointer>(),
+    };
     input.image.len()
+        + further_images
+        + image_ranges
         + input.image_alignment
         + RECORD_SIZE
         + entry_points
@@ -111,26 +124,30 @@ pub(crate) fn append_image(
     builder: &mut StringBuilder,
     input: &CompiledProgramInput<'_>,
 ) -> crate::Result<StringPointer> {
-    let (image, alignment) = (input.image, input.image_alignment);
+    let alignment = input.image_alignment;
+    let images = || core::iter::once(input.image).chain(input.further_images.iter().copied());
     if !alignment.is_power_of_two()
         || alignment < PAYLOAD_HEADER_SIZE
-        || image.is_empty()
-        || !image.len().is_multiple_of(alignment)
+        || images().any(|image| image.is_empty() || !image.len().is_multiple_of(alignment))
     {
         return Err(Error::ImageMisaligned);
     }
     let unaligned_start = PAYLOAD_HEADER_SIZE + builder.len;
     let padding = unaligned_start.next_multiple_of(alignment) - unaligned_start;
-    let (zeros, rest) = builder.writable().split_at_mut(padding);
-    zeros.fill(0);
-    let destination = &mut rest[..image.len()];
-    // SAFETY: `destination` is `image.len()` writable bytes of the builder's own buffer, which `image` does not overlap.
-    unsafe { bun_core::copy_in_parallel(destination.as_mut_ptr(), image.as_ptr(), image.len()) };
+    builder.writable()[..padding].fill(0);
     let offset = builder.len + padding;
-    builder.len = offset + image.len();
+    builder.len = offset;
+    for image in images() {
+        let destination = &mut builder.writable()[..image.len()];
+        // SAFETY: `destination` is `image.len()` writable bytes of the builder's own buffer, which `image` does not overlap.
+        unsafe {
+            bun_core::copy_in_parallel(destination.as_mut_ptr(), image.as_ptr(), image.len());
+        }
+        builder.len += image.len();
+    }
     Ok(StringPointer {
         offset: offset as u32,
-        length: image.len() as u32,
+        length: (builder.len - offset) as u32,
     })
 }
 
@@ -191,17 +208,34 @@ pub(crate) fn append_record(
         places[entry.3] = place;
     }
     let package_names = encode_package_names(input.package_names, &places).ok_or(CORRUPTED)?;
+    let has_images = !input.further_images.is_empty();
     let header = CompiledProgramRecord {
         image,
         entry_point_count,
-        flags: u32::from(input.preserves_source_paths) * PRESERVES_SOURCE_PATHS,
+        flags: u32::from(input.preserves_source_paths) * PRESERVES_SOURCE_PATHS
+            | u32::from(has_images) * HAS_IMAGE_FOR_EACH_ENTRY_POINT,
     };
+    let mut image_ranges: Vec<u32> = Vec::new();
+    if has_images {
+        let lengths = core::iter::once(input.image).chain(input.further_images.iter().copied());
+        let mut ranges = Vec::with_capacity(1 + input.further_images.len());
+        let mut start = 0u32;
+        for length in lengths.map(|image| image.len() as u32) {
+            ranges.push([start, length]);
+            start += length;
+        }
+        for entry in &entries {
+            let index = entry_points[entry.3].image_index as usize;
+            image_ranges.extend(ranges.get(index).ok_or(CORRUPTED)?);
+        }
+    }
     let _ = builder.add_concat(&[
         bytes_of(&header),
         slice_as_bytes(&records),
         slice_as_bytes(&source_path_order),
         slice_as_bytes(&module_paths),
         &package_names,
+        slice_as_bytes(&image_ranges),
     ]);
     Ok(())
 }
@@ -360,6 +394,21 @@ fn try_read(
 
     let mut end = module_paths_at + module_paths_size;
     let package_names = read_package_names(payload, &mut end, entry_point_count)?;
+    let mut images: Vec<&'static [u8]> = Vec::new();
+    if header.flags & HAS_IMAGE_FOR_EACH_ENTRY_POINT != 0 {
+        let ranges = payload.bytes(
+            end,
+            entry_point_count.checked_mul(size_of::<StringPointer>())?,
+        )?;
+        end += ranges.len();
+        for [offset, length] in ranges.as_chunks::<4>().0.as_chunks::<2>().0 {
+            let offset = u32::from_le_bytes(*offset) as usize;
+            let part = image
+                .get(offset..)?
+                .get(..u32::from_le_bytes(*length) as usize)?;
+            images.push(part);
+        }
+    }
     *record_at = end;
     let backing_file = payload.file.map(|file| ImageFile {
         descriptor: file.descriptor,
@@ -372,6 +421,7 @@ fn try_read(
         source_path_order,
         header.flags & PRESERVES_SOURCE_PATHS != 0,
     );
+    let program = program.with_images(images.into_boxed_slice());
     Some(program.with_package_names(package_names))
 }
 
@@ -722,6 +772,7 @@ pub(crate) mod tests {
             module_id: EngineModuleId(id),
             source_path,
             module_path: source_path,
+            image_index: 0,
         }
     }
 
@@ -733,6 +784,7 @@ pub(crate) mod tests {
     ) -> CompiledProgramInput<'a> {
         CompiledProgramInput {
             image,
+            further_images: &[],
             image_alignment,
             entry_points,
             package_names: &[],
@@ -796,6 +848,45 @@ pub(crate) mod tests {
             .map(|entry| (entry.module_id, entry.module_path));
         let expected: [(u32, &[u8]); 2] = [(11, b"/$bunfs/root/c.mjs"), (10, b"/$bunfs/root/b.ts")];
         assert!(paths.eq(expected));
+    }
+
+    #[test]
+    fn each_entry_point_finds_its_image() {
+        const SECOND: [u8; 2 * ALIGNMENT] = [0xA5; 2 * ALIGNMENT];
+        const THIRD: [u8; ALIGNMENT] = [0x5A; ALIGNMENT];
+        let mut entry_points = [
+            entry_point(10, b"/a/b.ts"),
+            entry_point(1, b"/a/c.ts"),
+            entry_point(1, b"/a/d.ts"),
+        ];
+        entry_points[1].image_index = 1;
+        entry_points[2].image_index = 2;
+        let input = CompiledProgramInput {
+            further_images: &[&SECOND[..], &THIRD[..]],
+            ..program(&IMAGE, ALIGNMENT, &entry_points, false)
+        };
+        let (bytes, record_at, image) = write(&input, &[Some(2), Some(0), Some(1)], 7).unwrap();
+        assert_eq!(image.length as usize, 4 * ALIGNMENT);
+        assert_eq!((PAYLOAD_HEADER_SIZE + image.offset as usize) % ALIGNMENT, 0);
+        let length = bytes.len();
+        let (program, record_end) = read_back(bytes, record_at).unwrap();
+        assert_eq!(record_end, length);
+        assert_eq!(program.image.len(), 4 * ALIGNMENT);
+        assert_eq!(program.first_image(), IMAGE);
+        assert_eq!(program.image_beginning_at(b"/a/b.ts"), IMAGE);
+        assert_eq!(program.image_beginning_at(b"/a/c.ts"), SECOND);
+        assert_eq!(program.image_beginning_at(b"/a/d.ts"), THIRD);
+        assert_eq!(program.image_beginning_at(b"/a/elsewhere.ts"), IMAGE);
+        assert_eq!(program.images().count(), 3);
+    }
+
+    #[test]
+    fn one_image_adds_nothing_to_the_record() {
+        let (bytes, record_at, _) = write_three(false);
+        let (program, _) = read_back(bytes, record_at).unwrap();
+        assert_eq!(program.images().count(), 1);
+        assert_eq!(program.first_image(), IMAGE);
+        assert_eq!(program.image_beginning_at(b"/a/b.ts"), IMAGE);
     }
 
     #[test]

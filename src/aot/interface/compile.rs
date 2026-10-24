@@ -37,6 +37,9 @@ pub struct FolderPaths {
 pub struct Compilation {
     pub engine: EngineResult,
     pub summary: ProgramSummary,
+    /// Of a build whose entry points begin programs of their own: the program of each entry point behind the first, in their order.
+    /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
+    pub further_programs: Vec<EngineResult>,
 }
 
 pub struct BuildFailed {

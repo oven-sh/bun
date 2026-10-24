@@ -157,6 +157,29 @@ fn resolve_exports_subpath(
     ExportsStatus::PackagePathNotExported.into()
 }
 
+/// What `condition` names in a map that a search for `subpath` leaves by a key in front of it.
+pub(super) fn find_target_behind_match<'h>(
+    exports: &ExportsEntry<'h>,
+    subpath: &[u8],
+    condition: &[u8],
+    matches: &dyn Fn(&[u8]) -> bool,
+) -> Option<&'h [u8]> {
+    let mut entry = match (subpath, *exports) {
+        (b".", _) => *main_export(exports)?,
+        (_, ExportsEntry::Map(map)) => *value_for_key(map, subpath)?,
+        _ => return None,
+    };
+    while let ExportsEntry::Map(map) = entry {
+        let taken = map.entries.iter().position(|entry| matches(entry.0))?;
+        let mut behind = map.entries[taken + 1..].iter();
+        if let Some(unreached) = behind.find(|entry| entry.0 == condition) {
+            return unreached.1.targets().first().copied();
+        }
+        entry = map.entries[taken].1;
+    }
+    None
+}
+
 fn main_export<'e, 'h>(exports: &'e ExportsEntry<'h>) -> Option<&'e ExportsEntry<'h>> {
     match *exports {
         ExportsEntry::Target(_) | ExportsEntry::Array(_) => Some(exports),

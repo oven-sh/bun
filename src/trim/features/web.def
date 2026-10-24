@@ -17,6 +17,8 @@ feature PostMessage "the postMessage global"
 
 feature WorkerConstructor "Worker and node:worker_threads"
 
+feature NodeWorker "the Worker of node:worker_threads"
+
 feature LegacyEncodings "TextDecoder encodings other than UTF-8, UTF-16 and Latin-1"
 
 feature WebSocket "the WebSocket client"

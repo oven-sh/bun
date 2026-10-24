@@ -2,6 +2,5 @@
   "runWithASAN": "what the writer stands on is replaced by code that runs inside the write",
   "skipInVariant": {
     "validate-collecting": "it allocates so much that it runs for minutes where every allocation collects, and a run is killed after 90 seconds"
-  },
-  "skipWithASAN": "TODO: a build with assertions asks for an exception check between two calls of JSOrderedHashTable::add"
+  }
 }

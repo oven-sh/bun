@@ -1,3 +1,0 @@
-{
-  "skipWithASAN": "TODO: a build with assertions stops in watchOwnMember: isAsDeclared == holdsAsDeclared"
-}

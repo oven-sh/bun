@@ -48,3 +48,16 @@ fn a_binding_that_stays_in_its_part_is_followed() {
         },
     );
 }
+
+#[test]
+fn a_part_pays_for_its_own_expressions_alone() {
+    let others: String = (0..50)
+        .map(|index| format!("function f{index}(a, b) {{ return a + b * {index}; }} "))
+        .collect();
+    let part = "function g() { return process.pid; }";
+    let source = format!("{others}{part}");
+    let states_of =
+        |parts: Option<&[&str]>| with_parts(RUNTIME, &source, parts, |case| case.states);
+    assert!(states_of(None) > 200);
+    assert!(states_of(Some(&[part])) < 10);
+}

@@ -36,6 +36,10 @@ for (let i = 0; i < 64; i++) { listedBags.push({ size: i, a: i + 1, b: 2 }); ope
 type Level = "low" | "mid" | "high" | "top";
 const levels: Level[] = ["low", "mid", "high", "top"];
 const levelNames: string[] = ["low", "mid", "high", "top"];
+const cutNames: string[] = ["xlow", "xmid", "xhigh", "xtop"].map(text => text.slice(1));
+const cutLevels: Level[] = ["xlow", "xmid", "xhigh", "xtop"].map(text => text.slice(1) as Level);
+const parsedNames: { level: string }[] = JSON.parse('[{"level":"low"},{"level":"mid"},{"level":"high"},{"level":"top"}]');
+const parsedLevels: { level: Level }[] = JSON.parse('[{"level":"low"},{"level":"mid"},{"level":"high"},{"level":"top"}]');
 const worthOfLevel: Record<Level, number> = { low: 1, mid: 2, high: 3, top: 4 };
 const worthOfName: Record<string, number> = { low: 1, mid: 2, high: 3, top: 4 };
 const getters: WithGetter[] = [], methods: WithMethod[] = [], arrows: WithArrowField[] = [], plains: WithPlainMethod[] = [], hashes: WithPrivateNames[] = [], keywords: WithPrivateKeyword[] = [];
@@ -112,6 +116,11 @@ const loops: Record<string, (n: number) => number> = {
   "keys out of a list of a union of texts": n => { let s = 0; for (let i = 0; i < n; i++) s += worthOfLevel[levels[i & 3]]; return s; },
   "comparisons of a string out of a list": n => { let s = 0; for (let i = 0; i < n; i++) { const v = levelNames[i & 3]; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
   "comparisons of one of a union of texts out of a list": n => { let s = 0; for (let i = 0; i < n; i++) { const v = levels[i & 3]; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
+  "comparisons of a string taken for one of a union of texts": n => { let s = 0; for (let i = 0; i < n; i++) { const v = levelNames[i & 3] as Level; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
+  "comparisons of a string cut out of another": n => { let s = 0; for (let i = 0; i < n; i++) { const v = cutNames[i & 3]; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
+  "comparisons of one of a union of texts cut out of another": n => { let s = 0; for (let i = 0; i < n; i++) { const v = cutLevels[i & 3]; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
+  "comparisons of a string out of parsed text": n => { let s = 0; for (let i = 0; i < n; i++) { const v = parsedNames[i & 3].level; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
+  "comparisons of one of a union of texts out of parsed text": n => { let s = 0; for (let i = 0; i < n; i++) { const v = parsedLevels[i & 3].level; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
 };
 let outersKeep: unknown = undefined;
 

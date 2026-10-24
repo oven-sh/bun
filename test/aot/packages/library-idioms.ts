@@ -1,9 +1,6 @@
 // What well-known libraries do with the objects, classes and functions that a TypeScript program passes to them: clone by prototype, deep clone, freeze, drafts wrapped in a Proxy, fields turned into accessors, instances filled from plain data, spies, generated code, checks of what kind of function a value is.
 import { js, pkg, ts, type Case } from "./run-packages";
 
-const differs =
-  "A value of the wrong type in a location whose type the program wrote throws a TypeError: a method that reads a `number` field after a library stored a string in it, and a `number` parameter that generated code passes a string.";
-
 export const cases: Case[] = [
   {
     // @jridgewell/remapping 2.3.5: the .d.cts that "require" leads to does not parse. Nobody who builds can edit it, and plain Bun never reads it.
@@ -123,7 +120,6 @@ ${ts}t("x", () => [enabled(), namespaces(), disable()]);
   },
   {
     name: "typed",
-    differs,
     files: {
       ...pkg("libs", {
         "index.js": `"use strict";

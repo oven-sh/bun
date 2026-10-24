@@ -276,8 +276,9 @@ pub fn default_options_of_full_types() -> Vec<(Vec<u8>, Json)> {
 
 pub fn find_manifest_of_full_types(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
-        if host.is_file(&join(dir, b"full-types.json")) {
-            return None;
+        let path = join(dir, b"full-types.json");
+        if host.is_file(&path) {
+            return Some(path);
         }
         let path = join(dir, b"package.json");
         let text = host.is_file(&path).then(|| host.read(&path)).flatten();
@@ -304,14 +305,22 @@ pub fn load_for_full_types(host: &dyn Host, session: &Session, manifest_path: &[
         compiler,
         ..Raw::default()
     };
-    project_for_build(
+    let mut project = project_for_build(
         host,
         session,
         manifest_path,
         raw,
         errors,
         RootFiles::Skipped,
-    )
+    );
+    // What Bun itself provides is declared there, as what the language provides is declared in `lib`.
+    let options = &mut project.options;
+    let type_roots = options.effective_type_roots();
+    let has_bun_types = |root: &Vec<u8>| host.is_file(&join(root, b"bun/package.json"));
+    if options.types.is_none() && type_roots.iter().any(has_bun_types) {
+        options.types = Some(vec![b"bun".to_vec()]);
+    }
+    project
 }
 
 impl Project {

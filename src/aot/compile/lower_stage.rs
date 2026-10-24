@@ -11,9 +11,12 @@ use crate::lower::{
     lower_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
-use crate::package_diagnostics::{PackageView, report_package_errors, report_used_versions};
+use crate::package_diagnostics::{
+    PackageView, report_package_errors, report_unchecked_versions, report_used_versions,
+};
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
+use bun_core::current_work;
 use bun_sema::atom::known;
 use bun_sema::check::aot::{
     DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
@@ -70,6 +73,8 @@ struct ProjectToLower<'a, 'b, 's> {
     keys: KeyContext<'a>,
     inputs: &'a LoweringInputs<'a>,
     threads: NonZeroUsize,
+    // --aot-sabotage=LoweringPanics
+    panics: bool,
 }
 
 impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
@@ -92,6 +97,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             },
             inputs,
             threads,
+            panics: false,
         }
     }
 
@@ -108,6 +114,9 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             &self.decided.roles,
             &self.decided.files_to_lower,
             &|checker, file| {
+                let path = self.loaded.loaded.files().diagnostic_path(file);
+                let _work = current_work::working_on(current_work::Step::Lower, path);
+                assert!(!self.panics, "--aot-sabotage=LoweringPanics");
                 if !is_well_formed(self.loaded.loaded.files(), file)
                     || checker.found_early_error(file)
                 {
@@ -493,8 +502,11 @@ impl Build<'_> {
             roles,
             left_out_of_application,
             |inputs| {
-                let of_application =
+                let mut of_application =
                     ProjectToLower::new(loaded, bound, decided, application, inputs, threads);
+                let words = &self.options.aot.option_words;
+                of_application.panics =
+                    (words.iter()).any(|it| **it == *b"sabotage=LoweringPanics");
                 let roles = &decided.runtime.roles;
                 let left_out = left_out.runtime;
                 self.with_inputs_for_reached_code(
@@ -562,7 +574,13 @@ impl Build<'_> {
         demoted_directories.extend(directories_demoted_by_worlds.iter().map(|it| &it[..]));
         self.diagnostics.add_load_messages(loaded.messages);
         if self.reports_typed_versions(project) {
-            report_used_versions(&mut self.diagnostics, packages, &demoted_directories);
+            report_unchecked_versions(&mut self.diagnostics, packages, roles);
+            report_used_versions(
+                &mut self.diagnostics,
+                packages,
+                &demoted_directories,
+                &self.full_types_refused_at_load,
+            );
         }
 
         for (file, lowered) in checked.lowered {

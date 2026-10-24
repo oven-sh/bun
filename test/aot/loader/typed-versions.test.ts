@@ -78,7 +78,7 @@ test("full types with a syntax error", () => {
 
 test("no condition, no full types", () => {
   using graph = describeTree(createTree({ "index.full.ts": typescript }, null), ["main.ts"]);
-  expectInferred(graph, null);
+  expectInferred(graph, "NotExported");
 });
 
 test("the condition names the installed file", () => {

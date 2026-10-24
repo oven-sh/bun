@@ -14,6 +14,9 @@ declare module "koa" {
       status: number;
       type: string;
       body: unknown;
+      state: { [name: string]: unknown };
+      get(name: string): string;
+      set(name: string, value: string): void;
     }
     type Next = () => Promise<void>;
     type Middleware = (ctx: Context, next: Next) => unknown;

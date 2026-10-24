@@ -171,13 +171,10 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
     case Wire::ResultSection::ObfuscatedSites:
         return bytesOf(result->obfuscatedSites);
     case Wire::ResultSection::ArrivalSites:
-        return output ? bytesOf(output->arrivalSites.sites) : noBytes;
     case Wire::ResultSection::ArrivalSiteLayouts:
-        return output ? bytesOf(output->arrivalSites.siteLayouts) : noBytes;
     case Wire::ResultSection::ArrivalLayouts:
-        return output ? bytesOf(output->arrivalSites.layouts) : noBytes;
     case Wire::ResultSection::ArrivalLayoutFields:
-        return output ? bytesOf(output->arrivalSites.layoutFields) : noBytes;
+        return noBytes;
     }
     return noBytes;
 }
@@ -342,24 +339,6 @@ static void encodeFunctionReports(BunAOTResult& result, OperationNames& operatio
     });
 }
 
-static void encodeArrivalSites(BunAOTResult& result)
-{
-    Typed::ArrivalSiteReport& report = result.output->arrivalSites;
-    Wire::TextRange appended = appendText(result.text, report.text.span());
-    bool didAppend = appended.length == report.text.size();
-    auto rebase = [&](Wire::TextRange& range) {
-        range = didAppend ? Wire::TextRange { appended.offset + range.offset, range.length } : Wire::TextRange { 0, 0 };
-    };
-    for (Wire::ArrivalSiteRecord& site : report.sites)
-        rebase(site.operation);
-    for (Wire::ArrivalLayoutRecord& layout : report.layouts) {
-        rebase(layout.kind);
-        rebase(layout.name);
-    }
-    for (Wire::ArrivalLayoutFieldRecord& field : report.layoutFields)
-        rebase(field.name);
-}
-
 static void encodePassTimes(BunAOTResult& result)
 {
     const JSC::AOT::Vector<JSC::AOT::Statistics::PassTime>& passTimes = result.output->statistics.passTimes();
@@ -433,7 +412,6 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
     encodeAllocationRemarks(*result, operationNames);
     encodeObfuscatedSites(*result);
     encodeFunctionReports(*result, operationNames);
-    encodeArrivalSites(*result);
     encodePassTimes(*result);
     result->statistics = result->output->statistics.values();
     result->limitValues = result->output->limitValues;
@@ -489,6 +467,16 @@ extern "C" bool Bun__AOT__isOptionalPass(Wire::PassID pass)
     return static_cast<uint32_t>(pass) < JSC::AOT::numberOfPasses && JSC::AOT::isOptionalPass(pass);
 }
 
+extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity)
+{
+    return JSC::AOT::describeWhereThisThreadStopped({ reinterpret_cast<char*>(buffer), capacity });
+}
+
+extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, size_t capacity)
+{
+    return JSC::AOT::describeWhatThreadsAreCompiling({ reinterpret_cast<char*>(buffer), capacity });
+}
+
 #else // ENABLE(AOT)
 
 #include <cstddef>
@@ -498,5 +486,8 @@ extern "C" bool Bun__AOT__isOptionalPass(Wire::PassID pass)
 extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
+// What src/runtime/cli/compile_command/build.rs names.
+extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t*, size_t) { return 0; }
+extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t*, size_t) { return 0; }
 
 #endif // ENABLE(AOT)

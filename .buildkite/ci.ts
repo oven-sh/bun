@@ -881,12 +881,17 @@ interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
   aot?: AotTests | undefined;
+  /** Which of the two steps of `aot` this is. */
+  aotTakes?: AotTakes | undefined;
   /** The Bun of `hardenedPlatform`. */
   hardened?: boolean | undefined;
 }
 
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
+// They come in two steps. "fixed" is the same on every commit and may hold up a merge. "drawn" is whatever goes by the commit, files and shares of programs alike: each commit takes
+// others, so that in time all are taken, and what it finds is seen and holds up nothing.
+type AotTakes = "fixed" | "drawn";
 
 const aotSources = [
   "src/aot/",
@@ -930,14 +935,8 @@ const aotSources = [
 const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
 const linuxX64AotGroups = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
 const tooSlowForAsan = ["aot/frameworks/nuxt.test", "aot/frameworks/astro.test", "aot/frameworks/angular"];
-// TODO: a build with assertions stops in StringKeyCache::findKeyForText where the limits are lowered, and in what a parse by a large type runs.
-const notYetWithAssertions = [
-  "aot/joined-programs-limits-lowered",
-  "aot/generated-a-parse-by-a-type-that-reaches-very-many-objects",
-];
-// TODO: with the limits lowered two programs of json-text-of-records do not end in the time that their group has (5), and the
-// compiler's check of what it hands to the back end refuses one group (7).
-const notYetInTime = ["aot/joined-programs-limits-lowered-5", "aot/joined-programs-limits-lowered-7"];
+// TODO: with the limits lowered two programs of json-text-of-records do not end in the time that their group has.
+const notYetInTime = ["aot/joined-programs-limits-lowered-5"];
 const fullRunAotGroups = [...linuxX64AotGroups, "aot/heat/", "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
@@ -952,6 +951,23 @@ function hasAotChanges({ changedFiles }: PipelineOptions): boolean {
   return (aotChanges ??= changedFiles?.length
     ? changedFiles.some(file => aotSources.some(source => file.startsWith(source)))
     : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...aotPathspecs)?.trim() !== "");
+}
+
+// What an executable compiles and what the table of built-ins is written from, outside the compiler's own folders: the modules in
+// JavaScript, the schemas of native functions, and the generators of both.
+const librarySources = ["src/js/", "src/codegen/"];
+const libraryPathspecs = [...librarySources, "*.bind.ts"];
+const isLibrarySource = (file: string) =>
+  file.endsWith(".bind.ts") || librarySources.some(source => file.startsWith(source));
+// What holds up a change of those alone: the table against what the functions do, the servers, and the programs of every run.
+const libraryAotGroups = ["aot/builtins/", "aot/servers/", "aot/programs-in-every-run"];
+
+let libraryChanges: boolean | undefined;
+function hasOnlyLibraryChanges(options: PipelineOptions): boolean {
+  if (hasAotChanges(options)) return false;
+  return (libraryChanges ??= options.changedFiles?.length
+    ? options.changedFiles.some(isLibrarySource)
+    : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...libraryPathspecs)?.trim() !== "");
 }
 
 const buildScripts = ["scripts/build", "scripts/build.ts"];
@@ -977,7 +993,7 @@ function getAotTests(platform: Platform, options: PipelineOptions): AotTests | u
 
 function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): string[] {
   const groups = aot === "a tenth" ? fullRunAotGroups : linuxX64AotGroups;
-  if (profile === "asan") return [...groups, ...tooSlowForAsan, ...notYetWithAssertions];
+  if (profile === "asan") return [...groups, ...tooSlowForAsan, ...notYetInTime];
   return aot === "all" && arch === "x64" && distro === "debian" && !profile
     ? notYetInTime
     : [...groups, ...notYetInTime];
@@ -991,17 +1007,26 @@ function getAotFileDraw({ os, distro, profile }: Platform, aot: AotTests): numbe
 }
 
 // What a lane runs whatever it draws.
-function getAotAlwaysDrawn({ os, arch, profile }: Platform): string[] {
+function getAotAlwaysDrawn({ os, arch, profile }: Platform, options: PipelineOptions): string[] {
   const isMacOnArm = os === "darwin" && arch === "aarch64";
   return [
+    ...(hasOnlyLibraryChanges(options) ? libraryAotGroups : []),
     // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
     ...(isMacOnArm ? ["aot/engine-tests"] : []),
     ...(profile === "asan" ? ["aot/exception-checks"] : []),
+    // Most files skip themselves where a Bun has no compiler. This one never does.
+    "aot/every-platform",
     // What can refuse to start an executable is tested wherever one is started.
     "aot/an-executable-whose-image-header-names-a-range-outside-its-code-segment-does-not-start",
     "aot/compiled-code-mapping",
     "aot/inserted-library",
     "aot/ways-to-start-an-executable",
+    // Each system has its own way to refuse a process memory for generated code.
+    "aot/without-executable-memory",
+    // Each system has its own way to take a wish for an address.
+    "aot/every-launch-places-its-heap-anew",
+    // Only on this CPU is the reach of a call within the size of a large program.
+    ...(arch === "aarch64" ? ["aot/calls-beyond-their-reach"] : []),
     // It lists what once went wrong on one platform alone, so that no draw passes it over there.
     "aot/programs-that-differed-on-one-platform",
     // What every run takes of the programs, whatever its share. Debian runs every file.
@@ -1016,6 +1041,17 @@ function getAotAlwaysDrawn({ os, arch, profile }: Platform): string[] {
   ];
 }
 
+// What the step that holds up nothing runs whatever the lane draws.
+function getAotAlwaysInDrawnStep({ profile }: Platform, aot: AotTests): string[] {
+  if (aot !== "all") return [];
+  return [
+    // A mark for this lane alone can only be found stale on this lane.
+    "aot/programs-marked-as-failing",
+    // Nothing else runs the engine's tests with a sanitizer and with assertions. They go to the other step once they have been green here.
+    ...(profile === "asan" ? ["aot/engine-tests-in-parts"] : []),
+  ];
+}
+
 let expectedDurations: Record<string, Record<string, unknown>> | undefined;
 function getExpectedDurations(): Record<string, Record<string, unknown>> {
   try {
@@ -1025,26 +1061,43 @@ function getExpectedDurations(): Record<string, Record<string, unknown>> {
   }
 }
 
-function getAotParallelism(platform: Platform, aot: AotTests): number {
+// By their names, for the number of shards alone: scripts/runner.node.ts reads the tests and knows.
+let programFolders: string[] | undefined;
+function isDrawnByName(path: string): boolean {
+  programFolders ??= git("ls-tree", "-d", "--name-only", "HEAD:test/aot/programs")?.split("\n").filter(Boolean) ?? [];
+  return (
+    /^aot\/(variant-|packages-|generated-|jit-mode-eager-tier-up|each-case-alone|every-program|programs-marked-as-failing|collector-stress\/|heat\/|bad-time\/|joined-programs|trimmed-matches-untrimmed)/.test(
+      path,
+    ) || programFolders.some(folder => path.startsWith(`aot/${folder}.`) || path.startsWith(`aot/${folder}-`))
+  );
+}
+
+function getAotParallelism(platform: Platform, options: PipelineOptions, aot: AotTests, takes: AotTakes): number {
   const { os, arch, abi, profile } = platform;
   const windows = arch === "x64" ? "windows" : "windows-aarch64";
   const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
   const excludes = getAotExcludes(platform, aot);
-  const alwaysDrawn = getAotAlwaysDrawn(platform);
+  const alwaysDrawn = getAotAlwaysDrawn(platform, options);
   const draw = getAotFileDraw(platform, aot);
+  const alwaysInDrawnStep = getAotAlwaysInDrawnStep(platform, aot);
   let milliseconds = 0;
   for (const [path, durations] of Object.entries(getExpectedDurations())) {
     if (!aotTests.some(group => path.startsWith(group)) || excludes.some(group => path.includes(group))) continue;
-    const isAlwaysDrawn = alwaysDrawn.some(group => path.includes(group));
-    milliseconds += (Number(durations?.[lane] ?? durations?.["default"]) || 0) / (isAlwaysDrawn ? 1 : draw);
+    // Where files are drawn, what is always drawn is the fixed step and the draw is the other. Where every file is run, the tests that take shares are the drawn step.
+    const isFixed = draw > 1 ? alwaysDrawn.some(group => path.includes(group)) : !isDrawnByName(path);
+    // These have as much for one step as for the other.
+    const isInBoth = draw === 1 && path.startsWith("aot/generated-births-and-uses");
+    if (isFixed !== (takes === "fixed") && !isInBoth) continue;
+    const isWhole = isFixed || alwaysInDrawnStep.some(group => path.includes(group));
+    milliseconds += (Number(durations?.[lane] ?? durations?.["default"]) || 0) / (isWhole ? 1 : draw);
   }
-  const shards = Math.ceil(milliseconds / (12 * 60_000)) || (aot === "all" ? 20 : 3);
-  return Math.min(shards, os === "darwin" ? 8 : arch === "x64" ? 27 : 16);
+  const shards = Math.ceil(milliseconds / (12 * 60_000)) || (aot === "all" ? 10 : 2);
+  return Math.min(shards, os === "darwin" ? 8 : arch === "x64" ? 27 : 24);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
-  const { buildId, testFiles, aot, hardened } = testOptions;
+  const { buildId, testFiles, aot, aotTakes = "fixed", hardened } = testOptions;
 
   const buildKey = `${getTargetKey(hardened ? hardenedPlatform : platform)}-build-bun`;
   const args = [`--step=${buildKey}`];
@@ -1062,9 +1115,19 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       "--vendor=false",
     );
   } else if (aot) {
-    args.push(...aotTests.map(group => `--include=${group}`));
-    args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
-    args.push(...getAotAlwaysDrawn(platform).map(group => `--always-draw=${group}`));
+    const draw = getAotFileDraw(platform, aot);
+    const alwaysDrawn = getAotAlwaysDrawn(platform, options);
+    args.push("--retries=1", "--vendor=false");
+    if (draw === 1) args.push(...aotTests.map(group => `--include=${group}`), `--aot-takes=${aotTakes}`);
+    else if (aotTakes === "fixed") args.push(...alwaysDrawn.map(group => `--include=${group}`), "--aot-takes=fixed");
+    else {
+      args.push(
+        ...aotTests.map(group => `--include=${group}`),
+        `--one-in=${draw}`,
+        ...alwaysDrawn.map(group => `--exclude=${group}`),
+      );
+      args.push(...getAotAlwaysInDrawnStep(platform, aot).map(group => `--always-draw=${group}`));
+    }
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
@@ -1082,7 +1145,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     depends.push(buildKey);
   }
 
-  const kind = hardened ? "hardened" : aot ? "aot" : "bun";
+  const kind = hardened ? "hardened" : aot ? (aotTakes === "drawn" ? "aot-drawn" : "aot") : "bun";
   return {
     key: `${getPlatformKey(platform)}-test-${kind}`,
     label: `${getPlatformLabel(platform)} - test-${kind}`,
@@ -1101,7 +1164,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
     parallelism: aot
-      ? getAotParallelism(platform, aot)
+      ? getAotParallelism(platform, options, aot, aotTakes)
       : platform.tier === "beta" || hardened
         ? 1
         : os === "darwin"
@@ -1109,16 +1172,16 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
           : os === "windows"
             ? 8
             : 20,
-    // The compiler's tests do not hold up work that does not touch the compiler.
-    ...(platform.tier === "beta" || (aot && !hasAotChanges(options)) ? { soft_fail: true } : {}),
+    // The compiler's tests do not hold up work that touches neither the compiler nor what it compiles.
+    ...(platform.tier === "beta" ||
+    (aot && (aotTakes === "drawn" || !(hasAotChanges(options) || hasOnlyLibraryChanges(options))))
+      ? { soft_fail: true }
+      : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
       platform.tier === "beta" ? 60 : aot || profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      // The steps that block draw by a fixed seed, so that the same tree runs the same tests on every commit.
-      // TODO: a second step, which does not block, that draws by the commit.
-      AOT_SHARE: "4cb5a199f53012a76e430ac97c34ef9600389623",
       // Platform smoke check: runner.node.ts asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
       // `release` is only asserted where the lane pins an exact version:
@@ -2048,6 +2111,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           const aot = getAotTests(target, options);
           const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
           if (aotStep) testStepKeys.push(aotStep.key);
+          // Nothing waits for it.
+          const drawnAotStep = aot && getTestBunStep(target, options, { buildId, aot, aotTakes: "drawn" });
           // Its build is made in this run alone, and no release waits for it.
           const runsHardened =
             !buildId &&
@@ -2062,7 +2127,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             {
               key: getPlatformKey(target),
               group: getPlatformLabel(target),
-              steps: [step, aotStep, hardenedStep].filter((step): step is CommandStep => !!step),
+              steps: [step, aotStep, drawnAotStep, hardenedStep].filter((step): step is CommandStep => !!step),
             },
             ...dependsOn,
           );

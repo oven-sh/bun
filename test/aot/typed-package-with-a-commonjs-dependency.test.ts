@@ -60,7 +60,9 @@ async function expectSameOutput(name: string, files: Record<string, string>, ent
   using dir = tempDir("typed-package-commonjs", { ...shared, ...files });
   const root = String(dir);
   const built = await spawned([bunExe(), "compile", `./${entry}`], root, env);
-  const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /full types|^error|^warn/.test(line));
+  const said = (built.stdout + built.stderr)
+    .split(/\r?\n/)
+    .filter(line => /full types|^error|^warn/.test(line) && !/ full types, and /.test(line));
   const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
   const plain = await spawned([bunExe(), entry], root, env);
   expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({

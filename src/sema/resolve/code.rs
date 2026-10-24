@@ -1,4 +1,5 @@
 use super::*;
+use crate::erasure::ErasureMismatchKind;
 use crate::import_sites::ImportSiteKind;
 use crate::program::HostModuleId;
 
@@ -114,7 +115,7 @@ pub enum TypedVersionOrigin {
 pub struct TypedVersionFile<'h> {
     pub path: &'h [u8],
     pub origin: TypedVersionOrigin,
-    pub is_missing: bool,
+    pub rejected_as: Option<ErasureMismatchKind>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

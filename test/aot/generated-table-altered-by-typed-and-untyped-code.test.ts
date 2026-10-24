@@ -13,7 +13,7 @@ import {
 } from "./generated/altered-by-typed-and-untyped-code";
 import { spread } from "./generated/case-files";
 import { moreFlags } from "./generated/run-generated";
-import { wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
+import { inShareOfList, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
 
 // A text was stored where a number is declared. The typed read that comes afterwards may throw a TypeError.
 const mayBeRefused = /^\S+ store-text/;
@@ -26,7 +26,7 @@ const inEveryRun = new Set(spread(names, Number(process.env.AOT_GENERATED_ALONE 
 const chosen = all
   .filter(({ name }) => (wanted === "all" ? true : wanted ? name.includes(wanted) : inEveryRun.has(name)))
   // A debug or ASAN build of Bun is many times slower.
-  .filter((_, index) => wanted || programsWanted !== "quick" || index % 10 === 0);
+  .filter(({ name }, index) => wanted || programsWanted !== "quick" || inShareOfList(`table altered ${name}`, index));
 const rows: Answers[] = [];
 
 const printed = (stdout: string) => stdout.trim().split("\n").join(" // ");

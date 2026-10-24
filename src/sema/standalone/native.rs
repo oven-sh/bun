@@ -1012,6 +1012,33 @@ unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
         .sum()
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__utf8_length_from_latin1(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { bytes(p, len) }
+        .iter()
+        .map(|&c| 1 + usize::from(c >= 0x80))
+        .sum()
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__convert_latin1_to_utf8(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+) -> usize {
+    let mut written = 0;
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    for &c in unsafe { bytes(p, len) } {
+        let mut encoded = [0; 2];
+        let encoded = char::from(c).encode_utf8(&mut encoded).as_bytes();
+        // SAFETY: the caller's buffer holds the length that this text has in UTF-8.
+        unsafe {
+            core::ptr::copy_nonoverlapping(encoded.as_ptr(), out.add(written), encoded.len());
+        }
+        written += encoded.len();
+    }
+    written
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__utf16_length_from_utf8(p: *const u8, len: usize) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }

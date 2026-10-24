@@ -1,6 +1,6 @@
 // One class makes the objects of a union: `new Node(1) as Num`, `new Node(2) as Str`, where the interfaces below the class write one literal each for `kind`, and each maker then stores the
 // fields of its own member. An object may be laid out for its member from the start, by the tag that the constructor is given. The tag may also be one that no member has, belong to
-// another member than the fields that follow, come out of a variable, change later; and the constructor may run for a child or for another new.target.
+// another member than the fields that follow, come out of a variable, change later; and the constructor may run for a child, for another new.target or for an object that is there already, and answer with another object.
 // How the class is written x how a member is made x what is asked of it, and what the tags are x how a member is made, each in some places.
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
@@ -23,11 +23,12 @@ const makers: Record<string, Maker> = {
   parameterIsTheField: { declare: K => `class Node { pos = 1; constructor(public kind: ${K}) {} }`, list: tag => tag },
   belowAnother: { declare: K => `class Base { id = 7; }\nclass Node extends Base { kind: ${K}; pos: number; constructor(kind: ${K}) { super(); this.kind = kind; this.pos = 0; } }`, list: tag => tag },
   plainFunction: { declare: K => `interface Node { kind: ${K}; pos: number }\nfunction NodeMaker(this: Node, kind: ${K}) { this.kind = kind; this.pos = 0; }\nconst Node = NodeMaker as unknown as new (kind: ${K}) => Node;`, list: tag => tag },
+  answersWithWhatItIsGiven: { declare: K => `interface Node { kind: ${K}; pos: number }\nfunction NodeMaker(this: Node, kind: ${K}, answer?: object) { this.kind = kind; this.pos = 0; if (answer) return answer; }\nconst Node = NodeMaker as unknown as new (kind: ${K}, answer?: object) => Node;`, list: tag => tag },
   withAMethod: { declare: K => `class Node { kind: ${K}; pos: number; constructor(kind: ${K}) { this.kind = kind; this.pos = 0; } describe(): string { return this.kind + ":" + this.pos; } }`, list: tag => tag },
   storesOnOneOfTwoWays: { declare: K => `class Node { kind: ${K}; pos: number; constructor(kind: ${K}, late = false) { this.pos = 0; if (late) { this.pos = 1; this.kind = kind; } else this.kind = kind; } }`, list: tag => tag },
 };
 
-type Birth = { beside?: (m: Maker, t: Tags) => string; num: (m: Maker, t: Tags) => string; str?: (m: Maker, t: Tags) => string };
+type Birth = { only?: string[]; beside?: (m: Maker, t: Tags) => string; num: (m: Maker, t: Tags) => string; str?: (m: Maker, t: Tags) => string };
 const births: Record<string, Birth> = {
   asWritten: { num: (m, t) => `const n = new Node(${m.list(t.values[0])}) as Num; n.value = v; return n;` },
   tagInAParameter: { beside: (m, t) => `function node(kind: ${t.type}): Node { return new Node(${m.list("kind")}); }`, num: (m, t) => `const n = node(${t.values[0]}) as Num; n.value = v; return n;`, str: (m, t) => `const n = node(${t.values[1]}) as Str; n.text = s; return n;` },
@@ -42,6 +43,9 @@ const births: Record<string, Birth> = {
   forAChild: { beside: () => "class Child extends Node {}", num: (m, t) => `const n = new Child(${m.list(t.values[0])}) as unknown as Num; n.value = v; return n;` },
   forAnotherNewTarget: { beside: () => "class Other { other(): string { return \"other\"; } }", num: (m, t) => `const n = Reflect.construct(Node, [${m.list(t.values[0])}], Other) as Num; n.value = v; return n;` },
   filledByAHelper: { beside: () => "function fill(n: Num, v: number): Num { n.value = v; return n; }", num: (m, t) => `return fill(new Node(${m.list(t.values[0])}) as Num, v);` },
+  calledForAnObjectThatIsThere: { only: ["plainFunction", "answersWithWhatItIsGiven"], num: (m, t) => `const n = { mine: v } as unknown as Num; say(Reflect.apply(NodeMaker, n, [${m.list(t.values[0])}])); n.value = v; return n;` },
+  calledForOneOfItsOwn: { only: ["plainFunction", "answersWithWhatItIsGiven"], num: (m, t) => `const n = new Node(${m.list(t.values[1])}) as unknown as Num; n.value = v; NodeMaker.call(n, ${m.list(t.values[0])}); return n;` },
+  answersWithAnotherObject: { only: ["answersWithWhatItIsGiven"], num: (m, t) => `const spare = { kind: ${t.values[0]}, pos: -1, value: -v }; const n = new Node(${m.list(t.values[0])}, v % 2 ? spare : undefined) as Num; say(n === (spare as unknown)); if (n !== (spare as unknown)) n.value = v; return n;` },
   frozenBehind: { num: (m, t) => `const n = new Node(${m.list(t.values[0])}) as Num; n.value = v; return Object.freeze(n);` },
 };
 
@@ -88,10 +92,10 @@ export function programs(isTyped?: boolean) {
   const tagNames = Object.keys(tagKinds);
   const all = new Map<string, Stretch>();
   let at = 0;
-  for (const maker in makers) for (const birth in births) for (const use in uses) { const made = stretch(maker, tagNames[at++ % tagNames.length], birth, use); all.set(made.name, made); }
+  for (const maker in makers) for (const birth in births) for (const use in uses) { if (births[birth].only?.includes(maker) === false) continue; const made = stretch(maker, tagNames[at++ % tagNames.length], birth, use); all.set(made.name, made); }
   for (const tag in tagKinds)
     for (const birth in births)
       for (const maker of ["stores", "plainFunction"])
-        for (const use of ["switchesOnTheTag", "writesItAsText", "makesAnother"]) { const made = stretch(maker, tag, birth, use); all.set(made.name, made); }
+        for (const use of ["switchesOnTheTag", "writesItAsText", "makesAnother"]) { if (births[birth].only?.includes(maker) === false) continue; const made = stretch(maker, tag, birth, use); all.set(made.name, made); }
   return inEveryPlace([...all.values()], isTyped, somePlaces);
 }

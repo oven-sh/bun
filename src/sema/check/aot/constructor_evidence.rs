@@ -1,4 +1,5 @@
 use super::answers::FunctionRef;
+use super::class_shape::is_prototype_object;
 use super::prototype_links::list_in;
 use super::queries::Queries;
 use crate::atom::known;
@@ -10,13 +11,16 @@ use crate::hir::{
 use crate::program::FileId;
 use crate::util::FxHashSet;
 
-fn is_member_of_receiver_or_prototype_object(hir: &hir::File<'_>, place: ExprId) -> bool {
+fn is_member_of_receiver_or_prototype_object(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    place: ExprId,
+) -> bool {
     let Some((object, _)) = hir.member_key(place) else {
         return false;
     };
     let object = hir.skip_type_assertions(object);
-    matches!(hir[object].kind, ExprKind::This)
-        || matches!(hir.member_key(object), Some((_, MemberKey::Name(name))) if name == known::prototype)
+    matches!(hir[object].kind, ExprKind::This) || is_prototype_object(hir, bound, object)
 }
 
 // Whether `value`, which is a function, stands where somebody may construct with it: behind `new`, in front of `.prototype`, or on its way to a place that this file does not follow.
@@ -63,7 +67,7 @@ fn stands_where_a_constructor_stands(
                 value: stored,
             } if stored == value => {
                 let becomes_member = declares_this && hir.member_key(target).is_some();
-                !becomes_member && !is_member_of_receiver_or_prototype_object(hir, target)
+                !becomes_member && !is_member_of_receiver_or_prototype_object(hir, bound, target)
             }
             _ => true,
         };

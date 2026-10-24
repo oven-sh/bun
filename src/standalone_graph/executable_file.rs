@@ -316,9 +316,21 @@ pub(crate) fn write_elf(
     if let Some(image) = image
         && let Some(address) = elf.payload_address(payload.len() as u64).map_err(Elf)?
     {
-        let start = image.offset as usize;
-        let bytes = &mut payload[start..start + image.length as usize];
-        bun_aot::engine::relocate_image(bytes, address + u64::from(image.offset));
+        // One image behind the other, each as long as `ImageHeader::size` says.
+        let (mut start, end) = (
+            image.offset as usize,
+            (image.offset + image.length) as usize,
+        );
+        while start < end {
+            let bytes = &mut payload[start..end];
+            let size = bytes.get(32..).and_then(|rest| rest.first_chunk::<8>());
+            let size = size.map_or(0, |word| u64::from_le_bytes(*word) as usize);
+            if size == 0 || size > bytes.len() {
+                break;
+            }
+            bun_aot::engine::relocate_image(&mut bytes[..size], address + start as u64);
+            start += size;
+        }
     }
     let code = image.and_then(|image| find_code_range(payload, image));
     let pieces = elf.bun_section_in_pieces(payload, code).map_err(Elf)?;

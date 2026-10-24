@@ -150,6 +150,7 @@ const stopped: Record<string, string[]> = {
     "a-literal-string-is-first-used-in-a-loop-beside-an-assignment-that-runs-only-for-null",
     "console-is-replaceable",
     "members-are-replaced-for-every-reader",
+    "not-a-number-with-its-sign-set-is-tested-and-unboxed",
     "replaced-console-log-keeps-its-arguments",
     "the-global-object-is-asked-for-another-prototype-and-then-for-its-own-names",
   ],

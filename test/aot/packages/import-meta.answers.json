@@ -1,10 +1,4 @@
 {
-  "import-meta.cjs_names.cjs": "compiled",
-  "import-meta.cjs_names_from_esm.mjs": "compiled",
-  "import-meta.entry.mjs": "compiled",
-  "import-meta.entry.ts": "compiled",
   "import-meta.meta_require.mjs": "compiled",
-  "import-meta.pkg.mjs": "compiled",
-  "import-meta.resolve.mjs": "compiled",
   "import-meta.url_file.mjs": "compiled"
 }

@@ -18,8 +18,9 @@
 //   { "errors": .. }                      the build must fail with exit code 1 and exactly these `error:` lines
 // A case with stored output or errors says why in `differs`.
 //
-//   bun test test/aot/packages                            one importer in ten and at least one of every case, the same ones
-//                                                         every time (about 8 minutes of CPU time)
+//   bun test test/aot/packages                            one importer in ten, others for each commit of Bun, and at least one of
+//                                                         every case (about 8 minutes of CPU time)
+//   AOT_PROGRAMS=quick bun test test/aot/packages         the same, the same ones every time
 //   AOT_PROGRAMS= bun test test/aot/packages              every importer (about 35 minutes of CPU time)
 //   AOT_PROGRAMS=umd bun test test/aot/packages           the importers whose name contains the text
 //   AOT_PROGRAMS_JOBS=4 bun test ..                       how many importers run at once (default: one per core)
@@ -28,7 +29,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { dirname, join } from "path";
-import { built, slot, spawned, told, unsupported } from "../run-programs";
+import { built, inShareOfList, slot, spawned, takesWhatIsFixed, told, unsupported } from "../run-programs";
 
 export interface Case {
   name: string;
@@ -74,14 +75,14 @@ export function packages(topic: string, part = 1, parts = 1) {
   const answers: Record<string, Answer> = existsSync(stored) ? JSON.parse(readFileSync(stored, "utf8")) : {};
   const hash = (name: string) => BigInt(Bun.hash(topic + "/" + name));
   const all = cases.flatMap(each => Object.keys(each.importers).map(file => ({ each, file: `${each.name}.${file}` })));
-  const isTenth = (file: string) => (hash(file) >> 8n) % 10n === 0n;
+  const isTenth = (file: string) => inShareOfList(`${topic}/${file}`, Number((hash(file) >> 8n) % 10n));
   // Of a case that has no importer in the tenth, the one with the smallest hash.
   const first = new Map<Case, string>();
   for (const { each, file } of all) if (!first.has(each) || hash(file) < hash(first.get(each)!)) first.set(each, file);
   for (const { each, file } of all) if (isTenth(file)) first.delete(each);
   const chosen = all
     .filter(({ file }) => Number(hash(file) % BigInt(parts)) === part - 1)
-    .filter(({ each, file }) => (wanted === "quick" ? isTenth(file) || first.get(each) === file : file.includes(wanted)));
+    .filter(({ each, file }) => (wanted === "quick" ? isTenth(file) || (takesWhatIsFixed && first.get(each) === file) : file.includes(wanted)));
 
   const folder = String(tempDirWithBunTypes("aot-packages", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));

@@ -213,7 +213,7 @@ function f17 name="awaitedBodyIntoParameter" flags=[IsAsync] parameters=[{type=R
     Return v3
 }
 # CHECK-LABEL: function f17 name="awaitedBodyIntoParameter"
-# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes17]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes17]]
 # CHECK: (v2:{{*}}):

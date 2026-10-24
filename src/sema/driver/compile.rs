@@ -28,13 +28,15 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::{Effect, FileOrigin, LeftOutBodies};
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
-use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION, Sym};
+use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION, MainModule, Sym};
 use bun_sema::resolve::{CodeFailure, CodeOptions};
 use std::num::NonZeroUsize;
 
 #[derive(Copy, Clone)]
 pub enum EntryPoints<'a> {
     Written(&'a [Vec<u8>]),
+    /// Of one of the programs of an executable.
+    WrittenFor(&'a [Vec<u8>], MainModule),
     Resolved(&'a [Vec<u8>]),
     /// Under that configuration file and no other. Without one: the options of a project that has none.
     Configured(&'a [Vec<u8>], Option<&'a [u8]>),

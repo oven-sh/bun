@@ -1,6 +1,6 @@
 // Opt-in test, like ./servers.test.ts. A small API with what a real service has around its handlers: three middlewares (a request id, two security headers set after the handler,
 // a bearer token), context variables, route parameters, a query string, JSON in and out, a cast as validation, an error handler and a 404 handler.
-// It is written three times on top of ./app/api-store.ts: by hand on Bun.serve (./app/api-bun.ts), on the thin typed framework (./app/api-thin.ts) and on Hono (./app/api-hono.ts).
+// It is written eight times on top of ./app/api-store.ts: by hand on Bun.serve (./app/api-bun.ts) and on node:http (api-node.ts), on the thin typed framework (api-thin.ts), and on Hono, Elysia, Express, Fastify and Koa.
 // ./measure/measure.py --servers api-bun,api-thin,api-hono measures what each framework adds to the first.
 //
 //   AOT_SERVERS=1 bun test test/aot/servers/api              all three
@@ -22,7 +22,16 @@ import {
   startServer,
 } from "./run-servers";
 
-const servers = filterRequested(["api-bun", "api-thin", "api-hono"]);
+const servers = filterRequested([
+  "api-bun",
+  "api-thin",
+  "api-hono",
+  "api-elysia",
+  "api-node",
+  "api-express",
+  "api-fastify",
+  "api-koa",
+]);
 
 async function sendRequest(origin: string, route: Route, body = route.request) {
   const response = await fetch(origin + route.path, {
@@ -148,6 +157,6 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", (
           route: route.name,
           ...(await sendRequest(reference.origin, route)),
         });
-    });
+    }, 120_000);
   });
 });

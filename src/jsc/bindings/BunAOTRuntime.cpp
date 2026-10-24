@@ -92,14 +92,14 @@ void discardBackEndOptionsOfEnvironment()
 
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 
-extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
+extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, BunAOTBytes allImages, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
 {
     if (!JSC::AOT::BuiltinBindings::hasHost())
         Bun__AOT__registerHostBindings();
     std::array<uint8_t, 16> id;
     memcpy(id.data(), identity, id.size());
     auto file = fileOrNull ? std::optional(JSC::AOT::ImageFile { fileOrNull->descriptor, fileOrNull->offset }) : std::nullopt;
-    auto verdict = JSC::AOT::useImage({ image.ptr, image.len }, file, id);
+    auto verdict = JSC::AOT::useImage({ image.ptr, image.len }, file, id, { allImages.ptr, allImages.len });
     if (verdict == JSC::AOT::Wire::ImageVerdict::NeedsCellCage) {
         auto result = JSC::MarkedBlockCage::require();
         RELEASE_ASSERT(!result);
@@ -215,7 +215,7 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
 #else // ENABLE(AOT)
 
 // ImageVerdict::Unsupported.
-extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
+extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
 extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
 extern "C" BunAOTBytes Bun__AOT__imageCode() { return { nullptr, 0 }; }

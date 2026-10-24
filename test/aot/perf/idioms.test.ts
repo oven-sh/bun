@@ -10,7 +10,8 @@
 //   AOT_PERF_ONLY='^(spread|rest)/' ..                      only the idioms whose path matches the regular expression
 //
 // Instructions are counted in user mode around the whole process (perf_event_open, or /usr/bin/time -l on macOS): no clock, the same at any load. Where
-// they cannot be counted, and for a platform without pins, everything is skipped. The cost of one iteration is the difference between a run of n
+// they cannot be counted everything is skipped. On a platform without pins the numbers are printed and not judged: ./pins-from-a-log.ts writes the file
+// from the log of such a run. The cost of one iteration is the difference between a run of n
 // iterations and a run of n / 4, divided by 3n / 4, so that start-up and warm-up cancel out. turns.json has n for each idiom.
 // ./untyped-idioms.ts makes the JavaScript.
 import { afterAll, expect } from "bun:test";
@@ -34,7 +35,8 @@ type Forms = {
   /** The least that was ever pinned, where today's pin is more. */
   best?: { typed: number; untyped: number };
 };
-const pins: Record<string, Forms> = existsSync(pinsPath) ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
+const hasPins = existsSync(pinsPath);
+const pins: Record<string, Forms> = hasPins ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
 const turns: Record<string, number> = JSON.parse(readFileSync(join(import.meta.dir, "turns.json"), "utf8"));
 
 const idioms = readdirSync(root, { recursive: true })
@@ -68,9 +70,7 @@ const skipped =
       ? "it counts with perf_event_open or /usr/bin/time -l"
       : isMusl
         ? "the pins are those of glibc"
-        : !existsSync(pinsPath) && mode !== "update"
-          ? `there is no ${pinsPath}`
-          : undefined;
+        : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/idioms.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
@@ -154,6 +154,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
               { ...now, jit: "instructions" in plain ? plain.instructions : undefined },
               pin,
             ));
+          if (!hasPins) return;
           expect(pin).toBeDefined();
           if (mode === "lower")
             pins[name] = withBest(

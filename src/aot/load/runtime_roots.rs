@@ -6,6 +6,7 @@ use crate::builtins::table::{
     MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES, runtime_function,
 };
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
+use crate::load::named_loads::find_library_modules_that_unknown_names_may_stand_for;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
 
@@ -50,6 +51,9 @@ fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
             named.extend(source.named_modules().iter().map(|it| it.module));
         }
     }
+    named.extend(find_library_modules_that_unknown_names_may_stand_for(
+        application,
+    ));
     host_loaded.extend(named.iter().copied());
     host_loaded.extend(STARTUP_MODULES);
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();

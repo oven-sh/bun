@@ -6,6 +6,7 @@ use std::time::Instant;
 
 #[cfg(not(test))]
 use bun_aot_interface::statistics::limit_values;
+use bun_core::current_work::{self, set_step_of_build};
 use bun_sema::check::aot::QueryStatistics;
 
 pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build};
@@ -226,11 +227,20 @@ impl StageClock {
     pub fn start(&mut self, stage: Stage) {
         self.stop();
         self.running = Some((stage, Instant::now()));
+        set_step_of_build(match stage {
+            Stage::Load => Some(current_work::Step::Load),
+            Stage::BindModules => Some(current_work::Step::BindModules),
+            Stage::Check => Some(current_work::Step::Check),
+            Stage::Lower => Some(current_work::Step::Lower),
+            Stage::LinkAndEmit => Some(current_work::Step::LinkAndEmit),
+            _ => None,
+        });
     }
 
     pub fn stop(&mut self) {
         if let Some((stage, started)) = self.running.take() {
             self.times[stage as usize] += started.elapsed();
+            set_step_of_build(None);
         }
     }
 

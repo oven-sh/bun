@@ -1,4 +1,4 @@
-# x.json() that is awaited at once becomes x.bytes(), the same await, and a parse of the bytes, with the decoded text given to JSON.parse on the rare path
+# x.json() that is awaited at once becomes a call for what it parses, the same await, and a parse of that, with the decoded text given to JSON.parse on the rare path
 # FORM: Prepared
 # OPTIONS: report=Declines
 # RUN: pass SelectTypedResults SelectTypedResults
@@ -24,7 +24,7 @@ function f0 name="responseAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Respo
 }
 # CHECK-LABEL: function f0 name="responseAwaitedAtOnce"
 # CHECK: b0(v0: Response):
-# CHECK-NEXT: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes0]]:{{*}}= Await v1
 # CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen [[bytes0]]
 # CHECK-NEXT: Branch [[open0]] -> taken [[opened0]](| 0), notTaken
@@ -52,7 +52,7 @@ function f1 name="requestAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Reques
     Return v3
 }
 # CHECK-LABEL: function f1 name="requestAwaitedAtOnce"
-# CHECK: v1:{{*}}= CallBuiltin v0 overload=RequestPrototypeBytes/0
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes1]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes1]]
 # CHECK: = CallDirect {{*}} function=[[parser]]
@@ -65,7 +65,7 @@ function f2 name="blobAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Blob}] re
     Return v3
 }
 # CHECK-LABEL: function f2 name="blobAwaitedAtOnce"
-# CHECK: v1:{{*}}= CallBuiltin v0 overload=BlobPrototypeBytes/0
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes2]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes2]]
 # CHECK: = CallDirect {{*}} function=[[parser]]
@@ -80,7 +80,7 @@ function f3 name="valueWithoutEffectsBetweenCallAndAwait" flags=[IsAsync] parame
     Return v6
 }
 # CHECK-LABEL: function f3 name="valueWithoutEffectsBetweenCallAndAwait"
-# CHECK: v2:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK: v2:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: v3: number = Add v1, v1
 # CHECK-NEXT: [[bytes3]]:{{*}}= Await v2
 # CHECK-NEXT: = JSONSourceOpen [[bytes3]]

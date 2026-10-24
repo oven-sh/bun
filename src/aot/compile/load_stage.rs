@@ -1,4 +1,4 @@
-use super::{Build, LoadedBuild, LoadedProject};
+use super::{Build, LoadedBuild, LoadedProject, ProgramPlace};
 use crate::builtins::{BuiltinNames, RuntimeModule};
 use crate::diagnostics::{Diagnostics, LoadMessages, ProgramView};
 use crate::load::fold_inputs::{
@@ -22,6 +22,7 @@ use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldInputs};
+use bun_sema::program::MainModule;
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema_driver::host::{Disk, from_native};
@@ -220,7 +221,13 @@ impl<'a> Build<'a> {
             AssetReads::FinishedLater => host.reading_in_background_after_load(),
         };
         let request = CompileRequest {
-            entry_points: EntryPoints::Written(&options.entry_points),
+            entry_points: match self.place {
+                ProgramPlace::Only => EntryPoints::Written(&options.entry_points),
+                ProgramPlace::OneOfSeveral(_) => EntryPoints::WrittenFor(
+                    &options.entry_points,
+                    MainModule::EntryPointOfProcessOrWorker,
+                ),
+            },
             code: &code,
             fold: shared.application_fold,
             atoms: shared.atoms,
@@ -408,7 +415,9 @@ impl<'a> Build<'a> {
             }
             Err(failure) => {
                 let entry_point_names = match request.entry_points {
-                    EntryPoints::Written(specifiers) => specifiers,
+                    EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
+                        specifiers
+                    }
                     EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths,
                 };
                 self.diagnostics
@@ -501,7 +510,8 @@ impl<'a> Build<'a> {
             };
             let defined =
                 |path: &[u8]| find_defined_string(shared.application_defines, &shared.atoms, path);
-            report_rejected_versions(&mut self.diagnostics, packages, &defined);
+            self.full_types_refused_at_load =
+                report_rejected_versions(&mut self.diagnostics, packages, &defined);
         }
         Ok(sources)
     }

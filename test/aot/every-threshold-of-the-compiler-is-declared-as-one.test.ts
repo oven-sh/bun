@@ -163,8 +163,7 @@ const smallest: Record<string, number> = {
   FieldsInKeyOrder: 4095,
   KeyOrdersPerLayout: 4096,
   InlineFramesPerFunction: 16777215,
-  DirectCallReach: 134217728,
-  FunctionCallReach: 134217728,
+  DirectCallReach: 2097152,
   RegExpSectionSize: 4294967295,
   MaxCachedKeyLength: 2,
 };

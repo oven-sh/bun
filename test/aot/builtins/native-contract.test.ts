@@ -7,8 +7,9 @@
 //   AOT_BUILTINS_FILTER=<r>  only the functions whose path matches the regular expression
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, tempDir } from "harness";
 import { availableParallelism } from "node:os";
+import { join } from "node:path";
 import type { TargetReport } from "./native-contract/check-target";
 import { knownChanges } from "./native-contract/known-changes";
 import { runWorkers, type Report, type Results } from "./native-contract/run-workers";
@@ -46,6 +47,26 @@ if (undeclared.length === 0) {
       workerCount: Math.min(availableParallelism(), 32),
     });
   }, 30 * 60_000);
+
+  // An opener that makes nothing takes the methods of its class out of this test and out of differential-cases.ts, and neither says so.
+  test.skipIf(!isGlibc)("every opener makes an instance of a class that the table has", async () => {
+    using folder = tempDir("aot-host-instances", {});
+    await using run = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-install",
+        "--expose-internals",
+        join(import.meta.dir, "native-contract/openers-fixture.ts"),
+      ],
+      cwd: String(folder),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([run.stdout.text(), run.exited]);
+    expect(JSON.parse(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
 
   test("every overload without a declaration has a report", () => {
     expect(undeclared.filter(token => !results.reports.has(token) && !results.ended.includes(token))).toEqual([]);

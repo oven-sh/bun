@@ -2,6 +2,5 @@
   "cycles.mixed.mjs": {
     "output": "mixed [\"ReferenceError|ReferenceError\",\"ma own\"]\n"
   },
-  "order.mixed.mjs": "compiled",
   "order.throws_req.cjs": "compiled"
 }

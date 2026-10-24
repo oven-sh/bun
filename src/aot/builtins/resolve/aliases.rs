@@ -1,5 +1,5 @@
-use super::BuiltinPath;
 use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
+use super::{BuiltinPath, ResolveInput};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingInitializer, BindingStability, Decl, SymbolId};
 use bun_sema::hir::{
@@ -7,6 +7,20 @@ use bun_sema::hir::{
 };
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
+
+pub(super) fn declared_names(
+    input: &ResolveInput<'_, '_>,
+) -> impl Iterator<Item = (PatId, SymbolId)> {
+    let names = (0..input.hir.pats.len() as u32).map(PatId);
+    names.filter_map(|name| {
+        match input.hir[name].kind {
+            PatKind::Ident(_) => {}
+            PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => return None,
+        }
+        let symbol = input.bound.declared_symbol(Decl::Var(name));
+        (!symbol.is_none()).then_some((name, symbol))
+    })
+}
 
 impl Resolver<'_, '_> {
     fn is_stable(&self, symbol: SymbolId) -> bool {
@@ -20,7 +34,7 @@ impl Resolver<'_, '_> {
         )
     }
 
-    fn find_alias_source(&self, symbol: SymbolId) -> Option<AliasSource> {
+    pub(super) fn find_alias_source(&self, symbol: SymbolId) -> Option<AliasSource> {
         let input = self.input;
         if !self.is_stable(symbol) {
             return None;
@@ -43,15 +57,12 @@ impl Resolver<'_, '_> {
 
     pub(super) fn collect_declared_aliases(&mut self) {
         let input = self.input;
-        for name in (0..input.hir.pats.len() as u32).map(PatId) {
-            match input.hir[name].kind {
-                PatKind::Ident(_) => {}
-                PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => continue,
-            }
-            let symbol = input.bound.declared_symbol(Decl::Var(name));
-            if symbol.is_none() {
-                continue;
-            }
+        if let Some(facts) = self.facts() {
+            self.add_declared_aliases_of_part(facts);
+            self.collect_entity_aliases();
+            return;
+        }
+        for (name, symbol) in declared_names(input) {
             // Also of a binding that stands for nothing, because it is stored to: other files read what a store puts into it.
             let flags = input.bound.modifier_flags(input.hir, Decl::Var(name));
             if flags.contains(Flags::EXPORT) {
@@ -111,7 +122,7 @@ impl Resolver<'_, '_> {
             };
             let is_local = self.is_stable(symbol)
                 && !input.hir[import].flags.contains(Flags::EXPORT)
-                && !self.exported_symbols.contains(&symbol)
+                && !self.is_exported(symbol)
                 && !input.bound.is_visible_to_eval(symbol);
             if is_local {
                 self.aliases
@@ -163,7 +174,7 @@ impl Resolver<'_, '_> {
             BindingStability::Stable | BindingStability::NotInitializedOnce
         );
         is_plain_binding
-            && !self.exported_symbols.contains(&symbol)
+            && !self.is_exported(symbol)
             && !bound.is_visible_to_eval(symbol)
             && !self.is_named_outside(symbol)
     }
@@ -204,7 +215,7 @@ impl Resolver<'_, '_> {
         matches!(
             self.aliases.get(&symbol),
             Some(AliasSource::Initializer { .. })
-        ) && !self.exported_symbols.contains(&symbol)
+        ) && !self.is_exported(symbol)
             && !bound.is_visible_to_eval(symbol)
             && bound.dynamic_lookup_scope(NodeData::Pat(name)).is_none()
             && !self.is_named_outside(symbol)

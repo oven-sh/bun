@@ -5,7 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
 
-const programs: Record<string, { main: string; files: Record<string, string>; stdout: string }> = {
+const programs: Record<string, { main: string; files: Record<string, string>; stdout: string; flags?: string[] }> = {
   "async generators that hand on to each other, taken by hand and by for await": {
     main: "main.ts",
     files: {
@@ -97,11 +97,61 @@ for (const value of [{}, new Odd(), Object.create(null), { a: 1 }]) {
     },
     stdout: "function function function\n",
   },
+  "more pieces of a wide text than a string under construction holds apart": {
+    main: "main.ts",
+    files: {
+      "main.ts": `const text = "\\u20ac1\\u20ac2\\u20ac3\\u20ac4\\u20ac5".repeat(400);
+function pieces(from: string, count: number): string {
+  let out = "";
+  for (let i = 0; i < count; i++) out += i + ":" + from.slice(i, i + 3) + ";";
+  return out;
+}
+const joined = pieces(text, 3000);
+console.log(joined.length, joined.slice(0, 24), joined.slice(-12));
+`,
+    },
+    stdout: "25890 0:\u20ac1\u20ac;1:1\u20ac2;2:\u20ac2\u20ac;3:2\u20ac3; 5\u20ac;2999:5\u20ac1;\n",
+  },
+  "keys put together from parts that are longer than the longest key that is kept": {
+    main: "main.ts",
+    flags: ["--aot-limit=MaxCachedKeyLength:2"],
+    files: {
+      "main.ts": `const table: Record<string, number> = {};
+function put(prefix: string, count: number): void {
+  for (let i = 0; i < count; i++) table[prefix + i] = i;
+}
+put("key", 3);
+put("a-rather-longer-key-", 3);
+put("", 3);
+console.log(Object.keys(table).join());
+`,
+    },
+    stdout: "0,1,2,key0,key1,key2,a-rather-longer-key-0,a-rather-longer-key-1,a-rather-longer-key-2\n",
+  },
+  "a class below one whose accessor is named constructor": {
+    main: "main.js",
+    files: {
+      "main.js": `class OnlySetter { set ["constructor"](value) {} }
+class Below extends OnlySetter {}
+console.log(new Below().constructor === Below, new OnlySetter().constructor);
+`,
+    },
+    stdout: "true undefined\n",
+  },
+  "evaluated text reads a member of console that was left out": {
+    main: "main.js",
+    files: {
+      "main.js": `const decoded = text => Buffer.from(text).toString();
+console.log((0, eval)(decoded("typeof console.Console")));
+`,
+    },
+    stdout: "function\n",
+  },
 };
 
 describe.concurrent("compile/aot/exception checks", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
-  for (const [name, { main, files, stdout }] of Object.entries(programs)) {
+  for (const [name, { main, files, stdout, flags = [] }] of Object.entries(programs)) {
     test(
       name,
       () =>
@@ -109,7 +159,13 @@ describe.concurrent("compile/aot/exception checks", () => {
           using dir = tempDir("aot-exception-checks", files);
           const root = String(dir);
           const executable = join(root, "program");
-          built(await spawned([bunExe(), "build", "--compile", "--aot", main, "--outfile", executable], root, bunEnv));
+          built(
+            await spawned(
+              [bunExe(), "build", "--compile", "--aot", ...flags, main, "--outfile", executable],
+              root,
+              bunEnv,
+            ),
+          );
           const ran = await spawned(withoutCoreDump([executable]), root, {
             ...bunEnv,
             BUN_JSC_validateExceptionChecks: "1",

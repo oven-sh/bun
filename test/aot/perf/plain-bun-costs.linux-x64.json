@@ -1,0 +1,220 @@
+{
+  "start hello.js": {
+    "thousandInstructions": 3388,
+    "pageFaults": 687,
+    "peakKilobytes": 16948
+  },
+  "start hello.ts": {
+    "thousandInstructions": 3501,
+    "pageFaults": 706,
+    "peakKilobytes": 17668
+  },
+  "start fs.js": {
+    "thousandInstructions": 10053,
+    "pageFaults": 865,
+    "peakKilobytes": 21092
+  },
+  "start stream.js": {
+    "thousandInstructions": 20118,
+    "pageFaults": 1018,
+    "peakKilobytes": 23188
+  },
+  "start http.js": {
+    "thousandInstructions": 38848,
+    "pageFaults": 1328,
+    "peakKilobytes": 27124
+  },
+  "start thirty-modules.js": {
+    "thousandInstructions": 114296,
+    "pageFaults": 2409,
+    "peakKilobytes": 34780
+  },
+  "start node-http-server.js": {
+    "thousandInstructions": 64315,
+    "pageFaults": 1822
+  },
+  "start bun-serve.js": {
+    "thousandInstructions": 4826,
+    "pageFaults": 769
+  },
+  "interpreter arrays.js": {
+    "thousandInstructions": 4002132,
+    "pageFaults": 4422,
+    "peakKilobytes": 34828
+  },
+  "jit arrays.js": {
+    "thousandInstructions": 1746200,
+    "pageFaults": 5090,
+    "peakKilobytes": 48432
+  },
+  "interpreter buffers.js": {
+    "thousandInstructions": 357551,
+    "pageFaults": 3546,
+    "peakKilobytes": 30044
+  },
+  "jit buffers.js": {
+    "thousandInstructions": 299317,
+    "pageFaults": 3522,
+    "peakKilobytes": 39716
+  },
+  "interpreter classes-and-closures.js": {
+    "thousandInstructions": 4189403,
+    "pageFaults": 3932,
+    "peakKilobytes": 30832
+  },
+  "jit classes-and-closures.js": {
+    "thousandInstructions": 1096746,
+    "pageFaults": 5459,
+    "peakKilobytes": 49748
+  },
+  "interpreter collector.js": {
+    "thousandInstructions": 6823404,
+    "pageFaults": 12905,
+    "peakKilobytes": 50012
+  },
+  "jit collector.js": {
+    "thousandInstructions": 1678434,
+    "pageFaults": 11288,
+    "peakKilobytes": 78392
+  },
+  "interpreter errors.js": {
+    "thousandInstructions": 1200912,
+    "pageFaults": 9466,
+    "peakKilobytes": 53888
+  },
+  "jit errors.js": {
+    "thousandInstructions": 1165514,
+    "pageFaults": 6702,
+    "peakKilobytes": 51564
+  },
+  "interpreter events-and-streams.js": {
+    "thousandInstructions": 4198135,
+    "pageFaults": 3838,
+    "peakKilobytes": 33420
+  },
+  "jit events-and-streams.js": {
+    "thousandInstructions": 1219995,
+    "pageFaults": 7067,
+    "peakKilobytes": 58184
+  },
+  "interpreter json.js": {
+    "thousandInstructions": 1576091,
+    "pageFaults": 4144,
+    "peakKilobytes": 31804
+  },
+  "jit json.js": {
+    "thousandInstructions": 1442120,
+    "pageFaults": 4259,
+    "peakKilobytes": 41008
+  },
+  "interpreter large-functions.js": {
+    "thousandInstructions": 291974,
+    "pageFaults": 1830,
+    "peakKilobytes": 23932
+  },
+  "jit large-functions.js": {
+    "thousandInstructions": 1311521,
+    "pageFaults": 16883,
+    "peakKilobytes": 89972
+  },
+  "interpreter maps.js": {
+    "thousandInstructions": 2103076,
+    "pageFaults": 10416,
+    "peakKilobytes": 56064
+  },
+  "jit maps.js": {
+    "thousandInstructions": 984656,
+    "pageFaults": 19972,
+    "peakKilobytes": 103068
+  },
+  "interpreter objects.js": {
+    "thousandInstructions": 1112688,
+    "pageFaults": 4681,
+    "peakKilobytes": 34140
+  },
+  "jit objects.js": {
+    "thousandInstructions": 541555,
+    "pageFaults": 6482,
+    "peakKilobytes": 51996
+  },
+  "interpreter promises.js": {
+    "thousandInstructions": 1330838,
+    "pageFaults": 3166,
+    "peakKilobytes": 30964
+  },
+  "jit promises.js": {
+    "thousandInstructions": 279294,
+    "pageFaults": 4037,
+    "peakKilobytes": 45008
+  },
+  "interpreter regexps.js": {
+    "thousandInstructions": 5242730,
+    "pageFaults": 3729,
+    "peakKilobytes": 30772
+  },
+  "jit regexps.js": {
+    "thousandInstructions": 889878,
+    "pageFaults": 4066,
+    "peakKilobytes": 41516
+  },
+  "interpreter strings.js": {
+    "thousandInstructions": 739565,
+    "pageFaults": 6119,
+    "peakKilobytes": 41512
+  },
+  "jit strings.js": {
+    "thousandInstructions": 435049,
+    "pageFaults": 7369,
+    "peakKilobytes": 53100
+  },
+  "interpreter transpiler.js": {
+    "thousandInstructions": 591551,
+    "pageFaults": 5174,
+    "peakKilobytes": 36860
+  },
+  "jit transpiler.js": {
+    "thousandInstructions": 592107,
+    "pageFaults": 5294,
+    "peakKilobytes": 37848
+  },
+  "interpreter webassembly.js": {
+    "thousandInstructions": 4636608,
+    "pageFaults": 783,
+    "peakKilobytes": 20896
+  },
+  "jit webassembly.js": {
+    "thousandInstructions": 134146,
+    "pageFaults": 976,
+    "peakKilobytes": 26316
+  },
+  "interpreter emit-to-one-listener.js": {
+    "thousandInstructions": 3828771,
+    "pageFaults": 3078,
+    "peakKilobytes": 29564
+  },
+  "jit emit-to-one-listener.js": {
+    "thousandInstructions": 530036,
+    "pageFaults": 3779,
+    "peakKilobytes": 41428
+  },
+  "interpreter emit-to-two-listeners.js": {
+    "thousandInstructions": 5416916,
+    "pageFaults": 3060,
+    "peakKilobytes": 29524
+  },
+  "jit emit-to-two-listeners.js": {
+    "thousandInstructions": 839074,
+    "pageFaults": 4200,
+    "peakKilobytes": 43280
+  },
+  "interpreter waiting-ticks.js": {
+    "thousandInstructions": 12742793,
+    "pageFaults": 11719,
+    "peakKilobytes": 49300
+  },
+  "jit waiting-ticks.js": {
+    "thousandInstructions": 1272020,
+    "pageFaults": 14816,
+    "peakKilobytes": 62304
+  }
+}

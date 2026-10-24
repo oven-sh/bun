@@ -1,3 +1,0 @@
-{
-  "skipWithASAN": "TODO: a build with assertions asks for an exception check between two calls of JSOrderedHashTable::add"
-}

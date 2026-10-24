@@ -18,7 +18,7 @@ mod projects;
 
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
-pub use self::code_load::CompileInputs;
+pub use self::code_load::{CompileInputs, MainModule};
 
 use self::code_load::{
     BuildFile, CodeFiles, CodeLoadContext, CompileLoad, InstallTables, RootTables, TypesQuestion,
@@ -256,6 +256,26 @@ pub struct Module<'s> {
     pub code_edges: &'s [FileId],
     /// False: only code edges reach it, and no import of a checked file sees it.
     pub is_in_types_program: bool,
+    /// True: `CodeHost::loader_of_code_in_place_of_typed_file` answers for it, so what it declares is what is expected of another file's code.
+    pub runs_other_code: bool,
+}
+
+/// The files of a directory come before the files of the directories in it.
+fn compare_as_listed(left: &[u8], right: &[u8]) -> std::cmp::Ordering {
+    let mut left = strings::split(left, b"/").peekable();
+    let mut right = strings::split(right, b"/").peekable();
+    loop {
+        let (Some(left_name), Some(right_name)) = (left.next(), right.next()) else {
+            return std::cmp::Ordering::Equal;
+        };
+        let (left_is_directory, right_is_directory) =
+            (left.peek().is_some(), right.peek().is_some());
+        if left_name != right_name || !left_is_directory || !right_is_directory {
+            return left_is_directory
+                .cmp(&right_is_directory)
+                .then_with(|| left_name.cmp(right_name));
+        }
+    }
 }
 
 /// A build reads a file that it does not compile only if a file that it reads refers to it, and a project's `tsconfig.json` includes tests, scripts and other programs.
@@ -6770,6 +6790,7 @@ impl<'s> Files<'s> {
         text: Cow<'s, [u8]>,
         bind_time: BindTime,
     ) -> (hir::File<'s>, Bound<'s>) {
+        let _work = bun_core::current_work::working_on(bun_core::current_work::Step::Load, path);
         if bind_time == BindTime::WhenReached
             && !is_lib
             && let Some(mut hir) = host.parse_top_level(arena, path, &text, atoms, options)
@@ -7314,6 +7335,11 @@ impl<'s> Files<'s> {
             if text.is_empty() {
                 continue;
             }
+            if let (Some(build), Some(code)) = (build, code.as_deref_mut())
+                && code.answer_types_from_data_loader(build.host, spec, mode)
+            {
+                continue;
+            }
             let resolved = resolver.resolve_module_name(text, from, mode);
             // In a build: `bun check` resolves with the options of the program in every file, and a build reports no error that it does not.
             let resolved = resolved.or_else(|| {
@@ -7562,6 +7588,7 @@ impl<'s> Files<'s> {
             compiled: None,
             code_edges: &[],
             is_in_types_program: true,
+            runs_other_code: false,
         };
         Loaded {
             module: ArenaBox::new_in(module, arena),
@@ -7674,6 +7701,10 @@ impl<'s> Files<'s> {
             }
         }
         self.order_code_files(&mut seen, &mut libs, &mut others);
+        if self.options.orders_files_as_listed {
+            let path_of = |file: FileId| self.modules[file.idx()].file_name();
+            others.sort_by(|&left, &right| compare_as_listed(path_of(left), path_of(right)));
+        }
         libs.shared_sort_by_cached_key(|&file| self.default_lib_file_priority(file));
         libs.extend(others);
         libs

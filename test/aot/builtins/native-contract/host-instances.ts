@@ -1,5 +1,6 @@
 // Instances of the host's classes that have no public constructor: what a server, a connection, a child process or a handler is given.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { SourceMap } from "node:module";
 import { join } from "node:path";
 import { everyCandidate, operandOrigin, Unavailable, type Candidate } from "../differential/instances";
 import type { Realm } from "../differential/members";
@@ -73,7 +74,7 @@ function openServer(createOptions: () => object): Open {
   };
 }
 
-// What node:http is handed for a request: the response handle, or the handle of the connection.
+// What node:http is handed for a request: at 4 the response handle.
 function openNodeHTTPHandle(position: number): Open {
   return async () => {
     const { promise, resolve } = Promise.withResolvers<object>();
@@ -113,6 +114,70 @@ const openFileSink: Open = () => {
   const sink = Bun.file("native-contract-sink.txt").writer();
   return { value: sink, close: () => sink.end() };
 };
+
+// What `writer()` of a file in a bucket answers. Nothing listens at the endpoint, so what it sends is refused.
+const openNetworkSink: Open = () => {
+  const client = new Bun.S3Client({ endpoint: "http://127.0.0.1:1", accessKeyId: "a", secretAccessKey: "b", bucket: "c" });
+  const sink = client.file("native-contract-sink.txt").writer();
+  return { value: sink, close: () => Promise.try(() => sink.end()).catch(noop) };
+};
+
+// What `pull` of a direct stream is handed when a native sink takes the stream: here the sink of a file.
+const openReadableSinkController: Open = async () => {
+  const given = Promise.withResolvers<object>();
+  const released = Promise.withResolvers<void>();
+  const stream = new ReadableStream({
+    type: "direct",
+    async pull(controller) {
+      given.resolve(controller);
+      await released.promise;
+    },
+  } as any);
+  const written = Bun.write("native-contract-controller.txt", new Response(stream)).catch(noop);
+  return {
+    value: await given.promise,
+    close() {
+      released.resolve();
+      return written;
+    },
+  };
+};
+
+const openRouter = () => {
+  mkdirSync("native-contract-pages", { recursive: true });
+  writeFileSync("native-contract-pages/index.tsx", "export default 1;");
+  return new Bun.FileSystemRouter({ dir: "native-contract-pages", style: "nextjs" });
+};
+
+const openTerminal: Open = () => {
+  const terminal = new Bun.Terminal({});
+  return { value: terminal, close: () => terminal.close() };
+};
+
+const openCronJob: Open = () => {
+  const job = Bun.cron("0 0 1 1 *", noop);
+  return { value: job, close: () => job.stop() };
+};
+
+// One red pixel.
+const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+// What a matcher of `expect.extend` is called on, or a member of it.
+function openMatcherContext(select: (context: any) => object): Open {
+  return () => {
+    const { expect } = jestOf();
+    let context: object | undefined;
+    expect.extend({
+      nativeContractMatcher(this: object) {
+        context = select(this);
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(1).nativeContractMatcher();
+    if (context === undefined) throw new Unavailable("the matcher was not called");
+    return { value: context, close: noop };
+  };
+}
 
 const openUDPSocket: Open = async () => {
   const socket = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data: noop, error: noop, drain: noop } });
@@ -164,7 +229,7 @@ const openFrameParser: Open = realm => {
 };
 
 const openResolver: Open = realm => {
-  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({});
+  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({ timeout: -1, tries: 4 });
   resolver.setServers([[4, "127.0.0.1", 1]]);
   return { value: resolver, close: () => resolver.cancel() };
 };
@@ -233,7 +298,6 @@ const openers: (Open & { className?: string })[] = [
   openServer(() => ({ development: true })),
   openServer(() => ({ development: true, tls: createTLSOptions() })),
   openNodeHTTPHandle(4),
-  openNodeHTTPHandle(6),
   openSubprocess,
   openResourceUsage,
   openFileSink,
@@ -271,6 +335,19 @@ const openers: (Open & { className?: string })[] = [
   () => ({ value: new Bun.Transpiler(), close: noop }),
   () => ({ value: new Bun.Glob("*.txt"), close: noop }),
   () => ({ value: new Bun.ArrayBufferSink(), close: noop }),
+  openNetworkSink,
+  openReadableSinkController,
+  () => ({ value: new Bun.CryptoHasher("sha256"), close: noop }),
+  () => ({ value: openRouter(), close: noop }),
+  () => ({ value: openRouter().match("/")!, close: noop }),
+  () => ({ value: new Bun.Archive({ "a.txt": "text" }), close: noop }),
+  () => ({ value: new Bun.Image(Buffer.from(pixel, "base64")), close: noop }),
+  openTerminal,
+  openCronJob,
+  () => ({ value: new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings: "AAAA", file: "b.js", sourceRoot: "" }), close: noop }),
+  openMatcherContext(context => context),
+  openMatcherContext(context => context.utils),
+  () => ({ value: (jestOf().expect.extend({ nativeContractAsymmetric: () => ({ pass: true, message: () => "" }) }), jestOf().expect.nativeContractAsymmetric()), close: noop }),
 ];
 
 // Makes one of each, tells the realm their prototypes, and adds the candidates.

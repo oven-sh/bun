@@ -210,6 +210,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Array.prototype.filter": fusedTraversalFunctions,
+  "Array.prototype.flatMap": fusedTraversalFunctions,
   "Array.prototype.map": fusedTraversalFunctions,
   "Array.prototype.slice": fusedTraversalFunctions,
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),

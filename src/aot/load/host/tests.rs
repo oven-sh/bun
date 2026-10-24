@@ -33,6 +33,8 @@ const CLAIMED: &[u8] = b"/project/claimed.ts";
 const VIRTUAL_CONFIG: &[u8] = b"config";
 const VIRTUAL_DATA: &[u8] = b"data";
 const TYPESCRIPT_TEXT: &[u8] = b"export const n: number = 1;";
+const ERASED: &[u8] = b"/project/erased.tsx";
+const ERASED_TEXT: &[u8] = b"export const n = 1;";
 
 #[derive(Default)]
 struct ScriptedProvider {
@@ -78,6 +80,7 @@ impl SourceProvider for ScriptedProvider {
         let (text, loader): (&'static [u8], Loader) = match request.module.path {
             TEMPLATE | VIRTUAL_CONFIG => (TYPESCRIPT_TEXT, Loader::Ts),
             DATA | VIRTUAL_DATA => (b"{\"a\":1}", Loader::Json),
+            ERASED | b"/project/erased.js" => (ERASED_TEXT, Loader::Js),
             NEVER_LOADED | DEFERRED_TEMPLATE => return Ok(Loaded::Deferred),
             b"/project/failed.ts" => {
                 log.add_error_fmt(None, Loc::EMPTY, format_args!("the plugin failed"));
@@ -541,7 +544,7 @@ fn loader_follows_attribute_options_and_entry_points() {
 }
 
 #[test]
-fn required_file_without_loader_is_typescript() {
+fn required_file_without_loader_is_carried_like_an_imported_one() {
     with_host(&[], |fixture| {
         let settings = default_settings();
         let kind_for = |path: &[u8], kind: CodeImportKind| {
@@ -551,10 +554,10 @@ fn required_file_without_loader_is_typescript() {
             });
             host_loader_kind(loader)
         };
-        let typescript = Some(HostLoaderKind::Loader(Loader::Ts));
         let by_name = Some(HostLoaderKind::ByName);
         let path = b"/project/other.in-its-name";
-        assert_eq!(kind_for(path, CodeImportKind::Require), typescript);
+        assert_eq!(loader_by_name(path), Loader::File);
+        assert_eq!(kind_for(path, CodeImportKind::Require), by_name);
         assert_eq!(kind_for(path, CodeImportKind::Import), by_name);
         assert_eq!(
             kind_for(b"/project/a.txt", CodeImportKind::Require),
@@ -628,6 +631,37 @@ fn plugin_loader_decides_language() {
         let library = b"/bundled:///libs/lib.es5.d.ts";
         assert!(!host.read_source(library).is_empty());
         assert!(fixture.take_calls().is_empty());
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn typed_file_keeps_its_text_beside_javascript_from_a_plugin() {
+    let on_disk = "export type N = number; export const n: N = 1;";
+    let files = [("erased.tsx", on_disk), ("erased.js", on_disk)];
+    with_host(&files, |fixture| {
+        let host = fixture.host;
+        assert_eq!(host.loader_of_code_in_place_of_typed_file(ERASED), None);
+        let code = fixture.parse(ERASED, BY_NAME);
+        assert!(code.hir.is_js && !code.hir.has_errors);
+        let source = payload_of(&code);
+        assert_eq!(source.loader, Loader::Js);
+        assert!(source.is_from_plugin);
+        let javascript = to_host_loader(Loader::Js, ERASED);
+        assert_ne!(javascript, BY_NAME);
+        let in_place = host.loader_of_code_in_place_of_typed_file(ERASED);
+        assert_eq!(in_place, Some(javascript));
+        assert_eq!(&*fixture.read_code(ERASED), ERASED_TEXT);
+        assert_eq!(&*host.read_source(ERASED), on_disk.as_bytes());
+        assert_eq!(host.script_kind(ERASED), None);
+
+        let untyped = b"/project/erased.js";
+        fixture.parse(untyped, BY_NAME);
+        assert_eq!(host.loader_of_code_in_place_of_typed_file(untyped), None);
+        assert_eq!(&*host.read_source(untyped), ERASED_TEXT);
+        fixture.parse(TEMPLATE, BY_NAME);
+        assert_eq!(host.loader_of_code_in_place_of_typed_file(TEMPLATE), None);
+        assert_eq!(&*host.read_source(TEMPLATE), TYPESCRIPT_TEXT);
         assert!(fixture.take_messages().is_empty());
     });
 }

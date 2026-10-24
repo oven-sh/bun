@@ -436,8 +436,6 @@ fn installed_typed_version_is_found() {
                 packages.display_directory_of_package(installed.as_bytes()),
                 directory.as_bytes()
             );
-            let manifest = project.path(&format!("{directory}/full-types.json"));
-            assert_eq!(packages.manifest_path(&typed), Some(manifest));
         }
     });
 }

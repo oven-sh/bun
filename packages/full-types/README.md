@@ -95,7 +95,7 @@ A package for which no full types are installed is compiled as always, and nothi
 | `when` | build-time defines that must have these string values: `{ "process.env.NODE_ENV": "production" }` |
 | `lay` | path inside the package to the sha256 of the installed file it replaces. The replacement is `lay/<same path>`. The compiler doesn't compare the sum: it compares the code, node for node. The gates of this folder compare it |
 | `needs` | names of other packages whose full types must also be in use |
-| `compilerOptions` | optional: the options that the files under `lay/` are type checked under, as in a tsconfig.json. Without it: `strict`, and nothing more |
+| `compilerOptions` | optional: the options that the files under `lay/` are type checked under, as in a tsconfig.json. Without it: `strict`, with the default `lib` and with `@types/bun` where it is installed, as for the full types that a package ships |
 
 Paths are relative, use `/`, and may not contain `..`. `package.json` cannot be replaced.
 

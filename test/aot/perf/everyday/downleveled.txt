@@ -593,6 +593,13 @@ const kept: any[] = [new (B as any)(1), new (B as any)(2), new (B as any)(3), ne
 function turn(i: number): number {
   return kept[i & 3].area();
 }
+//// super-call.prototype-call-of-a-function-that-nobody-constructs
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+const kept: any[] = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }];
+function turn(i: number): number {
+  return A.prototype.area.call(kept[i & 3]);
+}
 //// kept-objects.native
 class A { a: number; constructor(a: number) { this.a = a; } area(): number { return this.a + 1; } get size(): number { return this.a * 2; } static make(a: number): A { return new this(a); } }
 class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } area(): number { return super.area() + this.b; } }
@@ -745,27 +752,6 @@ Object.setPrototypeOf(D.prototype, B.prototype);
 D.prototype.area = function () { return this.a + this.d; };
 function turn(i: number): number {
   return new (B as any)(i & 7).area() + new (C as any)(i & 3).area() + new (D as any)(i & 1).area();
-}
-//// three-derived.babel
-function _typeof(o: any): any { "@babel/helpers - typeof"; return (_typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o: any) { return typeof o; } : function (o: any) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }), _typeof(o); }
-function _callSuper(t: any, o: any, e?: any) { return (o = _getPrototypeOf(o)), _possibleConstructorReturn(t, _isNativeReflectConstruct() ? Reflect.construct(o, e || [], _getPrototypeOf(t).constructor) : o.apply(t, e)); }
-function _possibleConstructorReturn(t: any, e: any) { if (e && ("object" == _typeof(e) || "function" == typeof e)) return e; if (void 0 !== e) throw new TypeError("Derived constructors may only return object or undefined"); return _assertThisInitialized(t); }
-function _assertThisInitialized(e: any) { if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); return e; }
-function _isNativeReflectConstruct(): any { try { var t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); } catch (t) {} return (_isNativeReflectConstruct = function _isNativeReflectConstruct() { return !!t; })(); }
-function _getPrototypeOf(t: any): any { return (_getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf.bind() : function (t: any) { return t.__proto__ || Object.getPrototypeOf(t); }), _getPrototypeOf(t); }
-function _inherits(t: any, e: any) { if ("function" != typeof e && null !== e) throw new TypeError("Super expression must either be null or a function"); (t.prototype = Object.create(e && e.prototype, { constructor: { value: t, writable: !0, configurable: !0 } })), Object.defineProperty(t, "prototype", { writable: !1 }), e && _setPrototypeOf(t, e); }
-function _setPrototypeOf(t: any, e: any): any { return (_setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t: any, e: any) { return (t.__proto__ = e), t; }), _setPrototypeOf(t, e); }
-function _classCallCheck(a: any, n: any) { if (!(a instanceof n)) throw new TypeError("Cannot call a class as a function"); }
-function _defineProperties(e: any, r: any) { for (var t = 0; t < r.length; t++) { var o = r[t]; (o.enumerable = o.enumerable || !1), (o.configurable = !0), "value" in o && (o.writable = !0), Object.defineProperty(e, _toPropertyKey(o.key), o); } }
-function _createClass(e: any, r?: any, t?: any) { return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", { writable: !1 }), e; }
-function _toPropertyKey(t: any) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
-function _toPrimitive(t: any, r: any) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var A: any = /*#__PURE__*/ (function () { function A(this: any, a: number) { _classCallCheck(this, A); this.a = a; } return _createClass(A, [{ key: "area", value: function area(this: any) { return this.a + 1; } }]); })();
-var B: any = /*#__PURE__*/ (function (_A: any) { function B(this: any, a: number) { var _this; _classCallCheck(this, B); _this = _callSuper(this, B, [a]); _this.b = 2; return _this; } _inherits(B, _A); return _createClass(B, [{ key: "area", value: function area(this: any) { return this.a + this.b; } }]); })(A);
-var C: any = /*#__PURE__*/ (function (_A2: any) { function C(this: any, a: number) { var _this2; _classCallCheck(this, C); _this2 = _callSuper(this, C, [a]); _this2.c = 3; return _this2; } _inherits(C, _A2); return _createClass(C, [{ key: "area", value: function area(this: any) { return this.a + this.c; } }]); })(A);
-var D: any = /*#__PURE__*/ (function (_B: any) { function D(this: any, a: number) { var _this3; _classCallCheck(this, D); _this3 = _callSuper(this, D, [a]); _this3.d = 4; return _this3; } _inherits(D, _B); return _createClass(D, [{ key: "area", value: function area(this: any) { return this.a + this.d; } }]); })(B);
-function turn(i: number): number {
-  return new B(i & 7).area() + new C(i & 3).area() + new D(i & 1).area();
 }
 //// two-classes.native
 class V { x: number; constructor(x: number) { this.x = x; } get(): number { return this.x + 1; } }

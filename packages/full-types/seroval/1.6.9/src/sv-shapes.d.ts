@@ -502,7 +502,7 @@ declare function btoa(data: string): string;
 //@fn 1938 createAddAssignment(ctx: SV.SerializerContext, ref: SV.RefId, value: string): void
 //@fn 1946 createSetAssignment(ctx: SV.SerializerContext, ref: SV.RefId, key: string, value: string): void
 //@fn 1954 createDeleteAssignment(ctx: SV.SerializerContext, ref: SV.RefId, key: string): void
-//@fn 1962 createArrayAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: string | SV.int32, value: string): void
+//@fn 1962 createArrayAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: string | number, value: string): void
 //@fn 1965 createObjectAssign(ctx: SV.SerializerContext, ref: SV.RefId, key: string, value: string): void
 //@fn 1977 createSequenceAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: SV.int32, value: string): void
 //@fn 1984 isIndexedValueInStack(ctx: SV.BaseSerializerContext, node: SV.SerovalNode): boolean

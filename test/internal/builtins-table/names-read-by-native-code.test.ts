@@ -79,11 +79,11 @@ function* cppFilesUnder(directory: string): Generator<string> {
   }
 }
 
-// In a member function of Process the object is `this`. Everywhere else it is a variable named process or processObject, or the call that answers it.
+// In a member function of Process the object is `this`, written or not. Everywhere else it is a variable named process or processObject, or the call that answers it.
 const lookupOnProcess =
   /(?:\bprocess|\bprocessObject|processObject\(\))->(?:get|getIfPropertyExists|getDirect|put|putInline|hasProperty)\(\s*(?:\w+,\s*)?(?:JSC::)?(?:Identifier::fromString\(vm, "([^"]+)"_s\)|(\w+))/g;
 const lookupOnThis =
-  /\bthis->(?:get|getIfPropertyExists|put|hasProperty)\(\s*\w+,\s*(?:JSC::)?Identifier::fromString\(vm, "([^"]+)"_s\)/g;
+  /(?:\bthis->|\breturn )(?:get|getIfPropertyExists|put|hasProperty)\(\s*\w+,\s*(?:JSC::)?Identifier::fromString\((?:vm|\w+->vm\(\)), "([^"]+)"_s\)/g;
 // The texts that an Identifier in a variable is made of: a literal, or each literal of the list that a loop goes through.
 function textsOfIdentifier(text: string, variable: string): string[] {
   const made = new RegExp(

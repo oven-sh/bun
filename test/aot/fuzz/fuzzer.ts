@@ -71,6 +71,10 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   const described = (bed: Bed, mode: string, failure: Failure, group?: string) => `${bed.name} ${mode} ${failure.kind} ${failure.detail}${group ? ` | ${group}` : ""}`;
   const knownAs = (bed: Bed, mode: string, failure: Failure, group?: string) => known.find(entry => entry.where === "finding" && entry.pattern.test(described(bed, mode, failure, group)));
   const knownText = (where: "reduced" | "program", text: string) => known.find(entry => entry.where === where && entry.pattern.test(text));
+  // A line that looks at the text of a program alone says where an executable may answer otherwise than plain Bun. It excuses no build that runs out of its clock and nothing that ends by a signal, whatever the program holds.
+  const isNeverByDesign = (kind: string) => ["build hang", "build crash", "internal compiler error", "crash", "hang"].includes(kind);
+  // Load makes a slow run look like one that never ends. It ends nothing by a signal and puts no message into the compiler's mouth.
+  const isNeverTheLoad = (kind: string) => ["build crash", "internal compiler error", "crash"].includes(kind);
 
   const counts = { programs: {} as Record<string, number>, runs: {} as Record<string, number>, skipped: {} as Record<string, number>, findings: 0, known: 0, repeated: 0, unstable: 0, onlyTogether: 0, artifacts: 0, reductions: 0 };
   const distinct: string[] = [];
@@ -97,7 +101,8 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   };
 
   const baseIsSame = new Map<string, boolean>();
-  const seenEarly = new Set<string>();
+  /** How many failures of these words were looked at; without end once one of them is stored. */
+  const seenEarly = new Map<string, number>();
   const perGroup = new Map<string, number>();
   let sequence = 0;
 
@@ -137,14 +142,17 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   // A failure that needs the other programs of its build: what the compiler proves, it proves about all of them at once.
   // The companions that are not needed go first, then what can go of the program itself. Every attempt is a build of its own.
   async function keepTogether(bed: Bed, folder: string, generated: Generated, members: Generated[], mode: Mode, failure: Failure) {
-    if (!bed.store || Date.now() > deadline) return;
+    if (!bed.store) return;
     // An empty module keeps the build a shared one when no companion is left.
     const filler: Program = { text: "", extension: "js" };
     const failsWith = async (program: Program, others: Program[]) => sameFailure(failure, (await bed.judge(folder, [program, filler, ...others], mode.flags))[0].verdict);
     let others: Program[] = members.filter(each => each !== generated).map(({ text, extension }) => ({ text, extension }));
-    if (!(await failsWith(generated, others))) return void counts.unstable++;
+    if (!(await failsWith(generated, others))) {
+      counts.unstable++;
+      return isNeverTheLoad(failure.kind) ? keepAsItIs(bed, generated, mode, failure, `same, by itself and beside the same ${others.length} programs`) : undefined;
+    }
     counts.reductions++;
-    const until = Date.now() + settings.reduceSeconds * 1000;
+    const until = Date.now() > deadline ? 0 : Date.now() + settings.reduceSeconds * 1000;
     for (let size = Math.max(1, others.length >> 1); others.length && Date.now() < until; size = Math.max(1, size >> 1)) {
       let removed = false;
       for (let at = 0; at < others.length && Date.now() < until; ) {
@@ -167,7 +175,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     });
     const small: Program = { text: reduced.text, extension: generated.extension };
     const group = `${failure.kind} only together`;
-    const byShape = failure.kind === "different output" || failure.kind === "different exit code" || failure.kind === "hang" || failure.kind === "crash";
+    const byShape = failure.kind === "different output" || failure.kind === "different exit code" || failure.kind === "hang" || failure.kind === "crash" || !failure.signature.includes(" ");
     const name = `${group} ${byShape ? Bun.hash.crc32(shape(small.text)).toString(16) : failure.signature}`.replace(/[^\w+&.-]+/g, "-").slice(0, 120);
     const target = join(out, "findings", name);
     if (existsSync(target)) return void counts.repeated++;
@@ -182,6 +190,19 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     appendFileSync(join(out, "findings.tsv"), [record.found, bed.name, mode.name, bed.binary, failure.kind, "only together", `${generated.source}:${generated.seed}`, name, failure.detail, `${others.length} companions`].join("\t") + "\n");
   }
 
+  // What failed once and not at the next try: no smaller program can be looked for, so the program is stored whole, with what the next try gave.
+  function keepAsItIs(bed: Bed, generated: Generated, mode: Mode, failure: Failure, nextTry: string) {
+    const name = `${failure.kind} not at the next try ${Bun.hash.crc32(generated.text).toString(16)}`.replace(/[^\w+&.-]+/g, "-").slice(0, 120);
+    const target = join(out, "findings", name);
+    if (existsSync(target)) return void counts.repeated++;
+    distinct.push(name);
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "original." + generated.extension), generated.text);
+    const record = { kind: failure.kind, detail: failure.detail, guilty: ["not at the next try"], nextTry, bed: bed.name, mode: mode.name, flags: mode.flags, binary: bed.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, found: new Date().toISOString() }; // prettier-ignore
+    writeFileSync(join(target, "finding.json"), JSON.stringify(record, null, 2) + "\n");
+    appendFileSync(join(out, "findings.tsv"), [record.found, bed.name, mode.name, bed.binary, failure.kind, "not at the next try", `${generated.source}:${generated.seed}`, name, failure.detail, `the next try: ${nextTry}`].join("\t") + "\n");
+  }
+
   async function keep(bed: Bed, folder: string, generated: Generated, mode: Mode, failure: Failure, members: Generated[]) {
     const together = members.length > 1;
     counts.findings++;
@@ -189,16 +210,23 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     if (rule) return void (rule.count++, counts.known++);
     // The words of a crash or of a wrong line say little, so the group tells such findings apart. A message of the compiler says what is wrong by itself.
     const groupOf = (kind: string) => (generated.group && !["internal compiler error", "build crash", "build error", "build hang"].includes(kind) ? `${generated.group} ` : "");
-    const early = `${bed.name} ${groupOf(failure.kind)}${failure.kind} ${failure.detail.replace(/\d+/g, "N")}`;
-    if (seenEarly.has(early)) return void counts.repeated++;
-    seenEarly.add(early);
+    // What runs out of its clock says no word, and many a death says only its signal, so all of them would count as one: they are told apart by source.
+    const saysNothing = !failure.detail.includes(" ");
+    const early = `${bed.name} ${groupOf(failure.kind)}${failure.kind} ${failure.detail.replace(/\d+/g, "N")}${saysNothing ? ` ${generated.source}` : ""}`;
+    // The first that is set aside must not hide the rest of the run: of what is never meant, four are looked at until one is stored.
+    const looks = seenEarly.get(early) ?? 0;
+    if (looks >= (isNeverByDesign(failure.kind) ? 4 : 1)) return void counts.repeated++;
+    seenEarly.set(early, looks + 1);
+    const isStored = () => void seenEarly.set(early, Infinity);
 
     // Once more, by itself: a program that fails one time in three, or only beside others, is kept apart.
     const again = await alone(bed, folder, generated, mode.flags);
     if (!sameFailure(failure, again.verdict)) {
       together ? counts.onlyTogether++ : counts.unstable++;
       appendFileSync(join(out, together ? "only-in-a-shared-build.tsv" : "unstable.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${described(bed, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`);
-      return together ? keepTogether(bed, folder, generated, members, mode, failure) : undefined;
+      if (together) return keepTogether(bed, folder, generated, members, mode, failure);
+      if (isNeverTheLoad(failure.kind)) keepAsItIs(bed, generated, mode, failure, isFinding(again.verdict) ? `${again.verdict.kind}: ${again.verdict.detail}` : again.verdict.kind);
+      return;
     }
     if ((await alone(bed, folder, generated, mode.flags)).plain.stdout !== again.plain.stdout) {
       counts.unstable++;
@@ -239,7 +267,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     // What is left rests on something the bed does not have.
     if (!bed.allows(small.text)) return void counts.artifacts++;
     const cause = knownText("reduced", small.text) ?? known.find(entry => entry.where === "both" && entry.pattern.test(described(bed, mode.name, verdict, generated.group) + "\n" + small.text));
-    if (cause) return void (cause.count++, counts.known++);
+    if (cause && !(cause.where === "reduced" && isNeverByDesign(verdict.kind))) return void (cause.count++, counts.known++);
     const culprits = settings.attribute === false || isLate() ? [] : await guilty(bed, folder, small, mode, verdict);
     // Does the other bed see it too? What only the engine bed shows is often its stand-in library.
     const elsewhere: Record<string, string> = {};
@@ -254,10 +282,11 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const validated = validating && !isLate() ? (await alone(bed, folder, small, validating.flags)).verdict : undefined;
     if (validated) elsewhere["validating build"] = !isFinding(validated) ? (validated.kind === "same" ? "right" : validated.why) : sameFailure(verdict, validated) ? "SILENT: it fails in the same way" : `${validated.kind}: ${validated.detail}`;
 
-    const byShape = verdict.kind === "different output" || verdict.kind === "different exit code" || verdict.kind === "hang" || verdict.kind === "crash";
+    const byShape = verdict.kind === "different output" || verdict.kind === "different exit code" || verdict.kind === "hang" || verdict.kind === "crash" || !verdict.signature.includes(" ");
     const group = `${groupOf(verdict.kind)}${verdict.kind} ${culprits.filter(name => name !== "flow-results").slice(0, 3).join("+") || (culprits.length ? "flow-results" : "no switch")}`;
     const name = `${group} ${byShape ? Bun.hash.crc32(shape(small.text)).toString(16) : verdict.signature}`.replace(/[^\w+&.-]+/g, "-").slice(0, 120);
     const target = join(out, "findings", name);
+    isStored();
     if (existsSync(target)) return void counts.repeated++;
     // One cause shows in many shapes: after ten of a group the rest is only counted.
     perGroup.set(group, (perGroup.get(group) ?? readdirSync(join(out, "findings")).filter(each => each.startsWith(group.replace(/[^\w+&.-]+/g, "-"))).length) + 1);
@@ -324,8 +353,12 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         if (verdict.kind === "same") continue;
         if (mode.name === bed.modes(base)[0].name) rejected.add(base.name);
         appendFileSync(join(out, "corpus-failures.tsv"), `${bed.binary}\t${base.name}\t${mode.name}\t${verdict.kind}\t${isFinding(verdict) ? verdict.detail : verdict.kind === "skipped" ? verdict.why : ""}\n`);
-        // The tests that run ../programs see a program that fails by itself. They do not see one that fails only beside others.
-        if (!isFinding(verdict) || members.length === 1 || knownAs(bed, mode.name, verdict) || (await alone(bed, folder, base, mode.flags)).verdict.kind !== "same") continue;
+        if (!isFinding(verdict) || knownAs(bed, mode.name, verdict)) continue;
+        // The tests that run ../programs see a program that fails by itself with the default flags, on the text they run on. Here it may be another mode or a later text, so what is never meant is kept.
+        if (members.length === 1 || (await alone(bed, folder, base, mode.flags)).verdict.kind !== "same") {
+          if (isNeverByDesign(verdict.kind) && !settings.isCountOnly) await keep(bed, folder, whole[index], mode, verdict, [whole[index]]);
+          continue;
+        }
         counts.findings++;
         counts.onlyTogether++;
         appendFileSync(join(out, "only-in-a-shared-build.tsv"), `${bed.binary}\tcorpus:${base.name}\t${described(bed, mode.name, verdict)}\n`);
@@ -357,8 +390,8 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         inGroup(generated, `${mode.name} ${verdict.kind === "skipped" ? `skipped: ${verdict.why}` : verdict.kind}`);
         if (!isFinding(verdict)) continue;
         appendFileSync(join(out, "failures.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${generated.group ?? ""}\t${mode.name}\t${verdict.kind}\t${verdict.detail}\t${members.length} in the build\t${mode.flags.join(" ")}\n`);
-        // Past the deadline a run that reduces only lists a failure: the other workers wait, and a later run finds it again.
-        if (!settings.isCountOnly && (Date.now() < deadline || !settings.reduceSeconds)) await keep(bed, folder, generated, mode, verdict, members);
+        // Past the deadline too: a later run has other seeds and may never draw it again. There it is confirmed and stored as it is, without a reduction, because the other workers wait.
+        if (!settings.isCountOnly) await keep(bed, folder, generated, mode, verdict, members);
       }
     }
   }

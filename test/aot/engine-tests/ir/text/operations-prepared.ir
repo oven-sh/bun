@@ -116,7 +116,9 @@
 # CHECK-NEXT: function f6 name="environments" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1:{{*}}= NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized
-# CHECK-NEXT: v2:{{*}}= MaterializeEnvironment v1 layout=L2
+# CHECK-NEXT: MarkEnvironmentEscaped v1
+# CHECK-NEXT: v3:{{*}}= MaterializeEnvironment v1 layout=L2
+# CHECK-NEXT: ReleaseEnvironment v1
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
 # CHECK-NEXT: function f7 name="builtinCalls" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=anything}, {type=number}, {type=int}, {type=string}] results=[{type=anything}]
@@ -542,7 +544,9 @@ function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type
 function f6 name="environments" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized
-    v2 = MaterializeEnvironment v1 layout=L2
+    MarkEnvironmentEscaped v1
+    v3 = MaterializeEnvironment v1 layout=L2
+    ReleaseEnvironment v1
     Return
 }
 function f7 name="builtinCalls" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=anything}, {type=number}, {type=int}, {type=string}] results=[{type=anything}] {

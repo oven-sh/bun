@@ -42,7 +42,6 @@ const programs: Record<string, string> = {
 
 // TODO: who still asks the run time, and for what.
 const asksToday: Record<string, string[]> = {
-  "a method whose generic version reads the field": ["operationAOTPrivateGet"],
   "names of a class below a parent, on objects that reach run-time text": ["operationAOTPrivateDefine"],
 };
 Object.assign(programs, {

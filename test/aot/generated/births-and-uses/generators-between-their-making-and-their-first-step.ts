@@ -69,6 +69,14 @@ const firstSteps: Record<string, (turn: string) => string> = {
   endedFirst: () => `say(steps.return("gone" as never).done, steps.next().done);`,
 };
 
+/** Behind these the generator is still held, so it stays a generator whatever walks it. */
+const firstStepsOfOneThatIsKept: Record<string, (turn: string) => string> = {
+  nextAndKept: () => `say(steps.next().value); kept.push(steps);`,
+  nextInALoopAndKept: () => `let at = 0; do say(steps.next().value); while (++at < 3); kept.push(steps);`,
+  nextInALoopOfSomeTurnsAndKept: turn => `let at = 0; do say(steps.next().value); while (++at < ${turn} % 4); kept.push(steps); say(steps.next().done);`,
+  onBothWaysAndKept: turn => `if (${turn} % 2) say("odd", steps.next().value); else say("even", steps.next().value); kept.push(steps); say(steps.next().value);`,
+};
+
 /** A place may write the turn as a literal, which TypeScript does not let a stretch compare with another. */
 const named = (stretch: Stretch): Stretch => ({ ...stretch, body: turn => `const now: number = ${turn}; ${stretch.body("now")}` });
 
@@ -83,12 +91,13 @@ export function programs(isTyped?: boolean) {
       name: `${head}-${between}-${firstStep}`,
       beside: common + heads[head].declares + "\n",
       before: seed => `const kept: unknown[] = []; shared = ${seed};`,
-      body: turn => `const steps = ${call(turn)}; ${betweens[between](turn).replace(/CALL\(([^)]*)\)/, (_, given) => call(given))} ${firstSteps[firstStep](turn)}`,
+      body: turn => `const steps = ${call(turn)}; ${betweens[between](turn).replace(/CALL\(([^)]*)\)/, (_, given) => call(given))} ${(firstSteps[firstStep] ?? firstStepsOfOneThatIsKept[firstStep])(turn)}`,
       after: `shared + ":" + kept.length`,
     };
   };
   const everywhere: Stretch[] = [], inFewPlaces: Stretch[] = [];
   let at = 0;
   for (const head in heads) for (const between in betweens) for (const firstStep in firstSteps) (at++ % 7 ? inFewPlaces : everywhere).push(stretch(head, between, firstStep));
+  for (const head in heads) for (const between in betweens) for (const firstStep in firstStepsOfOneThatIsKept) (at++ % 7 ? inFewPlaces : everywhere).push(stretch(head, between, firstStep));
   return alsoWithTypesErased([...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)], isTyped);
 }

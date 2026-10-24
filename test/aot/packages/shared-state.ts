@@ -1,13 +1,9 @@
 // One state seen through `import` and through `require`: a package with an ES wrapper around CommonJS, a package with two copies of its code, live bindings.
 import { js, pkg, ts, type Case } from "./run-packages";
 
-const differs =
-  "A property that is added to `module.exports` after the namespace object was made is visible through the namespace.";
-
 export const cases: Case[] = [
   {
     name: "wrapper",
-    differs,
     files: {
       ...pkg("dual_wrapper", {
         "index.cjs": `const state = { count: 0 };
@@ -53,7 +49,6 @@ t("required", () => { const r = require("dual_wrapper"); return [r.state === sta
   },
   {
     name: "two-copies",
-    differs,
     files: {
       ...pkg("dual_true", {
         "i.cjs": `exports.state = { count: 0, kind: "cjs" };
@@ -78,7 +73,6 @@ import("dual_true").then((m) => t("x", () => [m.inc(), m.inc(), r.inc(), m.state
   },
   {
     name: "live",
-    differs,
     files: {
       ...pkg("live", {
         "index.mjs": `export let n = 0;

@@ -35,11 +35,18 @@ fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics 
 }
 
 fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
-    let Compilation { engine, summary } = compilation;
+    let Compilation {
+        engine,
+        summary,
+        further_programs,
+        ..
+    } = compilation;
+    let wrap_engine = |engine| interface::engine::EngineResult(Opaque::new(engine));
     let entry_points = summary.entry_points.into_iter();
     let folders = summary.folders.into_iter();
     interface::Compilation {
-        engine: interface::engine::EngineResult(Opaque::new(engine)),
+        engine: wrap_engine(engine),
+        further_programs: further_programs.into_iter().map(wrap_engine).collect(),
         summary: interface::compile::ProgramSummary {
             entry_points: entry_points
                 .map(|entry| interface::compile::EntryPointPaths {

@@ -54,6 +54,7 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
       }
     }
     expect(found).toEqual(expected);
+    console.error(`on the template less on Bun, in bytes: ${JSON.stringify(larger)}`);
   }, 900_000);
 
   // TODO: on Windows x64 what `--trim` builds on the template is more than 256 KiB larger than what it builds on Bun.

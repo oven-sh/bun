@@ -9,7 +9,6 @@ pub(super) struct Projects<'s> {
     by_config_path: ShardedMap<Vec<u8>, ConfigAnswer<'s>>,
     lenient_by_package: ShardedMap<Vec<u8>, &'s Options>,
     lenient_template: OnceLock<Options>,
-    by_typed_version_manifest: ShardedMap<Vec<u8>, &'s Options>,
     full_types_by_directory: ShardedMap<Vec<u8>, Option<ConfigAnswer<'s>>>,
     naming_types: Guarded<Vec<&'s Options>>,
 }
@@ -58,7 +57,6 @@ impl<'s> Projects<'s> {
             by_config_path: ShardedMap::default(),
             lenient_by_package: ShardedMap::default(),
             lenient_template: OnceLock::new(),
-            by_typed_version_manifest: ShardedMap::default(),
             full_types_by_directory: ShardedMap::default(),
             naming_types: Guarded::new(Vec::new()),
         }
@@ -152,22 +150,6 @@ impl<'s> Projects<'s> {
             Governing::EveryFile(options) => options,
             Governing::FileByFile(solution) => solution.governing(path, context.is_case_sensitive),
         }
-    }
-
-    pub(super) fn of_typed_version(
-        &self,
-        context: &CodeLoadContext<'_, 's, '_>,
-        manifest_path: &[u8],
-    ) -> &'s Options {
-        if let Some(&known) = self.by_typed_version_manifest.get_ref(manifest_path) {
-            return known;
-        }
-        let options = self
-            .session
-            .keep(typed_version_options(context, manifest_path));
-        *self
-            .by_typed_version_manifest
-            .insert_ref(manifest_path.to_vec(), options)
     }
 
     fn find_project(
@@ -296,32 +278,6 @@ fn read_solution(context: &CodeLoadContext<'_, '_, '_>, config_path: &[u8]) -> O
 fn installed_package_directory(directory: &[u8]) -> Option<&[u8]> {
     let (_, _, end) = node_module_path_parts(&inside(directory, b""))?;
     Some(&directory[..end.min(directory.len())])
-}
-
-fn typed_version_options(context: &CodeLoadContext<'_, '_, '_>, manifest_path: &[u8]) -> Options {
-    let scratch = Session::new();
-    let stated = match config::load_options_for_build(context.host, &scratch, manifest_path) {
-        Ok(project) => project.options,
-        Err(_) => Options::from_compiler_options(b"", &Json::Object(Vec::new())),
-    };
-    Options {
-        strict_null_checks: stated.strict_null_checks,
-        no_implicit_any: stated.no_implicit_any,
-        specifies_no_implicit_any: stated.specifies_no_implicit_any,
-        no_implicit_this: stated.no_implicit_this,
-        strict_function_types: stated.strict_function_types,
-        strict_bind_call_apply: stated.strict_bind_call_apply,
-        strict_builtin_iterator_return: stated.strict_builtin_iterator_return,
-        strict_property_initialization: stated.strict_property_initialization,
-        use_unknown_in_catch_variables: stated.use_unknown_in_catch_variables,
-        exact_optional_property_types: stated.exact_optional_property_types,
-        no_unchecked_indexed_access: stated.no_unchecked_indexed_access,
-        no_property_access_from_index_signature: stated.no_property_access_from_index_signature,
-        no_implicit_returns: stated.no_implicit_returns,
-        no_implicit_override: stated.no_implicit_override,
-        no_fallthrough_cases_in_switch: stated.no_fallthrough_cases_in_switch,
-        ..lenient_options(context.options, dirname::<Posix>(manifest_path))
-    }
 }
 
 pub(super) fn lenient_options(program: &Options, package_directory: &[u8]) -> Options {

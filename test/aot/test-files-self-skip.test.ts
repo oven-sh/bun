@@ -54,6 +54,7 @@ const needNoCompiler = [
   "aot/builtins/native-contract.test.ts",
   "aot/builtins/native-contract/noticed-changes.test.ts",
   "aot/names-read-from-a-loaded-barrel.test.ts",
+  "aot/perf/plain-bun-costs.test.ts",
   "aot/plain-english.test.ts",
   "aot/removable-statements.test.ts",
   "aot/servers/layers.test.ts",

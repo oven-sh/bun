@@ -108,7 +108,7 @@ function f5 name="awaitedBody" flags=[IsAsync] parameters=[{type=Response}] resu
     Return v3
 }
 # CHECK-LABEL: function f5 name="awaitedBody"
-# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes5]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes5]]
 # CHECK: = Check v2 castType=undefined|null|L0 site=w0
@@ -185,7 +185,7 @@ function f9 name="awaitedBodyIsTested" flags=[IsAsync] parameters=[{type=Respons
     Return v5
 }
 # CHECK-LABEL: function f9 name="awaitedBodyIsTested"
-# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes9]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes9]]
 # CHECK: (v2:{{*}}):

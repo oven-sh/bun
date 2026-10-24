@@ -1,17 +1,32 @@
 // ./everyday/<group>.txt holds many small idioms, one under each line `//// <name>`: TypeScript that declares `function turn(i: number): number`, or the same
 // function async. everydayIdioms() puts each into a program of the form of ./idioms: a loop that calls turn() as often as ./idioms/host.ts says.
+// With `foundAtRunTime` the loop finds turn() in a property of the global object, and turn() begins with a branch that is never taken, which makes it a function of
+// ordinary size: it stays a function of its own with one caller, as most functions of a large program are. A very small one would be copied into the loop, or compiled as if it ran often.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
 const root = join(import.meta.dir, "everyday");
 
-function program(text: string) {
+const neverTaken = `
+  if (i < 0) {
+    let t = i | 0;
+${Array.from({ length: 16 }, (_, k) => `    t = ((t ^ ${k + 5}) * 3) | 0;`).join("\n")}
+    (globalThis as any).neverStored = t;
+  }`;
+
+function program(text: string, foundAtRunTime: boolean) {
   const isAsync = /^async function turn\b/m.test(text);
+  if (foundAtRunTime)
+    text = text.replace(
+      /^(?:async )?function turn\(i: number\): (?:number|Promise<number>) \{/m,
+      head => head + neverTaken,
+    );
+  const callee = foundAtRunTime ? "found" : "turn";
   return `import { nextTurns } from "../host.ts";
-${text.trim()}
-${isAsync ? "async function bench(n: number)" : "function bench(n: number): number"} {
+${text.trim()}${foundAtRunTime ? "\n(globalThis as any).turnOfThisProgram = turn;" : ""}
+${isAsync ? "async function bench(n: number)" : "function bench(n: number): number"} {${foundAtRunTime ? "\n  const found: typeof turn = (globalThis as any).turnOfThisProgram;" : ""}
   let sum = 0;
-  for (let i = 0; i < n; i++) sum = (sum + ${isAsync ? "(await turn(i))" : "turn(i)"}) | 0;
+  for (let i = 0; i < n; i++) sum = (sum + ${isAsync ? `(await ${callee}(i))` : `${callee}(i)`}) | 0;
   return sum;
 }
 let answer = 0;
@@ -20,22 +35,25 @@ console.log(answer);
 `;
 }
 
-export function everydayIdioms() {
+export function everydayIdioms(foundAtRunTime = false) {
   const idioms: { name: string; text: string }[] = [];
   for (const file of readdirSync(root).sort()) {
     const [, ...sections] = readFileSync(join(root, file), "utf8").split(/^\/\/\/\/ /m);
     for (const section of sections) {
       const end = section.indexOf("\n");
-      idioms.push({ name: `everyday-${file.slice(0, -4)}/${section.slice(0, end).trim()}`, text: program(section.slice(end + 1)) });
+      idioms.push({
+        name: `everyday-${file.slice(0, -4)}/${section.slice(0, end).trim()}`,
+        text: program(section.slice(end + 1), foundAtRunTime),
+      });
     }
   }
   return idioms;
 }
 
 /** Beside the idioms that writeUntypedIdioms() has put into `where`: each as TypeScript and as the same text without its types. */
-export function writeEverydayIdioms(where: string) {
+export function writeEverydayIdioms(where: string, foundAtRunTime = false) {
   const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false, inline: false });
-  const idioms = everydayIdioms();
+  const idioms = everydayIdioms(foundAtRunTime);
   for (const { name, text } of idioms) {
     mkdirSync(dirname(join(where, name)), { recursive: true });
     writeFileSync(join(where, name + ".ts"), text);

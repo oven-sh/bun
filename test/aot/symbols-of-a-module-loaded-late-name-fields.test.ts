@@ -70,7 +70,8 @@ test("the symbols of a CommonJS module name fields however the program gets to t
     ).accessSites;
     // The lines of the constructor and the two methods: every access there has `this` as its receiver or is a field of `raw`.
     return sites
-      .filter(site => site.file?.endsWith("reply.cjs") && site.line >= 3 && site.line <= 15 && site.kind !== "call")
+      .filter(site => site.file?.endsWith("reply.cjs") && site.line >= 3 && site.line <= 15)
+      .filter(site => site.kind === "read" || site.kind === "store")
       .map(site => site.line + " " + site.kind + " " + (site.cost === "byName" ? "by name" : "by slot"));
   };
   for (const entry of ["imported.mjs", "imported-late.mjs", "required-late.cjs"]) {

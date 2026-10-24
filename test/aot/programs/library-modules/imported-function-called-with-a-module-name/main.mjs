@@ -1,4 +1,4 @@
-// A string that happens to be the name of a built-in module keeps nothing unless the function it is passed to is a module loader. An export that is reassigned is not followed.
+// An export that is reassigned holds `require` at the first call and another function at the second. The program also loads by names that come from outside, so a string that is the name of a built-in module and goes somewhere as a value keeps the module. The output is that of plain Bun.
 import { log, swap, swapped } from "./log.mjs";
 
 log("dgram");

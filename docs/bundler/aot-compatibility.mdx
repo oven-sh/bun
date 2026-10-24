@@ -257,7 +257,7 @@ bun compile ./strings.ts && ./strings
 5 10 object
 ```
 
-That's fine for a template or a configuration file. It matters when a library generates its hot code that way: zod 4, ajv, fast-json-stringify and Elysia do. If the library has a mode without generated code, measure both: `z.config({ jitless: true })`, called before you create a schema, makes `parse` in zod 4 cheaper, while `new Elysia({ aot: false })` makes a request slower.
+That's fine for a template or a configuration file. It matters when a library generates its hot code that way: zod 4, ajv, fast-json-stringify and Elysia do. If the library has a mode without generated code, measure both: `z.config({ jitless: true })`, called before you create a schema, makes `parse` in zod 4 cheaper, while `new Elysia({ aot: false })` makes a request slower. For Fastify, see [below](#fastify).
 
 If your program never calls `eval` or `new Function`, the compiler assumes it has seen all the code that will ever run (a closed-world assumption, like GraalVM Native Image) and optimizes accordingly.
 
@@ -321,6 +321,62 @@ With the flag, a call to `eval` or `new Function` can only throw, so the compile
 **With `=strict`, code from the disk fails with the flag's error too.** `require()` and `import()` of a file that isn't in the executable throw `EvalError: Code generation from strings disallowed for this context`. `--preload`, `-r`, `--require`, `--import` and `BUN_INSPECT_PRELOAD` end the process with that error and exit code `1`. An executable built without `--aot` does the same. Without the flag, you get [the messages that say what to do](#code-that-isnt-in-the-executable).
 
 **Pass the flag when you build.** `BUN_OPTIONS` can turn it on too, but that's too late for a string that's a constant. The compiler has compiled `(0, eval)("1 + 1")` and `new Function("return 2")` like the rest of your program, so they still run. A string that's put together at run time throws.
+
+### Fastify
+
+Fastify generates code from strings in three places:
+
+- **The router.** find-my-way generates a few short functions for each route when the server starts, and a request calls two or three of them. That's 2 to 7% of a request. You can't turn it off.
+- **Response schemas.** fast-json-stringify generates a serializer for each `schema.response`.
+- **Request schemas.** ajv generates a validator for each `schema.body`, `schema.querystring`, `schema.params` and `schema.headers`.
+
+The serializers and validators run on every request, and interpreting them can cost more than the rest of the request. A route that returns 3.5 KB of JSON runs six times as many instructions with a response schema as without one. You can keep the schemas and avoid both.
+
+**Serialize with `JSON.stringify`.**
+
+```ts server.ts icon="/icons/typescript.svg"
+const app = Fastify();
+app.setSerializerCompiler(() => JSON.stringify);
+```
+
+In Bun, `JSON.stringify` is faster than the generated serializer even with the JIT. The compiled server answers that route more than twice as often per second. There's one difference: fast-json-stringify leaves out properties that aren't in the schema, and `JSON.stringify` writes every property of the object you return.
+
+**Write the validators to files before you compile.** `@fastify/ajv-compiler` can give you the source code of a validator instead of calling `new Function`. Save it to a file, and Bun compiles it with the rest of your program.
+
+```ts server.ts icon="/icons/typescript.svg"
+import { StandaloneValidator } from "@fastify/ajv-compiler";
+import Fastify from "fastify";
+import { writeFileSync } from "node:fs";
+
+const writes = process.argv[2] === "write";
+const buildValidator = writes
+  ? StandaloneValidator({
+      readMode: false,
+      storeFunction: (route, code) => writeFileSync("./order-validator.js", code),
+    })
+  : StandaloneValidator({
+      readMode: true,
+      restoreFunction: route => require("./order-validator.js"),
+    });
+
+const app = Fastify({ schemaController: { compilersFactory: { buildValidator } } });
+
+app.post("/orders", { schema: { body: orderSchema } }, placeOrder);
+
+await app.ready();
+if (writes) process.exit(0);
+await app.listen({ port: 3000 });
+```
+
+```bash terminal icon="terminal"
+bun add @fastify/ajv-compiler ajv
+bun ./server.ts write
+bun compile ./server.ts
+```
+
+`route` has the `method`, the `url` and the `httpPart` (`"body"`, `"querystring"`, ...) that the validator is for. If you have more than one schema, name each file after them. Give each `require()` a constant path, because [a module behind a computed path isn't compiled](#dynamic-imports). The validators import helpers from `ajv`, so it has to be installed.
+
+With both changes, a route that validates an order of ten items answers about 1.6 times as many requests per second, the same as without schemas.
 
 ## WebAssembly
 
@@ -402,7 +458,21 @@ error: Cannot load './plugin.js': path.join or path.resolve was replaced and ret
 
 ### Built-in modules
 
-The same rule applies to `node:` and `bun:` modules. The executable contains the ones that your program, a package or another built-in module imports by a constant name. A `require(name)` doesn't add the rest, so one such call in a package doesn't put `node:repl` and `node:dgram` into your server.
+The same rule applies to `node:` and `bun:` modules. The executable contains the ones that your program, a package or another built-in module imports by a constant name.
+
+A name doesn't have to stand in the call. If your program or a package loads a module by a name that the compiler can't work out, or hands `require`, `module`, `process` or `import.meta` to code that the compiler can't follow, the executable also contains every built-in module whose name is written as a string anywhere in the program, with or without `node:`.
+
+| Code                                                                                      | In the executable       |
+| ----------------------------------------------------------------------------------------- | ----------------------- |
+| `function tryRequire(name) { try { return require(name) } catch {} }; tryRequire("zlib")` | `node:zlib`             |
+| `function load(mod, name) { return mod.require(name) }; load(module, "perf_hooks")`       | `node:perf_hooks`       |
+| `for (const name of ["node:vm", "node:v8"]) process.getBuiltinModule(name)`               | `node:vm` and `node:v8` |
+| `function ask(p) { return p.getBuiltinModule("node:dgram") }; ask(process)`               | `node:dgram`            |
+
+A string doesn't count if it's only compared (`name === "fs"`, `case "fs":`), used as a property key (`table["fs"]`), or kept in an array or a `Set` that the program only searches (`names.includes(name)`, `names.has(name)`). No string counts in a program where every import has a constant name. A dynamic path that can't be the name of a built-in module, like `require("./locales/" + name)`, doesn't make strings count either.
+
+If a function passes its parameter to `require()`, `import()` or `process.getBuiltinModule()` and the program only ever calls that function directly, as with `tryRequire` above, the compiler takes the names from the calls. Such a function doesn't make other strings count.
+A `require(name)` doesn't add the rest, so one such call in a package doesn't put `node:repl` and `node:dgram` into your server. A name that comes from outside of the program, or that's put together from parts, only finds a module that's in the executable for another reason.
 
 ```ts load.ts icon="/icons/typescript.svg"
 import "node:path";
@@ -422,7 +492,7 @@ error: Cannot load 'node:dgram': it isn't in this executable. Import it by name 
 
 A built-in module that a dynamic name finds works like one that you import, even if it's only in the executable because another built-in module imports it.
 
-To keep a built-in module that your program only loads by a dynamic name, import it once by its name. The import costs nothing until the module is used.
+To keep a built-in module whose name isn't written anywhere in your program, import it once by its name. The import costs nothing until the module is used.
 
 ```ts load.ts icon="/icons/typescript.svg"
 import "node:dgram";
@@ -487,7 +557,7 @@ With code splitting, esbuild and `bun build` export the helper from a shared chu
 | `import { __require } from "./chunk.js"; __require("node:zlib")`   | `require("node:zlib")`                     |
 | `import { __require } from "./chunk.js"; __require("./inside.js")` | `require(name)`: it finds the entry points |
 
-`process.getBuiltinModule("node:fs")` with a string literal is compiled like `require("node:fs")`. If your program assigns a function of its own to `process.getBuiltinModule`, such a call still gets the built-in module. A call with a dynamic name runs the replacement. The compiler follows `process.getBuiltinModule` under another name like `require`. It can't see the function behind a computed key (`process[key](name)`): such a call throws `Cannot load '...': this executable can't load a module from a dynamic path`.
+`process.getBuiltinModule("node:fs")` with a string literal is compiled like `require("node:fs")`, also on a variable that holds `process` or `globalThis` and is never assigned again. If your program assigns a function of its own to `process.getBuiltinModule`, such a call still gets the built-in module. A call with a dynamic name runs the replacement. Under another name, or on a `process` that came through a parameter or a property, the function loads [the built-in modules that your program names](#built-in-modules). It can't see the function behind a computed key (`process[key](name)`): such a call throws `Cannot load '...': this executable can't load a module from a dynamic path`.
 
 `require()` can't wait. If it reaches an ES module outside of the executable that has a top-level `await`, it throws a `TypeError` that tells you to use `await import()`.
 
@@ -657,7 +727,9 @@ The names that a CommonJS module exports are only known once it has run. The sam
 
 ## Workers
 
-Pass the worker as an additional entry point, like in [any executable](/bundler/executables#worker). It's compiled with the rest.
+Pass the worker as an additional entry point, like in [any executable](/bundler/executables#worker).
+
+A Worker has its own global object, so the compiler treats each entry point as a separate program when your code starts Workers. What a worker does to a class, a prototype or a shared module doesn't slow down the main thread's code, and the other way around. A module that both import is compiled once for each. The build takes longer and the executable is larger than if everything were one program.
 
 ```ts worker.ts icon="/icons/typescript.svg"
 declare var self: Worker;
@@ -683,7 +755,9 @@ bun compile ./spawn.ts ./worker.ts --outfile spawn && rm worker.ts && ./spawn
 
 A Worker that you create from a `blob:` or `data:` URL runs [code that isn't in the executable](#code-that-isnt-in-the-executable), so it fails to load. Put the code in a file and pass it as an entry point.
 
-A file can start itself as a Worker. To tell the two threads apart, use `Bun.isMainThread`, not `import.meta.main`. In an executable with a single entry point, `import.meta.main` is decided at build time, like in any executable: it's `true` in that file on every thread. Under `bun run` it's `false` in the Worker.
+A file can start itself as a Worker. To tell the two threads apart, use `Bun.isMainThread`, not `import.meta.main`. In an executable with a single entry point, `import.meta.main` is decided at build time, like in any executable: it's `true` in that file on every thread. Under `bun run` it's `false` in the Worker. With more than one entry point it's `false` in a Worker here too.
+
+Entry points still end up in one program when they can meet in one global object: a program that calls `import()` or `require()` with a [dynamic path](#dynamic-imports) includes all of them, and so does every worker if you pass `preload` to `new Worker()`.
 
 ## Native addons
 
@@ -693,7 +767,7 @@ An addon is native code. It can keep, call and change whatever your program hand
 
 ## Plugins and build options
 
-[Plugins](/bundler/plugins) of `Bun.build` work with `compile: { aot: true }`. The compiler is handed what your plugins resolve and load, never what's on disk. Which names a CommonJS file exports, in which order modules run and what types a TypeScript module has all come from the text that `onLoad` returns.
+[Plugins](/bundler/plugins) of `Bun.build` work with `compile: { aot: true }`. The compiler is handed what your plugins resolve and load, never what's on disk. Which names a CommonJS file exports and in which order modules run come from the text that `onLoad` returns.
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
@@ -738,7 +812,11 @@ This differs:
 | `format`, `bytecode`, `--bytecode-depth`, `--bytecode-order`                  | Change what's in the executable        | No effect. Nothing is bundled, and the executable has no bytecode          |
 | `banner` or `footer` with code                                                | Work                                   | The build fails. A `banner` or `footer` that's only comments is fine       |
 
-The text that `onLoad` returns is type checked like a file. `onResolve` doesn't change what the type checker reads: it resolves an import as TypeScript does. So a module that's in no file needs a declaration, like in your editor.
+The text that `onLoad` returns is type checked like a file, and its types are what the files that import it see.
+
+Plugins for Solid, Vue or Svelte return JavaScript (`loader: "js"` or `"jsx"`) for a TypeScript file, so the types are gone from what they return. In that case the JavaScript is compiled, and the files that import it get their types from the file on disk, like in your editor. The build doesn't report type errors inside of that file. Your editor and `bun check` do. `import type { Props } from "./view.tsx"` keeps working.
+
+`onResolve` doesn't change what the type checker reads: it resolves an import as TypeScript does. So a module that's in no file needs a declaration, like in your editor.
 
 ```ts settings.d.ts icon="/icons/typescript.svg"
 declare module "settings:*" {
@@ -747,7 +825,7 @@ declare module "settings:*" {
 }
 ```
 
-If the module doesn't match its declaration, the program [behaves as under `bun run`](/bundler/aot-types#when-a-value-doesnt-match-its-type).
+If a module doesn't match its declaration, or the JavaScript from a plugin doesn't match the file it was made from, the program [behaves as under `bun run`](/bundler/aot-types#when-a-value-doesnt-match-its-type).
 
 ### Metafile
 
@@ -785,6 +863,8 @@ function add() { [native code] } add 2
 ```
 
 Code that reads parameter names out of that string, as some dependency injection libraries do, finds none.
+
+A library that reads the text of your functions can also decide differently on the text of your file than on what the transpiler printed. Elysia reads a handler to find out whether it needs the request body, and it doesn't follow a variable that holds the context: after `const c = context; return handle(c)`, `context.body` is `undefined` in an executable. `bun run` prints that handler as `return handle(context)`, which Elysia does follow. Pass `context` itself.
 
 ## Error messages
 

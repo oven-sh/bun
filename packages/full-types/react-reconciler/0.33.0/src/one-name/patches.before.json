@@ -1,23 +1,11 @@
 [
  [
-  "  type Lane = int32;",
-  "  type Lane = number;"
- ],
- [
-  "  type Lanes = int32;",
-  "  type Lanes = number;"
- ],
- [
   "  type TypeOfMode = int32;",
   "  type TypeOfMode = number;"
  ],
  [
   "  type RootTag = int32;",
   "  type RootTag = number;"
- ],
- [
-  "  type ExecutionContext = int32;",
-  "  type ExecutionContext = number;"
  ],
  [
   "  type OffscreenVisibility = int32;",

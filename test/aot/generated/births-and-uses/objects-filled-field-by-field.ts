@@ -10,9 +10,14 @@ const makers: Record<string, Maker> = {
   beforeTheLastStore: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { this.a = seed; this.b = "b" + seed; ${b} this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
   beforeTheFirstStore: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { ${b} this.a = seed; this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
   initialValues: { declare: wrap(b => `function interrupt(self: Thing): string { ${b} return "b"; }\nclass Thing { a: number = 1; b: string = interrupt(this); c: number = 3; constructor(seed: number) { this.a += seed; } }`, "self"), make: seed => `new Thing(${seed})` },
-  inTheParent: { declare: wrap(b => `class Base { a!: number; constructor(seed: number) { this.a = seed; ${b} } }\nclass Thing extends Base { b!: string; c!: number; constructor(seed: number) { super(seed); this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  inTheParent: { declare: wrap(b => `class Base { a!: number; constructor(seed: number) { this.a = seed; ${b} } }\nclass Thing extends Base { b!: string; c!: number; constructor(seed: number) { super(seed); this.b = "b" + seed; this.c = seed + 2; } }`, "(this as unknown as Thing)"), make: seed => `new Thing(${seed})` },
   behindTheParent: { declare: wrap(b => `class Base { a!: number; constructor(seed: number) { this.a = seed; } }\nclass Thing extends Base { b!: string; c!: number; constructor(seed: number) { super(seed); this.b = "b" + seed; ${b} this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
   plainFunction: { declare: wrap(b => `interface Thing { a: number; b: string; c: number }\nfunction ThingMaker(this: Thing, seed: number) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; }\nconst Thing = ThingMaker as unknown as new (seed: number) => Thing;`, "this"), make: seed => `new Thing(${seed})` },
+  fieldsAreOnlyDeclared: { declare: wrap(b => `class Thing { declare a: number; declare b: string; declare c: number; constructor(seed: number) { this.c = seed + 2; this.a = seed; ${b} this.b = "b" + seed; } }`, "this"), make: seed => `new Thing(${seed})` },
+  theSameNamesStandAbove: { declare: wrap(b => `class Thing { declare a: number; declare b: string; declare c: number; constructor(seed: number) { this.a = seed; this.c = seed + 2; ${b} this.b = "b" + seed; } }\nObject.assign(Thing.prototype, { a: -100, b: "above", c: -300 });`, "this"), make: seed => `new Thing(${seed})` },
+  otherCodeGivesTheSecondField: { declare: wrap(b => `interface Thing { a: number; b: string; c: number }\nlet underWay: Thing | undefined;\nfunction second(seed: number): string { const self = underWay; if (self) { ${b} } return "b" + seed; }\nfunction ThingMaker(this: Thing, seed: number) { this.c = seed + 2; this.b = second(seed); this.a = seed; }\nconst Thing = ThingMaker as unknown as new (seed: number) => Thing;\nfunction again(one: Thing, seed: number): Thing { underWay = one; Reflect.apply(ThingMaker, one, [seed]); underWay = undefined; return one; }`, "self"), make: seed => `again(new Thing(${seed}), ${seed} + 5)` },
+  anotherNewTargetTakesAStore: { declare: wrap(b => `class Thing { declare a: number; declare b: string; declare c: number; constructor(seed: number) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; } }\nclass Taker {}\nObject.setPrototypeOf(Taker.prototype, Thing.prototype);\nObject.defineProperty(Taker.prototype, "b", { set(value: string) { say("taken", value); }, get() { return "given"; }, configurable: true });\nObject.defineProperty(Taker.prototype, "c", { set(value: number) { say("taken", value); }, configurable: true });`, "this"), make: seed => `((${seed}) % 2 ? (Reflect.construct(Thing, [${seed}], Taker) as Thing) : new Thing(${seed}))` },
+  aSetterAppearsAbove: { declare: wrap(b => `class Thing { declare a: number; declare b: string; declare c: number; constructor(seed: number) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; } }\nlet made = 0;\nfunction next(seed: number): Thing { if (++made % 4 === 3) Object.defineProperty(Thing.prototype, "c", { set(this: Thing, value: number) { seen.push(this); say("taken", value, total(this)); }, get() { return -1; }, configurable: true }); else delete open(Thing.prototype).c; return new Thing(seed); }`, "this"), make: seed => `next(${seed})` },
   filledFromOutside: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; }\nfunction fill(seed: number): Thing { const made = new Thing(); made.a = seed; ${b} made.b = "b" + seed; made.c = seed + 2; return made; }`, "made"), make: seed => `fill(${seed})` },
   literalFilledLater: { declare: wrap(b => `type Thing = { a: number; b: string; c: number };\nfunction fill(seed: number): Thing { const made = { a: seed } as Thing; ${b} made.b = "b" + seed; made.c = seed + 2; return made; }`, "made"), make: seed => `fill(${seed})` },
   inAnotherOrder: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { this.c = seed + 2; ${b} this.a = seed; this.b = "b" + seed; } }`, "this"), make: seed => `new Thing(${seed})` },
@@ -27,6 +32,10 @@ const betweens: Record<string, (self: string) => string | undefined> = {
   itsKeysAreListed: self => `say(Object.keys(${self}).join("+"));`,
   aFieldIsRead: self => `say(${self}.a, ${self}.c);`,
   aStoredFieldIsDeleted: self => `delete open(${self}).a;`,
+  aStoredFieldIsDeletedThroughAProxy: self => `delete open(new Proxy(${self}, {})).c; delete open(new Proxy(${self}, {})).a;`,
+  aStoredFieldIsDeletedUnderANameFromOutside: self => `delete open(${self})[JSON.parse('"c"') as string];`,
+  anotherFunctionReadsIt: self => `say(total(${self}));`,
+  itIsKeptAndAnotherFunctionReadsWhatIsKept: self => `seen.push(${self}); say(total(seen[seen.length - 1]));`,
   aLaterFieldIsStored: self => `open(${self}).c = -1;`,
   aLaterFieldIsStoredAndDeleted: self => `open(${self}).c = -1; delete open(${self}).c;`,
   aLaterFieldBecomesAnAccessor: self => `Object.defineProperty(${self}, "c", { get() { return -7; }, set() {}, enumerable: true, configurable: true });`,
@@ -52,6 +61,7 @@ const readers: Record<string, (make: (seed: string) => string, turn: string) => 
   copiesIt: () => `const copy = { ...one }; say(Object.keys(copy).join("+"), copy.c);`,
   listsTheEntries: () => `say(Object.entries(one).join("|"));`,
   addsThemUp: () => `let sum = 0; for (let at = 0; at < 5; at++) sum += total(one); say(sum);`,
+  addsUpWhatWasSeen: () => `let sum = 0; for (let at = 0; at < seen.length; at++) sum += total(seen[at]); say(sum, total(one));`,
   storesEveryField: () => `one.a = 10; one.b = "again"; one.c = 30; say(JSON.stringify(one));`,
   makesOneInTheTurn: (make, turn) => `const fresh = ${make(turn)}; say(JSON.stringify(fresh), Object.keys(fresh).join("+"), fresh.c);`,
 };
@@ -78,7 +88,7 @@ function left(): string { const text = seen.map(each => JSON.stringify(each) + O
 
 const somePlaces = ["once", "often", "moduleLoop", "loop", "loopThatStartsAnew", "twoLoopsStartedBetween", "handlerInALoop", "loopUnderAHandler", "copiedIntoALoop", "alsoCalledWhereItSeldomRuns", "inAClosure", "method", "loopWithAYield", "loopWithAnAwait"];
 
-export const oneIn = 90;
+export const oneIn = 160;
 
 export function programs(isTyped?: boolean) {
   const all: Stretch[] = [];

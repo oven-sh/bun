@@ -1,1 +1,7 @@
-{"skipInShell": "needs Workers", "todoOn": {"win32": "the run without --aot, which the executable is compared with, has been killed at its time limit"}}
+{
+  "skipInShell": "needs Workers",
+  "todoOn": {
+    "win32": "the run without --aot, which the executable is compared with, has been killed at its time limit"
+  },
+  "skipWithASAN": "TODO: a build with assertions stops in ClassTable::createClassPart, which asserts that there is no exception, where the worker is terminated while the members of a class are made"
+}

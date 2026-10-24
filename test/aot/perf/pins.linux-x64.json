@@ -674,13 +674,13 @@
     }
   },
   "built-in/process-argv": {
-    "typed": 51,
-    "untyped": 51,
+    "typed": 32,
+    "untyped": 32,
     "jit": 10
   },
   "built-in/process-argv-includes": {
-    "typed": 174,
-    "untyped": 174,
+    "typed": 157,
+    "untyped": 157,
     "jit": 57
   },
   "built-in/process-env-by-key": {
@@ -792,8 +792,8 @@
     "jit": 528.3
   },
   "bytes/buffer-from-a-view": {
-    "typed": 443.3,
-    "untyped": 444.3,
+    "typed": 341.7,
+    "untyped": 343.6,
     "jit": 480.1
   },
   "bytes/buffer-over-the-bytes-of-a-view": {
@@ -863,8 +863,12 @@
   },
   "bytes/encode-into-the-rest-of-a-view": {
     "typed": 353.8,
-    "untyped": 362.7,
-    "jit": 1085.5
+    "untyped": 711.1,
+    "jit": 1085.5,
+    "best": {
+      "typed": 353.8,
+      "untyped": 362.7
+    }
   },
   "bytes/index-of-a-byte-from-a-start": {
     "typed": 301,
@@ -1167,9 +1171,13 @@
     }
   },
   "text/three-parts-of-which-two-are-empty": {
-    "typed": 178,
-    "untyped": 178,
-    "jit": 266.5
+    "typed": 355.8,
+    "untyped": 356.8,
+    "jit": 266.5,
+    "best": {
+      "typed": 178,
+      "untyped": 178
+    }
   },
   "accessor/setter-of-a-literal-below-two-created-objects": {
     "typed": 530.8,
@@ -1317,16 +1325,12 @@
     "jit": 375
   },
   "bytes/the-three-lengths-of-a-buffer": {
-    "typed": 44,
+    "typed": 25,
     "untyped": 286,
-    "jit": 25,
-    "best": {
-      "typed": 29,
-      "untyped": 286
-    }
+    "jit": 25
   },
   "bytes/write-words-into-a-buffer": {
-    "typed": 409.2,
+    "typed": 268.8,
     "untyped": 307,
     "jit": 341.7,
     "best": {

@@ -127,7 +127,7 @@ async function whereItIsRefused(executable: string, directory: string, onLinux: 
   return run([executable]);
 }
 
-// A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so nothing can be shown.
+// A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so the control has nothing to show. The regions are counted all the same.
 async function isRefusedNowhere() {
   if (!isMacOS || !isSupported) return false;
   using dir = tempDir("aot-without-executable-memory-control", {});
@@ -136,29 +136,33 @@ async function isRefusedNowhere() {
 const refusedNowhere = await isRefusedNowhere();
 if (refusedNowhere)
   console.error(
-    "SKIPPED: test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code",
+    "SKIPPED: the control of test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code",
   );
 
-describe.skipIf(!isSupported || refusedNowhere)("an executable needs no permission to make memory executable", () => {
-  test("the control: what asks for executable memory gets it, and is refused it there", async () => {
-    using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refuses });
-    const executable = await build(control, String(dir));
-    const hasDeniedItself = isHardened || (await run([executable, "has-it-denied-itself"])).stdout === "yes\n";
-    expect(await run([executable])).toEqual({
-      stdout: hasDeniedItself ? "refused\n" : "granted\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-    expect(await whereItIsRefused(executable, String(dir), "refuse")).toEqual({
-      stdout: "refused\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-    if (hasLinuxKernel)
-      expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
-  }, 120_000);
+describe.skipIf(!isSupported)("an executable needs no permission to make memory executable", () => {
+  test.skipIf(refusedNowhere)(
+    "the control: what asks for executable memory gets it, and is refused it there",
+    async () => {
+      using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refuses });
+      const executable = await build(control, String(dir));
+      const hasDeniedItself = isHardened || (await run([executable, "has-it-denied-itself"])).stdout === "yes\n";
+      expect(await run([executable])).toEqual({
+        stdout: hasDeniedItself ? "refused\n" : "granted\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+      expect(await whereItIsRefused(executable, String(dir), "refuse")).toEqual({
+        stdout: "refused\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+      if (hasLinuxKernel)
+        expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
+    },
+    120_000,
+  );
 
   test("an executable has no region for generated code, and the same program with the JIT has", async () => {
     using dir = tempDir("aot-without-executable-memory", {});

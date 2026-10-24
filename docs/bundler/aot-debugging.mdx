@@ -404,6 +404,24 @@ On Linux, the last 4 bytes of the executable's GNU build ID are the first 4 byte
 
 Don't run GNU `strip` on an executable that Bun built, with or without `--aot`. Afterwards it no longer finds your program, and it starts as `bun` itself.
 
+### When the build crashes or hangs
+
+If the compiler itself crashes, the crash report has a line that says what it was compiling: the function, the file and line where the function starts, and the step of the compiler.
+
+```txt
+panic: abort() called
+Stopped while compiling lineTotal (app.ts:14) in PlaceTypeTests.
+To build without that step, add --aot-disable=pass:PlaceTypeTests.
+```
+
+This is a bug in Bun. [Open an issue](https://github.com/oven-sh/bun/issues) with the report and, if you can share it, the function. If the report names an option, you can build with it until the bug is fixed. The executable behaves the same and may be slower. These lines only go to stderr. The link in the report has none of your names or paths.
+
+If a build seems stuck, press Ctrl+C, or end it with `kill` or `timeout`. Before it exits, it prints what each thread was working on and for how long.
+
+```txt
+Still compiling lineTotal (app.ts:14) in PlaceTypeTests for 312 s.
+```
+
 ## Profiles
 
 Pass the profiling flags to an executable through [`BUN_OPTIONS`](/bundler/executables#runtime-arguments-via-bun_options).

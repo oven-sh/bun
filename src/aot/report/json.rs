@@ -24,6 +24,14 @@ impl JsonWriter {
         self.write_decimal(value);
     }
 
+    /// A number with one decimal.
+    pub(super) fn tenths(&mut self, key: &str, tenths: u32) {
+        self.write_key(key);
+        self.write_decimal(u64::from(tenths / 10));
+        self.bytes.push(b'.');
+        self.write_decimal(u64::from(tenths % 10));
+    }
+
     pub(super) fn boolean(&mut self, key: &str, value: bool) {
         let text: &[u8] = if value { b"true" } else { b"false" };
         self.write_key(key);

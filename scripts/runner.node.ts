@@ -34,7 +34,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { units as partsOfOneTestFile } from "../test/aot/parts.mts";
+import { units as partsOfOneTestFile, unitsThatDraw, unitsThatOnlyDraw } from "../test/aot/parts.mts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -347,6 +347,14 @@ const { values: options, positionals: filters } = parseArgs({
     },
     /** Of the tests that are left after --include and --exclude, one in this many: others for each commit. */
     ["one-in"]: {
+      type: "string",
+      default: undefined,
+    },
+    /**
+     * `fixed`: the tests take only what is the same on every commit (AOT_TAKES in test/aot/run-programs.ts), and those that
+     * have nothing of the kind are left out. `drawn`: only the tests that take a share by the commit, and only that share.
+     */
+    ["aot-takes"]: {
       type: "string",
       default: undefined,
     },
@@ -2211,6 +2219,7 @@ async function spawnBunTest(
   const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
     ...(isPartOfOneTestFile(testPath) && { TEST_PART: testPath }),
+    ...(options["aot-takes"] && { AOT_TAKES: options["aot-takes"] }),
     ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
@@ -2764,10 +2773,27 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     }
   }
 
+  const aotTakes = options["aot-takes"];
+  if (aotTakes) {
+    const spelled = (testPath: string) => testPath.replaceAll("\\", "/");
+    // A test file draws if it calls one of the helpers that do.
+    const draws = (testPath: string) =>
+      isPartOfOneTestFile(testPath)
+        ? unitsThatDraw.has(spelled(testPath))
+        : /\b(generated|programs|programsBuiltWith|variant|joined|inShare|inShareOfList|partInShare)\(/.test(
+            readFileSync(join(cwd, testPath), "utf8"),
+          );
+    const taken = availableTests.filter(testPath =>
+      aotTakes === "drawn" ? draws(testPath) : !unitsThatOnlyDraw.has(spelled(testPath)),
+    );
+    !isQuiet && console.log("Tests that have something", aotTakes, taken.length, "/", availableTests.length);
+    availableTests.splice(0, availableTests.length, ...taken);
+  }
+
   const oneIn = parseInt(options["one-in"] ?? "1");
   if (oneIn > 1) {
     // Every shard draws the same files, because it draws by the path and the commit.
-    const commit = process.env.AOT_SHARE ?? process.env.BUILDKITE_COMMIT ?? "";
+    const commit = process.env.BUILDKITE_COMMIT ?? "";
     const isDrawn = (testPath: string) =>
       createHash("sha1")
         .update(`${commit} ${testPath.replaceAll("\\", "/")}`)

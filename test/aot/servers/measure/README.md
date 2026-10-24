@@ -56,6 +56,26 @@ halve either, and `SERVERS=express,fastify` or `ROUTES=text,json` measure a part
 - **Idle cores.** `measure.py` compares what the kernel charged to a lane's cores with what it charged to the server and the client. A row during which anything else ran there
   is marked void, and the table says how many are. Instructions, memory and sizes hold on a busy machine; requests per second, latency and CPU time do not.
 
+## Requests a second, from the start of a process to its millionth request
+
+    python3 test/aot/servers/measure/requests_a_second.py --column aot=<bun with --aot>:--aot --column jit=<the same bun> --column released=<released bun> \
+        --servers bun,hono,elysia,node,express,fastify,koa --cores 0-15 --client-cores 1 --work <a folder> --out rows.jsonl
+    python3 test/aot/servers/measure/requests_a_second.py --table rows.jsonl
+
+What a fresh process serves in its first second, its first five, its first 10,000 requests, and what it serves once it is warm (requests 200,001 to 1,000,000), with nothing attached to it: no counters, no pauses.
+
+- **One unbroken load.** `load.c` knocks at the port before the server is started. As soon as the server listens it has 64 connections with a request in flight on each, a request of each of the eight routes in turn,
+  until the millionth is answered. Times count from the moment the server was started, so the first second has in it what the process does before it listens and what a JIT compiles meanwhile.
+- **All columns in the same seconds.** Each column has a lane of its own: a core for the server, which is told that it has one, and one or more for its client. `go` and `rust`, the twins under `../go` and `../rust` on one
+  thread each, are two more columns. On a machine that others use, the same executable has served 22,000 and 31,000 requests a second five minutes apart; side by side, two builds of one program agree.
+  Lanes that share a last-level cache slow each other down by 3 to 5%, so no lane is idle (what is left over runs the first columns once more), and the columns are dealt to the lanes anew for
+  every start: with eight lanes there are seven starts, and any two columns are neighbors in three of them.
+- **CPU time from the same run.** `load.c` reads the kernel's CPU clock of the server's process, all threads, as the responses number 1,000, 10,000, 200,000 and 1,000,000 arrive.
+- **Latency.** The warm process is then sent 5,000 requests a second for four seconds, an open loop as above.
+- **A control.** `--column again=<bun with --aot>:--aot` and `--control again=aot` with `--table`: every table says how far apart two builds of the same program are.
+
+Seven servers, six columns, eight lanes of two cores and so seven starts: thirty-five minutes. `--seconds 5` ends a start after five seconds: seven more starts for the first seconds take five minutes.
+
 ## From exec to the millionth request, thread by thread
 
     python3 test/aot/servers/measure/cost_by_request.py --column aot=<bun with --aot>:--aot --column own=<the same bun> --column released=<released bun> \
@@ -92,10 +112,13 @@ rows that lose, worst first. Two minutes on sixteen cores.
 
     bun test/aot/servers/measure/tests-by-request.ts --bun <bun with --aot> --server koa
     bun test/aot/servers/measure/arrivals-by-request.ts --bun <bun with --aot> --server koa --routes text,hand
+    bun test/aot/servers/measure/failed-tests-by-request.ts --bun <bun with --aot> --server koa
 
 The first builds the server with `--aot-count-branches` and prints how many tests a request runs, and which of them have only ever gone one way: by the kind of test, by where the tested
 value comes from, by function and by place. The second builds it with `--aot-count-arrivals` and prints how often a request arrives at an operation that looks something up at run time, and with what.
-Both compare every answer, read no counter of the processor and print the same on a busy machine. `counted-server.ts` lists the options.
+The third counts branches like the first and prints the tests that a request fails: those that take the side the compiler laid out as the less likely one. Behind a failed test the rest of a function
+often runs in its generic copy, so a few failed tests stand in front of many arrivals.
+All compare every answer, read no counter of the processor and print the same on a busy machine. `counted-server.ts` lists the options.
 
 ## More
 

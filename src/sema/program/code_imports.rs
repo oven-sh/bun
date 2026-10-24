@@ -291,7 +291,7 @@ fn add_target<'r>(
         loader == HostLoader::default() && is_javascript_file(host, file.path);
     let typed_path = match can_have_typed_version {
         true => (resolver.typed_version_of(file.path))
-            .filter(|typed| !typed.is_missing)
+            .filter(|typed| typed.rejected_as.is_none())
             .map(|typed| typed.path),
         false => None,
     };

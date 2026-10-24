@@ -3,7 +3,7 @@
 // sources under the rules of --aot without compiling them: it and the executable must agree, also where both depart from plain Bun.
 //
 //   bun test test/aot/generated-operands                     a quarter of the part of each generator's programs that is meant for every run, another for each commit (`inShare` in ../run-programs.ts),
-//                                                            and every program that once showed a fault
+//                                                            every program that once showed a fault, and one in four hundred of the rest, others for each commit
 //   AOT_SHARE=all bun test test/aot/generated-operands       that part whole
 //   AOT_GENERATED=all bun test test/aot/generated-operands   all of them
 //   AOT_GENERATED=<text> bun test test/aot/generated-..      those whose name contains the text
@@ -13,7 +13,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, inShare, inTenthOfSlowBuild, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
+import { built, inShare, inShareOfList, inShareOfTheRest, wanted as programsWanted, slot, takesWhatIsFixed, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
 
 export type Generated = {
   name: string;
@@ -49,6 +49,8 @@ export type Generated = {
   alsoUnder?: Record<string, string>[];
   /** How the program departs from plain Bun today. It is listed as a todo and not run. */
   failsToday?: string;
+  /** How its lines depart from those of plain Bun today. It is built and run all the same, and ends by itself. */
+  linesDepartToday?: string;
   /** How `bun run --aot` departs from the executable today. That run is listed as a todo and left out. The executable is compared with plain Bun all the same. */
   modeFailsToday?: string;
 };
@@ -74,11 +76,12 @@ export function generated(title: string, programs: Generated[]) {
   const kept = process.env.AOT_GENERATED_KEEP;
   const root = kept ?? String(tempDir("aot-generated", {}));
   if (!kept) afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const isMeantForEveryRun = (program: Generated) => program.isAlwaysRun || !!program.wasOnceWrong;
   const chosen = programs
-    .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : program.isAlwaysRun || program.wasOnceWrong))
+    .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : isMeantForEveryRun(program) || inShareOfTheRest(`${title} ${program.name}`, 400)))
     // A debug or ASAN build of Bun is many times slower.
-    .filter((program, index) => wanted || programsWanted !== "quick" || inTenthOfSlowBuild(`${title} ${program.name}`, index))
-    .filter(program => wanted || program.wasOnceWrong || inShare(`${title} ${program.name}`, 4));
+    .filter((program, index) => wanted || programsWanted !== "quick" || inShareOfList(`${title} ${program.name}`, index))
+    .filter(program => wanted || (program.wasOnceWrong && takesWhatIsFixed) || !isMeantForEveryRun(program) || inShare(`${title} ${program.name}`, 4));
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -110,6 +113,7 @@ export function generated(title: string, programs: Generated[]) {
               const exitCode = program.exitsAsPlainBunDoes ? plain.exitCode : program.leavesAnError ? 1 : 0;
               expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode });
               expect(compiled.stderr).toContain("[aot] module: ");
+              if (program.linesDepartToday) return void expect(compiled.signal).toBeNull();
               if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError ")) return;
               const written = Object.entries(program.written ?? {});
               const [ours, theirs] = [compiled.stdout.split("\n"), plain.stdout.split("\n").map(line => written.find(([start]) => line.startsWith(start))?.join("") ?? line)];

@@ -33,7 +33,9 @@ pub struct CompiledPackageName {
 }
 
 pub struct CompiledProgram {
+    /// Every image of the executable, one behind the other. The first is that of the program the process starts with.
     pub image: &'static [u8],
+    /// Where `image` begins.
     pub backing_file: Option<ImageFile>,
     /// Ascending by `file_index`.
     pub entry_points: Box<[CompiledEntryPoint]>,
@@ -42,6 +44,8 @@ pub struct CompiledProgram {
     source_path_order: Box<[u32]>,
     /// Ascending by `path`.
     package_names: Box<[CompiledPackageName]>,
+    /// By entry point: the image of the program that begins there, a part of `image`. Empty: `image` is one image, of one program with all entry points.
+    images: Box<[&'static [u8]]>,
     module_lookup: OnceLock<ModuleLookup>,
     /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
@@ -243,6 +247,7 @@ impl CompiledProgram {
             preserves_source_paths,
             source_path_order,
             package_names: Box::new([]),
+            images: Box::new([]),
             module_lookup: OnceLock::new(),
             common_start_of_source_paths: OnceLock::new(),
         }
@@ -260,6 +265,34 @@ impl CompiledProgram {
         debug_assert!(indices.all(|index| (index as usize) < self.entry_points.len()));
         self.package_names = package_names;
         self
+    }
+
+    pub fn with_images(mut self, images: Box<[&'static [u8]]>) -> CompiledProgram {
+        debug_assert!(images.is_empty() || images.len() == self.entry_points.len());
+        self.images = images;
+        self
+    }
+
+    /// One for each program.
+    pub fn images(&self) -> impl Iterator<Item = &'static [u8]> {
+        let only = self.images.is_empty().then_some(self.image);
+        only.into_iter().chain(self.images.iter().copied())
+    }
+
+    /// Of the program that the process starts with.
+    pub fn first_image(&self) -> &'static [u8] {
+        let mut images = self.images.iter();
+        let first = images.find(|image| core::ptr::eq(image.as_ptr(), self.image.as_ptr()));
+        first.copied().unwrap_or(self.image)
+    }
+
+    /// Of the program that begins at the entry point with this key. A global that begins elsewhere runs the first program.
+    pub fn image_beginning_at(&self, module_path: &[u8]) -> &'static [u8] {
+        let mut entry_points = self.entry_points.iter().zip(&self.images);
+        let found = entry_points.find(|(entry_point, _)| {
+            entry_point.module_path == module_path || entry_point.source_path == module_path
+        });
+        found.map_or_else(|| self.first_image(), |(_, image)| *image)
     }
 
     pub fn set_module_lookup(&self, lookup: ModuleLookup) {

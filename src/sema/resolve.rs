@@ -756,6 +756,8 @@ pub struct Options {
     pub own_roots: Option<usize>,
     /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
     pub declarations_of_last_resort: Vec<u8>,
+    /// The declarations of one symbol in several files are considered in the order in which the directories list the files, whichever file refers to which.
+    pub orders_files_as_listed: bool,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
     /// `validatedFilesSpec` as an absolute path.
     pub file_specs: Vec<(Vec<u8>, Vec<u8>)>,

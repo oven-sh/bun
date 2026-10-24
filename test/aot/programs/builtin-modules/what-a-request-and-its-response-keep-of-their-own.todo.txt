@@ -1,1 +1,1 @@
-The lines of the server and of the client do not always come in the order in which plain Bun prints them.
+Not every time: the lines of the server and of the client do not always come in the order in which plain Bun prints them.

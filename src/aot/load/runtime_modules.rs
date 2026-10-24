@@ -30,6 +30,7 @@ pub(crate) enum RuntimeResolution {
 
 struct RuntimeFile {
     kind: RuntimeFileKind,
+    comes_with_module: bool,
     archive_name: Box<[u8]>,
     contents: Option<&'static [u8]>,
 }
@@ -204,6 +205,14 @@ impl RuntimeModules {
         DECLARATION_FILES.map(virtual_path)
     }
 
+    /// The file that says what `require` answers for the module at `path`.
+    pub(crate) fn declarations_of_module(&self, path: &[u8]) -> Option<Vec<u8>> {
+        let extension_start = bun_core::strings::last_index_of_char(path, b'.')?;
+        let declarations = [&path[..extension_start], b".listed.d.ts"].concat();
+        let kind = self.file_kind(&declarations)?;
+        (kind == RuntimeFileKind::Declarations).then_some(declarations)
+    }
+
     pub(crate) fn prelude_paths(&self) -> impl Iterator<Item = Vec<u8>> {
         prelude::FILES
             .iter()
@@ -300,6 +309,7 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     let mut add = |archive_name: &[u8], kind, contents| {
         let file = RuntimeFile {
             kind,
+            comes_with_module: false,
             archive_name: archive_name.into(),
             contents,
         };
@@ -335,6 +345,15 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
             contents,
         );
     }
+    for name in manifest.module_declarations() {
+        let file = RuntimeFile {
+            kind: RuntimeFileKind::Declarations,
+            comes_with_module: true,
+            archive_name: name.clone(),
+            contents: None,
+        };
+        files.insert(virtual_path(name), file);
+    }
     files
 }
 
@@ -343,7 +362,9 @@ fn collect_directories(
 ) -> FxHashMap<Vec<u8>, DirectoryEntries> {
     let top_directory = HOST_ROOT.strip_suffix(b"/").unwrap_or(HOST_ROOT);
     let mut directories: FxHashMap<Vec<u8>, DirectoryEntries> = FxHashMap::default();
-    for path in files.keys() {
+    // The project is every file that a directory lists. What says something of one module comes with that module.
+    let listed = files.iter().filter(|(_, file)| !file.comes_with_module);
+    for path in listed.map(|(path, _)| path) {
         debug_assert!(path.starts_with(HOST_ROOT));
         let mut child: &[u8] = path;
         let mut is_child_file = true;
@@ -371,7 +392,7 @@ fn collect_directories(
 
 #[cfg(test)]
 mod tests {
-    use bstr::BStr;
+    use bstr::{BStr, ByteSlice};
     use bun_sema::atom::Interner;
     use bun_sema::hir_from_data::DataValue;
     use bun_sema::session::Session;
@@ -613,7 +634,8 @@ mod tests {
             }
             file_count += entries.files.len();
         }
-        assert_eq!(file_count, runtime.files.len());
+        let listed = runtime.files.values().filter(|it| !it.comes_with_module);
+        assert_eq!(file_count, listed.count());
     }
 
     #[test]
@@ -639,6 +661,26 @@ mod tests {
             let text = runtime.read(&virtual_path(name));
             assert!(text.is_some_and(|text| !text.is_empty()));
         }
+    }
+
+    #[test]
+    fn what_require_answers_for_a_module_is_declared_beside_the_module() {
+        let runtime = runtime_modules();
+        let module = runtime.module_path(RuntimeModule::NodeFs).unwrap();
+        let declarations = runtime.declarations_of_module(module).unwrap();
+        assert_eq!(declarations, b"/$bun/js/node/fs.listed.d.ts");
+        let text = runtime.read(&declarations).unwrap();
+        let line = br#""node:fs": $ModuleValue<typeof import("./fs")>;"#;
+        assert!(text.find(line).is_some(), "{}", BStr::new(&text));
+        assert_eq!(runtime.declarations_of_module(&declarations), None);
+
+        // A file that a directory lists is part of every program, and what it names is read.
+        let (files, _) = runtime.entries(b"/$bun/js/node").unwrap();
+        assert!(files.contains(&b"fs.ts".to_vec()));
+        assert!(!files.contains(&b"fs.listed.d.ts".to_vec()));
+        let shared = runtime.read(b"/$bun/js/private.d.ts").unwrap();
+        assert!(shared.find(b"interface $BunModules {").is_some());
+        assert!(shared.find(b"$ModuleValue<typeof import(\"./").is_none());
     }
 
     #[test]

@@ -21,6 +21,10 @@ export interface ExplainCause {
   url: string;
   accesses: number;
   dependencyAccesses: number;
+  calls: number;
+  operators: number;
+  fixedByThisAlone: number;
+  estimatedPercent: number;
   function: string;
   types: string[];
   family: "unproven-type" | "unknown-code" | "mutation" | "limit";

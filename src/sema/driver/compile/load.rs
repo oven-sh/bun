@@ -10,7 +10,7 @@ use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
-use bun_sema::program::{CompileInputs, FileId, Files, RootFileNames};
+use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, Host, HostResolution, Options, Resolver, is_same_path, is_typescript_file_name,
@@ -29,7 +29,9 @@ pub fn load_program<'s>(
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");
     let entry_paths = match request.entry_points {
-        EntryPoints::Written(specifiers) => resolve_entry_points(host, request.code, specifiers)?,
+        EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
+            resolve_entry_points(host, request.code, specifiers)?
+        }
         EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
     debug_assert!(!entry_paths.is_empty());
@@ -60,6 +62,8 @@ pub fn load_program<'s>(
     let has_bun_types_installed =
         choose_libraries(host, options, request.libs, &project.config_path);
     let is_application = request.project_origin != FileOrigin::Runtime;
+    // What a file of Bun's own says is the same in every program, whichever of the others the program asks for.
+    options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types_installed {
         last_files.append(&mut host.declarations_beside_bun_types());
     }
@@ -97,7 +101,11 @@ pub fn load_program<'s>(
         root_files,
         &CompileInputs {
             entry_points: &entry_paths,
-            has_main_module: !is_configured,
+            main_module: match request.entry_points {
+                EntryPoints::Configured(..) => MainModule::Elsewhere,
+                EntryPoints::WrittenFor(_, main_module) => main_module,
+                EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
+            },
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,

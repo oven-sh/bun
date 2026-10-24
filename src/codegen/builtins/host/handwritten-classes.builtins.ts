@@ -119,11 +119,12 @@ export default b.declarations(
   constructorOnly("Worker", {
     extends: "EventTarget",
     construct: [
-      { ...startedWorker, args: { url: b.string, options: b.undefined }, uses: { url: [b.loadedAsModule] } },
+      // What the URL and `preload` name is loaded into the global of the Worker, which begins a program of its own.
+      { ...startedWorker, args: { url: b.string, options: b.undefined } },
       {
         ...startedWorker,
         args: { url: b.any, options: b.any.optional },
-        uses: { url: [b.everything, b.loadedAsModule], options: [b.everything, b.loadedAsModule] },
+        uses: { url: [b.everything], options: [b.everything] },
       },
     ],
   }),

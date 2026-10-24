@@ -1,8 +1,8 @@
 use std::time::Instant;
 
 use bun_aot::engine::{
-    EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
-    has_compiler, image_alignment, used_features,
+    EngineModuleId, EngineResult, ExecutableIdentity, TargetImageForm,
+    describe_difference_of_runtime, has_compiler, image_alignment, used_features,
 };
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
@@ -15,20 +15,25 @@ use bun_exe_format::identity::{
 use bun_options_types::Format;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileResult, ExecutableRequest, GraphRequest, target_base_public_path, to_graph_bytes,
+    CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
 use bun_standalone_graph::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
 };
 use bun_sys::Fd;
-use bun_trim::TrimPlan;
+use bun_trim::{Feature, TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
 
 use super::{
     BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest, configuration,
     reports, trimming,
 };
 use crate::cli::build_command::collect_compile_assets;
+
+unsafe extern "C" {
+    fn Bun__AOT__describeWhereThisThreadStopped(buffer: *mut u8, capacity: usize) -> usize;
+    fn Bun__AOT__describeWhatThreadsAreCompiling(buffer: *mut u8, capacity: usize) -> usize;
+}
 
 struct ProductInputs<'p> {
     module_prefix: &'p [u8],
@@ -45,6 +50,11 @@ pub(crate) fn compile_to_executable(
     }
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
+    let _reports_where_it_stops =
+        bun_crash_handler::report_stopped_builds(bun_crash_handler::BuildDescribers {
+            where_this_thread_stopped: Bun__AOT__describeWhereThisThreadStopped,
+            what_threads_are_compiling: Bun__AOT__describeWhatThreadsAreCompiling,
+        });
     bun_jsc::initialize(bun_jsc::InitializeOptions {
         is_compiler: true,
         ..Default::default()
@@ -66,7 +76,13 @@ pub(crate) fn compile_to_executable(
             });
         }
     };
-    let used = used_features(&build.engine);
+    let mut used = used_features(&build.engine);
+    for program in &build.further_programs {
+        add_used_features(&mut used, used_features(program));
+    }
+    if (used.features.iter()).any(|used| used.feature == Feature::SystemCaCertificates) {
+        request.executable.flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
+    }
     let trimming = trimming::decide_trimming(request, &used)?;
     let mut outcome = reports::collect_reports(&build, options, &used, &trimming);
 
@@ -107,8 +123,28 @@ fn write_product(
         &build.root_directory,
         &mut build.output_files,
     )?;
-    let module_ids = build.engine.entry_module_ids();
-    let entry_points = pair_entry_points(&build.entry_points, module_ids, options.runs_in_place)?;
+    // The first entry point of a program begins it.
+    let first_module_id = |program: &EngineResult| program.entry_module_ids().first().copied();
+    let module_ids: Vec<EngineModuleId> = match build.further_programs.len() {
+        0 => build.engine.entry_module_ids().to_vec(),
+        _ => core::iter::once(&build.engine)
+            .chain(&build.further_programs)
+            .map(first_module_id)
+            .collect::<Option<_>>()
+            .ok_or_else(corrupted_program)?,
+    };
+    let mut entry_points =
+        pair_entry_points(&build.entry_points, &module_ids, options.runs_in_place)?;
+    if !build.further_programs.is_empty() {
+        for (index, entry_point) in (0..).zip(&mut entry_points) {
+            entry_point.image_index = index;
+        }
+    }
+    let further_images: Vec<&[u8]> = build
+        .further_programs
+        .iter()
+        .map(|program| program.image().ok_or_else(corrupted_program))
+        .collect::<Result<_, _>>()?;
     let package_names: Vec<CompiledPackageNameInput<'_>> = build
         .package_names
         .iter()
@@ -130,6 +166,7 @@ fn write_product(
         runtime_options: settings.runtime_options,
         compiled_program: Some(CompiledProgramInput {
             image: build.engine.image().ok_or_else(corrupted_program)?,
+            further_images: &further_images,
             image_alignment: image_alignment(),
             entry_points: &entry_points,
             package_names: &package_names,
@@ -585,6 +622,33 @@ pub(super) fn pair_entry_points<'b>(
                 false => &entry_point.module_path,
             },
             module_path: &entry_point.module_path,
+            image_index: 0,
         })
         .collect())
+}
+
+/// The run time holds what any program of the executable uses. A witness is a position in the records of the first program.
+fn add_used_features(used: &mut UsedFeatures, further: UsedFeatures) {
+    for feature in further.features {
+        if !(used.features.iter()).any(|known| known.feature == feature.feature) {
+            used.features.push(UsedFeature {
+                feature: feature.feature,
+                witness: None,
+            });
+        }
+    }
+    used.causes
+        .extend(further.causes.into_iter().map(|unseen| UnseenCode {
+            cause: unseen.cause,
+            witness: None,
+        }));
+    match (&mut used.locales, further.locales) {
+        (UsedLocales::Unknown(_), _) => {}
+        (locales, UsedLocales::Unknown(_)) => *locales = UsedLocales::Unknown(None),
+        (UsedLocales::Listed(listed), UsedLocales::Listed(more)) => {
+            listed.extend(more);
+            listed.sort_unstable();
+            listed.dedup();
+        }
+    }
 }

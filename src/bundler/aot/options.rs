@@ -48,6 +48,7 @@ pub(crate) fn options_from_bundler<'r>(
         input.file_map,
         log,
     );
+    let entry_points = entry_points.map(|list| follow_links(input, list));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
@@ -202,6 +203,8 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
         code.main_fields = owned_list(&options.main_fields);
         code.has_default_main_fields = false;
     }
+    // An executable holds the file of a package that a bundle holds. `bun run` takes "main" where a package has both.
+    code.prefers_module_field = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
     code.transpiles_by_working_directory = input.aot.checks_only;
     code.tsconfig_override = (options.tsconfig_override.as_ref())
@@ -414,6 +417,36 @@ fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
     rest.iter().fold(first, |common, &path| {
         resolve_path::longest_common_path(&[common, path])
     })
+}
+
+/// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.
+fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    let mut followed: Vec<Vec<u8>> = Vec::with_capacity(entry_points.len());
+    for entry in entry_points {
+        let is_in_memory = input.file_map.is_some_and(|files| files.contains(&entry));
+        let absolute = absolute_path(input.working_directory, &entry);
+        let real = match is_in_memory {
+            true => None,
+            false => real_file_path(&absolute).filter(|real| *real != absolute),
+        };
+        let entry = real.unwrap_or(entry);
+        if !followed.contains(&entry) {
+            followed.push(entry);
+        }
+    }
+    followed
+}
+
+fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
+    let mut name = bun_paths::path_buffer_pool::get();
+    if path.len() >= name.len() {
+        return None;
+    }
+    name[..path.len()].copy_from_slice(path);
+    name[path.len()] = 0;
+    let name = bun_core::ZStr::from_buf(&name[..], path.len());
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
 }
 
 fn real_directory_path(directory: &[u8]) -> Option<Vec<u8>> {

@@ -9,7 +9,6 @@ import {
   closed,
   completeness,
   external,
-  notYet,
   open,
   retainsFeature,
   uncompiledModule,
@@ -17,7 +16,7 @@ import {
   type Use,
 } from "./runtime-use-expectations";
 import { declared, of, runtimeUse, tsconfig, withDeclarations } from "./runtime-use-harness";
-import { eachRow, gap, test } from "./supported";
+import { eachRow, test } from "./supported";
 
 const usesEveryMember = (use: Use) => use.lines.includes("property toTemporalInstant");
 const hello = { "main.ts": declared + `console.log("hello");` };
@@ -306,10 +305,7 @@ describe.concurrent("an object of the program's own, read by a computed key", ()
       `const table = {};\n(table as any)[key] = ((table as any)[key] ?? 0) + 1;\nif ((table as any)[key] > 1) console.log("again");`,
     ],
     ["a string is stored under a name", `${table}(table as any).more = "more";\n${called}`],
-    gap(notYet.everyBuiltin, [
-      "a function is stored under a key",
-      `${table}(table as any)[process.argv[3]] = () => "more";\n${called}`,
-    ]),
+    ["a function is stored under a key", `${table}(table as any)[process.argv[3]] = () => "more";\n${called}`],
     [
       "a member is incremented",
       `const table = { home: 1 };\n(table as any)[process.argv[3]]++;\n--(table as any)[process.argv[3]];\n${called}`,

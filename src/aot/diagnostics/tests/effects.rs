@@ -21,6 +21,7 @@ const MISSING_DECLARATION: &str = "export const x = missing;\n";
 const IMPLICIT_ANY: &str = "export function f(a) {\n  return a;\n}\n";
 const DUPLICATE_LABEL: &str = "again: {\n  again: {}\n}\n";
 const NOTHING: [(Kind, u32); 0] = [];
+const COUNT_OF_FULL_TYPES: (Kind, u32) = (Kind::Note, 0);
 
 const CHECKS_DECLARATION_FILES: &str = concat!(
     r#"{"compilerOptions":{"lib":["ESNext"],"target":"ESNext","module":"Preserve","#,
@@ -330,7 +331,7 @@ fn type_error_in_dependency_javascript_is_dropped() {
 #[test]
 fn type_error_in_project_typed_version_withdraws_trust() {
     let shown = check_project_typed_version("export const x = \"a\";\n", TYPE_ERROR);
-    assert_eq!(shown, [(Kind::Warn, 100009)]);
+    assert_eq!(shown, [(Kind::Warn, 100009), COUNT_OF_FULL_TYPES]);
 }
 
 #[test]
@@ -355,7 +356,7 @@ fn missing_declaration_stops_build_only_in_program_source() {
 fn style_error_stops_build_only_in_program_source() {
     assert_eq!(check(&[("main.ts", IMPLICIT_ANY)]), [(Kind::Err, 7006)]);
     assert_eq!(check_dependency_source(IMPLICIT_ANY), NOTHING);
-    let typed_version_is_used = [(Kind::Note, 0)];
+    let typed_version_is_used = [(Kind::Note, 0), COUNT_OF_FULL_TYPES];
     assert_eq!(
         check_project_typed_version(IMPLICIT_ANY, IMPLICIT_ANY),
         typed_version_is_used

@@ -34,9 +34,12 @@ for (const main of Object.keys(mains)) {
   );
 }
 
-test.todo("a `then` that a main file exports which awaits at its top level is called as often as under bun run", () =>
-  isAsPlain(
-    "main.mjs",
-    `export function then(resolve) { console.log("then is called"); resolve(); }\nawait 0;\nconsole.log("ran");\n`,
-  ),
+test(
+  "a `then` that a main file exports which awaits at its top level is called as often as under bun run",
+  () =>
+    isAsPlain(
+      "main.mjs",
+      `export function then(resolve) { console.log("then is called"); resolve(); }\nawait 0;\nconsole.log("ran");\n`,
+    ),
+  120_000,
 );

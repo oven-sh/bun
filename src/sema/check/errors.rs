@@ -15,6 +15,7 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
 use crate::util::{PositionSet, SharedSort};
+use bun_core::current_work;
 use bun_core::strings;
 
 /// The finalized diagnostics that `check_file` passes to `Program::finish_file`. Diagnostics reported inside a query
@@ -209,6 +210,10 @@ impl Checker<'_, '_> {
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
     /// one, go to the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
+        let _work = current_work::working_on(
+            current_work::Step::Check,
+            self.files().diagnostic_path(file),
+        );
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf

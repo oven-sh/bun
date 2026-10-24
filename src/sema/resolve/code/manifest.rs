@@ -29,6 +29,7 @@ pub(in crate::resolve) struct CodeManifest<'h> {
     main_fields: &'h [(&'h [u8], &'h [u8])],
     pub(super) exports: Option<ExportsEntry<'h>>,
     pub(super) imports: Option<ExportsEntry<'h>>,
+    pub(super) typed_field: Option<&'h [u8]>,
     side_effects: DeclaredSideEffects<'h>,
 }
 
@@ -242,6 +243,8 @@ fn read_manifest<'h>(
         main_fields: slice_in(&main_field_values, arena),
         exports: subpath_table(b"exports"),
         imports: subpath_table(b"imports"),
+        typed_field: non_empty_string_property(json, TYPED_CONDITION)
+            .map(|target| slice_in(target, arena)),
         side_effects: read_side_effects(arena, directory, json),
     })
 }

@@ -1218,7 +1218,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
       root === currentTime ? suspendedLanes : 0,
       null !== root.cancelPendingCommit || root.timeoutHandle !== noTimeout
     );
-    pingedLanes = root.callbackNode;
+    pingedLanes = ((root.callbackNode as RR.SchedulerTask | null | RR.Lanes) as RR.SchedulerTask | null);
     if (
       0 === suspendedLanes ||
       (root === currentTime &&
@@ -1254,7 +1254,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
         default:
           suspendedLanes = NormalPriority$1;
       }
-      pingedLanes = performWorkOnRootViaSchedulerTask.bind(null, root);
+      pingedLanes = ((performWorkOnRootViaSchedulerTask.bind(null, root) as RR.SchedulerCallback | RR.Lanes) as RR.SchedulerCallback);
       suspendedLanes = scheduleCallback$3(suspendedLanes, pingedLanes);
       root.callbackPriority = currentTime;
       root.callbackNode = suspendedLanes;
@@ -1669,7 +1669,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
           (newChild as RR.Fiber)
         );
       if ("object" === typeof newChild && null !== newChild) {
-        switch (newChild.$$typeof) {
+        switch ((newChild as RR.ReactElement).$$typeof) {
           case REACT_ELEMENT_TYPE:
             return (
               (lanes = createFiberFromTypeAndProps(
@@ -1734,7 +1734,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
           ? null
           : updateTextNode(returnFiber, oldFiber, "" + newChild, lanes);
       if ("object" === typeof newChild && null !== newChild) {
-        switch (newChild.$$typeof) {
+        switch ((newChild as RR.ReactElement).$$typeof) {
           case REACT_ELEMENT_TYPE:
             return (newChild as RR.ReactElement).key === key
               ? updateElement(returnFiber, oldFiber, (newChild as RR.ReactElement), lanes)
@@ -1788,7 +1788,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
           updateTextNode(returnFiber, (existingChildren as RR.Fiber | null), "" + newChild, lanes)
         );
       if ("object" === typeof newChild && null !== newChild) {
-        switch (newChild.$$typeof) {
+        switch ((newChild as RR.ReactElement).$$typeof) {
           case REACT_ELEMENT_TYPE:
             return (
               (existingChildren =
@@ -2031,11 +2031,11 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
     ): RR.Fiber | null {
       "object" === typeof newChild &&
         null !== newChild &&
-        newChild.type === REACT_FRAGMENT_TYPE &&
-        null === newChild.key &&
-        (newChild = newChild.props.children);
+        (newChild as RR.ReactElement).type === REACT_FRAGMENT_TYPE &&
+        null === (newChild as RR.ReactElement).key &&
+        (newChild = (newChild as RR.ReactElement).props.children);
       if ("object" === typeof newChild && null !== newChild) {
-        switch (newChild.$$typeof) {
+        switch ((newChild as RR.ReactElement).$$typeof) {
           case REACT_ELEMENT_TYPE:
             a: {
               for (var key: string | RR.ReactElement["type"] | RR.IteratorFn | null = (newChild as RR.ReactElement).key; null !== currentFirstChild; ) {
@@ -2409,7 +2409,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
     var queue: RR.UpdateQueue = workInProgress$jscomp$0.updateQueue as RR.UpdateQueue;
     hasForceUpdate = !1;
     var firstBaseUpdate: RR.Update | null = queue.firstBaseUpdate,
-      lastBaseUpdate: RR.Update | RR.Lanes | null = queue.lastBaseUpdate,
+      lastBaseUpdate: RR.Update | RR.Lanes | null = ((queue.lastBaseUpdate as RR.Update | null | RR.Lanes) as RR.Update | null),
       pendingQueue: RR.Update | null = queue.shared.pending;
     if (null !== pendingQueue) {
       queue.shared.pending = null;
@@ -3481,7 +3481,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
     workInProgressRootSkippedLanes |= hook;
     return initialValue;
   }
-  function updateDeferredValueImpl<T>(hook: RR.Hook | T | RR.Lane, prevValue: T, value: T, initialValue: T | undefined): T {
+  function updateDeferredValueImpl<T>(hook: RR.Hook | T | number, prevValue: T, value: T, initialValue: T | undefined): T {
     if (objectIs(value, prevValue)) return value;
     if (null !== currentTreeHiddenStackCursor.current)
       return (
@@ -4180,7 +4180,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
           for (nextChildren = 0; null !== nextProps; )
             (nextChildren =
               nextChildren | nextProps.lanes | nextProps.childLanes),
-              (nextProps = nextProps.sibling);
+              (nextProps = ((nextProps.sibling as RR.Fiber | null | RR.Lanes) as RR.Fiber | null));
           nextProps = nextChildren & ~prevState;
         } else (nextProps = 0), (workInProgress.child = null);
         return deferHiddenOffscreenComponent(
@@ -5021,7 +5021,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
         bailoutOffscreenComponent((current as RR.Fiber | null)!.child, (nextProps as RR.Fiber))
       );
     pushPrimaryTreeSuspenseHandler((workInProgress as RR.Fiber));
-    renderLanes = (current as RR.Fiber | null)!.child!;
+    renderLanes = (((current as RR.Fiber | null)!.child! as RR.Fiber | RR.Lanes) as RR.Fiber);
     current = (renderLanes as RR.Fiber).sibling;
     renderLanes = createWorkInProgress((renderLanes as RR.Fiber), {
       mode: "visible",
@@ -5135,14 +5135,14 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
       }
     switch (revealOrder) {
       case "forwards":
-        renderLanes = workInProgress.child;
+        renderLanes = ((workInProgress.child as RR.Fiber | null | RR.Lanes) as RR.Fiber | null);
         for (revealOrder = null; null !== renderLanes; )
           (current = renderLanes.alternate),
             null !== current &&
               null === findFirstSuspended(current) &&
               (revealOrder = renderLanes),
-            (renderLanes = renderLanes.sibling);
-        renderLanes = (revealOrder as RR.Fiber | null);
+            (renderLanes = ((renderLanes.sibling as RR.Fiber | null | RR.Lanes) as RR.Fiber | null));
+        renderLanes = ((revealOrder as RR.Fiber | null | RR.Lanes) as RR.Fiber | null);
         null === renderLanes
           ? ((revealOrder = workInProgress.child),
             (workInProgress.child = null))
@@ -5330,7 +5330,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
             current!,
             workInProgress,
             renderLanes,
-            workInProgress.pendingProps
+            ((workInProgress.pendingProps as RR.OffscreenProps | RR.Lanes) as RR.OffscreenProps)
           )
         );
       case 24:
@@ -5771,7 +5771,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
           (current as RR.Fiber | null),
           (workInProgress as RR.Fiber),
           (renderLanes as RR.Lanes),
-          (workInProgress as RR.Fiber).pendingProps
+          (((workInProgress as RR.Fiber).pendingProps as RR.OffscreenProps | RR.Lanes) as RR.OffscreenProps)
         );
       case 24:
         return (
@@ -6057,7 +6057,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
           );
     } else workInProgress.flags &= -16777217;
   }
-  function scheduleRetryEffect(workInProgress: RR.Fiber, retryQueue: RR.FiberUpdateQueue | RR.Lane): void {
+  function scheduleRetryEffect(workInProgress: RR.Fiber, retryQueue: RR.FiberUpdateQueue | number): void {
     null !== (retryQueue as RR.FiberUpdateQueue) && (workInProgress.flags |= 4);
     workInProgress.flags & 16384 &&
       ((retryQueue =
@@ -6591,7 +6591,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
     }
     throw Error(formatProdErrorMessage(156, workInProgress.tag));
   }
-  function unwindWork(current: RR.Fiber | RR.Flags | RR.SuspenseState | null, workInProgress: RR.Fiber): RR.Fiber | null {
+  function unwindWork(current: RR.Fiber | number | RR.SuspenseState | null, workInProgress: RR.Fiber): RR.Fiber | null {
     popTreeContext(workInProgress);
     switch (workInProgress.tag) {
       case 1:
@@ -9059,7 +9059,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
   }
   function isRenderConsistentWithExternalStores(finishedWork: RR.Fiber): boolean {
     for (var node: RR.Fiber = finishedWork; ; ) {
-      var tag: RR.WorkTag | RR.FunctionComponentUpdateQueue | RR.StoreConsistencyCheck[] | RR.Fiber | null = node.tag;
+      var tag: number | RR.FunctionComponentUpdateQueue | RR.StoreConsistencyCheck[] | RR.Fiber | null = node.tag;
       if (
         (0 === tag || 11 === tag || 15 === tag) &&
         node.flags & 16384 &&
@@ -9769,7 +9769,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
       flushSyncWorkAcrossRoots_impl(0, !1);
     }
   }
-  function releaseRootPooledCache(root: RR.FiberRoot, remainingLanes: RR.Lanes | RR.Cache | null): void {
+  function releaseRootPooledCache(root: RR.FiberRoot, remainingLanes: number | RR.Cache | null): void {
     0 === (root.pooledCacheLanes &= (remainingLanes as RR.Lanes)) &&
       ((remainingLanes = root.pooledCache),
       null != remainingLanes &&
@@ -10003,7 +10003,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
       null === pendingProps
         ? null
         : {
-            lanes: pendingProps.lanes,
+            lanes: pendingProps.lanes as RR.Lanes,
             firstContext: pendingProps.firstContext
           };
     workInProgress.sibling = current.sibling;
@@ -10034,7 +10034,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
         (workInProgress.memoizedState = current.memoizedState),
         (workInProgress.updateQueue = current.updateQueue),
         (workInProgress.type = current.type),
-        (renderLanes = current.dependencies),
+        (renderLanes = ((current.dependencies as RR.Dependencies | null | RR.Lanes) as RR.Dependencies | null)),
         (workInProgress.dependencies =
           null === renderLanes
             ? null
@@ -10254,11 +10254,11 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
     tag = 1;
     !0 === (isStrictMode as boolean) && (tag |= 24);
     isStrictMode = createFiber(3, null, null, tag);
-    containerInfo.current = isStrictMode;
-    isStrictMode.stateNode = containerInfo;
+    (containerInfo as RR.FiberRoot).current = isStrictMode;
+    isStrictMode.stateNode = (containerInfo as RR.FiberRoot);
     tag = createCache();
     tag.refCount++;
-    containerInfo.pooledCache = tag;
+    (containerInfo as RR.FiberRoot).pooledCache = tag;
     tag.refCount++;
     isStrictMode.memoizedState = {
       element: initialChildren,
@@ -10266,7 +10266,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
       cache: tag
     } as RR.RootState;
     initializeUpdateQueue(isStrictMode);
-    return containerInfo;
+    return (containerInfo as RR.FiberRoot);
   }
   function getContextForSubtree(parentComponent: RR.ClassInstance | RR.LegacyContext | null | undefined): RR.LegacyContext {
     if (!(parentComponent as RR.ClassInstance | null | undefined)) return emptyContextObject;
@@ -11697,8 +11697,8 @@ declare var AbortController: RR.AbortControllerConstructor;
 declare var __REACT_DEVTOOLS_GLOBAL_HOOK__: RR.DevToolsHook;
 declare namespace RR {
   type int32 = import("bun").int32;
-  type Lane = number;
-  type Lanes = number;
+  type Lane = int32;
+  type Lanes = int32;
   type LaneMap<T> = T[];
   type Flags = int32;
   type WorkTag = int32;
@@ -11708,7 +11708,7 @@ declare namespace RR {
   type UpdateTag = int32;
   type EventPriority = number;
   type SchedulerPriority = number;
-  type ExecutionContext = number;
+  type ExecutionContext = int32;
   type RootExitStatus = int32;
   type SuspendedReason = int32;
   type PendingEffectsStatus = int32;

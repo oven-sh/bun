@@ -105,6 +105,7 @@ asked for the work of every layer: the application's compiled code, Bun's own mo
 "sampled" is samples times period over the counted total: well under 1 means the kernel dropped samples, and then threads that
 mostly sleep (GC helpers) look larger than they are. Kernel cycles are estimated as user cycles times kernel CPU time over user CPU time, read in a window without hardware
 counters. The Buns must not be stripped.
+With `--events ex_ret_brn_misp,bp_de_redirect` those events are sampled as well and charged to the same layers: who owns the mispredicted branches of a request, not only its cycles.
 `compare.py rows.jsonl aot jit` prints the layers side by side and the difference, largest first.
 
     requests_per_second, instructions, cycles, cpu_us       per request; instructions and cycles in user mode
@@ -124,7 +125,7 @@ SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify",
 VALIDATED = ("bun-validated", "hono-validated", "express-validated")
 TANSTACK = ("tanstack", "tanstack-typed")
 TYPED_APP = {"koa-typed": "koa", "express-typed": "express", "fastify-typed": "fastify"}
-API_SERVERS = ["api-bun", "api-thin", "api-hono"]
+API_SERVERS = ["api-bun", "api-thin", "api-hono", "api-elysia", "api-node", "api-express", "api-fastify", "api-koa"]
 EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
 VALIDATING = ("post", "hand", "validated", "parsed")
@@ -642,8 +643,8 @@ def layers_job(options, lane, spec, server, route):
             after = each.cpu_ticks()
             line.update(each.run_window(each.window_size * 2))
             line["void"] = line.pop("disturbed")
-            for event in ("cycles", "instructions"):
-                line["layers"][event], line["heaviest"][event] = each.profile(event, line[event])
+            for event in ("cycles", "instructions", *options.events):
+                line["layers"][event], line["heaviest"][event] = each.profile(event, line[event] if event in line else line["events"][event])
             if "--aot" in column.get("flags", []):
                 line["asked"] = each.profile_callers(line["cycles"])
             line["sampled"] = each.sampled

@@ -147,6 +147,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 | None => continue,
             };
             let object = hir.skip_type_assertions(object);
+            let object = find_prototype_object_held_by(hir, bound, object).unwrap_or(object);
             if let Some(this) = find_this_held_by(hir, bound, object) {
                 if let Some(owner) = self.this_owner(file, this) {
                     let is_in_every_construction = form == StoreForm::Plain
@@ -406,6 +407,27 @@ fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> 
     };
     let value = hir.skip_type_assertions(value);
     matches!(hir[value].kind, ExprKind::This).then_some(value)
+}
+
+// `var members = F.prototype`: the `F.prototype` that the variable `object` holds from its declaration on.
+pub(super) fn find_prototype_object_held_by(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    object: ExprId,
+) -> Option<ExprId> {
+    let variable = bound_symbol(hir, bound, object)?;
+    if !bound.is_stable_binding(variable) {
+        return None;
+    }
+    let BindingInitializer::Expression(value) = bound.binding_initializer(hir, variable) else {
+        return None;
+    };
+    let value = hir.skip_type_assertions(value);
+    is_prototype_property(hir, value).then_some(value)
+}
+
+pub(super) fn is_prototype_property(hir: &hir::File<'_>, e: ExprId) -> bool {
+    matches!(hir.member_key(e), Some((_, MemberKey::Name(name))) if name == known::prototype)
 }
 
 fn bound_symbol(hir: &hir::File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {

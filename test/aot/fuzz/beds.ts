@@ -105,8 +105,8 @@ async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
 }
 
 export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>): Promise<Run> {
-  // No core files, and a limit on processor time and on memory behind the limit on wall time.
-  const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
+  // No core files, and a limit on processor time and on memory behind the limit on wall time. Where core files go to a program through a pipe, Linux asks for no limit but one: at a limit of one byte it starts no such program.
+  const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
   await using child = Bun.spawn({ cmd: limited, cwd, env: { ...environment, ...more }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
   const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
@@ -278,6 +278,11 @@ export class ProductBed implements Bed {
     if (program.extension === "ts") modes.push({ name: "erased-cold-and-very-large", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] });
     if (program.extension === "ts") modes.push({ name: "erased-and-cold", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold"] });
     modes.push({ name: "allocations-leave-the-fast-path", flags: ["--aot-testing=ForceGCSlowPaths"] });
+    // The product's own machine code with what the compiler claims to its back end asked again at run time, behind the last phase that moves a value: a false claim is a named stop even where its garbage does not show in what is printed.
+    modes.push({ name: "claims-checked", flags: ["--aot-check=ClaimsToBackEnd"] });
+    modes.push({ name: "moved-loads-checked", flags: ["--aot-check=MovedLoads"] });
+    modes.push({ name: "hot-with-claims-checked", flags: ["--aot-heat=everything-is-hot", "--aot-check=ClaimsToBackEnd"] });
+    modes.push({ name: "hot-with-moved-loads-checked", flags: ["--aot-heat=everything-is-hot", "--aot-check=MovedLoads"] });
     return modes.filter(mode => this.options.modes!.includes(mode.name));
   }
 
@@ -600,7 +605,8 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
     if (build.signal || /\bpanic(ked)?\b|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault/.test(said))
       return failure("build crash", `${build.signal ?? ""} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: ).*$/m.exec(said)?.[0] ?? "")}`.trim());
     // A mutant of a typed program may not type-check, and that stops a build.
-    if (program.extension === "ts" && /\berror: TS\d+/.test(said)) return { kind: "skipped", why: "type error" };
+    const refusal = program.extension === "ts" && /\berror: (TS\d+)/.exec(said);
+    if (refusal) return { kind: "skipped", why: `type error ${refusal[1]}` };
     const error = /^(front end: )?.*\berror\b.*$/im.exec(said)?.[0] ?? said.trim().split("\n")[0] ?? "";
     // testaot reports what the product calls an internal compiler error as `<Name>: <what it means>; function ..`.
     if (bed.name === "engine" && /^[A-Z][A-Za-z]+: /.test(said.trim())) return failure("internal compiler error", normalized(said.trim().split("\n")[0].replace(/; function .*$/, "")));

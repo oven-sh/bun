@@ -75,6 +75,24 @@ test("the example of docs/bundler/aot-compatibility.mdx: require(name) adds no b
   expect(await run([kept.executable, "node:dgram"], directory)).toEqual(found);
 });
 
+test("the name of a module of Bun's own that is written as a text brings none into a build that loads nothing by a computed name", async () => {
+  using dir = tempDir("aot-written-names", {
+    "show.js": `export function show(text) { console.log(text); }\n`,
+    "locales/en.js": `export default "en";\n`,
+    "plain.js": `import { show } from "./show.js";\nshow(process.argv[2]);\nshow("text");\nshow((await import("./locales/" + process.argv[2] + ".js")).default);\n`,
+    "written.js": `import { show } from "./show.js";\nshow(process.argv[2]);\nshow("node:dgram");\nshow((await import("./locales/" + process.argv[2] + ".js")).default);\n`,
+  });
+  const directory = String(dir);
+  const plain = await build(directory, "plain.js");
+  const written = await build(directory, "written.js");
+  expect(written.filesOfBun).toBe(plain.filesOfBun);
+  expect(await run([written.executable, "en"], directory)).toEqual({
+    stdout: "en\nnode:dgram\nen\n",
+    errors: [],
+    exitCode: 0,
+  });
+});
+
 test("a name with a constant start brings no module of Bun's own into the build either", async () => {
   const loadsWithPrefix = `const name = process.argv[2];
 try {

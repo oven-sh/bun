@@ -39,6 +39,8 @@ extern "C" size_t Bun__AOT__operationCount();
 extern "C" BunAOTBytes Bun__AOT__operationName(size_t index);
 extern "C" bool Bun__AOT__isOptionalPass(JSC::AOT::Wire::PassID);
 #endif
+extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity);
+extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, size_t capacity);
 
 // BunCompilers.cpp
 extern "C" bool Bun__AOT__hasCompiler();
@@ -48,7 +50,7 @@ extern "C" void Bun__AOT__registerHostBindings();
 
 // BunAOTRuntime.cpp
 #if ENABLE(AOT)
-extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16]);
+extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, BunAOTBytes allImages, const BunAOTImageFile* fileOrNull, const uint8_t identity[16]);
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes image, JSC::AOT::Wire::AdmittedCode* admitted);
 #endif
 extern "C" BunAOTBytes Bun__AOT__imageCode();

@@ -8,6 +8,7 @@ const beside = `function note(label: string, value: number): number { say(label)
 const talker = { valueOf(): number { say("valueOf"); return 1; } };
 const box: { value: number; flag?: boolean } = { value: 0 };
 function isOdd(value: number): boolean { return value % 2 === 1; }
+function idle(): void {}
 `;
 
 /** Sets `flag`, of type `F`, on two or more ways. `X` stands on one way, `Y` on the other. */
@@ -33,7 +34,7 @@ const partings: Record<string, { type: string; text: string }> = {
 };
 
 const work: Record<string, [statement: string, expression: string]> = {
-  nothing: [``, `0`],
+  nothing: [``, `idle()`],
   says: [`say("x");`, `say("x")`],
   counts: [`count++;`, `count++`],
   writesAField: [`box.value++;`, `box.value++`],
@@ -48,14 +49,14 @@ const meetings: Record<string, string> = {
   compared: `say(flag === (true as unknown), flag === (1 as unknown), flag === (7 as unknown), flag == null);`,
   switchedOn: `switch (flag) { case true as never: say("true"); break; case 0 as never: say("zero"); break; case 1 as never: say("one"); break; case null as never: say("null"); break; default: say("else"); }`,
   askedForItsKind: `say(typeof flag);`,
-  askedForItsKindAndUsed: `if (typeof flag === "number") say(flag + 1); else if (typeof flag === "string") say(flag.length); else say(String(flag));`,
+  askedForItsKindAndUsed: `if (typeof flag === "number") say((flag as unknown as number) + 1); else if (typeof flag === "string") say((flag as unknown as string).length); else say(String(flag));`,
   handedOn: `say(String(flag), Object.is(flag, -0));`,
   chosenBy: `say(flag ? carried : count);`,
   testedInALoop: `for (let at = 0; at < 2; at++) { if (flag) say("yes", at); else say("no", at); }`,
   testedBehindAWrite: `box.flag = !!flag; count++; if (box.flag) say("yes"); else say("no");`,
   testedWithAnother: `if (flag && now > 1) say("both"); else if (flag || now > 2) say("one"); else say("none");`,
   answered: `say((() => { if (flag) return "yes"; return "no"; })());`,
-  optionalRead: `say((flag as { at?: number } | null | undefined)?.at);`,
+  optionalRead: `say((flag as unknown as { at?: number } | null | undefined)?.at);`,
   defaulted: `say(String(flag ?? "none"), String(flag || "empty"));`,
 };
 

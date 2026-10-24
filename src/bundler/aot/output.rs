@@ -44,7 +44,11 @@ pub(crate) fn finish_build(
     names_of_entry_points: &EntryPointNames<'_>,
     embedded: Vec<OutputFile>,
 ) -> AotBuild {
-    let Compilation { engine, summary } = compilation;
+    let Compilation {
+        engine,
+        summary,
+        further_programs,
+    } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,
         folders: _,
@@ -59,6 +63,7 @@ pub(crate) fn finish_build(
     AotBuild {
         output_files,
         engine,
+        further_programs,
         entry_points,
         root_directory: Vec::new(),
         package_names: Vec::new(),

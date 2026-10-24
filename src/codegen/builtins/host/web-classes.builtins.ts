@@ -276,6 +276,26 @@ const readsBlob = (settledValue: b.TableType) =>
 
 const parsedBody = { typedResultForm: { form: "ParsedBody", source: "this" } } as const;
 
+// What json() parses: the string that holds the body, the text behind the UTF-16 mark of a Blob, otherwise the bytes.
+// The call of json() that this one stands for has matched its receiver, by a test where the type does not say it.
+const jsonSourceOfBody = {
+  ...anyCode,
+  args: { body: b.any },
+  returns: settledWithAnyReason(b.union(b.instance("Uint8Array").exactly, b.string).fresh),
+  uses: { body: stateUpdate },
+  reads: externalState,
+  writes: externalState,
+  directEntry: {
+    symbol: "Body__jsonSource",
+    declaration: 'extern "C" SYSV_ABI JSC::EncodedJSValue Body__jsonSource(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
+    headers: [],
+    parameters: [
+      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
+      { value: "Value", cppType: "JSC::EncodedJSValue" },
+    ],
+  },
+} satisfies b.FunctionField;
+
 // The bytes of a stream are handed to what `FormData.from` holds, which a program can replace, and a promise that is resolved with a FormData looks for `then` on a prototype that is not locked.
 const readsFormData = readsBody(b.any);
 
@@ -506,6 +526,7 @@ export default b.declarations(
 
   b.construction("%Blob%", blobConstruction),
   declareMethods("Blob", membersOfBlob),
+  b.static("%CompilerHelpers%.jsonSourceOfBody", jsonSourceOfBody),
 
   // What Bun.file makes of an "s3://" path, and an S3Client of a key.
   b.class("%S3File%", {

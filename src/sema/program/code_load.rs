@@ -11,10 +11,20 @@ use crate::resolve::{
     TypedVersionOrigin,
 };
 
+/// What `import.meta.main` is in an entry point. In every other file it is false.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MainModule {
+    /// The process starts with an entry point: with the only one, or with one of them.
+    EntryPoint,
+    /// The process or a Worker starts with the entry point. In a Worker it is false, and `require.main` is the module all the same.
+    EntryPointOfProcessOrWorker,
+    /// A part of a program, which starts somewhere else.
+    Elsewhere,
+}
+
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
-    /// False for a part of a program, which starts somewhere else.
-    pub has_main_module: bool,
+    pub main_module: MainModule,
     pub code: &'a CodeOptions,
     pub fold: &'a FoldInputs<'s>,
     pub atoms: Interner<'s>,
@@ -176,6 +186,8 @@ pub(super) struct CodeFiles<'s, 'r> {
     pub(super) entry_points: Vec<u32>,
     pub(super) entry_of_file: Vec<Option<u32>>,
     pub(super) is_in_types_program: Vec<bool>,
+    /// `Module::path` of the files that `loader_of_code_in_place_of_typed_file` answers for.
+    pub(super) typed_files_with_other_code: FxHashSet<Vec<u8>>,
 }
 
 pub(super) type ModuleSlots<'s> = Vec<Option<ArenaBox<'s, Module<'s>>>>;

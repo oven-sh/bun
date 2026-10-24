@@ -103,6 +103,11 @@ const isToldWhatToTake = seedOfShare === "all" || process.env.AOT_PROGRAMS !== u
 // Most helpers have a rule of their own for the quick subset. One that has none passes `alsoOfQuickSubset`, or a debug or ASAN build would take everything.
 const takesEverything = (alsoOfQuickSubset: boolean) => isToldWhatToTake || (wanted === "quick" && !alsoOfQuickSubset);
 let hasSaidShare = false;
+// CI has two steps for these tests. One may hold up a merge, so it is the same on every commit: AOT_TAKES=fixed takes no share at all, only what every run takes. The other shows what
+// the shares find and holds up nothing: AOT_TAKES=drawn takes the shares alone. A run that is told neither takes both.
+const takes = process.env.AOT_TAKES;
+/** Whether this run takes what every run takes: the programs of a list, what once went wrong. */
+export const takesWhatIsFixed = takes !== "drawn";
 
 /** For a tool that takes every n-th program, starting at the i-th, as `<i>/<n>`: part `part` of `parts`, or, in a run that takes a share, one of `oneIn` pieces of that part. */
 export function partInShare(part: number, parts: number, oneIn: number, alsoOfQuickSubset = false): string {
@@ -112,14 +117,18 @@ export function partInShare(part: number, parts: number, oneIn: number, alsoOfQu
 
 /** Whether this run takes the program, the case or the pair `name`, of whose kind a run takes one in `oneIn`. */
 export function inShare(name: string, oneIn: number, alsoOfQuickSubset = false): boolean {
+  if (takes === "fixed") return false;
   if (takesEverything(alsoOfQuickSubset)) return true;
   if (!hasSaidShare) console.error(`SHARE: this run takes a part of the programs. AOT_SHARE=${seedOfShare} takes the same part, AOT_SHARE=all takes all of them`);
   hasSaidShare = true;
   return BigInt(Bun.hash(seedOfShare + " " + name.replaceAll("\\", "/"))) % BigInt(oneIn) === 0n;
 }
 
-/** Whether a debug or ASAN build of Bun, which takes a tenth of what others take, takes `name`, the `index`-th of its list: by the commit, as every share, so that in time all are taken. */
-export const inTenthOfSlowBuild = (name: string, index: number) => (isToldWhatToTake ? index % 10 === 0 : inShare(name, 10, true));
+/** For what no run is meant to take whole: one in `oneIn` by the commit, so that in time all are taken, and nothing where the run is told what to take. */
+export const inShareOfTheRest = (name: string, oneIn: number) => !isToldWhatToTake && inShare(name, oneIn, true);
+
+/** For what takes one in `oneIn` of a list, as a debug or ASAN build of Bun takes a tenth of many: whether it takes `name`, the `index`-th. By the commit, as every share, so that in time all are taken; every `oneIn`-th where the run is told what to take. */
+export const inShareOfList = (name: string, index: number, oneIn = 10) => (isToldWhatToTake ? index % oneIn === 0 : inShare(name, oneIn, true));
 
 // One build takes about as long as the whole default limit of bun:test. This holds for every file that imports this one or supported.ts.
 setDefaultTimeout(120_000);
@@ -299,11 +308,18 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   const timeout = cmd.includes("--aot-check=verify-each-pass") || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
   const start = performance.now();
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
+  // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
+  const secondsToAnswer = 3;
+  const isBuild = behindTheFlag && (cmd.includes("build") || cmd.includes("compile"));
+  const asked = isBuild && !isWindows ? setTimeout(() => proc.kill("SIGTERM"), timeout - secondsToAnswer * 1000) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  clearTimeout(asked);
   const milliseconds = Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
   const result = { stdout, stderr, exitCode, signal: proc.signalCode };
-  if (proc.signalCode === "SIGKILL" && performance.now() - start >= timeout) {
-    console.error(`KILLED at its time limit of ${timeout / 1000} s, with ${Math.round(milliseconds / 1000)} s of processor time used: ${cmd.at(-1)}`);
+  const lasted = performance.now() - start;
+  if ((proc.signalCode === "SIGKILL" && lasted >= timeout) || (proc.signalCode === "SIGTERM" && asked && lasted >= timeout - secondsToAnswer * 1000)) {
+    const stillCompiling = stderr.split("\n").filter(line => line.startsWith("Still "));
+    console.error([`KILLED at its time limit of ${timeout / 1000} s, with ${Math.round(milliseconds / 1000)} s of processor time used: ${cmd.at(-1)}`, ...stillCompiling].join("\n  "));
     killedWhenTimeWasUp.add(result);
     if (milliseconds >= timeout / 10) atWorkWhenTimeWasUp.add(result);
   }
@@ -315,7 +331,10 @@ const atWorkWhenTimeWasUp = new WeakSet<object>();
 const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => Number(env.BUN_JSC_slowPathAllocsBetweenGCs) <= 7;
 const collectsEveryMillisecond = (env: Record<string, string | undefined>) => env.BUN_JSC_collectContinuously === "1";
 
-export const withoutCoreDump = (cmd: string[]) => (isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd]);
+// Where the kernel hands a core to a program (systemd-coredump, apport) it starts that program whatever the limit is, but for a limit of one byte, and the process that a signal ended is
+// gone only when the program has read it: seconds on a busy machine.
+export const withoutCoreDump = (cmd: string[]) =>
+  isWindows ? cmd : ["/bin/sh", "-c", `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`, "--", ...cmd];
 /** For a process that is meant to end by a signal. CI's runner books a report that a passing file leaves on the next file that fails. */
 export const withoutCrashReport: Record<string, string> = { BUN_ENABLE_CRASH_REPORTING: "0", ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }) };
 
@@ -424,7 +443,7 @@ function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
 
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");
-  const flags = ["--aot-check=validate-references", ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected ? ["--explain=statistics"] : [])];
+  const flags = ["--aot-check=validate-references", ...(isASAN || isDebug ? ["--aot-check=ClaimsToBackEnd"] : []), ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected ? ["--explain=statistics"] : [])];
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, ...program.entryPoints, "--outfile", executable];
   const ran = await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment });
   const build = { ...ran, executable };
@@ -585,8 +604,11 @@ const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
 // AOT_PROGRAMS=quick names the same tenth every time. The tenth that a debug or ASAN build takes by itself goes by the commit, as every share does: in time all are taken.
 const isInTenthOfSlowBuild = (path: string) =>
   process.env.AOT_PROGRAMS === undefined && seedOfShare !== "all" ? inShare(inPrograms(path), 10, true) : isQuick(path);
+/** For what walks all folders and takes few: one program in ten, or in three, others for each commit and each `label`, so that in time all are taken. A run that is told what to take gets the same ones every time. */
+export const inTenthOfAll = (label: string, path: string) => (isToldWhatToTake ? isQuick(path) : inShare(`${label} tenth ${inPrograms(path)}`, 10, true));
+export const inThirdOfAll = (label: string, path: string) => (isToldWhatToTake ? (hash(path) >> 32n) % 3n === 0n : inShare(`${label} third ${inPrograms(path)}`, 3, true));
 export const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
-const runsWithASAN = (path: string) => isASAN && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
+const runsWithASAN = (path: string) => isASAN && takesWhatIsFixed && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
 
 function define(title: string, chosen: string[], settings: Omit<Setup, "folder" | "carrier">) {
   const folder = String(tempDir("aot-programs", {}));
@@ -636,6 +658,9 @@ export function programs(topic: string, part = 1, parts = 1) {
  * as a path below ./programs without its extension. Each is judged as programs() judges it. A line that names no program fails.
  */
 export function programsInEveryRun(part = 1, parts = 1) {
+  // A machine that runs other tests beside this one moves a ratio of two times. What compares times says so where it leaves the sanitizer out ("skipWithASAN": "a clock"), and is taken by
+  // the step of CI that holds up nothing.
+  const isJudgedByClock = (path: string) => existsSync(besideOf(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipWithASAN ?? "");
   const listed = readFileSync(join(import.meta.dir, "programs-in-every-run.txt"), "utf8").split(/\r?\n/).filter(line => line !== "");
   const nameOf = (path: string) => besideOf(inPrograms(path)).replaceAll("\\", "/");
   const all = [...new Set(["counterexamples", ...listed.map(name => name.slice(0, name.indexOf("/")))])].flatMap(find).filter(path => !groups.has(path));
@@ -646,10 +671,54 @@ export function programsInEveryRun(part = 1, parts = 1) {
     "compile/aot/in-every-run",
     taken(
       all.filter(path => Number((hash(path) >> 24n) % BigInt(parts)) === part - 1),
-      path => (nameOf(path).startsWith("counterexamples/") || isListed.has(nameOf(path))) && (wanted === "" || wanted === "quick" || isWanted(path)),
+      path => (isJudgedByClock(path) ? takes !== "fixed" : takesWhatIsFixed) && (nameOf(path).startsWith("counterexamples/") || isListed.has(nameOf(path))) && (wanted === "" || wanted === "quick" || isWanted(path)),
     ),
     { buildFlags: [], runEnv: {}, erasesTypes: true },
   );
+}
+
+/** The mark that leaves a program out because it fails with the Bun under test, as it is named to whoever takes it out. */
+function markOfFailure(path: string): string | undefined {
+  const name = inPrograms(besideOf(path)).replaceAll("\\", "/");
+  const kept = join(root, name);
+  const options: { skipWithASAN?: string; todoOn?: Record<string, string> } = existsSync(kept + ".json") ? JSON.parse(readFileSync(kept + ".json", "utf8")) : {};
+  // Such a build is many times slower, and what fails everywhere is looked at elsewhere.
+  if (isASAN) return /^TODO\b/.test(options.skipWithASAN ?? "") ? `"skipWithASAN" in ${name}.json` : undefined;
+  if (existsSync(kept + ".todo.txt")) return readFileSync(kept + ".todo.txt", "utf8").startsWith("Not every time:") ? undefined : `${name}.todo.txt`;
+  return options.todoOn?.[process.platform] ? `"todoOn" in ${name}.json` : undefined;
+}
+
+/**
+ * A mark that outlives its cure hides the next fault. The programs that are left out because they fail (`<name>.todo.txt`, "todoOn" for this platform, and with AddressSanitizer a
+ * "skipWithASAN" that begins with TODO) are run as programs() runs the others, and one that does what is expected is red: its mark goes out. What fails on one run and not on the
+ * next is not asked: a `<name>.todo.txt` that begins with "Not every time:", and ./programs/untyped-speed, where a clock decides.
+ */
+export function programsMarkedAsFailing() {
+  const folder = String(tempDir("aot-programs", {}));
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  const isAsked = (path: string) => takes !== "fixed" && !inPrograms(path).startsWith("untyped-speed") && (wanted === "" || wanted === "quick" || isWanted(path));
+  const chosen = taken(
+    find().filter(path => !groups.has(path)),
+    path => isAsked(path) && markOfFailure(path) !== undefined,
+  );
+  describe.concurrent("compile/aot/marked-as-failing", () => {
+    if (unsupported) return void test.skip(unsupported, () => {});
+    if (chosen.length === 0) test.skip("no program selected", () => {});
+    for (const path of chosen) {
+      const mark = markOfFailure(path);
+      test(
+        inPrograms(besideOf(path)).replaceAll("\\", "/"),
+        async () => {
+          const outcome = await slot(() => run(path, besideOf(path), { folder, carrier: [], buildFlags: [], runEnv: {}, erasesTypes: true })).then(
+            () => "it does what is expected: the mark goes out",
+            () => "it fails",
+          );
+          expect({ mark, outcome }).toEqual({ mark, outcome: "it fails" });
+        },
+        600_000,
+      );
+    }
+  });
 }
 
 /**
@@ -674,7 +743,7 @@ export function programsBuiltWith(topic: string, label: string, buildFlags: stri
       path =>
         (wanted === "quick" ? isInTenthOfSlowBuild(path) || runsWithASAN(path) : isWanted(path)) &&
         // A list of names is a list of programs that once went wrong so: all of them are taken.
-        (only ? only.includes(nameOf(path)) : inShare(label + " " + inPrograms(path), 10)),
+        (only ? takesWhatIsFixed && only.includes(nameOf(path)) : inShare(label + " " + inPrograms(path), 10)),
     )
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt"))
       // As in variant(): <program>.json may say why the program is left out under this label.
@@ -701,10 +770,8 @@ export function variant(
   always: string | string[] = [],
   stubCopies?: number,
 ) {
-  const isAlwaysTaken = (path: string) => [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
+  const isAlwaysTaken = (path: string) => takesWhatIsFixed && [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
   // Two draws, since a group is drawn before its programs have names: one path or group in forty, then one program in ten.
-  const isInTenth = (path: string) => (isToldWhatToTake ? isQuick(path) : inShare(`${label} tenth ${inPrograms(path)}`, 10, true));
-  const isInThird = (path: string) => (isToldWhatToTake ? (hash(path) >> 32n) % 3n === 0n : inShare(`${label} third ${inPrograms(path)}`, 3, true));
   define(
     `compile/aot/variant/${label}`,
     taken(
@@ -715,9 +782,9 @@ export function variant(
         .filter(
           path =>
             isAlwaysTaken(path) ||
-            (inShare(label + " " + inPrograms(path), 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || isInThird(path))),
+            (inShare(label + " " + inPrograms(path), 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || inThirdOfAll(label, path))),
         ),
-      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? isInTenth(path) : isWanted(path)),
+      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? inTenthOfAll(label, path) : isWanted(path)),
     )
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt"))

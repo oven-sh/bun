@@ -1,8 +1,0 @@
-{
-  "typed.fill.ts": {
-    "output": "x [7,true,9]\nextra [3,\"e\",[\"x\",\"y\",\"extra\"]]\nwrong THROWS TypeError [--aot: expected number, got string \"3\"]\nby create [11,true,11,8,8]\nhalf [5,\"undef\",null,null]\n"
-  },
-  "typed.generated_code.ts": {
-    "output": "add 4\nreads typed 7\nwrites typed [\"x,y,extra\",10,12]\nmakes typed [7,true,13]\nwith \"s:2:2\"\ncalls typed THROWS TypeError [--aot: expected number, got string \"2\"]\n"
-  }
-}

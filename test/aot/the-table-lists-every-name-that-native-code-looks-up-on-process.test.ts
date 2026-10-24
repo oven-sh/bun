@@ -20,10 +20,10 @@ function lookupsIn(file: string): Lookup[] {
   const text = readFileSync(join(bindings, file), "utf8");
   const receiver =
     file === "BunProcess.cpp"
-      ? String.raw`(?:\bprocess|processObject\(\)|\bthis)`
-      : String.raw`(?:\bprocess|processObject\(\))`;
+      ? String.raw`(?:(?:\bprocess|processObject\(\)|\bthis)->|\breturn )`
+      : String.raw`(?:\bprocess|processObject\(\))->`;
   const lookup = new RegExp(
-    String.raw`${receiver}->(?:get|getIfPropertyExists)\(\w+, (?:Identifier::fromString\(vm, "([^"]+)"_s\)|(\w+))\)`,
+    String.raw`${receiver}(?:get|getIfPropertyExists)\(\w+, (?:Identifier::fromString\((?:vm|\w+->vm\(\)), "([^"]+)"_s\)|(\w+))\)`,
     "g",
   );
   return Array.from(text.matchAll(lookup), match => {

@@ -539,11 +539,14 @@ export default b.declarations(
       "NodeTLS.cpp",
       "getBundledRootCertificates",
       "getExtraCACertificates",
-      "getSystemCACertificates",
       "loadExtraCACertificates",
       "parseCACertificates",
       "selectServerName",
     ),
+  ),
+  extendAll(
+    ["Tls", "SystemCaCertificates"],
+    ...nativeBindings("NewCppFunction", "NodeTLS.cpp", "getSystemCACertificates"),
   ),
 
   // reload() changes none of these: the server stays what its first options made it.

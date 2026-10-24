@@ -36,8 +36,11 @@ const tablePath = process.env.AOT_BUILTINS_TABLE ?? null;
 const filter = new RegExp(process.env.AOT_BUILTINS_FILTER ?? ".");
 const secondsPerAttempt = 600;
 // CI ends a test file after five minutes, so a call that does not come back has to be found well before that.
+// They are seconds in which its process ran or had nothing to run: on a machine with more to do than it has processors a call waits for its turn, and that is not the call's time.
 const secondsPerCall = Number(process.env.AOT_BUILTINS_SECONDS_A_CALL) || 45;
-const executableEnv = { ...bunEnv, BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT: "1" };
+const secondsAsleepPerCall = 10;
+// At a level above 0 every matcher of expect() ends with a collection: thousands of them for one entry, ten times the time of the calls themselves.
+const executableEnv = { ...bunEnv, BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
 const maxAttemptsPerWorker = 400;
 
 const dump: TableDump = tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8"));
@@ -233,6 +236,13 @@ const wrongEntries: WrongEntry[] = [
     applyTo: overload => ({ ...overload, capability: "heap" }),
   },
   {
+    title: "new ReadableStream that is handed its source and runs no other code",
+    path: "ReadableStream",
+    mode: "Construct",
+    column: "parameters[0].protocols",
+    applyTo: overload => ({ ...overload, runsOnlyOperandCode: true }),
+  },
+  {
     title: "Array.prototype.push that stores nothing by key",
     path: "Array.prototype.push",
     mode: "Call",
@@ -324,7 +334,7 @@ export function differential(part: number, parts: number): void {
     });
 
   const reports = new Map<string, WorkerReport>();
-  const endedProcess = new Set<string>();
+  const endedProcess = new Map<string, string>();
 
   function readReports(path: string): void {
     if (!existsSync(path)) return;
@@ -332,6 +342,18 @@ export function differential(part: number, parts: number): void {
       if (line === "") continue;
       const report: WorkerReport = JSON.parse(line);
       reports.set(keyOf(report.entry, report.mode), report);
+    }
+  }
+
+  // Nothing where the system does not say.
+  function processorSecondsOf(pid: number): number | undefined {
+    try {
+      const line = readFileSync(`/proc/${pid}/stat`, "utf8");
+      // Behind the name, which may hold blanks: the state is the third field, the ticks in user and in kernel mode the fourteenth and fifteenth.
+      const fields = line.slice(line.lastIndexOf(")") + 2).split(" ");
+      return (Number(fields[11]) + Number(fields[12])) / 100;
+    } catch {
+      return undefined;
     }
   }
 
@@ -370,9 +392,29 @@ export function differential(part: number, parts: number): void {
       const noteAtStart = noteOfCall();
       let note = noteAtStart;
       let notedAt = Date.now();
+      let usedAtNote = processorSecondsOf(worker.pid);
+      let [used, usedSince] = [usedAtNote, notedAt];
+      let isOutOfTime = false;
+      let timeOfCall = "";
       const watch = setInterval(() => {
-        if (note !== noteOfCall()) [note, notedAt] = [noteOfCall(), Date.now()];
-        else if (note !== noteAtStart && Date.now() - notedAt > secondsPerCall * 1000) worker.kill("SIGKILL");
+        const [now, usedNow] = [Date.now(), processorSecondsOf(worker.pid)];
+        if (usedNow !== used) [used, usedSince] = [usedNow, now];
+        if (note !== noteOfCall()) [note, notedAt, usedAtNote] = [noteOfCall(), now, usedNow];
+        else if (note !== noteAtStart && now - notedAt > secondsPerCall * 1000) {
+          const isAsleep = now - usedSince > secondsAsleepPerCall * 1000;
+          const hasWaitedLong = now - notedAt > 4 * secondsPerCall * 1000;
+          if (
+            usedNow === undefined ||
+            usedAtNote === undefined ||
+            isAsleep ||
+            hasWaitedLong ||
+            usedNow - usedAtNote > secondsPerCall
+          ) {
+            isOutOfTime = true;
+            timeOfCall = `${Math.round((now - notedAt) / 1000)} s, of which it ran ${usedNow === undefined || usedAtNote === undefined ? "?" : Math.round(usedNow - usedAtNote)} s${isAsleep ? ` and none of the last ${secondsAsleepPerCall} s` : ""}`;
+            worker.kill("SIGKILL");
+          }
+        }
       }, 1000);
       await worker.exited;
       clearInterval(watch);
@@ -384,7 +426,14 @@ export function differential(part: number, parts: number): void {
         remaining = remaining.slice(position);
         continue;
       }
-      endedProcess.add(keyOf(...current));
+      endedProcess.set(
+        keyOf(...current),
+        isOutOfTime
+          ? `no answer in ${timeOfCall}`
+          : worker.signalCode
+            ? `ended by ${worker.signalCode}`
+            : `exit code ${worker.exitCode}`,
+      );
       remaining = remaining.slice(1);
     }
     readReports(reportsPath);
@@ -408,7 +457,8 @@ export function differential(part: number, parts: number): void {
     const key = keyOf(entry.token, mode);
     const report = reports.get(key);
     if (report?.failure !== undefined) return [`${overload.token}: the test itself threw: ${report.failure}`];
-    if (endedProcess.has(key)) return [`${overload.token}: the process ended or did not come back`];
+    if (endedProcess.has(key))
+      return [`${overload.token}: the process ended or did not come back: ${endedProcess.get(key)}`];
     if (!report) return [`${overload.token}: no report`];
     if (report.unreachable !== undefined) return [`${overload.token}: it is not called: ${report.unreachable}`];
     const checked = report.overloads.find(({ token }) => token === overload.token);

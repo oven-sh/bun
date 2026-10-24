@@ -46,7 +46,7 @@ async function answerOf(folder: string) {
   );
   const said = (built.stdout + built.stderr)
     .split(/\r?\n/)
-    .filter(line => /full types|without (its |their )?types/.test(line));
+    .filter(line => /full types|without (its |their )?types/.test(line) && !/ full types, and /.test(line));
   const ran = await spawned(
     [join(folder, isWindows ? "orders.exe" : "orders"), "1000", "0", "3", "2", "0"],
     folder,

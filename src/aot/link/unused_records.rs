@@ -120,9 +120,23 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
 }
 
 /// Says of a plain record that nothing in the program makes an object with it: it only describes objects.
-pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) {
+/// Answers whether the program writes a property under `asked_name`.
+pub(super) fn mark_unused_records(
+    layouts: &mut [Layout],
+    input: &UseInput<'_>,
+    asked_name: &[u8],
+) -> bool {
     let is_allocated = find_allocated_layouts(input);
     let is_written = find_written_keys(layouts, input);
+    let asked_key = input.strings.find(asked_name).and_then(|text| {
+        input.property_keys.find(&PropertyKey {
+            kind: PropertyKeyKind::Text,
+            text: Some(text),
+            ..PropertyKey::default()
+        })
+    });
+    let is_asked_name_written =
+        asked_key.is_some_and(|key| is_written[key.index()].load(Ordering::Relaxed));
     input.for_each_layout(layouts, &is_allocated, &|layout, is_allocated| {
         if !is_plain_record(layout) {
             return;
@@ -140,6 +154,7 @@ pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) 
             }
         }
     });
+    is_asked_name_written
 }
 
 #[cfg(test)]

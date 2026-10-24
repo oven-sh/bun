@@ -202,6 +202,8 @@ pub(crate) trait BlobExt {
     fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    /// A promise for [`BlobExt::to_json_source`].
+    fn json_source(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
     fn write(
@@ -296,6 +298,8 @@ pub(crate) trait BlobExt {
     fn to_string_transfer(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
+    /// What `to_json` parses: the bytes, or the text behind a UTF-16 mark.
+    fn to_json_source(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
     /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
@@ -1174,6 +1178,11 @@ impl BlobExt for Blob {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
+    }
+
+    fn json_source(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        let _store = self.store.get().clone();
+        JSPromise::wrap(cx.global(), |_| self.to_json_source(cx, Lifetime::Clone))
     }
 
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -2557,6 +2566,19 @@ impl BlobExt for Blob {
         }
     }
 
+    fn to_json_source(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue> {
+        if self.needs_to_read_file() {
+            return Ok(self.do_read_file::<ToJsonSourceWithBytesFn>(cx));
+        }
+        if self.is_s3() {
+            return self.do_read_from_s3::<ToJsonSourceWithBytesFn>(cx);
+        }
+        match json_text_behind_mark(cx.global(), self.shared_view()) {
+            Some(text) => text,
+            None => self.to_uint8_array(cx, lifetime),
+        }
+    }
+
     /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.
     ///
     /// # Safety
@@ -2579,20 +2601,7 @@ impl BlobExt for Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // Reinterpret as u16: drop a trailing odd byte.
-            let buf = &buf[..buf.len() & !1];
-            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => BunString::clone_utf16(units),
-                Err(_) => {
-                    let units: Vec<u16> = buf
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
-                        .collect();
-                    BunString::clone_utf16(&units)
-                }
-            };
+            let out = decode_utf16_le(buf);
             // Compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -2619,25 +2628,10 @@ impl BlobExt for Blob {
             return Ok(parsed);
         }
 
-        if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            if let Some(external) = strings::to_utf16_alloc(buf, false, false)
-                .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?
-            {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
-                }
-                let result =
-                    EncodedSlice::utf16(&external).to_json_object(global, CompiledJsonParser::Skip);
-                drop(external);
-                return result;
-            }
-
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
-            }
+        if could_be_all_ascii == Some(true) {
+            return EncodedSlice::latin1(buf).to_json_object(global, CompiledJsonParser::Skip);
         }
-
-        EncodedSlice::latin1(buf).to_json_object(global, CompiledJsonParser::Skip)
+        EncodedSlice::utf8(buf).to_json_object(global, CompiledJsonParser::Skip)
     }
 
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
@@ -3935,6 +3929,35 @@ impl URLSearchParamsConverter {
 // ──────────────────────────────────────────────────────────────────────────
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
+
+/// A trailing odd byte is dropped.
+fn decode_utf16_le(bytes: &[u8]) -> BunString {
+    let bytes = &bytes[..bytes.len() & !1];
+    match bytemuck::try_cast_slice::<u8, u16>(bytes) {
+        Ok(units) => BunString::clone_utf16(units),
+        Err(_) => {
+            let units: Vec<u16> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .collect();
+            BunString::clone_utf16(&units)
+        }
+    }
+}
+
+/// Where `to_json_with_bytes` does not parse the bytes as UTF-8: the text that it parses behind a
+/// UTF-16 mark, and the error that it throws for a mark alone.
+fn json_text_behind_mark(global: &JSGlobalObject, bytes: &[u8]) -> Option<JsResult<JSValue>> {
+    match strings::BOM::detect_and_split(bytes) {
+        (Some(_), []) => Some(Err(
+            global.throw_value(Blob__createEmptyJSONBodyError(global))
+        )),
+        (Some(strings::BOM::Utf16Le), text) => Some(decode_utf16_le(text).into_js(global)),
+        _ => None,
+    }
+}
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__createEmptyJSONBodyError(global: &JSGlobalObject) -> JSValue {
@@ -5923,6 +5946,7 @@ impl Drop for TemporaryBytes {
 // Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
 pub(crate) struct ToStringWithBytesFn;
 pub(crate) struct ToJsonWithBytesFn;
+pub(crate) struct ToJsonSourceWithBytesFn;
 pub(crate) struct ToArrayBufferWithBytesFn;
 pub(crate) struct ToUint8ArrayWithBytesFn;
 pub(crate) struct ToFormDataWithBytesFn;
@@ -5952,6 +5976,19 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
                 Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by),
             }
         }
+    }
+}
+impl read_file::ReadFileToJs for ToJsonSourceWithBytesFn {
+    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        // SAFETY: see `ToStringWithBytesFn::call`.
+        let Some(text) = json_text_behind_mark(g, unsafe { &*by }) else {
+            return ToUint8ArrayWithBytesFn::call(b, g, by, l);
+        };
+        if l == Lifetime::Temporary {
+            // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
+            unsafe { drop(bun_core::heap::take(by)) };
+        }
+        text
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
@@ -6219,6 +6256,27 @@ impl Any {
         }
     }
 
+    /// What `to_json` parses, for the JSON parser of a compiled program: the string that holds the
+    /// body, the text behind the UTF-16 mark of a Blob, otherwise the bytes. A UTF-8 mark stays in the bytes.
+    /// Where `to_json` answers null without parsing, the text is "null".
+    pub(crate) fn to_json_source(
+        &mut self,
+        cx: &bun_jsc::JsThread<'_>,
+        lifetime: Lifetime,
+    ) -> JsResult<JSValue> {
+        match self {
+            Any::Blob(b) => b.to_json_source(cx, lifetime),
+            Any::InternalBlob(ib) if ib.bytes.is_empty() => {
+                bun_string_jsc::create_utf8_for_js(cx.global(), b"null")
+            }
+            Any::WTFStringImpl(s) if s.length() == 0 => {
+                bun_string_jsc::create_utf8_for_js(cx.global(), b"null")
+            }
+            Any::InternalBlob(_) => self.to_uint8_array(cx, lifetime),
+            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
+        }
+    }
+
     pub(crate) fn to_json_share(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         self.to_json(cx, Lifetime::Share)
     }
@@ -6442,7 +6500,7 @@ impl Internal {
     }
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let str_bytes = EncodedSlice::from_bytes(strings::without_utf8_bom(&self.bytes));
+        let str_bytes = EncodedSlice::utf8(strings::without_utf8_bom(&self.bytes));
         let json = str_bytes.to_json_object(global_this, CompiledJsonParser::Try);
         self.bytes = Vec::new();
         json

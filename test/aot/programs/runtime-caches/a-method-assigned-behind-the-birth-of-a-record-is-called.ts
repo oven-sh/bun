@@ -5,7 +5,7 @@ function tell(this: Internals, ...values: number[]): string { return this.kind +
 
 const log: string[] = [];
 function attempt(label: string, work: () => unknown) {
-  try { log.push(label + " " + String(work())); } catch (error) { log.push(label + " throws " + (error as Error).constructor.name); }
+  try { log.push(label + " " + String(work())); } catch (error) { log.push(label + " throws " + (error as Error).constructor.name + (error instanceof TypeError ? (error.message.includes("h.internals.") ? " that names it" : " THAT DOES NOT NAME IT") : "")); }
 }
 function callAll(h: any, label: string) {
   attempt(label + " 0", () => h.internals.run());

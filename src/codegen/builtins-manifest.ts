@@ -93,6 +93,56 @@ function mergeTsconfig(): string {
   return JSON.stringify({ compilerOptions: { ...base.compilerOptions, ...own.compilerOptions } });
 }
 
+// `$BunModules` says what `require` answers for every module of the directory. A build reads the line of a module with the module:
+// a file that names them all would make every build read them all. A file that writes `$BunModules["name"]` as a type brings the
+// line of that module too.
+function splitListOfModules(text: string): { rest: string; listings: Map<string, string> } {
+  const listingOf = (source: string) => source.replace(/\.[jt]s$/, ".listed.d.ts");
+  const sources = [...sourceFiles, ...helperModules.map(helper => helper.path), ...functionFiles];
+  const linesOfModule = new Map<string, string[]>();
+  const moduleOfName = new Map<string, string>();
+  const rest: string[] = [];
+  let isInList = false;
+  let hasList = false;
+  for (const line of text.split("\n")) {
+    if (line === "interface $BunModules {") isInList = hasList = true;
+    else if (isInList && line === "}") isInList = false;
+    const [, name, imported] =
+      (isInList && /^  "([^"]+)": \$ModuleValue<typeof import\("\.\/([^"]+)"\)>;$/.exec(line)) || [];
+    const source = imported && [".ts", ".js"].map(extension => imported + extension).find(it => sources.includes(it));
+    if (!source) {
+      rest.push(line);
+      continue;
+    }
+    moduleOfName.set(name, source);
+    const own = line.replace(`"./${imported}"`, `"./${path.posix.basename(imported)}"`);
+    linesOfModule.set(source, [...(linesOfModule.get(source) ?? []), own]);
+  }
+  if (!hasList || isInList || linesOfModule.size === 0) {
+    throw new Error("src/js/private.d.ts must declare `interface $BunModules {`, a line a module, up to a line `}`");
+  }
+  const listings = new Map<string, string>();
+  for (const source of sources) {
+    const named = fs.readFileSync(locate(source), "utf8").matchAll(/\$BunModules\["([^"]+)"\]/g);
+    const others = new Set([...named].map(([, name]) => moduleOfName.get(name)).filter(it => it && it !== source));
+    const references = [...others]
+      .sort()
+      .map(other => `/// <reference path="${path.posix.relative(path.posix.dirname(source), listingOf(other!))}" />`);
+    const own = linesOfModule.get(source);
+    if (references.length === 0 && !own) continue;
+    listings.set(
+      listingOf(source),
+      [...references, ...(own ? ["interface $BunModules {", ...own, "}"] : []), ""].join("\n"),
+    );
+  }
+  return { rest: rest.join("\n"), listings };
+}
+
+const listOfModules = splitListOfModules(fs.readFileSync(locate("private.d.ts"), "utf8"));
+for (const listing of listOfModules.listings.keys()) {
+  lines.push(`declarations\t${listing}`);
+}
+
 const manifest = lines.join("\n") + "\n";
 fs.mkdirSync(path.dirname(output), { recursive: true });
 writeIfNotChanged(output, manifest);
@@ -100,13 +150,11 @@ writeIfNotChanged(output, manifest);
 if (archive) {
   const nameLength = 63;
   const recordLength = 1 + nameLength + 4 + 4;
-  const files = [
-    ...sourceFiles,
-    ...helperModules.map(helper => helper.path),
-    ...functionFiles,
-    "builtins.d.ts",
-    "private.d.ts",
-  ].map((file): [string, Buffer] => [file, fs.readFileSync(locate(file))]);
+  const files = [...sourceFiles, ...helperModules.map(helper => helper.path), ...functionFiles, "builtins.d.ts"].map(
+    (file): [string, Buffer] => [file, fs.readFileSync(locate(file))],
+  );
+  files.push(["private.d.ts", Buffer.from(listOfModules.rest)]);
+  for (const [file, text] of listOfModules.listings) files.push([file, Buffer.from(text)]);
   for (const [file, text] of engineTexts) files.push([file, Buffer.from(text)]);
   files.push(["tsconfig.json", Buffer.from(mergeTsconfig())]);
   files.push(["manifest", Buffer.from(manifest)]);

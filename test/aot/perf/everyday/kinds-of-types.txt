@@ -1075,3 +1075,73 @@ function turn(i: number): number {
   const p = ps[i & 3];
   return p.x + p.y;
 }
+//// texts.out-of-a-map
+type Level = "low" | "mid" | "high";
+const levels = new Map<number, Level>([[0, "low"], [1, "mid"], [2, "high"], [3, "low"]]);
+function turn(i: number): number {
+  const v = levels.get(i & 3)!;
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-field-of-parsed-text
+type Level = "low" | "mid" | "high";
+interface Row { level: Level }
+const rows: Row[] = JSON.parse('[{"level":"low"},{"level":"mid"},{"level":"high"},{"level":"low"}]');
+function turn(i: number): number {
+  const v = rows[i & 3].level;
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-field-of-parsed-text-in-a-switch
+type Level = "low" | "mid" | "high";
+interface Row { level: Level }
+const rows: Row[] = JSON.parse('[{"level":"low"},{"level":"mid"},{"level":"high"},{"level":"low"}]');
+function turn(i: number): number {
+  switch (rows[i & 3].level) {
+    case "low": return 10;
+    case "mid": return 20;
+    case "high": return 30;
+  }
+}
+//// texts.cast-from-a-string
+type Level = "low" | "mid" | "high";
+const names: string[] = ["low", "mid", "high", "low"];
+function turn(i: number): number {
+  const v = names[i & 3] as Level;
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.made-at-run-time
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["xlow", "xmid", "xhigh", "xlow"].map(s => s.slice(1) as Level);
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-result-of-a-function-in-a-field
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+const source: { pick(i: number): Level }[] = [{ pick: i => values[i & 3] }, { pick: i => values[(i + 1) & 3] }];
+function turn(i: number): number {
+  const v = source[i & 1].pick(i);
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-field-of-a-record-written-from-a-list
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+const row: { level: Level; n: number } = { level: "low", n: 0 };
+function turn(i: number): number {
+  row.level = values[i & 3];
+  return row.level === "low" ? 10 : row.level === "mid" ? 20 : 30;
+}
+//// texts.an-optional-field
+type Level = "low" | "mid" | "high";
+interface Row { level?: Level; n: number }
+const rows: Row[] = [{ level: "low", n: 1 }, { n: 2 }, { level: "high", n: 3 }, { level: "mid", n: 4 }];
+function turn(i: number): number {
+  const v = rows[i & 3].level;
+  return v === "low" ? 10 : v === "mid" ? 20 : v === undefined ? 5 : 30;
+}
+//// texts.two-values-compared
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+function turn(i: number): number {
+  return values[i & 3] === values[(i >> 2) & 3] ? 1 : 2;
+}

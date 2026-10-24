@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 
-use super::format::{code_of, write_count, write_counted};
+use super::format::{code_of, write_count, write_counted, write_percent};
 use super::json::JsonWriter;
 use super::levels::{ProgramTotals, compute_totals};
 use super::model::OriginCounts;
@@ -32,17 +32,62 @@ pub(super) struct Cause {
     pub function: Option<FunctionId>,
     pub layouts: Vec<LayoutId>,
     pub accesses: OriginCounts,
+    pub calls: OriginCounts,
+    pub operators: OriginCounts,
+    /// The operations that have no other root: the fix types them.
+    pub alone: u64,
+    pub cost: EstimatedCost,
+    /// The position is in one of Bun's own modules.
+    pub is_in_runtime: bool,
 }
 
+#[derive(Default)]
 struct CauseGroup {
     function: Option<FunctionId>,
     layouts: BTreeSet<LayoutId>,
     accesses: OriginCounts,
+    calls: OriginCounts,
+    operators: OriginCounts,
+    alone: u64,
+    cost: EstimatedCost,
+}
+
+/// Instructions that types would save, by the compiler's own estimate of how often each operation runs.
+#[derive(Copy, Clone, Default, PartialEq, Debug)]
+pub(super) struct EstimatedCost {
+    pub program: f64,
+    pub dependencies: f64,
+}
+
+impl Eq for EstimatedCost {}
+
+impl EstimatedCost {
+    fn add_for_origin(&mut self, origin: ModuleOrigin, cost: f64) {
+        match origin {
+            ModuleOrigin::Program => self.program += cost,
+            ModuleOrigin::Dependency => self.dependencies += cost,
+            ModuleOrigin::Runtime => {}
+        }
+    }
+
+    fn total(self) -> f64 {
+        self.program + self.dependencies
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum OperationClass {
+    PropertyAccess,
+    Call,
+    Operator,
 }
 
 type CauseKey = (UnprovenCause, LimitId, IllTypedCause, Option<Position>);
 
 type RankOrder = (
+    bool,
+    Reverse<u64>,
+    Reverse<u64>,
     Reverse<u64>,
     Reverse<u64>,
     bool,
@@ -53,21 +98,83 @@ type RankOrder = (
 );
 
 impl Cause {
+    fn operations(&self) -> OriginCounts {
+        OriginCounts {
+            program: self.accesses.program + self.calls.program + self.operators.program,
+            dependencies: self.accesses.dependencies
+                + self.calls.dependencies
+                + self.operators.dependencies,
+        }
+    }
+
     fn is_in_dependency(&self) -> bool {
-        self.accesses.program == 0
+        self.operations().program == 0
     }
 }
 
-pub(super) fn is_property_access(kind: AccessKind) -> bool {
-    !matches!(kind, AccessKind::Call | AccessKind::Construct)
+pub(super) fn operation_class(kind: AccessKind) -> Option<OperationClass> {
+    match kind {
+        AccessKind::Unknown => None,
+        AccessKind::Read
+        | AccessKind::Store
+        | AccessKind::Define
+        | AccessKind::Has
+        | AccessKind::Delete => Some(OperationClass::PropertyAccess),
+        AccessKind::Call | AccessKind::Construct => Some(OperationClass::Call),
+        AccessKind::Truthiness
+        | AccessKind::Equality
+        | AccessKind::Arithmetic
+        | AccessKind::Comparison
+        | AccessKind::Conversion
+        | AccessKind::TypeOf
+        | AccessKind::InstanceOf
+        | AccessKind::Iteration
+        | AccessKind::Spread => Some(OperationClass::Operator),
+    }
 }
 
-fn is_untyped_access(record: &AccessRecord) -> bool {
-    let is_untyped = match record.cost {
-        AccessCost::ByName | AccessCost::TestsReceiver | AccessCost::TestsSlot => true,
-        AccessCost::Free => false,
-    };
-    is_untyped && is_property_access(record.kind)
+#[cfg(test)]
+pub(super) fn is_property_access(kind: AccessKind) -> bool {
+    operation_class(kind) == Some(OperationClass::PropertyAccess)
+}
+
+/// About how many instructions the operation executes beyond what it would with types. From test/aot/perf/operations.
+fn instructions_saved_by_types(record: &AccessRecord) -> u32 {
+    match (record.kind, record.cost) {
+        (_, AccessCost::Free) | (AccessKind::Unknown, _) => 0,
+        (AccessKind::Call | AccessKind::Construct, AccessCost::ByName) => 13,
+        (AccessKind::Call | AccessKind::Construct, _) => 0,
+        (_, AccessCost::TestsSlot) => 1,
+        (_, AccessCost::TestsReceiver) => 2,
+        (AccessKind::Truthiness, _) => 8,
+        (AccessKind::TypeOf, _) => 6,
+        (AccessKind::Equality, _) => 10,
+        (AccessKind::Arithmetic | AccessKind::Comparison | AccessKind::Conversion, _) => 12,
+        (AccessKind::InstanceOf, _) => 20,
+        (AccessKind::Iteration, _) => 40,
+        (AccessKind::Spread, _) => 60,
+        (
+            AccessKind::Read
+            | AccessKind::Store
+            | AccessKind::Define
+            | AccessKind::Has
+            | AccessKind::Delete,
+            AccessCost::ByName,
+        ) => 28,
+    }
+}
+
+/// An operation without an estimate counts as one that runs once.
+fn weight_of(heat: f64) -> f64 {
+    if heat > 0.0 { heat } else { 1.0 }
+}
+
+/// Nothing in the program's text changes these.
+fn is_fixed_in_the_compiler(cause: UnprovenCause) -> bool {
+    matches!(
+        cause,
+        UnprovenCause::Unknown | UnprovenCause::ResultDisabled | UnprovenCause::LeftByPasses
+    )
 }
 
 fn access_origin(
@@ -93,10 +200,14 @@ fn is_family_selected(families: ExplainSet, family: UnprovenCauseFamily) -> bool
     families.is_empty() || families.contains(family_bit(family))
 }
 
+// The bits of a number that is not negative ascend with it.
 fn rank_order(cause: &Cause) -> RankOrder {
     (
-        Reverse(cause.accesses.program),
-        Reverse(cause.accesses.dependencies),
+        is_fixed_in_the_compiler(cause.cause) || cause.is_in_runtime,
+        Reverse(cause.cost.program.to_bits()),
+        Reverse(cause.cost.dependencies.to_bits()),
+        Reverse(cause.operations().program),
+        Reverse(cause.operations().dependencies),
         cause.position.is_none(),
         cause.position,
         cause.cause,
@@ -112,7 +223,11 @@ pub(super) fn collect_causes(
 ) -> Vec<Cause> {
     let mut groups: BTreeMap<CauseKey, CauseGroup> = BTreeMap::new();
     for record in records {
-        if !is_untyped_access(record) || !is_family_selected(families, record.cause.family()) {
+        let saved = instructions_saved_by_types(record);
+        let Some(class) = operation_class(record.kind) else {
+            continue;
+        };
+        if saved == 0 || !is_family_selected(families, record.cause.family()) {
             continue;
         }
         let origin = access_origin(record, origin_of);
@@ -127,10 +242,18 @@ pub(super) fn collect_causes(
         );
         let group = groups.entry(key).or_insert_with(|| CauseGroup {
             function: record.witness.function_id(),
-            layouts: BTreeSet::new(),
-            accesses: OriginCounts::default(),
+            ..CauseGroup::default()
         });
-        group.accesses.add_for_origin(origin, 1);
+        let counts = match class {
+            OperationClass::PropertyAccess => &mut group.accesses,
+            OperationClass::Call => &mut group.calls,
+            OperationClass::Operator => &mut group.operators,
+        };
+        counts.add_for_origin(origin, 1);
+        group.alone += u64::from(record.has_other_roots == 0);
+        group
+            .cost
+            .add_for_origin(origin, weight_of(record.heat) * f64::from(saved));
         group.layouts.extend(record.layout_id());
     }
 
@@ -144,6 +267,12 @@ pub(super) fn collect_causes(
             function: group.function,
             layouts: group.layouts.into_iter().collect(),
             accesses: group.accesses,
+            calls: group.calls,
+            operators: group.operators,
+            alone: group.alone,
+            cost: group.cost,
+            is_in_runtime: position
+                .is_some_and(|position| origin_of(position.module) == ModuleOrigin::Runtime),
         })
         .collect();
     causes.shared_sort_unstable_by_key(rank_order);
@@ -180,9 +309,53 @@ fn documentation_url(code: &[u8]) -> Vec<u8> {
     [DOCUMENTATION_URL, code].concat()
 }
 
+fn tenths_of_percent(part: f64, whole: f64) -> u32 {
+    if whole > 0.0 {
+        (part / whole * 1000.0) as u32
+    } else {
+        0
+    }
+}
+
+fn total_cost(causes: &[Cause]) -> f64 {
+    causes.iter().map(|cause| cause.cost.total()).sum()
+}
+
+fn write_other_operations(out: &mut Vec<u8>, cause: &Cause) {
+    let (calls, operators) = (cause.calls.total(), cause.operators.total());
+    if calls > 0 {
+        write_counted(out, calls, "indirect call", "indirect calls");
+    }
+    if operators > 0 {
+        if calls > 0 {
+            out.extend_from_slice(b", ");
+        }
+        write_counted(out, operators, "untyped operator", "untyped operators");
+    }
+}
+
+fn write_estimate(out: &mut Vec<u8>, cause: &Cause, whole: f64) {
+    out.extend_from_slice(b"about ");
+    write_percent(out, tenths_of_percent(cause.cost.total(), whole));
+    out.extend_from_slice(
+        b" of the time in untyped operations, by how often the compiler expects each to run",
+    );
+}
+
+fn write_other_roots(out: &mut Vec<u8>, cause: &Cause) {
+    let others = cause.operations().total() - cause.alone;
+    if others > 0 {
+        write_count(out, others);
+        out.extend_from_slice(b" of these stay untyped until other entries are fixed too");
+    }
+}
+
 fn write_share(out: &mut Vec<u8>, cause: &Cause, totals: &ProgramTotals) {
+    if cause.accesses.total() == 0 {
+        return;
+    }
     let dependency_total = totals.dependencies.access_costs.not_free();
-    if cause.is_in_dependency() {
+    if cause.accesses.program == 0 {
         write_count(out, cause.accesses.dependencies);
         out.extend_from_slice(b" of ");
         write_counted(out, dependency_total, "untyped access", "untyped accesses");
@@ -287,6 +460,7 @@ fn text_entry(
     totals: &ProgramTotals,
     names: &ProgramNames,
     limit_value: u64,
+    whole_cost: f64,
 ) -> ReportEntry {
     let wording = cause_wording(cause.cause);
     let code = cause_code(cause.cause).as_bytes();
@@ -298,6 +472,12 @@ fn text_entry(
 
     let mut share = Vec::new();
     write_share(&mut share, cause, totals);
+    let mut others = Vec::new();
+    write_other_operations(&mut others, cause);
+    let mut estimate = Vec::new();
+    write_estimate(&mut estimate, cause, whole_cost);
+    let mut other_roots = Vec::new();
+    write_other_roots(&mut other_roots, cause);
     let mut function = Vec::new();
     write_function_name(&mut function, function_name(cause, names));
     let mut types = Vec::new();
@@ -315,7 +495,18 @@ fn text_entry(
         position: cause.position,
         notes: Vec::new(),
     };
-    for note in [share, function, types, limit, why, fix, url] {
+    for note in [
+        share,
+        others,
+        estimate,
+        other_roots,
+        function,
+        types,
+        limit,
+        why,
+        fix,
+        url,
+    ] {
         if !note.is_empty() {
             entry.add_note(note);
         }
@@ -351,6 +542,7 @@ fn json_entry(
     rank: usize,
     names: &ProgramNames,
     positions: &mut Positions<'_>,
+    whole_cost: f64,
 ) -> ReportEntry {
     let wording = cause_wording(cause.cause);
     let code = cause_code(cause.cause).as_bytes();
@@ -378,6 +570,11 @@ fn json_entry(
     json.string("url", &documentation_url(code));
     json.number("accesses", cause.accesses.program);
     json.number("dependencyAccesses", cause.accesses.dependencies);
+    json.number("calls", cause.calls.total());
+    json.number("operators", cause.operators.total());
+    json.number("fixedByThisAlone", cause.alone);
+    let share = tenths_of_percent(cause.cost.total(), whole_cost);
+    json.tenths("estimatedPercent", share);
     json.string("function", function_name(cause, names));
     json.strings("types", type_names(cause, names).into_iter());
     json.string("family", &code_of(cause.cause.family().name()));
@@ -401,6 +598,10 @@ fn list_entry(cause: &Cause, names: &ProgramNames, positions: &mut Positions<'_>
     write_shown_position(&mut text, shown.as_ref());
     text.extend_from_slice(b", ");
     write_counted(&mut text, cause.accesses.total(), "access", "accesses");
+    if cause.calls.total() + cause.operators.total() > 0 {
+        text.extend_from_slice(b", ");
+        write_other_operations(&mut text, cause);
+    }
     write_type_names(&mut text, b", types ", &type_names(cause, names));
     if let Some(wording) = ill_typed_cause_wording(cause.ill_typed_cause) {
         text.extend_from_slice(b", why ");
@@ -437,9 +638,18 @@ fn collect_text_entries(
     out: &mut Vec<ReportEntry>,
 ) {
     out.push(heading_entry(causes.len()));
+    let whole_cost = total_cost(causes);
     for (index, cause) in causes.iter().take(MAX_SHOWN_CAUSES).enumerate() {
         let limit_value = limit_value_of(cause.limit);
-        out.push(text_entry(cause, index + 1, totals, names, limit_value));
+        let rank = index + 1;
+        out.push(text_entry(
+            cause,
+            rank,
+            totals,
+            names,
+            limit_value,
+            whole_cost,
+        ));
     }
     out.extend(footer_entry(causes.len()));
 }
@@ -452,8 +662,9 @@ fn collect_json_entries(
     out: &mut Vec<ReportEntry>,
 ) {
     out.push(numbers_entry(totals, causes.len()));
+    let whole_cost = total_cost(causes);
     collect_ranked_entries(causes, out, |cause, rank| {
-        json_entry(cause, rank, names, positions)
+        json_entry(cause, rank, names, positions, whole_cost)
     });
 }
 

@@ -35,7 +35,9 @@ pub mod build_id;
 mod compiled_frames;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod fault_registers;
+mod stopped_builds;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
+pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
 /// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
@@ -1036,6 +1038,7 @@ mod draft {
                             abort();
                         }
                     }
+                    crate::stopped_builds::write_where_this_thread_stopped(writer);
 
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;
@@ -1726,6 +1729,28 @@ mod draft {
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
 
+    /// For a process whose threads may crash at the same moment, as the threads of a build do that meet the same broken
+    /// state. As `reset_on_posix` leaves the signals, the first crash puts them back to their default actions, and the
+    /// second ends the process in the middle of the report of the first.
+    #[cfg(unix)]
+    pub(crate) fn report_crashes_of_several_threads() {
+        if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
+        let mut act: libc::sigaction = bun_core::ffi::zeroed();
+        act.sa_sigaction = handle_segfault_posix as *const () as usize;
+        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
+        if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
+            act.sa_flags |= libc::SA_ONSTACK;
+        }
+        // SAFETY: sa_mask is a valid out-pointer.
+        unsafe {
+            libc::sigemptyset(&raw mut act.sa_mask);
+        }
+        let _ = update_posix_segfault_handler(Some(&mut act));
+    }
+
     pub fn init() {
         if !ENABLE {
             return;
@@ -1787,7 +1812,7 @@ mod draft {
     static REPORTS_ABORTS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// For a process that has loaded a compiled program: an assertion of the engine that fails in compiled code calls `abort()`, which on Windows raises no exception.
+    /// For a process that has loaded a compiled program or compiles one: an assertion of the engine that fails there calls `abort()`, which on Windows raises no exception.
     pub fn report_aborts() {
         #[cfg(windows)]
         {
@@ -1900,6 +1925,7 @@ mod draft {
             if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
                 let _ = writeln!(writer, "Crashed while {}", action);
             }
+            crate::stopped_builds::write_where_this_thread_stopped(writer);
 
             let mut addr_buf: [usize; 20] = [0; 20];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
@@ -2200,6 +2226,15 @@ mod draft {
 
     #[cfg(windows)]
     extern "C" fn handle_abort_windows(_signal: core::ffi::c_int) {
+        // The C runtime has put the default action back, with which the `abort()` of a second thread would end the
+        // process in the middle of this report.
+        // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
+        unsafe {
+            libc::signal(
+                libc::SIGABRT,
+                handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
+            );
+        }
         bun_core::debug::with_current_context(|pc, context| {
             crash_handler(CrashReason::Abort, TraceSeed::Fault { pc, fp: context })
         })

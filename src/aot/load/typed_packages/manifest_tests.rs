@@ -6,7 +6,12 @@ const CODE: &str = "exports.x = 1;\n";
 const P: (&str, &str) = ("p", "1.0.0");
 const Q: (&str, &str) = ("q", "1.0.0");
 const NOT_JSON: &str = "full-types.json is not valid JSON";
-const NOT_VALID: &str = "full-types.json is not valid";
+const NO_FORMAT: &str = "\"format\" in full-types.json is missing or not valid";
+const NO_NAME: &str = "\"name\" in full-types.json is missing or not valid";
+const NO_VERSION: &str = "\"version\" in full-types.json is missing or not valid";
+const INVALID_WHEN: &str = "\"when\" in full-types.json is missing or not valid";
+const INVALID_LAY: &str = "\"lay\" in full-types.json is missing or not valid";
+const OTHER_NAME: &str = "the \"name\" in full-types.json is \"q\", but the folder is for \"p\"";
 const UNSUPPORTED_FORMAT: &str =
     "this version of Bun doesn't support the \"format\" in full-types.json";
 const INVALID_NEEDS: &str = "\"needs\" in full-types.json must be a list of package names";
@@ -116,14 +121,14 @@ fn text_that_is_no_manifest_is_mismatch() {
     for (text, expected) in [
         ("{", NOT_JSON),
         (r#"{"format":2"#, NOT_JSON),
-        ("", NOT_VALID),
-        ("[]", NOT_VALID),
-        ("{}", NOT_VALID),
-        (r#"{"format":"2"}"#, NOT_VALID),
+        ("", NO_FORMAT),
+        ("[]", NO_FORMAT),
+        ("{}", NO_FORMAT),
+        (r#"{"format":"2"}"#, NO_FORMAT),
         (r#"{"format":1}"#, UNSUPPORTED_FORMAT),
         (r#"{"format":99}"#, UNSUPPORTED_FORMAT),
-        (r#"{"format":2}"#, NOT_VALID),
-        (r#"{"format":2,"name":"p"}"#, NOT_VALID),
+        (r#"{"format":2}"#, NO_NAME),
+        (r#"{"format":2,"name":"p"}"#, NO_VERSION),
         (r#"{"format":2,"name":"p","version":"1.0.0"}"#, EMPTY_LAY),
     ] {
         project.add_typed_version("p", text);
@@ -139,13 +144,13 @@ fn text_that_is_no_manifest_is_mismatch() {
 fn field_of_wrong_shape_is_mismatch() {
     let project = Project::new("wrong_shape");
     for (more, expected) in [
-        (r#","name":"q""#, NOT_VALID),
-        (r#","name":1"#, NOT_VALID),
-        (r#","version":1"#, NOT_VALID),
-        (r#","when":[]"#, NOT_VALID),
-        (r#","when":{"MODE":true}"#, NOT_VALID),
-        (r#","lay":[]"#, NOT_VALID),
-        (r#","lay":{"x.js":1}"#, NOT_VALID),
+        (r#","name":"q""#, OTHER_NAME),
+        (r#","name":1"#, NO_NAME),
+        (r#","version":1"#, NO_VERSION),
+        (r#","when":[]"#, INVALID_WHEN),
+        (r#","when":{"MODE":true}"#, INVALID_WHEN),
+        (r#","lay":[]"#, INVALID_LAY),
+        (r#","lay":{"x.js":1}"#, INVALID_LAY),
         (r#","needs":{}"#, INVALID_NEEDS),
         (r#","needs":[1]"#, INVALID_NEEDS),
         (r#","needs":["../x"]"#, INVALID_NEEDS),
@@ -176,7 +181,7 @@ fn first_mismatch_is_reported() {
     let installed = ("p", "1.0.1");
     for (more, expected) in [
         (r#","format":1,"name":"q""#, UNSUPPORTED_FORMAT),
-        (r#","name":"q","needs":{}"#, NOT_VALID),
+        (r#","name":"q","needs":{}"#, OTHER_NAME),
         (r#","needs":{},"lay":{"../x":""}"#, INVALID_NEEDS),
         (
             r#","lay":{"../x":"new"}"#,
@@ -205,6 +210,12 @@ fn first_mismatch_is_reported() {
         Some("lay/y.js is missing")
     );
     project.directory.write(".full-types/p/lay/y.js", CODE);
+    let adds_file = "they add y.js, and full types can only replace installed files";
+    assert_eq!(
+        project.find_mismatch(P, &defines).as_deref(),
+        Some(adds_file)
+    );
+    project.directory.write("node_modules/p/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &defines).as_deref(), Some(NEEDS_Q));
 }
 
@@ -245,6 +256,11 @@ fn listed_file_must_be_below_lay() {
         Some("lay/cjs/y.js is missing")
     );
     project.directory.write(".full-types/p/lay/cjs/y.js", CODE);
+    assert_eq!(
+        project.find_mismatch(P, &[]).as_deref(),
+        Some("they add cjs/y.js, and full types can only replace installed files")
+    );
+    project.directory.write("node_modules/p/cjs/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &[]), None);
 }
 

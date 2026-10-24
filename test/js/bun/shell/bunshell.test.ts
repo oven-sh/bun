@@ -574,7 +574,7 @@ describe("bunshell", () => {
   describe("redirect stdout and stderr to one JS object", () => {
     const bothStreams = `console.log("out 1"); console.error("err 1"); console.log("out 2"); console.error("err 2");`;
 
-    test("a buffer keeps both streams of a builtin", async () => {
+    test.concurrent("a buffer keeps both streams of a builtin", async () => {
       using dir = tempDir("shell-both-streams-buffer", { "found.txt": "x" });
       const buffer = new Uint8Array(256);
       const { exitCode } = await $`ls found.txt missing.txt &> ${buffer}`.cwd(String(dir)).quiet();
@@ -588,7 +588,7 @@ describe("bunshell", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a buffer gets a builtin's stderr after its stdout", async () => {
+    test.concurrent("a buffer gets a builtin's stderr after its stdout", async () => {
       // `yes` fills the buffer, then reports ENOSPC on stderr. The message
       // goes after the output, where no room is left, not over its start.
       const buffer = new Uint8Array(64);
@@ -597,14 +597,14 @@ describe("bunshell", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a buffer keeps both streams of an external command in write order", async () => {
+    test.concurrent("a buffer keeps both streams of an external command in write order", async () => {
       const buffer = new Uint8Array(256);
       const { exitCode } = await $`${BUN} -e ${bothStreams} &> ${buffer}`.env(bunEnv).quiet();
       expect(stringifyBuffer(buffer)).toBe("out 1\nerr 1\nout 2\nerr 2\n");
       expect(exitCode).toBe(0);
     });
 
-    test("a Bun.file(fd) keeps both streams of an external command in write order", async () => {
+    test.concurrent("a Bun.file(fd) keeps both streams of an external command in write order", async () => {
       // Only a path-backed Bun.file() is inlined as a path. One made from a
       // file descriptor stays a JS object redirect.
       using dir = tempDir("shell-both-streams-fd", {});

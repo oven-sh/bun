@@ -3444,7 +3444,10 @@ describe("css tests", () => {
           stays(`.a { background: ${std}; background: ${moz}; }`, targets);
           stays(`.a { background: url("a.png"); background: ${moz}; }`, targets);
           stays(`.a { background-image: ${std}; background-image: ${moz}; }`, targets);
-          stays(`.a { background: radial-gradient(red, green); background: -moz-radial-gradient(red, green); }`, targets);
+          stays(
+            `.a { background: radial-gradient(red, green); background: -moz-radial-gradient(red, green); }`,
+            targets,
+          );
           stays(
             `.a { background: repeating-linear-gradient(red, green 10px); background: -moz-repeating-linear-gradient(red, green 10px); }`,
             targets,
@@ -3458,7 +3461,10 @@ describe("css tests", () => {
           stays(`.a { background: red; background: ${legacy}; }`, targets);
           stays(`.a { background: red; background: image-set(${moz} 1x); }`, targets);
           stays(`.a { background: ${moz}; background-color: red; background: ${opera}; }`, targets);
-          stays(`.a { background: ${webkit} no-repeat; background: ${moz} no-repeat; background-repeat: repeat-x; }`, targets);
+          stays(
+            `.a { background: ${webkit} no-repeat; background: ${moz} no-repeat; background-repeat: repeat-x; }`,
+            targets,
+          );
           stays(`.a { background: ${moz} no-repeat; background-image: ${std}; }`, targets);
           stays(
             `.a { background: ${moz}; background-position: 1px 2px; background-size: 10px; background-attachment: fixed; background-origin: content-box; }`,
@@ -3503,7 +3509,10 @@ describe("css tests", () => {
       describe("keeps the source order around an unparsed value", () => {
         stays(`.a { background: ${webkit}; background: var(--x); background: ${moz}; }`, defaults);
         stays(`.a { background: ${moz}; background: ${webkit}; background: var(--x); }`, defaults);
-        stays(`.a { background-image: ${moz}; -webkit-background-clip: var(--c); background: url("x.png"); }`, defaults);
+        stays(
+          `.a { background-image: ${moz}; -webkit-background-clip: var(--c); background: url("x.png"); }`,
+          defaults,
+        );
       });
 
       describe("keeps a prefixed background-clip", () => {
@@ -3577,7 +3586,9 @@ describe("css tests", () => {
         stays(`.a { background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${opera}; }`, {
           chrome: 95 << 16,
         });
-        stays(`.a { background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${opera}; background: ${std}; }`);
+        stays(
+          `.a { background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${opera}; background: ${std}; }`,
+        );
         stays(`.a { background: red; background: var(--x); background: ${std}; }`, defaults);
       });
 

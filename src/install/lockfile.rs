@@ -195,10 +195,7 @@ pub struct Lockfile {
     /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
     pub(crate) only_bundled: DynamicBitSet,
 
-    /// Packages whose row a migration wrote without their package.json. yarn.lock and
-    /// pnpm-lock.yaml have neither the `bin` nor the install scripts of a git, GitHub or tarball
-    /// package, so the row has none of them until an install reads the package.json
-    /// (`PackageManager::describe`). Runtime-only, sized lazily.
+    /// Rows that a migration wrote without the `bin` and the install scripts. Runtime-only.
     pub(crate) unread: DynamicBitSet,
 }
 
@@ -2529,7 +2526,6 @@ impl Lockfile {
         self.only_bundled.set(i);
     }
 
-    /// See `unread`.
     pub(crate) fn mark_unread(&mut self, id: PackageID) {
         let i = id as usize;
         if self.unread.bit_length() <= i {

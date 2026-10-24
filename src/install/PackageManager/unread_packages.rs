@@ -1,39 +1,31 @@
-//! yarn.lock and pnpm-lock.yaml do not record what only a package.json says: the `bin` and the
-//! install scripts. For a registry package the migration takes both from the manifest. A git,
-//! GitHub or tarball package is `Lockfile::unread` until a linker places it and reads its
-//! package.json. Nothing is downloaded to read one.
+//! The package.json of a `Lockfile::unread` package: a linker reads it to link, a save records it.
 
 use std::sync::OnceLock;
 
-use bun_core::{ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_semver::ExternalString;
 
 use super::{PackageManager, directories};
 use crate::bin_real::Bin;
 use crate::bun_json::Expr;
-use crate::integrity::Integrity;
 use crate::lockfile_real::package::{Package, PackageColumns as _, ResolverContext};
 use crate::lockfile_real::{Lockfile, StringBuilder};
-use crate::resolution::{Resolution, ResolutionType, Tag as ResolutionTag};
+use crate::resolution::ResolutionType;
 use crate::{Features, PackageID};
 
 /// What a package.json says about a row.
+#[derive(Default)]
 pub(crate) struct Described {
     pub(crate) bin: Bin,
     /// The strings of `bin`.
     pub(crate) string_bytes: Vec<u8>,
     pub(crate) extern_strings: Vec<ExternalString>,
     pub(crate) has_install_script: bool,
-    /// The package.json is of the bytes that the row pins, so the row can record it. If not, it
-    /// only says what this install links.
-    pub(crate) pinned: bool,
 }
 
-/// What the linker of one install read, by package id. A linker cannot grow the lockfile's
-/// buffers, so the strings of a `bin` stay here until `PackageManager::adopt_described`.
+/// What the linker of one install read to link, by package id. A row records none of it.
 pub(crate) struct DescribedPackages {
-    /// The main thread fills the slot of a package before anything links its bins. `None`: its
-    /// package.json cannot be read.
+    /// Set on the main thread before a task of the package starts. `None`: nothing to read.
     slots: Box<[OnceLock<Option<Described>>]>,
 }
 
@@ -103,104 +95,146 @@ impl ResolverContext for BinAndScripts {
 }
 
 impl PackageManager {
-    /// Returns true if a copy of the package with the `.bun-tag` of the row has the bytes that the
-    /// row pins: the commit of a repository, or the integrity of a tarball that was checked.
-    fn row_pins(&self, resolution: &Resolution, integrity: &Integrity) -> bool {
-        match resolution.tag {
-            ResolutionTag::Git | ResolutionTag::Github => {
-                !resolution.repository().resolved.is_empty()
-            }
-            ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                integrity.tag.is_supported() && !self.skips_verify(resolution.tag)
-            }
-            _ => false,
-        }
-    }
-
-    /// Reads `bin` and `hasInstallScript` as a fresh resolve does. `path` is where the package.json
-    /// is: a `binding.gyp` next to it counts as an install script. `None`: it does not parse.
-    pub(crate) fn describe(
-        &mut self,
-        path: &[u8],
-        contents: &[u8],
-        pinned: bool,
-    ) -> Option<Described> {
+    /// Reads `bin` and `hasInstallScript` as a fresh resolve does, `binding.gyp` beside `path` too.
+    fn describe(&mut self, id: PackageID, path: &[u8], contents: &[u8]) -> Option<Described> {
         crate::initialize_store();
         let source = bun_ast::Source::init_path_string(path, contents);
         let mut log = bun_ast::Log::init();
-        let json = crate::bun_json::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+        let json = match crate::bun_json::ParsedJson::parse_package_json(&source, &mut log) {
+            Ok(json) => json,
+            Err(err) => return self.unreadable(id, "parse", err.name().as_bytes()),
+        };
 
         let mut scratch = Lockfile::default();
         let mut package = Package::default();
         // The row has the dependencies.
-        package
-            .parse_with_json(
-                &mut scratch,
-                self,
-                &mut log,
-                &source,
-                json.root,
-                &mut BinAndScripts,
-                Features::LINK,
-            )
-            .ok()?;
+        let parsed = package.parse_with_json(
+            &mut scratch,
+            self,
+            &mut log,
+            &source,
+            json.root,
+            &mut BinAndScripts,
+            Features::LINK,
+        );
+        if let Err(err) = parsed {
+            return self.unreadable(id, "parse", err.name().as_bytes());
+        }
         Some(Described {
             bin: package.bin,
             string_bytes: core::mem::take(&mut scratch.buffers.string_bytes),
             extern_strings: core::mem::take(&mut scratch.buffers.extern_strings),
             has_install_script: package.meta.has_install_script(),
-            pinned,
         })
     }
 
-    /// `describe` for `folder` of the cache. It does not follow a link.
-    pub(crate) fn describe_cached(&mut self, folder: &ZStr, pinned: bool) -> Option<Described> {
-        let package_dir = [
-            strings::without_trailing_slash(self.cache_directory_path.as_bytes()),
-            bun_paths::SEP_STR.as_bytes(),
-            folder.as_bytes(),
-        ]
-        .concat();
-        let dir = bun_sys::Dir::open(&package_dir).ok()?;
-        let json = crate::git_runner::read_package_json_in(&dir).ok()?;
-        self.describe(&package_json_in(&package_dir), &json, pinned)
+    /// The install stops before it saves a row that could not be read.
+    fn unreadable(&mut self, id: PackageID, verb: &str, why: &[u8]) -> Option<Described> {
+        let name = self.lockfile.packages.items_name()[id as usize];
+        let name = self.lockfile.str(&name).to_vec();
+        self.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "\"package.json\" for \"{}\" failed to {}: {}",
+                bun_core::fmt::for_terminal(bstr::BStr::new(&name)),
+                verb,
+                bstr::BStr::new(why)
+            ),
+        );
+        None
     }
 
-    /// `describe` for a package that is in place: in `placed`, a folder of `node_modules` or of
-    /// the store. The cache entry that the row pins has the package as it was published, so that
-    /// one is read if it is there.
-    ///
-    /// `placed_as_pinned`: the copy in `placed` has the `.bun-tag` of the row and no patch.
+    /// A package that has no package.json has no bin and no script.
+    fn read_failed(&mut self, id: PackageID, err: &bun_sys::Error) -> Option<Described> {
+        if err.get_errno() == bun_sys::E::ENOENT {
+            return Some(Described::default());
+        }
+        self.unreadable(id, "open", err.name())
+    }
+
+    /// `describe` for `folder` of the cache. `None` if the cache does not have it complete.
+    pub(crate) fn describe_cached(&mut self, id: PackageID, folder: &ZStr) -> Option<Described> {
+        // `cache_directory_path` is empty until the cache directory is open.
+        let cache_dir = directories::try_get_cache_directory(self).ok()?;
+        let tag = self.lockfile.packages.items_resolution()[id as usize].tag;
+        if folder.is_empty() || !directories::is_package_in_cache_at(cache_dir, folder, tag) {
+            return None;
+        }
+        let json = (bun_sys::Dir::borrow(&cache_dir).open_at(folder.as_bytes()))
+            .and_then(|dir| crate::git_runner::read_package_json_in(&dir));
+        match json {
+            Ok(json) => {
+                let package_dir = [
+                    strings::without_trailing_slash(self.cache_directory_path.as_bytes()),
+                    bun_paths::SEP_STR.as_bytes(),
+                    folder.as_bytes(),
+                ]
+                .concat();
+                self.describe(id, &package_json_in(&package_dir), &json)
+            }
+            // An older version cached a checkout whose package.json is a link. Nothing uses it.
+            Err(err) if err.get_errno() == bun_sys::E::ELOOP => None,
+            Err(err) => self.read_failed(id, &err),
+        }
+    }
+
+    /// The cache entry of the bytes that row `id` pins. Empty if the row pins none.
+    fn pinned_cache_entry(&self, id: PackageID) -> ZBox {
+        let packages = self.lockfile.packages.slice();
+        let resolution = &packages.items_resolution()[id as usize];
+        let integrity = &packages.items_meta()[id as usize].integrity;
+        // Not the buffer of the other names: a linker asks while it holds one of them.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let entry = directories::cached_pinned_folder_name(self, &mut buf.0, resolution, integrity);
+        ZBox::from_bytes(entry.as_bytes())
+    }
+
+    /// Returns true if the cache has the bytes that row `id` pins.
+    pub(crate) fn has_pinned_cache_entry(&mut self, id: PackageID) -> bool {
+        let entry = self.pinned_cache_entry(id);
+        let tag = self.lockfile.packages.items_resolution()[id as usize].tag;
+        !entry.is_empty()
+            && directories::try_get_cache_directory(self)
+                .is_ok_and(|dir| directories::is_package_in_cache_at(dir, &entry, tag))
+    }
+
+    /// `describe` for a package in place: its pinned cache entry, else the copy in `placed`.
     pub(crate) fn describe_placed(
         &mut self,
-        resolution: &Resolution,
-        integrity: &Integrity,
+        id: PackageID,
         placed: &[u8],
-        placed_as_pinned: bool,
+        patched: bool,
     ) -> Option<Described> {
-        let entry = directories::cached_pinned_folder_name(self, resolution, integrity);
-        if !entry.is_empty()
-            && let Some(described) = self.describe_cached(entry, true)
-        {
+        let entry = self.pinned_cache_entry(id);
+        if let Some(described) = self.describe_cached(id, &entry) {
             return Some(described);
+        }
+        // A patch can change the package.json of the copy, and the bins are of the published one.
+        if patched {
+            return None;
         }
         // This read follows a link, because `--backend=symlink` places each file as one.
         let path = package_json_in(placed);
-        let json = bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).ok()?;
-        let pinned = placed_as_pinned && self.row_pins(resolution, integrity);
-        self.describe(&path, &json, pinned)
+        match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {
+            Ok(json) => self.describe(id, &path, &json),
+            Err(err) => self.read_failed(id, &err),
+        }
     }
 
-    /// Gives each row what the package.json of its bytes says. Call this only while nothing views
-    /// the lockfile's buffers, which grow here. A migration is always saved, so nothing has to ask
-    /// for that.
-    pub(crate) fn adopt_described(&mut self, described: &DescribedPackages) {
+    /// Before a save. Grows the lockfile's buffers, so nothing may view them while this runs.
+    pub fn record_unread_from_cache(&mut self) {
+        if self.lockfile.unread.count() == 0 {
+            return;
+        }
         let before = self.lockfile.buffers.string_bytes.as_ptr();
-        for (id, slot) in described.slots.iter().enumerate() {
-            if let Some(Some(package)) = slot.get()
-                && package.pinned
-            {
-                bun_core::handle_oom(self.lockfile.adopt(id as PackageID, package));
+        for id in 0..self.lockfile.unread.bit_length() as PackageID {
+            if !self.lockfile.is_unread(id) {
+                continue;
+            }
+            let entry = self.pinned_cache_entry(id);
+            if let Some(described) = self.describe_cached(id, &entry) {
+                bun_core::handle_oom(self.lockfile.adopt(id, &described));
             }
         }
         // `UpdateRequest::version_buf` views all of `string_bytes`.

@@ -596,7 +596,6 @@ pub(crate) fn install_hoisted_packages(
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));
-        installer.summary.described = installer.described.take();
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

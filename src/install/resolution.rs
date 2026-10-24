@@ -1054,8 +1054,7 @@ impl Tag {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
     }
 
-    /// A package that is downloaded and that no registry manifest describes: only the
-    /// package.json inside the archive or the repository says what its `bin` and its scripts are.
+    /// Only the package.json inside a git, GitHub or tarball package has its `bin` and scripts.
     pub(crate) fn is_self_described(self) -> bool {
         self.is_git() || self.is_tarball()
     }

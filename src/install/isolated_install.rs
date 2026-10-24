@@ -1808,9 +1808,7 @@ pub(crate) fn install_isolated_packages(
                 write!(WyhashWriter { hasher: &mut h }, "{path}\0").expect("unreachable");
                 let pkg_id = store.ids(id).pkg_id as usize;
                 h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
-                // Only the package.json of a git or tarball package says what its bins are. A
-                // lockfile that an older version migrated has the row without them, and the
-                // entries of such an install lack their links.
+                // An older version migrated such a row without its bins: its entries lack links.
                 if pkg_resolutions[pkg_id].tag.is_self_described()
                     && pkg_bins[pkg_id].tag != crate::bin::Tag::None
                 {
@@ -2274,7 +2272,6 @@ pub(crate) fn install_isolated_packages(
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
             described: DescribedPackages::for_linker(lockfile_ro),
-            described_in_store: Vec::new(),
         };
         // From here on, no `&mut PackageManager` is held across a call on `installer`, because it
         // would alias.
@@ -2440,6 +2437,7 @@ pub(crate) fn install_isolated_packages(
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
                     let needs_install = installer.manager().options.enable.force_install()
+                        || (installer.described.is_some() && installer.reinstalls_unread(pkg_id))
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2708,8 +2706,8 @@ pub(crate) fn install_isolated_packages(
                 .all(|step| step.load(Ordering::Relaxed) == Step::Done as u32)
         );
 
-        installer.relink_bins_of_members_with_scripts();
-        installer.link_bins_of_described_in_store();
+        let failed = installer.relink_bins_of_members_with_scripts();
+        installer.link_bins_of_unread_after_relink(&failed);
         installer.unlink_left_out_entries();
         installer.warn_left_out_links();
         installer.record_update_request_trust();
@@ -2725,7 +2723,6 @@ pub(crate) fn install_isolated_packages(
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
-        summary.described = installer.described.take();
 
         return Ok(summary);
     }

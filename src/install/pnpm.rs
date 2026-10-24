@@ -1040,8 +1040,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         pkg.resolution = res.copy();
 
         let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
-        // pnpm-lock.yaml has neither the bins nor the install scripts of the package. See
-        // `yarn::migrate_yarn_lockfile`.
+        // pnpm-lock.yaml has neither the bins nor the install scripts of the package.
         if res.tag.is_self_described() {
             lockfile.mark_unread(pkg_id);
         }

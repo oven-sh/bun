@@ -917,6 +917,9 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
+        if manager.options.do_.save_lockfile() {
+            manager.record_unread_from_cache();
+        }
         if log_level != Options::LogLevel::Silent {
             manager
                 .log_mut()
@@ -991,9 +994,6 @@ pub fn install_with_manager(
                 None,
             )?
         };
-        if let Some(described) = summary.described.take() {
-            manager.adopt_described(&described);
-        }
         summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
         if !isolated && warn_incorrect_peers {
             let served = lockfile::tree::served_peers(&manager.lockfile);
@@ -1009,6 +1009,9 @@ pub fn install_with_manager(
                 ));
         summary
     };
+    if manager.options.do_.save_lockfile() {
+        manager.record_unread_from_cache();
+    }
 
     if manager.options.do_.install_packages()
         && (install_summary.success > 0
@@ -1065,6 +1068,9 @@ pub fn install_with_manager(
                         || load_result.ok().serializer_result.migrated_from_lockb_v2))
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
+    // The next run migrates again and reads the rows that this failed run left unread.
+    let should_save_lockfile =
+        should_save_lockfile && !(install_summary.fail > 0 && manager.lockfile.unread.count() > 0);
 
     if should_save_lockfile {
         super::package_json_write_back::write_migrated(manager);

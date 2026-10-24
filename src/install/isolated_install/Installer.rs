@@ -134,9 +134,6 @@ pub struct Installer<'a> {
 
     /// `Some` if the lockfile has an unread package. The row of one has no `bin`.
     pub(crate) described: Option<Box<DescribedPackages>>,
-
-    /// Main-thread only: the packages that `describe` read in the store.
-    pub(crate) described_in_store: Vec<PackageID>,
 }
 
 /// A task on the pool reads `self` and the store through `Task::installer`.
@@ -310,7 +307,7 @@ impl<'a> Installer<'a> {
                 self.record_extracted_integrity(pkg_id, &data.integrity);
             }
             if self.described.is_some() {
-                self.describe(pkg_id, PackageJson::Extracted(data));
+                self.describe(pkg_id, PackageJson::Cached(entry_id));
             }
 
             let patched = self
@@ -351,47 +348,43 @@ impl<'a> Installer<'a> {
             .set(Enable::FORCE_SAVE_LOCKFILE, true);
     }
 
-    /// Main thread, before a task of `pkg_id` starts. Reads the package.json of an unread package,
-    /// once.
+    /// Main thread, before a task of `pkg_id` starts: reads the package.json of an unread package.
     #[cold]
     #[inline(never)]
-    pub(crate) fn describe(&mut self, pkg_id: PackageID, package_json: PackageJson<'_>) {
+    pub(crate) fn describe(&mut self, pkg_id: PackageID, package_json: PackageJson) {
         let Some(described) = self.described.as_deref() else {
             return;
         };
-        let lockfile = self.lockfile();
-        if !described.wants(lockfile, pkg_id) {
+        if !described.wants(self.lockfile(), pkg_id) {
             return;
         }
-        let pkgs = lockfile.packages.slice();
-        let resolution = &pkgs.items_resolution()[pkg_id as usize];
-        let integrity = &pkgs.items_meta()[pkg_id as usize].integrity;
-        let manager = self.manager_mut();
         let package = match package_json {
-            PackageJson::Extracted(data) => data.json.as_ref().and_then(|json| {
-                let pinned = !manager.skips_verify(resolution.tag);
-                manager.describe(&json.path, &json.buf, pinned)
-            }),
             PackageJson::Cached(entry_id) => {
                 // An owned copy, because the next name is printed into the same buffer.
                 let folder =
                     bun_core::ZBox::from_bytes(self.cached_folder_name(entry_id, None).as_bytes());
-                let pinned = directories::cached_pinned_folder_name(manager, resolution, integrity);
-                manager.describe_cached(&folder, folder.as_bytes() == pinned.as_bytes())
+                self.manager_mut().describe_cached(pkg_id, &folder)
             }
             PackageJson::Stored { entry_id, patched } => {
                 let mut placed = AutoAbsPath::init_top_level_dir();
                 self.append_real_store_path(&mut placed, entry_id, Which::Final)
                     .ok()
                     .and_then(|()| {
-                        manager.describe_placed(resolution, integrity, placed.slice(), !patched)
+                        self.manager_mut()
+                            .describe_placed(pkg_id, placed.slice(), patched)
                     })
             }
         };
-        if package.is_some() && matches!(package_json, PackageJson::Stored { .. }) {
-            self.described_in_store.push(pkg_id);
-        }
         described.set(pkg_id, package);
+    }
+
+    /// A run that saves the lockfile needs the bytes that an unread row pins, not a copy in place.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn reinstalls_unread(&self, pkg_id: PackageID) -> bool {
+        self.lockfile().is_unread(pkg_id)
+            && self.manager().pins_tarballs()
+            && !self.manager_mut().has_pinned_cache_entry(pkg_id)
     }
 
     /// The `bin` of a package, and the buffers of its strings.
@@ -409,12 +402,7 @@ impl<'a> Installer<'a> {
 
     #[inline]
     fn has_bin(&self, pkg_id: PackageID) -> bool {
-        let lockfile = self.lockfile();
-        let tag = match &self.described {
-            Some(described) => described.bin_of(lockfile, pkg_id).0.tag,
-            None => lockfile.packages.items_bin()[pkg_id as usize].tag,
-        };
-        tag != bin::Tag::None
+        self.bin_of(pkg_id).0.tag != bin::Tag::None
     }
 
     fn has_install_script(&self, pkg_id: PackageID) -> bool {
@@ -424,48 +412,52 @@ impl<'a> Installer<'a> {
                 .is_some_and(|package| package.has_install_script)
     }
 
-    /// Main thread, once every task is done. An entry that was in the store before the
-    /// package.json of its package was read has the bins of the package in no `.bin`: not in its
-    /// own, and not in the one of an entry that depends on it.
-    pub(crate) fn link_bins_of_described_in_store(&mut self) {
-        let described: Vec<PackageID> = core::mem::take(&mut self.described_in_store)
-            .into_iter()
-            .filter(|&pkg_id| self.has_bin(pkg_id))
-            .collect();
-        if described.is_empty() {
+    /// Main thread, after every task: a relink links no bin of its package, and often none at all.
+    pub(crate) fn link_bins_of_unread_after_relink(&mut self, failed: &[StoreEntryId]) {
+        let Some(described) = self.described.as_deref() else {
             return;
-        }
+        };
         let store = self.store;
-        let is_described = |entry_id: StoreEntryId| described.contains(&store.ids(entry_id).pkg_id);
-        for index in 0..store.entries.len() {
-            let entry_id = StoreEntryId::from(index as u32);
-            let has_described_dependency = (store.entries.items_dependencies()[index].slice())
-                .iter()
-                .any(|dep| is_described(dep.entry_id));
-            if !(is_described(entry_id) || has_described_dependency)
-                || self.left_out_entries.contains(&entry_id)
-            {
-                continue;
-            }
-            // An unread package keeps itself and its dependents out of the global store, so
-            // `Which::Staging` is where the entry is.
+        let has_unread_bin = |entry_id: StoreEntryId| {
+            (described.get(store.ids(entry_id).pkg_id))
+                .is_some_and(|package| package.bin.tag != bin::Tag::None)
+        };
+        // [the entry, a dependency of it is an unread package with bins]
+        let relinked: Vec<(StoreEntryId, bool)> = (self.tasks.iter().enumerate())
+            .filter(|(_, task)| task.relink != Relink::Off && matches!(task.result, Result::Done))
+            .map(|(index, _)| {
+                let dependencies = store.entries.items_dependencies()[index].slice();
+                (
+                    StoreEntryId::from(index as u32),
+                    dependencies.iter().any(|dep| has_unread_bin(dep.entry_id)),
+                )
+            })
+            .filter(|&(entry_id, of_dependency)| {
+                (of_dependency || has_unread_bin(entry_id))
+                    && !self.left_out_entries.contains(&entry_id)
+                    && !failed.contains(&entry_id)
+            })
+            .collect();
+        for (entry_id, of_dependency) in relinked {
+            // A relink is of a project-local entry, so its `Which::Staging` is where it is.
             debug_assert!(!self.entry_uses_global_store(entry_id));
             let linked = (|| -> TaskResult<()> {
-                if is_described(entry_id)
+                self.remove_planted_links_in(entry_id, Self::store_path_len())
+                    .map_err(|err| TaskError::Binaries(err.into()))?;
+                // In the order of a task: a bin of the package replaces one of a dependency.
+                if of_dependency {
+                    self.link_dependency_bins(entry_id)?;
+                }
+                let pkg_id = store.ids(entry_id).pkg_id;
+                if self.has_bin(pkg_id)
                     && let Some(own_name) = self
                         .entry_store_node_modules_package_name(entry_id)
                         .filter(|name| !name.is_empty())
                 {
                     self.bin_links(entry_id)
                         .map_err(crate::Error::from)
-                        .and_then(|mut links| {
-                            let pkg_id = store.ids(entry_id).pkg_id;
-                            self.link_bins(&mut links, pkg_id, own_name, false)
-                        })
+                        .and_then(|mut links| self.link_bins(&mut links, pkg_id, own_name, false))
                         .map_err(TaskError::Binaries)?;
-                }
-                if has_described_dependency {
-                    self.link_dependency_bins(entry_id)?;
                 }
                 Ok(())
             })();
@@ -744,7 +736,8 @@ impl<'a> Installer<'a> {
     }
 
     /// Main thread, once every task is done. A member's scripts can write the files of its bins.
-    pub(crate) fn relink_bins_of_members_with_scripts(&mut self) {
+    /// Returns the entries that failed.
+    pub(crate) fn relink_bins_of_members_with_scripts(&mut self) -> Vec<StoreEntryId> {
         let store = self.store;
         let pkg_bins = self.lockfile().packages.items_bin();
 
@@ -759,8 +752,9 @@ impl<'a> Installer<'a> {
                 members.push(store.ids(entry_id).pkg_id);
             }
         }
+        let mut failed = Vec::new();
         if members.is_empty() {
-            return;
+            return failed;
         }
 
         // Compare by package, because a `workspace:` dependency on a workspace can have its own
@@ -774,11 +768,20 @@ impl<'a> Installer<'a> {
         for dependent in dependents {
             // It depends on a workspace, so its `Which::Staging` is where it is.
             debug_assert!(!self.entry_uses_global_store(dependent));
-            if let Err(err) = self.link_dependency_bins(dependent) {
+            // A relink that changed nothing did not reach `Step::SymlinkDependencyBinaries`.
+            let checked = if self.tasks[dependent.get() as usize].relink == Relink::Off {
+                Ok(())
+            } else {
+                self.remove_planted_links_in(dependent, Self::store_path_len())
+                    .map_err(|err| TaskError::Binaries(err.into()))
+            };
+            if let Err(err) = checked.and_then(|()| self.link_dependency_bins(dependent)) {
                 self.manager_mut().increment_pending_tasks(1);
                 self.on_task_fail(dependent, &err);
+                failed.push(dependent);
             }
         }
+        failed
     }
 
     /// Main thread only.
@@ -1084,9 +1087,7 @@ impl<'a> Installer<'a> {
 
 /// Where `Installer::describe` reads the package.json of a package.
 #[derive(Clone, Copy)]
-pub(crate) enum PackageJson<'a> {
-    /// What the extraction of the package read.
-    Extracted(&'a install::ExtractData),
+pub(crate) enum PackageJson {
     /// The folder of the entry in the cache, which its files are about to be linked from.
     Cached(StoreEntryId),
     /// An earlier install put the entry into the store. A patch changes the package.json there.

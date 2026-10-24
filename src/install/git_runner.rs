@@ -1278,8 +1278,8 @@ impl GitSubprocess {
         #[cfg(windows)]
         let mut spawned = spawned;
 
-        // A reader that fails to start reports through `on_reader_error`, which only
-        // touches `remaining_fds` / `read_error`, never the reader cell being borrowed.
+        // A pipe that cannot be watched is a read error, not a failed spawn: git is
+        // running and its exit is still awaited.
         #[cfg(unix)]
         for (reader, fd, is_memfd) in [
             (&this.stdout, spawned.stdout, spawned.memfds[1]),
@@ -1293,10 +1293,13 @@ impl GitSubprocess {
             }
             let _ = bun_sys::set_nonblocking(fd);
             this.remaining_fds.set(this.remaining_fds.get() + 1);
-            reader.with_mut(|r| {
+            let started = reader.with_mut(|r| {
                 r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
                 r.start(fd, true)
-            })?;
+            });
+            if let Err(err) = started {
+                Self::on_reader_error(this, err);
+            }
             reader.with_mut(|r| {
                 if let Some(poll) = r.handle.get_poll() {
                     poll.set_flag(FilePollFlag::Socket);

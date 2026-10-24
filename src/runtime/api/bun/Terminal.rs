@@ -428,22 +428,26 @@ impl Terminal {
             }
         }
 
-        // Start reader with the read fd. The reader's ref is taken first: when
-        // the poll registration fails, POSIX `start()` calls `on_reader_error`,
-        // which releases that ref, and still returns Ok.
+        // Start reader with the read fd. The reader's ref is taken first: a
+        // reader that ends releases it.
         terminal.ref_();
         match terminal
             .reader
             .with_mut(|r| r.start(pty_result.read_fd, true))
         {
+            // The poll registration failed and the reader holds read_fd: end it
+            // as a read error does, which releases the reader's ref.
+            #[cfg(unix)]
+            sys::Result::Err(err) => {
+                terminal.on_reader_error(&err);
+                return Err(terminal.fail_reader_start());
+            }
+            #[cfg(windows)]
             sys::Result::Err(_) => {
                 // No callback ran: the reader took neither read_fd nor its ref.
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
                 terminal.deref_();
-                return Err(terminal.fail_reader_start());
-            }
-            sys::Result::Ok(()) if terminal.flags.get().contains(Flags::READER_DONE) => {
                 return Err(terminal.fail_reader_start());
             }
             sys::Result::Ok(()) => {

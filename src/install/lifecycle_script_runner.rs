@@ -786,6 +786,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             #[cfg(windows)]
             let mut spawned = spawned;
 
+            // A pipe that cannot be watched is a read error, not a failed spawn: the
+            // script is running and its exit is still awaited.
             #[cfg(unix)]
             {
                 if let Some(stdout) = spawned.stdout {
@@ -795,7 +797,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         (*this).remaining_fds += 1;
 
                         Self::reset_output_flags(&mut (*this).stdout, stdout);
-                        (*this).stdout.start(stdout, true)?;
+                        if let Err(err) = (*this).stdout.start(stdout, true) {
+                            (*this).on_reader_error(&err);
+                        }
                         if let Some(poll) = (*this).stdout.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                         }
@@ -811,7 +815,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         (*this).remaining_fds += 1;
 
                         Self::reset_output_flags(&mut (*this).stderr, stderr);
-                        (*this).stderr.start(stderr, true)?;
+                        if let Err(err) = (*this).stderr.start(stderr, true) {
+                            (*this).on_reader_error(&err);
+                        }
                         if let Some(poll) = (*this).stderr.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                         }

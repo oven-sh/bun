@@ -550,6 +550,7 @@ impl PosixBufferedReader {
         }
     }
 
+    /// On `Err` the fd is not watched and no callback ran. The reader holds `fd` as it does after `Ok`, so the parent ends it the way it does after a read error.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
         if !is_pollable {
             self.buffer().clear();
@@ -564,10 +565,7 @@ impl PosixBufferedReader {
         }
         // With nothing left to read the fd is never waited on: like a non-pollable source, the parent's first read request ends the reader.
         if !self.flags.contains(PosixFlags::IS_PAUSED) && !self.limit.reached() {
-            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
-            // a protector across the (maybe-freeing) error dispatch — pre-existing
-            // on the parent chain, tracked with the raw-dispatch follow-up.
-            unsafe { Self::register_poll(std::ptr::from_mut(self)) };
+            return self.try_register_poll();
         }
 
         sys::Result::Ok(())

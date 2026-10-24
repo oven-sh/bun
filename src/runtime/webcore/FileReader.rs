@@ -395,6 +395,12 @@ impl FileReader {
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
+            // A failed poll registration is reported like a read that fails later: the first read rejects with it.
+            #[cfg(unix)]
+            if let Err(e) = start_result {
+                self.on_reader_error(e);
+            }
+            #[cfg(windows)]
             if let Err(e) = start_result {
                 if need_io_ref {
                     self.waiting_for_on_reader_done.set(false);

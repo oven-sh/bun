@@ -176,7 +176,7 @@ impl PipeReader {
             let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
             if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
                 // Route through the same teardown as a read-callback error
-                // (matches POSIX's register_poll failure path): state=Err,
+                // (as the POSIX arm below does for a failed start): state=Err,
                 // detach from the Subprocess via on_close_io, release the
                 // start() ref, and let the caller proceed to the sibling pipe.
                 // Returning Err would have the caller throw after try_kill
@@ -193,26 +193,23 @@ impl PipeReader {
                 // pipe buffer provides backpressure and the child blocks.
                 self.reader.flags.insert(PosixFlags::IS_PAUSED);
             }
-            // PosixBufferedReader.start() always returns Ok(()); if poll
-            // registration fails it synchronously invokes onReaderError() first,
-            // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
-            // just took above. Hold one more ref so `this` survives long enough to
-            // check state after start() returns.
+            // If poll registration fails, `on_reader_error` below drops both the
+            // Readable.pipe ref (via onCloseIO) and the ref we just took above.
+            // Hold one more ref so `this` survives long enough to return.
             //
             // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
             let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
 
-            let _ = self.reader.start(self.stdio_result.unwrap(), true);
+            if let bun_sys::Result::Err(err) = self.reader.start(self.stdio_result.unwrap(), true) {
+                // `_guard`'s Drop on return will drop the last ref.
+                self.on_reader_error(err);
+                return;
+            }
 
             #[cfg(unix)]
             {
-                if matches!(self.state, State::Err(..)) {
-                    // onReaderError already ran; `_guard`'s Drop on return
-                    // will drop the last ref and deinit() closes the handle.
-                    return;
-                }
                 if let Some(poll) = self.reader.handle.get_poll() {
                     poll.set_flag(FilePollFlag::Socket);
                     poll.set_flag(FilePollFlag::Nonblocking);

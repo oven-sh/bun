@@ -1982,10 +1982,6 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
 /// Spawns the command and wires the output readers. `Err` records the error
 /// via `set_err` (for the caller to `finish`). `this.as_ptr()` is stored as
 /// the readers' parent pointer.
-/// The `stdout_reader().start(..)` failure path synchronously re-enters this
-/// job (`on_reader_error` -> `note_reader_error` writes the `remaining_fds`/
-/// `err_msg` cells through the parent backref); it never touches the reader
-/// cell itself, so the reader's `with_mut` borrow is the only one live.
 fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     this: ThisPtr<T>,
     argv: &[&CStr],
@@ -2131,9 +2127,10 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                     );
                     r.start(stdout, true)
                 });
-                if started.is_err() {
-                    this.set_err(format_args!("Failed to start reading stdout"));
-                    return Err(());
+                // A pipe that cannot be watched is a read error, not a failed spawn:
+                // the command is running and its exit is still awaited.
+                if let Err(err) = started {
+                    this.note_reader_error(err);
                 }
                 this.stdout_reader().with_mut(|r| {
                     if let Some(p) = r.handle.get_poll() {

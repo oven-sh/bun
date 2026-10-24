@@ -1183,10 +1183,10 @@ impl Readable {
     /// `arc_as_mut_ptr` invariant is localised once.
     ///
     /// # Safety
-    /// `slot` must point to a live `Readable`. Raw because `start`/`read_all`
-    /// can complete the reader synchronously, which runs `close_io` →
-    /// `Readable::finalize` and overwrites the slot — no reference to it may
-    /// span those calls.
+    /// `slot` must point to a live `Readable`. Raw because `read_all`, and
+    /// `on_reader_error` after a failed start, can complete the reader
+    /// synchronously, which runs `close_io` → `Readable::finalize` and
+    /// overwrites the slot. No reference to it may span those calls.
     unsafe fn start_pipe_reader(
         slot: *mut Readable,
         process: *mut ShellSubprocess,
@@ -1205,8 +1205,8 @@ impl Readable {
         // re-entrant reader callbacks only hold raw `*mut PipeReader`, and
         // each `&mut` below is scoped to its own call.
         if let Err(err) = unsafe { (*p).start(process, event_loop) } {
-            // Only Windows returns an error here. Close the pipe and report it as
-            // a read error, so the `Cmd` is still alive when the child exits.
+            // Close the pipe and report it as a read error, so the `Cmd` is still
+            // alive when the child exits.
             // SAFETY: as above.
             unsafe {
                 (*p).reader.deinit();
@@ -1829,13 +1829,6 @@ impl PipeReader {
         match self.reader.start(self.stdio_result.take().unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
-                // `reader.start` reports a poll-registration failure through
-                // `on_reader_error` (not its return value), so the reader may
-                // already be errored/torn down here; same guard as
-                // `SubprocessPipeReader::start`.
-                if matches!(self.state, PipeReaderState::Err(_)) {
-                    return Ok(());
-                }
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct

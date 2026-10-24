@@ -224,21 +224,21 @@ impl<'a> ProcessHandle<'a> {
             }
         }
 
+        // A pipe that cannot be watched is a read error, not a failed spawn: the
+        // script is running and its exit is still awaited.
         #[cfg(unix)]
         {
             if let Some(stdout_fd) = stdout_fd {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader
-                    .reader
-                    .start(stdout_fd, true)
-                    .map_err(Error::from)?;
+                if self.stdout_reader.reader.start(stdout_fd, true).is_err() {
+                    self.stdout_reader.ended = true;
+                }
             }
             if let Some(stderr_fd) = stderr_fd {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader
-                    .reader
-                    .start(stderr_fd, true)
-                    .map_err(Error::from)?;
+                if self.stderr_reader.reader.start(stderr_fd, true).is_err() {
+                    self.stderr_reader.ended = true;
+                }
             }
         }
         #[cfg(not(unix))]

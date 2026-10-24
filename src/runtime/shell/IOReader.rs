@@ -44,9 +44,6 @@ struct State {
     buf: Vec<u8>,
     /// Listeners for the in-flight read (see `take_readers`).
     readers: Readers,
-    /// True while `start()` is on the stack. An error reported meanwhile goes to `start_err`.
-    starting: bool,
-    start_err: Option<sys::Error>,
     /// The reader is paused until a listener calls `resume()` (see `nobody_ready`).
     paused: bool,
     evtloop: EventLoopHandle,
@@ -96,7 +93,6 @@ impl IOReader {
         // vtable callback (see struct doc comment).
         //
         // Don't call this from the done/error callback bodies below. `WindowsBufferedReader`
-        // (and `PosixBufferedReader::start()` when registration fails synchronously)
         // invokes them while a `&mut ReaderImpl` is live. The POSIX poll dispatch
         // doesn't borrow the reader (raw pointer, copied vtable), so a command
         // started from a done/error notification can `start()` a new read.
@@ -142,8 +138,6 @@ impl IOReader {
                 fd,
                 buf: Vec::new(),
                 readers: Readers::new(),
-                starting: false,
-                start_err: None,
                 paused: false,
                 evtloop,
                 #[cfg(windows)]
@@ -220,11 +214,7 @@ impl IOReader {
             return self.finish_listeners(None);
         }
         self.state().paused = false;
-        self.state().starting = true;
-        let result = self.start_impl();
-        let s = self.state();
-        s.starting = false;
-        match s.start_err.take().map_or(result, Err) {
+        match self.start_impl() {
             Ok(()) => Yield::suspended(),
             Err(e) => {
                 self.set_reading(false);
@@ -332,10 +322,6 @@ impl IOReader {
         // alive across the loop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        if self.state().starting {
-            self.state().start_err = Some(err.clone());
-            return;
-        }
         let interp = self.state().interp;
         for r in self.take_readers() {
             // Re-derive a fresh SystemError per callee (see

@@ -158,17 +158,17 @@ impl Worker {
                     coord.vm.event_loop().cast(),
                 )),
             );
+            // A pipe that cannot be watched is a read error, not a failed spawn: the
+            // worker is running and its exit is still awaited.
             if let Some(fd) = stdout {
-                this.out
-                    .reader
-                    .start(fd, true)
-                    .map_err(|_| crate::Error::PipeStartFailed)?;
+                if let Err(err) = this.out.reader.start(fd, true) {
+                    this.out.on_reader_error(err);
+                }
             }
             if let Some(fd) = stderr {
-                this.err
-                    .reader
-                    .start(fd, true)
-                    .map_err(|_| crate::Error::PipeStartFailed)?;
+                if let Err(err) = this.err.reader.start(fd, true) {
+                    this.err.on_reader_error(err);
+                }
             }
             if !extra_pipes.is_empty() {
                 // coord.vm backref valid for worker lifetime; adopt() mutates the

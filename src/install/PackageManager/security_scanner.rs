@@ -1089,6 +1089,13 @@ impl<'a> SecurityScanSubprocess<'a> {
         // isDone() returns true, otherwise we risk freeing this struct while
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
+        // POSIX: a pipe that cannot be watched is a read error, not a failed spawn.
+        // The scanner is running and its exit is still awaited.
+        #[cfg(unix)]
+        if let Err(err) = self.ipc_reader.start(ipc_read_fd, true) {
+            self.on_reader_error(err);
+        }
+        #[cfg(windows)]
         self.ipc_reader
             .start(ipc_read_fd, true)
             .map_err(|e| e.to_zig_err())?;

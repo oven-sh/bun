@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
@@ -19,7 +19,7 @@ import { join } from "node:path";
 // practice manifested as a process stuck idle with no error and no exit.
 //
 // The fix routes the start_with_current_pipe() error through on_reader_error
-// (matching what POSIX already does for register_poll failure), so the pipe is
+// (as the POSIX arm does for a failed start()), so the pipe is
 // torn down and detached from the Subprocess before the exit callback runs.
 //
 // Triggering a real uv_read_start failure on a freshly-spawned stdio pipe is
@@ -102,6 +102,10 @@ try {
 // first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
 // what no mode fails, which is nearer to what running out of watches does.
 //
+// FAIL_EPOLL_CTL=reader-add fails every readable EPOLL_CTL_ADD of a pipe or a
+// socket and nothing else: the registration that a pipe reader makes when it
+// starts.
+//
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -117,6 +121,7 @@ const SHIM_C = /* c */ `
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -133,6 +138,11 @@ static int is_pidfd(int fd) {
   return strstr(target, "pidfd") != NULL;
 }
 
+static int is_pipe_or_socket(int fd) {
+  struct stat st;
+  return fstat(fd, &st) == 0 && (S_ISFIFO(st.st_mode) || S_ISSOCK(st.st_mode));
+}
+
 static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
@@ -143,6 +153,9 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
     if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
     const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
     return pidfd_adds++ >= (skip ? atoi(skip) : 0);
+  }
+  if (strcmp(mode, "reader-add") == 0) {
+    return op == EPOLL_CTL_ADD && (event->events & EPOLLIN) && !(event->events & EPOLLOUT) && is_pipe_or_socket(fd);
   }
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
@@ -241,13 +254,34 @@ function writeToTerminal(writes) {
   return seen;
 }
 
+// The child is reachable only from this call, like the terminal above.
+async function readOutput() {
+  const rejection = promise => promise.then(() => null, e => ({ code: e.code, syscall: e.syscall }));
+  const child = Bun.spawn({ cmd: ["true"], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([rejection(child.stdout.text()), rejection(child.stderr.text()), child.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 let error = null;
 let write;
 let sync;
 let onExit;
 let shell;
+let read;
 try {
   switch (kind) {
+    case "stdout-pipe":
+      read = await readOutput();
+      break;
+    case "sync-stdout-pipe":
+      Bun.spawnSync({ cmd: ["true"], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      break;
+    case "stdin-stream":
+      await Bun.stdin.stream().getReader().read();
+      break;
+    case "cron":
+      await Bun.cron(import.meta.dir + "/cron-job.js", "0 * * * *", "pipe-start-error");
+      break;
     case "stdin-pipe":
       Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
       break;
@@ -320,7 +354,10 @@ try {
 } catch (e) {
   error = { code: e.code, message: e.message };
 }
-if (kind === "sync-stdin-buffer") {
+if (kind === "sync-stdout-pipe") {
+  // Read before anything else runs: spawnSync has no later moment to clean up in.
+  sync = { children: children().length, next: Bun.spawnSync(quiet).exitCode };
+} else if (kind === "sync-stdin-buffer") {
   // Read before anything else runs: spawnSync has no later moment to clean up in.
   sync = {
     children: children().length,
@@ -342,14 +379,21 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, sync, onExit, shell, read, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
   if (!isLinux || !cc) return;
-  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE });
+  dir = tempDir("poll-start-error", {
+    "shim.c": SHIM_C,
+    "fixture.js": FIXTURE,
+    "cron-job.js": "",
+    // Stands in for crontab(1): `crontab -l` prints an empty table.
+    "bin/crontab": "#!/bin/sh\nexit 0\n",
+  });
+  chmodSync(join(String(dir), "bin/crontab"), 0o755);
   await using ccProc = Bun.spawn({
     cmd: [cc, "-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
@@ -364,11 +408,12 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-async function runFixture(kind: string, env: Record<string, string> = {}) {
+async function runFixture(kind: string, env: Record<string, string> = {}, stdin: "inherit" | "pipe" = "inherit") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.js", kind],
     cwd: String(dir),
     env: { ...bunEnv, ...env, LD_PRELOAD: join(String(dir), "shim.so") },
+    stdin,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -590,13 +635,12 @@ describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be sig
   });
 });
 
-// The POSIX reader reports a failed registration by calling on_reader_error
-// from inside start(), and start() still returns Ok. Terminal's reader
-// callbacks end by releasing the reader's ref, which the constructor used to
-// take only after start() returned: the release freed the Terminal while the
-// constructor was still using it. A reader that ends during the constructor's
-// first read (the injected EPOLL_CTL_MOD failure) did not free early. It left
-// a constructed Terminal that was already dead and could never be collected.
+// A reader that fails to start, or that ends during the constructor's first
+// read (the injected EPOLL_CTL_MOD failure), releases the reader's ref. The
+// constructor used to take that ref only after start() returned: the release
+// freed the Terminal while the constructor was still using it. The reader that
+// ended during the first read did not free early. It left a constructed
+// Terminal that was already dead and could never be collected.
 describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose reader fails to register with the event loop", () => {
   describe.each(["pty-reader-add", "pty-reader-mod"])("FAIL_EPOLL_CTL=%s", mode => {
     test.concurrent.each([
@@ -629,5 +673,147 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// The POSIX reader returns a failed registration from start() and runs no
+// callback for it. Each parent of a reader handles the failure itself. For the
+// parents below, what the caller observes is the same as when start() called
+// on_reader_error from the inside.
+describe.skipIf(!isLinux || !cc)(
+  "a pipe reader whose event loop registration fails is reported as a read error",
+  () => {
+    const env = { FAIL_EPOLL_CTL: "reader-add", BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" };
+    const ENOSPC = { code: "ENOSPC", syscall: "epoll_ctl" };
+
+    test.concurrent("Bun.spawn rejects the reads of stdout and stderr", async () => {
+      expect(await runFixture("stdout-pipe", env)).toEqual({
+        report: {
+          error: null,
+          read: { stdout: ENOSPC, stderr: ENOSPC, exitCode: 0 },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("Bun.spawnSync throws and reaps its child", async () => {
+      expect(await runFixture("sync-stdout-pipe", env)).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: 0 },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("Bun.stdin.stream() rejects its first read", async () => {
+      expect(await runFixture("stdin-stream", env, "pipe")).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("Bun.cron rejects", async () => {
+      const PATH = `${join(String(dir), "bin")}:${bunEnv.PATH}`;
+      expect(await runFixture("cron", { ...env, PATH })).toEqual({
+        report: { error: { message: "Failed to read process output: ENOSPC" }, leakedFds: 0, leakedWrappers: 0 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// The CLI keeps a script running when one of its output pipes cannot be watched.
+describe.skipIf(!isLinux || !cc)("a script whose output pipes fail to register with the event loop still runs", () => {
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: {
+        ...bunEnv,
+        FAIL_EPOLL_CTL: "reader-add",
+        BUN_FEATURE_FLAG_DISABLE_MEMFD: "1",
+        LD_PRELOAD: join(String(dir), "shim.so"),
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  // A script whose pipe was closed instead would die of SIGPIPE at its first echo.
+  const hi = "echo hello-from-script; exit 3";
+
+  // It counted such a pipe as ended when it failed to start, and once more when the script exited and the pipe was read.
+  test.concurrent("bun run --filter prints the output when the script exits", async () => {
+    using project = tempDir("unwatchable-output-filter", {
+      "package.json": JSON.stringify({ name: "pipe-script", scripts: { hi } }),
+    });
+    expect(await run(String(project), ["run", "--filter=*", "hi"])).toEqual({
+      stdout: "pipe-script hi: hello-from-script\npipe-script hi: Exited with code 3\n",
+      stderr: "",
+      exitCode: 3,
+    });
+  });
+
+  test.concurrent("bun run --parallel exits with the script's exit code", async () => {
+    using project = tempDir("unwatchable-output-parallel", {
+      "package.json": JSON.stringify({ name: "pipe-script", scripts: { hi } }),
+    });
+    const { stderr, exitCode } = await run(String(project), ["run", "--parallel", "hi"]);
+    expect(stderr).toContain("Exited with code 3");
+    expect(exitCode).toBe(3);
+  });
+
+  test.concurrent("bun install runs a lifecycle script", async () => {
+    using project = tempDir("unwatchable-output-install", {
+      "package.json": JSON.stringify({ name: "pipe-script-root", workspaces: ["dep"] }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: { postinstall: "echo to-the-pipe && echo ran > ran.txt" },
+      }),
+    });
+    const { stderr, exitCode } = await run(String(project), ["install"]);
+    expect(stderr).toContain('Failed to read postinstall script output from "dep"');
+    expect({ ran: existsSync(join(String(project), "dep", "ran.txt")), exitCode }).toEqual({ ran: true, exitCode: 0 });
+  });
+
+  test.concurrent("bun install reports the security scanner's lost answer", async () => {
+    using project = tempDir("unwatchable-output-scanner", {
+      "package.json": JSON.stringify({ name: "pipe-script-root", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "bunfig.toml": `[install.security]\nscanner = "./scanner.ts"\n`,
+      "scanner.ts": `export const scanner = { version: "1", scan: async () => [] };`,
+    });
+    const { stderr, exitCode } = await run(String(project), ["install"]);
+    expect(stderr).toContain("Failed to read security scanner IPC: ENOSPC");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("bun test --parallel reports the results", async () => {
+    using project = tempDir("unwatchable-output-test", {
+      "package.json": JSON.stringify({ name: "pipe-script" }),
+      "pass.test.ts": `import { test } from "bun:test"; test("passes", () => {});`,
+      "fail.test.ts": `import { test } from "bun:test"; test("fails", () => { throw new Error("no"); });`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(project), ["test", "--parallel"]);
+    const output = stdout + stderr;
+    expect(output).toContain(" 1 pass");
+    expect(output).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
   });
 });

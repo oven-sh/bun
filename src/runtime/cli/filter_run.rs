@@ -165,17 +165,19 @@ impl<'a> ProcessHandle<'a> {
             }
         }
 
+        // A pipe that cannot be watched stays counted in `remaining_fds`: its reader
+        // holds it, and `drain_and_close_pipes` reads it when the script exits.
         #[cfg(unix)]
         {
             if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
                 handle.remaining_fds += 1;
-                handle.stdout.start(stdout, true)?;
+                let _ = handle.stdout.start(stdout, true);
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
                 handle.remaining_fds += 1;
-                handle.stderr.start(stderr, true)?;
+                let _ = handle.stderr.start(stderr, true);
             }
         }
         #[cfg(not(unix))]

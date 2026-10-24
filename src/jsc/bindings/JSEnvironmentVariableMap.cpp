@@ -147,8 +147,18 @@ static String zoneIDForWholeHoursWest(int32_t secondsWest)
 // ICU reads "GMT+3" as three hours east. In TZ it is a POSIX value, three hours west.
 static bool isPosixOffsetFromGMT(StringView value)
 {
-    return value.length() > 3 && startsWithLettersIgnoringASCIICase(value, "gmt"_s)
-        && (value[3] == '+' || value[3] == '-' || isASCIIDigit(value[3]));
+    constexpr auto gmt = "gmt"_s;
+    if (value.length() <= gmt.length() || !startsWithLettersIgnoringASCIICase(value, gmt))
+        return false;
+    char16_t next = value[gmt.length()];
+    return next == '+' || next == '-' || isASCIIDigit(next);
+}
+
+static bool hasProcessTimeZone()
+{
+    Vector<char16_t, 32> zoneID;
+    WTF::getTimeZoneOverride(zoneID);
+    return !zoneID.isEmpty();
 }
 
 void applyTimeZoneFromEnv(JSC::VM& vm, const String& value, TimeZoneWriter writer)
@@ -157,11 +167,15 @@ void applyTimeZoneFromEnv(JSC::VM& vm, const String& value, TimeZoneWriter write
     if (name.startsWith(':'))
         name = name.substring(1);
     // Only the C library can read the tzfile at a path, and what follows `std offset` in a POSIX value.
-    bool isForHost = name.startsWith('/');
+    bool isForHost = value.isEmpty() || name.startsWith('/');
     if (!isForHost) {
-        if (name.startsWith("posix/"_s) || name.startsWith("right/"_s))
-            name = name.substring(6);
-        if (!isPosixOffsetFromGMT(name) && setProcessTimeZone(vm, name))
+        for (auto prefix : { "posix/"_s, "right/"_s }) {
+            if (name.startsWith(prefix)) {
+                name = name.substring(prefix.length());
+                break;
+            }
+        }
+        if (!name.isEmpty() && !isPosixOffsetFromGMT(name) && setProcessTimeZone(vm, name))
             return;
         if (auto standard = parsePosixStandardTime(name)) {
             String zoneID = standard->isWholeValue ? zoneIDForWholeHoursWest(standard->secondsWest) : String();
@@ -172,6 +186,9 @@ void applyTimeZoneFromEnv(JSC::VM& vm, const String& value, TimeZoneWriter write
     }
     // As in Node, an assigned value that is not a time zone is UTC.
     if (!isForHost && writer == TimeZoneWriter::Assignment && setProcessTimeZone(vm, "UTC"_s))
+        return;
+    // At a start no zone is set yet, and a reset of the date caches would walk the heap for nothing.
+    if (writer == TimeZoneWriter::Start && !hasProcessTimeZone())
         return;
     clearProcessTimeZone(vm);
 }

@@ -106,6 +106,8 @@ describe("process.env.TZ = value", () => {
       "Not/AZone",
       "undefined",
       "europe/paris",
+      ":",
+      "posix/",
       "XYZ",
       "AB-3",
       "<XY>-3",

@@ -7,7 +7,7 @@
 
 const ObjectDefineProperty = Object.defineProperty;
 
-const { Mutex, Condition, SharedArray } = $bindgen("shared_struct_classes.bind.ts", "classes")();
+const { Mutex, Condition, SharedArray, SharedStruct } = $bindgen("shared_struct_classes.bind.ts", "classes")();
 const nativeCanBeShared = $bindgen("shared_struct_classes.bind.ts", "canBeShared");
 const nativeAtomicLoad = $bindgen("shared_struct_classes.bind.ts", "atomicLoad");
 const nativeAtomicStore = $bindgen("shared_struct_classes.bind.ts", "atomicStore");
@@ -179,3 +179,9 @@ export default {
   exchange: atomicsOverloads.exchange,
   compareExchange: atomicsOverloads.compareExchange,
 };
+
+// The `shared struct` lowering in runtime.js builds its instances through this hook.
+Object.defineProperty(globalThis, Symbol.for("bun.structs.native"), {
+  value: { create: (fields: string[]) => new SharedStruct(fields) },
+  configurable: true,
+});

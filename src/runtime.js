@@ -463,7 +463,13 @@ export var __structBase = (parent, fields, shared) => {
         var layout = __structLayoutFor(new.target);
         var self = this;
         if (layout.shared) {
-          // Shared structs have a null prototype.
+          // Reading Reflect.canBeShared installs the native structs, which publish the hook.
+          var native = typeof Reflect.canBeShared === "function" && globalThis[Symbol.for("bun.structs.native")];
+          if (native) {
+            // A constructor that returns an object makes it `this` in the subclass.
+            return native.create(layout.names);
+          }
+          // No native support: emulate within this agent. Shared structs have a null prototype.
           Object.setPrototypeOf(self, null);
           __structSharedInstances.add(self);
           for (var name of layout.names) {

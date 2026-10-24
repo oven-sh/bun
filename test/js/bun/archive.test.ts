@@ -1,7 +1,22 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -2396,6 +2411,739 @@ describe("Bun.Archive", () => {
       const readArchive = new Bun.Archive(await bunFile.bytes());
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
+  });
+
+  describe.concurrent("Bun.file() input", () => {
+    // The names and the text of the entries, in archive order.
+    async function entries(tar: Uint8Array | Blob): Promise<[string, string][]> {
+      return Promise.all(
+        [...(await new Bun.Archive(tar).files())].map(async ([name, file]) => [name, await file.text()]),
+      );
+    }
+
+    // Runs `script` in a process of its own and gives what it prints as JSON.
+    async function inChild(script: string, cwd: string): Promise<any> {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    const big = Buffer.alloc(600_001, "0123456789abcdef").toString();
+    const sources = { "digits.txt": "0123456789", "empty.txt": "", "big.txt": big };
+
+    // [name, makes the value of an entry, the text the entry has to hold]
+    const fileValues: [string, (dir: string) => Blob, string][] = [
+      ["a Bun.file()", dir => Bun.file(join(dir, "digits.txt")), "0123456789"],
+      ["a middle slice", dir => Bun.file(join(dir, "digits.txt")).slice(2, 6), "2345"],
+      ["a slice to the end", dir => Bun.file(join(dir, "digits.txt")).slice(7), "789"],
+      ["a slice past the end", dir => Bun.file(join(dir, "digits.txt")).slice(8, 100), "89"],
+      ["a slice of a slice", dir => Bun.file(join(dir, "digits.txt")).slice(2).slice(1, 4), "345"],
+      ["an empty slice", dir => Bun.file(join(dir, "digits.txt")).slice(3, 3), ""],
+      ["an empty file", dir => Bun.file(join(dir, "empty.txt")), ""],
+      ["a file of more than one read", dir => Bun.file(join(dir, "big.txt")), big],
+      ["a slice across reads", dir => Bun.file(join(dir, "big.txt")).slice(100_000, 500_000), big.slice(100_000, 500_000)], // prettier-ignore
+    ];
+    const optionSets: [string, Bun.ArchiveOptions | undefined][] = [
+      ["no options", undefined],
+      ["gzip", { compress: "gzip" }],
+    ];
+
+    describe.each(optionSets)("%s", (_, options) => {
+      test.each(fileValues)("%s as an entry of new Archive()", async (_, make, expected) => {
+        using dir = tempDir("archive-file-entry", sources);
+        const file = make(String(dir));
+        // The file is the first, a middle and the last entry.
+        const archive = new Bun.Archive(
+          { "first": file, "a.txt": "string", "middle": file, "b.bin": new Uint8Array([104, 105]), "last": file },
+          options,
+        );
+        const want = [
+          ["first", expected],
+          ["a.txt", "string"],
+          ["middle", expected],
+          ["b.bin", "hi"],
+          ["last", expected],
+        ];
+        expect(await entries(await archive.bytes())).toEqual(want);
+        expect(await entries(await archive.blob())).toEqual(want);
+        expect([...(await archive.files())].map(([name]) => name)).toEqual(want.map(([name]) => name));
+      });
+
+      test.each(fileValues)("%s as an entry of Archive.write()", async (_, make, expected) => {
+        using dir = tempDir("archive-file-entry-write", sources);
+        const out = join(String(dir), "out.tar");
+        const file = make(String(dir));
+        expect(await Bun.Archive.write(out, { "a.txt": "string", "file": file, "c.txt": "tail" }, options)).toBe(
+          undefined,
+        );
+        expect(await entries(await Bun.file(out).bytes())).toEqual([
+          ["a.txt", "string"],
+          ["file", expected],
+          ["c.txt", "tail"],
+        ]);
+      });
+
+      test("Bun.write() writes the bytes that bytes() gives", async () => {
+        using dir = tempDir("archive-file-bun-write", sources);
+        const files = () => ({ "digits.txt": Bun.file(join(String(dir), "digits.txt")), "b.txt": "b" });
+        const want = [
+          ["digits.txt", "0123456789"],
+          ["b.txt", "b"],
+        ];
+        // Bun.write() is the first use of one archive, and bytes() of the other.
+        const out = join(String(dir), "out.tar");
+        const written = await Bun.write(out, new Bun.Archive(files(), options));
+        const archive = new Bun.Archive(files(), options);
+        const bytes = await archive.bytes();
+        expect(await entries(readFileSync(out))).toEqual(want);
+        expect(readFileSync(out).subarray(0, 2).equals(bytes.subarray(0, 2))).toBe(true);
+        expect(written).toBe(statSync(out).size);
+        // The archive is read now. The same call gives the same bytes.
+        const again = join(String(dir), "again.tar");
+        expect(await Bun.write(Bun.file(again), archive)).toBe(bytes.length);
+        expect(readFileSync(again).equals(bytes)).toBe(true);
+      });
+    });
+
+    test("Bun.write() of a gzip archive of values in memory writes gzip", async () => {
+      using dir = tempDir("archive-gzip-bun-write", {});
+      const out = join(String(dir), "out.tar.gz");
+      const archive = new Bun.Archive({ "a.txt": Buffer.alloc(5000, "a").toString() }, { compress: "gzip" });
+      const bytes = await archive.bytes();
+      expect(await Bun.write(out, archive)).toBe(bytes.length);
+      expect(readFileSync(out).equals(bytes)).toBe(true);
+      expect(bytes.subarray(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
+    });
+
+    // [name, writes `archive` to the file `path`]
+    const destinations: [string, (path: string, archive: Bun.Archive) => Promise<number>][] = [
+      ["a path", (path, archive) => Bun.write(path, archive)],
+      ["a Bun.file()", (path, archive) => Bun.write(Bun.file(path), archive)],
+      ["BunFile#write", (path, archive) => Bun.file(path).write(archive)],
+      [
+        "a file descriptor",
+        async (path, archive) => {
+          const fd = openSync(path, "w");
+          try {
+            return await Bun.write(fd, archive);
+          } finally {
+            closeSync(fd);
+          }
+        },
+      ],
+      [
+        "a Bun.file() of a file descriptor",
+        async (path, archive) => {
+          const fd = openSync(path, "w");
+          try {
+            return await Bun.write(Bun.file(fd), archive);
+          } finally {
+            closeSync(fd);
+          }
+        },
+      ],
+    ];
+    test.each(destinations)("Bun.write() of an archive that is not read yet, to %s", async (_, write) => {
+      using dir = tempDir("archive-file-destination", sources);
+      const out = join(String(dir), "out.tar");
+      const archive = new Bun.Archive({ "a.txt": "a", "digits.txt": Bun.file(join(String(dir), "digits.txt")) });
+      const written = await write(out, archive);
+      expect(await entries(readFileSync(out))).toEqual([
+        ["a.txt", "a"],
+        ["digits.txt", "0123456789"],
+      ]);
+      expect(written).toBe(statSync(out).size);
+    });
+
+    test("Bun.write() of an archive that is not read yet, to Bun.stdout", async () => {
+      using dir = tempDir("archive-file-stdout", sources);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `await Bun.write(Bun.stdout, new Bun.Archive({ "a.txt": "a", "digits.txt": Bun.file("digits.txt") }));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(await entries(stdout)).toEqual([
+        ["a.txt", "a"],
+        ["digits.txt", "0123456789"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.write() of an archive that is not read yet keeps createPath", async () => {
+      using dir = tempDir("archive-file-create-path", sources);
+      const files = () => ({ "digits.txt": Bun.file(join(String(dir), "digits.txt")) });
+      const missing = join(String(dir), "no", "such", "dir", "out.tar");
+      await expect(Bun.write(missing, new Bun.Archive(files()), { createPath: false })).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(existsSync(join(String(dir), "no"))).toBe(false);
+      await Bun.write(missing, new Bun.Archive(files()));
+      expect(await entries(readFileSync(missing))).toEqual([["digits.txt", "0123456789"]]);
+    });
+
+    test("a Blob made of one Bun.file() as an entry", async () => {
+      using dir = tempDir("archive-file-blob", sources);
+      const archive = new Bun.Archive({ "a.txt": new Blob([Bun.file(join(String(dir), "digits.txt"))]) });
+      expect(await entries(await archive.bytes())).toEqual([["a.txt", "0123456789"]]);
+    });
+
+    test("an output of Bun.build() with an outdir as an entry", async () => {
+      using dir = tempDir("archive-file-build-output", { "entry.js": "console.log('built');" });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        outdir: join(String(dir), "out"),
+      });
+      const output = build.outputs[0];
+      const archive = new Bun.Archive({ "entry.js": output, "tail.txt": "tail" });
+      expect(await entries(await archive.bytes())).toEqual([
+        ["entry.js", readFileSync(output.path, "utf8")],
+        ["tail.txt", "tail"],
+      ]);
+    });
+
+    test("a relative path is the file that Bun.file() reads", async () => {
+      using dir = tempDir("archive-file-relative", { "sub/a.txt": "relative", "a.txt": "wrong" });
+      const result = await inChild(
+        `const file = Bun.file("sub/../sub/a.txt");
+         const files = await new Bun.Archive({ "a.txt": file }).files();
+         console.log(JSON.stringify({ archived: await files.get("a.txt").text(), read: await file.text() }));`,
+        String(dir),
+      );
+      expect(result).toEqual({ archived: "relative", read: "relative" });
+    });
+
+    test.skipIf(!isLinux)("a procfs file, which states no size, as an entry", async () => {
+      const archive = new Bun.Archive({ "version": Bun.file("/proc/version"), "tail.txt": "tail" });
+      expect(await entries(await archive.bytes())).toEqual([
+        ["version", readFileSync("/proc/version", "utf8")],
+        ["tail.txt", "tail"],
+      ]);
+    });
+
+    const sysfsFile = "/sys/devices/system/cpu/online";
+    test.skipIf(!isLinux || !existsSync(sysfsFile))(
+      "a sysfs file, which states more than it holds, as an entry",
+      async () => {
+        // The premise: the file system states a page, and a read gives a few bytes.
+        expect(statSync(sysfsFile).size).toBeGreaterThan(readFileSync(sysfsFile).length);
+        const archive = new Bun.Archive({ "online": Bun.file(sysfsFile), "tail.txt": "tail" });
+        expect(await entries(await archive.bytes())).toEqual([
+          ["online", readFileSync(sysfsFile, "utf8")],
+          ["tail.txt", "tail"],
+        ]);
+      },
+    );
+
+    // Every entry has the time of the call to `new`, so both calls have to be in one second.
+    function twins(lazy: Record<string, any>, inMemory: Record<string, any>): [Bun.Archive, Bun.Archive] {
+      for (;;) {
+        const second = Math.floor(Date.now() / 1000);
+        const pair: [Bun.Archive, Bun.Archive] = [new Bun.Archive(lazy), new Bun.Archive(inMemory)];
+        if (second === Math.floor(Date.now() / 1000)) return pair;
+      }
+    }
+
+    // Sizes on both sides of the 512-byte record, the 10240-byte block and the 256 KiB read.
+    const headSizes = [null, 1, 511, 512, 9215, 9216, 9217, 30_000];
+    const fileSizes = [0, 1, 511, 512, 513, 8_704, 262_143, 262_144, 262_145, 300_000];
+    test.each(headSizes)("has the bytes of the archive of the same values in memory, head of %p bytes", async head => {
+      const longName = "dir/" + Buffer.alloc(150, "n").toString() + ".txt";
+      using dir = tempDir(
+        "archive-file-bytes",
+        Object.fromEntries(fileSizes.map(size => [`${size}.bin`, Buffer.alloc(size, "f").toString()])),
+      );
+      for (const size of fileSizes) {
+        const path = join(String(dir), `${size}.bin`);
+        const values = (file: Blob | Uint8Array) => ({
+          ...(head === null ? {} : { "head.bin": new Uint8Array(head), [longName]: "long", "hé.txt": "é" }),
+          "file.bin": file,
+          ["tail/" + longName]: new Blob(["blob"]),
+          "tail/slice.txt": new Blob(["a slice of a Blob"]).slice(2, 7),
+          "tail/ü.txt": "ü",
+          "zeros.bin": new Uint8Array(2000),
+          "again.bin": file,
+        });
+        const [fromFile, fromMemory] = twins(values(Bun.file(path)), values(await Bun.file(path).bytes()));
+        expect(Buffer.from(await fromFile.bytes()).equals(await fromMemory.bytes())).toBe(true);
+      }
+    });
+
+    test("new Archive() does not read the file, the first use does, and later uses keep those bytes", async () => {
+      using dir = tempDir("archive-file-first-use", {});
+      const path = join(String(dir), "late.txt");
+      const archive = new Bun.Archive({ "a.txt": "a", "late.txt": Bun.file(path) });
+      expect(Bun.inspect(archive)).toBe("Archive {\n  files: 2\n}");
+
+      // The file does not exist yet: the use fails, and the next one reads again.
+      await expect(archive.bytes()).rejects.toMatchObject({ code: "ENOENT", syscall: "open", path });
+      await expect(archive.files()).rejects.toMatchObject({ code: "ENOENT", syscall: "open", path });
+
+      writeFileSync(path, "written after new");
+      const want = [
+        ["a.txt", "a"],
+        ["late.txt", "written after new"],
+      ];
+      expect(await entries(await archive.bytes())).toEqual(want);
+
+      writeFileSync(path, "written after the first use");
+      expect(await entries(await archive.bytes())).toEqual(want);
+      expect(await entries(await archive.blob())).toEqual(want);
+      expect(Bun.inspect(archive)).toBe("Archive {\n  files: 2\n}");
+    });
+
+    test("a use that fails leaves the archive as it was for the next use", async () => {
+      using dir = tempDir("archive-file-retry", { "big.txt": big });
+      const missing = join(String(dir), "missing.txt");
+      const values = (bigFile: Blob | string, missingFile: Blob | string) => ({
+        "head.bin": new Uint8Array(30_000).fill(7),
+        "head.txt": "head",
+        "big.txt": bigFile,
+        "missing.txt": missingFile,
+        "tail.txt": "tail",
+      });
+      const [archive, twin] = twins(
+        values(Bun.file(join(String(dir), "big.txt")), Bun.file(missing)),
+        values(big, "here now"),
+      );
+      const error = { code: "ENOENT", syscall: "open", path: missing };
+      // Each of these reads `big.txt` and then fails at `missing.txt`.
+      const failed = await Promise.allSettled([
+        archive.bytes(),
+        archive.blob(),
+        archive.files(),
+        archive.extract(join(String(dir), "extracted")),
+        Bun.write(join(String(dir), "out.tar"), archive),
+        Bun.Archive.write(join(String(dir), "out2.tar"), archive),
+        archive.bytes(),
+      ]);
+      for (const result of failed) expect(result).toMatchObject({ status: "rejected", reason: error });
+      await expect(archive.bytes()).rejects.toMatchObject(error);
+
+      writeFileSync(missing, "here now");
+      expect(Buffer.from(await archive.bytes()).equals(await twin.bytes())).toBe(true);
+    });
+
+    test("every method of one archive gets the same bytes when they all start before it is read", async () => {
+      using dir = tempDir("archive-file-concurrent", sources);
+      const root = String(dir);
+      const archive = new Bun.Archive({ "a.txt": "head", "big.txt": Bun.file(join(root, "big.txt")), "c.txt": "tail" });
+      const want = [
+        ["a.txt", "head"],
+        ["big.txt", big],
+        ["c.txt", "tail"],
+      ];
+      const [bytes, again, blob, files, extracted, written] = await Promise.all([
+        archive.bytes(),
+        archive.bytes(),
+        archive.blob(),
+        archive.files(),
+        archive.extract(join(root, "extracted")),
+        Bun.write(join(root, "written.tar"), archive),
+        Bun.Archive.write(join(root, "archive-written.tar"), archive),
+      ]);
+      expect(await entries(bytes)).toEqual(want);
+      expect(Buffer.from(again).equals(bytes)).toBe(true);
+      expect(Buffer.from(await blob.bytes()).equals(bytes)).toBe(true);
+      expect([...files.keys()]).toEqual(want.map(([name]) => name));
+      expect(extracted).toBe(3);
+      expect(readFileSync(join(root, "extracted", "big.txt"), "utf8")).toBe(big);
+      expect(written).toBe(bytes.length);
+      expect(readFileSync(join(root, "written.tar")).equals(bytes)).toBe(true);
+      expect(readFileSync(join(root, "archive-written.tar")).equals(bytes)).toBe(true);
+    });
+
+    // /proc counts the bytes that each thread reads.
+    test.skipIf(!isLinux)("the JS thread reads no file, and methods that start together read it once", async () => {
+      const size = 1024 * 1024;
+      using dir = tempDir("archive-file-threads", { "big.bin": Buffer.alloc(size, "b").toString() });
+      const result = await inChild(
+        `const fs = require("node:fs");
+         const rchar = path => Number(/^rchar: (\\d+)/m.exec(fs.readFileSync(path, "utf8"))[1]);
+         // Linux gives the first thread of a process the id of the process.
+         const read = () => ({ js: rchar("/proc/self/task/" + process.pid + "/io"), all: rchar("/proc/self/io") });
+         const delta = (after, before) => ({ js: after.js - before.js, all: after.all - before.all });
+         const t0 = read();
+         const archive = new Bun.Archive({ "a.txt": "a", "big.bin": Bun.file("big.bin") });
+         const t1 = read();
+         await Promise.all([archive.bytes(), archive.files(), archive.blob(), archive.bytes()]);
+         const t2 = read();
+         await archive.bytes();
+         const t3 = read();
+         const whole = new Bun.Archive(Bun.file("big.bin"));
+         const t4 = read();
+         await Promise.allSettled([whole.bytes(), whole.files()]);
+         const t5 = read();
+         console.log(JSON.stringify({ construct: delta(t1, t0), firstUses: delta(t2, t1), laterUse: delta(t3, t2), constructWhole: delta(t4, t3), wholeUses: delta(t5, t4) }));`,
+        String(dir),
+      );
+      // The probe reads /proc on the JS thread, and the collector reads a few bytes: below 64 KiB.
+      const small = 64 * 1024;
+      for (const step of ["construct", "firstUses", "laterUse", "constructWhole", "wholeUses"])
+        expect(result[step].js).toBeLessThan(small);
+      expect(result.construct.all).toBeLessThan(small);
+      expect(result.constructWhole.all).toBeLessThan(small);
+      expect(result.laterUse.all).toBeLessThan(small);
+      // Four methods, and two of the other archive: one read of the file each.
+      for (const step of ["firstUses", "wholeUses"]) {
+        expect(result[step].all).toBeGreaterThanOrEqual(size);
+        expect(result[step].all).toBeLessThan(size + small);
+      }
+    });
+
+    test("an archive that nothing holds is still read for the method that waits", async () => {
+      using dir = tempDir("archive-file-gc", sources);
+      const count = () => heapStats().objectTypeCounts.Archive ?? 0;
+      const before = count();
+      // The archives are gone from the stack when this returns.
+      const start = () =>
+        Array.from({ length: 50 }, () =>
+          new Bun.Archive({ "digits.txt": Bun.file(join(String(dir), "digits.txt")) }).bytes(),
+        );
+      const pending = start();
+      Bun.gc(true);
+      expect(count() - before).toBeLessThan(50);
+      for (const bytes of await Promise.all(pending))
+        expect(await entries(bytes)).toEqual([["digits.txt", "0123456789"]]);
+    });
+
+    test("a Bun.ModuleGraph that is disposed while it reads an archive does not keep other callers waiting", async () => {
+      using dir = tempDir("archive-file-graph", {
+        "digits.txt": "0123456789",
+        "app.mjs": "export const bytes = archive => archive.bytes();",
+      });
+      const archive = new Bun.Archive({ "digits.txt": Bun.file(join(String(dir), "digits.txt")) });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(join(String(dir), "app.mjs"));
+      // The script of the graph asks first. The graph is gone before anything settles.
+      graph.run(() => app.bytes(archive));
+      const pending = Promise.all([archive.bytes(), archive.files()]);
+      graph.dispose();
+      const [bytes, files] = await pending;
+      expect(await entries(bytes)).toEqual([["digits.txt", "0123456789"]]);
+      expect(await files.get("digits.txt")!.text()).toBe("0123456789");
+    });
+
+    test("a file that does not exist rejects the use and leaves the destination as it is", async () => {
+      using dir = tempDir("archive-file-missing", { "out.tar": "keep" });
+      const path = join(String(dir), "missing.txt");
+      const out = join(String(dir), "out.tar");
+      const files = { "a.txt": "a", "missing.txt": Bun.file(path) };
+      const error = { code: "ENOENT", syscall: "open", path };
+
+      await expect(Bun.Archive.write(out, files)).rejects.toMatchObject(error);
+      expect(readFileSync(out, "utf8")).toBe("keep");
+
+      const archive = new Bun.Archive(files);
+      await expect(Bun.write(out, archive)).rejects.toMatchObject(error);
+      await expect(Bun.Archive.write(out, archive)).rejects.toMatchObject(error);
+      await expect(archive.extract(join(String(dir), "extracted"))).rejects.toMatchObject(error);
+      await expect(archive.blob()).rejects.toMatchObject(error);
+      expect(readFileSync(out, "utf8")).toBe("keep");
+    });
+
+    test("a directory rejects the use", async () => {
+      using dir = tempDir("archive-file-directory", { "sub/a.txt": "a" });
+      const path = join(String(dir), "sub");
+      const archive = new Bun.Archive({ "sub": Bun.file(path) });
+      await expect(archive.bytes()).rejects.toMatchObject({ code: "EISDIR", path });
+    });
+
+    // Only a regular file is read: the size of anything else does not bound the read.
+    test.skipIf(isWindows)("a FIFO and a device reject the use and are not read", async () => {
+      using dir = tempDir("archive-file-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      await using proc = Bun.spawn({ cmd: ["mkfifo", fifo], env: bunEnv, stderr: "pipe" });
+      expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stderr: "", exitCode: 0 });
+      for (const path of [fifo, "/dev/null"]) {
+        const archive = new Bun.Archive({ "a.txt": "a", "entry": Bun.file(path) });
+        await expect(archive.bytes()).rejects.toMatchObject({ code: "ENODEV", syscall: "read", path });
+        await expect(Bun.write(join(String(dir), "out.tar"), archive)).rejects.toMatchObject({ code: "ENODEV", path });
+      }
+      expect(existsSync(join(String(dir), "out.tar"))).toBe(false);
+    });
+
+    test.skipIf(isWindows)("a socket rejects the use", async () => {
+      using dir = tempDir("archive-file-socket", {});
+      const path = join(String(dir), "s");
+      using server = Bun.listen({ unix: path, socket: { data() {} } });
+      const archive = new Bun.Archive({ "s": Bun.file(path) });
+      const error = await archive.bytes().then(
+        () => null,
+        error => error,
+      );
+      // The open of a socket fails: ENXIO on Linux, EOPNOTSUPP on macOS.
+      expect(error).toMatchObject({ syscall: "open", path });
+      expect(["ENXIO", "EOPNOTSUPP"]).toContain(error.code);
+    });
+
+    // /proc counts the bytes that the child has read, so the file gets smaller during the read.
+    test.skipIf(!isLinux)("a file that gets smaller while it is read rejects the use", async () => {
+      using dir = tempDir("archive-file-smaller", {});
+      const path = join(String(dir), "big.bin");
+      const script = `
+        process.stdin.once("data", async () => {
+          const archive = new Bun.Archive({ "a.txt": "a", "big.bin": Bun.file("big.bin") });
+          console.log(JSON.stringify(await archive.bytes().then(bytes => ({ length: bytes.length }), error => ({ code: error.code, syscall: error.syscall, path: error.path, message: error.message }))));
+          process.exit(0);
+        });
+        console.log("ready");`;
+      // A read that ends before the file is made smaller shows nothing: read a larger file then.
+      for (let megabytes = 64; ; megabytes *= 2) {
+        writeFileSync(path, Buffer.alloc(megabytes * 1024 * 1024, "x"));
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          cwd: String(dir),
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const reader = proc.stdout.getReader();
+        const decoder = new TextDecoder();
+        let output = "";
+        const line = async () => {
+          while (!output.includes("\n")) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error("the child ended: " + output);
+            output += decoder.decode(value, { stream: true });
+          }
+          const [first, ...rest] = output.split("\n");
+          output = rest.join("\n");
+          return first;
+        };
+        expect(await line()).toBe("ready");
+        const rchar = () => Number(/^rchar: (\d+)/m.exec(readFileSync(`/proc/${proc.pid}/io`, "utf8"))![1]);
+        const before = rchar();
+        proc.stdin.write("go\n");
+        await proc.stdin.flush();
+        while (proc.exitCode === null && rchar() - before < 1024 * 1024) await new Promise(setImmediate);
+        truncateSync(path, 1024);
+        const result = JSON.parse(await line());
+        await proc.exited;
+        if (result.length !== undefined && megabytes < 1024) continue;
+        expect(result).toEqual({
+          code: "EIO",
+          syscall: "read",
+          path: "big.bin",
+          message: "The file got smaller while it was read",
+        });
+        break;
+      }
+    });
+
+    // [name, makes a Blob that has no path to read, how the error names it]
+    const unreadable: [string, (fd: number) => Blob, string][] = [
+      ["a Bun.file() of a file descriptor", fd => Bun.file(fd), "a Bun.file() of a file descriptor"],
+      [
+        "an S3 file",
+        () =>
+          new Bun.S3Client({
+            accessKeyId: "key",
+            secretAccessKey: "secret",
+            bucket: "bucket",
+            endpoint: "http://127.0.0.1:1",
+          }).file("object.tar"),
+        "an S3 file",
+      ],
+    ];
+
+    test.each(unreadable)("%s as an entry throws", async (_, make, kind) => {
+      using dir = tempDir("archive-file-unreadable", { "a.tar": "a", "out.tar": "keep" });
+      const fd = openSync(join(String(dir), "a.tar"), "r");
+      try {
+        const files = { "a.txt": "a", "b.txt": Bun.file(join(String(dir), "a.tar")), "c.txt": make(fd) };
+        const error = {
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `Archive: "c.txt" is ${kind}. Pass the result of "await file.bytes()"`,
+        };
+        const thrownBy = (fn: () => unknown) => {
+          try {
+            fn();
+          } catch (e) {
+            return e;
+          }
+        };
+        // After a Bun.file() with a path, as the only entry, and in Archive.write().
+        for (const fn of [
+          () => new Bun.Archive(files),
+          () => new Bun.Archive({ "c.txt": make(fd) }),
+          () => Bun.Archive.write(join(String(dir), "out.tar"), files),
+        ]) {
+          const thrown = thrownBy(fn);
+          expect(thrown).toBeInstanceOf(TypeError);
+          expect(thrown).toMatchObject(error);
+        }
+        expect(readFileSync(join(String(dir), "out.tar"), "utf8")).toBe("keep");
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    test.each(unreadable)(
+      "%s as the archive is passed on by blob() and rejects the methods that read",
+      async (_, make, kind) => {
+        using dir = tempDir("archive-file-unreadable-whole", {});
+        const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+        writeFileSync(join(String(dir), "a.tar"), tar);
+        const fd = openSync(join(String(dir), "a.tar"), "r");
+        try {
+          const archive = new Bun.Archive(make(fd));
+          const error = {
+            code: "ERR_INVALID_ARG_TYPE",
+            message: `Archive: cannot read ${kind}. Pass the result of "await file.bytes()"`,
+          };
+          expect(await archive.blob()).toBeInstanceOf(Blob);
+          await expect(archive.bytes()).rejects.toMatchObject(error);
+          await expect(archive.files()).rejects.toMatchObject(error);
+          await expect(archive.extract(join(String(dir), "extracted"))).rejects.toMatchObject(error);
+          await expect(Bun.Archive.write(join(String(dir), "out.tar"), archive)).rejects.toMatchObject(error);
+          await expect(new Bun.Archive(make(fd), { compress: "gzip" }).blob()).rejects.toMatchObject(error);
+        } finally {
+          closeSync(fd);
+        }
+      },
+    );
+
+    // [name, the entries of the tar, makes a Blob over a file whose bytes are exactly `tar`]
+    const wholeFiles: [string, Record<string, string>, (dir: string, tar: Uint8Array) => Blob][] = [];
+    for (const [size, files] of [
+      ["one block", { "a.txt": "hello" }],
+      ["more than one read", { "a.txt": "hello", "b.txt": big }],
+    ] as const) {
+      wholeFiles.push([
+        `a Bun.file() of ${size}`,
+        files,
+        (dir, tar) => {
+          writeFileSync(join(dir, "in.tar"), tar);
+          return Bun.file(join(dir, "in.tar"));
+        },
+      ]);
+      wholeFiles.push([
+        `a slice of a Bun.file() of ${size}`,
+        files,
+        (dir, tar) => {
+          writeFileSync(join(dir, "padded.tar"), Buffer.concat([Buffer.from("junk"), tar, Buffer.from("junk")]));
+          return Bun.file(join(dir, "padded.tar")).slice(4, 4 + tar.length);
+        },
+      ]);
+    }
+
+    test.each(wholeFiles)("%s as the archive", async (_, contents, make) => {
+      using dir = tempDir("archive-file-whole", {});
+      const root = String(dir);
+      const tar = await new Bun.Archive(contents).bytes();
+      const file = make(root, tar);
+      const want = Object.entries(contents);
+
+      const archive = new Bun.Archive(file);
+      expect(Bun.inspect(archive)).toBe("Archive {}");
+      expect(Buffer.from(await archive.bytes()).equals(tar)).toBe(true);
+      expect(Buffer.from(await (await archive.blob()).bytes()).equals(tar)).toBe(true);
+      expect(await Promise.all([...(await archive.files())].map(async ([name, f]) => [name, await f.text()]))).toEqual(
+        want,
+      );
+      expect(await archive.extract(join(root, "extracted"))).toBe(want.length);
+      expect(readFileSync(join(root, "extracted", "a.txt"), "utf8")).toBe("hello");
+
+      await Bun.Archive.write(join(root, "from-archive.tar"), archive);
+      expect(readFileSync(join(root, "from-archive.tar")).equals(tar)).toBe(true);
+      await Bun.Archive.write(join(root, "from-file.tar"), file);
+      expect(readFileSync(join(root, "from-file.tar")).equals(tar)).toBe(true);
+      expect(await Bun.write(join(root, "written.tar"), new Bun.Archive(file))).toBe(tar.length);
+      expect(readFileSync(join(root, "written.tar")).equals(tar)).toBe(true);
+
+      const gzipped = await new Bun.Archive(file, { compress: "gzip" }).bytes();
+      expect(gzipped.subarray(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
+      expect(await entries(gzipped)).toEqual(want);
+      await Bun.Archive.write(join(root, "from-file.tar.gz"), file, { compress: "gzip" });
+      expect(await entries(readFileSync(join(root, "from-file.tar.gz")))).toEqual(want);
+    });
+
+    test("a Bun.file() as the archive is read once: every method of the archive has those bytes", async () => {
+      using dir = tempDir("archive-file-whole-once", {});
+      const path = join(String(dir), "in.tar");
+      writeFileSync(path, await new Bun.Archive({ "first.txt": "first" }).bytes());
+      const archive = new Bun.Archive(Bun.file(path));
+      expect([...(await archive.files()).keys()]).toEqual(["first.txt"]);
+
+      writeFileSync(path, await new Bun.Archive({ "second.txt": "second" }).bytes());
+      expect([...(await archive.files()).keys()]).toEqual(["first.txt"]);
+      expect(await entries(await archive.blob())).toEqual([["first.txt", "first"]]);
+      expect(await archive.extract(join(String(dir), "extracted"))).toBe(1);
+      expect(readdirSync(join(String(dir), "extracted"))).toEqual(["first.txt"]);
+    });
+
+    test("a Bun.file() that does not exist as the archive rejects the methods", async () => {
+      using dir = tempDir("archive-file-whole-missing", { "out.tar": "keep" });
+      const path = join(String(dir), "missing.tar");
+      const error = { code: "ENOENT", syscall: "open", path };
+      const archive = new Bun.Archive(Bun.file(path));
+      await expect(archive.bytes()).rejects.toMatchObject(error);
+      await expect(archive.blob()).rejects.toMatchObject(error);
+      await expect(archive.files()).rejects.toMatchObject(error);
+      await expect(archive.extract(join(String(dir), "extracted"))).rejects.toMatchObject(error);
+      await expect(Bun.write(join(String(dir), "out.tar"), archive)).rejects.toMatchObject(error);
+      await expect(Bun.Archive.write(join(String(dir), "out.tar"), Bun.file(path))).rejects.toMatchObject(error);
+      expect(readFileSync(join(String(dir), "out.tar"), "utf8")).toBe("keep");
+      expect(existsSync(join(String(dir), "extracted"))).toBe(false);
+    });
+
+    // docs/runtime/archive.mdx, "Create Archive from Directory".
+    test("the directory example of the docs archives the regular files", async () => {
+      using dir = tempDir("archive-file-directory-example", {
+        "my-project/index.ts": "export default 1;",
+        "my-project/lib/util.ts": "export const util = 2;",
+        "my-project/README.md": "# readme",
+        "outside.txt": "outside",
+      });
+      const root = join(String(dir), "my-project");
+      if (!isWindows) {
+        symlinkSync(join(String(dir), "outside.txt"), join(root, "link-to-file"));
+        symlinkSync(join(root, "lib"), join(root, "link-to-directory"));
+        symlinkSync(join(root, "nothing"), join(root, "link-to-nothing"));
+      }
+
+      async function archiveDirectory(dir: string, compress = false): Promise<Bun.Archive> {
+        const files: Record<string, Blob> = {};
+
+        async function walk(currentDir: string, prefix: string = "") {
+          const entries = await readdir(currentDir, { withFileTypes: true });
+
+          for (const entry of entries) {
+            const fullPath = join(currentDir, entry.name);
+            const archivePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+            if (entry.isDirectory()) {
+              await walk(fullPath, archivePath);
+            } else if (entry.isFile()) {
+              files[archivePath] = Bun.file(fullPath);
+            }
+          }
+        }
+
+        await walk(dir);
+        return new Bun.Archive(files, compress ? { compress: "gzip" } : undefined);
+      }
+
+      const out = join(String(dir), "my-project.tar.gz");
+      const archive = await archiveDirectory(root, true);
+      await Bun.write(out, archive);
+      expect(readFileSync(out).subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]));
+      expect((await entries(readFileSync(out))).sort()).toEqual([
+        ["README.md", "# readme"],
+        ["index.ts", "export default 1;"],
+        ["lib/util.ts", "export const util = 2;"],
+      ]);
     });
   });
 

@@ -1,12 +1,9 @@
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
 use bun_alloc::{AllocError, allocators};
-use bun_collections::VecExt as _;
 use bun_core::Generation;
-use bun_core::MutableString;
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::strings;
 use bun_ptr::Interned;
@@ -22,6 +19,15 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // (simdutf-backed). The canonical implementation lives in
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
+
+/// What `cache::Fs::read_file_with_allocator` does with a byte order mark at the start of the file.
+#[derive(Clone, Copy)]
+pub enum BomHandling {
+    /// Text: no UTF-8 mark, and UTF-16LE transcoded to UTF-8.
+    Convert,
+    /// The bytes on disk.
+    Keep,
+}
 
 mod preallocate {
     pub(crate) mod counts {
@@ -697,39 +703,7 @@ unsafe impl Sync for Entry {}
 // SAFETY: same invariant as the `Sync` impl above.
 unsafe impl Send for Entry {}
 
-// ══════════════════════════════════════════════════════════════════════════
-// CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
-//
-// One body, two entry points:
-//   • `read_file_with_handle_impl`  — free fn, const-generic, returns
-//     `PathContentsPair`. No `&mut RealFS` needed: the only
-//     `self` uses are `setMaxFd` (a static) and
-//     `readFileError` (a no-op in release).
-//   • `read_file_contents` — runtime-bool → const-generic dispatcher for the
-//     two `cache::Fs` callers (resolver/lib.rs + bundler/cache.rs), which take
-//     `use_shared_buffer`/`stream` at runtime and want only the bytes.
-// ══════════════════════════════════════════════════════════════════════════
-
-/// Runtime-bool → const-generic dispatcher for `cache::Fs::read_file{,_shared}`.
-/// Returns just the contents (`Cow::Borrowed` ⇢ shared-buffer arm,
-/// `Cow::Owned` ⇢ heap arm); callers `.map(Contents::from)` to tag provenance.
-pub fn read_file_contents<'buf>(
-    file: &bun_sys::File,
-    use_shared_buffer: bool,
-    shared: &'buf mut MutableString,
-    stream: bool,
-) -> crate::CrateResult<Cow<'buf, [u8]>> {
-    match (use_shared_buffer, stream) {
-        (true, true) => read_file_with_handle_impl::<true, true>(None, file, shared),
-        (true, false) => read_file_with_handle_impl::<true, false>(None, file, shared),
-        (false, true) => read_file_with_handle_impl::<false, true>(None, file, shared),
-        (false, false) => read_file_with_handle_impl::<false, false>(None, file, shared),
-    }
-    .map(|p| p.contents)
-}
-
-/// Arena-backed twin of the `USE_SHARED_BUFFER = false` arm of
-/// [`read_file_with_handle_impl`]: the returned bytes live
+/// Arena-backed twin of [`read_file_contents`]: the returned bytes live
 /// in `arena` so they are bulk-freed when the per-call `MimallocArena` is
 /// `mi_heap_destroy`'d (`TranspilerJob::run` / `ParseTask`), instead of
 /// round-tripping through the worker thread's *default* mimalloc heap (which
@@ -757,12 +731,10 @@ pub fn read_file_contents_in_arena(
         // `finish_arena_contents` writes the trailing NUL at `[read_count]`.
         let buf = arena_alloc_uninit_bytes(arena, read_count + 1);
         buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
-        return Ok(finish_arena_contents(arena, buf, read_count));
+        return Ok(finish_arena_contents(buf, read_count));
     }
     let initial_len = read_count;
 
-    // Skip the extra file.stat() call when possible (size_hint is always None
-    // on this path — `cache::Fs::read_file_with_allocator` never passes one).
     let size = file.get_end_pos()?;
     debug!("stat({}) = {}", file.handle(), size);
 
@@ -771,7 +743,7 @@ pub fn read_file_contents_in_arena(
     }
 
     // Arena-owned `[u8; cap + 1]` instead of `vec![0u8; size + 1]` — this is
-    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`.
+    // the load-bearing change vs. `read_file_contents`.
     // The buffer is UNINITIALIZED; the
     // `copy_from_slice` + `read_all` below cover `[..total]` and
     // `finish_arena_contents` writes the trailing NUL at `[total]`.
@@ -792,7 +764,7 @@ pub fn read_file_contents_in_arena(
     let total = read_count + initial_len;
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-    Ok(finish_arena_contents(arena, buf, total))
+    Ok(finish_arena_contents(buf, total))
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
@@ -815,35 +787,9 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
-/// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
-/// trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
+/// Write the trailing NUL and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
-fn finish_arena_contents(
-    arena: &bun_alloc::Arena,
-    buf: &mut [u8],
-    mut total: usize,
-) -> (core::ptr::NonNull<u8>, usize) {
-    if let Some(bom) = BOM::detect(&buf[..total]) {
-        debug!("Convert {} BOM", bom.tag_name());
-        match bom {
-            BOM::Utf8 => {
-                let n = BOM::UTF8_BYTES.len();
-                buf.copy_within(n..total, 0);
-                total -= n;
-            }
-            other => {
-                // Rare path (UTF-16 source on the concurrent transpiler) —
-                // re-encode via the global-heap helper, then copy into the
-                // arena so the *retained* bytes still land there.
-                let converted = other.remove_and_convert_to_utf8_and_free(buf[..total].to_vec());
-                let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
-                dst[..converted.len()].copy_from_slice(&converted);
-                // SAFETY: `dst` is a non-null arena slice of length ≥ 1.
-                let ptr = unsafe { core::ptr::NonNull::new_unchecked(dst.as_mut_ptr()) };
-                return (ptr, converted.len());
-            }
-        }
-    }
+fn finish_arena_contents(buf: &mut [u8], total: usize) -> (core::ptr::NonNull<u8>, usize) {
     debug_assert!(buf.len() > total);
     buf[total] = 0;
     // SAFETY: `buf` is a non-null arena slice (len ≥ 1 on every path that
@@ -852,216 +798,59 @@ fn finish_arena_contents(
     (ptr, total)
 }
 
-pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
-    size_hint: Option<usize>,
-    file: &bun_sys::File,
-    shared_buffer: &'buf mut MutableString,
-) -> crate::CrateResult<PathContentsPair<'buf>> {
-    // allocator param dropped (global mimalloc)
+/// Reads `file` onto the global heap.
+pub fn read_file_contents(file: &bun_sys::File) -> crate::CrateResult<Vec<u8>> {
     crate::fs::FileSystem::set_max_fd(file.handle().native());
 
-    // in the `USE_SHARED_BUFFER` branch, `file_contents` borrows
-    // `shared_buffer.list`; tracked as a raw (ptr, len) pair so borrowck doesn't tie the
-    // slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice is
-    // reconstituted with `from_raw_parts`. The
-    // non-shared-buffer branch owns its allocation and returns early with `Cow::Owned`.
-    // Definite-init: the read `loop` below assigns both before any `break`/read; the
-    // `else` (non-shared-buffer) arm always early-returns.
-    let mut file_contents_ptr: *const u8;
-    let mut file_contents_len: usize;
-    // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
-    // This imposes a performance hit because not reading from disk is faster than reading from disk
-    // Part of that hit is allocating a temporary buffer to store the file contents in
-    // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
-    if USE_SHARED_BUFFER {
-        shared_buffer.reset();
+    let mut initial_buf = [0u8; 16384];
 
-        // Skip the extra file.stat() call when possible
-        let mut size = match size_hint {
-            Some(s) => s,
-            None => file.get_end_pos()?,
-        };
-        debug!("stat({}) = {}", file.handle(), size);
+    // Optimization: no stat() call unless the file is too big for `initial_buf`.
+    let initial_read: &[u8] = {
+        let buf: &mut [u8] = &mut initial_buf;
+        let read_count = file.read_all(buf)?;
+        if read_count + 1 < buf.len() {
+            // Exact allocation, no zero-fill. `truncate` drops the NUL sentinel from the logical length.
+            let mut allocation: Vec<u8> = Vec::with_capacity(read_count + 1);
+            allocation.extend_from_slice(&buf[..read_count]);
+            allocation.push(0);
+            allocation.truncate(read_count);
 
-        // Skip the pread call for empty files
-        // Otherwise will get out of bounds errors
-        // plus it's an unnecessary syscall
-        if size == 0 {
-            if USE_SHARED_BUFFER {
-                shared_buffer.reset();
-                return Ok(PathContentsPair {
-                    contents: Cow::Borrowed(b""),
-                });
-            } else {
-                return Ok(PathContentsPair {
-                    contents: Cow::Borrowed(b""),
-                });
-            }
+            return Ok(allocation);
         }
 
-        let mut bytes_read: u64 = 0;
-        shared_buffer.grow_by(size + 1)?;
-        // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-        unsafe { shared_buffer.list.expand_to_capacity() };
+        &initial_buf[..read_count]
+    };
 
-        // if you press save on a large file we might not read all the
-        // bytes in the first few pread() calls. we only handle this on
-        // stream because we assume that this only realistically happens
-        // during HMR
-        loop {
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-            let read_count = file.read_all(&mut shared_buffer.list[bytes_read as usize..])?;
-            shared_buffer
-                .list
-                .truncate(read_count + bytes_read as usize);
-            file_contents_ptr = shared_buffer.list.as_ptr();
-            file_contents_len = shared_buffer.list.len();
-            debug!("read({}, {}) = {}", file.handle(), size, read_count);
+    let size = file.get_end_pos()?;
+    debug!("stat({}) = {}", file.handle(), size);
 
-            if STREAM {
-                // check again that stat() didn't change the file size
-                // another reason to only do this when stream
-                let new_size = file.get_end_pos()?;
+    // No zero-fill: `extend_from_slice` and `read_all` write `..total`, then `set_len` exposes it.
+    let cap = size.max(initial_read.len());
+    let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
+    buf.extend_from_slice(initial_read);
 
-                bytes_read += read_count as u64;
-
-                // don't infinite loop is we're still not reading more
-                if read_count == 0 {
-                    break;
-                }
-
-                if (bytes_read as usize) < new_size {
-                    shared_buffer.grow_by(new_size.saturating_sub(size))?;
-                    // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-                    unsafe { shared_buffer.list.expand_to_capacity() };
-                    size = new_size;
-                    continue;
-                }
-            }
-            break;
-        }
-
-        if shared_buffer.list.capacity() > file_contents_len {
-            // SAFETY: capacity > len, so writing one byte past len is in-bounds
-            unsafe {
-                *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
-            }
-        }
-
-        // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
-        // the read loop above); borrow the Vec directly so the slice ends before the
-        // `&mut shared_buffer.list` reborrow inside the BOM branch.
-        if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
-            debug!("Convert {} BOM", bom.tag_name());
-            // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
-            // correct logical size (the read loop above truncated to `file_contents_len`).
-            shared_buffer.list.truncate(file_contents_len);
-            let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
-            file_contents_ptr = converted.as_ptr();
-            file_contents_len = converted.len();
-        }
-    } else {
-        let mut initial_buf = [0u8; 16384];
-
-        // Optimization: don't call stat() unless the file is big enough
-        // that we need to dynamically allocate memory to read it.
-        let initial_read: &[u8] = if size_hint.is_none() {
-            let buf: &mut [u8] = &mut initial_buf;
-            let read_count = file.read_all(buf)?;
-            if read_count + 1 < buf.len() {
-                // Own the buffer; the returned `Cow::Owned` frees it on the
-                // caller's drop. The trailing
-                // NUL sentinel is not part of `contents`.
-                // Allocate exact (no zero-fill): `extend_from_slice` + `push`
-                // initialize all `read_count + 1` bytes, then `truncate` drops
-                // the sentinel from the logical length.
-                let mut allocation: Vec<u8> = Vec::with_capacity(read_count + 1);
-                allocation.extend_from_slice(&buf[..read_count]);
-                allocation.push(0);
-                allocation.truncate(read_count);
-
-                if let Some(bom) = BOM::detect(&allocation) {
-                    debug!("Convert {} BOM", bom.tag_name());
-                    allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
-                }
-
-                return Ok(PathContentsPair {
-                    contents: Cow::Owned(allocation),
-                });
-            }
-
-            &initial_buf[..read_count]
-        } else {
-            &initial_buf[..0]
-        };
-
-        // Skip the extra file.stat() call when possible
-        let size = match size_hint {
-            Some(s) => s,
-            None => file.get_end_pos()?,
-        };
-        debug!("stat({}) = {}", file.handle(), size);
-
-        // Allocate UNINITIALIZED (no zero-fill):
-        // `extend_from_slice` writes the prefix, `read_all` writes
-        // the tail, then `set_len` exposes only the initialized `..total`.
-        let cap = size.max(initial_read.len());
-        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
-        buf.extend_from_slice(initial_read);
-
-        if size == 0 {
-            return Ok(PathContentsPair {
-                contents: Cow::Borrowed(b""),
-            });
-        }
-
-        let tail_len = cap + 1 - initial_read.len();
-        let tail = &mut buf.spare_capacity_mut()[..tail_len];
-        // stick a zero at the end
-        tail[tail_len - 1].write(0);
-        // SAFETY: `read_all` only writes into the slice (never reads uninitialized
-        // bytes); `MaybeUninit<u8>` and `u8` have identical layout, so handing
-        // the spare-capacity tail as `&mut [u8]` to a write-only sink is sound.
-        let read_count = file.read_all(unsafe {
-            core::slice::from_raw_parts_mut(tail.as_mut_ptr().cast::<u8>(), tail_len)
-        })?;
-        let total = read_count + initial_read.len();
-        debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
-        // were written by `extend_from_slice` and `initial_read.len()..total` by
-        // `read_all` above.
-        unsafe { buf.set_len(total) };
-
-        if let Some(bom) = BOM::detect(&buf) {
-            debug!("Convert {} BOM", bom.tag_name());
-            buf = bom.remove_and_convert_to_utf8_and_free(buf);
-        }
-
-        return Ok(PathContentsPair {
-            contents: Cow::Owned(buf),
-        });
+    if size == 0 {
+        return Ok(Vec::new());
     }
 
-    // `file_contents_ptr` always equals `shared_buffer.list.as_ptr()` on every
-    // shared-buffer path above (read loop and BOM rewrite both anchor at index 0), so we
-    // re-derive the final slice safely from `shared_buffer` with the real `'buf` lifetime
-    // instead of fabricating `'static` via `from_raw_parts`.
-    debug_assert!(core::ptr::eq(
-        file_contents_ptr,
-        shared_buffer.list.as_ptr()
-    ));
-    let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
-    Ok(PathContentsPair {
-        contents: Cow::Borrowed(file_contents),
-    })
-}
-// ──────────────────────────────────────────────────────────────────────────
+    let tail_len = cap + 1 - initial_read.len();
+    let tail = &mut buf.spare_capacity_mut()[..tail_len];
+    // stick a zero at the end
+    tail[tail_len - 1].write(0);
+    // SAFETY: `read_all` only writes into the slice (never reads uninitialized
+    // bytes); `MaybeUninit<u8>` and `u8` have identical layout, so handing
+    // the spare-capacity tail as `&mut [u8]` to a write-only sink is sound.
+    let read_count = file.read_all(unsafe {
+        core::slice::from_raw_parts_mut(tail.as_mut_ptr().cast::<u8>(), tail_len)
+    })?;
+    let total = read_count + initial_read.len();
+    debug!("read({}, {}) = {}", file.handle(), size, read_count);
+    // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
+    // were written by `extend_from_slice` and `initial_read.len()..total` by
+    // `read_all` above.
+    unsafe { buf.set_len(total) };
 
-pub struct PathContentsPair<'buf> {
-    /// `Owned` for the heap-allocated branch (caller frees on drop); `Borrowed`
-    /// for the shared-buffer branch (points into the caller's `MutableString`,
-    /// tied to `'buf` — see the note in `read_file_with_handle_impl`).
-    pub(crate) contents: Cow<'buf, [u8]>,
+    Ok(buf)
 }
 
 // `Path` / `PathName` — re-exported from the canonical `bun_paths::fs` via

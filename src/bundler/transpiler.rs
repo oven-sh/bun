@@ -1362,7 +1362,7 @@ impl<'a> Transpiler<'a> {
                 self.fs_mut(),
                 path.text,
                 dirname_fd,
-                USE_SHARED_BUFFER,
+                Fs::BomHandling::Convert,
                 file_descriptor,
                 if USE_SHARED_BUFFER { None } else { Some(arena) },
             ) {
@@ -1384,11 +1384,7 @@ impl<'a> Transpiler<'a> {
                 *file_fd_ptr = entry.fd;
             }
             // `Source.contents: &'static [u8]` (the AST crate's `Str`
-            // convention). The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
-            // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
-            // bulk-freed by `mi_heap_destroy` when the per-call arena is
-            // recycled). Thread the
+            // convention). The bytes live in `this_parse.arena`, or on the heap for `USE_SHARED_BUFFER`. Thread the
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns).
@@ -3042,7 +3038,7 @@ impl<'a> Transpiler<'a> {
             self.fs_mut(),
             file_path_text,
             dirname_fd,
-            false,
+            Fs::BomHandling::Convert,
             None,
             None,
         ) {

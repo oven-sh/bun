@@ -1605,10 +1605,7 @@ pub mod fs {
     /// the canonical read-file helpers, so `cache::Fs` (here and in
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
-    pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
-        read_file_with_handle_impl,
-    };
+    pub use super::fs_full::{BOM, BomHandling, read_file_contents, read_file_contents_in_arena};
 
     /// Re-export `StatHash` from the full `fs.rs` port so `bun_runtime::server::FileRoute`
     /// can hash mtimes/sizes without inlining the formatter.
@@ -1951,21 +1948,18 @@ pub mod cache {
                     shared_buffer: MutableString::init(0).expect("unreachable"),
                     macro_shared_buffer: MutableString::init(0).expect("unreachable"),
                     use_alternate_source_cache: false,
-                    stream: false,
                 },
                 json: Json::init(),
             }
         }
     }
 
-    /// File-read cache: shared read buffers plus flags controlling buffer
-    /// reuse and streaming reads.
+    /// Reads files for the resolver, the transpiler and the bundler. No read fills the two buffers.
     pub struct Fs {
         pub(crate) shared_buffer: MutableString,
         pub(crate) macro_shared_buffer: MutableString,
 
         pub use_alternate_source_cache: bool,
-        pub(crate) stream: bool,
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned
@@ -2002,7 +1996,7 @@ pub mod cache {
     /// (forbidden per docs/PORTING.md §Forbidden patterns). The enum makes
     /// provenance explicit so `deinit` matches on the variant instead of
     /// guessing — the old scheme would `heap::take` a `MutableString`-owned
-    /// pointer on the `use_shared_buffer=true` path (UB).
+    /// pointer (UB).
     #[derive(Default)]
     pub enum Contents {
         /// Empty / static literal. No-op on `deinit`.
@@ -2024,9 +2018,7 @@ pub mod cache {
             ptr: core::ptr::NonNull<u8>,
             len: usize,
         },
-        /// Borrows the per-thread `shared_buffer` (or other caller-kept-alive
-        /// storage). Caller guarantees the pointee outlives all reads through
-        /// this `Entry`. NOT freed on `deinit`.
+        /// Borrows storage the caller keeps alive past this `Entry` (the bundler's in-memory sources). NOT freed on `deinit`.
         SharedBuffer { ptr: *const u8, len: usize },
         /// Externally-owned bytes the producer keeps alive past this `Entry`
         /// (native-plugin buffers are freed by the bundler's
@@ -2041,9 +2033,7 @@ pub mod cache {
                 Contents::Empty => b"",
                 Contents::Owned(v) => v.as_slice(),
                 // SAFETY: FFI/ARENA — single encapsulation point for foreign-
-                // owned bytes. `SharedBuffer` points into the caller-owned
-                // per-thread `MutableString` (reset only after this `Entry` is
-                // dropped); `External` is producer-owned memory the producer
+                // owned bytes. `SharedBuffer` is caller-owned storage that outlives the `Entry`; `External` is producer-owned memory the producer
                 // keeps alive past the `Entry` (native-plugin buffers are
                 // freed later by the bundler's `BundleV2.finalizers`, via
                 // `ParseTask.external_free_function`). In both cases
@@ -2061,6 +2051,62 @@ pub mod cache {
                 Contents::Arena { ptr, len } => unsafe {
                     core::slice::from_raw_parts(ptr.as_ptr(), *len)
                 },
+            }
+        }
+
+        /// The text of a file that `read_file_with_allocator` read: no UTF-8 mark, UTF-16LE transcoded. Arena bytes stay as read.
+        #[inline]
+        pub fn convert_bom(self, arena: Option<&bun_alloc::Arena>) -> Contents {
+            match fs_mod::BOM::detect(self.as_slice()) {
+                Some(bom) => self.convert_detected_bom(bom, arena),
+                None => self,
+            }
+        }
+
+        #[cold]
+        fn convert_detected_bom(
+            self,
+            bom: fs_mod::BOM,
+            arena: Option<&bun_alloc::Arena>,
+        ) -> Contents {
+            bun_core::scoped_log!(CacheFs, "Convert {} BOM", bom.tag_name());
+            match (self, arena) {
+                (Contents::Owned(bytes), _) => {
+                    Contents::from(bom.remove_and_convert_to_utf8_and_free(bytes))
+                }
+                (Contents::Arena { ptr, len }, Some(arena)) => {
+                    let mark = bom.length();
+                    match bom {
+                        fs_mod::BOM::Utf8 if len == mark => Contents::Empty,
+                        fs_mod::BOM::Utf8 => Contents::Arena {
+                            // SAFETY: `mark < len`, so `ptr + mark` is inside the
+                            // allocation. The NUL at `ptr[len]` stays right
+                            // after the text.
+                            ptr: unsafe { ptr.add(mark) },
+                            len: len - mark,
+                        },
+                        fs_mod::BOM::Utf16Le => {
+                            // SAFETY: ARENA: `ptr[..len]` is the file that the
+                            // read just put in `arena`.
+                            let file = unsafe { core::slice::from_raw_parts(ptr.as_ptr(), len) };
+                            let text =
+                                bun_core::strings::to_utf8_alloc_from_le_bytes(&file[mark..]);
+                            if text.is_empty() {
+                                return Contents::Empty;
+                            }
+                            let copy = arena.alloc_slice_fill_copy::<u8>(text.len() + 1, 0);
+                            copy[..text.len()].copy_from_slice(&text);
+                            Contents::Arena {
+                                // SAFETY: an arena slice is never null.
+                                ptr: unsafe {
+                                    core::ptr::NonNull::new_unchecked(copy.as_mut_ptr())
+                                },
+                                len: text.len(),
+                            }
+                        }
+                    }
+                }
+                (other, _) => other,
             }
         }
     }
@@ -2081,24 +2127,6 @@ pub mod cache {
                 Contents::Empty
             } else {
                 Contents::Owned(b.into_vec())
-            }
-        }
-    }
-
-    /// Adapter for the canonical `fs::read_file_contents` (returns
-    /// `Cow<'buf,[u8]>` per the spec `PathContentsPair` shape). `Borrowed`
-    /// always points into the per-thread `shared_buffer` on the
-    /// `use_shared_buffer=true` path → tag as `SharedBuffer` so `deinit` is a
-    /// no-op; `Owned` is the heap arm.
-    impl<'buf> From<std::borrow::Cow<'buf, [u8]>> for Contents {
-        fn from(c: std::borrow::Cow<'buf, [u8]>) -> Self {
-            match c {
-                std::borrow::Cow::Borrowed([]) => Contents::Empty,
-                std::borrow::Cow::Borrowed(s) => Contents::SharedBuffer {
-                    ptr: s.as_ptr(),
-                    len: s.len(),
-                },
-                std::borrow::Cow::Owned(v) => Contents::from(v),
             }
         }
     }
@@ -2178,14 +2206,9 @@ pub mod cache {
             }
         }
 
-        /// `use_shared_buffer` is taken at runtime — the live
-        /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
-        /// `Transpiler::parse`) pass a value computed from runtime state, and the
-        /// resolver's earlier forward-decl already pinned this shape.
-        /// PERF: re-monomorphize once both callers stabilize.
+        /// `bom_handling`: `Convert` returns the file as text, `Keep` the bytes on disk.
         ///
-        /// `arena`: when
-        /// `!use_shared_buffer && arena.is_some()` the file body is read
+        /// `arena`: when `Some`, the file body is read
         /// directly into `arena` (`Contents::Arena`), so the bytes are
         /// bulk-freed by `mi_heap_destroy` when the per-call `MimallocArena`
         /// drops instead of landing in the worker thread's default mimalloc
@@ -2196,7 +2219,7 @@ pub mod cache {
             _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
-            use_shared_buffer: bool,
+            bom_handling: fs_mod::BomHandling,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
@@ -2253,15 +2276,11 @@ pub mod cache {
                 fd
             );
 
-            // reshaped for borrowck — capture `stream` scalar before borrowing
-            // the shared buffer.
-            let stream = self.stream;
-
-            let contents = match (use_shared_buffer, arena) {
+            let contents = match arena {
                 // Read straight into the per-call arena so the source bytes
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
-                (false, Some(arena)) => {
+                Some(arena) => {
                     match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
@@ -2277,24 +2296,23 @@ pub mod cache {
                         }
                     }
                 }
-                _ => {
-                    let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
-                        .map(Contents::from)
-                    {
-                        Ok(c) => c,
-                        Err(err) => {
-                            if cfg!(debug_assertions) {
-                                Output::print_error(format_args!(
-                                    "{}: readFile error -- {}",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(err.name()),
-                                ));
-                            }
-                            return Err(err);
+                None => match fs_mod::read_file_contents(file_handle).map(Contents::from) {
+                    Ok(c) => c,
+                    Err(err) => {
+                        if cfg!(debug_assertions) {
+                            Output::print_error(format_args!(
+                                "{}: readFile error -- {}",
+                                bstr::BStr::new(path),
+                                bstr::BStr::new(err.name()),
+                            ));
                         }
+                        return Err(err);
                     }
-                }
+                },
+            };
+            let contents = match bom_handling {
+                fs_mod::BomHandling::Convert => contents.convert_bom(arena),
+                fs_mod::BomHandling::Keep => contents,
             };
 
             let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;

@@ -1451,6 +1451,15 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
+    /// A loader that copies its file emits the bytes of the read.
+    fn bom_handling_for(loader: Loader) -> Fs::BomHandling {
+        if loader.should_copy_for_bundling() {
+            Fs::BomHandling::Keep
+        } else {
+            Fs::BomHandling::Convert
+        }
+    }
+
     // `transpiler`/`resolver` are raw `*mut`.
     // Callers pass `resolver = &mut (*transpiler).resolver`; taking
     // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
@@ -1462,7 +1471,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        _loader: Loader,
+        bom_handling: Fs::BomHandling,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1539,7 +1548,7 @@ pub mod parse_worker {
                     fs_ref,
                     file_path.text,
                     contents_dir,
-                    false,
+                    bom_handling,
                     contents_file.unwrap_valid(),
                     read_arena,
                 ) {
@@ -1649,7 +1658,13 @@ pub mod parse_worker {
 
         if !might_have_on_parse_plugins {
             return get_code_for_parse_task_without_plugins(
-                task, log, transpiler, resolver, bump, file_path, *loader,
+                task,
+                log,
+                transpiler,
+                resolver,
+                bump,
+                file_path,
+                bom_handling_for(*loader),
             );
         }
 
@@ -1667,6 +1682,7 @@ pub mod parse_worker {
             should_continue_running: &should_continue_running,
             result: core::ptr::null_mut(),
             original_contents: None,
+            original_text: None,
         };
 
         // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
@@ -1710,6 +1726,8 @@ pub mod parse_worker {
         // the duration of `run`. Returned to the caller when the plugin keeps
         // the original source, dropped otherwise.
         original_contents: Option<crate::cache::Contents>,
+        // The text of `original_contents` that `fetch_source_code` gave the plugin, for a file from disk.
+        original_text: Option<crate::cache::Contents>,
     }
 
     #[repr(C)]
@@ -1979,7 +1997,8 @@ pub mod parse_worker {
                 this.resolver,
                 this.bump,
                 this.file_path,
-                result.loader,
+                // The bytes on disk: `run` returns them or the text.
+                Fs::BomHandling::Keep,
             ) {
                 Ok(e) => e,
                 Err(e) => {
@@ -1997,10 +2016,19 @@ pub mod parse_worker {
             // plugin keeps the original source, or drops it when the plugin
             // replaces the source.
             let fd = entry.fd;
-            this.original_contents = Some(core::mem::take(&mut entry.contents));
+            let on_disk = core::mem::take(&mut entry.contents);
+            // A plugin reads text, whatever the loader. Only a file from disk (`Arena`) is decoded.
+            this.original_text = match on_disk {
+                crate::cache::Contents::Arena { ptr, len } => {
+                    Some(crate::cache::Contents::Arena { ptr, len }.convert_bom(Some(this.bump)))
+                }
+                _ => None,
+            };
+            this.original_contents = Some(on_disk);
             let contents_slice = this
-                .original_contents
+                .original_text
                 .as_ref()
+                .or(this.original_contents.as_ref())
                 .expect("just set")
                 .as_slice();
             let source_ptr = contents_slice.as_ptr();
@@ -2219,9 +2247,15 @@ pub mod parse_worker {
                     // (if any) drops with `self`.
                     let contents =
                         if !wrapper.original_source.is_null() && ptr == wrapper.original_source {
-                            self.original_contents
+                            let on_disk = self
+                                .original_contents
                                 .take()
-                                .expect("original_contents set alongside original_source")
+                                .expect("original_contents set alongside original_source");
+                            // `wrapper.loader` is the loader of the task, which the parse step uses.
+                            match self.original_text.take() {
+                                Some(text) if !wrapper.loader.should_copy_for_bundling() => text,
+                                _ => on_disk,
+                            }
                         } else {
                             crate::cache::Contents::External {
                                 ptr,
@@ -2245,7 +2279,7 @@ pub mod parse_worker {
                 self.resolver,
                 self.bump,
                 self.file_path,
-                *self.loader,
+                bom_handling_for(*self.loader),
             )
         }
     }

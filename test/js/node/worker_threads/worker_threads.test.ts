@@ -597,6 +597,24 @@ describe("stdio is flushed when the worker exits synchronously", () => {
   });
 });
 
+// The global `console` of a worker is a `Console` on its two streams. As in Node, its `FORCE_COLOR` decides the colors.
+test.each([
+  ["0", "{ a: 1 }\n"],
+  ["1", "{ a: \x1b[33m1\x1b[39m }\n"],
+])("console in a worker with FORCE_COLOR=%s", async (FORCE_COLOR, logged) => {
+  const worker = new Worker(`console.log({ a: 1 }); console.error({ a: 1 });`, {
+    eval: true,
+    stdout: true,
+    stderr: true,
+    env: { FORCE_COLOR },
+  });
+  let [out, err] = ["", ""];
+  worker.stdout.setEncoding("utf8").on("data", chunk => (out += chunk));
+  worker.stderr.setEncoding("utf8").on("data", chunk => (err += chunk));
+  const [code] = await once(worker, "exit");
+  expect({ out, err, code }).toEqual({ out: logged, err: logged, code: 0 });
+});
+
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();

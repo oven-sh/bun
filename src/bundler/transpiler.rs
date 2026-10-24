@@ -1078,26 +1078,25 @@ fn macro_resolver_options(
     from: &resolver::options::BundleOptions,
     transform: &api::TransformOptions,
 ) -> crate::Result<resolver::options::BundleOptions> {
-    use crate::options_impl::{Target, TargetExt, bundle_options_defaults as defaults};
+    use crate::options_impl::{Target, TargetExt};
     use resolver::options as ropts;
 
-    let conditions = options::ESMConditions::for_target(Target::BunMacro, transform)?;
-    // As in `from_api`: `--main-fields` and `--extension-order` replace the lists of the target.
+    // As in `from_api`: the defaults of the target, `node-addons`, then the user's `--conditions`.
+    let user_conditions: Vec<&[u8]> = transform.conditions.iter().map(|s| &**s).collect();
+    let mut conditions = options::ESMConditions::init(
+        Target::default_conditions_map()[Target::BunMacro],
+        transform.allow_addons.unwrap_or(true),
+        &user_conditions,
+    )?;
+    // "development" says how the build runs, not what it is for: a macro import has it when the importing resolver has it.
+    if from.conditions.import.contains(b"development") {
+        conditions.append_slice(&[b"development"])?;
+    }
+    // As in `from_api`: `--main-fields` replaces the list of the target.
     let main_fields = if transform.main_fields.is_empty() {
         ropts::owned_string_list(Target::default_main_fields_map()[Target::BunMacro])
     } else {
         transform.main_fields.iter().cloned().collect()
-    };
-    let (extensions, node_modules_extensions) = if transform.extension_order.is_empty() {
-        (
-            ropts::owned_string_list(defaults::EXTENSION_ORDER_BUN),
-            ropts::owned_string_list(defaults::node_modules::EXTENSION_ORDER_BUN),
-        )
-    } else {
-        (
-            from.extension_order.default.default.clone(),
-            from.extension_order.node_modules.default.clone(),
-        )
     };
 
     Ok(ropts::BundleOptions {
@@ -1110,17 +1109,6 @@ fn macro_resolver_options(
         },
         main_fields,
         main_fields_is_default: transform.main_fields.is_empty(),
-        extension_order: ropts::ExtensionOrder {
-            default: ropts::ExtensionOrderGroup {
-                default: extensions,
-                esm: from.extension_order.default.esm.clone(),
-            },
-            node_modules: ropts::ExtensionOrderGroup {
-                default: node_modules_extensions,
-                esm: from.extension_order.node_modules.esm.clone(),
-            },
-            css: from.extension_order.css.clone(),
-        },
         external: ropts::ExternalModules {
             patterns: options::default_wildcard_patterns(),
             ..Default::default()
@@ -1152,6 +1140,18 @@ fn macro_resolver_options(
         supports_multiple_outputs: from.supports_multiple_outputs,
         tree_shaking: from.tree_shaking,
         allow_runtime: from.allow_runtime,
+        // A macro import is an `import` statement: it reads the `esm` extension lists, which no target changes.
+        extension_order: ropts::ExtensionOrder {
+            default: ropts::ExtensionOrderGroup {
+                default: from.extension_order.default.default.clone(),
+                esm: from.extension_order.default.esm.clone(),
+            },
+            node_modules: ropts::ExtensionOrderGroup {
+                default: from.extension_order.node_modules.default.clone(),
+                esm: from.extension_order.node_modules.esm.clone(),
+            },
+            css: from.extension_order.css.clone(),
+        },
     })
 }
 

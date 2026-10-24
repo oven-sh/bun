@@ -379,6 +379,10 @@ impl RuntimeTranspilerStore {
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
+                // SAFETY: this is the JS thread of `vm`, the only thread that writes the list.
+                extra_cjs_extensions: unsafe {
+                    (*vm).transpiler.resolver.opts.extra_cjs_extensions.clone()
+                },
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -444,6 +448,8 @@ pub struct TranspilerJob {
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
+    /// `require.extensions` as of `transpile()`. The JS thread can replace the list of `vm.transpiler` while `run()` resolves.
+    pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -738,7 +744,7 @@ impl TranspilerJob {
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
-        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
+        // outlives this stack frame. One thing the JS thread replaces meanwhile is the `require.extensions` list: see below.
         // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
@@ -753,6 +759,14 @@ impl TranspilerJob {
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
+        // The copy has the `require.extensions` list of `vm.transpiler`, which the JS thread frees when a script
+        // assigns an extension. SAFETY: the copy is never dropped, so the list of this job keeps one owner, the job.
+        unsafe {
+            ptr::write(
+                &raw mut transpiler.resolver.opts.extra_cjs_extensions,
+                ptr::read(&raw const self.extra_cjs_extensions),
+            )
+        };
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;

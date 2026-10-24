@@ -133,6 +133,23 @@ describe("Histogram", () => {
     assert.strictEqual(h.count, 1);
   });
 
+  test("recordDelta measures less than a microsecond", () => {
+    // With 5 figures, a value below 2 ** 18 is exact.
+    const h = createHistogram({ figures: 5 });
+    const deltas = [];
+    for (let i = 0; i < 100; i++) {
+      h.reset();
+      h.recordDelta();
+      h.recordDelta();
+      if (h.max < 2 ** 18) deltas.push(h.max);
+    }
+    assert.notStrictEqual(deltas.length, 0);
+    assert.ok(
+      deltas.some(delta => delta % 1000 !== 0),
+      `every delta is a whole number of microseconds: ${deltas}`,
+    );
+  });
+
   describe("exceeds functionality", () => {
     test("basic exceeds counting", () => {
       const h = createHistogram({ lowest: 1, highest: 10, figures: 1 });
@@ -703,6 +720,34 @@ describe("Histogram", () => {
       into.add(from);
       assert.deepStrictEqual([into.min, into.max, into.mean, into.percentile(100)], [3, 5, 4, 5]);
     });
+
+    test("the next recordDelta measures from the recordDelta of the other", () => {
+      const into = createHistogram();
+      const from = createHistogram();
+      from.recordDelta();
+      into.add(from);
+      into.recordDelta();
+      assert.deepStrictEqual([into.count, from.count], [1, 0]);
+    });
+
+    for (const first of ["into", "from"]) {
+      test(`the next recordDelta measures from the later of the two, and "${first}" is the earlier`, () => {
+        const into = createHistogram();
+        const from = createHistogram();
+        const [earlier, later] = first === "into" ? [into, from] : [from, into];
+        earlier.recordDelta();
+        const start = performance.now();
+        while (performance.now() - start < 20);
+        const before = performance.now();
+        later.recordDelta();
+        into.add(from);
+        into.recordDelta();
+        const elapsed = performance.now() - before;
+        assert.strictEqual(into.count, 1);
+        // From the earlier one it is 20 ms more than `elapsed`.
+        assert.ok(into.max < (elapsed + 10) * 1e6, `${into.max} ns in ${elapsed} ms`);
+      });
+    }
 
     test("nothing fits", () => {
       const into = createHistogram({ lowest: 1, highest: 10 });
@@ -1521,13 +1566,16 @@ describe("Histogram", () => {
 
     test("to a worker that records while this thread does", async () => {
       const h = createHistogram();
+      const started = new Int32Array(new SharedArrayBuffer(4));
       const worker = new Worker(
-        `const { parentPort } = require("node:worker_threads");
+        `const { parentPort, workerData: started } = require("node:worker_threads");
          parentPort.once("message", h => {
+           Atomics.store(started, 0, 1);
+           Atomics.notify(started, 0);
            for (let i = 0; i < 20000; i++) h.record(2);
            parentPort.postMessage(h.constructor.name);
          });`,
-        { eval: true },
+        { eval: true, workerData: started },
       );
       try {
         const done = new Promise((resolve, reject) => {
@@ -1537,6 +1585,7 @@ describe("Histogram", () => {
           worker.once("exit", code => reject(new Error(`the worker exited with code ${code}`)));
         });
         worker.postMessage(h);
+        await Promise.race([Atomics.waitAsync(started, 0, 0).value, done]);
         for (let i = 0; i < 20000; i++) h.record(1);
         assert.strictEqual(await done, "RecordableHistogram");
       } finally {

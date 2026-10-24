@@ -72,6 +72,8 @@ test("a structured clone in the same thread does not count as an allocation", ()
   expect(estimateShallowMemoryUsageOf(histogram)).toBeGreaterThan(37 * 1024 * 1024);
 
   // They share its buckets. If each counted as a part of the 37 MB, the GC would run every few clones.
+  // Collecting first leaves no other reason for the GC to run: recording has just allocated the 37 MB.
+  Bun.gc(true);
   const before = heapStats().objectTypeCounts.Histogram;
   for (let i = 0; i < 300; i++) structuredClone(histogram);
   expect(heapStats().objectTypeCounts.Histogram - before).toBeGreaterThan(150);
@@ -103,7 +105,8 @@ test("histograms that arrive from another thread are collected without an explic
     do {
       Atomics.add(turn, 0, 1);
       Atomics.notify(turn, 0);
-      Atomics.wait(turn, 0, (received / 100) * 2 + 1);
+      // This blocks the thread that would time the test out.
+      expect(Atomics.wait(turn, 0, (received / 100) * 2 + 1, 30_000)).not.toBe("timed-out");
       for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port1)?.message.count).toBe(valuesInEveryChunk.length);
       received += 100;
     } while (received < 2000 && heapStats().objectTypeCounts.Histogram > received / 2);

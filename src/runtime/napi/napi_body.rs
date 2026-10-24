@@ -4349,7 +4349,7 @@ mod uv_functions_to_export {
         pub(super) fn uv_handle_set_data();
         pub(super) fn uv_handle_size();
         pub(super) fn uv_handle_type_name();
-        pub(super) fn uv_hrtime();
+        pub(super) safe fn uv_hrtime() -> u64;
         pub(super) fn uv_if_indextoiid();
         pub(super) fn uv_if_indextoname();
         pub(super) fn uv_inet_ntop();

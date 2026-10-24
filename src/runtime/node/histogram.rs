@@ -57,7 +57,8 @@ enum Counts {
 
 struct State {
     histogram: bun_histogram::Histogram,
-    /// When `record_delta` last ran, or 0.
+    /// When `record_delta` last ran, or 0. `recordDelta()` and `Interval::sample` read different
+    /// clocks, and no histogram has both.
     previous_ns: u64,
 }
 
@@ -71,8 +72,7 @@ pub(crate) struct Interval {
 
 impl State {
     /// Records the time since the last call, if there was one.
-    fn record_delta(&mut self, now: Timespec) {
-        let now_ns = now.ns();
+    fn record_delta(&mut self, now_ns: u64) {
         if self.previous_ns > 0 {
             self.histogram
                 .record(now_ns.saturating_sub(self.previous_ns));
@@ -96,7 +96,7 @@ impl Interval {
     pub(crate) fn sample(&self) -> (Timespec, usize) {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut state = self.state.lock();
-        state.record_delta(now);
+        state.record_delta(now.ns());
         (now, self.memory.update(&state))
     }
 }
@@ -430,8 +430,11 @@ pub(crate) fn record_delta<'a>(
     heap: &JsHeap<'a>,
     receiver: JsLocal<'a>,
 ) -> bindgen::Result<'a, ()> {
-    let now = Timespec::now(TimespecMockMode::ForceRealTime);
-    recordable(heap, receiver)?.with(heap, receiver, |state| state.record_delta(now));
+    unsafe extern "C" {
+        /// `Timespec::now` has whole microseconds on macOS.
+        safe fn uv_hrtime() -> u64;
+    }
+    recordable(heap, receiver)?.with(heap, receiver, |state| state.record_delta(uv_hrtime()));
     Ok(())
 }
 

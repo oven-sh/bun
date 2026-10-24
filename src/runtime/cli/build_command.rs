@@ -442,6 +442,15 @@ impl BuildCommand {
                 resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
+            // An entry point from bunfig.toml can have a NUL byte, and the open would read the path only up to it.
+            if strings::contains_char(path, 0) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> root directory {} contains a null byte",
+                    bun_fmt::quote(path),
+                );
+                Global::exit(1);
+            }
+
             // `bun_sys::Dir` is the owning RAII
             // handle; its Drop closes the fd when this block ends.
             let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {

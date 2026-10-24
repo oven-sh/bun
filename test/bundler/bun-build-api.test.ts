@@ -2687,3 +2687,409 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
   });
 });
+
+// A syscall reads a path only up to its first NUL byte. Each case runs in a child: without the checks, a debug build
+// aborts in `ZStr::as_cstr` and a release build opens the path cut at the NUL.
+describe.concurrent("Bun.build with a NUL byte in a path", () => {
+  async function run(script: string) {
+    using dir = tempDir("bun-build-nul", {
+      "entry.ts": `console.log("entry");`,
+      "split.ts": `export const lazy = () => import("./lazy.ts");`,
+      "lazy.ts": `export default 1;`,
+      "with-asset.ts": `import asset from "./asset.txt" with { type: "file" };\nconsole.log(asset);`,
+      "asset.txt": "asset",
+      "imports.ts": `import value from "virtual-module";\nconsole.log(value);`,
+      "imports-config.ts": String.raw`import config from "\0virtual:config.ts";` + `\nconsole.log(config);`,
+      "lazy-plugin.ts": `export const lazy = () => import("from-plugin");`,
+      "asset-plugin.ts": `import asset from "from-plugin";\nconsole.log(asset);`,
+      "index.html": `<!doctype html><html><body><script type="module" src="./with-asset.ts"></script></body></html>`,
+      "tsconfig.json": "{}",
+      "order.txt": "",
+      // "sub\0tail" cut at the NUL names this directory.
+      "sub/keep": "",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        String.raw`
+          import { readdirSync } from "node:fs";
+          const listing = () => readdirSync(".", { recursive: true }).map(name => name.replaceAll("\\", "/")).sort();
+          const before = listing();
+          const created = () => listing().filter(name => !before.includes(name));
+          const loaded = [];
+          const virtual = {
+            name: "virtual",
+            setup(build) {
+              build.onResolve({ filter: /^virtual-module$/ }, () => ({ path: "\0virtual-module", namespace: "virtual" }));
+              build.onResolve({ filter: /virtual\.ts$/ }, ({ path }) => ({
+                path: path.split(/[\\/]/).pop(),
+                namespace: "virtual",
+              }));
+              build.onLoad({ filter: /.*/, namespace: "virtual" }, ({ path }) => {
+                loaded.push(path);
+                return { contents: "export default 3;", loader: "ts" };
+              });
+            },
+          };
+          const fromPlugin = (path, loader) => ({
+            name: "from-plugin",
+            setup(build) {
+              build.onResolve({ filter: /^from-plugin$/ }, () => ({ path, namespace: "from-plugin" }));
+              build.onLoad({ filter: /.*/, namespace: "from-plugin" }, () => ({ contents: "export default 3;", loader }));
+            },
+          });
+          async function logs(builds) {
+            const logs = {};
+            for (const [name, option] of Object.entries(builds)) {
+              const build = await Bun.build({ entrypoints: ["./entry.ts"], throw: false, ...option });
+              logs[name] = build.success
+                ? "success"
+                : build.logs.map(log => [log.message, ...log.notes.map(note => note.message)]);
+            }
+            return logs;
+          }
+          ${script}
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const report = (value: object) => ({ stdout: JSON.stringify(value, null, 2) + "\n", stderr: "", exitCode: 0 });
+  const failed = (input: string, output: string, template: string) => [
+    [`Output path for "${input}" contains a null byte: "${output}"`, `naming template is "${template}"`],
+  ];
+
+  test("a path option throws before the build opens anything", async () => {
+    const thrown = (option: string, received: string) =>
+      `TypeError ERR_INVALID_ARG_VALUE: The ${option.includes(".") ? "property" : "argument"} '${option}' must be a string without null bytes. Received "${received}"`;
+    const derived = (what: string, received: string, option: string) =>
+      `TypeError ERR_INVALID_ARG_VALUE: The ${what} "${received}", taken from 'entrypoints', must not contain null bytes. Set '${option}' to override it.`;
+    expect(
+      await run(String.raw`
+        const options = {
+          "outdir": { outdir: "out\0tail" },
+          "outdir from a plugin's setup()": {
+            plugins: [{ name: "sets-outdir", setup: build => void (build.config.outdir = "out\0tail") }],
+          },
+          "tsconfig": { tsconfig: "tsconfig.json\0tail" },
+          "root": { root: "sub\0tail" },
+          "root from entrypoints": { entrypoints: ["sub\0tail/entry.ts"] },
+          "metafile": { metafile: "meta.json\0tail" },
+          "metafile.json": { outdir: "out", metafile: { json: "meta.json\0tail" } },
+          "metafile.markdown": { outdir: "out", metafile: { markdown: "meta.md\0tail" } },
+          "compile.outfile": { compile: { outfile: "app\0tail" } },
+          "compile.outfile from entrypoints": {
+            entrypoints: ["/de\0rived.ts"],
+            files: { "/de\0rived.ts": "" },
+            compile: true,
+          },
+          "compile.executablePath": { compile: { outfile: "app", executablePath: "entry.ts\0tail" } },
+          "compile.windows.icon": { compile: { outfile: "app", windows: { icon: "entry.ts\0tail" } } },
+          "compile.bytecodeOrder": {
+            bytecode: true,
+            format: "cjs",
+            compile: { outfile: "app", bytecodeOrder: "order.txt\0tail" },
+          },
+          "compile.bytecodeOrder[1]": {
+            bytecode: true,
+            format: "cjs",
+            compile: { outfile: "app", bytecodeOrder: ["order.txt", "order.txt\0tail"] },
+          },
+        };
+        const thrown = {};
+        for (const [name, option] of Object.entries(options)) {
+          let build;
+          try {
+            build = Bun.build({ entrypoints: ["./entry.ts"], throw: false, ...option });
+          } catch (error) {
+            thrown[name] = error.name + " " + error.code + ": " + error.message;
+            continue;
+          }
+          const result = await build.catch(() => ({ success: "rejected" }));
+          thrown[name] = "did not throw, success: " + result.success;
+        }
+        console.log(JSON.stringify({ thrown, created: created() }, null, 2));
+      `),
+    ).toEqual(
+      report({
+        thrown: {
+          "outdir": thrown("outdir", "out\\u0000tail"),
+          "outdir from a plugin's setup()": thrown("outdir", "out\\u0000tail"),
+          "tsconfig": thrown("tsconfig", "tsconfig.json\\u0000tail"),
+          "root": thrown("root", "sub\\u0000tail"),
+          "root from entrypoints": derived("root directory", "sub\\u0000tail", "root"),
+          "metafile": thrown("metafile", "meta.json\\u0000tail"),
+          "metafile.json": thrown("metafile.json", "meta.json\\u0000tail"),
+          "metafile.markdown": thrown("metafile.markdown", "meta.md\\u0000tail"),
+          "compile.outfile": thrown("compile.outfile", "app\\u0000tail"),
+          "compile.outfile from entrypoints": derived("executable name", "de\\u0000rived", "compile.outfile"),
+          "compile.executablePath": thrown("compile.executablePath", "entry.ts\\u0000tail"),
+          "compile.windows.icon": thrown("compile.windows.icon", "entry.ts\\u0000tail"),
+          "compile.bytecodeOrder": thrown("compile.bytecodeOrder", "order.txt\\u0000tail"),
+          "compile.bytecodeOrder[1]": thrown("compile.bytecodeOrder", "order.txt\\u0000tail"),
+        },
+        created: [],
+      }),
+    );
+  });
+
+  test("a naming template fails the build before anything is written", async () => {
+    expect(
+      await run(String.raw`
+        const naming = await logs({
+          "naming": { outdir: "out", naming: "pre\0post-[name].[ext]" },
+          "naming.entry": { outdir: "out", naming: { entry: "pre\0post-[name].[ext]" } },
+          "naming.chunk": {
+            outdir: "out",
+            entrypoints: ["./split.ts"],
+            splitting: true,
+            naming: { chunk: "ch\0unk-[name].[ext]" },
+          },
+          "naming.asset": {
+            outdir: "out",
+            entrypoints: ["./with-asset.ts"],
+            naming: { asset: "as\0set-[name].[ext]" },
+          },
+        });
+        const rejection = await Bun.build({ entrypoints: ["./entry.ts"], outdir: "out", naming: "pre\0post-[name].[ext]" })
+          .then(() => "resolved", error => [error.name, error.message, error.errors.map(item => item.message)]);
+        console.log(JSON.stringify({ naming, rejection, created: created() }, null, 2));
+      `),
+    ).toEqual(
+      report({
+        naming: {
+          "naming": failed("entry.ts", "./pre\\u0000post-entry.js", "./pre\\u0000post-[name].[ext]"),
+          "naming.entry": failed("entry.ts", "./pre\\u0000post-entry.js", "./pre\\u0000post-[name].[ext]"),
+          "naming.chunk": failed("lazy.ts", "./ch\\u0000unk-lazy.js", "./ch\\u0000unk-[name].[ext]"),
+          "naming.asset": failed("asset.txt", "./as\\u0000set-asset.txt", "./as\\u0000set-[name].[ext]"),
+        },
+        rejection: [
+          "AggregateError",
+          "Bundle failed",
+          ['Output path for "entry.ts" contains a null byte: "./pre\\u0000post-entry.js"'],
+        ],
+        created: [],
+      }),
+    );
+  });
+
+  test("a module path that names an output fails the build before anything is written", async () => {
+    expect(
+      await run(String.raw`
+        const names = await logs({
+          "a files key": {
+            outdir: "out",
+            entrypoints: [process.cwd() + "/in\0memory.ts"],
+            files: { [process.cwd() + "/in\0memory.ts"]: "" },
+          },
+          "an entry point that a plugin resolves": {
+            outdir: "out",
+            entrypoints: ["a\0b-virtual.ts"],
+            plugins: [virtual],
+          },
+          // Cut at the NUL, this [dir] is the directory "sub".
+          "[dir]": { outdir: "out", root: ".", entrypoints: ["sub\0tail/virtual.ts"], plugins: [virtual] },
+          "a chunk that a plugin path names": {
+            outdir: "out",
+            entrypoints: ["./lazy-plugin.ts"],
+            splitting: true,
+            naming: { chunk: "[name].[ext]" },
+            plugins: [fromPlugin("ch\0unk.ts", "ts")],
+          },
+          "an asset that a plugin path names": {
+            outdir: "out",
+            entrypoints: ["./asset-plugin.ts"],
+            naming: { asset: "[name].[ext]" },
+            plugins: [fromPlugin("pic\0ture.png", "file")],
+          },
+          "an asset extension from a plugin path": {
+            outdir: "out",
+            entrypoints: ["./asset-plugin.ts"],
+            naming: { asset: "[name].[ext]" },
+            plugins: [fromPlugin("picture.p\0ng", "file")],
+          },
+        });
+        console.log(JSON.stringify({ names, created: created() }, null, 2));
+      `),
+    ).toEqual(
+      report({
+        names: {
+          "a files key": failed("in\\u0000memory.ts", "./in\\u0000memory.js", "[dir]/[name].[ext]"),
+          "an entry point that a plugin resolves": failed(
+            "virtual:a\\u0000b-virtual.ts",
+            "./a\\u0000b-virtual.js",
+            "[dir]/[name].[ext]",
+          ),
+          "[dir]": failed("virtual:virtual.ts", "sub\\u0000tail/virtual.js", "[dir]/[name].[ext]"),
+          "a chunk that a plugin path names": failed(
+            "from-plugin:ch\\u0000unk.ts",
+            "./ch\\u0000unk.js",
+            "./[name].[ext]",
+          ),
+          "an asset that a plugin path names": failed(
+            "from-plugin:pic\\u0000ture.png",
+            "./pic\\u0000ture.png",
+            "./[name].[ext]",
+          ),
+          "an asset extension from a plugin path": failed(
+            "from-plugin:picture.p\\u0000ng",
+            "./picture.p\\u0000ng",
+            "./[name].[ext]",
+          ),
+        },
+        created: [],
+      }),
+    );
+  });
+
+  test("a standalone HTML build and an executable fail the build for a name that they open", async () => {
+    expect(
+      await run(String.raw`
+        const opened = await logs({
+          "the HTML of a standalone HTML build": {
+            outdir: "out",
+            entrypoints: ["./index.html"],
+            compile: true,
+            target: "browser",
+            naming: { entry: "en\0try-[name].[ext]" },
+          },
+          "a .map of a standalone HTML build": {
+            outdir: "out",
+            entrypoints: ["./index.html"],
+            compile: true,
+            target: "browser",
+            sourcemap: "linked",
+            naming: { chunk: "ch\0unk-[name].[ext]" },
+          },
+          "a .map of an executable": {
+            entrypoints: ["./split.ts"],
+            splitting: true,
+            sourcemap: "external",
+            naming: { chunk: "ch\0unk-[name].[ext]" },
+            compile: { outfile: "app" },
+          },
+        });
+        console.log(JSON.stringify({ opened, created: created() }, null, 2));
+      `),
+    ).toEqual(
+      report({
+        opened: {
+          "the HTML of a standalone HTML build": failed(
+            "index.html",
+            "./en\\u0000try-index.html",
+            "./en\\u0000try-[name].[ext]",
+          ),
+          "a .map of a standalone HTML build": failed(
+            "index.html",
+            "./ch\\u0000unk-index.js",
+            "./ch\\u0000unk-[name].[ext]",
+          ),
+          "a .map of an executable": failed("lazy.ts", "./ch\\u0000unk-lazy.js", "./ch\\u0000unk-[name].[ext]"),
+        },
+        created: [],
+      }),
+    );
+  });
+
+  test("a name that the build does not open still builds", async () => {
+    expect(
+      await run(String.raw`
+        const builds = {
+          "naming without an outdir": { naming: "pre\0post-[name].[ext]" },
+          "[dir] without an outdir": { root: ".", entrypoints: ["sub\0tail/virtual.ts"], plugins: [virtual] },
+          "an entry point that does not exist": { outdir: "out1", entrypoints: ["./entry.ts\0tail"] },
+          "a plugin path inside a chunk": { outdir: "out2", entrypoints: ["./imports.ts"], plugins: [virtual] },
+          "a files key inside a chunk": {
+            outdir: "out3",
+            entrypoints: ["./imports-config.ts"],
+            files: { "\0virtual:config.ts": "export default 1;" },
+          },
+          "publicPath and banner": { outdir: "out4", publicPath: "/p\0q/", banner: "// a\0b" },
+          "the inlined chunk and asset of a standalone HTML build": {
+            outdir: "out5",
+            entrypoints: ["./index.html"],
+            compile: true,
+            target: "browser",
+            naming: { chunk: "ch\0unk-[name].[ext]", asset: "as\0set-[name].[ext]" },
+          },
+        };
+        const results = {};
+        for (const [name, option] of Object.entries(builds)) {
+          const build = await Bun.build({ entrypoints: ["./entry.ts"], throw: false, ...option });
+          results[name] = build.success
+            ? build.outputs.map(output => output.path.replace(process.cwd(), "").replaceAll("\\", "/"))
+            : build.logs.map(log => log.message);
+        }
+        console.log(JSON.stringify({ results, loaded, created: created() }, null, 2));
+      `),
+    ).toEqual(
+      report({
+        results: {
+          "naming without an outdir": ["./pre\0post-entry.js"],
+          "[dir] without an outdir": ["sub\0tail/virtual.js"],
+          "an entry point that does not exist": ['ModuleNotFound resolving "./entry.ts\0tail" (entry point)'],
+          "a plugin path inside a chunk": ["/out2/imports.js"],
+          "a files key inside a chunk": ["/out3/imports-config.js"],
+          "publicPath and banner": ["/out4/entry.js"],
+          "the inlined chunk and asset of a standalone HTML build": ["/out5/index.html"],
+        },
+        loaded: ["virtual.ts", "\0virtual-module"],
+        created: [
+          "out2",
+          "out2/imports.js",
+          "out3",
+          "out3/imports-config.js",
+          "out4",
+          "out4/entry.js",
+          "out5",
+          "out5/index.html",
+        ],
+      }),
+    );
+  });
+
+  // An executable embeds its chunks and assets, and writes the `.map` of a chunk under its basename. The asset that
+  // does not exist stops each build after the name check, before it copies the running executable.
+  test("an executable does not check a name that it embeds, or the directory of a .map", async () => {
+    expect(
+      await run(String.raw`
+        const builds = {
+          "an embedded chunk and asset": {
+            entrypoints: ["./split.ts", "./with-asset.ts"],
+            naming: { chunk: "ch\0unk-[name].[ext]", asset: "as\0set-[name].[ext]" },
+          },
+          "the directory of a .map": {
+            entrypoints: ["./split.ts"],
+            sourcemap: "external",
+            naming: { chunk: "d\0ir/[name].[ext]" },
+          },
+        };
+        const stopped = {};
+        for (const [name, option] of Object.entries(builds)) {
+          const build = await Bun.build({
+            splitting: true,
+            compile: { outfile: "app", assets: ["missing.bin"] },
+            throw: false,
+            ...option,
+          });
+          stopped[name] = build.success ? "success" : build.logs.map(log => log.message.replace(/: .*/s, ""));
+        }
+        console.log(JSON.stringify({ stopped, created: created() }, null, 2));
+      `),
+    ).toEqual(
+      report({
+        stopped: {
+          "an embedded chunk and asset": ['failed to read asset "missing.bin"'],
+          "the directory of a .map": ['failed to read asset "missing.bin"'],
+        },
+        created: [],
+      }),
+    );
+  });
+});

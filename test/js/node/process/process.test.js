@@ -3144,6 +3144,84 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
   });
 });
 
+it.concurrent("a time zone change reaches a Date that cached its local time in an earlier task", async () => {
+  // The walk over the live Dates runs only when a Date has cached a local time. Each Date here caches one in one
+  // task, and the zone changes in a later task, after the VM was left and entered again.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { setTimeZone } from "bun:jsc";
+       const nextTask = () => new Promise(resolve => setImmediate(resolve));
+       const d = new Date("2024-01-15T12:00:00Z");
+       const hours = [d.getHours()];
+       await nextTask();
+       process.env.TZ = "America/New_York";
+       hours.push(d.getHours());
+       await nextTask();
+       delete process.env.TZ;
+       hours.push(d.getHours());
+       await nextTask();
+       setTimeZone("Asia/Tokyo");
+       hours.push(d.getHours());
+       await nextTask();
+       // A Date made after the last change, and read for the first time after this one.
+       const late = new Date("2024-01-15T12:00:00Z");
+       setTimeZone("America/New_York");
+       hours.push(d.getHours(), late.getHours());
+       console.log(JSON.stringify(hours));`,
+    ],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ hours: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    hours: [12, 7, 12, 21, 7, 7],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("a time zone change reaches a Date that compiled code read first", async () => {
+  // The DFG reads the cached local time of a Date without a call, and calls into the runtime only to compute it.
+  // hours() is compiled before `d` exists, and the change to UTC walks the Dates of the loop. After that, only the
+  // read of `d` from the compiled code can tell the next change that a Date has a local time to drop.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { noInline, numberOfDFGCompiles, setTimeZone } from "bun:jsc";
+       const nextTask = () => new Promise(resolve => setImmediate(resolve));
+       function hours(date) { return date.getHours(); }
+       noInline(hours);
+       for (let i = 0; i < 200_000 && numberOfDFGCompiles(hours) === 0; i++) hours(new Date(i * 3_600_000));
+       const compiled = numberOfDFGCompiles(hours) > 0;
+       setTimeZone("UTC");
+       const d = new Date("2024-01-15T12:00:00Z");
+       const seen = [hours(d)];
+       await nextTask();
+       process.env.TZ = "America/New_York";
+       seen.push(hours(d));
+       await nextTask();
+       setTimeZone("Asia/Tokyo");
+       seen.push(hours(d));
+       console.log(JSON.stringify({ compiled, hours: seen }));`,
+    ],
+    // The compile is done when the loop ends.
+    env: { ...bunEnv, TZ: "UTC", BUN_JSC_useConcurrentJIT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    compiled: true,
+    hours: [12, 7, 21],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.traceDeprecation set at runtime prints a stack", async () => {
   await using proc = Bun.spawn({
     cmd: [

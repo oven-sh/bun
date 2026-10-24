@@ -294,8 +294,12 @@ export class Bench {
           clearTimeout(timer);
           timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
           if (it.signal && (await Promise.race([child.exited, Bun.sleep(3000).then(() => "runs on")])) === "runs on") {
-            answers.push("runs on: " + (await fetch(base + "/text").then(async answer => `${answer.status} ${await answer.text()}`, () => "no answer")));
-            child.kill("SIGKILL");
+            const answer = await fetch(base + "/text").then(async answer => `${answer.status} ${await answer.text()}`, () => "no answer");
+            // A server that answers nothing more is ending, and how long that takes depends on what else the machine does: it is waited for. Only one that still answers runs on.
+            if (answer !== "no answer") {
+              answers.push("runs on: " + answer);
+              child.kill("SIGKILL");
+            }
           }
         }
         for (;;) {

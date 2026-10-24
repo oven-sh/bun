@@ -742,10 +742,62 @@ impl<'a> Run<'a> {
                 if let Some(blob) = blob_ {
                     // SAFETY: `blob` (a JS cell) is pinned for the call; the
                     // shared-view/content-type slices borrow its store.
-                    let (bytes, ct) =
-                        unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
-                    return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
-                        .map_err(|_| MacroError::MacroFailed);
+                    let blob = unsafe { &*blob };
+                    let read: Vec<u8>;
+                    let mut path: Option<&[u8]> = None;
+                    let bytes: &[u8] = match blob.in_memory_view() {
+                        Some(view) => view,
+                        None if blob.is_s3() => {
+                            self.log.add_range_error_fmt_with_notes(
+                                Some(self.source),
+                                Range {
+                                    loc: self.caller.loc,
+                                    ..Default::default()
+                                },
+                                Box::new([bun_ast::range_data(
+                                    None,
+                                    Range::NONE,
+                                    "read the file in the macro and return the result, for example \"await file.text()\" or \"await file.json()\"",
+                                )]),
+                                format_args!(
+                                    "cannot inline S3 file {} returned by this macro",
+                                    bun_core::fmt::quote(blob.store_path().unwrap_or_default()),
+                                ),
+                            );
+                            return Err(MacroError::MacroFailed);
+                        }
+                        None => {
+                            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+                            read = match (hooks.blob_read_bytes_sync)(blob) {
+                                Ok(bytes) => bytes,
+                                Err(err) => {
+                                    self.log.add_error_fmt(
+                                        Some(self.source),
+                                        self.caller.loc,
+                                        format_args!(
+                                            "failed to read the file returned by this macro: {}",
+                                            err.to_system_error().message,
+                                        ),
+                                    );
+                                    return Err(MacroError::MacroFailed);
+                                }
+                            };
+                            // Line and column of a slice that starts later would not be those of the file.
+                            if blob.offset.get() == 0 {
+                                path = blob.store_path();
+                            }
+                            &read
+                        }
+                    };
+                    return expr_from_blob(
+                        bytes,
+                        self.bump,
+                        blob.content_type_slice(),
+                        path,
+                        self.log,
+                        self.caller.loc,
+                    )
+                    .map_err(|_| MacroError::MacroFailed);
                 }
 
                 return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
@@ -1129,6 +1181,7 @@ fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
     content_type: &[u8],
+    path: Option<&[u8]>,
     log: &mut Log,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
@@ -1146,8 +1199,18 @@ fn expr_from_blob(
 
     if is_json {
         // The parsed strings borrow the source bytes; keep them in `bump`.
-        let bytes: &[u8] = bump.alloc_slice_copy(bytes);
-        let source = &Source::init_path_string(b"fetch.json", bytes);
+        let bytes: &[u8] = match strings::BOM::detect_and_split(bytes) {
+            (Some(strings::BOM::Utf16Le), body) => {
+                bump.alloc_slice_copy(&strings::to_utf8_alloc_from_le_bytes(body))
+            }
+            _ => bump.alloc_slice_copy(bytes),
+        };
+        // A diagnostic keeps the name of its source, so the name goes into `bump` too.
+        let name: &[u8] = match path {
+            Some(path) => bump.alloc_slice_copy(path),
+            None => b"fetch.json",
+        };
+        let source = &Source::init_path_string(name, bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
             Err(_) => return Err(crate::Error::MacroFailed),

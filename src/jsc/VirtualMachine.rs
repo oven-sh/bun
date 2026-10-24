@@ -2943,6 +2943,8 @@ pub struct RuntimeHooks {
     /// `ResolveMessage` arms in `Macro::Run::coerce`.
     pub body_mixin_get_blob:
         fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
+    /// `BlobExt::read_bytes_sync`, for `Macro::Run::coerce` (the `Blob` read paths are in `bun_runtime`).
+    pub blob_read_bytes_sync: fn(blob: &crate::webcore_types::Blob) -> bun_sys::Result<Vec<u8>>,
     /// `process.exit(global, code)`. Main-thread is `noreturn`; in a worker
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this

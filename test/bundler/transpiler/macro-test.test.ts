@@ -1,7 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -516,6 +516,265 @@ test("a JSON Blob or Response returned from a macro does not have to outlive the
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+// `Bun.file()` is a Blob whose bytes are on disk. The macro call reads a regular file where it is inlined,
+// on the thread that transpiles the caller. Anything else fails the build.
+describe.concurrent("a file-backed Blob returned from a macro", () => {
+  const text = 'line1\nline2 "quoted" back\\slash é 😀\n';
+  const json = { port: 8080, name: "é", list: [1, "two", null] };
+  const binary = Buffer.from([0, 1, 2, 254, 255]);
+  // More than the 256 KB that the first read asks for.
+  const large = Buffer.alloc(300_000, "0123456789abcde\n").toString();
+  const files = {
+    "banner.txt": text,
+    "config.json": JSON.stringify(json),
+    "utf16.json": Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify(json), "utf16le")]),
+    "data.bin": binary,
+    "large.txt": large,
+    "empty.txt": "",
+    "empty.json": "",
+    "empty.bin": "",
+  };
+
+  async function run(
+    tree: Record<string, string | Buffer>,
+    cmd: string[] = ["run", "index.ts"],
+    env: Record<string, string> = {},
+  ) {
+    using dir = tempDir("macro-file-blob", tree);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+
+  const macros = [
+    `import fs from "node:fs";`,
+    `const here = import.meta.dir + "/";`,
+    `export const textFile = () => Bun.file(here + "banner.txt");`,
+    `export const jsonFile = () => Bun.file(here + "config.json");`,
+    `export const utf16JsonFile = () => Bun.file(here + "utf16.json");`,
+    `export const binaryFile = () => Bun.file(here + "data.bin");`,
+    `export const largeFile = () => Bun.file(here + "large.txt");`,
+    `export const typeOption = () => Bun.file(here + "config.json", { type: "text/plain" });`,
+    `export const slice = () => Bun.file(here + "banner.txt").slice(6, 11);`,
+    `export const sliceOfNothing = () => Bun.file(here + "banner.txt").slice(3, 3);`,
+    `export const slicePastTheEnd = () => Bun.file(here + "banner.txt").slice(1000, 1010);`,
+    `export const fileUrl = () => Bun.file(Bun.pathToFileURL(here + "banner.txt"));`,
+    `export const descriptor = () => Bun.file(fs.openSync(here + "banner.txt", "r"), { type: "text/plain" });`,
+    `export const response = () => new Response(Bun.file(here + "banner.txt"));`,
+    `export const jsonResponse = () => new Response(Bun.file(here + "config.json"));`,
+    `export const request = () => new Request("http://localhost/", { method: "POST", body: Bun.file(here + "banner.txt") });`,
+    `export const fetched = () => fetch(Bun.pathToFileURL(here + "banner.txt"));`,
+    `export const streamed = () => new Response(Bun.file(here + "banner.txt").stream(), { headers: { "content-type": "text/plain" } });`,
+    `export const onePart = () => new Blob([Bun.file(here + "banner.txt")]);`,
+    `export const nested = () => ({ a: Bun.file(here + "banner.txt"), b: [Bun.file(here + "config.json")] });`,
+    `export const promised = async () => Bun.file(here + "banner.txt");`,
+    `export const twice = () => {`,
+    `  const file = Bun.file(here + "banner.txt");`,
+    `  return [file, file];`,
+    `};`,
+    `export const emptyText = () => Bun.file(here + "empty.txt");`,
+    `export const emptyJson = () => Bun.file(here + "empty.json");`,
+    `export const emptyBinary = () => Bun.file(here + "empty.bin");`,
+    ``,
+  ].join("\n");
+  const names = [...macros.matchAll(/export const (\w+)/g)].map(match => match[1]);
+  const index = [
+    `import { ${names.join(", ")} } from "./m.ts" with { type: "macro" };`,
+    `console.log(JSON.stringify({ ${names.map(name => `${name}: ${name}()`).join(", ")} }));`,
+    ``,
+  ].join("\n");
+  const inlined = {
+    textFile: text,
+    jsonFile: json,
+    utf16JsonFile: json,
+    binaryFile: "data:application/octet-stream;base64," + binary.toString("base64"),
+    largeFile: large,
+    typeOption: JSON.stringify(json),
+    slice: "line2",
+    sliceOfNothing: "",
+    slicePastTheEnd: "",
+    fileUrl: text,
+    descriptor: text,
+    response: text,
+    jsonResponse: json,
+    request: text,
+    fetched: text,
+    streamed: text,
+    onePart: text,
+    nested: { a: text, b: [json] },
+    promised: text,
+    twice: [text, text],
+    emptyText: "",
+    emptyJson: {},
+    emptyBinary: "data:application/octet-stream;base64,",
+  };
+
+  test("is inlined by its type, as an in-memory Blob of the same bytes is", async () => {
+    const { lastLine, stderr, exitCode } = await run({ ...files, "m.ts": macros, "index.ts": index });
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({ value: inlined, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("is inlined by `bun build`, so the bundle does not read the file", async () => {
+    using dir = tempDir("macro-file-blob-build", { ...files, "m.ts": macros, "index.ts": index });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./index.ts", "--target=bun", "--outfile=out/bundle.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ buildStderr, buildExitCode }).toEqual({ buildStderr: "", buildExitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "bundle.js"],
+      env: bunEnv,
+      cwd: path.join(String(dir), "out"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ value: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({ value: inlined, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Modules that are not the entry point are transpiled on the work pool. With as many of them as the
+  // pool has threads, a read that needed one more pool thread would never run.
+  test("is read on the transpiling thread, without a work pool thread", async () => {
+    const count = 4;
+    const modules = Array.from({ length: count }, (_, i) => i);
+    const { lastLine, stderr, exitCode } = await run(
+      {
+        "banner.txt": text,
+        "m.ts": `export const banner = () => Bun.file(import.meta.dir + "/banner.txt");\n`,
+        ...Object.fromEntries(
+          modules.map(i => [
+            `lib${i}.ts`,
+            `import { banner } from "./m.ts" with { type: "macro" };\nexport const value${i} = banner();\n`,
+          ]),
+        ),
+        "index.ts": [
+          ...modules.map(i => `import { value${i} } from "./lib${i}.ts";`),
+          `console.log(JSON.stringify([${modules.map(i => `value${i}`).join(", ")}]));`,
+          ``,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+      { UV_THREADPOOL_SIZE: "2" },
+    );
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
+      value: modules.map(() => text),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const failures: [name: string, macro: string, stderr: string[], files?: Record<string, string>][] = [
+    [
+      "a missing file",
+      `Bun.file(import.meta.dir + "/no-such-file.txt")`,
+      [
+        "failed to read the file returned by this macro: ENOENT: no such file or directory, open",
+        "no-such-file.txt",
+        "index.ts:2:24",
+      ],
+    ],
+    [
+      "a Response over a missing file",
+      `new Response(Bun.file(import.meta.dir + "/no-such-file.txt"))`,
+      [
+        "failed to read the file returned by this macro: ENOENT: no such file or directory, open",
+        "no-such-file.txt",
+        "index.ts:2:24",
+      ],
+    ],
+    ["a directory", `Bun.file(import.meta.dir)`, ["failed to read the file returned by this macro: ", "index.ts:2:24"]],
+    [
+      "a JSON file that does not parse",
+      `Bun.file(import.meta.dir + "/bad.json")`,
+      ["Unexpected oops", "bad.json:2:8"],
+      { "bad.json": `{\n  "a": oops\n}\n` },
+    ],
+    [
+      "an S3 file",
+      `Bun.file("s3://bucket/key.txt")`,
+      [
+        'cannot inline S3 file "bucket/key.txt" returned by this macro',
+        'note: read the file in the macro and return the result, for example "await file.text()" or "await file.json()"',
+        "index.ts:2:24",
+      ],
+    ],
+  ];
+  // A read of a device does not end.
+  if (!isWindows) {
+    failures.push([
+      "a device",
+      `Bun.file("/dev/zero")`,
+      ["failed to read the file returned by this macro: ENODEV: no such device, read '/dev/zero'", "index.ts:2:24"],
+    ]);
+  }
+  test.each(failures)("%s fails the build", async (_name, macro, expected, extraFiles = {}) => {
+    const { lastLine, stderr, exitCode } = await run({
+      ...extraFiles,
+      "m.ts": `export const unread = () => ${macro};\n`,
+      "index.ts": `import { unread } from "./m.ts" with { type: "macro" };\nconsole.log("inlined", unread());\n`,
+    });
+    for (const part of expected) expect(stderr).toContain(part);
+    expect(lastLine).not.toContain("inlined");
+    expect(exitCode).toBe(1);
+  });
+
+  // The open of a FIFO that no process writes to does not return, unless it is non-blocking.
+  test.skipIf(isWindows)("a FIFO fails the build", async () => {
+    using dir = tempDir("macro-file-blob-fifo", {
+      "m.ts": `export const fifo = () => Bun.file(import.meta.dir + "/fifo");\n`,
+      "index.ts": `import { fifo } from "./m.ts" with { type: "macro" };\nconsole.log("inlined", fifo());\n`,
+    });
+    expect(Bun.spawnSync({ cmd: ["mkfifo", path.join(String(dir), "fifo")], env: bunEnv }).exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("failed to read the file returned by this macro: ENODEV: no such device, read");
+    expect(stdout).not.toContain("inlined");
+    expect(exitCode).toBe(1);
+  });
+
+  test("is only read when the macro returns it", async () => {
+    const { lastLine, stderr, exitCode } = await run({
+      "m.ts": `export function unused() {\n  Bun.file(import.meta.dir + "/no-such-file.txt");\n  return "not read";\n}\n`,
+      "index.ts": `import { unused } from "./m.ts" with { type: "macro" };\nconsole.log(unused());\n`,
+    });
+    expect({ lastLine, stderr }).toEqual({ lastLine: "not read", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // procfs reports a size of 0 for a file that has content, and a sysctl file gives all of it to one read only.
+  test.skipIf(!isLinux)("is read whole when it reports no size", async () => {
+    const procfs = ["/proc/version", "/proc/sys/kernel/random/boot_id"];
+    const { lastLine, stderr, exitCode } = await run({
+      "m.ts": `export const procfs = () => ${JSON.stringify(procfs)}.map(path => Bun.file(path, { type: "text/plain" }));\n`,
+      "index.ts": `import { procfs } from "./m.ts" with { type: "macro" };\nconsole.log(JSON.stringify(procfs()));\n`,
+    });
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
+      value: procfs.map(path => readFileSync(path, "utf8")),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which

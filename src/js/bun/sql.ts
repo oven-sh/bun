@@ -538,12 +538,13 @@ function refuseStart(this: Scope, error: unknown) {
   shut(this);
 }
 
-/// Nothing is sent: the server refused the start, so there is no transaction to end.
-async function leaveRefused(scope: Scope) {
-  const { finishing } = scope;
-  if (finishing !== null) {
-    return finishing.$then(undefined, noop);
-  }
+/// Nothing is sent: the server refused the start, so there is no transaction to end. What was handed over before is
+/// waited for. A close() in that time waits for this.
+function leaveRefused(scope: Scope): Promise<unknown> {
+  return (scope.finishing ??= leaveWhenIdle(scope)).$then(undefined, noop);
+}
+
+async function leaveWhenIdle(scope: Scope) {
   const idle = untilIdle(scope);
   if (idle !== undefined) {
     await idle;

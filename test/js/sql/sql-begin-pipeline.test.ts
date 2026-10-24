@@ -8,15 +8,35 @@ import { describeWithContainer } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 
-/** A proxy to the server that logs every write of the client as `decode` reads it. */
-async function loggingProxy(host: string, port: number, decode: (chunk: Buffer, first: boolean) => string) {
+/**
+ * A proxy to the server that logs every write of the client as the messages in it. A read can end inside a message:
+ * `frame` gives the length of the message at the start of `bytes`, or 0 when the bytes are short of it, and what is
+ * left waits for the next read, which then belongs to the same write.
+ */
+async function loggingProxy(
+  host: string,
+  port: number,
+  frame: (bytes: Buffer, first: boolean) => { length: number; type: string },
+) {
   const writes: string[] = [];
-  let first = true;
   const server = net.createServer(client => {
     const upstream = net.connect(port, host);
+    let buffered = Buffer.alloc(0);
+    let first = true;
+    let types = "";
     client.on("data", (chunk: Buffer) => {
-      writes.push(decode(chunk, first));
-      first = false;
+      buffered = Buffer.concat([buffered, chunk]);
+      for (;;) {
+        const { length, type } = frame(buffered, first);
+        if (length === 0 || buffered.length < length) break;
+        first = false;
+        types += type;
+        buffered = buffered.subarray(length);
+      }
+      if (buffered.length === 0) {
+        writes.push(types);
+        types = "";
+      }
       upstream.write(chunk);
     });
     upstream.on("data", data => client.write(data));
@@ -35,33 +55,24 @@ async function loggingProxy(host: string, port: number, decode: (chunk: Buffer, 
   };
 }
 
-/** The type byte of every message in a write. The StartupMessage has none, and its URL asks for no SSLRequest. */
-function pgMessageTypes(chunk: Buffer, first: boolean) {
-  let types = "";
-  let offset = first ? chunk.readInt32BE(0) : 0;
-  while (offset + 5 <= chunk.length) {
-    types += String.fromCharCode(chunk[offset]);
-    offset += 1 + chunk.readInt32BE(offset + 1);
-  }
-  return types;
+/** The type byte of a message. The StartupMessage has none, and its URL asks for no SSLRequest. */
+function pgFrame(bytes: Buffer, first: boolean) {
+  if (first) return bytes.length < 4 ? { length: 0, type: "" } : { length: bytes.readInt32BE(0), type: "" };
+  if (bytes.length < 5) return { length: 0, type: "" };
+  return { length: 1 + bytes.readInt32BE(1), type: String.fromCharCode(bytes[0]) };
 }
 
-/** The command byte of every packet in a write, in hex: 03 COM_QUERY, 16 COM_STMT_PREPARE, 17 COM_STMT_EXECUTE. */
-function mysqlCommands(chunk: Buffer, first: boolean) {
-  if (first) return "handshake";
-  let commands = "";
-  let offset = 0;
-  while (offset + 5 <= chunk.length) {
-    commands += chunk[offset + 4].toString(16).padStart(2, "0");
-    offset += 4 + chunk.readUIntLE(offset, 3);
-  }
-  return commands;
+/** The command byte of a packet, in hex: 03 COM_QUERY, 16 COM_STMT_PREPARE, 17 COM_STMT_EXECUTE. */
+function mysqlFrame(bytes: Buffer, first: boolean) {
+  if (bytes.length < 5) return { length: 0, type: "" };
+  const length = 4 + bytes.readUIntLE(0, 3);
+  return { length, type: first ? "" : bytes[4].toString(16).padStart(2, "0") };
 }
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   async function connect() {
     await container.ready;
-    const proxy = await loggingProxy(container.host, container.port, pgMessageTypes);
+    const proxy = await loggingProxy(container.host, container.port, pgFrame);
     const sql = new SQL({
       url: `postgres://bun_sql_test@127.0.0.1:${proxy.port}/bun_sql_test?sslmode=disable`,
       max: 1,
@@ -145,6 +156,35 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql.begin(tx => [tx`SELECT count(*)::int AS c FROM pipelined_begin`])).toEqual([[{ c: 0 }]]);
   });
 
+  test("COMMIT waits for the results of a statement that nothing awaited", async () => {
+    const { sql, proxy } = await connect();
+    await using _sql = sql;
+    using _proxy = proxy;
+    const run = () =>
+      sql.begin(tx => {
+        tx`SELECT 10 AS n`.execute();
+      });
+    await run();
+    proxy.take();
+    await run();
+    expect(proxy.take()).toEqual(["PBESBES", "PBES"]);
+  });
+
+  test("BEGIN waits for a statement of the reservation that is in flight", async () => {
+    const { sql, proxy } = await connect();
+    await using _sql = sql;
+    using _proxy = proxy;
+    await using reserved = await sql.reserve();
+    const run = () => {
+      const ahead = reserved`SELECT 11 AS n`.execute();
+      return Promise.all([ahead, reserved.begin(tx => [tx`SELECT 12 AS n`])]);
+    };
+    await run();
+    proxy.take();
+    expect(await run()).toEqual([[{ n: 11 }], [[{ n: 12 }]]]);
+    expect(proxy.take()).toEqual(["BES", "PBESBES", "PBES"]);
+  });
+
   test("the BEGIN of a distributed transaction is a plain BEGIN: it is pipelined too", async () => {
     const { sql, proxy } = await connect();
     await using _sql = sql;
@@ -187,7 +227,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 describeWithContainer("mysql", { image: "mysql_plain" }, container => {
   test("the statements of the array form share START TRANSACTION's write", async () => {
     await container.ready;
-    using proxy = await loggingProxy(container.host, container.port, mysqlCommands);
+    using proxy = await loggingProxy(container.host, container.port, mysqlFrame);
     await using sql = new SQL({ url: `mysql://root@127.0.0.1:${proxy.port}/bun_sql_test`, max: 1 });
     await sql`SELECT 1`;
     const run = () => sql.begin(tx => [tx`SELECT ${8} AS n`]);

@@ -230,7 +230,7 @@ impl PostgresSQLQuery {
     }
 
     /// What `reject_at_ready_for_query` put in the place of the rows. `reject` does nothing a second time.
-    fn kept_error(&self) -> Option<JSValue> {
+    pub(crate) fn kept_error(&self) -> Option<JSValue> {
         if !self.flags.get().discard_response {
             return None;
         }

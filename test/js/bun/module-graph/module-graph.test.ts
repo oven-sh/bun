@@ -1788,6 +1788,124 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
     expect([fresh.inc(), b.s.inc()]).toEqual([1, 3]); // a's state.cjs re-evaluated; b untouched
     expect(require.cache[join(dir, "state.cjs")]).toBeUndefined(); // host cache untouched
   });
+  describe("a load that was in flight at dispose() leaves no CommonJS module in the disposed graph's require.cache", () => {
+    const files = {
+      "keys.cjs": `module.exports = () => Object.keys(require.cache).map(k => k.split(/[\\\\/]/).pop());`,
+      "leaf.cjs": `globalThis.leafRan = true; module.exports = "leaf";`,
+      // ES modules that import leaf.cjs: directly, and through one more ES module.
+      "direct.mjs": `export { default } from "./leaf.cjs";`,
+      "deep.mjs": `export { default } from "./deep-1.mjs";`,
+      "deep-1.mjs": `export { default } from "./leaf.cjs";`,
+    };
+    test("whether the file's fetch completes or starts after dispose(), for every importer", async () => {
+      using d = tempDir("module-graph-dispose-in-flight", {
+        ...files,
+        "disposes.cjs": `disposeGraph(); module.exports = "disposes";`,
+        "disposes-first.mjs": `import "./disposes.cjs"; export { default } from "./deep.mjs";`,
+        "requires.cjs": `module.exports = id => { try { require(id); return "returned"; } catch (e) { return e.code; } };`,
+        "macro.ts": `export function disposeInMacro() { disposeGraph(); return "leaf"; }`,
+        "leaf-with-macro.cjs": `import { disposeInMacro } from "./macro.ts" with { type: "macro" }; globalThis.leafRan = true; module.exports = disposeInMacro();`,
+        "main.mjs": `
+          const at = file => import.meta.dir + "/" + file;
+          const ended = pending => pending.then(() => "resolved", e => e.code);
+          // Imports the files into a new graph and disposes it in the same tick. Reports the keys of the graph's
+          // require.cache at dispose() and afterwards, and how each import ended.
+          async function importThenDispose(...files) {
+            const graph = new Bun.ModuleGraph();
+            const keys = (await graph.import(at("keys.cjs"))).default;
+            const pending = files.map(file => graph.import(at(file)));
+            const before = keys();
+            graph.dispose();
+            return { before, imports: await Promise.all(pending.map(ended)), after: keys() };
+          }
+          // The code that the graph loads disposes it, through a global (which a macro can see).
+          async function disposedByWhatItLoads(load) {
+            const graph = new Bun.ModuleGraph();
+            globalThis.disposeGraph = () => graph.dispose();
+            const keys = (await graph.import(at("keys.cjs"))).default;
+            const requireInGraph = (await graph.import(at("requires.cjs"))).default;
+            return { imports: [await load(graph, requireInGraph)], after: keys() };
+          }
+          const out = {
+            cjs: await importThenDispose("leaf.cjs"),
+            esmImportingCjs: await importThenDispose("direct.mjs"),
+            sameFileTwice: await importThenDispose("leaf.cjs", "leaf.cjs"),
+            sharedDependency: await importThenDispose("direct.mjs", "deep.mjs"),
+          };
+          // Off the main thread, which of disposes.cjs and leaf.cjs is fetched first is not fixed.
+          if (process.env.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER) {
+            // disposes.cjs runs before the fetch of leaf.cjs starts, under import() and under require().
+            out.disposedDuringImport = await disposedByWhatItLoads(graph => ended(graph.import(at("disposes-first.mjs"))));
+            out.disposedDuringRequire = await disposedByWhatItLoads((graph, requireInGraph) => requireInGraph("./disposes-first.mjs"));
+            // The macro runs while the file is transpiled: dispose() comes after the fetch of the file started.
+            out.disposedInsideTheFetch = await disposedByWhatItLoads(graph => ended(graph.import(at("leaf-with-macro.cjs"))));
+          }
+          out.leafRan = globalThis.leafRan ?? false;
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const run = (transpileOffThread: boolean) =>
+        runBun(["main.mjs"], {
+          cwd: String(d),
+          env: { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: transpileOffThread ? undefined : "1" },
+        });
+      const [offThread, synchronous] = await Promise.all([run(true), run(false)]);
+      const one = { imports: ["ERR_INVALID_STATE"], after: [] };
+      const two = { imports: ["ERR_INVALID_STATE", "ERR_INVALID_STATE"], after: [] };
+      // Transpiled off the main thread, the fetch of a file completes after dispose(): no module is made before it.
+      expect(JSON.parse(offThread.stdout)).toEqual({
+        cjs: { before: ["keys.cjs"], ...one },
+        esmImportingCjs: { before: ["keys.cjs"], ...one },
+        sameFileTwice: { before: ["keys.cjs"], ...two },
+        sharedDependency: { before: ["keys.cjs"], ...two },
+        leafRan: false,
+      });
+      // Transpiled synchronously, the module of a file imported by name is made before dispose(), which removes it.
+      // The fetch of a dependency starts after dispose(). (A debug build prints a line for the macro call first.)
+      expect(JSON.parse(synchronous.stdout.split("\n").at(-1)!)).toEqual({
+        cjs: { before: ["keys.cjs", "leaf.cjs"], ...one },
+        esmImportingCjs: { before: ["keys.cjs"], ...one },
+        sameFileTwice: { before: ["keys.cjs", "leaf.cjs"], ...two },
+        sharedDependency: { before: ["keys.cjs"], ...two },
+        disposedDuringImport: one,
+        disposedDuringRequire: one,
+        disposedInsideTheFetch: one,
+        leafRan: false,
+      });
+      expect([offThread.exitCode, synchronous.exitCode]).toEqual([0, 0]);
+    });
+    test("when the file comes from the module cache of bun test --isolate", async () => {
+      using d = tempDir("module-graph-dispose-in-flight-isolate", {
+        ...files,
+        "isolate.test.js": `
+          import { test } from "bun:test";
+          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+          // The host loads the files first: the graph's loader is handed them from the cache, synchronously.
+          import "./direct.mjs";
+          import "./deep.mjs";
+          test("dispose while importing", async () => {
+            const graph = new Bun.ModuleGraph();
+            const keys = (await graph.import(import.meta.dir + "/keys.cjs")).default;
+            const pending = ["direct.mjs", "deep.mjs"].map(file => graph.import(import.meta.dir + "/" + file));
+            graph.dispose();
+            console.log(JSON.stringify({
+              cached: isolatedModuleCacheSourceType(require.resolve("./leaf.cjs")),
+              imports: await Promise.all(pending.map(p => p.then(() => "resolved", e => e.code))),
+              keys: keys(),
+            }));
+          });
+        `,
+      });
+      const { stdout, exitCode } = await runBun(["test", "--isolate", "isolate.test.js"], { cwd: String(d) });
+      // (stdout starts with the version line of bun test)
+      expect(JSON.parse(stdout.split("\n").at(-1)!)).toEqual({
+        cached: "Program",
+        imports: ["ERR_INVALID_STATE", "ERR_INVALID_STATE"],
+        keys: [],
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
   test("require of JSON is per graph (own object, mutations isolated)", async () => {
     const a = (await ModuleGraph().import(join(dir, "usejson.cjs"))).default;
     const b = (await ModuleGraph().import(join(dir, "usejson.cjs"))).default;

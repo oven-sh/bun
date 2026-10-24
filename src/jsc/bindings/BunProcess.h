@@ -36,8 +36,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
-    // What `console._stdout` and `console._stderr` of the global console return, indexed by ConsoleStream. The
-    // native console does not write to them.
+    // What the global `console._stdout` / `_stderr` return. The native console does not write to them.
     WriteBarrier<Unknown> m_consoleStream[2];
 
     void installDefaultWarningListener(JSC::VM&);

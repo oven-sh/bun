@@ -3016,9 +3016,7 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
     return hrtime;
 }
 
-// `console._stdout` / `console._stderr` of the global console are Node's kBindStreamsLazy accessor pair, so that
-// only a read of the property builds process.stdout / process.stderr:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L207-L236
+// Node's kBindStreamsLazy: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L207-L236
 JSValue Process::consoleStream(JSGlobalObject* globalObject, ConsoleStream stream)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3053,8 +3051,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConsoleStderrSetter, (JSGlobalObject * globalObject, 
 void bindConsoleStreamsLazy(VM& vm, Zig::GlobalObject* globalObject, JSObject* console)
 {
     auto bind = [&](ASCIILiteral name, NativeFunction getter, NativeFunction setter) {
-        // Not a CustomAccessor: Bun's formatter and its CommonJS export walk call every custom slot. The first prints
-        // a non-enumerable real accessor as [Getter/Setter] and the second skips it.
+        // Not a CustomAccessor: Bun's formatter and its CommonJS export walk call every custom slot.
         auto* accessor = GetterSetter::create(vm, globalObject,
             JSFunction::create(vm, globalObject, 0, "get"_s, getter, ImplementationVisibility::Public),
             JSFunction::create(vm, globalObject, 1, "set"_s, setter, ImplementationVisibility::Public));

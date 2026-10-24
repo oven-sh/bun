@@ -1005,6 +1005,10 @@ impl RewriterPipe {
                 pv.producer = SourceHandle::HTMLRewriter(this);
                 // The output is as decoded as the input. It isn't the string the input may have been.
                 pv.facts = original.get_body_value().facts() & BodyFacts::DECODED;
+                // An input without a header list still has its type with its body.
+                if original.get_init_headers().is_none() {
+                    pv.content_type = original.get_body_value().content_type().clone();
+                }
                 webcore::body::Value::Locked(pv)
             }),
             BunString::EMPTY,

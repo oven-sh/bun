@@ -2538,7 +2538,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
 
   get state() {
     const session = this[bunHTTP2Session];
-    if (session && !session.destroyed && typeof this.#id === "number") {
+    if (session && !this.destroyed && typeof this.#id === "number") {
       const native = session[bunHTTP2Native];
       if (!native) return {};
       // Node's Http2Stream::RefreshState reports an idle stream once nghttp2 has dropped the id.
@@ -2554,7 +2554,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       );
     }
     // node reports an empty object while the stream is still pending (no id yet) and once the
-    // stream's session has been destroyed.
+    // stream has been destroyed.
     return {};
   }
 

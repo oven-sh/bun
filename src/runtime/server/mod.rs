@@ -848,6 +848,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         // SAFETY: `on_request_ffi` wrote it and took the ref that `deref()` below drops. Shared: its state is `Cell` / `JsCell`.
         let nhr = unsafe { &*node_http_response };
+        nhr.flags
+            .set(nhr.flags.get().difference(NhrFlags::IN_LISTENER));
 
         enum HttpResult {
             Rejection(JSValue),

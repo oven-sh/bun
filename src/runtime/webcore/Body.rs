@@ -753,6 +753,11 @@ impl Value {
             _ => blob::BlobContentType::default(),
         };
         *self = Value::from(bytes);
+        self.keep_content_type(content_type);
+    }
+
+    /// Gives the bytes that replaced a pending body the type which that body implied.
+    fn keep_content_type(&mut self, content_type: blob::BlobContentType) {
         if content_type.is_empty() || content_type.as_slice() == self.content_type().as_slice() {
             return;
         }
@@ -1120,8 +1125,10 @@ impl Value {
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         let facts = self.facts();
+        let content_type = self.content_type().clone();
         let mut pending =
             core::mem::replace(self, Value::InternalBlob(InternalBlob { bytes, facts }));
+        self.keep_content_type(content_type);
         pending.resolve(self, cx)
     }
 

@@ -655,6 +655,11 @@ describe("Readable.fromWeb() of a native stream that something has started", () 
   // Each block has its own fill byte, so a chunk that is missing, repeated or out of order shows.
   const payload = Buffer.concat(Array.from({ length: 16 }, (_, i) => Buffer.alloc(64 * 1024, i)));
   const collect = async readable => Buffer.concat(await Array.fromAsync(readable));
+  const failure = readable =>
+    finishedP(readable).then(
+      () => undefined,
+      error => error,
+    );
   const sources = {
     "Bun.file().stream()": path => Bun.file(path).stream(),
     "new Response(Bun.file()).body": path => new Response(Bun.file(path)).body,
@@ -707,43 +712,146 @@ describe("Readable.fromWeb() of a native stream that something has started", () 
       expect(reads).toBe(1);
       expect((await collect(readable)).equals(payload)).toBe(true);
     });
+
+    it("is locked from the call on, and still after 'end'", async () => {
+      using made = make();
+      made.web.getReader().releaseLock();
+      const readable = Readable.fromWeb(made.web);
+      const atTheCall = made.web.locked;
+      expect(() => Readable.fromWeb(made.web)).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      expect((await collect(readable)).equals(payload)).toBe(true);
+      expect({ atTheCall, afterEnd: made.web.locked }).toEqual({ atTheCall: true, afterEnd: true });
+    });
+
+    it("fails with an AbortError if the signal is already aborted, and stays locked", async () => {
+      using made = make();
+      made.web.getReader().releaseLock();
+      const reason = new Error("stop");
+      const error = await failure(Readable.fromWeb(made.web, { signal: AbortSignal.abort(reason) }));
+      expect({ name: error?.name, code: error?.code, cause: error?.cause, locked: made.web.locked }).toEqual({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: reason,
+        locked: true,
+      });
+    });
+
+    it.each([
+      ["highWaterMark", { highWaterMark: -1 }, "ERR_INVALID_ARG_VALUE"],
+      ["signal", { signal: {} }, "ERR_INVALID_ARG_TYPE"],
+    ])("stays locked if an invalid %s makes the Readable constructor throw", (_, options, code) => {
+      using made = make();
+      made.web.getReader().releaseLock();
+      expect(() => Readable.fromWeb(made.web, options)).toThrow(expect.objectContaining({ code }));
+      expect(made.web.locked).toBe(true);
+    });
   });
 
+  // The stream stays locked in each of these, so nothing else could close its source.
   // The child writes more than a pipe holds, so the result doesn't depend on when the pipe closes.
-  it("closes the source if the Readable constructor throws", async () => {
-    const child = `
-      const fs = require("fs");
-      process.stdin.once("data", () => {
-        let result = "written";
-        try {
-          for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(1, rest));
-        } catch (error) {
-          result = "failed:" + error.code;
-        }
-        fs.writeSync(2, result);
-        process.exit(0);
+  describe.each([
+    ["nothing has started", false],
+    ["something has started", true],
+  ])("a child's stdout that %s", (_, started) => {
+    it.each([
+      ["the Readable constructor throws", true],
+      ["the signal is already aborted", false],
+    ])("closes the source if %s", async (_, throws) => {
+      const child = `
+        const fs = require("fs");
+        process.stdin.once("data", () => {
+          let result = "written";
+          try {
+            for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(1, rest));
+          } catch (error) {
+            result = "failed:" + error.code;
+          }
+          fs.writeSync(2, result);
+          process.exit(0);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", child],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
       });
-    `;
+      if (started) proc.stdout.getReader().releaseLock();
+      if (throws) {
+        const signal = {
+          get aborted() {
+            throw new Error("boom");
+          },
+          addEventListener() {},
+          removeEventListener() {},
+        };
+        expect(() => Readable.fromWeb(proc.stdout, { signal })).toThrow("boom");
+      } else {
+        const error = await failure(Readable.fromWeb(proc.stdout, { signal: AbortSignal.abort() }));
+        expect(error?.name).toBe("AbortError");
+      }
+      expect(proc.stdout.locked).toBe(true);
+      proc.stdin.write("go");
+      await proc.stdin.end();
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "failed:EPIPE", exitCode: 0 });
+    });
+  });
+
+  // process.stdin reads from the stream that Bun.stdin.stream() returns, and pauses its source when it lets go of it.
+  it.each([
+    ["pause()", `process.stdin.pause();`],
+    ["resume() and pause()", `process.stdin.resume(); process.stdin.pause();`],
+    [
+      "one 'data' event and pause()",
+      `await new Promise(resolve => process.stdin.once("data", chunk => { head = chunk.length; process.stdin.pause(); resolve(); }));`,
+    ],
+  ])("reads the rest of Bun.stdin.stream() after process.stdin's %s", async (_, before) => {
+    // More than the pipe and the reader can buffer, so most of it is still unread when process.stdin pauses.
+    const size = 4 * 1024 * 1024;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", child],
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Readable } = require("node:stream");
+          let head = 0, rest = 0;
+          ${before}
+          // process.stdin lets go of the stream a tick after pause().
+          await new Promise(resolve => setImmediate(resolve));
+          for await (const chunk of Readable.fromWeb(Bun.stdin.stream())) rest += chunk.length;
+          // What process.stdin read before it let go is in its own buffer.
+          console.log(head + process.stdin.readableLength + rest);
+        `,
+      ],
       env: bunEnv,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
-    const signal = {
-      get aborted() {
-        throw new Error("boom");
-      },
-      addEventListener() {},
-      removeEventListener() {},
-    };
-    expect(() => Readable.fromWeb(proc.stdout, { signal })).toThrow("boom");
-    expect(proc.stdout.locked).toBe(true);
-    proc.stdin.write("go");
+    proc.stdin.write(Buffer.alloc(size, "x"));
     await proc.stdin.end();
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "failed:EPIPE", exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: size + "\n", stderr: "", exitCode: 0 });
+  });
+});
+
+it("Readable.fromWeb() with an already aborted signal fails with an AbortError and cancels the stream", async () => {
+  let cancelledWith;
+  const web = new ReadableStream({
+    cancel(reason) {
+      cancelledWith = reason;
+    },
+  });
+  const error = await finishedP(Readable.fromWeb(web, { signal: AbortSignal.abort() })).then(
+    () => undefined,
+    error => error,
+  );
+  expect({ name: error?.name, code: error?.code, cancelledWithIt: cancelledWith === error }).toEqual({
+    name: "AbortError",
+    code: "ABORT_ERR",
+    cancelledWithIt: true,
   });
 });
 

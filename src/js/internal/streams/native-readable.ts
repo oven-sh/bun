@@ -11,6 +11,7 @@ const transferToNativeReadable = $newCppFunction(
   "jsFunctionTransferToNativeReadableStream",
   1,
 );
+const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { errorOrDestroy } = require("internal/streams/destroy");
 
 const kRefCount = Symbol("refCount");
@@ -68,24 +69,24 @@ let debugId = 0;
 function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
-  return fromNativeHandle(transferToNativeReadable(readableStream), options);
+  return fromNativeHandle(transferToNativeReadable(readableStream), options, undefined);
 }
 
 // Readable.fromWeb(): returns undefined for a stream that something has started, whose queue only a reader can empty.
-function tryConstructNativeReadable(readableStream: ReadableStream, options): NativeReadable | undefined {
+function tryConstructNativeReadable(readableStream: ReadableStream, options, signal): NativeReadable | undefined {
   const bunNativePtr = transferToNativeReadable(readableStream);
-  return bunNativePtr === undefined ? undefined : fromNativeHandle(bunNativePtr, options);
+  if (bunNativePtr === undefined) return undefined;
+  try {
+    return fromNativeHandle(bunNativePtr, options, signal);
+  } catch (error) {
+    bunNativePtr.cancel(error);
+    throw error;
+  }
 }
 
 // The caller took the handle first, because a getter in `options` could start the stream.
-function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeReadable {
-  let stream: NativeReadable;
-  try {
-    stream = new Readable(options) as NativeReadable;
-  } catch (error) {
-    bunNativePtr?.cancel(error);
-    throw error;
-  }
+function fromNativeHandle(bunNativePtr: NativePtr | undefined, options, signal): NativeReadable {
+  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
 
@@ -111,6 +112,9 @@ function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeR
     // Only used by node:tty on Windows
     stream.$start = ensureConstructed;
   }
+
+  // Not through `options`: an aborted signal destroys the stream at once, and only `destroy` above cancels the handle.
+  if (signal) addAbortSignal(signal, stream);
 
   $debug(`[${stream.debugId}] constructed!`);
 

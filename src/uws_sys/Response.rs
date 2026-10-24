@@ -209,9 +209,9 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
     }
 
-    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now.
-    pub fn close_after_message_if_parsing(&mut self) -> bool {
-        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
+    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now. `drop_corked`: what waits in the cork buffer isn't sent.
+    pub fn close_after_message_if_parsing(&mut self, drop_corked: bool) -> bool {
+        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw(), drop_corked)
     }
 
     /// Removes the handlers that were attached with `user_data`. See `HttpResponse::clearHandlersOf`.
@@ -1019,10 +1019,14 @@ impl AnyResponse {
     }
 
     /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
-    pub fn close_after_message_if_parsing(self) -> bool {
+    pub fn close_after_message_if_parsing(self, drop_corked: bool) -> bool {
         match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).close_after_message_if_parsing(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).close_after_message_if_parsing(drop_corked)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).close_after_message_if_parsing(drop_corked)
+            }
             AnyResponse::H3(_) | AnyResponse::H2(_) => false,
         }
     }
@@ -1334,6 +1338,7 @@ pub mod c {
         pub(crate) safe fn uws_res_close_after_message_if_parsing(
             ssl: i32,
             res: &mut uws_res,
+            drop_corked: bool,
         ) -> bool;
         pub(crate) safe fn uws_res_clear_handlers_of(
             ssl: i32,

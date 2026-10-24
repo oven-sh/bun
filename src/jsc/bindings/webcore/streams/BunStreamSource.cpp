@@ -184,6 +184,17 @@ static void setNativeSourceCloseAdapter(JSC::VM& vm, JSObject* handle, JSValue a
         ASSERT_NOT_REACHED();
 }
 
+extern "C" void Bun__FileReader__resume(void* source);
+
+void resumeNativeSource(JSReadableStream* stream)
+{
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return;
+    if (auto* file = dynamicDowncast<JSFileInternalReadableStreamSource>(handle.asCell()))
+        Bun__FileReader__resume(file->wrapped());
+}
+
 // object.<name>(...args) with a real [[Get]], as the replaced builtins did.
 static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
 {

@@ -7346,6 +7346,130 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
+  describe("a response given up in the tick in which it began", () => {
+    type Listener = (req: IncomingMessage, res: ServerResponse) => void;
+
+    // Everything the client receives until the server ends the connection.
+    async function received(
+      listener: Listener,
+      { secure = false, request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n" } = {},
+    ) {
+      const onRequest: Listener = (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        listener(req, res);
+      };
+      const server = secure ? createHttpsServer(tlsCert, onRequest) : createServer(onRequest);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      const client = secure
+        ? tlsConnect({ port, host: "127.0.0.1", ca: tlsCert.cert, servername: "localhost" })
+        : connect(port, "127.0.0.1");
+      try {
+        let wire = "";
+        client.on("data", chunk => (wire += chunk.toString("latin1")));
+        client.on("error", () => {});
+        client.write(request);
+        await once(client, "close");
+        return wire;
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      }
+    }
+
+    const begin: Record<string, (res: ServerResponse) => void> = {
+      "a head and part of the body it announces": res => {
+        res.writeHead(200, { "content-length": "100" });
+        res.write("partial");
+      },
+      "a head and all of the body it announces": res => {
+        res.writeHead(200, { "content-length": "7" });
+        res.write("partial");
+      },
+      "a chunk": res => void res.write("partial"),
+      "two chunks": res => {
+        res.write("partial");
+        res.write("second");
+      },
+    };
+    const giveUp: Record<string, Listener> = {
+      "res.destroy()": (_req, res) => void res.destroy(),
+      "res.destroy(error)": (_req, res) => void res.destroy(new Error("given up")),
+      "req.destroy()": req => void req.destroy(),
+      "req.destroy(error)": req => void req.destroy(new Error("given up")),
+    };
+    const cases = Object.keys(begin).flatMap(written => Object.keys(giveUp).map(call => [call, written] as const));
+
+    it.each(cases)("%s right after %s sends nothing", async (call, written) => {
+      const wire = await received((req, res) => {
+        begin[written](res);
+        giveUp[call](req, res);
+      });
+      expect(wire).toBe("");
+    });
+
+    it("sends nothing over TLS either", async () => {
+      const wire = await received(
+        (_req, res) => {
+          begin["a head and all of the body it announces"](res);
+          res.destroy();
+        },
+        { secure: true },
+      );
+      expect(wire).toBe("");
+    });
+
+    it("sends nothing when the request's body came with its head", async () => {
+      const wire = await received(
+        (_req, res) => {
+          begin["a head and all of the body it announces"](res);
+          res.destroy();
+        },
+        { request: "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello" },
+      );
+      expect(wire).toBe("");
+    });
+
+    it.each([
+      ["process.nextTick()", (giveUp: () => void) => process.nextTick(giveUp)],
+      ["a microtask", (giveUp: () => void) => void Promise.resolve().then(giveUp)],
+      ["setImmediate()", (giveUp: () => void) => void setImmediate(giveUp)],
+    ])("sends what it wrote when it is given up in %s", async (_name, later) => {
+      for (const call of Object.keys(giveUp)) {
+        const wire = await received((req, res) => {
+          begin["a head and part of the body it announces"](res);
+          later(() => giveUp[call](req, res));
+        });
+        expect({ call, status: wire.split("\r\n")[0], body: wire.split("\r\n\r\n")[1] }).toEqual({
+          call,
+          status: "HTTP/1.1 200 OK",
+          body: "partial",
+        });
+      }
+    });
+
+    it("still sends the head that flushHeaders() asked for", async () => {
+      const wire = await received((_req, res) => {
+        res.writeHead(200, { "content-length": "100" });
+        res.flushHeaders();
+        res.destroy();
+      });
+      expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(wire).toEndWith("\r\n\r\n");
+    });
+
+    it("still sends an informational response, and nothing of the final one", async () => {
+      const wire = await received((_req, res) => {
+        res.writeProcessing();
+        begin["a head and part of the body it announces"](res);
+        res.destroy();
+      });
+      expect(wire).toBe("HTTP/1.1 102 Processing\r\n\r\n");
+    });
+  });
+
   // More than a Linux or macOS loopback socket takes in one write(), so the rest of the body waits
   // for the client to read. Winsock takes a body of any size in one send().
   const backedUpBodySize = (isWindows ? 2 : 64) * 1024 * 1024;

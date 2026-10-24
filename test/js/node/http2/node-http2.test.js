@@ -7599,6 +7599,48 @@ describe("session teardown", () => {
       }
     });
 
+    it.each(["client", "server"])(
+      "reads the state of a stream that %s session.destroy() hasn't reached yet",
+      async side => {
+        const server = http2.createServer();
+        server.on("sessionError", () => {});
+        const streams = [];
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          stream.respond({ ":status": 200 });
+          stream.write("x");
+          streams.push(stream);
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+        client.on("error", () => {});
+        try {
+          const requests = [0, 1].map(() => client.request({ ":path": "/", ":method": "POST" }).on("error", () => {}));
+          await Promise.all(requests.map(request => once(request, "data")));
+          const open = side === "client" ? requests : streams;
+          const hasState = stream => Object.keys(stream.state).length > 0;
+          const seen = [];
+          open.forEach((stream, i) => {
+            const other = open[1 - i];
+            stream.on("aborted", () =>
+              seen.push({ otherDestroyed: other.destroyed, other: hasState(other), own: hasState(stream) }),
+            );
+          });
+          // once() would reject with the error that a cancelled request emits first.
+          const closed = Promise.all(open.map(stream => new Promise(resolve => stream.on("close", resolve))));
+          open[0].session.destroy();
+          await closed;
+          expect(seen).toEqual([
+            { otherDestroyed: false, other: true, own: false },
+            { otherDestroyed: true, other: false, own: false },
+          ]);
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      },
+    );
+
     // The types of the frames in `bytes`, from the first GOAWAY (7) on.
     function frameTypesFromGoaway(bytes) {
       const types = [];

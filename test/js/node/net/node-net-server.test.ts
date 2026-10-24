@@ -1139,6 +1139,23 @@ it("createServer() stores keepAliveInitialDelay in seconds, like Node", () => {
   expect([stored({ keepAliveInitialDelay: 2500 }), stored({ keepAliveInitialDelay: -1 }), stored()]).toEqual([2, 0, 0]);
 });
 
+it.each([1000, 2147483000, 2147484000, 3e9, 2 ** 32, 3e12, 1e13])(
+  "a server with keepAlive and a keepAliveInitialDelay of %d ms takes connections",
+  async keepAliveInitialDelay => {
+    const server = createServer({ keepAlive: true, keepAliveInitialDelay }, socket => socket.end("hi"));
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      await once(client, "close");
+      expect(received).toBe("hi");
+    } finally {
+      server.close();
+    }
+  },
+);
+
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.

@@ -270,8 +270,8 @@ public:
         return false;
     }
 
-    /* node:http socket.destroy() during this socket's parse: onData closes it after the current message. False when the caller must close it now. */
-    bool closeAfterMessageIfParsing() {
+    /* node:http socket.destroy() during this socket's parse: onData closes it after the current message. False when the caller must close it now. dropCorked: what waits in the cork buffer isn't sent. */
+    bool closeAfterMessageIfParsing(bool dropCorked = false) {
         if (!HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->isParsing((us_socket_t *) this)) {
             return false;
         }
@@ -280,6 +280,9 @@ public:
             return false;
         }
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE;
+        if (dropCorked) {
+            Super::uncorkWithoutSending();
+        }
         return true;
     }
 

@@ -893,7 +893,8 @@ impl FileReader {
             self.flowing.get()
         );
 
-        if self.flowing.get() == flag {
+        // Before `on_start` the reader has no parent to hand a read to, and nothing to pause.
+        if !self.started.get() || self.flowing.get() == flag {
             return;
         }
 
@@ -914,6 +915,12 @@ impl FileReader {
 }
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
+
+/// A reader was attached to the stream: undo the pause that the last consumer left behind.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FileReader__resume(source: &Source) {
+    source.context.set_flowing(true);
+}
 
 // SAFETY: `FileReader` is always the `context` field of a heap-allocated
 // `Source`. `parent` is the `raw` arm for releasing a ref, which can free it.

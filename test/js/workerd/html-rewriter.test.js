@@ -2055,6 +2055,91 @@ it("#3334 regression", async () => {
   Bun.gc(true);
 });
 
+// None of these inputs has a header list yet: nothing passed `headers`, and nothing has read `.headers`.
+describe.each([
+  ["a Bun.file()", "", dir => new Response(Bun.file(join(dir, "page.html")))],
+  // This one is still being rewritten when transform() returns.
+  [
+    "a Bun.file() that takes many reads",
+    Buffer.alloc(1024 * 1024, "x").toString(),
+    dir => new Response(Bun.file(join(dir, "page.html"))),
+  ],
+  ["a Blob with a type", "", () => new Response(new Blob(["<p>hi</p>"], { type: "text/html" }))],
+  [
+    "a Blob with a type, after .body was read",
+    "",
+    () => {
+      const response = new Response(new Blob(["<p>hi</p>"], { type: "text/html" }));
+      response.body;
+      return response;
+    },
+  ],
+])("transform(response) keeps the Content-Type that %s implies", (_, filler, input) => {
+  const make = () => {
+    const dir = tempDir("rewriter-content-type", { "page.html": "<p>hi</p>" + filler });
+    const transform = () =>
+      new HTMLRewriter()
+        .on("p", {
+          element(element) {
+            element.setAttribute("x", "1");
+          },
+        })
+        .transform(input(String(dir)));
+    return { transform, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  };
+  const expected = { type: "text/html;charset=utf-8", rewritten: true };
+  const isRewritten = body => body === '<p x="1">hi</p>' + filler;
+
+  it("in .headers", async () => {
+    using made = make();
+    const output = made.transform();
+    const type = output.headers.get("content-type");
+    expect({ type, rewritten: isRewritten(await output.text()) }).toEqual(expected);
+  });
+
+  it("in the response that Bun.serve sends", async () => {
+    using made = make();
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: made.transform });
+    const response = await fetch(server.url);
+    const type = response.headers.get("content-type");
+    expect({ type, rewritten: isRewritten(await response.text()) }).toEqual(expected);
+  });
+
+  it("as the type of blob()", async () => {
+    using made = make();
+    const blob = await made.transform().blob();
+    expect({ type: blob.type, rewritten: isRewritten(await blob.text()) }).toEqual(expected);
+  });
+
+  it("in a clone", async () => {
+    using made = make();
+    const clone = made.transform().clone();
+    const type = clone.headers.get("content-type");
+    expect({ type, rewritten: isRewritten(await clone.text()) }).toEqual(expected);
+  });
+});
+
+it.each([
+  ["set", headers => headers.set("content-type", "text/x-mine"), "text/x-mine", "text/x-mine"],
+  ["deleted", headers => headers.delete("content-type"), null, "application/octet-stream"],
+])(
+  "transform(response) goes by the input's header list if the program %s its Content-Type",
+  async (_, edit, inHeaders, sent) => {
+    using dir = tempDir("rewriter-content-type", { "page.html": "<p>hi</p>" });
+    const transform = () => {
+      const input = new Response(Bun.file(join(String(dir), "page.html")));
+      edit(input.headers);
+      return new HTMLRewriter().transform(input);
+    };
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: transform });
+    expect({
+      inHeaders: transform().headers.get("content-type"),
+      sent: (await fetch(server.url)).headers.get("content-type"),
+      ofBlob: (await transform().blob()).type,
+    }).toEqual({ inHeaders, sent, ofBlob: inHeaders ?? "text/plain;charset=utf-8" });
+  },
+);
+
 it("#3489", async () => {
   var el;
   await new HTMLRewriter()

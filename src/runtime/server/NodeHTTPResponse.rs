@@ -114,6 +114,8 @@ bitflags! {
         const SOCKET_CLOSED                       = 1 << 0;
         const REQUEST_HAS_COMPLETED               = 1 << 1;
         const ENDED                               = 1 << 2;
+        /// The call that emits 'request' hasn't returned, so no tick has run since the response was made.
+        const IN_LISTENER                         = 1 << 3;
         /// The server socket granted the connection to this response. A queued pipelined response waits for it.
         const CURRENT                             = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
@@ -126,8 +128,7 @@ const _: () = assert!(size_of::<Flags>() == 2);
 
 impl Default for Flags {
     fn default() -> Self {
-        // is_request_pending defaults to true; all others false.
-        Flags::IS_REQUEST_PENDING
+        Flags::IS_REQUEST_PENDING | Flags::IN_LISTENER
     }
 }
 
@@ -1418,7 +1419,7 @@ impl NodeHTTPResponse {
 
         // uws is parsing this socket: it delivers the rest of the read, then closes (on_abort runs then).
         if let Some(raw_response) = self.reader()
-            && raw_response.close_after_message_if_parsing()
+            && raw_response.close_after_message_if_parsing(self.wrote_only_in_this_tick())
         {
             return;
         }
@@ -1444,6 +1445,12 @@ impl NodeHTTPResponse {
             raw_response.abandon();
         }
         self.on_request_complete();
+    }
+
+    /// Node corks the socket until the tick after a write, so a destroy in the same tick sends nothing. `flushHeaders()` isn't corked there.
+    fn wrote_only_in_this_tick(&self) -> bool {
+        let first_tick = Flags::IN_LISTENER | Flags::CURRENT;
+        self.flags.get().contains(first_tick) && !self.auto_flusher.get().registered.get()
     }
 
     fn get_bytes(&self, global_this: &JSGlobalObject, chunk: &[u8]) -> JSValue {

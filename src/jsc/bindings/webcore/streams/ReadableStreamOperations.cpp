@@ -610,7 +610,9 @@ void setUpReadableStreamDefaultReader(JSGlobalObject* globalObject, JSReadableSt
         throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is locked"_s));
         return;
     }
-    RELEASE_AND_RETURN(scope, readableStreamReaderGenericInitialize(globalObject, reader, stream));
+    readableStreamReaderGenericInitialize(globalObject, reader, stream);
+    RETURN_IF_EXCEPTION(scope, void());
+    resumeNativeSource(stream);
 }
 
 // SetUpReadableStreamBYOBReader(reader, stream)

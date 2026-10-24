@@ -1386,17 +1386,17 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
-  bool uws_res_close_after_message_if_parsing(int ssl, uws_res_r res)
+  bool uws_res_close_after_message_if_parsing(int ssl, uws_res_r res, bool drop_corked)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      return uwsRes->closeAfterMessageIfParsing();
+      return uwsRes->closeAfterMessageIfParsing(drop_corked);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      return uwsRes->closeAfterMessageIfParsing();
+      return uwsRes->closeAfterMessageIfParsing(drop_corked);
     }
   }
 

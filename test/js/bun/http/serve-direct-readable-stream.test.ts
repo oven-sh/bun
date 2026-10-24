@@ -1136,6 +1136,14 @@ describe("jobs of a pull() that ended the response", () => {
     "fetch()": `{ port: 0, fetch: respond }`,
     "async fetch()": `{ port: 0, fetch: async (request, server) => respond(request, server) }`,
     "a route": `{ port: 0, routes: { "/": respond } }`,
+    // The response is rendered from a promise job, whose checkpoint also runs the jobs of pull().
+    "fetch() that awaits a task first": `{
+      port: 0,
+      fetch: async (request, server) => {
+        await new Promise(resolve => setImmediate(resolve));
+        return respond(request, server);
+      },
+    }`,
   };
   const cells = Object.keys(handlers).flatMap(handler => Object.keys(streams).map(stream => [handler, stream]));
 

@@ -216,6 +216,24 @@ mod tests {
     }
 
     #[test]
+    fn static_table_lookups() {
+        let entries: Vec<_> = (1..=static_table::LEN)
+            .map(|index| static_table::get(index).unwrap())
+            .collect();
+        for (index, &(name, value)) in (1..).zip(&entries) {
+            let first = 1 + entries.iter().position(|entry| entry.0 == name).unwrap() as u32;
+            assert_eq!(static_table::find_name(name), Some(first));
+            assert_eq!(static_table::find(first, name, value), Some(index));
+            assert_eq!(static_table::find(first, name, b"no such value"), None);
+        }
+        // Values that only later entries, with other names, have.
+        assert_eq!(static_table::find(2, b":method", b"/"), None);
+        assert_eq!(static_table::find(16, b"accept-encoding", b""), None);
+        assert_eq!(static_table::find_name(b"x-a"), None);
+        assert_eq!(static_table::find_name(b""), None);
+    }
+
+    #[test]
     fn malformed_blocks() {
         for block in [
             "80",                // index 0
@@ -378,6 +396,24 @@ mod tests {
             let mut pos = 0;
             assert_eq!(integer::decode(&out, &mut pos, prefix_bits), Some(value));
             assert_eq!(pos, out.len());
+        }
+    }
+
+    #[test]
+    fn integer_limits() {
+        for (bytes, value) in [
+            ("1e", Some(30)),
+            ("1f00", Some(31)),
+            ("1fe0ffffff0f", Some(u32::MAX)),
+            ("1fe1ffffff0f", None),   // one more
+            ("1f8080808010", None),   // bit 32
+            ("1f808080808001", None), // a sixth byte
+            ("1f8080808000", None),   // padded with zeros to the fifth
+            ("1f80", None),           // cut off
+            ("1f", None),
+            ("", None),
+        ] {
+            assert_eq!(integer::decode(&hex(bytes), &mut 0, 5), value, "{bytes}");
         }
     }
 

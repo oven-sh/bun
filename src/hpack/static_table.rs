@@ -1,4 +1,4 @@
-//! The static table (Appendix A) and the encoder's way into it.
+//! The static table (Appendix A).
 
 pub(crate) const LEN: u32 = 61;
 
@@ -71,69 +71,71 @@ pub(crate) fn get(index: u32) -> Option<(&'static [u8], &'static [u8])> {
     ENTRIES.get((index as usize).checked_sub(1)?).copied()
 }
 
-/// With this seed no two entries, and no two names, share a slot: a lookup is one probe.
-const SEED: u64 = 1751;
-const SLOTS: usize = 512;
-
-pub(crate) fn hash_name(name: &[u8]) -> u32 {
-    bun_wyhash::hash_with_seed(SEED, name) as u32
+bun_core::comptime_string_map! {
+    /// The index of the first entry with a name. The others with that name follow it.
+    static FIRST_INDEX_OF_NAME: u32 = {
+        b":authority" => 1,
+        b":method" => 2,
+        b":path" => 4,
+        b":scheme" => 6,
+        b":status" => 8,
+        b"accept-charset" => 15,
+        b"accept-encoding" => 16,
+        b"accept-language" => 17,
+        b"accept-ranges" => 18,
+        b"accept" => 19,
+        b"access-control-allow-origin" => 20,
+        b"age" => 21,
+        b"allow" => 22,
+        b"authorization" => 23,
+        b"cache-control" => 24,
+        b"content-disposition" => 25,
+        b"content-encoding" => 26,
+        b"content-language" => 27,
+        b"content-length" => 28,
+        b"content-location" => 29,
+        b"content-range" => 30,
+        b"content-type" => 31,
+        b"cookie" => 32,
+        b"date" => 33,
+        b"etag" => 34,
+        b"expect" => 35,
+        b"expires" => 36,
+        b"from" => 37,
+        b"host" => 38,
+        b"if-match" => 39,
+        b"if-modified-since" => 40,
+        b"if-none-match" => 41,
+        b"if-range" => 42,
+        b"if-unmodified-since" => 43,
+        b"last-modified" => 44,
+        b"link" => 45,
+        b"location" => 46,
+        b"max-forwards" => 47,
+        b"proxy-authenticate" => 48,
+        b"proxy-authorization" => 49,
+        b"range" => 50,
+        b"referer" => 51,
+        b"refresh" => 52,
+        b"retry-after" => 53,
+        b"server" => 54,
+        b"set-cookie" => 55,
+        b"strict-transport-security" => 56,
+        b"transfer-encoding" => 57,
+        b"user-agent" => 58,
+        b"vary" => 59,
+        b"via" => 60,
+        b"www-authenticate" => 61,
+    };
 }
 
-pub(crate) fn hash_field(name_hash: u32, value: &[u8]) -> u32 {
-    bun_wyhash::hash_with_seed(name_hash as u64, value) as u32
+pub(crate) fn find_name(name: &[u8]) -> Option<u32> {
+    FIRST_INDEX_OF_NAME.get(name).copied()
 }
 
-const fn slot(hash: u32) -> usize {
-    hash as usize & (SLOTS - 1)
-}
-
-const fn same(a: &[u8], b: &[u8]) -> bool {
-    let (mut a, mut b) = (a, b);
-    loop {
-        match (a.split_first(), b.split_first()) {
-            (None, None) => return true,
-            (Some((x, a_rest)), Some((y, b_rest))) if *x == *y => (a, b) = (a_rest, b_rest),
-            _ => return false,
-        }
-    }
-}
-
-/// Slot to index, 0 for none. A name that several entries have leads to the first of them.
-#[allow(
-    clippy::indexing_slicing,
-    clippy::panic,
-    reason = "evaluated at compile time"
-)]
-const fn build_slots(with_value: bool) -> [u8; SLOTS] {
-    let mut slots = [0u8; SLOTS];
-    let mut i = 0;
-    while i < ENTRIES.len() {
-        let (name, value) = ENTRIES[i];
-        let name_hash = bun_wyhash::hash_const(SEED, name) as u32;
-        let at = slot(if with_value {
-            bun_wyhash::hash_const(name_hash as u64, value) as u32
-        } else {
-            name_hash
-        });
-        if slots[at] == 0 {
-            slots[at] = i as u8 + 1;
-        } else if with_value || !same(ENTRIES[slots[at] as usize - 1].0, name) {
-            panic!("two static table entries share a slot");
-        }
-        i += 1;
-    }
-    slots
-}
-
-static BY_FIELD: [u8; SLOTS] = build_slots(true);
-static BY_NAME: [u8; SLOTS] = build_slots(false);
-
-pub(crate) fn find(name: &[u8], value: &[u8], field_hash: u32) -> Option<u32> {
-    let index = u32::from(*BY_FIELD.get(slot(field_hash))?);
-    (get(index)? == (name, value)).then_some(index)
-}
-
-pub(crate) fn find_name(name: &[u8], name_hash: u32) -> Option<u32> {
-    let index = u32::from(*BY_NAME.get(slot(name_hash))?);
-    (get(index)?.0 == name).then_some(index)
+/// `name_index` is what [`find_name`] gave for `name`.
+pub(crate) fn find(name_index: u32, name: &[u8], value: &[u8]) -> Option<u32> {
+    (name_index..=LEN)
+        .map_while(|index| Some((index, get(index).filter(|entry| entry.0 == name)?.1)))
+        .find_map(|(index, entry_value)| (entry_value == value).then_some(index))
 }

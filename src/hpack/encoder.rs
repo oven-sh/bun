@@ -193,14 +193,17 @@ impl Encoder {
         }
         self.announce_capacity(out);
 
-        let name_hash = static_table::hash_name(name);
-        let field_hash = static_table::hash_field(name_hash, value);
+        let static_name = static_table::find_name(name);
+        // Its index tells a name of the static table apart just as well.
+        let name_hash = static_name.unwrap_or_else(|| bun_wyhash::hash(name) as u32);
+        let field_hash = bun_wyhash::hash_with_seed(u64::from(name_hash), value) as u32;
 
         // A reference to an entry with the same value would not say "never indexed".
         let whole = if indexing == Indexing::Never {
             None
         } else {
-            static_table::find(name, value, field_hash)
+            static_name
+                .and_then(|index| static_table::find(index, name, value))
                 .or_else(|| self.find(name, value, field_hash))
         };
         // Adding it would only empty the table (§4.4).
@@ -223,7 +226,7 @@ impl Encoder {
             Indexing::Skip => (0x00, 4),
             Indexing::Never => (0x10, 4),
         };
-        match static_table::find_name(name, name_hash).or_else(|| self.find_name(name, name_hash)) {
+        match static_name.or_else(|| self.find_name(name, name_hash)) {
             Some(index) => integer::encode(out, flags, prefix_bits, index),
             None => {
                 out.push(flags);

@@ -619,6 +619,7 @@ dependencies = [
 name = "bun_hpack"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_wyhash",
  "thiserror",
 ]

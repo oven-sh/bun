@@ -94,7 +94,9 @@ ${show}
 console.log(await show(path));`,
       "carried.ts": `export default 1;`,
     },
-    plugins: [`build.onLoad({ filter: /carried\\.ts$/ }, () => ({ contents: ${JSON.stringify(library)}, loader: "file" }));`],
+    plugins: [
+      `build.onLoad({ filter: /carried\\.ts$/ }, () => ({ contents: ${JSON.stringify(library)}, loader: "file" }));`,
+    ],
     prints: `string ${library.length}\n`,
   },
 });

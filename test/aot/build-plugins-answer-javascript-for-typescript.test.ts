@@ -133,7 +133,11 @@ console.log("props.ts does not run");`,
 console.log("unused.ts does not run");`,
       "helper.js": `export function wrap(text) { return "<" + text + ">"; }`,
     },
-    plugins: [erases(`text => 'import { wrap } from "./helper.js";\\n' + text.replace(/import.*unused.*/, "").replace("return props.title", "return wrap(props.title)")`)],
+    plugins: [
+      erases(
+        `text => 'import { wrap } from "./helper.js";\\n' + text.replace(/import.*unused.*/, "").replace("return props.title", "return wrap(props.title)")`,
+      ),
+    ],
     prints: "<page>\n",
   },
   "such a file imports another, through a file that only exports again": {

@@ -525,9 +525,9 @@ pub fn compile(
     }
     // The host loads what `preload` names into the global of the Worker, and node:worker_threads into that of a Worker of that module.
     // An object has that option only in a program that writes a property of its name.
-    let preloads = programs.iter().any(|program| {
-        program.writes_preload && names(program, Feature::WorkerConstructor)
-    });
+    let preloads = programs
+        .iter()
+        .any(|program| program.writes_preload && names(program, Feature::WorkerConstructor));
     let starts_node_workers = programs
         .iter()
         .any(|program| names(program, Feature::NodeWorker));

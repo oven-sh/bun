@@ -1,5 +1,5 @@
-import { tsconfig } from "./generated/every-way-to-look-at-an-object";
 import { program } from "./generated/copies-that-follow-other-copies";
+import { tsconfig } from "./generated/every-way-to-look-at-an-object";
 import { generated } from "./generated/run-generated";
 
 generated(

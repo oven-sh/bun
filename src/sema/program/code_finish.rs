@@ -11,9 +11,7 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
         module.is_in_types_program = self.is_in_types_program[file.idx()];
         self.remove_code_only_edges(module, arena);
         let Some(index) = self.entry_of(file) else {
-            module.runs_other_code = self
-                .typed_files_with_other_code
-                .contains(module.path.text);
+            module.runs_other_code = self.typed_files_with_other_code.contains(module.path.text);
             return;
         };
         let entry = &self.entries[index];

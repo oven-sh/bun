@@ -178,16 +178,31 @@ describe("compile/aot/entry points begin programs of their own", () => {
 
   // The host loads what `preload` names into the global of the Worker, so there the entry points meet. No other option does that.
   test("only the option preload brings entry points together", async () => {
-    const withOptions = (options: string) => `const worker = new Worker("./worker.ts", ${options});\nworker.onmessage = event => {\n  console.log(event.data);\n  worker.terminate();\n};\n`;
-    const folder = write(join(root, "options"), { ...files, "worker.ts": quietWorker, "named.ts": withOptions(`{ name: "quiet", env: { A: "1" } }`), "preloads.ts": withOptions(`{ preload: ["./lib/third.ts"] }`) });
+    const withOptions = (options: string) =>
+      `const worker = new Worker("./worker.ts", ${options});\nworker.onmessage = event => {\n  console.log(event.data);\n  worker.terminate();\n};\n`;
+    const folder = write(join(root, "options"), {
+      ...files,
+      "worker.ts": quietWorker,
+      "named.ts": withOptions(`{ name: "quiet", env: { A: "1" } }`),
+      "preloads.ts": withOptions(`{ preload: ["./lib/third.ts"] }`),
+    });
     await build(folder, ["./worker.ts"], "alone");
     const alone = programOf(folder, "alone", 0);
     // The module that is loaded first is the first to send a message.
-    for (const [main, isAsAlone, stdout] of [["./named.ts", true, "quiet\n"], ["./preloads.ts", false, "third began a global\n"]] as const) {
+    for (const [main, isAsAlone, stdout] of [
+      ["./named.ts", true, "quiet\n"],
+      ["./preloads.ts", false, "third began a global\n"],
+    ] as const) {
       const executable = await build(folder, [main, "./worker.ts", "./lib/third.ts"], "with-options");
       expect({ main, isAsAlone: areEqual(programOf(folder, "with-options", 1), alone) }).toEqual({ main, isAsAlone });
       const ran = await spawned([executable], root, bunEnv);
-      expect({ main, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ main, stdout, stderr: "", exitCode: 0, signal: null });
+      expect({ main, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+        main,
+        stdout,
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      });
     }
   }, 600_000);
 

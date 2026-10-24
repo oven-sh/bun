@@ -1,6 +1,6 @@
 import { tsconfig } from "./generated/every-way-to-look-at-an-object";
-import { program } from "./generated/texts-parsed-as-a-drawn-type";
 import { generated } from "./generated/run-generated";
+import { program } from "./generated/texts-parsed-as-a-drawn-type";
 
 generated(
   "text parsed as a type gives what plain JSON.parse gives",

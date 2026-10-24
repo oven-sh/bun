@@ -1,4 +1,5 @@
-// Loads a built-in module by a computed name.
+// Loads a built-in module by a computed name, in an executable that only runs what was compiled into it.
+//@ build --aot-refuse-code-from-disk
 //@ args node:zlib node:sqlite bun:sqlite
 const names = process.argv.slice(2);
 function show(module) { console.log(Object.keys(module).sort().slice(0, 6).join()); }
@@ -124,7 +125,6 @@ for (const name of names) show(arguments[1](name));
 //@ ext cjs
 console.log(this === module.exports, this === exports);
 //// typed-union-import
-//@ exit 1
 //@ ext ts
 const name = (process.argv[2] ?? "node:zlib") as "node:zlib" | "node:fs";
 console.log(Object.keys(await import(name)).length > 5);

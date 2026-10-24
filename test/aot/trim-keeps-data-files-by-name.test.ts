@@ -14,6 +14,7 @@ const programs = [
   "code-by-computed-path-without-js-extension-with-eval",
 ];
 
+// The executables only run what was compiled into them: one that loads code from disk keeps the transpiler.
 describe.skipIf(!canTrim)("a trimmed executable loads what a whole one loads from a path computed at run time", () => {
   test.concurrent.each(programs)(
     "%s",
@@ -27,6 +28,7 @@ describe.skipIf(!canTrim)("a trimmed executable loads what a whole one loads fro
         "--compile",
         "--aot",
         "--trim",
+        "--aot-refuse-code-from-disk",
         program + ".cjs",
         "--outfile",
         executable,

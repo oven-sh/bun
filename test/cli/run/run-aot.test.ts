@@ -6,10 +6,14 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
+import { isHardened } from "../../aot/hardened";
 import { run as runCommand } from "../../aot/harness/run";
 import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
+
+// The build warns of a load by a name that it does not know only where the run time refuses code that was not compiled.
+const warnsOfLoadByUnknownName = isHardened ? ["TS100064"] : [];
 
 // `warns`: the codes of the warnings that the build prints in front of what the program prints.
 type Options = {
@@ -418,7 +422,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         "sub/other.ts": `export default "the other module";`,
       },
       "entry.ts",
-      { warns: ["TS100064"] },
+      { warns: warnsOfLoadByUnknownName },
     );
   });
 
@@ -467,7 +471,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         `,
         },
         "entry.ts",
-        { warns: ["TS100064"] },
+        { warns: warnsOfLoadByUnknownName },
       );
       expect(stdout).toBe("lib begins\nother runs\nsaid: lib has a word\nentry: lib has a word\n");
     },

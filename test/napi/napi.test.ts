@@ -71,6 +71,38 @@ beforeAll(async () => {
 }, 300_000);
 
 describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
+  describe("environment finalizers", () => {
+    it.each(["terminate", "exit", "gc-terminate", "gc-exit"])("finalizes once after Worker %s", async mode => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/env-finalizers-fixture.mjs"), mode],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "finalized once on the creating thread\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each(["main-natural", "main-gc", "main-exit"])("handles %s", async mode => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/env-finalizers-fixture.mjs"), mode],
+        env: { ...bunEnv, NAPI_ENV_FINALIZER_TRACE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split(/\r?\n/).filter(Boolean).sort(), stderr, exitCode }).toEqual({
+        lines: mode === "main-exit" ? [] : ["finalized 0", "finalized 1", "finalized 2", "finalized 3"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {

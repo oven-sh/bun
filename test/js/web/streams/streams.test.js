@@ -6,6 +6,7 @@ import {
   readableStreamToBytes,
   readableStreamToText,
 } from "bun";
+import { CString, dlopen } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import {
   bunEnv,
@@ -20,7 +21,18 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { exec } from "node:child_process";
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  openSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -2923,6 +2935,313 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
     expect(exitCode).toBe(0);
+  });
+});
+
+// A reader registers its fd with the event loop, and a loop holds one
+// registration per fd number: epoll refuses a second one with EEXIST, kqueue
+// replaces the first. A stream over stdio polls a dup, as a stream over any
+// other fd does, so two of them share the bytes and each byte goes to one.
+// Not on Windows, where a reader opens a libuv handle and registers no fd number.
+describe.skipIf(isWindows)("Bun.file().stream() readers that share a stdio fd", () => {
+  // Resolves with the text that one reader of `source` gets.
+  const text = `
+    async function text(source, seen) {
+      let all = "";
+      for await (const chunk of source) {
+        const got = Buffer.from(chunk).toString();
+        all += got;
+        seen?.(got);
+      }
+      return all;
+    }
+  `;
+  // Says that the readers in `started` run, then prints the text they got between them and how each one failed.
+  const report = `
+    console.log("ready");
+    const results = await Promise.allSettled(started);
+    console.log(JSON.stringify({
+      text: results.map(result => result.value ?? "").join(""),
+      errors: results.filter(result => result.status === "rejected").map(({ reason }) => reason.code + " " + reason.syscall),
+    }));
+  `;
+  const twoReaders = (first, second) => `${text} const started = [${first}, ${second}]; ${report}`;
+  const everyByteOnce = "ready\n" + JSON.stringify({ text: "hello world\n", errors: [] }) + "\n";
+
+  // Runs `script` in a child. Each step writes its input to the child's stdin, then waits
+  // until the child has printed its line. Stdin ends after the last step, or when the child
+  // stops printing. Stdin is the socketpair that Bun.spawn makes, unless `stdin` is the
+  // child's end of something else and `writer` the end to write to.
+  async function run(script, steps, { cmd = [bunExe(), "-e", script], env = bunEnv, stdin, writer } = {}) {
+    const open = new Set([stdin, writer].filter(fd => fd !== undefined));
+    const close = fd => open.delete(fd) && closeSync(fd);
+    try {
+      await using proc = Bun.spawn({ cmd, env, stdin: stdin ?? "pipe", stdout: "pipe", stderr: "pipe" });
+      close(stdin);
+      const stderr = proc.stderr.text();
+      const stdout = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      stepping: for (const { write, until } of steps) {
+        if (write && writer !== undefined) {
+          writeSync(writer, write);
+        } else if (write) {
+          proc.stdin.write(write);
+          await proc.stdin.flush();
+        }
+        while (until && !output.includes(until)) {
+          const { done, value } = await stdout.read();
+          if (done) break stepping;
+          output += decoder.decode(value, { stream: true });
+        }
+      }
+      if (writer !== undefined) close(writer);
+      else await proc.stdin.end();
+      for (let read; !(read = await stdout.read()).done;) output += decoder.decode(read.value, { stream: true });
+      return { output, stderr: await stderr, exitCode: await proc.exited };
+    } finally {
+      [...open].forEach(close);
+    }
+  }
+
+  // Both readers wait before the input arrives. Up to 1.4.2 the second one then never woke.
+  const waitThenWrite = [{ until: "ready\n" }, { write: "hello world\n" }];
+
+  test.concurrent.each([
+    ["text(Bun.file(0).stream())", "text(Bun.file(0).stream())"],
+    ["text(Bun.stdin.stream())", "text(Bun.file(0).stream())"],
+    ["text(Bun.file(0).stream())", "text(Bun.stdin.stream())"],
+    ["text(process.stdin)", "text(Bun.file(0).stream())"],
+    ["text(Bun.file(0).stream())", "text(process.stdin)"],
+    ["text(new Response(Bun.file(0)).body)", "Bun.readableStreamToText(Bun.file(0).stream())"],
+  ])("%s and %s", async (first, second) => {
+    expect(await run(twoReaders(first, second), waitThenWrite)).toEqual({
+      output: everyByteOnce,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // fetch() reads its request body with a native sink, which starts the stream another way than a JS reader.
+  test.concurrent("a fetch() upload of Bun.file(0).stream() and a stream that starts during it", async () => {
+    const script = `
+      ${text}
+      const { promise: uploading, resolve: onUpload } = Promise.withResolvers();
+      using server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          let body = "";
+          for await (const chunk of request.body) {
+            body += Buffer.from(chunk).toString();
+            onUpload();
+          }
+          return new Response(body);
+        },
+      });
+      const upload = fetch(server.url, { method: "POST", body: Bun.file(0).stream() });
+      // The server has the first part of the body, so the upload reads stdin by now.
+      await uploading;
+      const started = [upload.then(response => response.text()), text(Bun.file(0).stream())];
+      ${report}
+    `;
+    expect(await run(script, [{ write: "hello ", until: "ready\n" }, { write: "world\n" }])).toEqual({
+      output: everyByteOnce,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A socket that adopts fd 0 registers the number itself. The stream must leave it alone.
+  test.concurrent.each([
+    ["socket()", "text(Bun.file(0).stream())"],
+    ["text(Bun.file(0).stream())", "socket()"],
+  ])("Bun.connect({ fd: 0 }) next to a stream: %s, then %s", async (first, second) => {
+    const script = `
+      // Resolves with the text that a socket over fd 0 gets.
+      const socket = () =>
+        new Promise((resolve, reject) => {
+          let all = "";
+          Bun.connect({
+            fd: 0,
+            socket: {
+              data: (_, chunk) => void (all += chunk.toString()),
+              end: socket => void socket.end(),
+              close: () => resolve(all),
+              error: (_, error) => reject(error),
+              connectError: (_, error) => reject(error),
+            },
+          }).catch(reject);
+        });
+      ${twoReaders(first, second)}
+    `;
+    expect(await run(script, waitThenWrite)).toEqual({ output: everyByteOnce, stderr: "", exitCode: 0 });
+  });
+
+  // With no descriptor left for a dup, the reader polls the stdio fd itself.
+  test.concurrent("a stream still reads stdin at the descriptor limit", async () => {
+    const script = `
+      ${text}
+      const { openSync } = require("node:fs");
+      try {
+        for (;;) openSync("/dev/null", "r");
+      } catch (error) {
+        if (error.code !== "EMFILE") throw error;
+      }
+      const started = [text(Bun.file(0).stream())];
+      ${report}
+    `;
+    const cmd = ["sh", "-c", 'ulimit -n 64 && exec "$0" -e "$1"', bunExe(), script];
+    expect(await run(script, waitThenWrite, { cmd })).toEqual({ output: everyByteOnce, stderr: "", exitCode: 0 });
+  });
+
+  // Each reader that polls holds one dup and closes it. A regular file is read
+  // with no poll, so nothing is dup'd for it.
+  test.concurrent.each([
+    ["a socket", false, { alone: 2, shared: 3, sequential: 2 }],
+    ["a regular file", true, { alone: 1, shared: 1, sequential: 1 }],
+  ])("descriptors held on stdin when it is %s", async (_, regularFile, expected) => {
+    using dir = tempDir("stdio-readers-descriptors", { "input.txt": "hello world\n" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { fstatSync } = require("node:fs");
+        const stdin = fstatSync(0);
+        // How many descriptors of this process are open on the file behind fd 0.
+        function descriptors() {
+          let count = 0;
+          for (let fd = 0; fd < 64; fd++) {
+            try {
+              const { dev, ino } = fstatSync(fd);
+              if (dev === stdin.dev && ino === stdin.ino) count++;
+            } catch {}
+          }
+          return count;
+        }
+        const first = Bun.file(0).stream().getReader();
+        const alone = descriptors();
+        const second = Bun.file(0).stream().getReader();
+        const shared = descriptors();
+        await Promise.all([first.cancel(), second.cancel()]);
+        // A reader closes its descriptor on the thread pool.
+        while (descriptors() > 1) await new Promise(resolve => setImmediate(resolve));
+        const third = Bun.file(0).stream().getReader();
+        const sequential = descriptors();
+        await third.cancel();
+        console.log(JSON.stringify({ alone, shared, sequential }));
+        `,
+      ],
+      env: bunEnv,
+      stdin: regularFile ? Bun.file(join(String(dir), "input.txt")) : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // One write wakes both readers of a pipe, and off Linux the one that lost the
+  // bytes would block in read(2). So only Linux gives a reader of a pipe or of
+  // a terminal a dup, and the rest of this block runs there alone.
+  describe.skipIf(!isLinux)("over a pipe or a terminal", () => {
+    test.concurrent("a shell pipe", async () => {
+      using dir = tempDir("stdio-readers-shell-pipe", {
+        "writer.js": `process.stdout.write("hello world\\n");`,
+        "reader.js": twoReaders("text(Bun.file(0).stream())", "text(Bun.file(0).stream())"),
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      exec(
+        `"${bunExe()}" writer.js | "${bunExe()}" reader.js`,
+        { cwd: String(dir), env: bunEnv },
+        (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+      );
+      expect(await promise).toEqual({ err: null, stdout: everyByteOnce, stderr: "" });
+    });
+
+    // The child prints a line from the turn of the event loop after the chunk, while
+    // the writer is still open. A reader that blocks in read(2) then would not get there.
+    const turnAfterChunk = `
+      ${text}
+      const turned = got => setImmediate(() => console.log("the loop turned after " + JSON.stringify(got)));
+      const started = [text(Bun.file(0).stream(), turned), text(Bun.file(0).stream(), turned)];
+      ${report}
+    `;
+    const writeThenTurn = [{ until: "ready\n" }, { write: "hello world\n", until: "the loop turned" }];
+
+    // A pipe is read with preadv2(RWF_NOWAIT) where the kernel has it for pipes, and behind a poll where not.
+    test.concurrent.each([
+      ["", {}],
+      [" read without RWF_NOWAIT", { BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK: "1" }],
+    ])("a named FIFO%s whose writer stays open", async (_, flag) => {
+      using dir = tempDir("stdio-readers-fifo", {});
+      const fifo = join(String(dir), "stdin");
+      mkfifo(fifo);
+      // O_RDWR does not wait for a reader, and with it open the read end does not wait for a writer.
+      const writer = openSync(fifo, constants.O_RDWR);
+      const stdin = openSync(fifo, constants.O_RDONLY);
+      expect(await run(turnAfterChunk, writeThenTurn, { env: { ...bunEnv, ...flag }, stdin, writer })).toEqual({
+        output:
+          'ready\nthe loop turned after "hello world\\n"\n' +
+          JSON.stringify({ text: "hello world\n", errors: [] }) +
+          "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A pty master cannot be reopened by name, so it reaches the reader as fd 0 itself, like a pipe.
+    test.concurrent("a terminal that cannot be reopened", async () => {
+      const libc = dlopen(libcPathForDlopen(), {
+        posix_openpt: { args: ["int"], returns: "int" },
+        grantpt: { args: ["int"], returns: "int" },
+        unlockpt: { args: ["int"], returns: "int" },
+        ptsname: { args: ["int"], returns: "ptr" },
+      }).symbols;
+      const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY);
+      expect({ master: master >= 0, grantpt: libc.grantpt(master), unlockpt: libc.unlockpt(master) }).toEqual({
+        master: true,
+        grantpt: 0,
+        unlockpt: 0,
+      });
+      const slave = openSync(new CString(libc.ptsname(master)).toString(), constants.O_RDWR | constants.O_NOCTTY);
+      const script = `console.log("isatty " + require("node:tty").isatty(0)); ${turnAfterChunk}`;
+      // The terminal turns the line feed into CR LF, and a read of the master fails with EIO once the slave is closed.
+      expect(await run(script, writeThenTurn, { stdin: master, writer: slave })).toEqual({
+        output:
+          'isatty true\nready\nthe loop turned after "hello world\\r\\n"\n' +
+          JSON.stringify({ text: "", errors: ["EIO read", "EIO read"] }) +
+          "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // A file that `bun test --isolate` has run leaves its process.stdin reader behind, and the
+  // next file starts its own. Not concurrent: the child is a test run of its own.
+  test("two `bun test --isolate` files that listen on process.stdin", async () => {
+    const file = `
+      import { test } from "bun:test";
+      test("listens on stdin", async () => {
+        process.stdin.on("data", () => {});
+        await new Promise(resolve => setImmediate(resolve));
+      });
+    `;
+    using dir = tempDir("stdio-readers-isolate", { "a.test.ts": file, "b.test.ts": file });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ summary: stderr.match(/^ \d+ (?:pass|fail)$/gm), exitCode }).toEqual({
+      summary: [" 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
   });
 });
 

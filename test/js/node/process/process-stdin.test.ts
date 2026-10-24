@@ -473,6 +473,85 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// A paused process.stdin takes its fd out of the event loop and puts it back on
+// resume(). That fd was fd 0 itself, so a stream that started during the pause
+// registered fd 0 too and the resume failed with EEXIST from epoll_ctl. Windows
+// reads a stdin pipe through libuv and is not covered here.
+test.skipIf(isWindows).concurrent("resume() works after another stream read stdin during the pause", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const chunk = data => console.log("chunk " + Buffer.from(data).toString());
+      const ends = [];
+      const end = name => {
+        if (ends.push(name) === 2) console.log(ends.sort().join(", "));
+      };
+      process.stdin.on("error", error => {
+        console.log("process.stdin error " + error.code + " " + error.syscall);
+        process.exit(1);
+      });
+      process.stdin.on("end", () => end("process.stdin end"));
+      process.stdin.once("data", first => {
+        chunk(first);
+        process.stdin.pause();
+        // pause() stops reading on the next tick. The stream starts after that.
+        setImmediate(async () => {
+          const reader = Bun.file(0).stream().getReader();
+          console.log("stream started");
+          try {
+            for (let resumed = false; ; ) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunk(value);
+              if (!resumed) {
+                resumed = true;
+                process.stdin.on("data", chunk).resume();
+              }
+            }
+            end("stream end");
+          } catch (error) {
+            console.log("stream error " + error.code + " " + error.syscall);
+            process.exit(1);
+          }
+        });
+      });
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const stderr = proc.stderr.text();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  // "two" arrives during the pause, so the stream gets it. Either reader can get "three".
+  stepping: for (const [input, line] of [
+    ["one", "stream started\n"],
+    ["two", "chunk two\n"],
+    ["three", "chunk three\n"],
+  ]) {
+    proc.stdin.write(input);
+    await proc.stdin.flush();
+    while (!stdout.includes(line)) {
+      const { value, done } = await reader.read();
+      if (done) break stepping;
+      stdout += decoder.decode(value, { stream: true });
+    }
+  }
+  await proc.stdin.end();
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+
+  expect({ stdout, stderr: await stderr, exitCode: await proc.exited }).toEqual({
+    stdout: "chunk one\nstream started\nchunk two\nchunk three\nprocess.stdin end, stream end\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
@@ -596,10 +675,26 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
 
   // Stopping unregisters a fired one-shot poll without a syscall, which leaves
   // its disarmed registration in the kernel. Cancelling the stream must still
-  // take it out: fd 0 stays open, and the next poll on it would hit EEXIST.
-  test.concurrent("a reader cancelled at the highwater backstop frees fd 0 for the next reader", async () => {
-    const { second } = await run(`
+  // take it out. The reader polls a dup of fd 0, and epoll keeps a registration
+  // for as long as the file is open, which fd 0 keeps it. The dup of the next
+  // reader gets the same number once the first is closed, and would hit EEXIST.
+  test.concurrent(
+    "a reader cancelled at the highwater backstop leaves no registration for the next reader",
+    async () => {
+      const { second } = await run(`
       const { getEventLoopStats } = require("bun:internal-for-testing");
+      const { fstatSync } = require("node:fs");
+      const stdin = fstatSync(0);
+      // Whether a descriptor other than fd 0 is open on stdin.
+      function hasDup() {
+        for (let fd = 3; fd < 64; fd++) {
+          try {
+            const { dev, ino } = fstatSync(fd);
+            if (dev === stdin.dev && ino === stdin.ino) return true;
+          } catch {}
+        }
+        return false;
+      }
       // Not top-level await: an unsettled entry-module promise would keep the process alive by itself.
       (async () => {
         const reader = Bun.stdin.stream().getReader();
@@ -607,13 +702,16 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
         // The parent keeps the pipe full, so the reader soon stops and lets go of the loop.
         while (getEventLoopStats().loopActive) await new Promise(resolve => setImmediate(resolve));
         await reader.cancel();
+        // The reader closes its dup on the thread pool.
+        while (hasDup()) await new Promise(resolve => setImmediate(resolve));
         const next = await Bun.file(0).stream().getReader().read();
         process.stdout.write(JSON.stringify({ second: (next.value?.length ?? 0) > 0 }));
         process.exit(0);
       })();
     `);
-    expect(second).toBe(true);
-  });
+      expect(second).toBe(true);
+    },
+  );
 
   test.concurrent("reading resumes after the highwater backstop", async () => {
     // Stop reading long enough for the backstop to engage, then drain to EOF

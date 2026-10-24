@@ -90,6 +90,32 @@ devTest("the server-rendered HTML of a client component follows its saves", {
   },
 });
 
+// react-server-dom-bun keeps the promise of that import() for each client component. When the component
+// fails to load, the promise it keeps is a rejected one, and only a new evaluation of that module drops it.
+devTest("a client component that fails to load on the server is rendered after it is fixed", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      import { Counter } from "../components/Counter";
+      export default function Page() {
+        return <main><Counter /></main>;
+      }
+    `,
+    "components/Counter.tsx": `
+      "use client";
+      throw new Error("counter failed");
+    `,
+    "components/label.ts": `export const label = "L1";`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    expect((await dev.fetch("/")).status).toBe(500);
+
+    await dev.write("components/Counter.tsx", counter("v2"));
+    expect(button(await (await dev.fetch("/")).text())).toBe("L1 counter v2");
+  },
+});
+
 // Real React and react-refresh. Page.tsx is a Fast Refresh boundary. widgets.tsx, theme.ts and Fwd.tsx
 // are between it and config.ts and are not boundaries, so a save of config.ts evaluates them again.
 devTest("component state after a hot update evaluates the modules below a Fast Refresh boundary again", {
@@ -185,5 +211,57 @@ devTest("component state after a hot update evaluates the modules below a Fast R
     await c.expectElemText("#ctx", "label(v2) ctx 0");
     // Lost: forwardRef() makes a new component too.
     await c.expectElemText("#fwd", "v2 fwd 0");
+  },
+});
+
+// React keeps what the function that is given to lazy() returned. For a page that fails to load, that is
+// a rejected promise. routes.tsx is not a Fast Refresh boundary, so the save that fixes the page evaluates
+// it again and makes a new lazy().
+devTest("a page that lazy() loads and that fails to load is shown after it is fixed", {
+  framework: "react",
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.tsx"], body: `<div id="root"></div>` }),
+    "index.tsx": `
+      import { createRoot } from "react-dom/client";
+      import { App } from "./App";
+      createRoot(document.getElementById("root")).render(<App />);
+    `,
+    "App.tsx": `
+      import { Component, Suspense } from "react";
+      import { Page } from "./routes";
+      class Boundary extends Component {
+        state = { error: null };
+        static getDerivedStateFromError(error) {
+          return { error };
+        }
+        render() {
+          return this.state.error ? <p id="out">{"failed: " + this.state.error.message}</p> : this.props.children;
+        }
+      }
+      export function App() {
+        return (
+          <Boundary>
+            <Suspense fallback={<p id="out">loading</p>}>
+              <Page />
+            </Suspense>
+          </Boundary>
+        );
+      }
+    `,
+    "routes.tsx": `
+      import { lazy } from "react";
+      export const Page = lazy(() => import("./Page"));
+    `,
+    "Page.tsx": `
+      throw new Error("page failed");
+    `,
+  },
+  async test(dev) {
+    // React reports the error that the boundary caught with console.error.
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectElemText("#out", "failed: page failed");
+
+    await dev.write("Page.tsx", `export default function Page() { return <p id="out">page v2</p>; }`);
+    await c.expectElemText("#out", "page v2");
   },
 });

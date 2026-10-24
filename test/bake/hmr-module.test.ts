@@ -2835,3 +2835,295 @@ describe("require() inside a load that import() started", () => {
     expect(take()).toEqual(["helper ran v1", "route ran", "helper ran v2", "route ran"]);
   });
 });
+
+describe("import()", () => {
+  const sides = ["client", "server"] as const;
+  const throws = (log: (line: string) => void, message: string) =>
+    esm([], () => {
+      log("bad ran");
+      throw new Error(message);
+    });
+
+  test.each(sides)("%s: runs the module after the code that called it", async side => {
+    const { log, take, define, load } = await loader(side);
+    define({
+      main: esm([], hmr => {
+        log("start");
+        hmr.dynamicImport("esm").then((ns: any) => log("then " + ns.value));
+        hmr.dynamicImport("cjs").then((ns: any) => log("then " + ns.value));
+        log("end");
+      }),
+      esm: esm([], hmr => {
+        log("esm ran");
+        hmr.exports = { value: "esm" };
+      }),
+      cjs: cjs((hmr, module) => {
+        log("cjs ran");
+        module.exports = { value: "cjs" };
+      }),
+    });
+    await load("main");
+    await settleJobs();
+    expect(take()).toEqual(["start", "end", "esm ran", "cjs ran", "then esm", "then cjs"]);
+  });
+
+  test("the module sees what its importer did after the call", async () => {
+    const { log, take, define, load } = await loader("client");
+    let config = "not set";
+    define({
+      main: esm([], hmr => {
+        hmr.dynamicImport("plugin").then((ns: any) => log("plugin read " + ns.config));
+        config = "set";
+      }),
+      plugin: esm([], hmr => void (hmr.exports = { config })),
+    });
+    await load("main");
+    await settleJobs();
+    expect(take()).toEqual(["plugin read set"]);
+  });
+
+  test("a module with top-level await starts after the code that called import()", async () => {
+    const { log, take, define, load } = await loader("client");
+    define({
+      main: esm([], hmr => {
+        log("start");
+        hmr.dynamicImport("tla").then(() => log("then"));
+        log("end");
+      }),
+      tla: esm(
+        [],
+        async hmr => {
+          log("tla start");
+          await null;
+          log("tla end");
+          hmr.exports = {};
+        },
+        true,
+      ),
+    });
+    await load("main");
+    await settleJobs();
+    expect(take()).toEqual(["start", "end", "tla start", "tla end", "then"]);
+  });
+
+  test.each(sides)("%s: a module that throws rejects the promise, and its importer goes on", async side => {
+    const { log, take, define, load } = await loader(side);
+    let again!: () => Promise<unknown>;
+    let first: unknown;
+    define({
+      main: esm([], hmr => {
+        log("start");
+        hmr.dynamicImport("bad").catch((error: Error) => {
+          first = error;
+          log("caught " + error.message);
+        });
+        log("end");
+        again = () => hmr.dynamicImport("bad");
+      }),
+      bad: throws(log, "bad failed"),
+    });
+    await load("main");
+    await settleJobs();
+    expect(take()).toEqual(["start", "end", "bad ran", "caught bad failed"]);
+    // The module is not evaluated again. The next import() rejects with the error of the first.
+    expect(await again().catch(error => error)).toBe(first);
+    expect(take()).toEqual([]);
+  });
+
+  test("every way that a load fails rejects the promise", async () => {
+    const { define, load } = await loader("server");
+    let hmr!: Hmr;
+    define({
+      main: esm([], self => void (hmr = self)),
+      "throws-cjs": cjs(() => {
+        throw new Error("CommonJS failed");
+      }),
+      "imports-bad": esm(["bad-dep"], () => {}),
+      "bad-dep": esm([], () => {
+        throw new Error("dependency failed");
+      }),
+      "throws-after-await": esm(
+        [],
+        async () => {
+          await null;
+          throw new Error("top-level await failed");
+        },
+        true,
+      ),
+      // The module loads. Its exports cannot become a namespace.
+      "bad-namespace": cjs((_, module) => {
+        module.exports = new Proxy(
+          {},
+          {
+            ownKeys() {
+              throw new Error("namespace failed");
+            },
+          },
+        );
+      }),
+    });
+    await load("main");
+    const specifiers = {
+      commonJS: "throws-cjs",
+      dependency: "imports-bad",
+      topLevelAwait: "throws-after-await",
+      namespace: "bad-namespace",
+      specifier: {
+        toString() {
+          throw new Error("toString failed");
+        },
+      },
+    };
+    const results: Record<string, string> = {};
+    for (const [name, specifier] of Object.entries(specifiers)) {
+      let promise: Promise<unknown>;
+      try {
+        promise = hmr.dynamicImport(specifier);
+      } catch (error: any) {
+        results[name] = "threw in the call: " + error.message;
+        continue;
+      }
+      results[name] = await promise.then(
+        () => "resolved",
+        error => "rejected: " + error.message,
+      );
+    }
+    expect(results).toEqual({
+      commonJS: "rejected: CommonJS failed",
+      dependency: "rejected: dependency failed",
+      topLevelAwait: "rejected: top-level await failed",
+      namespace: "rejected: namespace failed",
+      specifier: "rejected: toString failed",
+    });
+  });
+
+  test("a module that the imported module imports back has run when the imported module runs", async () => {
+    const { log, take, define, load } = await loader("client");
+    define({
+      a: esm([], hmr => {
+        hmr.dynamicImport("b").then(
+          (b: any) => log(b.seen),
+          (error: Error) => log("rejected: " + error.message),
+        );
+        hmr.exports = { a: 1 };
+      }),
+      b: esm(["a"], (hmr, [a]) => void (hmr.exports = { seen: "b saw a = " + a.a })),
+    });
+    await load("a");
+    await settleJobs();
+    expect(take()).toEqual(["b saw a = 1"]);
+  });
+
+  test("a module that imports itself gets its own namespace", async () => {
+    const { define, load } = await loader("client");
+    define({
+      self: esm([], hmr => {
+        const again = hmr.dynamicImport("self");
+        hmr.exports = { again };
+      }),
+    });
+    const namespace = await load("self");
+    expect(await namespace.again).toBe(namespace);
+  });
+
+  test("the specifier is converted to a string one time, inside the call", async () => {
+    const { log, take, define, load } = await loader("server");
+    let hmr!: Hmr;
+    define({
+      main: esm([], self => void (hmr = self)),
+      m: esm([], self => {
+        log("m ran");
+        self.exports = {};
+      }),
+    });
+    await load("main");
+    const specifier = () => ({ toString: () => (log("toString"), "m") });
+    log("start");
+    const first = hmr.dynamicImport(specifier());
+    log("end");
+    await first;
+    // Another object that names the same module gets the module that is loaded.
+    await hmr.dynamicImport(specifier());
+    expect(take()).toEqual(["start", "toString", "end", "m ran", "toString"]);
+  });
+
+  test("an id that is not a module of the dev server goes to the import() of the runtime", async () => {
+    const { define, load } = await loader("server");
+    let hmr!: Hmr;
+    define({ main: esm([], self => void (hmr = self)) });
+    await load("main");
+    expect(typeof (await hmr.dynamicImport("node:path")).join).toBe("function");
+  });
+
+  // A caller that keeps the promise keeps the rejection. The save that fixes the module has to
+  // evaluate that caller again, or its next attempt gets the old rejection.
+  test("client: a module that keeps the promise of a failed import() imports again after the fix", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const dep = (fails: boolean) =>
+      esm([], hmr => {
+        if (fails) throw new Error("dep failed");
+        hmr.exports = { value: "fixed" };
+      });
+    define({
+      index: esm(["helper"], (hmr, [helper]) => {
+        hmr.accept();
+        helper.open().then(
+          (ns: any) => log("opened " + ns.value),
+          (error: Error) => log("caught " + error.message),
+        );
+      }),
+      helper: esm([], hmr => {
+        let kept: Promise<unknown> | undefined;
+        hmr.exports = { open: () => (kept ??= hmr.dynamicImport("dep")) };
+      }),
+      dep: dep(true),
+    });
+    await load("index");
+    await settleJobs();
+    expect(take()).toEqual(["caught dep failed"]);
+    await save({ dep: dep(false) });
+    await settleJobs();
+    expect(take()).toEqual(["opened fixed"]);
+  });
+
+  test("server: a route that keeps the promise of a failed import() imports again after the fix", async () => {
+    const { define, load, save } = await loader("server");
+    const dep = (fails: boolean) =>
+      esm([], hmr => {
+        if (fails) throw new Error("dep failed");
+        hmr.exports = { value: "fixed" };
+      });
+    define({
+      route: esm([], hmr => {
+        let kept: Promise<any> | undefined;
+        const render = () =>
+          (kept ??= hmr.dynamicImport("dep")).then(
+            ns => ns.value,
+            error => "failed: " + error.message,
+          );
+        hmr.exports = { render };
+      }),
+      dep: dep(true),
+    });
+    expect(await (await load("route")).render()).toBe("failed: dep failed");
+    expect(await (await load("route")).render()).toBe("failed: dep failed");
+    await save({ dep: dep(false) });
+    expect(await (await load("route")).render()).toBe("fixed");
+  });
+
+  test("a failed import() that is awaited keeps its importer in the stack trace", async () => {
+    const { log, define, load } = await loader("server");
+    let open!: () => Promise<unknown>;
+    define({
+      main: esm([], hmr => {
+        open = async function loadPlugin() {
+          return await hmr.dynamicImport("bad");
+        };
+      }),
+      bad: throws(log, "bad failed"),
+    });
+    await load("main");
+    const error: any = await open().catch(error => error);
+    expect(error.stack).toContain("at async loadPlugin");
+  });
+});

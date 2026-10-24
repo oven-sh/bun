@@ -1150,3 +1150,59 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+devTest("import() in a module that a hot update runs again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      console.log("index 1");
+      import.meta.hot.accept();
+    `,
+    "late.ts": `
+      console.log("late ran");
+      export const value = "late";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index 1");
+    await dev.write(
+      "index.ts",
+      `
+        console.log("index 2");
+        import("./late").then(ns => console.log("then " + ns.value));
+        console.log("index 2 end");
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("index 2", "index 2 end", "late ran", "then late");
+  },
+});
+
+devTest("a module whose import() failed is loaded again when it is fixed", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import("./dep").then(
+        ns => console.log("loaded " + ns.value),
+        e => console.log("caught " + e.message),
+      );
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      throw new Error("boom");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("caught boom");
+    // The failed load still recorded index.ts as an importer, so the fix reaches it as a hot update and not as a reload.
+    await dev.write(
+      "dep.ts",
+      `
+        export const value = "fixed";
+      `,
+    );
+    await c.expectMessage("loaded fixed");
+  },
+});

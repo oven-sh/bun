@@ -9,6 +9,8 @@ const { Stream } = require("internal/streams/legacy");
 const destroyImpl = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
+const streamUtils = require("internal/streams/utils");
+const kWriteOperation: typeof streamUtils.kWriteOperation = streamUtils.kWriteOperation;
 const streamState = require("internal/streams/state");
 const { WritableState, resetBuffer, isReadableState, isWritableState, flagsOf, addFlags, removeFlags, internals, nop } =
   streamState;
@@ -229,6 +231,18 @@ function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, c
   state.pendingcb!++;
   return writeOrBuffer(stream, state, chunk, encoding, cb, 1);
 }
+
+// Internal byte-counted operations share the byte stream's queue and lifecycle.
+Writable.prototype[kWriteOperation] = function (operation, callback) {
+  const state: WritableState = this._writableState;
+  const cb: WriteCallback = callback ?? nop;
+  if ((state[kState] & Flag.EndingOrDestroyed) !== 0) {
+    writeAfterEnd(this, state, cb);
+    return false;
+  }
+  state.pendingcb!++;
+  return writeOrBuffer(this, state, operation, kWriteOperation, cb, operation.length);
+};
 
 const writeBytes = function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, cb: WriteCallback) {
   if (!encoding) {

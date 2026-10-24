@@ -51,6 +51,7 @@ const MIRI_CRATES = [
   "bun_md",
   "bun_pod",
   "bun_ptr",
+  "bun_resolver",
   "bun_resolve_builtins",
   "bun_semver",
   "bun_shell_parser",

@@ -170,6 +170,12 @@ async function onDocument(document: vscode.TextDocument, options: LanguageServer
   await ensureStarted(options);
 }
 
+function scanOpenDocuments(options: LanguageServerOptions): void {
+  for (const document of vscode.workspace.textDocuments) {
+    void onDocument(document, options);
+  }
+}
+
 export async function stopLanguageServer(): Promise<void> {
   if (starting) await starting;
   const current = client;
@@ -190,10 +196,14 @@ export function registerLanguageServer(context: vscode.ExtensionContext, options
       }
       if (runtimeChanged) await stopLanguageServer();
       failed = false;
-      if (wanted) await ensureStarted(options);
+      if (wanted) {
+        await ensureStarted(options);
+        return;
+      }
+      // Documents opened while the setting was off never set `wanted`, and VS Code
+      // does not re-fire onDidOpenTextDocument for them.
+      if (enableChanged) scanOpenDocuments(options);
     }),
   );
-  for (const document of vscode.workspace.textDocuments) {
-    void onDocument(document, options);
-  }
+  scanOpenDocuments(options);
 }

@@ -205,6 +205,25 @@ describe("registerLanguageServer", () => {
     expect(checkRuntime).not.toHaveBeenCalled();
   });
 
+  test("starts for already-open documents when bun.lsp.enable turns on", async () => {
+    setConfiguration("bun.lsp.enable", false);
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    expect(clients).toHaveLength(0);
+
+    setConfiguration("bun.lsp.enable", true);
+    await fireConfigurationChange(["bun.lsp.enable"]);
+    await waitFor(() => clients.length === 1);
+    await settle();
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(clients[0].spec.args).toEqual(["fmt", "--no-script", "--lsp"]);
+    expect(clients[0].started).toBe(1);
+  });
+
   test("starts exactly one client for the first qualifying document", async () => {
     const lsp = await loadLsp();
     const { clients, context, subscriptions, createClient, checkRuntime } = makeHarness();

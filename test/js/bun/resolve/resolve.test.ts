@@ -2421,7 +2421,7 @@ describe.concurrent("a directory created below one that was looked up while it w
       write("probe.ts", 'import page from "./probe/page.ts"; console.log(page);');
       await build("probe.ts");
       write("probe/page.ts", "export default 1;");
-      for (let i = 0; i < 100 && !(await build("probe.ts")).success; i++) await Bun.sleep(1);
+      while (!(await build("probe.ts")).success) {}
       for (const dir of ["one", "two/b", "three/b/c"]) {
         const top = dir.split("/")[0];
         write(top + ".ts", 'import page from "./pages/' + dir + '/page.ts"; console.log(page);');

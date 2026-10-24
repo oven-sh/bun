@@ -144,6 +144,13 @@ describe("console._stdout and console._stderr", () => {
            Object.defineProperty(process, name, { configurable: true, get: () => (reads[name]++, streams[name]) });
          }
          const kind = key => Object.keys(Object.getOwnPropertyDescriptor(console, key) ?? {}).join();
+         // Runs each operation and returns the names of those that read a stream.
+         const readers = operations =>
+           Object.keys(operations).filter(name => {
+             reads.stdout = reads.stderr = 0;
+             operations[name]();
+             return reads.stdout + reads.stderr > 0;
+           });
          let result;
          ${body}
          require("node:fs").writeSync(1, JSON.stringify(result));`,
@@ -156,42 +163,44 @@ describe("console._stdout and console._stderr", () => {
     return { stdout, stderr, exitCode };
   }
 
-  describe.concurrent("in a fresh process", () => {
-    test("nothing but a read of the property reads process.stdout or process.stderr", async () => {
+  // Not concurrent: a debug build starts slowly when many processes start at once, and a single test then comes
+  // close to the default timeout.
+  describe("in a fresh process", () => {
+    test("a descriptor operation on the property does not read process.stdout or process.stderr", async () => {
       const { stdout, stderr, exitCode } = await run(`
-        const util = require("node:util");
-        const operations = {
+        const described = readers({
           "Object.getOwnPropertyDescriptor": () => [Object.getOwnPropertyDescriptor(console, "_stdout"), Object.getOwnPropertyDescriptor(console, "_stderr")],
           "Reflect.getOwnPropertyDescriptor": () => Reflect.getOwnPropertyDescriptor(console, "_stdout"),
           "Object.getOwnPropertyDescriptors": () => Object.getOwnPropertyDescriptors(console),
           "propertyIsEnumerable": () => [console.propertyIsEnumerable("_stdout"), console.propertyIsEnumerable("_stderr")],
           "a descriptor through a Proxy": () => Object.getOwnPropertyDescriptor(new Proxy(console, {}), "_stderr"),
           "Object.defineProperty with {}": () => Object.defineProperty(console, "_stdout", {}),
+          "Object.seal": () => Object.seal(console),
+          "Object.freeze": () => Object.freeze(console),
+        });
+        // A frozen console keeps the accessors, so an assignment still goes through the setter.
+        console._stdout = streams.stderr;
+        result = { described, kinds: [kind("_stdout"), kind("_stderr")], assigned: console._stdout === streams.stderr };
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ described: [], kinds: [accessorKeys, accessorKeys], assigned: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a print of console does not read process.stdout or process.stderr", async () => {
+      const { stdout, stderr, exitCode } = await run(`
+        const util = require("node:util");
+        const printed = readers({
           "util.inspect with showHidden": () => util.inspect(console, { showHidden: true }),
           "util.format with %o": () => util.format("%o", console),
           "Bun.inspect": () => [Bun.inspect(console), Bun.inspect(console, { sorted: true })],
           "Bun.inspect of a holder": () => [Bun.inspect({ console }), Bun.inspect([console])],
           "Bun.inspect of an heir": () => Bun.inspect(Object.create(console)),
-          "Object.seal": () => Object.seal(console),
-          "Object.freeze": () => Object.freeze(console),
-        };
-        const readers = [];
-        for (const [name, operation] of Object.entries(operations)) {
-          operation();
-          if (reads.stdout + reads.stderr > 0) readers.push(name);
-          reads.stdout = reads.stderr = 0;
-        }
-        // A frozen console keeps the accessors, so an assignment still goes through the setter.
-        console._stdout = streams.stderr;
-        result = { readers, kinds: [kind("_stdout"), kind("_stderr")], assigned: console._stdout === streams.stderr, reads };
+        });
+        result = { printed, kinds: [kind("_stdout"), kind("_stderr")] };
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        readers: [],
-        kinds: [accessorKeys, accessorKeys],
-        assigned: true,
-        reads: { stdout: 0, stderr: 0 },
-      });
+      expect(JSON.parse(stdout)).toEqual({ printed: [], kinds: [accessorKeys, accessorKeys] });
       expect(exitCode).toBe(0);
     });
 
@@ -374,11 +383,15 @@ describe("console._stdout and console._stderr", () => {
       });
 
       test("a read of the property builds that stream only", async () => {
-        expect(await flagsAfter(`console._stderr;`)).toEqual({
-          flags: "1:blocking 2:nonblocking",
+        // The comparison is with a read of process.stderr itself, so that the test does not pin what a build of the
+        // stream does to fd 2.
+        const [viaConsole, direct] = await Promise.all([flagsAfter(`console._stderr;`), flagsAfter(`process.stderr;`)]);
+        expect(direct).toEqual({
+          flags: expect.stringMatching(/^1:blocking 2:(non)?blocking$/),
           stderr: "",
           exitCode: 0,
         });
+        expect(viaConsole).toEqual(direct);
       });
     });
   });

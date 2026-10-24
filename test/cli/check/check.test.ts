@@ -24169,6 +24169,20 @@ export {};
       expect(exitCode).toBe(1);
     });
 
+    test("prints `{ ...; }` for the type that's inferred for `keyof X` once the length limit is reached", async () => {
+      using dir = project({
+        "a.ts": `type HasKey<T> = T extends keyof (infer X) ? X : never;
+export const x: never = null! as HasKey<"property00" | "property01" | "property02" | "property03" | "property04" | "property05" | "property06" | "property07" | "property08" | "property09" | "property10" | "property11" | "property12" | "property13" | "property14" | "property15" | "property16" | "property17" | "property18" | "property19" | "property20" | "property21" | "property22" | "property23">;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,14): error TS2322: Type '{ property00: any; } | { property01: any; } | { property02: any; } | { property03: any; } | { property04: any; } | { property05: any; } | { property06: any; } | { property07: any; } | { property08: any; } | ... 14 more ... | { ...; }' is not assignable to type 'never'.
+          Type '{ property00: any; }' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("truncates two `NoInfer<..>` in one type argument list at half the length", async () => {
       using dir = project({
         "a.ts": `import type { Far, Near } from "./m";

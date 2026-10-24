@@ -3952,7 +3952,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             // "Anonymous types without a symbol are never circular." So `visitAndTransformType` doesn't elide one.
             TypeData::Synth(shape)
-                if shape.has_no_instantiable_symbol
+                if !Checker::shape_has_symbol(shape)
                     && shape.call.is_empty()
                     && shape.construct.is_empty() =>
             {

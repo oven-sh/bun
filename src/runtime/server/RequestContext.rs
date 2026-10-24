@@ -2159,6 +2159,11 @@ where
         readable_ref.deinit();
     }
 
+    /// HTTP/1.1, and the sink has not ended the response (`resp` is stale after that).
+    fn takes_early_head(sink: &ResponseStream<SSL_ENABLED>, resp: uws::AnyResponse) -> bool {
+        !MUX && !sink.ended_response && !resp.state().is_ancient_request()
+    }
+
     /// Commits the head after the microtask drain, so a body that ends in it keeps its framing.
     fn defer_head_commit(&self) {
         debug_assert!(!self.flags.has_deferred_head_commit());
@@ -2229,7 +2234,8 @@ where
         debug_assert!(
             !state.is_response_pending()
                 || state.is_http_write_called()
-                || state.is_http_end_called(),
+                || state.is_http_end_called()
+                || state.is_ancient_request(),
             "a parked response left its head open"
         );
     }
@@ -2374,8 +2380,7 @@ where
                             this.render_metadata();
                         }
 
-                        // HTTP/2 and HTTP/3 keep HEADERS for the first DATA: see `commit_head`.
-                        if !MUX {
+                        if Self::takes_early_head(response_stream, resp) {
                             if this.is_async() {
                                 // No drain ran above: the body's microtasks are still queued.
                                 this.defer_head_commit();

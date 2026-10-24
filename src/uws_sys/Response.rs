@@ -860,7 +860,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
 
-    /// Ends the header section of a live HTTP/1 response whose body has sent nothing yet.
+    /// Ends the header section of a live HTTP/1.1 response whose body has sent nothing yet.
     pub fn commit_head(self) {
         // HTTP/3 ends a failed body with a FIN, and early HTTP/2 HEADERS cost a socket write.
         if matches!(self, AnyResponse::H3(_) | AnyResponse::H2(_)) {
@@ -869,7 +869,10 @@ impl AnyResponse {
         let open_head = State::HTTP_STATUS_CALLED | State::HTTP_RESPONSE_PENDING;
         // A `try_end` parked on backpressure sets only END_CALLED: its head is out too.
         let head_is_out = State::HTTP_WRITE_CALLED | State::HTTP_END_CALLED;
-        if self.state().bits() & (open_head | head_is_out).bits() != open_head.bits() {
+        // HTTP/1.0: the close ends the body, so a cut behind a whole head reads as an empty body.
+        let close_ends_body = State::HTTP_ANCIENT_REQUEST;
+        let skip = head_is_out | close_ends_body;
+        if self.state().bits() & (open_head | skip).bits() != open_head.bits() {
             return;
         }
         self.corked(|| self.flush_headers(false));
@@ -1242,6 +1245,7 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_ANCIENT_REQUEST             = 1 << 8;
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
         const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
     }
@@ -1276,6 +1280,12 @@ impl State {
     #[inline]
     pub fn is_http_connection_close(self) -> bool {
         self.bits() & State::HTTP_CONNECTION_CLOSE.bits() != 0
+    }
+
+    /// The request was HTTP/1.0: a body with no `Content-Length` ends when the connection closes.
+    #[inline]
+    pub fn is_ancient_request(self) -> bool {
+        self.bits() & State::HTTP_ANCIENT_REQUEST.bits() != 0
     }
 
     #[inline]

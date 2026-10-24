@@ -5254,25 +5254,26 @@ describe("the response head does not wait for a body that is not ready", () => {
     });
   });
 
-  // The response to an HTTP/1.0 request has no chunked framing: the close ends it.
-  it("an HTTP/1.0 request gets the head, then a body that the close delimits", async () => {
+  // The close of the connection ends the body of an HTTP/1.0 response. A cut behind a
+  // whole head would read as a whole, empty answer, so that head still waits for the
+  // first body byte. The body below then ends in one step and keeps Content-Length.
+  it("an HTTP/1.0 response keeps its head for the first body byte", async () => {
     const gate = Promise.withResolvers<void>();
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       idleTimeout: 0,
-      fetch: () => kinds["ReadableStream with async pull()"](gate.promise),
+      // The gate opens in a later task: the stream is parked by then.
+      fetch: () => (setImmediate(gate.resolve), kinds["ReadableStream with async pull()"](gate.promise)),
     });
     const wire = exchange(server.port!, false, "GET / HTTP/1.0\r\n\r\n");
     try {
       const head = await wire.head;
       expect({
-        transferEncoding: field(head, "transfer-encoding"),
         contentLength: field(head, "content-length"),
-        bodyAtHead: wire.bodyAtHead(),
-      }).toEqual({ transferEncoding: null, contentLength: null, bodyAtHead: "" });
-      gate.resolve();
-      expect(await wire.body).toBe("x");
+        transferEncoding: field(head, "transfer-encoding"),
+        body: await wire.body,
+      }).toEqual({ contentLength: "1", transferEncoding: null, body: "x" });
     } finally {
       wire.socket.destroy();
     }

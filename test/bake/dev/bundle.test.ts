@@ -1017,6 +1017,206 @@ for (const [order, imports] of [
     },
   });
 }
+// One file is in two graphs: a plain import gets the copy of the server graph, and an import with
+// `bunBakeGraph: "ssr"` gets the copy of the SSR graph. The file `#both` resolves to shows the graph of a copy.
+{
+  const framework = { ...minimalFramework, serverComponents: separateSSRGraph };
+  const shared = { ...conditionalImport("both"), "shared.ts": `export { which } from "#both";` };
+  // Holds the loads of `hold` until `until` is loaded `times` times: the importer that is not held is parsed first.
+  // Counts the server-side loads of `until` like `countLoads`.
+  const holdLoad = (hold: string, until: string, times = 1) => `
+    import { basename } from "node:path";
+    export default [
+      {
+        name: "hold-load",
+        setup(build) {
+          const reached = Promise.withResolvers();
+          build.onLoad({ filter: /${until}$/ }, args => {
+            if (args.side === "client") return;
+            const loads = (globalThis.loads ??= {});
+            const file = basename(args.path);
+            loads[file] = (loads[file] ?? 0) + 1;
+            if (loads[file] === ${times}) reached.resolve();
+          });
+          build.onLoad({ filter: /${hold}$/ }, () => reached.promise);
+        },
+      },
+    ];
+  `;
+  const twoImporters = (file: string) => ({
+    "plain.ts": `import * as ns from ${JSON.stringify(file)}; export const plain = ns;`,
+    "ssr.ts": `import * as ns from ${JSON.stringify(file)} with { bunBakeGraph: "ssr" }; export const ssr = ns;`,
+  });
+  // The importer that is named is parsed first.
+  const importerOrders = [
+    ["server", "ssr[.]ts"],
+    ["SSR", "plain[.]ts"],
+  ];
+
+  for (const [order, imports] of [
+    [
+      "server, SSR",
+      `import { which as plain } from "../shared"; import { which as ssr } from "../shared" with { bunBakeGraph: "ssr" };`,
+    ],
+    [
+      "SSR, server",
+      `import { which as ssr } from "../shared" with { bunBakeGraph: "ssr" }; import { which as plain } from "../shared";`,
+    ],
+  ]) {
+    const route = `
+      ${imports}
+      export default () => Response.json({ plain, ssr, loads: globalThis.loads });
+    `;
+    devTest(`two statements import one file for two graphs (${order})`, {
+      framework,
+      pluginFile: countLoads("shared[.]ts$"),
+      files: { ...shared, "routes/index.ts": route },
+      async test(dev) {
+        const bundledOncePerGraph = { plain: "rsc", ssr: "ssr", loads: { "shared.ts": 2 } };
+        expect(await dev.fetch("/").json()).toEqual(bundledOncePerGraph);
+        await dev.write("routes/index.ts", route + "// saved again");
+        expect(await dev.fetch("/").json()).toEqual(bundledOncePerGraph);
+      },
+    });
+  }
+  for (const [first, held] of importerOrders) {
+    devTest(`two modules import one file for two graphs (${first} importer first)`, {
+      framework,
+      pluginFile: holdLoad(held, "shared[.]ts"),
+      files: {
+        ...shared,
+        ...twoImporters("./shared"),
+        "routes/index.ts": `
+          import { plain } from "../plain";
+          import { ssr } from "../ssr";
+          export default () => Response.json({ plain: plain.which, ssr: ssr.which, loads: globalThis.loads });
+        `,
+      },
+      async test(dev) {
+        expect(await dev.fetch("/").json()).toEqual({ plain: "rsc", ssr: "ssr", loads: { "shared.ts": 2 } });
+      },
+    });
+    // Each graph requests another name of the barrel.
+    devTest(`two modules import one barrel for two graphs (${first} importer first)`, {
+      framework,
+      pluginFile: holdLoad(held, "lib.index[.]js"),
+      files: {
+        "node_modules/lib/package.json": JSON.stringify({
+          name: "lib",
+          main: "index.js",
+          sideEffects: false,
+          imports: { "#both": { "react-server": "./both-rsc.js", "default": "./both-ssr.js" } },
+        }),
+        "node_modules/lib/index.js": `export { which } from "./which.js"; export { other } from "./other.js";`,
+        "node_modules/lib/which.js": `export { which } from "#both";`,
+        "node_modules/lib/other.js": `export { which as other } from "#both";`,
+        "node_modules/lib/both-rsc.js": `export const which = "rsc";`,
+        "node_modules/lib/both-ssr.js": `export const which = "ssr";`,
+        "plain.ts": `import { which } from "lib"; export const plain = which;`,
+        "ssr.ts": `import { other } from "lib" with { bunBakeGraph: "ssr" }; export const ssr = other;`,
+        "routes/index.ts": `
+          import { plain } from "../plain";
+          import { ssr } from "../ssr";
+          export default () => Response.json({ plain, ssr, loads: globalThis.loads });
+        `,
+      },
+      async test(dev) {
+        expect(await dev.fetch("/").json()).toEqual({ plain: "rsc", ssr: "ssr", loads: { "index.js": 2 } });
+      },
+    });
+    // The server graph gets the client reference, and the SSR graph gets the component.
+    devTest(`two modules import one "use client" file for two graphs (${first} importer first)`, {
+      framework,
+      pluginFile: holdLoad(held, "Comp[.]ts"),
+      files: {
+        "Comp.ts": `"use client"; export function Button() {}`,
+        ...twoImporters("./Comp"),
+        "routes/index.ts": `
+          import { serverManifest } from "bun:bake/server";
+          import { plain } from "../plain";
+          import { ssr } from "../ssr";
+          export default () =>
+            Response.json({
+              plain: typeof plain.Button,
+              ssr: typeof ssr.Button,
+              manifest: Object.keys(serverManifest),
+              loads: globalThis.loads,
+            });
+        `,
+      },
+      async test(dev) {
+        expect(await dev.fetch("/").json()).toEqual({
+          plain: "object",
+          ssr: "function",
+          manifest: ["Comp.ts#Button"],
+          // One load for the client reference, and one for the SSR copy.
+          loads: { "Comp.ts": 2 },
+        });
+      },
+    });
+  }
+  // The SSR copy of A.ts imports B.ts, and the page imports B.ts too.
+  for (const [first, held] of [
+    ["the page's import", "A[.]ts"],
+    ["the client component's import", "B[.]ts"],
+  ]) {
+    devTest(`a client component has one SSR copy when a page and a client component import it (${first} first)`, {
+      framework,
+      // The second load of B.ts is the one for the SSR graph.
+      pluginFile: holdLoad(held, "B[.]ts", 2),
+      files: {
+        "A.ts": `"use client"; import { b } from "./B"; export function A() { return b; }`,
+        "B.ts": `"use client"; export const b = 1;`,
+        "routes/index.ts": `
+          import { serverManifest } from "bun:bake/server";
+          import * as A from "../A";
+          import * as B from "../B";
+          export default () =>
+            Response.json({
+              a: typeof A.A,
+              b: typeof B.b,
+              manifest: Object.keys(serverManifest).sort(),
+              loads: globalThis.loads,
+            });
+        `,
+      },
+      async test(dev) {
+        expect(await dev.fetch("/").json()).toEqual({
+          a: "object",
+          b: "object",
+          manifest: ["A.ts#A", "B.ts#b"],
+          // One load for the client reference, and one for the SSR copy.
+          loads: { "B.ts": 2 },
+        });
+      },
+    });
+  }
+  devTest("an entry point of the server graph is imported for the SSR graph", {
+    framework,
+    files: {
+      "routes/index.ts": `
+        import * as entry from ${JSON.stringify(require.resolve("../minimal.server.ts"))} with { bunBakeGraph: "ssr" };
+        export default () => new Response("render: " + typeof entry.render);
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("render: function");
+    },
+  });
+  devTest("a stylesheet imported for the SSR graph is a style of the route", {
+    framework,
+    files: {
+      "style.css": `body { color: red; }`,
+      "routes/index.ts": `
+        import "../style.css" with { bunBakeGraph: "ssr" };
+        export default (req, meta) => new Response("styles: " + meta.styles.length);
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("styles: 1");
+    },
+  });
+}
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({

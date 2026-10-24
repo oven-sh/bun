@@ -353,16 +353,19 @@ fn un_defer_same_path(
 }
 
 /// The record's patched source_index, or (dev server, where indices are left
-/// unset on import records) a path-map lookup.
+/// unset on import records) a path-map lookup in the graph the record imports
+/// from. `importer_target` is the graph of the file that has the record.
 #[inline]
 fn record_target(
+    this: &BundleV2,
     rec: &bun_ast::ImportRecord,
-    map: Option<bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>>,
+    importer_target: bun_ast::Target,
 ) -> Option<u32> {
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    this.dev_server?;
+    this.graph.build_graphs[this.import_record_target(rec, importer_target)].get_path(&rec.path)
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can
@@ -438,6 +441,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
             loader,
             target,
             only_records: Some(un_deferred),
+            imports_other_graph: resolve_result.imports_other_graph,
             ..Default::default()
         },
     );
@@ -492,24 +496,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // In dev server mode, patchImportRecordSourceIndices skips saving source_indices
     // on import records (the dev server uses path-based identifiers instead). But
     // barrel optimization requires source_indices to seed requested_exports and to
-    // BFS un-defer records. Resolve paths → source_indices here as a fallback.
-    //
-    // Borrowck: `path_to_source_index_map` borrows
-    // `&mut this.graph`; wrap in `BackRef` so the long-lived read borrow
-    // doesn't conflict with `&mut this.requested_exports` /
-    // `&mut this.graph.ast` below. The map struct sits at a stable address in
-    // `graph.build_graphs[target]`; `resolve_barrel_records` may grow it
-    // through its own `&mut` reborrow, but no `&mut` is live when this
-    // `BackRef` is dereferenced (`record_target` re-derefs fresh each call).
-    let path_to_source_index_map: Option<
-        bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
-    > = if dev_handle.is_some() {
-        Some(bun_ptr::BackRef::new(
-            this.path_to_source_index_map(result_ast_target),
-        ))
-    } else {
-        None
-    };
+    // BFS un-defer records. `record_target` resolves paths → source_indices as a fallback.
 
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
     let file_import_records = file_import_records.get();
@@ -534,7 +521,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
-        let Some(target) = record_target(ir, path_to_source_index_map) else {
+        let Some(target) = record_target(this, ir, result_ast_target) else {
             continue;
         };
 
@@ -564,7 +551,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     //   can destructure or access any export. Must mark as .all. We cannot
     //   safely assume which exports will be used.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
-        let Some(target) = record_target(ir, path_to_source_index_map) else {
+        let Some(target) = record_target(this, ir, result_ast_target) else {
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -612,7 +599,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let Some(ir_target) = record_target(ir, path_to_source_index_map) else {
+        let Some(ir_target) = record_target(this, ir, result_ast_target) else {
             continue;
         };
 
@@ -634,7 +621,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Add bare require/dynamic-import targets to BFS as star imports — both
     // always need the full namespace.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
-        let Some(target) = record_target(ir, path_to_source_index_map) else {
+        let Some(target) = record_target(this, ir, result_ast_target) else {
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -682,7 +669,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
             continue;
         }
-        let Some(target) = record_target(ir, path_to_source_index_map) else {
+        let Some(target) = record_target(this, ir, result_ast_target) else {
             continue;
         };
         let (found, value) = RequestedExports::entry(&mut this.requested_exports, target);
@@ -809,6 +796,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             let mut pushes: Vec<StarPush> = Vec::new();
             {
+                let barrel_target = this.graph.ast.items_target()[barrel_idx as usize];
                 let irs = &this.graph.ast.items_import_records()[barrel_idx as usize];
                 let named_exports = &this.graph.ast.items_named_exports()[barrel_idx as usize];
                 let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
@@ -823,7 +811,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
                         continue;
                     }
-                    let Some(target) = record_target(rec, path_to_source_index_map) else {
+                    let Some(target) = record_target(this, rec, barrel_target) else {
                         continue;
                     };
                     if imp.alias_is_star {
@@ -850,7 +838,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
                         continue;
                     }
-                    let Some(target) = record_target(rec, path_to_source_index_map) else {
+                    let Some(target) = record_target(this, rec, barrel_target) else {
                         continue;
                     };
                     pushes.push(StarPush {

@@ -436,6 +436,198 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  // One file is in two graphs: a plain import gets the copy of the server graph, and an import with
+  // `bunBakeGraph: "ssr"` gets the copy of the SSR graph.
+  describe("a file in the server graph and in the SSR graph", () => {
+    const framework = {
+      fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+      serverComponents: {
+        separateSSRGraph: true,
+        serverRuntimeImportSource: "./server.ts",
+        serverRegisterClientReferenceExport: "registerClientReference",
+      },
+    };
+    // The page gets the exports that the SSR manifest loads, as a framework loads a client component for SSR.
+    const server = `
+      import { ssrManifest } from "bun:bake/server";
+      export function render() {
+        throw new Error("not used");
+      }
+      export async function prerender(meta) {
+        const ssrExports = [];
+        for (const id in ssrManifest) {
+          for (const name in ssrManifest[id]) {
+            const entry = ssrManifest[id][name];
+            ssrExports.push((await import(entry.specifier))[entry.name]);
+          }
+        }
+        return { files: { "index.html": String(meta.pageModule.default(ssrExports)) } };
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `;
+    // `#both` resolves to a different file in each graph: it shows the graph of a copy.
+    const shared = {
+      "package.json": JSON.stringify({
+        imports: { "#both": { "react-server": "./both-rsc.ts", "default": "./both-ssr.ts" } },
+      }),
+      "both-rsc.ts": `export const which = "rsc";`,
+      "both-ssr.ts": `export const which = "ssr";`,
+      "shared.ts": `export { which } from "#both";`,
+    };
+    // Holds the loads of `hold` until `until` is loaded `times` times: the importer that is not held is parsed first.
+    const holdLoad = (hold: string, until: string, times = 1) => `{
+      name: "hold-load",
+      setup(build) {
+        const reached = Promise.withResolvers();
+        let loads = 0;
+        build.onLoad({ filter: /${until}$/ }, () => {
+          if (++loads === ${times}) reached.resolve();
+        });
+        build.onLoad({ filter: /${hold}$/ }, () => reached.promise);
+      },
+    }`;
+    // The importer that is named is parsed first.
+    const importerOrders = [
+      ["server", "ssr[.]ts"],
+      ["SSR", "plain[.]ts"],
+    ];
+    const twoImporters = (name: string, file: string) => ({
+      "plain.ts": `import { ${name} } from ${JSON.stringify(file)}; export const plain = ${name};`,
+      "ssr.ts": `import { ${name} } from ${JSON.stringify(file)} with { bunBakeGraph: "ssr" }; export const ssr = ${name};`,
+    });
+
+    // Builds the app and returns what its page prerenders.
+    async function prerender(files: Record<string, string>, plugin?: string) {
+      using dir = tempDir("bake-production-two-graphs", {
+        "app.ts": `
+          const plugins = ${plugin ? `[${plugin}]` : "undefined"};
+          export default { app: { framework: ${JSON.stringify(framework)}, plugins } };
+        `,
+        "server.ts": server,
+        ...files,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const page = await Bun.file(path.join(String(dir), "dist", "index.html"))
+        .text()
+        .catch(() => stderr);
+      return { page, exitCode };
+    }
+
+    test.concurrent.each([
+      [
+        "server, SSR",
+        `import { which as plain } from "../shared"; import { which as ssr } from "../shared" with { bunBakeGraph: "ssr" };`,
+      ],
+      [
+        "SSR, server",
+        `import { which as ssr } from "../shared" with { bunBakeGraph: "ssr" }; import { which as plain } from "../shared";`,
+      ],
+    ])("two statements import one file for two graphs (%s)", async (_, imports) => {
+      expect(
+        await prerender({
+          ...shared,
+          "routes/index.ts": `${imports}\nexport default () => "plain=" + plain + " ssr=" + ssr;`,
+        }),
+      ).toEqual({ page: "plain=rsc ssr=ssr", exitCode: 0 });
+    });
+
+    test.concurrent.each(importerOrders)(
+      "two modules import one file for two graphs (%s importer first)",
+      async (_, held) => {
+        expect(
+          await prerender(
+            {
+              ...shared,
+              ...twoImporters("which", "./shared"),
+              "routes/index.ts": `
+                import { plain } from "../plain";
+                import { ssr } from "../ssr";
+                export default () => "plain=" + plain + " ssr=" + ssr;
+              `,
+            },
+            holdLoad(held, "shared[.]ts"),
+          ),
+        ).toEqual({ page: "plain=rsc ssr=ssr", exitCode: 0 });
+      },
+    );
+
+    // The server graph gets the client reference, and the SSR graph gets the component.
+    test.concurrent.each(importerOrders)(
+      'two modules import one "use client" file for two graphs (%s importer first)',
+      async (_, held) => {
+        expect(
+          await prerender(
+            {
+              "Comp.ts": `"use client"; export function Button() {}`,
+              ...twoImporters("Button", "./Comp"),
+              "routes/index.ts": `
+                import { plain } from "../plain";
+                import { ssr } from "../ssr";
+                export default ssrExports =>
+                  "plain=" + typeof plain + " ssr=" + typeof ssr + " manifest=" + (ssrExports[0] === ssr);
+              `,
+            },
+            holdLoad(held, "Comp[.]ts"),
+          ),
+        ).toEqual({ page: "plain=object ssr=function manifest=true", exitCode: 0 });
+      },
+    );
+
+    // The SSR copy of A.ts imports B.ts, and the SSR manifest loads B.ts: both get one module.
+    test("a client component has one SSR copy when a page and a client component import it", async () => {
+      expect(
+        await prerender(
+          {
+            "A.ts": `"use client"; import { token } from "./B"; export const tokenFromA = token;`,
+            "B.ts": `"use client"; export const token = {};`,
+            "routes/index.ts": `
+              import { tokenFromA } from "../A";
+              import { token } from "../B";
+              export default ssrExports =>
+                "references=" + typeof tokenFromA + "," + typeof token + " tokens=" + new Set(ssrExports).size;
+            `,
+          },
+          // B.ts is loaded for its client reference and for its SSR copy before A.ts is parsed. In the other
+          // order the browser graph gets B.ts twice, and the build stops at the two equal output files.
+          holdLoad("A[.]ts", "B[.]ts", 2),
+        ),
+      ).toEqual({ page: "references=object,object tokens=1", exitCode: 0 });
+    });
+
+    // A package with a "module" and a "main" field: an import gets "main" when its graph also requires the package.
+    const dualPackage = {
+      "node_modules/dual/package.json": JSON.stringify({ name: "dual", main: "./main.cjs", module: "./module.mjs" }),
+      "node_modules/dual/module.mjs": `export default "module";`,
+      "node_modules/dual/main.cjs": `module.exports = "main";`,
+      "imports.ts": `import field from "dual" with { bunBakeGraph: "ssr" }; export const imported = field;`,
+      "requires.ts": `export const required = require("dual");`,
+    };
+    test.concurrent.each([
+      ["the SSR graph", `with { bunBakeGraph: "ssr" }`, "main"],
+      ["the server graph", ``, "module"],
+    ])("an import for the SSR graph when %s requires the package", async (_, attribute, field) => {
+      expect(
+        await prerender({
+          ...dualPackage,
+          "routes/index.ts": `
+            import { imported } from "../imports";
+            import { required } from "../requires" ${attribute};
+            export default () => "imported=" + imported + " required=" + required;
+          `,
+        }),
+      ).toEqual({ page: `imported=${field} required=main`, exitCode: 0 });
+    });
+  });
+
   test('a framework entry point that a "browser" map disables is reported', async () => {
     using dir = tempDir("bake-production-disabled-entry", {
       "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),

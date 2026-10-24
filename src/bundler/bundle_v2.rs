@@ -143,6 +143,12 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+
+    /// One file can import one path for two graphs, see `import_record_target`. Its
+    /// resolve queue has room for one new module per path: the module for the second
+    /// graph waits here. `resolve_import_records` fills it and `process_resolve_queue`
+    /// empties it.
+    pub(crate) other_graph_resolve_queue: ResolveQueue,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -236,6 +242,33 @@ impl<'a> BundleV2<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         self.graph.path_to_source_index_map(target)
+    }
+
+    /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
+    #[inline]
+    pub(crate) fn has_separate_ssr_graph(&self) -> bool {
+        self.framework
+            .as_ref()
+            .and_then(|framework| framework.server_components.as_ref())
+            .is_some_and(|server_components| server_components.separate_ssr_graph)
+    }
+
+    /// The graph of the module that `record` imports: the importer's own, unless
+    /// `bunBakeGraph: "ssr"` moves the import to the SSR graph. The module is filed
+    /// in `Graph::build_graphs` under this target and under no other.
+    #[inline]
+    pub(crate) fn import_record_target(
+        &self,
+        record: &bun_ast::ImportRecord,
+        importer_target: Target,
+    ) -> Target {
+        if record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph
+            && self.has_separate_ssr_graph()
+        {
+            Target::ServerComponentsSsr
+        } else {
+            importer_target
+        }
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
@@ -2653,7 +2686,6 @@ pub mod bv2_impl {
                 ast_import_records.iter_mut().zip(targets.iter())
             {
                 let import_records = ast_import_record_list.as_mut_slice();
-                let path_to_source_index_map = &self.graph.build_graphs[*target];
                 for import_record in import_records.iter_mut() {
                     let source_index = import_record.source_index.get();
                     if source_index >= max_valid_source_index.get() {
@@ -2661,6 +2693,8 @@ pub mod bv2_impl {
                     }
                     let secondary_path: &[u8] = &secondary_paths[source_index as usize];
                     if !secondary_path.is_empty() {
+                        let path_to_source_index_map = &self.graph.build_graphs
+                            [self.import_record_target(import_record, *target)];
                         let Some(secondary_source_index) =
                             path_to_source_index_map.get(secondary_path)
                         else {
@@ -3023,14 +3057,7 @@ pub mod bv2_impl {
                     // `self.graph` simultaneously, so re-derive the map per insert.
                     let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
-                    let separate_ssr = self
-                        .framework
-                        .as_ref()
-                        .unwrap()
-                        .server_components
-                        .as_ref()
-                        .unwrap()
-                        .separate_ssr_graph;
+                    let separate_ssr = self.has_separate_ssr_graph();
                     let (ta, tb) = match target {
                         Target::Browser => (main_target, Target::ServerComponentsSsr),
                         Target::ServerComponentsSsr => (main_target, Target::Browser),
@@ -3315,6 +3342,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                other_graph_resolve_queue: ResolveQueue::default(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -4204,20 +4232,12 @@ pub mod bv2_impl {
             let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
             // Compute borrow-heavy fields up front so the `&self` borrow taken by
             // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::ServerComponentsSsr
-                && !self
-                    .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
-            {
-                self.transpiler.options.jsx.clone()
-            } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
-            };
+            let jsx =
+                if known_target == Target::ServerComponentsSsr && !self.has_separate_ssr_graph() {
+                    self.transpiler.options.jsx.clone()
+                } else {
+                    self.transpiler_for_target(known_target).options.jsx.clone()
+                };
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -6557,10 +6577,12 @@ pub mod bv2_impl {
         //
         // The problem is that module resolution has many mutexes.
         // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
+        //
+        // Returns `ResolveImportRecordResult`'s `resolve_queue` and `imports_other_graph`.
         fn run_resolution_for_parse_task(
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
-        ) -> ResolveQueue {
+        ) -> (ResolveQueue, bool) {
             let result = match &mut parse_result.value {
                 parse_task::ResultValue::Success(r) => r,
                 _ => unreachable!(),
@@ -6580,8 +6602,9 @@ pub mod bv2_impl {
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
+                this.other_graph_resolve_queue.clear();
 
-                // A failed file's imports are not followed: the queue is cleared
+                // A failed file's imports are not followed: the queues are cleared
                 // above. That includes the records barrel optimization deferred, so
                 // a later request must not un-defer them. (The graph row keeps only
                 // the records: it has no `target` to resolve them against.)
@@ -6634,7 +6657,10 @@ pub mod bv2_impl {
                 });
             }
 
-            resolve_result.resolve_queue
+            (
+                resolve_result.resolve_queue,
+                resolve_result.imports_other_graph,
+            )
         }
     }
 
@@ -6648,8 +6674,34 @@ pub mod bv2_impl {
     }
 
     pub(crate) struct ResolveImportRecordResult {
+        /// The new modules, one for each path. See `BundleV2::other_graph_resolve_queue`
+        /// for the second module of a path.
         pub(crate) resolve_queue: ResolveQueue,
         pub(crate) last_error: Option<Error>,
+        /// An import of this call is for another graph than the importer's, see
+        /// `BundleV2::import_record_target`. `patch_import_record_source_indices`
+        /// then picks the path map for each record.
+        pub(crate) imports_other_graph: bool,
+    }
+
+    /// The graph that a module of the resolve queue is parsed for, when the record
+    /// that queues it imports for `target`.
+    #[inline]
+    fn queued_known_target(kind: ImportKind, target: options::Target) -> options::Target {
+        if kind == ImportKind::HtmlManifest {
+            Target::Browser
+        } else {
+            target
+        }
+    }
+
+    /// An earlier record of the file put a module for `queued` in the file's resolve
+    /// queue, and this record needs the module of the same path for `known_target`.
+    /// True if that is a module of another graph: a record can only move its import
+    /// to the SSR graph, see `BundleV2::import_record_target`.
+    #[inline]
+    fn is_other_graph(queued: options::Target, known_target: options::Target) -> bool {
+        (queued == Target::ServerComponentsSsr) != (known_target == Target::ServerComponentsSsr)
     }
 
     /// `only_records`: barrel un-deferral passes the ascending indices of the records
@@ -6710,8 +6762,10 @@ pub mod bv2_impl {
             }
             let mut resolve_queue = ResolveQueue::default();
             resolve_queue.reserve(estimated_resolve_queue_count);
+            debug_assert!(self.other_graph_resolve_queue.is_empty());
 
             let mut last_error: Option<Error> = None;
+            let mut imports_other_graph = false;
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
                 if !only_selected_record(only_records, i) {
@@ -6861,16 +6915,7 @@ pub mod bv2_impl {
                         continue;
                     }
 
-                    let is_supported = self.framework.as_ref().unwrap().server_components.is_some()
-                        && self
-                            .framework
-                            .as_ref()
-                            .unwrap()
-                            .server_components
-                            .as_ref()
-                            .unwrap()
-                            .separate_ssr_graph;
-                    if !is_supported {
+                    if !self.has_separate_ssr_graph() {
                         self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
@@ -6879,6 +6924,7 @@ pub mod bv2_impl {
                         continue;
                     }
 
+                    imports_other_graph |= ctx.target != Target::ServerComponentsSsr;
                     (
                         self.ssr_transpiler,
                         bake::Graph::Ssr,
@@ -6893,6 +6939,7 @@ pub mod bv2_impl {
                         ctx.target,
                     )
                 };
+                debug_assert!(target == self.import_record_target(import_record, ctx.target));
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
@@ -6919,10 +6966,18 @@ pub mod bv2_impl {
 
                         let resolve_entry =
                             resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                        let mut found_existing = resolve_entry.found_existing;
+                        let mut task_slot: *mut *mut ParseTask = resolve_entry.value_ptr;
+                        // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
+                        if found_existing
+                            && is_other_graph(unsafe { &**task_slot }.known_target, target)
+                        {
+                            (found_existing, task_slot) =
+                                self.other_graph_resolve_queue_slot(path_primary.text);
+                        }
+                        if found_existing {
+                            // SAFETY: see above.
+                            import_record.path = path_as_static(&unsafe { &**task_slot }.path);
                             continue;
                         }
 
@@ -6955,7 +7010,8 @@ pub mod bv2_impl {
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
+                        // SAFETY: nothing was put into that queue since the slot was taken.
+                        unsafe { *task_slot = resolve_task };
                         continue;
                     }
                 }
@@ -7316,10 +7372,20 @@ pub mod bv2_impl {
                 }
 
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
-                if resolve_entry.found_existing {
-                    // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path =
-                        path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                let mut found_existing = resolve_entry.found_existing;
+                let mut task_slot: *mut *mut ParseTask = resolve_entry.value_ptr;
+                // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
+                if found_existing
+                    && is_other_graph(
+                        unsafe { &**task_slot }.known_target,
+                        queued_known_target(import_record.kind, target),
+                    )
+                {
+                    (found_existing, task_slot) = self.other_graph_resolve_queue_slot(path.text);
+                }
+                if found_existing {
+                    // SAFETY: see above.
+                    import_record.path = path_as_static(&unsafe { &**task_slot }.path);
                     continue;
                 }
 
@@ -7336,17 +7402,14 @@ pub mod bv2_impl {
                 // SAFETY: arena outlives the bundle pass.
                 let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
 
-                resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
-                    Target::Browser
-                } else {
-                    target
-                };
+                resolve_task.known_target = queued_known_target(import_record.kind, target);
 
                 resolve_task.jsx = resolve_result.jsx.clone();
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
-                *resolve_entry.value_ptr = resolve_task;
+                // SAFETY: nothing was put into that queue since the slot was taken.
+                unsafe { *task_slot = resolve_task };
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
                         && !core::ptr::eq(secondary, path)
@@ -7365,12 +7428,58 @@ pub mod bv2_impl {
             ResolveImportRecordResult {
                 resolve_queue,
                 last_error,
+                imports_other_graph,
             }
         }
 
+        /// An earlier record of the file put a module of another graph in the file's
+        /// queue for `path`. Returns the slot of `path` in `other_graph_resolve_queue`,
+        /// and whether a record already put its task there. The slot is valid until the
+        /// next put into that queue.
+        #[cold]
+        fn other_graph_resolve_queue_slot(&mut self, path: &[u8]) -> (bool, *mut *mut ParseTask) {
+            let entry = self
+                .other_graph_resolve_queue
+                .get_or_put(path)
+                .expect("oom");
+            (entry.found_existing, std::ptr::from_mut(entry.value_ptr))
+        }
+
         /// Process a resolve queue: create input file slots and schedule parse tasks.
+        /// Also empties `other_graph_resolve_queue`, which the same call of
+        /// `resolve_import_records` filled.
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
+        #[inline]
         pub(crate) fn process_resolve_queue(
+            &mut self,
+            resolve_queue: &ResolveQueue,
+            target: options::Target,
+            importer_source_index: IndexInt,
+        ) -> i32 {
+            let diff = self.schedule_resolve_queue(resolve_queue, target, importer_source_index);
+            if self.other_graph_resolve_queue.is_empty() {
+                return diff;
+            }
+            diff + self.schedule_other_graph_resolve_queue(target, importer_source_index)
+        }
+
+        #[cold]
+        fn schedule_other_graph_resolve_queue(
+            &mut self,
+            target: options::Target,
+            importer_source_index: IndexInt,
+        ) -> i32 {
+            let mut resolve_queue = core::mem::take(&mut self.other_graph_resolve_queue);
+            let diff = self.schedule_resolve_queue(&resolve_queue, target, importer_source_index);
+            resolve_queue.clear();
+            self.other_graph_resolve_queue = resolve_queue;
+            diff
+        }
+
+        /// Files each new module of `resolve_queue` in the path map of its own graph
+        /// (`ParseTask::known_target`) and schedules its parse. `target` is the graph
+        /// of the importer.
+        fn schedule_resolve_queue(
             &mut self,
             resolve_queue: &ResolveQueue,
             target: options::Target,
@@ -7408,7 +7517,7 @@ pub mod bv2_impl {
                     let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
                         self.graph.path_to_source_index_map(Target::Browser)
                     } else {
-                        self.graph.path_to_source_index_map(target)
+                        self.graph.path_to_source_index_map(value.known_target)
                     };
                     let existing = map.get_or_put(key).expect("oom");
                     (
@@ -7516,6 +7625,8 @@ pub mod bv2_impl {
         /// See `only_selected_record`. `Some` also saves the source indices regardless
         /// of dev_server/loader: the barrel BFS follows them.
         pub(crate) only_records: Option<&'a [u32]>,
+        /// See `ResolveImportRecordResult::imports_other_graph`.
+        pub(crate) imports_other_graph: bool,
     }
 
     impl Default for PatchImportRecordsCtx<'_> {
@@ -7527,6 +7638,7 @@ pub mod bv2_impl {
                 target: Target::Browser,
                 redirect_import_record_index: u32::MAX,
                 only_records: None,
+                imports_other_graph: false,
             }
         }
     }
@@ -7568,14 +7680,45 @@ pub mod bv2_impl {
                 drop(value);
             }
 
-            // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
-            // so borrowck sees it as disjoint from `self.graph.input_files` above.
-            let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
+            if ctx.imports_other_graph {
+                self.patch_import_records::<true>(
+                    import_records,
+                    ctx,
+                    save_import_record_source_index,
+                );
+            } else {
+                self.patch_import_records::<false>(
+                    import_records,
+                    ctx,
+                    save_import_record_source_index,
+                );
+            }
+        }
+
+        /// Binds each record to the module its path has in the path map of the graph
+        /// the record imports from. `OTHER_GRAPH`: see
+        /// `ResolveImportRecordResult::imports_other_graph`. Without it, that graph is
+        /// the importer's for every record, and the loop does not read the records' tags.
+        #[inline(always)]
+        fn patch_import_records<const OTHER_GRAPH: bool>(
+            &mut self,
+            import_records: &mut import_record::List,
+            ctx: PatchImportRecordsCtx,
+            save_import_record_source_index: bool,
+        ) {
+            // Inlined `self.path_to_source_index_map(..)` (== `&mut self.graph.build_graphs[target]`)
+            // so borrowck sees it as disjoint from `self.graph.input_files`.
+            let input_file_loaders = self.graph.input_files.items_loader();
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                let target = if OTHER_GRAPH {
+                    self.import_record_target(record, ctx.target)
+                } else {
+                    ctx.target
+                };
+                if let Some(source_index) = self.graph.build_graphs[target].get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7584,7 +7727,8 @@ pub mod bv2_impl {
 
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
+                            let _ = self.graph.build_graphs[ctx.target]
+                                .put(ctx.source_path, source_index); // OOM-only Result
                         }
                     }
                 }
@@ -7722,11 +7866,13 @@ pub mod bv2_impl {
             // double-borrow `graph`/`this`.
 
             let mut resolve_queue = ResolveQueue::default();
+            let mut imports_other_graph = false;
             let mut process_log = true;
 
             if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
                 barrel_imports::apply_barrel_optimization(this, parse_result);
-                resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
+                (resolve_queue, imports_other_graph) =
+                    Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
                 }
@@ -7904,6 +8050,7 @@ pub mod bv2_impl {
                             target: result.ast.target,
                             redirect_import_record_index: result.ast.redirect_import_record_index,
                             only_records: None,
+                            imports_other_graph,
                         },
                     );
 
@@ -7937,14 +8084,7 @@ pub mod bv2_impl {
                     // needs *before* the move. Only paid for files that hit the SCB gate.
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
                         && {
-                            let separate = this
-                                .framework
-                                .as_ref()
-                                .unwrap()
-                                .server_components
-                                .as_ref()
-                                .unwrap()
-                                .separate_ssr_graph;
+                            let separate = this.has_separate_ssr_graph();
                             let is_client = result.use_directive == crate::UseDirective::Client;
                             let is_browser = result_ast_target == Target::Browser;
                             if separate {
@@ -7980,14 +8120,7 @@ pub mod bv2_impl {
                             bun_core::todo_panic!("\"use server\"");
                         }
 
-                        let separate_ssr_graph = this
-                            .framework
-                            .as_ref()
-                            .unwrap()
-                            .server_components
-                            .as_ref()
-                            .unwrap()
-                            .separate_ssr_graph;
+                        let separate_ssr_graph = this.has_separate_ssr_graph();
 
                         // `result.source` was swapped into
                         // `graph.input_files` earlier; re-borrow it from the SoA
@@ -8015,29 +8148,43 @@ pub mod bv2_impl {
                                 )
                                 .expect("oom");
 
-                            let mut ssr_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            // `path_with_pretty_initialized` takes/returns
-                            // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
-                            // `fs_path_from_logger`/`fs_path_to_logger` until the
-                            // three `Path` mirrors unify.
-                            ssr_source.path.pretty = ssr_source.path.text;
-                            ssr_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &ssr_source.path,
+                            // The SSR copy is this path's module in the SSR graph. An
+                            // import of that graph may have added it already.
+                            let ssr_index = if let Some(ssr_index) = this
+                                .path_to_source_index_map(Target::ServerComponentsSsr)
+                                .get(source_path_text)
+                            {
+                                ssr_index
+                            } else {
+                                let mut ssr_source = this.graph.input_files.items_source()
+                                    [result_source_index]
+                                    .clone();
+                                // `path_with_pretty_initialized` takes/returns
+                                // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
+                                // `fs_path_from_logger`/`fs_path_to_logger` until the
+                                // three `Path` mirrors unify.
+                                ssr_source.path.pretty = ssr_source.path.text;
+                                ssr_source.path = path_as_static(
+                                    &this
+                                        .path_with_pretty_initialized(
+                                            &ssr_source.path,
+                                            Target::ServerComponentsSsr,
+                                        )
+                                        .expect("oom"),
+                                );
+                                let ssr_index = this
+                                    .enqueue_parse_task2(
+                                        &mut ssr_source,
+                                        source_loader,
                                         Target::ServerComponentsSsr,
+                                        source_module_type,
                                     )
-                                    .expect("oom"),
-                            );
-                            let ssr_index = this
-                                .enqueue_parse_task2(
-                                    &mut ssr_source,
-                                    source_loader,
-                                    Target::ServerComponentsSsr,
-                                    source_module_type,
-                                )
-                                .expect("oom");
+                                    .expect("oom");
+                                this.path_to_source_index_map(Target::ServerComponentsSsr)
+                                    .put(source_path_text, ssr_index)
+                                    .expect("oom");
+                                ssr_index
+                            };
 
                             (reference_source_index, ssr_index)
                         } else {

@@ -1710,7 +1710,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // directly. Otherwise a later parse infers the synthetic binding's name.
                 if p.options.features.minify_keep_names {
                     for var_decl in var_decls.iter_mut() {
-                        let Some(Expr { data: ExprData::EIdentifier(id), .. }) = var_decl.value else {
+                        let Some(Expr {
+                            data: ExprData::EIdentifier(id),
+                            ..
+                        }) = var_decl.value
+                        else {
                             continue;
                         };
                         if p.symbols[id.ref_.inner_index() as usize].use_count_estimate != 1 {

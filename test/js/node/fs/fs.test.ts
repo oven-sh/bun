@@ -7951,3 +7951,12 @@ describe("module init", () => {
     expect(mismatched).toStrictEqual([]);
   });
 });
+
+it.if(isPosix)("realpath preserves literal backslashes", async () => {
+  using dir = tempDir("fs-realpath-backslash", {});
+  const target = join(String(dir), "artifact\\root");
+  fs.mkdirSync(target);
+  const expected = realpathSync.native(target);
+  expect(realpathSync(target)).toBe(expected);
+  expect(await promises.realpath(target)).toBe(expected);
+});

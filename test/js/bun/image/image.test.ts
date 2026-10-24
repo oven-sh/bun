@@ -1424,21 +1424,34 @@ describe("PNG decode: every colour type, depth, tRNS and interlace", () => {
     ["gray 2-bit", { ctype: 0, depth: 2, w: W, h: H, px: (x, y) => [(x + y) & 3] }],
     ["gray 4-bit", { ctype: 0, depth: 4, w: W, h: H, px: (x, y) => [(x * 3 + y) & 15] }],
     ["gray 8-bit", { ctype: 0, depth: 8, w: W, h: H, px: (x, y) => [v8(x, y, 0)] }],
-    ["gray 8-bit + tRNS", { ctype: 0, depth: 8, w: W, h: H, px: (x, y) => [(x + y) % 3 === 0 ? 40 : v8(x, y, 0) | 1], trns: [40] }],
+    [
+      "gray 8-bit + tRNS",
+      { ctype: 0, depth: 8, w: W, h: H, px: (x, y) => [(x + y) % 3 === 0 ? 40 : v8(x, y, 0) | 1], trns: [40] },
+    ],
     ["gray 16-bit", { ctype: 0, depth: 16, w: W, h: H, px: (x, y) => [v16(x, y, 0)] }],
     ["gray+alpha 8-bit", { ctype: 4, depth: 8, w: W, h: H, px: (x, y) => [v8(x, y, 0), v8(x, y, 1)] }],
     ["gray+alpha 16-bit", { ctype: 4, depth: 16, w: W, h: H, px: (x, y) => [v16(x, y, 0), v16(x, y, 1)] }],
     ["RGB 8-bit", { ctype: 2, depth: 8, w: W, h: H, px: (x, y) => [0, 1, 2].map(c => v8(x, y, c)) }],
     [
       "RGB 8-bit + tRNS",
-      { ctype: 2, depth: 8, w: W, h: H, px: (x, y) => ((x * y) % 4 === 0 ? [1, 2, 3] : [0, 1, 2].map(c => v8(x, y, c) | 128)), trns: [1, 2, 3] },
+      {
+        ctype: 2,
+        depth: 8,
+        w: W,
+        h: H,
+        px: (x, y) => ((x * y) % 4 === 0 ? [1, 2, 3] : [0, 1, 2].map(c => v8(x, y, c) | 128)),
+        trns: [1, 2, 3],
+      },
     ],
     ["RGB 16-bit", { ctype: 2, depth: 16, w: W, h: H, px: (x, y) => [0, 1, 2].map(c => v16(x, y, c)) }],
     ["RGBA 16-bit", { ctype: 6, depth: 16, w: W, h: H, px: (x, y) => [0, 1, 2, 3].map(c => v16(x, y, c)) }],
     ["palette 4-bit", { ctype: 3, depth: 4, w: W, h: H, plte, px: (x, y) => [(x + y * 3) & 15] }],
     ["palette 8-bit", { ctype: 3, depth: 8, w: W, h: H, plte, px: (x, y) => [(x * 5 + y) & 15] }],
     // Shorter than PLTE: entries past the end are opaque.
-    ["palette 8-bit + partial tRNS", { ctype: 3, depth: 8, w: W, h: H, plte, px: (x, y) => [(x * 5 + y) & 15], trns: [0, 64, 128] }],
+    [
+      "palette 8-bit + partial tRNS",
+      { ctype: 3, depth: 8, w: W, h: H, plte, px: (x, y) => [(x * 5 + y) & 15], trns: [0, 64, 128] },
+    ],
     ["RGBA 8-bit", { ctype: 6, depth: 8, w: W, h: H, px: (x, y) => [0, 1, 2, 3].map(c => v8(x, y, c)) }],
   ];
 

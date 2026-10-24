@@ -103,6 +103,21 @@ fn widen_row(color: ::png::ColorType, src: &[u8], dst: &mut [u8]) -> Result<(), 
     Ok(())
 }
 
+/// The zlib stream of the iCCP chunk, if one comes before IDAT.
+fn iccp_stream(bytes: &[u8]) -> Option<&[u8]> {
+    let mut at = 8;
+    while let Some(head) = bytes.get(at..at + 8) {
+        let len = u32::from_be_bytes(head[..4].try_into().ok()?) as usize;
+        let data = bytes.get(at + 8..(at + 8).checked_add(len)?)?;
+        match &head[4..] {
+            b"iCCP" => return data.get(data.iter().position(|&b| b == 0)? + 2..),
+            b"IDAT" => return None,
+            _ => at += 12 + len,
+        }
+    }
+    None
+}
+
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let mut decoder = ::png::Decoder::new(std::io::Cursor::new(bytes));
     // Skip adler32 and chunk-CRC verification (as libvips and stb_image do); they only cost decode time.
@@ -126,6 +141,18 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let (width, height) = (reader.info().width, reader.info().height);
     codecs::guard(width, height, max_pixels)?;
     let icc_profile = reader.info().icc_profile.as_deref().map(<[u8]>::to_vec);
+    // The crate drops an iCCP it can't inflate within the budget (and a malformed one) without an
+    // error; libspng failed the decode for the first and kept the pixels for the second.
+    if icc_profile.is_none()
+        && iccp_stream(bytes).is_some_and(|z| {
+            matches!(
+                ::fdeflate::decompress_to_vec_bounded(z, max_inflated as usize),
+                Err(::fdeflate::BoundedDecompressionError::OutputTooLarge { .. })
+            )
+        })
+    {
+        return Err(codecs::Error::DecodeFailed);
+    }
     let (color, depth) = reader.output_color_type();
     if depth != ::png::BitDepth::Eight {
         return Err(codecs::Error::DecodeFailed);

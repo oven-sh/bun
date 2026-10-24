@@ -1560,6 +1560,7 @@ dependencies = [
  "encoding_rs",
  "enum-map",
  "enumset",
+ "fdeflate",
  "getrandom",
  "libc",
  "lol_html",

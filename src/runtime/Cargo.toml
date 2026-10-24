@@ -24,6 +24,8 @@ blake2 = { version = "0.10", default-features = false }
 bytemuck = "1"
 # Bun.Image PNG decode + truecolour encode. zlib-rs: the default miniz_oxide encodes slower than libspng did.
 png = { version = "=0.18.1", features = ["zlib-rs"] }
+# png 0.18.1 drops an iCCP it can't inflate within its limit; codec_png.rs re-checks with the same inflater.
+fdeflate = "0.3.7"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true

@@ -11560,6 +11560,510 @@ export function second(p: string | number | undefined) {
       expect(exitCode).toBe(1);
     });
 
+    // A call that fails is reported while the errors of the call around it are collected: in an argument, in what the
+    // elaboration of an object literal checks again, or in the initializer of `then`, which `maybeAddMissingAwaitInfo` reads.
+    test("the errors of a call and of a call that's reported meanwhile stay apart", async () => {
+      using dir = project({
+        "arguments.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare function g(x: string): void; declare function g(x: number, y: number): void; declare function h(cb: () => string): void; declare function h(cb: () => boolean, n: number): void; declare function o(x: { a: string }): void; declare function o(x: { a: boolean }): void; declare function ar(x: string[]): void; declare function ar(x: boolean[]): void;
+g(f(1)); g(f(f(1))); h(() => f(1)); h(() => { f(1); return 1; }); h(function () { return f(1); }); o({ a: f(1) }); o({ a: f("s") }); ar([f(1)]); ar([f("s"), f(2)]); g(f(1), f(2)); g(\`\${f(1)}\`); g((f(1), 1)); g(f(1) ? 1 : 2); g([f(1)][0]); g({ k: f(1) }.k); h(() => () => f(1)); o({ a: (() => f(1))() }); o({ get a() { return f(1); } }); o({ a: f(1), b: f(2) }); g(f); g(new (class { p = f(1); })()); g(f(1) as any); g(<any>f(1)); g(f(1)!);
+export {};
+`,
+        "await.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare function g(x: string): void; declare function g(x: number, y: number): void; declare function one(x: string): void; declare const ps: Promise<string>; declare const pn: Promise<number>;
+async function a() { g(ps); one(ps); one(pn); g(pn, pn); f(ps); one(Promise.resolve(f(1))); g(Promise.resolve(f(1))); one((async () => f(1))()); g((async () => "s")()); one({ then: f(1) }); g({ then(r: (v: string) => void) { f(1); } }); one({ then(r: (v: string) => void) { f(1); } }); one(new (class { then(r: (v: string) => void) { return f(1); } })()); }
+export {};
+`,
+        "generic.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare function id<T>(x: T): T; declare function pair<T>(a: T, b: T): T; declare function pair<T>(a: T, b: T, c: T): T[]; declare function on<K extends "a" | "b">(k: K, cb: (v: K) => void): void; declare function on(k: number, cb: () => void): void; declare function wrap<T extends string>(x: T): T; declare function wrap<T extends boolean>(x: T, y: T): T;
+id(f(1)); pair(f(1), "s"); pair(f(1)); on("c", v => f(v)); on("a", v => f(1)); on(f(1), () => f(2)); wrap(f(1)); wrap(id(f(1))); wrap(pair(f(1), f(2))); id(wrap(1)); pair(wrap(1), wrap(2)); on("a", (v, w) => wrap(f(v)));
+export {};
+`,
+        "literals-in-loop.ts": `declare function ovo(x: { a: number }): string; declare function ovo(x: { a: string }): number; declare function ova(x: number[]): string; declare function ova(x: string[]): number; declare function ovn(x: { a: { b: number } }): string; declare function ovn(x: { a: { b: string } }): number; declare function ovf(x: () => number): string; declare function ovf(x: () => string): number; declare function oneo(x: { a: number }): string; declare function ovt(x: [number, number]): string; declare function ovt(x: [string, string]): number;
+declare const c: boolean; declare const root: {};
+export function obj(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovo({ a: undefined ?? z });
+  while (c) { x = p; }
+  return x;
+}
+export function arr(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ova([undefined ?? z]);
+  while (c) { x = p; }
+  return x;
+}
+export function nested(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovn({ a: { b: undefined ?? z } });
+  while (c) { x = p; }
+  return x;
+}
+export function fn(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovf(() => undefined ?? z);
+  while (c) { x = p; }
+  return x;
+}
+export function single(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = oneo({ a: undefined ?? z });
+  while (c) { x = p; }
+  return x;
+}
+export function tuple(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovt([1, undefined ?? z]);
+  while (c) { x = p; }
+  return x;
+}
+export function obj2(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovo({ a: null ?? z, b: undefined ?? z } as any as { a: {} });
+  while (c) { x = p; }
+  return x;
+}
+export function spread(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovo({ ...{ a: undefined ?? z } });
+  while (c) { x = p; }
+  return x;
+}
+export function cond(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovo(c ? { a: undefined ?? z } : { a: null ?? z });
+  while (c) { x = p; }
+  return x;
+}
+export function paren(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ovo(({ a: (undefined ?? z) }));
+  while (c) { x = p; }
+  return x;
+}
+`,
+        "loops.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare function g(x: string): string; declare function g(x: boolean, y: number): boolean; declare const c: boolean;
+export function a() { let x: string | number | boolean = 1; while (c) { x = g(f(x)); } return x; } export function b() { let x: string | number = 1; for (;;) { x = f(g(x)); if (c) break; } return x; } export function d() { let x: string | number | undefined = 0; while (c) { x = g(() => f(x)); x = g({ a: f(x) }); x = g([f(x)]); } } export function e() { let x: number | string = 0; do { x = f(f(f(x))); } while (g(x)); } export function h(p: string | number | undefined) { let x: string | number | undefined = 0; p = f(undefined ?? g(p)); while (c) { x = p; } return x; }
+`,
+        "then-single.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare function g1(x: string): void;
+export function run() { g1(new T1()); g1(new T2()); g1(mk()); }
+class T1 { then = f(1); } class T2 { then() { return f(2); } } function mk() { return { then: f(3) }; }
+`,
+        "then-twice.ts": `declare function f(x: string): (cb: (v: string) => void) => void; declare function f(x: boolean): (cb: (v: string) => void) => void; declare function g(x: string): void; declare function g(x: number): void;
+export function run() { g(new Thenable()); g(new Thenable2()); }
+class Thenable { then = f(oops); } class Thenable2 { then = f(f(f(1))); }
+`,
+        "then.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare function g(x: string): void; declare function g(x: number): void;
+export function run() { g(new Thenable()); }
+class Thenable { then = f(1); }
+`,
+        "this-rest.ts": `declare function f(x: string): number; declare function f(x: boolean): number; declare const o: { m(this: { a: string }, x: string): void; m(this: { a: string }, x: boolean): void; a: number; r(...x: [string, number]): void; r(...x: [boolean]): void }; declare function sp(...x: [string, ...number[]]): void; declare function sp(...x: [boolean]): void; declare const t: [number, number]; declare function mk(): typeof o;
+o.m(f(1)); o.m("s"); mk().m(f(1)); o.r(f(1), f(2)); o.r(...t); sp(...t); sp(...[f(1)]); sp(f(1), ...t); sp(...t, f(1)); o.r(...[f(1), f(2)] as const); ({ a: f(1), m: o.m }).m("s"); ({ a: "s", m: o.m }).m(f(1));
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "arguments.ts(2,3): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        arguments.ts(2,5): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,12): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        arguments.ts(2,14): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,16): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,30): error TS2322: Type 'number' is not assignable to type 'string'.
+        arguments.ts(2,32): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,39): error TS2345: Argument of type '() => number' is not assignable to parameter of type '() => string'.
+          Type 'number' is not assignable to type 'string'.
+        arguments.ts(2,49): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,69): error TS2345: Argument of type '() => number' is not assignable to parameter of type '() => string'.
+          Type 'number' is not assignable to type 'string'.
+        arguments.ts(2,92): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,104): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,109): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,120): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,138): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,140): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,150): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,158): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,160): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,170): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,176): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,188): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,198): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        arguments.ts(2,200): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,211): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+          Type 'number' is not assignable to type 'string'.
+        arguments.ts(2,213): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,228): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        arguments.ts(2,231): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,242): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        arguments.ts(2,249): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,266): error TS2322: Type '() => number' is not assignable to type 'string'.
+        arguments.ts(2,274): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,283): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,295): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,313): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,328): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,342): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'boolean'.
+        arguments.ts(2,347): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,356): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,365): error TS2345: Argument of type '{ (x: string): number; (x: boolean): number; }' is not assignable to parameter of type 'string'.
+        arguments.ts(2,371): error TS2345: Argument of type '(Anonymous class)' is not assignable to parameter of type 'string'.
+        arguments.ts(2,390): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,405): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,426): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        arguments.ts(2,433): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        arguments.ts(2,435): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,24): error TS2345: Argument of type 'Promise<string>' is not assignable to parameter of type 'string'.
+        await.ts(2,33): error TS2345: Argument of type 'Promise<string>' is not assignable to parameter of type 'string'.
+        await.ts(2,42): error TS2345: Argument of type 'Promise<number>' is not assignable to parameter of type 'string'.
+        await.ts(2,49): error TS2345: Argument of type 'Promise<number>' is not assignable to parameter of type 'number'.
+        await.ts(2,60): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'Promise<string>' is not assignable to parameter of type 'boolean'.
+        await.ts(2,69): error TS2345: Argument of type 'Promise<number>' is not assignable to parameter of type 'string'.
+        await.ts(2,87): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,95): error TS2345: Argument of type 'Promise<number>' is not assignable to parameter of type 'string'.
+        await.ts(2,113): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,123): error TS2345: Argument of type 'Promise<number>' is not assignable to parameter of type 'string'.
+        await.ts(2,138): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,148): error TS2345: Argument of type 'Promise<string>' is not assignable to parameter of type 'string'.
+        await.ts(2,174): error TS2345: Argument of type '{ then: number; }' is not assignable to parameter of type 'string'.
+        await.ts(2,184): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,193): error TS2345: Argument of type '{ then(r: (v: string) => void): void; }' is not assignable to parameter of type 'string'.
+        await.ts(2,228): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,242): error TS2345: Argument of type '{ then(r: (v: string) => void): void; }' is not assignable to parameter of type 'string'.
+        await.ts(2,277): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        await.ts(2,291): error TS2345: Argument of type '(Anonymous class)' is not assignable to parameter of type 'string'.
+        await.ts(2,344): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,6): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,18): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,22): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        generic.ts(2,28): error TS2554: Expected 2-3 arguments, but got 1.
+        generic.ts(2,35): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,43): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'string' is not assignable to parameter of type 'number'.
+        generic.ts(2,75): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,85): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,97): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,107): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        generic.ts(2,109): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,119): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        generic.ts(2,124): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,135): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        generic.ts(2,142): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,148): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        generic.ts(2,162): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        generic.ts(2,177): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        generic.ts(2,186): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        generic.ts(2,194): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'string' is not assignable to parameter of type 'number'.
+        generic.ts(2,200): error TS7006: Parameter 'v' implicitly has an 'any' type.
+        generic.ts(2,203): error TS7006: Parameter 'w' implicitly has an 'any' type.
+        generic.ts(2,214): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        literals-in-loop.ts(8,13): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(8,16): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(17,12): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(17,12): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(26,18): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(26,21): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(35,17): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(35,17): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(44,14): error TS2322: Type '{}' is not assignable to type 'number'.
+        literals-in-loop.ts(44,17): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(53,12): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type 'number' is not assignable to type 'string'.
+        literals-in-loop.ts(53,15): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(53,15): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(62,11): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{ a: {}; }' is not assignable to parameter of type '{ a: string; }'.
+              Types of property 'a' are incompatible.
+                Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(62,16): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(62,30): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(71,11): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{ a: {}; }' is not assignable to parameter of type '{ a: string; }'.
+              Types of property 'a' are incompatible.
+                Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(71,21): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(80,11): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{ a: {}; }' is not assignable to parameter of type '{ a: string; }'.
+              Types of property 'a' are incompatible.
+                Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(80,20): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(80,44): error TS2871: This expression is always nullish.
+        literals-in-loop.ts(89,14): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Type '{}' is not assignable to type 'string'.
+        literals-in-loop.ts(89,18): error TS2871: This expression is always nullish.
+        loops.ts(2,79): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        loops.ts(2,81): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        loops.ts(2,169): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        loops.ts(2,282): error TS2345: Argument of type '() => number' is not assignable to parameter of type 'string'.
+        loops.ts(2,290): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'string | number | undefined' is not assignable to parameter of type 'boolean'.
+              Type 'undefined' is not assignable to type 'boolean'.
+        loops.ts(2,301): error TS2345: Argument of type '{ a: number; }' is not assignable to parameter of type 'string'.
+        loops.ts(2,321): error TS2345: Argument of type 'number[]' is not assignable to parameter of type 'string'.
+        loops.ts(2,395): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        loops.ts(2,397): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        loops.ts(2,399): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        loops.ts(2,416): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        loops.ts(2,521): error TS2871: This expression is always nullish.
+        loops.ts(2,536): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string'.
+          Type 'undefined' is not assignable to type 'string'.
+        then-single.ts(2,28): error TS2345: Argument of type 'T1' is not assignable to parameter of type 'string'.
+        then-single.ts(2,42): error TS2345: Argument of type 'T2' is not assignable to parameter of type 'string'.
+        then-single.ts(2,56): error TS2345: Argument of type '{ then: number; }' is not assignable to parameter of type 'string'.
+        then-single.ts(3,21): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        then-single.ts(3,56): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        then-single.ts(3,97): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        then-twice.ts(2,27): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'Thenable' is not assignable to parameter of type 'number'.
+        then-twice.ts(2,46): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'Thenable2' is not assignable to parameter of type 'number'.
+        then-twice.ts(3,27): error TS2304: Cannot find name 'oops'.
+        then-twice.ts(3,63): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '((cb: (v: string) => void) => void) & ((cb: (v: string) => void) => void)' is not assignable to parameter of type 'boolean'.
+        then-twice.ts(3,65): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '((cb: (v: string) => void) => void) & ((cb: (v: string) => void) => void)' is not assignable to parameter of type 'boolean'.
+        then-twice.ts(3,67): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        then.ts(2,27): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'Thenable' is not assignable to parameter of type 'number'.
+        then.ts(3,27): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,1): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            The 'this' context of type '{ m(this: { a: string; }, x: string): void; m(this: { a: string; }, x: boolean): void; a: number; r(x_0: string, x_1: number): void; r(x_0: boolean): void; }' is not assignable to method's 'this' of type '{ a: string; }'.
+              Types of property 'a' are incompatible.
+                Type 'number' is not assignable to type 'string'.
+        this-rest.ts(2,7): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,12): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            The 'this' context of type '{ m(this: { a: string; }, x: string): void; m(this: { a: string; }, x: boolean): void; a: number; r(x_0: string, x_1: number): void; r(x_0: boolean): void; }' is not assignable to method's 'this' of type '{ a: string; }'.
+              Types of property 'a' are incompatible.
+                Type 'number' is not assignable to type 'string'.
+        this-rest.ts(2,22): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            The 'this' context of type '{ m(this: { a: string; }, x: string): void; m(this: { a: string; }, x: boolean): void; a: number; r(x_0: string, x_1: number): void; r(x_0: boolean): void; }' is not assignable to method's 'this' of type '{ a: string; }'.
+              Types of property 'a' are incompatible.
+                Type 'number' is not assignable to type 'string'.
+        this-rest.ts(2,31): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,40): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        this-rest.ts(2,42): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,48): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,57): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        this-rest.ts(2,67): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        this-rest.ts(2,77): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,83): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,92): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        this-rest.ts(2,94): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,108): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        this-rest.ts(2,116): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,125): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        this-rest.ts(2,131): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,137): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,160): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'.
+        this-rest.ts(2,164): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Object literal may only specify known properties, and 'm' does not exist in type '{ a: string; }'.
+        this-rest.ts(2,193): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Object literal may only specify known properties, and 'm' does not exist in type '{ a: string; }'.
+        this-rest.ts(2,207): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'number' is not assignable to parameter of type 'boolean'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

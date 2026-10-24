@@ -775,7 +775,7 @@ impl Checker<'_, '_> {
     /// Takes the diagnostics reported from index `from` on, for a caller that stores or rewrites
     /// them. `addDeferredDiagnostic` callbacks stay.
     pub(super) fn take_reported_from(&mut self, from: usize) -> Vec<Reported> {
-        let drained = self.reported.split_off(from).into_iter();
+        let drained = (self.reported.split_off(from.min(self.reported.len()))).into_iter();
         let (callbacks, reported): (Vec<_>, Vec<_>) = drained.partition(|d| d.deferred.is_some());
         self.reported.extend(callbacks);
         reported

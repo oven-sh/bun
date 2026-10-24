@@ -1204,7 +1204,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !s.type_args.is_empty() || !self.has_correct_arity(s, candidate, &params) {
                 return None;
             }
-            if !self.is_signature_applicable(s, candidate, relation, CheckMode::empty(), false) {
+            if !self.is_signature_applicable(s, candidate, relation, CheckMode::empty(), None) {
                 s.candidates_for_argument_error.push(candidate);
                 return None;
             }
@@ -1261,8 +1261,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
             }
-            if !self.is_signature_applicable(s, check_candidate, relation, s.arg_check_mode, false)
-            {
+            if !self.is_signature_applicable(s, check_candidate, relation, s.arg_check_mode, None) {
                 s.candidates_for_argument_error.push(check_candidate);
                 continue;
             }
@@ -1289,7 +1288,7 @@ impl<'p, 's> Checker<'p, 's> {
                     check_candidate,
                     relation,
                     CheckMode::empty(),
-                    false,
+                    None,
                 ) {
                     s.candidates_for_argument_error.push(check_candidate);
                     continue;

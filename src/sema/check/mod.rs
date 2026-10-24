@@ -931,7 +931,6 @@ impl<'s> Program<'s> {
             current_source_element: None,
             is_type_checked: false,
             reported: Vec::new(),
-            candidate_errors_from: 0,
             is_checking_in_flow_loop: false,
             check_in_flow_loop: None,
             checked_in_flow_loop: FxHashMap::default(),
@@ -1735,8 +1734,6 @@ pub struct Checker<'p, 's> {
     is_type_checked: bool,
     /// The diagnostics reported for the queries in progress, and with none in progress. See `sink`.
     reported: Vec<Reported>,
-    /// Where in `reported` the errors of the candidate begin that `is_signature_applicable` has just rejected.
-    candidate_errors_from: usize,
     /// True while `check_expression` runs for `check_expression_in_flow_loop`, possibly in a file
     /// other than the task's. It then records nothing for the end of `checkSourceFile`, which is
     /// the file walk's job, and it checks the calls that it visits.

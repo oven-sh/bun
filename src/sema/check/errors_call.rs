@@ -799,19 +799,8 @@ impl Checker<'_, '_> {
             _ => None,
         };
         if let Some(&last) = s.candidates_for_argument_error.last() {
-            let from = self.reported.len();
-            self.candidate_errors_from = from;
-            let mode = CheckMode::empty();
-            let is_applicable =
-                self.is_signature_applicable(s, last, Relation::Assignable, mode, true);
-            // What the check of an argument reports isn't an error of the candidate. An argument is checked again
-            // here while a loop is analyzed.
-            let from = match s.node {
-                CallLike::Jsx(_) => from,
-                _ if is_applicable => self.reported.len(),
-                _ => self.candidate_errors_from.max(from),
-            };
-            let reported = self.take_reported_from(from);
+            let (mode, mut reported) = (CheckMode::empty(), Vec::new());
+            self.is_signature_applicable(s, last, Relation::Assignable, mode, Some(&mut reported));
             let is_overloaded = s.candidates_for_argument_error.len() > 1;
             let related = if reported.is_empty() {
                 Vec::new()
@@ -938,31 +927,38 @@ impl Checker<'_, '_> {
     }
 
     /// `isSignatureApplicable`. If something couldn't be determined the result is true, except in the subtype pass.
+    /// `report` is `errorOutputContainer`: it gets the errors of the comparison that fails. What the check of an argument
+    /// reports on the way isn't among them. An argument is checked again here while a loop is analyzed.
     pub(super) fn is_signature_applicable(
         &mut self,
         s: &CallState<'_>,
         sig: SigId,
         relation: Relation,
         check_mode: CheckMode,
-        report: bool,
+        mut report: Option<&mut Vec<Reported>>,
     ) -> bool {
         if let CallLike::Jsx(_) = s.node {
-            return self.check_applicable_signature_for_jsx_call_like_element(
+            let from = self.reported.len();
+            let is_applicable = self.check_applicable_signature_for_jsx_call_like_element(
                 s.file,
                 s.call,
                 sig,
                 relation,
                 check_mode,
                 s.checks_arguments_once && s.is_single_non_generic_candidate,
-                report,
+                report.is_some(),
             );
+            if let Some(errors) = report {
+                errors.extend(self.take_reported_from(from));
+            }
+            return is_applicable;
         }
         let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);
         // A decorator's arguments are synthetic (`createSyntheticExpression`), so an error about one is reported at the
         // decorator expression.
         let decorator = match node {
-            CallLike::Decorator(_) if report => Some(self.decorator_position(file, e)),
+            CallLike::Decorator(_) if report.is_some() => Some(self.decorator_position(file, e)),
             _ => None,
         };
         if let Some(expected) = self.sig_this_type(sig)
@@ -971,18 +967,20 @@ impl Checker<'_, '_> {
         {
             let actual = self.this_argument_type(file, this_arg);
             if !self.related(actual, expected, relation) {
-                if !report {
+                let Some(errors) = report.as_deref_mut() else {
                     return false;
-                }
+                };
                 let at = match (this_arg, decorator) {
                     (None, Some(decorator_span)) => {
                         (file, decorator_span.at_sign, decorator_span.end)
                     }
                     _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
                 };
-                self.candidate_errors_from = self.reported.len();
+                let from = self.reported.len();
                 // 2684, or a more specific error. As below, this comparison can succeed.
-                if !self.check_this_assignable(actual, expected, at) {
+                let is_assignable = self.check_this_assignable(actual, expected, at);
+                errors.extend(self.take_reported_from(from));
+                if !is_assignable {
                     return false;
                 }
             }
@@ -1025,7 +1023,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             self.note_parameter_types_resolved(sig, &params, i + 1);
-            if report {
+            if let Some(errors) = report.as_deref_mut() {
                 let check_node = self.effective_check_node(file, node);
                 let error_node = match decorator {
                     Some(decorator_span) => (file, decorator_span.start, decorator_span.end),
@@ -1035,8 +1033,6 @@ impl Checker<'_, '_> {
                     Arg::Expr(_) => Some((file, check_node)),
                     _ => None,
                 };
-                let reported = self.reported.len();
-                self.candidate_errors_from = reported;
                 let mut diagnostics = Vec::new();
                 // `elaborateError` has no case for a `SyntheticExpression` or a `SpreadElement`.
                 let is_elaborated = expr.is_none()
@@ -1062,9 +1058,10 @@ impl Checker<'_, '_> {
                 {
                     continue;
                 }
-                self.reported.extend(diagnostics);
                 let error_span = self.span_of_parenthesized_expr(file, node);
-                self.maybe_add_missing_await_info(error_span, actual, expected, reported);
+                let first = diagnostics.first_mut();
+                self.maybe_add_missing_await_info(error_span, actual, expected, first);
+                errors.extend(diagnostics);
             }
             return false;
         }
@@ -1072,7 +1069,7 @@ impl Checker<'_, '_> {
         if let Some(rest) = rest {
             let actual = self.spread_argument_type(file, args, count, rest, None, check_mode);
             if !self.related(actual, rest, relation) {
-                if report {
+                if let Some(errors) = report {
                     let (at, end) = match decorator {
                         Some(decorator_span) if count == args.len() => {
                             (decorator_span.at_sign, decorator_span.end)
@@ -1095,10 +1092,12 @@ impl Checker<'_, '_> {
                             ),
                         },
                     };
-                    let reported = self.reported.len();
-                    self.candidate_errors_from = reported;
+                    let from = self.reported.len();
                     self.check_assignable_with_end(file, actual, rest, at, end, ExprId::NONE, 2345);
-                    self.maybe_add_missing_await_info((file, at, end), actual, rest, reported);
+                    let mut diagnostics = self.take_reported_from(from);
+                    let first = diagnostics.first_mut();
+                    self.maybe_add_missing_await_info((file, at, end), actual, rest, first);
+                    errors.extend(diagnostics);
                 }
                 return false;
             }
@@ -1106,18 +1105,17 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// `maybeAddMissingAwaitInfo`. `argument_span` is the argument's span. `reported` is the index in `self.reported`
-    /// of the first diagnostic for it.
+    /// `maybeAddMissingAwaitInfo`. `argument_span` is the argument's span. `first` is the first diagnostic for it.
     fn maybe_add_missing_await_info(
         &mut self,
         argument_span: (FileId, u32, u32),
         source: TypeId,
         target: TypeId,
-        reported: usize,
+        first: Option<&mut Reported>,
     ) {
-        if reported == self.reported.len() {
+        let Some(first) = first else {
             return;
-        }
+        };
         // `getAwaitedTypeOfPromise`
         let awaited_of_promise = |c: &mut Self, ty: TypeId| {
             let promised = c.thenable_value(ty)?;
@@ -1130,7 +1128,7 @@ impl Checker<'_, '_> {
             return;
         };
         if self.is_assignable(awaited, target) {
-            self.reported[reported].add_related_info(Reported::bare(argument_span, 2773));
+            first.add_related_info(Reported::bare(argument_span, 2773));
         }
     }
 

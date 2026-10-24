@@ -165,7 +165,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     }
     out += "\r\n";
     if (body !== undefined && !chunked) {
-      writeToSocket(out + body, callback, encoding);
+      // Not the socket's defaultEncoding: the Content-Length above counts these bytes.
+      writeToSocket(out + body, callback, encoding || "utf8");
       return true;
     }
     writeToSocket(out);

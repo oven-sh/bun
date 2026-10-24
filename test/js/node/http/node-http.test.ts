@@ -8010,6 +8010,30 @@ it("a ServerResponse made by the handler for its request closes after 'finish'",
   expect(await promise).toEqual(["end callback: null", "finish", "close"]);
 });
 
+// Node.js leaves the string to the socket, which sends one byte here under a Content-Length of 2.
+it("a socket from emit('connection') with another defaultEncoding gets the bytes that Content-Length counts", async () => {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const chunks: Buffer[] = [];
+  const socket = new Duplex({
+    defaultEncoding: "latin1",
+    read() {},
+    write(chunk, _encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+  const server = http.createServer((req, res) => {
+    res.on("finish", resolve);
+    res.end("\xe9");
+  });
+  server.emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  await promise;
+  socket.destroy();
+  const [head, body] = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n");
+  expect({ length: /^Content-Length: (\d+)$/m.exec(head)?.[1], body }).toEqual({ length: "2", body: "\xc3\xa9" });
+});
+
 // Node.js calls neither callback here: a write that never completes holds both back.
 it("a socket from emit('connection') that closes with a write in flight fails write() and end() callbacks by name", async () => {
   const socket = new Duplex({ read() {}, write() {} });
